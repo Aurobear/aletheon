@@ -12,6 +12,7 @@ members = [
     "crates/aletheon-body",
     "crates/aletheon-runtime",
     "crates/aletheon-meta",
+    "examples/basic-agent",
 ]
 
 [workspace.package]
