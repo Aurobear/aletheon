@@ -20,6 +20,7 @@ pub mod meta;
 pub mod runtime;
 pub mod genome;
 pub mod paths;
+pub mod evolution;
 
 // Shared types (message, tool, sandbox, IPC, LLM)
 pub mod message;
@@ -39,7 +40,7 @@ pub mod observable;
 
 // Re-export key types at crate root for convenience
 pub use subsystem::{Subsystem, SubsystemHealth, SubsystemContext, Version, InitPhase};
-pub use event::{Event, EventType, Priority, SubscriptionId, EventHandler};
+pub use event::{Event, EventType, Priority, SubscriptionId, EventHandler, AsyncEventHandler};
 pub use event_bus::EventBus;
 pub use context::{Context, TraceState};
 pub use capability::{Capability, CapabilitySet, PermissionLevel};

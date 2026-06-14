@@ -10,7 +10,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::time::Duration;
 
-use crate::event::{Event, EventHandler, EventType, SubscriptionId};
+use crate::event::{AsyncEventHandler, Event, EventHandler, EventType, SubscriptionId};
 
 /// EventBus trait — the interrupt controller of Aletheon.
 ///
@@ -51,4 +51,27 @@ pub trait EventBus: Send + Sync {
 
     /// Check if any subscribers exist for an event type.
     async fn has_subscribers(&self, event_type: &EventType) -> bool;
+
+    /// Subscribe with an async handler.
+    ///
+    /// Default implementation wraps the async handler into a synchronous
+    /// `EventHandler` by spawning the future on the Tokio runtime. The
+    /// sync wrapper always returns `true` (continues propagation) because
+    /// the async result is not awaited synchronously.
+    ///
+    /// Implementations that support native async dispatch should override
+    /// this method.
+    async fn subscribe_async(
+        &self,
+        event_type: EventType,
+        handler: AsyncEventHandler,
+    ) -> Result<SubscriptionId> {
+        let sync_handler: EventHandler = Box::new(move |event: &dyn Event| {
+            let json = event.to_json();
+            let fut = handler(json);
+            tokio::spawn(fut);
+            true // cannot await here; propagate unconditionally
+        });
+        self.subscribe(event_type, sync_handler).await
+    }
 }
