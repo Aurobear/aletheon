@@ -8,6 +8,7 @@ description = "Aletheon Self-evolution - reflection, behavior evolution, and gen
 [dependencies]
 aletheon-abi = { path = "../aletheon-abi" }
 aletheon-body = { path = "../aletheon-body" }
+aletheon-brain = { path = "../aletheon-brain" }
 aletheon-comm = { path = "../aletheon-comm" }
 aletheon-memory = { path = "../aletheon-memory" }
 tokio = { version = "1", features = ["full"] }
