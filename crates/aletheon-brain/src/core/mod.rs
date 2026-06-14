@@ -14,6 +14,7 @@ pub mod learner;
 pub mod world_model;
 pub mod evolution_trigger;
 pub mod skill_extractor;
+pub mod awareness;
 
 use aletheon_abi::{
     brain::{
@@ -21,8 +22,8 @@ use aletheon_abi::{
         LearnedRule, Observation, Plan, Reflection, ReflectionEntry, ReflectionOutcome,
     },
     context::Context,
-    self_field::Intent,
-    Subsystem, SubsystemContext, SubsystemHealth, Version,
+    self_field::{AwarenessGrowthSuggestion, Intent},
+    Subsystem, SubsystemContext, SubsystemHealth, Version, SelfAwareness,
 };
 use anyhow::Result;
 use aletheon_abi::message::ContentBlock;
@@ -36,6 +37,7 @@ use self::reasoner::{Reasoner, ReasoningStrategy};
 use self::reflector::Reflector;
 use self::skill_extractor::SkillExtractor;
 use self::world_model::WorldModel;
+use self::awareness::{AwarenessContext, AwarenessGenerator};
 use crate::bridge::learning::LearningBridge;
 use crate::bridge::llm::LlmBridge;
 use crate::bridge::dual_model::{DualModelBridge, TaskComplexity};
@@ -216,6 +218,7 @@ pub struct BrainCore {
     llm: Option<LlmBridge>,
     dual_model: Option<DualModelBridge>,
     learning: Option<LearningBridge>,
+    awareness_generator: AwarenessGenerator,
 }
 
 impl BrainCore {
@@ -232,6 +235,7 @@ impl BrainCore {
             llm: None,
             dual_model: None,
             learning: None,
+            awareness_generator: AwarenessGenerator::new(),
         }
     }
 
@@ -299,6 +303,32 @@ impl BrainCore {
     /// Access the skill extractor (for extracting skills from reflections).
     pub fn skill_extractor(&self) -> &SkillExtractor {
         &self.skill_extractor
+    }
+
+    /// Generate self-awareness for a reasoning act.
+    ///
+    /// This is a side-channel method — it does NOT change the
+    /// BrainCoreOps::think() return type. Instead, awareness
+    /// is generated alongside reasoning and stored separately.
+    ///
+    /// Call this after think() to produce awareness for the
+    /// reasoning that just happened.
+    pub fn generate_awareness(
+        &self,
+        action: &str,
+        context: &AwarenessContext,
+    ) -> SelfAwareness {
+        self.awareness_generator.generate_enriched(action, context)
+    }
+
+    /// Update awareness growth suggestions.
+    ///
+    /// Called when AwarenessGrowthAnalyzer produces new suggestions.
+    pub fn update_awareness_suggestions(
+        &mut self,
+        suggestions: Vec<AwarenessGrowthSuggestion>,
+    ) {
+        self.awareness_generator.update_suggestions(suggestions);
     }
 }
 

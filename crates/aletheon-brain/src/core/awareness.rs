@@ -10,7 +10,6 @@
 use aletheon_abi::{
     AwarenessExtension, AwarenessGrowthSuggestion, SelfAwareness, SelfState,
 };
-use anyhow::Result;
 
 /// System prompt for generating self-awareness.
 ///
