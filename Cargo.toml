@@ -13,6 +13,7 @@ members = [
     "crates/aletheon-runtime",
     "crates/aletheon-meta",
     "examples/basic-agent",
+    "examples/self-evolution-loop",
 ]
 
 [workspace.package]

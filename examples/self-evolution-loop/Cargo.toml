@@ -1,0 +1,22 @@
+[package]
+name = "self-evolution-loop-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+aletheon-abi = { path = "../../crates/aletheon-abi" }
+aletheon-comm = { path = "../../crates/aletheon-comm" }
+aletheon-brain = { path = "../../crates/aletheon-brain" }
+aletheon-self = { path = "../../crates/aletheon-self" }
+aletheon-meta = { path = "../../crates/aletheon-meta" }
+aletheon-body = { path = "../../crates/aletheon-body" }
+aletheon-memory = { path = "../../crates/aletheon-memory" }
+aletheon-runtime = { path = "../../crates/aletheon-runtime" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
