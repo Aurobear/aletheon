@@ -1,0 +1,17 @@
+[package]
+name = "aletheon-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "aletheon-cli"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+atty = "0.2"
+aletheon-body = { path = "../aletheon-body", features = ["input", "display", "a11y", "ocr"] }

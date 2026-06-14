@@ -1,0 +1,13 @@
+[package]
+name = "aletheon-meta"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+aletheon-abi = { path = "../aletheon-abi" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }

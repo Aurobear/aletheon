@@ -1,0 +1,14 @@
+# Rust build artifacts
+target/
+
+# References - external source code for study, do not commit
+references/anthropic-sdk-python/
+references/autogen/
+references/codex/
+references/crewAI/
+references/hermes-agent/
+references/langgraph/
+references/letta/
+references/opencode/
+references/OpenHands/
+references/claude-code/

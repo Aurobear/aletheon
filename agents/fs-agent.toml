@@ -1,0 +1,9 @@
+[agent]
+id = "fs-agent"
+name = "File System Agent"
+description = "Handles file read/write operations"
+capabilities = ["file_ops"]
+tools = ["file_read", "file_write"]
+role = "Leaf"
+max_iterations = 10
+system_prompt = "fs-agent.md"

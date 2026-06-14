@@ -1,0 +1,124 @@
+//! AttentionLayer — focus tracking with priority and decay.
+//!
+//! Tracks what the agent is currently focused on. Focus topics have
+//! a priority that decays over time, so stale focus naturally fades.
+
+use chrono::{DateTime, Utc};
+use parking_lot::RwLock;
+
+/// A focus topic the agent is attending to.
+#[derive(Debug, Clone)]
+pub struct FocusTopic {
+    pub topic: String,
+    pub priority: f64,
+    pub started_at: DateTime<Utc>,
+    pub last_updated: DateTime<Utc>,
+}
+
+/// AttentionLayer — manages focus topics with time-based decay.
+pub struct AttentionLayer {
+    focus: RwLock<Vec<FocusTopic>>,
+    /// Priority decays by this amount per second of inactivity.
+    decay_rate: f64,
+}
+
+impl AttentionLayer {
+    pub fn new(decay_rate: f64) -> Self {
+        Self {
+            focus: RwLock::new(Vec::new()),
+            decay_rate,
+        }
+    }
+
+    /// Attend to a topic (adds or refreshes).
+    pub fn attend(&self, topic: &str, priority: f64) {
+        let mut focus = self.focus.write();
+        if let Some(existing) = focus.iter_mut().find(|f| f.topic == topic) {
+            existing.priority = priority;
+            existing.last_updated = Utc::now();
+        } else {
+            focus.push(FocusTopic {
+                topic: topic.to_string(),
+                priority,
+                started_at: Utc::now(),
+                last_updated: Utc::now(),
+            });
+        }
+    }
+
+    /// Apply decay to all focus topics. Removes topics with priority <= 0.
+    pub fn decay(&self) {
+        let now = Utc::now();
+        let mut focus = self.focus.write();
+        for topic in focus.iter_mut() {
+            let elapsed = (now - topic.last_updated).num_seconds() as f64;
+            topic.priority -= self.decay_rate * elapsed;
+        }
+        focus.retain(|t| t.priority > 0.0);
+    }
+
+    /// Get the current highest-priority focus topic, after applying decay.
+    pub fn current_focus(&self) -> Option<FocusTopic> {
+        self.decay();
+        self.focus.read().iter().max_by(|a, b| {
+            a.priority.partial_cmp(&b.priority).unwrap_or(std::cmp::Ordering::Equal)
+        }).cloned()
+    }
+
+    /// Get all active focus topics (after decay).
+    pub fn all_topics(&self) -> Vec<FocusTopic> {
+        self.decay();
+        self.focus.read().clone()
+    }
+
+    /// Remove a specific focus topic.
+    pub fn dismiss(&self, topic: &str) -> bool {
+        let mut focus = self.focus.write();
+        let len_before = focus.len();
+        focus.retain(|f| f.topic != topic);
+        focus.len() < len_before
+    }
+}
+
+impl Default for AttentionLayer {
+    fn default() -> Self {
+        // Default decay: 0.001 priority per second (~1.0 per 1000 seconds)
+        Self::new(0.001)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attend_and_focus() {
+        let layer = AttentionLayer::new(0.0); // no decay for testing
+        layer.attend("task_a", 0.8);
+        layer.attend("task_b", 0.5);
+
+        let focus = layer.current_focus();
+        assert!(focus.is_some());
+        assert_eq!(focus.unwrap().topic, "task_a");
+    }
+
+    #[test]
+    fn refresh_updates_priority() {
+        let layer = AttentionLayer::new(0.0);
+        layer.attend("task_a", 0.3);
+        layer.attend("task_a", 0.9);
+
+        let topics = layer.all_topics();
+        assert_eq!(topics.len(), 1);
+        assert_eq!(topics[0].priority, 0.9);
+    }
+
+    #[test]
+    fn dismiss_removes_topic() {
+        let layer = AttentionLayer::new(0.0);
+        layer.attend("task_a", 0.5);
+        assert!(layer.dismiss("task_a"));
+        assert!(layer.current_focus().is_none());
+        assert!(!layer.dismiss("nonexistent"));
+    }
+}

@@ -1,0 +1,54 @@
+//! EventBus trait — like Linux kernel's interrupt controller.
+//!
+//! The EventBus is the central message router. All cross-subsystem
+//! communication flows through it. Three communication patterns:
+//! - Publish-Subscribe (one-to-many broadcast)
+//! - Request-Response (synchronous wait for reply)
+//! - Fire-and-Forget (async, no wait)
+
+use anyhow::Result;
+use async_trait::async_trait;
+use std::time::Duration;
+
+use crate::event::{Event, EventHandler, EventType, SubscriptionId};
+
+/// EventBus trait — the interrupt controller of Aletheon.
+///
+/// Subsystems subscribe to event types and receive callbacks when
+/// events are published. The EventBus handles routing, priority
+/// ordering, and delivery.
+#[async_trait]
+pub trait EventBus: Send + Sync {
+    /// Publish an event. All matching subscribers are notified.
+    ///
+    /// Events are delivered in priority order (Critical first).
+    /// Returns after all synchronous handlers have completed.
+    async fn publish(&self, event: Box<dyn Event>) -> Result<()>;
+
+    /// Subscribe to an event type. Returns a subscription ID for later removal.
+    ///
+    /// The handler is called whenever an event of the specified type is published.
+    /// If the handler returns `false`, no further handlers for that event are called
+    /// (early termination / "handled" semantics).
+    async fn subscribe(
+        &self,
+        event_type: EventType,
+        handler: EventHandler,
+    ) -> Result<SubscriptionId>;
+
+    /// Request-Response pattern. Publishes an event and waits for a reply.
+    ///
+    /// Like Linux ioctl — synchronous call that blocks until the handler
+    /// produces a response or timeout is reached.
+    async fn request(
+        &self,
+        event: Box<dyn Event>,
+        timeout: Duration,
+    ) -> Result<Box<dyn Event>>;
+
+    /// Unsubscribe a previously registered handler.
+    async fn unsubscribe(&self, id: SubscriptionId) -> Result<()>;
+
+    /// Check if any subscribers exist for an event type.
+    async fn has_subscribers(&self, event_type: &EventType) -> bool;
+}

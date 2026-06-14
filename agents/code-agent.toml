@@ -1,0 +1,9 @@
+[agent]
+id = "code-agent"
+name = "Code Agent"
+description = "Handles code execution and file operations"
+capabilities = ["code_execution", "file_ops"]
+tools = ["file_read", "file_write", "bash_exec"]
+role = "Leaf"
+max_iterations = 20
+system_prompt = "code-agent.md"
