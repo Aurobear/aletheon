@@ -5,6 +5,7 @@
 //! Boundary -> Care -> Permissions -> Narrative -> Verdict.
 
 pub mod attention;
+pub mod awareness_growth;
 pub mod boundary;
 pub mod care;
 pub mod conflict;
