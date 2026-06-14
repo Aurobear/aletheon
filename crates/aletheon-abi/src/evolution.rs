@@ -79,7 +79,7 @@ pub struct EvolutionResultPayload {
 }
 
 /// Purpose of an LLM call, used for routing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LlmPurpose {
     Reflect,
     ExtractRules,
