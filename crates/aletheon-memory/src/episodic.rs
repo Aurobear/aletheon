@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use aletheon_abi::{
-    CompactResult, CompactStrategy, EvolutionLogEntry, MemoryBackend,
-    MemoryEntry, MemoryFilter, MemoryHandle, MemoryQuery, MemoryStats, MemoryType,
-    ReflectionEntry, ReflectionTrigger, Subsystem, SubsystemContext, SubsystemHealth, Version,
+    AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, CompactResult, CompactStrategy,
+    EvolutionLogEntry, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle, MemoryQuery,
+    MemoryStats, MemoryType, ReflectionEntry, ReflectionTrigger, SelfAwareness, Subsystem,
+    SubsystemContext, SubsystemHealth, Version,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -151,6 +152,102 @@ impl EpisodicMemory {
         })
     }
 
+    /// Store a SelfAwareness entry linked to an episodic memory.
+    ///
+    /// The awareness is stored as a first-class record, not just
+    /// serialized bytes in the event. This enables pattern analysis
+    /// for growth.
+    pub fn store_awareness(
+        &self,
+        memory_id: &str,
+        awareness: &SelfAwareness,
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            let id = Uuid::new_v4().to_string();
+            let now = Utc::now().to_rfc3339();
+
+            conn.execute(
+                "INSERT INTO awareness_events (id, memory_id, action, aware, extensions, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    id,
+                    memory_id,
+                    awareness.core.action,
+                    awareness.core.aware as i32,
+                    serde_json::to_string(&awareness.extensions).unwrap_or_default(),
+                    now,
+                ],
+            )?;
+
+            Ok(())
+        })
+    }
+
+    /// Recall recent awareness entries for pattern analysis.
+    ///
+    /// Returns the N most recent awareness entries, ordered by time.
+    /// Used by AwarenessGrowthAnalyzer to identify patterns.
+    pub fn recall_awareness_history(&self, limit: usize) -> Result<Vec<SelfAwareness>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT action, aware, extensions FROM awareness_events
+                 ORDER BY created_at DESC LIMIT ?1"
+            )?;
+
+            let entries = stmt.query_map(params![limit as i64], |row| {
+                let action: String = row.get("action")?;
+                let aware: bool = row.get::<_, i32>("aware")? != 0;
+                let extensions_str: String = row.get("extensions")?;
+
+                let extensions: Vec<AwarenessExtension> =
+                    serde_json::from_str(&extensions_str).unwrap_or_default();
+
+                Ok(SelfAwareness {
+                    core: AwarenessCore { action, aware },
+                    extensions,
+                })
+            })?.collect::<std::result::Result<Vec<_>, _>>()?;
+
+            Ok(entries)
+        })
+    }
+
+    /// Count awareness entries by extension type.
+    ///
+    /// Returns aggregate counts across all stored awareness entries.
+    /// Used to identify which extension types are most/least used.
+    pub fn awareness_extension_stats(&self) -> Result<AwarenessExtensionCounts> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT extensions FROM awareness_events"
+            )?;
+
+            let mut counts = AwarenessExtensionCounts::default();
+
+            let rows = stmt.query_map([], |row| {
+                let extensions_str: String = row.get("extensions")?;
+                Ok(extensions_str)
+            })?;
+
+            for row in rows {
+                let extensions_str = row?;
+                let extensions: Vec<AwarenessExtension> =
+                    serde_json::from_str(&extensions_str).unwrap_or_default();
+
+                for ext in &extensions {
+                    match ext {
+                        AwarenessExtension::Intent { .. } => counts.intent += 1,
+                        AwarenessExtension::SelfState { .. } => counts.self_state += 1,
+                        AwarenessExtension::Significance { .. } => counts.significance += 1,
+                        AwarenessExtension::Reflexive { .. } => counts.reflexive += 1,
+                    }
+                }
+            }
+
+            Ok(counts)
+        })
+    }
+
     /// Store an evolution log entry.
     pub fn store_evolution_log(&self, entry: &EvolutionLogEntry) -> Result<()> {
         self.with_conn(|conn| {
@@ -216,6 +313,7 @@ impl Subsystem for EpisodicMemory {
         let conn = Connection::open(&self.db_path)
             .with_context(|| format!("Failed to open {}", self.db_path.display()))?;
         schema::init_base_table(&conn)?;
+        schema::init_awareness_table(&conn)?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS episodic_events (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
