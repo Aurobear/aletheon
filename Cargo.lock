@@ -93,6 +93,7 @@ version = "0.1.0"
 dependencies = [
  "aletheon-abi",
  "aletheon-body",
+ "aletheon-comm",
  "anyhow",
  "async-trait",
  "chrono",
@@ -193,6 +194,7 @@ dependencies = [
  "aletheon-abi",
  "aletheon-body",
  "aletheon-brain",
+ "aletheon-comm",
  "aletheon-memory",
  "aletheon-meta",
  "aletheon-self",
@@ -2600,6 +2602,27 @@ checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "self-evolution-loop-example"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "aletheon-body",
+ "aletheon-brain",
+ "aletheon-comm",
+ "aletheon-memory",
+ "aletheon-meta",
+ "aletheon-runtime",
+ "aletheon-self",
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
