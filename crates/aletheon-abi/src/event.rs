@@ -66,6 +66,10 @@ pub enum EventType {
     RuleExtracted,
     EvolutionTriggered,
     EvolutionResult,
+
+    // Energy / agent lifecycle
+    CognitivePulse,
+    AgentSpawned,
 }
 
 /// Event priority — like IRQ priority levels.

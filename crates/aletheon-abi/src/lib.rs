@@ -7,6 +7,7 @@
 //! (`file_operations`, `net_proto_ops`), this crate defines the contracts
 //! between Aletheon subsystems.
 
+pub mod agent;
 pub mod subsystem;
 pub mod event;
 pub mod event_bus;

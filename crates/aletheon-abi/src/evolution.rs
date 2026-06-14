@@ -78,6 +78,44 @@ pub struct EvolutionResultPayload {
     pub summary: String,
 }
 
+/// LLM energy pulse — broadcast periodically by LlmPulse.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CognitivePulseEvent {
+    pub pulse_id: Uuid,
+    pub timestamp: String, // ISO 8601
+    pub available_tokens: u32,
+    pub provider_health: ProviderHealth,
+}
+
+/// Health status of an LLM provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderHealth {
+    pub name: String,
+    pub available: bool,
+    pub latency_ms: u64,
+    pub tokens_remaining: Option<u32>,
+}
+
+/// Agent started lifecycle event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStartedPayload {
+    pub pid: u64,
+    pub task: String,
+}
+
+/// Agent stopped lifecycle event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStoppedPayload {
+    pub pid: u64,
+}
+
+/// Agent spawned lifecycle event (parent -> child).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSpawnedPayload {
+    pub parent: u64,
+    pub child: u64,
+}
+
 /// Purpose of an LLM call, used for routing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LlmPurpose {
