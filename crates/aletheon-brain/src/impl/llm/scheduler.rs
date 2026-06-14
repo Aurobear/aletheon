@@ -47,6 +47,21 @@ pub struct LlmScheduler {
 }
 
 impl LlmScheduler {
+    /// Create a scheduler directly from pre-built providers and routing rules.
+    ///
+    /// Useful for testing with mock providers.
+    pub fn from_providers(
+        providers: HashMap<String, Arc<dyn LlmProvider>>,
+        routing: HashMap<LlmPurpose, String>,
+    ) -> Self {
+        let default_provider = providers.keys().next().cloned().unwrap_or_default();
+        Self {
+            providers,
+            routing,
+            default_provider,
+        }
+    }
+
     /// Create a new scheduler from config.
     pub fn new(config: &SchedulerConfig) -> Result<Self> {
         let mut providers = HashMap::new();

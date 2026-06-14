@@ -42,5 +42,4 @@ pub use r#impl::inference;
 pub use r#impl::learning;
 pub use r#impl::provider_registry;
 
-#[cfg(test)]
 pub mod testing;
