@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use tracing::{debug, warn};
 
-use aletheon_abi::{Event, EventBus, EventHandler, EventType, SubscriptionId};
+use aletheon_abi::{AsyncEventHandler, Event, EventBus, EventHandler, EventType, SubscriptionId};
 use crate::r#impl::subscription::SubscriptionRegistry;
 use crate::r#impl::event_log::EventLog;
 use crate::r#impl::routing_policy::{RoutingPolicy, RouteAction};
@@ -67,6 +67,25 @@ impl EventBus for KernelEventBus {
     ) -> Result<SubscriptionId> {
         let id = self.subscriptions.subscribe(event_type, handler);
         debug!(subscription_id = id.0, "New subscription");
+        Ok(id)
+    }
+
+    async fn subscribe_async(
+        &self,
+        event_type: EventType,
+        handler: AsyncEventHandler,
+    ) -> Result<SubscriptionId> {
+        let handler = Arc::new(handler);
+        let sync_handler: EventHandler = Box::new(move |event: &dyn Event| {
+            let json = event.to_json();
+            let handler = handler.clone();
+            tokio::spawn(async move {
+                handler(json).await;
+            });
+            true // non-blocking, continue propagation
+        });
+        let id = self.subscriptions.subscribe(event_type, sync_handler);
+        debug!(subscription_id = id.0, "New async subscription");
         Ok(id)
     }
 
