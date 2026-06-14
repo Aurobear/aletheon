@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use aletheon_abi::evolution::LlmPurpose;
+use aletheon_abi::evolution::{LlmPurpose, ProviderHealth};
 use aletheon_abi::message::Message;
 
 use crate::config::{ProviderConfig, Transport};
@@ -137,6 +137,19 @@ impl LlmScheduler {
         self.providers.get(name).unwrap_or_else(|| {
             self.providers.values().next().expect("No LLM providers configured")
         })
+    }
+
+    /// Check health of the default provider.
+    ///
+    /// Phase 1: returns basic status (always available).
+    /// Phase 2: actually ping providers and measure latency.
+    pub async fn health_check(&self) -> ProviderHealth {
+        ProviderHealth {
+            name: self.default_provider.clone(),
+            available: true,
+            latency_ms: 0,
+            tokens_remaining: None,
+        }
     }
 }
 
