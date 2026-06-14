@@ -36,7 +36,7 @@ impl ClipboardDriver for X11ClipboardDriver {
 
         let clipboard_atom = intern_atom(&conn, b"CLIPBOARD")?;
         let utf8_atom = intern_atom(&conn, b"UTF8_STRING")?;
-        let result_atom = intern_atom(&conn, b"ARGOS_CLIP")?;
+        let result_atom = intern_atom(&conn, b"ALETHEON_CLIP")?;
 
         // Check if there is a clipboard owner at all.
         let owner_reply = conn
@@ -173,7 +173,7 @@ impl ClipboardDriver for X11ClipboardDriver {
         // when a SelectionRequest arrives.  This is a simplified approach —
         // a full implementation would run an event loop to serve the data
         // on-demand, but this is sufficient for the driver's current scope.
-        let data_atom = intern_atom(&conn, b"ARGOS_CLIPBOARD_DATA")?;
+        let data_atom = intern_atom(&conn, b"ALETHEON_CLIPBOARD_DATA")?;
         conn.change_property(
             PropMode::REPLACE,
             win,
@@ -210,7 +210,7 @@ mod tests {
 
         let driver = X11ClipboardDriver::new();
 
-        let test_text = "argos-x11-clipboard-test-42";
+        let test_text = "aletheon-x11-clipboard-test-42";
         driver
             .set_clipboard(test_text)
             .expect("set_clipboard should succeed");

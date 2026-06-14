@@ -12,16 +12,16 @@ use std::path::PathBuf;
 use tokio::sync::Mutex;
 use tracing::info;
 
-/// Bridges argos-tools + argos-sandbox into aletheon BodyRuntime.
-pub struct ArgosBodyRuntime {
+/// Aletheon body runtime — tools + sandbox integration.
+pub struct AletheonBodyRuntime {
     registry: ToolRegistry,
     runner: Mutex<ToolRunnerWithGuard>,
     capabilities: Vec<Capability>,
     initialized: bool,
 }
 
-impl ArgosBodyRuntime {
-    /// Create a new ArgosBodyRuntime with default tools and security.
+impl AletheonBodyRuntime {
+    /// Create a new AletheonBodyRuntime with default tools and security.
     pub fn new(working_dir: PathBuf) -> Result<Self> {
         let registry = ToolRegistry::default();
         let audit_logger = AuditLogger::new(working_dir.join("audit.jsonl"))?;
@@ -72,15 +72,15 @@ impl ArgosBodyRuntime {
 }
 
 #[async_trait]
-impl Subsystem for ArgosBodyRuntime {
+impl Subsystem for AletheonBodyRuntime {
     fn name(&self) -> &str {
-        "argos-body"
+        "aletheon-body"
     }
 
     async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
         self.initialized = true;
         info!(
-            "ArgosBodyRuntime initialized with {} capabilities",
+            "AletheonBodyRuntime initialized with {} capabilities",
             self.capabilities.len()
         );
         Ok(())
@@ -111,7 +111,7 @@ impl Subsystem for ArgosBodyRuntime {
 }
 
 #[async_trait]
-impl BodyRuntime for ArgosBodyRuntime {
+impl BodyRuntime for AletheonBodyRuntime {
     async fn execute(&self, action: Action, ctx: &Context) -> Result<ActionResult> {
         let start = std::time::Instant::now();
 
@@ -174,7 +174,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runtime_init_and_health() {
-        let rt = ArgosBodyRuntime::with_runner(
+        let rt = AletheonBodyRuntime::with_runner(
             ToolRegistry::default(),
             ToolRunnerWithGuard::with_default_sandbox(
                 AuditLogger::new(PathBuf::from("/dev/null")).unwrap(),
@@ -202,7 +202,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_capabilities_populated() {
-        let rt = ArgosBodyRuntime::with_runner(
+        let rt = AletheonBodyRuntime::with_runner(
             ToolRegistry::default(),
             ToolRunnerWithGuard::with_default_sandbox(
                 AuditLogger::new(PathBuf::from("/dev/null")).unwrap(),
@@ -213,7 +213,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_unknown_tool() {
-        let rt = ArgosBodyRuntime::with_runner(
+        let rt = AletheonBodyRuntime::with_runner(
             ToolRegistry::default(),
             ToolRunnerWithGuard::with_default_sandbox(
                 AuditLogger::new(PathBuf::from("/dev/null")).unwrap(),
@@ -231,7 +231,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_version() {
-        let rt = ArgosBodyRuntime::with_runner(
+        let rt = AletheonBodyRuntime::with_runner(
             ToolRegistry::default(),
             ToolRunnerWithGuard::with_default_sandbox(
                 AuditLogger::new(PathBuf::from("/dev/null")).unwrap(),

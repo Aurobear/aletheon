@@ -9,7 +9,7 @@ use tracing::info;
 
 use crate::ProviderRegistry;
 
-/// Daemon configuration, migrated from argosd.
+/// Daemon configuration.
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     pub api_key: String,
@@ -45,12 +45,10 @@ fn load_dotenv(path: &PathBuf) {
 
 /// Default config file search paths.
 fn default_config_path() -> PathBuf {
-    // 1. ~/.argos/config.toml
-    if let Some(home) = std::env::var_os("HOME") {
-        let path = PathBuf::from(home).join(".argos/config.toml");
-        if path.exists() {
-            return path;
-        }
+    // 1. ~/.aletheon/config.toml
+    let path = aletheon_abi::paths::config_file();
+    if path.exists() {
+        return path;
     }
     // 2. /etc/agentd/config.toml
     PathBuf::from("/etc/agentd/config.toml")
@@ -64,12 +62,10 @@ pub async fn run(
 ) -> Result<()> {
     // Load .env file
     let env_path = env_path.unwrap_or_else(|| {
-        // Search: ~/.argos/.env
-        if let Some(home) = std::env::var_os("HOME") {
-            let path = PathBuf::from(home).join(".argos/.env");
-            if path.exists() {
-                return path;
-            }
+        // Search: ~/.aletheon/.env
+        let path = aletheon_abi::paths::env_file();
+        if path.exists() {
+            return path;
         }
         PathBuf::from(".env")
     });
@@ -77,7 +73,7 @@ pub async fn run(
 
     // Load AppConfig from TOML
     let config_path = config_path.unwrap_or_else(default_config_path);
-    let app_config = aletheon_brain_core::config::AppConfig::load_or_default(&config_path);
+    let app_config = aletheon_brain::config::AppConfig::load_or_default(&config_path);
 
     tracing::info!(path = %config_path.display(), providers = %app_config.providers.len(), "Loaded config");
 
@@ -94,10 +90,7 @@ pub async fn run(
         working_dir: std::env::var("AGENT_WORKING_DIR")
             .unwrap_or_else(|_| "/tmp".to_string()),
         data_dir: std::env::var("AGENT_DATA_DIR")
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                format!("{}/.local/share/argos", home)
-            }),
+            .unwrap_or_else(|_| aletheon_abi::paths::xdg_data_dir().to_string_lossy().to_string()),
         system_prompt: std::env::var("AGENT_SYSTEM_PROMPT")
             .unwrap_or_else(|_| "You are a helpful system assistant.".to_string()),
         sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
@@ -118,15 +111,15 @@ pub async fn run(
     );
 
     // Start perception manager and bridge
-    let (event_tx, event_rx) = mpsc::channel::<aletheon_self_field::r#impl::perception::PerceptionEvent>(256);
-    let (injection_tx, injection_rx) = mpsc::channel::<aletheon_self_field::r#impl::perception::bridge::PerceptionInjection>(64);
+    let (event_tx, event_rx) = mpsc::channel::<aletheon_self::r#impl::perception::PerceptionEvent>(256);
+    let (injection_tx, injection_rx) = mpsc::channel::<aletheon_self::r#impl::perception::bridge::PerceptionInjection>(64);
 
     let watch_paths = vec![
         PathBuf::from("/etc"),
         PathBuf::from("/var/log"),
     ];
     tokio::spawn(async move {
-        let mut manager = aletheon_self_field::r#impl::perception::manager::PerceptionManager::new(
+        let mut manager = aletheon_self::r#impl::perception::manager::PerceptionManager::new(
             event_tx,
             watch_paths,
             true, // enable journald
@@ -137,7 +130,7 @@ pub async fn run(
     });
 
     // Start perception bridge
-    let mut bridge = aletheon_self_field::r#impl::perception::bridge::PerceptionBridge::new(event_rx, injection_tx);
+    let mut bridge = aletheon_self::r#impl::perception::bridge::PerceptionBridge::new(event_rx, injection_tx);
     tokio::spawn(async move {
         bridge.run().await;
     });

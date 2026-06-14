@@ -491,9 +491,9 @@ struct AgentLoopState {
 ## Implementation Summary
 
 **Code Locations:**
-- `argos/crates/agent-core/src/security/policy.rs` — PolicyEngine with hardcoded rules
-- `argos/crates/agent-core/src/security/loop_detector.rs` — LoopDetector with stagnation + fail-streak detection
-- `argos/crates/agent-core/src/security/policy.rs` — PolicyRule, permission level checks
+- `crates/aletheon-body/src/impl/security/mod.rs` — PolicyEngine with hardcoded rules
+- `crates/aletheon-body/src/impl/security/loop_detector.rs` — LoopDetector with stagnation + fail-streak detection
+- `crates/aletheon-body/src/impl/security/mod.rs` — PolicyRule, permission level checks
 
 **Key Types/Traits Implemented:**
 - `PolicyEngine` — rule-based permission checks (L0-L3), hardcoded rules

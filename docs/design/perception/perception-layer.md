@@ -347,12 +347,12 @@ journald ───────┘
 | **eBPF** (`libbpf`, BPF CO-RE) | 内核态感知探针、ring buffer 传输、CO-RE 跨内核兼容 |
 | **Hermes** | 签名哈希去重（`ToolCallSignature`）、`_result_hash` 内容哈希抑制、分层阈值配置、成功时清除计数器 |
 | **LangGraph** | 通道版本调度——事件版本变化才触发处理；`update()` 返回 bool；`LastValueAfterFinish` 的 `consume()` 语义；`get_new_channel_versions()` 版本号比较 |
-| **原始设计文档** | `docs/plans/2026-06-06-argos-design.md` §8 — 感知源分类、事件模型、事件处理流水线、eBPF 管理阶段 |
+| **原始设计文档** | `docs/plans/2026-06-06-argos-design.md` §8 (historical reference, file has been removed) — 感知源分类、事件模型、事件处理流水线、eBPF 管理阶段 |
 
 ---
 
 *模块版本: 0.1.0*
-*源文档: `docs/plans/2026-06-06-argos-design.md` §8*
+*源文档: `docs/plans/2026-06-06-argos-design.md` §8 (historical reference, file has been removed)*
 
 ---
 

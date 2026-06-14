@@ -41,7 +41,7 @@ impl Default for VectorStoreConfig {
             qdrant_url: "http://localhost:6333".to_string(),
             lance_path: dirs::home_dir()
                 .unwrap_or_else(|| "/tmp".into())
-                .join(".argos")
+                .join(".aletheon")
                 .join("vector-db")
                 .to_string_lossy()
                 .to_string(),

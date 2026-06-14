@@ -70,7 +70,7 @@ pub async fn run(socket_path: &str) -> anyhow::Result<()> {
             )?;
             terminal.show_cursor()?;
             return Err(anyhow::anyhow!(
-                "Cannot connect to daemon at {}: {}\n\nStart the daemon first:\n  argos daemon &",
+                "Cannot connect to daemon at {}: {}\n\nStart the daemon first:\n  aletheon daemon &",
                 socket_path,
                 e
             ));
@@ -116,7 +116,7 @@ pub async fn run(socket_path: &str) -> anyhow::Result<()> {
 
     app.chat.add_message(
         chat::Role::System,
-        "Welcome to argos! Type a message to get started. Ctrl+C to quit.".to_string(),
+        "Welcome to aletheon! Type a message to get started. Ctrl+C to quit.".to_string(),
     );
 
     let result = app.run(tx).await;
@@ -597,7 +597,7 @@ impl App {
                 let vsep = if caps_ref.unicode { "  │  " } else { "  |  " };
 
                 let line1 = Line::from(Span::styled(
-                    "  argos v0.1.0",
+                    "  aletheon v0.1.0",
                     Style::default().fg(Color::White),
                 ));
                 let line2 = Line::from(vec![
@@ -625,9 +625,9 @@ impl App {
                     &status_ref.model_name
                 };
                 let title = if model_display.is_empty() {
-                    " argos".to_string()
+                    " aletheon".to_string()
                 } else {
-                    format!(" argos  │  {model_display}")
+                    format!(" aletheon  │  {model_display}")
                 };
                 let title_line = Line::from(Span::styled(title, Style::default().fg(Color::White)));
                 let title_widget = Paragraph::new(title_line).style(Style::default().bg(title_bg));

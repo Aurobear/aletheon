@@ -1,6 +1,6 @@
 //! Agent-Computer Interface (ACIX) — high-level perception, action, experience, and task management.
 //!
-//! Migrated from argos-acix into aletheon-body's unified impl layer.
+//! Agent-Computer Interface (ACIX) — high-level perception, action, experience, and task management.
 
 pub mod aci;
 pub mod experience;

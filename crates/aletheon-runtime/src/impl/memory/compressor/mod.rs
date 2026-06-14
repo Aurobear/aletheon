@@ -4,7 +4,7 @@ pub mod template;
 use anyhow::Result;
 use tracing::info;
 
-use aletheon_brain_core::r#impl::llm::LlmProvider;
+use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_abi::message::{ContentBlock, Message};
 use tail::{find_tail_cut, TailProtectionConfig};
 use template::{SummaryTemplate, SUMMARY_PREFIX};

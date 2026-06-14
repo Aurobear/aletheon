@@ -145,7 +145,7 @@ impl UinputDriver {
             },
             name: {
                 let mut name = [0u8; 80];
-                let s = b"argos-virtual-input";
+                let s = b"aletheon-virtual-input";
                 name[..s.len()].copy_from_slice(s);
                 name
             },

@@ -1,4 +1,4 @@
-/// Skill loader — reads SKILL.md files from ~/.argos/skills/
+/// Skill loader — reads SKILL.md files from ~/.aletheon/skills/
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -28,11 +28,11 @@ impl SkillLoader {
         }
     }
 
-    /// Default skills directory: ~/.argos/skills/
+    /// Default skills directory: ~/.aletheon/skills/
     pub fn default_dir() -> PathBuf {
         dirs_next::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(".argos")
+            .join(".aletheon")
             .join("skills")
     }
 

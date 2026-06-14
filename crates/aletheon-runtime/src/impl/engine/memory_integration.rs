@@ -1,6 +1,6 @@
 use tracing::{info, warn};
 
-use aletheon_brain_core::r#impl::learning::{OutcomeRecord, OutcomeContext};
+use aletheon_brain::r#impl::learning::{OutcomeRecord, OutcomeContext};
 use aletheon_abi::tool::ToolResult;
 
 use super::cognitive_loop::Engine;

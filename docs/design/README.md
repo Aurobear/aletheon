@@ -157,27 +157,20 @@
 ## 项目结构
 
 ```
-argos/
+aletheon/
 ├── Cargo.toml                  # workspace 根
 │
 ├── crates/
-│   ├── agent-core/             # 核心库 (~17K 行): engine, tool, memory, security,
-│   │   └── src/                #   sandbox, perception, orchestration, hook, mcp,
-│   │       ├── engine.rs       #   plugin, inference, session, ipc, fuse, platform,
-│   │       ├── tool/           #   llm, learning
-│   │       ├── memory/         #
-│   │       ├── security/       #   (所有功能模块都在此 crate 内)
-│   │       ├── sandbox/        #
-│   │       ├── perception/     #
-│   │       ├── orchestration/  #
-│   │       ├── hook/           #
-│   │       ├── mcp/            #
-│   │       ├── plugin/         #
-│   │       ├── ipc/            #
-│   │       ├── fuse/           #
-│   │       └── ...
-│   ├── agentd/                 # Daemon 入口 (~0.4K 行)
-│   └── agent-cli/              # CLI + TUI (~2K 行)
+│   ├── aletheon-abi/           # ABI 类型: IPC, tool, message, sandbox, LLM types
+│   ├── aletheon-comm/          # IPC 层: Unix socket, priority queue
+│   ├── aletheon-memory/        # 记忆系统: self-memory, episodic/semantic
+│   ├── aletheon-self/          # SelfField: identity, boundary, care, narrative
+│   ├── aletheon-brain/         # BrainCore: reasoning, planning, reflection
+│   ├── aletheon-body/          # BodyRuntime: tools, sandbox, perception, MCP, TUI
+│   ├── aletheon-runtime/       # Runtime engine: cognitive loop, orchestration, daemon
+│   ├── aletheon-meta/          # MetaRuntime: self-update, self-generation
+│   ├── aletheond/              # Daemon 入口
+│   └── aletheon-cli/           # CLI + TUI 客户端
 │
 ├── agents/                     # Agent 定义文件 (TOML + .md)
 │   ├── fs-agent.md
@@ -188,7 +181,7 @@ argos/
 │   └── default.toml            # 默认配置
 │
 ├── systemd/
-│   └── agentd.service          # systemd 服务文件
+│   └── aletheond.service       # systemd 服务文件
 │
 ├── references/                 # 参考项目 (~3GB, gitignored)
 │

@@ -12,7 +12,7 @@
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
 | AgentId / AgentKind / TrustLevel / Capability / Endpoint / AgentInfo | ✅ Implemented | `platform/awareness/mod.rs` | Core types |
-| AgentDiscovery (Unix socket scan) | ✅ Implemented | `platform/awareness/discovery.rs` | L2 local discovery, scans `/var/run/argos/*.sock` |
+| AgentDiscovery (Unix socket scan) | ✅ Implemented | `platform/awareness/discovery.rs` | L2 local discovery, scans `/var/run/aletheon/*.sock` |
 | ConflictDetector | ✅ Implemented | `platform/awareness/conflict.rs` | File/service/resource/memory conflict detection |
 | AgentLifecycle FSM | ✅ Implemented | `platform/awareness/lifecycle.rs` | Starting->Running->Paused/Degraded->Stopped/Crashed |
 | AgentCommunication trait | ✅ Implemented | `platform/awareness/communication.rs` | JSON-RPC 2.0 over Unix socket |
@@ -32,7 +32,7 @@ struct AgentRegistry {
     agents: HashMap<AgentId, AgentInfo>,
     async fn discover_local_agents(&self) -> Vec<AgentInfo>;
     // D-Bus 广播查询: "Who is running?"
-    // Unix socket: /var/run/argos/*.sock 扫描
+    // Unix socket: /var/run/aletheon/*.sock 扫描
 }
 
 struct AgentInfo {

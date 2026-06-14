@@ -1,6 +1,6 @@
 //! IPC trait and message types.
 //!
-//! Merged from argos-types ipc module into aletheon-abi.
+//! IPC trait and message types.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

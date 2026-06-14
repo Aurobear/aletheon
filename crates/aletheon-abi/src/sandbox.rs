@@ -1,6 +1,6 @@
 //! Sandbox trait and types.
 //!
-//! Merged from argos-types sandbox module into aletheon-abi.
+//! Sandbox trait and types.
 
 use async_trait::async_trait;
 use anyhow::Result;

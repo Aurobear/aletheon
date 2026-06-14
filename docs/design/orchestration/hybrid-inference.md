@@ -173,7 +173,7 @@ agent "自动判断的任务"                  # 使用分类器
 
 ## 6. 参考来源
 
-- **原始设计文档:** `docs/plans/2026-06-06-argos-design.md` §12 (混合推理架构)
+- **原始设计文档:** `docs/plans/2026-06-06-argos-design.md` §12 (historical reference, file has been removed)
 - **llama.cpp:** 本地推理引擎，GGUF 格式模型加载，GPU offload 支持
 - **Anthropic SDK:** content-block 协议、工具循环、上下文压缩（`lib/tools/_beta_runner.py`）
 - **OpenCode:** run coordinator 的 demand coalescing 模式（参考其多 provider 调度逻辑）

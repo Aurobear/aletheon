@@ -15,10 +15,10 @@ pub use r#impl::automation as automation;
 pub use r#impl::session as session;
 pub use r#impl::plugin as plugin;
 
-// Re-export provider registry from brain-core (migrated from argos-core)
-pub use aletheon_brain_core::r#impl::provider_registry::ProviderRegistry;
+// Re-export provider registry from brain-core
+pub use aletheon_brain::r#impl::provider_registry::ProviderRegistry;
 
-// Re-export memory types (migrated from argos-core into aletheon-runtime)
+// Re-export memory types
 pub use r#impl::memory::core_memory::CoreMemory;
 pub use r#impl::memory::recall_memory::RecallMemory;
 pub use r#impl::memory::tools as memory_tools;

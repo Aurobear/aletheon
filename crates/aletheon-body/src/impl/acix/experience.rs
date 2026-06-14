@@ -310,7 +310,7 @@ mod tests {
         mem.store(make_experience("open browser", vec![1.0, 0.0], true));
         mem.store(make_experience("write doc", vec![0.0, 1.0], false));
 
-        let dir = std::env::temp_dir().join("argos_test_experience");
+        let dir = std::env::temp_dir().join("aletheon_test_experience");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test_memory.json");
 

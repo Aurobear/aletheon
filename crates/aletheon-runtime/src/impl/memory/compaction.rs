@@ -1,4 +1,4 @@
-use aletheon_brain_core::r#impl::llm::LlmProvider;
+use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_abi::message::{ContentBlock, Message, Role};
 use tracing::info;
 

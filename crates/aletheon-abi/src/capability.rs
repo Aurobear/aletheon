@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 
 /// Permission level for an operation.
 ///
-/// Mirrors the existing argos PermissionLevel but adds semantics
-/// for the Aletheon runtime.
+/// Permission level for runtime operations.
+///
+/// Tool-level (L0-L3) maps to these ABI-level semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 pub enum PermissionLevel {
     /// Read-only operations (no side effects).

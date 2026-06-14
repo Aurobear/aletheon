@@ -3,12 +3,12 @@ use tracing::{debug, info, warn};
 
 use aletheon_abi::{Message, ContentBlock, Role, ToolDefinition};
 use aletheon_abi::tool::{ToolResult, Tool as ToolTrait};
-use aletheon_brain_core::r#impl::llm::{StreamChunk, Usage, StopReason};
+use aletheon_brain::r#impl::llm::{StreamChunk, Usage, StopReason};
 use futures::StreamExt;
 
 use crate::r#impl::session::journal::SessionEvent;
-use aletheon_self_field::r#impl::hook::types::{HandlerResult as HookResult, HookContext, HookEventName};
-use aletheon_self_field::r#impl::security::runner::ToolError;
+use aletheon_self::r#impl::hook::types::{HandlerResult as HookResult, HookContext, HookEventName};
+use aletheon_self::r#impl::security::runner::ToolError;
 use aletheon_abi::tool::ToolContext;
 
 use super::cognitive_loop::Engine;

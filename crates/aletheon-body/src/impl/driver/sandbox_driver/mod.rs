@@ -1,7 +1,7 @@
 //! Sandbox primitives — namespace isolation, cgroups v2, seccomp filtering.
 //!
 //! These are low-level building blocks. Higher-level orchestration (e.g.
-//! registering as a Level 0 backend in argos-sandbox) is out of scope here.
+//! registering as a Level 0 backend in the sandbox subsystem) is out of scope here.
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -102,9 +102,9 @@ pub struct CgroupManager {
 }
 
 impl CgroupManager {
-    /// Create a new cgroup named `argos-<id>`.
+    /// Create a new cgroup named `aletheon-<id>`.
     pub fn create(id: &str) -> Result<Self> {
-        let path = PathBuf::from(format!("/sys/fs/cgroup/argos-{id}"));
+        let path = PathBuf::from(format!("/sys/fs/cgroup/{}-{id}", aletheon_abi::paths::CGROUP_PREFIX));
         fs::create_dir_all(&path)
             .context("Failed to create cgroup. Need root or cgroup write access.")?;
         Ok(Self { path })

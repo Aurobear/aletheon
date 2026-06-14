@@ -1,6 +1,6 @@
 //! Unified message types for agent communication.
 //!
-//! Merged from argos-types message module into aletheon-abi.
+//! Unified message types for agent communication.
 
 use serde::{Deserialize, Serialize};
 

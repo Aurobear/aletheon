@@ -1,6 +1,6 @@
 //! Core tool types and trait definitions.
 //!
-//! Merged from argos-types tool module into aletheon-abi.
+//! Core tool types and trait definitions.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

@@ -383,7 +383,7 @@ mod tests {
         let (_tmp, mut mem) = setup();
         init_mem(&mut mem).await;
 
-        mem.store(make_identity_change(b"renamed agent to Argos"))
+        mem.store(make_identity_change(b"renamed agent to Aletheon"))
             .await
             .unwrap();
 

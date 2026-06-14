@@ -1,4 +1,4 @@
-//! SDK/driver layer — Linux kernel interface bindings for Argos.
+//! SDK/driver layer — Linux kernel interface bindings.
 //!
 //! Each module wraps a specific Linux kernel interface or system service
 //! with safe Rust APIs. Feature-gated by hardware capability.

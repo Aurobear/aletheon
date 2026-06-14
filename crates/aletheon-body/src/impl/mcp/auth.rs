@@ -169,11 +169,9 @@ impl TokenStore {
         })
     }
 
-    /// Default store at `~/.config/argos/mcp_tokens.json`.
+    /// Default store at `~/.config/aletheon/mcp_tokens.json`.
     pub fn default_path() -> Result<PathBuf> {
-        let base = dirs::config_dir()
-            .context("could not determine config directory")?;
-        Ok(base.join("argos").join("mcp_tokens.json"))
+        Ok(aletheon_abi::paths::mcp_tokens_path())
     }
 
     /// Create a store at the default path, creating parent directories as

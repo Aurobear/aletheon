@@ -1,6 +1,6 @@
 //! Agent discovery via Unix socket scan.
 //!
-//! Scans `/var/run/argos/*.sock` to find running agents.
+//! Scans `/var/run/aletheon/*.sock` to find running agents.
 //! Future phases will add mDNS (L3) and WAN (L4) discovery.
 
 use super::{AgentId, AgentInfo, Endpoint};
@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-/// Default socket directory for argos.
-pub const DEFAULT_SOCKET_DIR: &str = "/var/run/argos";
+/// Default socket directory for aletheon.
+pub const DEFAULT_SOCKET_DIR: &str = aletheon_abi::paths::SOCKET_DIR;
 
 /// Discovers agents by scanning a Unix socket directory.
 pub struct AgentDiscovery {
@@ -138,7 +138,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_nonexistent_directory() {
-        let discovery = AgentDiscovery::with_dir("/tmp/argos-test-nonexistent");
+        let discovery = AgentDiscovery::with_dir("/tmp/aletheon-test-nonexistent");
         let agents = discovery.scan().await.unwrap();
         assert!(agents.is_empty());
     }

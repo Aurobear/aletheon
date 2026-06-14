@@ -271,8 +271,8 @@ fallback_log_level = "warn"
 ## Implementation Summary
 
 **Code Locations:**
-- `argos/crates/agent-core/src/security/sandbox/mod.rs` — SandboxExecutor, multi-backend dispatch
-- `argos/crates/agent-core/src/security/sandbox/bubblewrap.rs` — BubblewrapBackend implementation
+- `crates/aletheon-body/src/impl/sandbox/mod.rs` — SandboxExecutor, multi-backend dispatch
+- `crates/aletheon-body/src/impl/sandbox/bubblewrap.rs` — BubblewrapBackend implementation
 
 **Key Types/Traits Implemented:**
 - `SandboxBackend` trait — `name()`, `isolation_level()`, `is_available()`, `capabilities()`, `execute()`

@@ -1,6 +1,6 @@
 //! LLM-related shared types.
 //!
-//! Merged from argos-types llm module into aletheon-abi.
+//! LLM-related shared types.
 
 use serde::{Deserialize, Serialize};
 

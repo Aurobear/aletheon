@@ -38,8 +38,9 @@ impl GroundingResult {
 
 /// Provider for visual grounding — locating UI elements by natural language description.
 ///
-/// Defined here (in argos-acix) to avoid a circular dependency with argos-core.
-/// The caller (argos-core) implements this trait by forwarding to a vision-capable LlmProvider.
+/// Visual grounding provider — locates UI elements by natural language description.
+///
+/// Implemented by the runtime layer to forward to a vision-capable LLM provider.
 #[async_trait]
 pub trait GroundingProvider: Send + Sync {
     /// Locate an element in the given screenshot by natural language description.

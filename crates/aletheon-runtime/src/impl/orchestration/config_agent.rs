@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use aletheon_brain_core::r#impl::llm::{LlmProvider, ToolDefinition};
+use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
 use aletheon_abi::message::{ContentBlock, Message};
 use aletheon_body::r#impl::tools::Tool;
 use super::agent::{Agent, Capability};

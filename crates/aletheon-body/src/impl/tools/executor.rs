@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use super::{Tool, ToolContext, ToolResult};
 
 // ---------------------------------------------------------------------------
-// Concurrency classification (re-exported from argos-types)
+// Concurrency classification
 // ---------------------------------------------------------------------------
 
 pub use aletheon_abi::tool::ConcurrencyClass;

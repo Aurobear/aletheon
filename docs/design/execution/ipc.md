@@ -303,11 +303,11 @@ io_uring 混合架构        可选内核模块            自定义 syscall
 ## Implementation Summary
 
 **Code Locations:**
-- `argos/crates/agent-core/src/ipc/mod.rs` — IpcBackend enum, IpcManager, auto-detect logic
-- `argos/crates/agent-core/src/ipc/unix_socket.rs` — UnixSocketBackend (full server/client)
-- `argos/crates/agent-core/src/ipc/io_uring_backend.rs` — IoUringBackend (simulated, not real io_uring)
-- `argos/crates/agent-core/src/ipc/priority_queue.rs` — PriorityQueue for message routing
-- `argos/crates/agent-core/src/ipc/manager.rs` — Unified IPC management
+- `crates/aletheon-comm/src/impl/ipc/mod.rs` — IpcBackend enum, IpcManager, auto-detect logic
+- `crates/aletheon-comm/src/impl/ipc/unix_socket.rs` — UnixSocketBackend (full server/client)
+- `crates/aletheon-comm/src/impl/ipc/io_uring_backend.rs` — IoUringBackend (simulated, not real io_uring)
+- `crates/aletheon-comm/src/impl/ipc/priority_queue.rs` — PriorityQueue for message routing
+- `crates/aletheon-comm/src/impl/ipc/manager.rs` — Unified IPC management
 
 **Key Types/Traits Implemented:**
 - `IpcBackend` enum — AgentRing / IoUring / UnixSocket

@@ -19,8 +19,9 @@ pub mod brain;
 pub mod meta;
 pub mod runtime;
 pub mod genome;
+pub mod paths;
 
-// Merged from argos-types
+// Shared types (message, tool, sandbox, IPC, LLM)
 pub mod message;
 pub mod tool;
 pub mod sandbox;
@@ -44,7 +45,7 @@ pub use meta::{MetaRuntimeOps, RuntimeCandidate, TestResult, Evaluation, Migrati
 pub use genome::Genome;
 pub use runtime::{RuntimeOps, AgentInfo, AgentStatus, ScheduledTask, ScheduleKind, StepResult};
 
-// Re-export key types from argos-types migration
+// Re-export shared types
 // Note: tool::PermissionLevel (L0-L3) is aliased as ToolPermissionLevel
 // to avoid conflict with capability::PermissionLevel (ReadOnly/SandboxWrite/...).
 pub use message::{Message, ContentBlock, Role, ImageSource, Priority as MessagePriority};

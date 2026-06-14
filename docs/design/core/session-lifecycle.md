@@ -356,7 +356,7 @@ use_audit_as_fallback = true
 - **OpenCode (Observability):** Durable/Ephemeral 事件分离、Fragment Accumulator、per-callID 工具状态机、Token Usage 安全归一化、事件 schema 版本控制
 - **Hermes:** SQLite WAL 会话存储、`_execute_write()` jitter retry 模式、`apply_wal_with_fallback()` NFS 回退、`_reconcile_columns()` 声明式 schema 协调、compression chain、FTS5 + trigram tokenizer
 - **LangGraph:** 检查点机制、`checkpoint_pending_writes` 分离写入与应用、`GraphInterrupt` 中断/恢复协议、channel-based 状态版本化
-- **原始设计文档:** `docs/plans/2026-06-06-argos-design.md`
+- **原始设计文档:** `docs/plans/2026-06-06-argos-design.md` (historical reference, file has been removed)
 
 ---
 

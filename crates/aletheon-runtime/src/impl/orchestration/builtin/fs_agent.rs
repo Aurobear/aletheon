@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use aletheon_abi::message::{ContentBlock, Message};
-use aletheon_brain_core::r#impl::llm::{LlmProvider, ToolDefinition};
+use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
 use aletheon_body::r#impl::tools::file_read::FileReadTool;
 use aletheon_body::r#impl::tools::file_write::FileWriteTool;
 use aletheon_body::r#impl::tools::Tool;

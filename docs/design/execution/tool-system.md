@@ -615,10 +615,10 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 ## Implementation Summary
 
 **Code Locations:**
-- `argos/crates/agent-core/src/tool/mod.rs` — Tool trait definition, ToolRegistry, ToolOutput trait
-- `argos/crates/agent-core/src/tool/registry.rs` — Registration, lookup, visibility filtering
-- `argos/crates/agent-core/src/tool/bash_exec.rs`, `file_read.rs`, `file_write.rs`, `process_list.rs`, `system_status.rs` — 5 built-in tools
-- `argos/crates/agent-core/src/tool/output/` — Three-layer output defense: `capture.rs`, `persistence.rs`, `turn_budget.rs`, `truncation.rs`, `pruner.rs`, `config.rs`
+- `crates/aletheon-body/src/impl/tools/mod.rs` — Tool trait definition, ToolRegistry, ToolOutput trait
+- `crates/aletheon-body/src/impl/tools/registry.rs` — Registration, lookup, visibility filtering
+- `crates/aletheon-body/src/impl/tools/bash_exec.rs`, `file_read.rs`, `file_write.rs`, `process_list.rs`, `system_status.rs` — 5 built-in tools
+- `crates/aletheon-body/src/impl/tools/output/` — Three-layer output defense: `capture.rs`, `persistence.rs`, `turn_budget.rs`, `truncation.rs`, `pruner.rs`, `config.rs`
 
 **Key Types/Traits Implemented:**
 - `Tool` trait — unified tool interface with `input_schema()`, `permission_level()`, `needs_sandbox()`, `exposure()`, `concurrency_class()`

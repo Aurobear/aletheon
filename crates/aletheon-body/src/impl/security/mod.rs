@@ -1,6 +1,6 @@
 //! Security layer — guardrails, rate limiting, loop detection, and audit logging.
 //!
-//! Migrated from argos-security into aletheon-body's unified impl layer.
+//! Security layer — guardrails, rate limiting, loop detection, and audit logging.
 
 pub mod loop_detector;
 pub mod risk_classifier;

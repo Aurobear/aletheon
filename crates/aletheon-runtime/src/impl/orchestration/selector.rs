@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tracing::{info, debug};
 
-use aletheon_brain_core::r#impl::llm::LlmProvider;
+use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_abi::message::{ContentBlock, Message};
 use super::agent::AgentResponse;
 use super::registry::AgentRegistry;

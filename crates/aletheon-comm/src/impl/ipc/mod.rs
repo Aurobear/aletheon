@@ -1,6 +1,6 @@
 //! # IPC — Inter-Process Communication backends
 //!
-//! Migrated from argos-ipc. Provides Unix socket, io_uring, and shared memory
+//! Provides Unix socket, io_uring, and shared memory
 //! IPC backends with auto-detection and runtime fallback.
 
 pub mod unix_socket;

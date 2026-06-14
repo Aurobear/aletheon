@@ -1,6 +1,6 @@
 //! Cognitive engine module - the ReAct loop for agent reasoning and action.
 //!
-//! This module was extracted from argos-core/src/engine.rs and split into:
+//! This module implements the cognitive engine, split into:
 //! - config.rs: EngineConfig struct and Default impl
 //! - cognitive_loop.rs: Main Engine struct, run() method, ReAct loop
 //! - tool_dispatch.rs: Tool selection, execution, result handling (docs only)

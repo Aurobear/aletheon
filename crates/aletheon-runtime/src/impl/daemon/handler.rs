@@ -11,7 +11,7 @@ use crate::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySea
 use crate::r#impl::orchestration::builtin::{FsAgent, NetAgent, CodeAgent};
 use crate::ProviderRegistry;
 use crate::session::store::SessionStore;
-use aletheon_self_field::r#impl::perception::bridge::PerceptionInjection;
+use aletheon_self::r#impl::perception::bridge::PerceptionInjection;
 use aletheon_body::r#impl::sandbox::executor::{SandboxExecutor, SandboxPreference};
 use aletheon_body::r#impl::security::audit::AuditLogger;
 use aletheon_body::r#impl::security::runner::ToolRunnerWithGuard;
@@ -28,7 +28,7 @@ use super::DaemonConfig;
 /// NOTE: The old Engine god-object has been replaced by AletheonRuntime.
 /// Methods like `run_turn`, `messages`, `set_perception_rx` etc. no longer
 /// exist on the runtime.  This handler exposes a thin shim that delegates
-/// to `AletheonRuntime::process()`.  A full migration of argosd to the
+/// to `AletheonRuntime::process()`.  A full migration of the daemon to the
 /// new intent/plan/execute pipeline is tracked separately.
 struct SessionState {
     runtime: AletheonRuntime,

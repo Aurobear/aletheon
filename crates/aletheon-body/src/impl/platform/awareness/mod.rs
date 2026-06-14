@@ -1,6 +1,6 @@
 //! Agent awareness: cross-process discovery and conflict detection.
 //!
-//! Phase 1 scope: L2 local discovery only (Unix socket scan at `/var/run/argos/*.sock`).
+//! Phase 1 scope: L2 local discovery only (Unix socket scan at `/var/run/aletheon/*.sock`).
 //! L3/L4 (mDNS, WAN) are deferred to future phases.
 
 pub mod communication;

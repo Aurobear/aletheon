@@ -1,15 +1,15 @@
 use aletheon_abi::body::{Action, ActionResult, SideEffect, SideEffectKind};
 use aletheon_abi::capability::{Capability, PermissionLevel as AbiPermissionLevel};
 use aletheon_abi::context::Context;
-use aletheon_abi::tool::{ToolResult, ToolResultMeta, PermissionLevel as ArgosPermissionLevel, ToolContext};
+use aletheon_abi::tool::{ToolResult, ToolResultMeta, PermissionLevel as ToolPermissionLevel, ToolContext};
 use std::time::Duration;
 
-/// Convert aletheon Action → argos Tool name + JSON input
+/// Convert Action to tool name + JSON input
 pub fn action_to_tool_input(action: &Action) -> (String, serde_json::Value) {
     (action.name.clone(), action.parameters.clone())
 }
 
-/// Convert argos ToolResult → aletheon ActionResult
+/// Convert ToolResult to ActionResult
 pub fn tool_result_toActionResult(result: &ToolResult) -> ActionResult {
     ActionResult {
         success: !result.is_error,
@@ -21,7 +21,7 @@ pub fn tool_result_toActionResult(result: &ToolResult) -> ActionResult {
     }
 }
 
-/// Convert aletheon Context → argos ToolContext
+/// Convert Context to ToolContext
 pub fn context_to_tool_context(ctx: &Context) -> ToolContext {
     ToolContext {
         working_dir: ctx.working_dir.clone(),
@@ -29,21 +29,21 @@ pub fn context_to_tool_context(ctx: &Context) -> ToolContext {
     }
 }
 
-/// Convert argos PermissionLevel → aletheon PermissionLevel
-pub fn argos_to_abi_permission(level: ArgosPermissionLevel) -> AbiPermissionLevel {
+/// Convert tool PermissionLevel to ABI PermissionLevel
+pub fn tool_to_abi_permission(level: ToolPermissionLevel) -> AbiPermissionLevel {
     match level {
-        ArgosPermissionLevel::L0 => AbiPermissionLevel::ReadOnly,
-        ArgosPermissionLevel::L1 => AbiPermissionLevel::SandboxWrite,
-        ArgosPermissionLevel::L2 => AbiPermissionLevel::SystemChange,
-        ArgosPermissionLevel::L3 => AbiPermissionLevel::Destructive,
+        ToolPermissionLevel::L0 => AbiPermissionLevel::ReadOnly,
+        ToolPermissionLevel::L1 => AbiPermissionLevel::SandboxWrite,
+        ToolPermissionLevel::L2 => AbiPermissionLevel::SystemChange,
+        ToolPermissionLevel::L3 => AbiPermissionLevel::Destructive,
     }
 }
 
-/// Convert argos Tool metadata → aletheon Capability
-pub fn tool_to_capability(name: &str, level: ArgosPermissionLevel, description: &str) -> Capability {
+/// Convert tool metadata to Capability
+pub fn tool_to_capability(name: &str, level: ToolPermissionLevel, description: &str) -> Capability {
     Capability {
         name: name.to_string(),
-        level: argos_to_abi_permission(level),
+        level: tool_to_abi_permission(level),
         description: description.to_string(),
     }
 }
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn test_permission_mapping() {
-        assert_eq!(argos_to_abi_permission(ArgosPermissionLevel::L0), AbiPermissionLevel::ReadOnly);
-        assert_eq!(argos_to_abi_permission(ArgosPermissionLevel::L3), AbiPermissionLevel::Destructive);
+        assert_eq!(tool_to_abi_permission(ToolPermissionLevel::L0), AbiPermissionLevel::ReadOnly);
+        assert_eq!(tool_to_abi_permission(ToolPermissionLevel::L3), AbiPermissionLevel::Destructive);
     }
 }

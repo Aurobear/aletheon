@@ -25,7 +25,7 @@ impl Default for RuntimeConfig {
 }
 
 // ---------------------------------------------------------------------------
-// AppConfig — merged from argos-core/src/config.rs
+// AppConfig — top-level application config
 // ---------------------------------------------------------------------------
 
 /// Top-level application config (loaded from TOML).

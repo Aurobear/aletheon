@@ -1,4 +1,4 @@
-//! Tool registry and execution for Argos (migrated from argos-tools).
+//! Tool registry and execution.
 
 pub mod registry;
 pub mod bash_exec;

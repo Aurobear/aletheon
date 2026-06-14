@@ -1,4 +1,4 @@
-//! Sandbox execution layer for Argos.
+//! Sandbox execution layer.
 
 pub mod bubblewrap;
 pub mod bwrap_builder;

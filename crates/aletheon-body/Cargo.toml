@@ -23,7 +23,7 @@ tempfile = "3"
 which = "7"
 hostname = "0.4"
 
-# TUI dependencies (migrated from argos-cli)
+# TUI dependencies
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 pulldown-cmark = "0.12"
@@ -32,7 +32,7 @@ clap = { version = "4", features = ["derive"] }
 atty = "0.2"
 dirs-next = "2"
 
-# Migrated from argos-driver
+# Driver dependencies
 libc = "0.2"
 base64 = "0.22"
 png = "0.17"

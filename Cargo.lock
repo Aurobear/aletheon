@@ -84,7 +84,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aletheon-brain-core"
+name = "aletheon-brain"
 version = "0.1.0"
 dependencies = [
  "aletheon-abi",
@@ -171,8 +171,8 @@ version = "0.1.0"
 dependencies = [
  "aletheon-abi",
  "aletheon-body",
- "aletheon-brain-core",
- "aletheon-self-field",
+ "aletheon-brain",
+ "aletheon-self",
  "anyhow",
  "async-trait",
  "chrono",
@@ -196,7 +196,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aletheon-self-field"
+name = "aletheon-self"
 version = "0.1.0"
 dependencies = [
  "aletheon-abi",

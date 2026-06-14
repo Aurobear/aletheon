@@ -153,8 +153,9 @@ impl TaskGraph {
 
 /// Minimal async trait for task decomposition via LLM.
 ///
-/// Defined here (in argos-acix) to avoid a circular dependency with argos-core.
-/// The caller (argos-core) implements this trait by forwarding to `LlmProvider`.
+/// Minimal async trait for task decomposition via LLM.
+///
+/// Implemented by the runtime layer to forward to `LlmProvider`.
 #[async_trait]
 pub trait TaskDecomposer: Send + Sync {
     /// Send a prompt to the LLM and return the text response.

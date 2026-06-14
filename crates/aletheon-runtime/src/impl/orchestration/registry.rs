@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use aletheon_brain_core::r#impl::llm::LlmProvider;
+use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_body::r#impl::tools::Tool;
 use super::agent::Agent;
 use super::config_agent::ConfigAgent;

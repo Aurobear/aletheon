@@ -5,9 +5,9 @@ edition = "2021"
 
 [dependencies]
 aletheon-abi = { path = "../aletheon-abi" }
-aletheon-brain-core = { path = "../aletheon-brain-core" }
+aletheon-brain = { path = "../aletheon-brain" }
 aletheon-body = { path = "../aletheon-body" }
-aletheon-self-field = { path = "../aletheon-self-field" }
+aletheon-self = { path = "../aletheon-self" }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
