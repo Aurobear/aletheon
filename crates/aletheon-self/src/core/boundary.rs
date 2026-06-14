@@ -119,6 +119,11 @@ impl BoundaryLayer {
         self.rules.len()
     }
 
+    /// Return count of immutable rules.
+    pub fn immutable_rule_count(&self) -> usize {
+        self.rules.iter().filter(|r| r.immutable).count()
+    }
+
     /// Check an intent against all rules. Returns Some(verdict) on first match.
     pub fn check(&self, intent: &Intent) -> Option<Verdict> {
         for rule in &self.rules {

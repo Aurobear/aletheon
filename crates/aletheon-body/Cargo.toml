@@ -54,7 +54,7 @@ ocr-tesseract = ["ocr", "tesseract"]
 cli = []
 
 [[bin]]
-name = "aletheon-cli"
+name = "aletheon-body-cli"
 path = "src/bin/cli.rs"
 required-features = ["cli"]
 

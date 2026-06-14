@@ -10,6 +10,7 @@ pub enum BuiltinCommand {
     Input,
     Copy,
     Reflect,
+    ReflectNow,
     Evolution,
     Genome,
     Computer { args: String },
@@ -36,11 +37,12 @@ pub fn parse_command(input: &str) -> Option<CommandType> {
     match name {
         "help" => Some(CommandType::Builtin(BuiltinCommand::Help)),
         "clear" => Some(CommandType::Builtin(BuiltinCommand::Clear)),
-        "status" => Some(CommandType::Builtin(BuiltinCommand::Status)),
+        "status" | "st" => Some(CommandType::Builtin(BuiltinCommand::Status)),
         "quit" | "exit" => Some(CommandType::Builtin(BuiltinCommand::Quit)),
         "input" | "i" => Some(CommandType::Builtin(BuiltinCommand::Input)),
         "copy" | "cp" => Some(CommandType::Builtin(BuiltinCommand::Copy)),
         "reflect" | "r" => Some(CommandType::Builtin(BuiltinCommand::Reflect)),
+        "reflect_now" | "rn" => Some(CommandType::Builtin(BuiltinCommand::ReflectNow)),
         "evolution" | "evo" => Some(CommandType::Builtin(BuiltinCommand::Evolution)),
         "genome" | "gene" => Some(CommandType::Builtin(BuiltinCommand::Genome)),
         "computer" => Some(CommandType::Builtin(BuiltinCommand::Computer {
@@ -117,6 +119,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_reflect_now() {
+        let result = parse_command("/reflect_now").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::ReflectNow)));
+    }
+
+    #[test]
+    fn test_parse_reflect_now_alias() {
+        let result = parse_command("/rn").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::ReflectNow)));
+    }
+
+    #[test]
     fn test_parse_evolution() {
         let result = parse_command("/evolution").unwrap();
         assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Evolution)));
@@ -138,5 +152,17 @@ mod tests {
     fn test_parse_genome_alias() {
         let result = parse_command("/gene").unwrap();
         assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Genome)));
+    }
+
+    #[test]
+    fn test_parse_status() {
+        let result = parse_command("/status").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Status)));
+    }
+
+    #[test]
+    fn test_parse_status_alias() {
+        let result = parse_command("/st").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Status)));
     }
 }

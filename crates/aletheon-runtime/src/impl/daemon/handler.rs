@@ -22,7 +22,8 @@ use aletheon_body::r#impl::tools::ToolRegistry;
 use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_brain::core::reflector::Reflector;
 use aletheon_brain::core::ExperienceSummarizer;
-use aletheon_abi::{Message, Role, ContentBlock, ReflectionTrigger, Subsystem, SubsystemContext};
+use aletheon_abi::{Message, Role, ContentBlock, ReflectionTrigger, Subsystem, SubsystemContext,
+    SelfFieldOps, Intent, IntentSource, Verdict, Context as AbiContext};
 use aletheon_memory::episodic::EpisodicMemory;
 use serde_json::json;
 use tokio::sync::{mpsc, Mutex};
@@ -171,11 +172,56 @@ impl RequestHandler {
                 let message = request["params"]["message"].as_str().unwrap_or("");
                 info!(message = %message, "Chat request received");
 
+                // --- SelfField review: gate the user message before LLM ---
+                let intent = Intent {
+                    action: "chat".to_string(),
+                    parameters: serde_json::json!({ "message": message }),
+                    source: IntentSource::User,
+                    description: format!("User chat message: {}", &message[..message.len().min(80)]),
+                };
+                let sf_ctx = AbiContext::new(
+                    &self.state.lock().await.runtime.config().session_id,
+                    std::env::current_dir().unwrap_or_default(),
+                );
+
+                let verdict = {
+                    let sf = self.self_field.lock().await;
+                    sf.review(&intent, &sf_ctx).await
+                };
+
+                let mut system_prompt = "You are Aletheon, an AI agent running on the user's machine. Be helpful, concise, and friendly.".to_string();
+
+                match verdict {
+                    Ok(Verdict::Deny { ref reason }) => {
+                        warn!(reason = %reason, "SelfField denied chat intent");
+                        let sf = self.self_field.lock().await;
+                        let _ = sf.narrate("chat_denied", reason).await;
+                        return json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32010, "message": format!("Intent denied by SelfField: {}", reason) }
+                        });
+                    }
+                    Ok(Verdict::SandboxFirst { ref reason }) => {
+                        info!(reason = %reason, "SelfField flagged chat for sandbox");
+                        system_prompt.push_str(&format!(
+                            "\n\n[SelfField note: This interaction has been flagged for sandbox review. Reason: {}]",
+                            reason
+                        ));
+                    }
+                    Ok(ref v) => {
+                        info!(verdict = ?v, "SelfField approved chat intent");
+                    }
+                    Err(ref e) => {
+                        warn!(error = %e, "SelfField review error, proceeding with caution");
+                    }
+                }
+
                 let messages = vec![
                     Message {
                         role: Role::System,
                         content: vec![ContentBlock::Text {
-                            text: "You are Aletheon, an AI agent running on the user's machine. Be helpful, concise, and friendly.".to_string(),
+                            text: system_prompt,
                         }],
                     },
                     Message::user(message),
@@ -191,6 +237,19 @@ impl RequestHandler {
                             .collect::<Vec<_>>()
                             .join("");
                         info!(tokens = response.usage.output_tokens, "Chat response generated");
+
+                        // Narrate the completed interaction in the SelfField narrative layer
+                        {
+                            let sf = self.self_field.lock().await;
+                            let _ = sf.narrate(
+                                "chat_completed",
+                                &format!("User asked: '{}...' | Response: {} chars, {} tokens",
+                                    &message[..message.len().min(60)],
+                                    text.len(),
+                                    response.usage.output_tokens,
+                                ),
+                            ).await;
+                        }
 
                         // Increment turn count
                         let turn = {
@@ -328,12 +387,46 @@ impl RequestHandler {
             }
             "status" => {
                 let state = self.state.lock().await;
+                let session_id = state.runtime.config().session_id.clone();
+                let turn_count = state.turn_count;
+                let iteration = state.runtime.iteration();
+                drop(state);
+
+                // Reflection and evolution counts from episodic memory
+                let reflection_count = self.episodic_memory.lock().await
+                    .reflection_count()
+                    .unwrap_or(0);
+                let evolution_count = self.episodic_memory.lock().await
+                    .evolution_log_count()
+                    .unwrap_or(0);
+
+                // Care weights, boundary rules, and attention from SelfField
+                let sf = self.self_field.lock().await;
+                let care_weights: Vec<serde_json::Value> = sf.care().all_cares().into_iter().map(|c| {
+                    json!({ "topic": c.topic, "weight": c.weight })
+                }).collect();
+                let boundary_total = sf.boundary().rule_count();
+                let boundary_immutable = sf.boundary().immutable_rule_count();
+                let attention_focus = sf.attention().current_focus()
+                    .map(|f| f.topic)
+                    .unwrap_or_default();
+                drop(sf);
+
                 json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": {
-                        "iteration": state.runtime.iteration(),
-                        "config": state.runtime.config().session_id,
+                        "status": {
+                            "session_id": session_id,
+                            "turn_count": turn_count,
+                            "iteration": iteration,
+                            "reflection_count": reflection_count,
+                            "evolution_count": evolution_count,
+                            "care_weights": care_weights,
+                            "boundary_rules": boundary_total,
+                            "boundary_immutable": boundary_immutable,
+                            "attention_focus": attention_focus,
+                        }
                     }
                 })
             }

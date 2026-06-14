@@ -129,6 +129,11 @@ impl SelfField {
         &mut self.boundary
     }
 
+    /// Access the boundary layer (immutable).
+    pub fn boundary(&self) -> &BoundaryLayer {
+        &self.boundary
+    }
+
     /// Access the care layer.
     pub fn care(&self) -> &CareLayer {
         &self.care

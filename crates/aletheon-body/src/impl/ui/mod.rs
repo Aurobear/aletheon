@@ -433,7 +433,7 @@ async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Help)) => {
-                let help = "内置命令：\n  /help       显示帮助\n  /clear      清空对话\n  /copy       复制最后回复到剪贴板\n  /reflect    查看反思记录\n  /evolution  查看演化历史\n  /genome     查看基因组\n  /quit       退出\n\n输入：\n  Shift+Enter 或 \\+Enter  换行\n  Enter                   发送\n  Ctrl+C                   清空/退出\n  Esc                      清空输入\n  PgUp/PgDn               滚动聊天";
+                let help = "内置命令：\n  /help         显示帮助\n  /clear        清空对话\n  /copy         复制最后回复到剪贴板\n  /status (st)  查看自我演化状态\n  /reflect      查看反思记录\n  /reflect_now  执行即时反思\n  /evolution    查看演化历史\n  /genome       查看基因组\n  /quit         退出\n\n输入：\n  Shift+Enter 或 \\+Enter  换行\n  Enter                   发送\n  Ctrl+C                   清空/退出\n  Esc                      清空输入\n  PgUp/PgDn               滚动聊天";
                 app.chat.add_message(ChatRole::System, help.to_string());
                 return;
             }
@@ -459,6 +459,18 @@ async fn submit_message(app: &mut App, text: String) {
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
                 app.chat.add_message(ChatRole::System, "查询反思记录中...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
+                let msg = serde_json::json!({
+                    "jsonrpc": "2.0", "method": "reflect_now", "id": 1
+                });
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                use tokio::io::AsyncWriteExt;
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat.add_message(ChatRole::System, "执行即时反思中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Evolution)) => {
@@ -569,7 +581,8 @@ fn process_response(app: &mut App, msg: serde_json::Value) {
     if let Some(result) = msg.get("result") {
         if let Some(text) = result.get("response").and_then(|v| v.as_str()) {
             // Standard chat response
-            app.chat.update_last_message(text.to_string());
+            let display = format!("{}\n\n💡 /reflect to see reflections", text);
+            app.chat.update_last_message(display);
         } else if let Some(entries) = result.get("reflections") {
             // /reflect response — format reflection entries
             let formatted = format_reflections(entries);
@@ -582,11 +595,10 @@ fn process_response(app: &mut App, msg: serde_json::Value) {
             // /evolution response — format evolution history
             let formatted = format_evolution(evo);
             app.chat.update_last_message(formatted);
-        } else if result.get("iteration").is_some() {
-            // /status response — has iteration and config fields
-            let iteration = result.get("iteration").and_then(|v| v.as_u64()).unwrap_or(0);
-            let config = result.get("config").and_then(|v| v.as_str()).unwrap_or("unknown");
-            app.chat.update_last_message(format!("iteration: {}\nsession: {}", iteration, config));
+        } else if let Some(status) = result.get("status") {
+            // /status response — rich self-evolution state
+            let formatted = format_status(status);
+            app.chat.update_last_message(formatted);
         }
     } else if let Some(error) = msg.get("error") {
         let err = error.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
@@ -638,6 +650,20 @@ fn format_reflections(entries: &serde_json::Value) -> String {
                 }
             }
         }
+        if let Some(arr) = entry.get("what_worked").and_then(|v| v.as_array()) {
+            for w in arr {
+                if let Some(s) = w.as_str() {
+                    lines.push(format!("  worked: {}", s));
+                }
+            }
+        }
+        if let Some(arr) = entry.get("what_failed").and_then(|v| v.as_array()) {
+            for f in arr {
+                if let Some(s) = f.as_str() {
+                    lines.push(format!("  failed: {}", s));
+                }
+            }
+        }
         lines.push(String::new());
     }
     lines.join("\n")
@@ -670,6 +696,42 @@ fn format_evolution(evo: &serde_json::Value) -> String {
     }
     // Handle object form with version/message fields
     serde_json::to_string_pretty(evo).unwrap_or_else(|_| format!("{:?}", evo))
+}
+
+/// Format status response for display.
+fn format_status(status: &serde_json::Value) -> String {
+    let session_id = status.get("session_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let turn_count = status.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let reflection_count = status.get("reflection_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let evolution_count = status.get("evolution_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let boundary_rules = status.get("boundary_rules").and_then(|v| v.as_u64()).unwrap_or(0);
+    let boundary_immutable = status.get("boundary_immutable").and_then(|v| v.as_u64()).unwrap_or(0);
+    let attention_focus = status.get("attention_focus").and_then(|v| v.as_str()).unwrap_or("");
+
+    let mut lines = Vec::new();
+    lines.push("=== Aletheon Status ===".to_string());
+    lines.push(format!("Session: {}", &session_id[..8.min(session_id.len())]));
+    lines.push(format!("Turns: {}", turn_count));
+    lines.push(format!("Reflections: {}", reflection_count));
+    lines.push(format!("Evolutions: {}", evolution_count));
+    lines.push(String::new());
+    lines.push("Care Weights:".to_string());
+
+    if let Some(cares) = status.get("care_weights").and_then(|v| v.as_array()) {
+        for care in cares {
+            let topic = care.get("topic").and_then(|v| v.as_str()).unwrap_or("?");
+            let weight = care.get("weight").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            lines.push(format!("  {}: {:.2}", topic, weight));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push(format!("Boundary Rules: {} (immutable: {})", boundary_rules, boundary_immutable));
+
+    let focus_display = if attention_focus.is_empty() { "none" } else { attention_focus };
+    lines.push(format!("Attention Focus: {}", focus_display));
+
+    lines.join("\n")
 }
 
 fn draw(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> anyhow::Result<()> {
@@ -849,6 +911,9 @@ async fn simple_line_mode(mut stream: UnixStream, _caps: TermCaps, model_name: S
                 "reflect" | "r" => serde_json::json!({
                     "jsonrpc": "2.0", "method": "reflect", "id": 1
                 }),
+                "reflect_now" | "rn" => serde_json::json!({
+                    "jsonrpc": "2.0", "method": "reflect_now", "id": 1
+                }),
                 "evolution" | "evo" => serde_json::json!({
                     "jsonrpc": "2.0", "method": "evolution", "id": 1
                 }),
@@ -858,7 +923,7 @@ async fn simple_line_mode(mut stream: UnixStream, _caps: TermCaps, model_name: S
                 "clear" => serde_json::json!({
                     "jsonrpc": "2.0", "method": "clear", "id": 1
                 }),
-                "status" => serde_json::json!({
+                "status" | "st" => serde_json::json!({
                     "jsonrpc": "2.0", "method": "status", "id": 1
                 }),
                 _ => serde_json::json!({
@@ -891,6 +956,8 @@ async fn simple_line_mode(mut stream: UnixStream, _caps: TermCaps, model_name: S
                             println!("\n{}\n", format_genome(&msg["result"]["genome"]));
                         } else if !msg["result"]["evolution"].is_null() {
                             println!("\n{}\n", format_evolution(&msg["result"]["evolution"]));
+                        } else if !msg["result"]["status"].is_null() {
+                            println!("\n{}\n", format_status(&msg["result"]["status"]));
                         } else if let Some(err) = msg["error"]["message"].as_str() {
                             eprintln!("Error: {}\n", err);
                         }

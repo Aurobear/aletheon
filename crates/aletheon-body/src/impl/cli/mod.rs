@@ -59,13 +59,16 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
             "reflect" | "r" => serde_json::json!({
                 "jsonrpc": "2.0", "id": 1, "method": "reflect"
             }),
+            "reflect_now" | "rn" => serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "reflect_now"
+            }),
             "evolution" | "evo" => serde_json::json!({
                 "jsonrpc": "2.0", "id": 1, "method": "evolution"
             }),
             "genome" | "gene" => serde_json::json!({
                 "jsonrpc": "2.0", "id": 1, "method": "genome"
             }),
-            "status" => serde_json::json!({
+            "status" | "st" => serde_json::json!({
                 "jsonrpc": "2.0", "id": 1, "method": "status"
             }),
             _ => serde_json::json!({
@@ -98,6 +101,8 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
         println!("{}", format_genome(&resp["result"]["genome"]));
     } else if !resp["result"]["evolution"].is_null() {
         println!("{}", format_evolution(&resp["result"]["evolution"]));
+    } else if let Some(status) = resp["result"]["status"].as_object() {
+        println!("{}", format_status(&resp["result"]["status"]));
     } else if let Some(err) = resp["error"]["message"].as_str() {
         eprintln!("Error: {}", err);
     }
@@ -134,6 +139,20 @@ fn format_reflections(entries: &serde_json::Value) -> String {
                 }
             }
         }
+        if let Some(arr) = entry.get("what_worked").and_then(|v| v.as_array()) {
+            for w in arr {
+                if let Some(s) = w.as_str() {
+                    lines.push(format!("  worked: {}", s));
+                }
+            }
+        }
+        if let Some(arr) = entry.get("what_failed").and_then(|v| v.as_array()) {
+            for f in arr {
+                if let Some(s) = f.as_str() {
+                    lines.push(format!("  failed: {}", s));
+                }
+            }
+        }
         lines.push(String::new());
     }
     lines.join("\n")
@@ -165,4 +184,40 @@ fn format_evolution(evo: &serde_json::Value) -> String {
         return lines.join("\n");
     }
     serde_json::to_string_pretty(evo).unwrap_or_else(|_| format!("{:?}", evo))
+}
+
+/// Format status response for display.
+fn format_status(status: &serde_json::Value) -> String {
+    let session_id = status.get("session_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let turn_count = status.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let reflection_count = status.get("reflection_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let evolution_count = status.get("evolution_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let boundary_rules = status.get("boundary_rules").and_then(|v| v.as_u64()).unwrap_or(0);
+    let boundary_immutable = status.get("boundary_immutable").and_then(|v| v.as_u64()).unwrap_or(0);
+    let attention_focus = status.get("attention_focus").and_then(|v| v.as_str()).unwrap_or("");
+
+    let mut lines = Vec::new();
+    lines.push("=== Aletheon Status ===".to_string());
+    lines.push(format!("Session: {}", &session_id[..8.min(session_id.len())]));
+    lines.push(format!("Turns: {}", turn_count));
+    lines.push(format!("Reflections: {}", reflection_count));
+    lines.push(format!("Evolutions: {}", evolution_count));
+    lines.push(String::new());
+    lines.push("Care Weights:".to_string());
+
+    if let Some(cares) = status.get("care_weights").and_then(|v| v.as_array()) {
+        for care in cares {
+            let topic = care.get("topic").and_then(|v| v.as_str()).unwrap_or("?");
+            let weight = care.get("weight").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            lines.push(format!("  {}: {:.2}", topic, weight));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push(format!("Boundary Rules: {} (immutable: {})", boundary_rules, boundary_immutable));
+
+    let focus_display = if attention_focus.is_empty() { "none" } else { attention_focus };
+    lines.push(format!("Attention Focus: {}", focus_display));
+
+    lines.join("\n")
 }

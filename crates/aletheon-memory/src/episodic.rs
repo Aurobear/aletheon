@@ -139,6 +139,18 @@ impl EpisodicMemory {
         })
     }
 
+    /// Count total evolution log entries stored.
+    pub fn evolution_log_count(&self) -> Result<usize> {
+        self.with_conn(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM evolution_log_events",
+                [],
+                |r| r.get(0),
+            )?;
+            Ok(count as usize)
+        })
+    }
+
     /// Store an evolution log entry.
     pub fn store_evolution_log(&self, entry: &EvolutionLogEntry) -> Result<()> {
         self.with_conn(|conn| {
