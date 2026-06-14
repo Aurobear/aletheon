@@ -3,7 +3,7 @@ name = "aletheon-comm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "EventBus implementation for the Aletheon runtime"
+description = "Aletheon Communication layer - inter-process communication"
 
 [dependencies]
 aletheon-abi = { path = "../aletheon-abi" }

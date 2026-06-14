@@ -3,6 +3,7 @@ name = "aletheon-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Aletheon Runtime - core agent runtime and orchestration"
 
 [dependencies]
 aletheon-abi = { path = "../aletheon-abi" }

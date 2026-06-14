@@ -3,7 +3,7 @@ name = "aletheon-abi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Core trait definitions for the Aletheon runtime — zero implementations, only interfaces"
+description = "Aletheon ABI layer - public API interfaces for agent runtime"
 
 [dependencies]
 async-trait = "0.1"

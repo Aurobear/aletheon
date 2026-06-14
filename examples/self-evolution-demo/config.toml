@@ -1,0 +1,17 @@
+# Self-Evolution Demo Configuration
+
+[agent]
+default_model = "claude-sonnet-4-20250514"
+max_iterations = 10
+max_tokens = 4096
+compaction_enabled = true
+
+[sandbox]
+preference = "auto"
+
+[memory]
+backend = "sqlite"
+data_dir = "./demo-memory"
+
+[plugins]
+directories = []

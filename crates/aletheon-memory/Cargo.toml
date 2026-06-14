@@ -3,7 +3,7 @@ name = "aletheon-memory"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "SQLite-backed memory backends for the Aletheon runtime"
+description = "Aletheon Memory system - episodic, semantic, and procedural memory"
 
 [dependencies]
 aletheon-abi = { path = "../aletheon-abi" }
