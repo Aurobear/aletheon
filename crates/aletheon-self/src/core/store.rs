@@ -79,3 +79,13 @@ impl SelfFieldStore {
         self.conn.lock().expect("store mutex poisoned")
     }
 }
+
+/// Unified persistence interface for self-field layers.
+pub trait Persistable {
+    /// SQLite table name this layer persists to.
+    fn table_name(&self) -> &str;
+    /// Write current state to the store.
+    fn save_to_store(&self, store: &SelfFieldStore) -> anyhow::Result<()>;
+    /// Load state from the store, overwriting in-memory data.
+    fn load_from_store(&mut self, store: &SelfFieldStore) -> anyhow::Result<()>;
+}
