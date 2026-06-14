@@ -1,3 +1,11 @@
+pub mod budget;
+pub mod harness;
+pub mod process;
+
+pub use budget::TokenBudget;
+pub use harness::{AgentHarness, AttemptParams, AttemptResult, AttemptStatus, HarnessBid, HarnessContext, RuntimePlan};
+pub use process::{AgentProcess, AgentProcessConfig, AgentState};
+
 use anyhow::Result;
 use aletheon_abi::runtime::{AgentInfo, AgentStatus, ScheduledTask};
 use aletheon_abi::subsystem::{Subsystem, SubsystemHealth, SubsystemContext, Version};
