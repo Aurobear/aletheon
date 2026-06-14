@@ -9,6 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
+use aletheon_abi::Registry;
 use crate::r#impl::acix::Aci;
 use crate::r#impl::acix::GroundingProvider;
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};

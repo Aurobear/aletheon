@@ -12,6 +12,7 @@ use crate::r#impl::orchestration::builtin::{FsAgent, NetAgent, CodeAgent};
 use crate::ProviderRegistry;
 use crate::session::store::SessionStore;
 use aletheon_self::r#impl::perception::bridge::PerceptionInjection;
+use aletheon_abi::Registry;
 use aletheon_self::{SelfField, SelfFieldConfig};
 use aletheon_meta::r#impl::meta_runtime::self_reader::SelfReader;
 use aletheon_body::r#impl::sandbox::executor::{SandboxExecutor, SandboxPreference};

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use aletheon_abi::tool::{PermissionLevel, ToolExposure};
+use aletheon_abi::Registry;
 use aletheon_body::r#impl::tools::ToolRegistry;
 use aletheon_body::r#impl::tools::script_tool::ScriptTool;
 
