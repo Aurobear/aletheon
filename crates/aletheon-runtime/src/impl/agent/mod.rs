@@ -1,5 +1,7 @@
 pub mod budget;
+pub mod process;
 pub use budget::TokenBudget;
+pub use process::{AgentProcess, AgentProcessConfig, AgentState};
 
 use anyhow::Result;
 use aletheon_abi::runtime::{AgentInfo, AgentStatus, ScheduledTask};
