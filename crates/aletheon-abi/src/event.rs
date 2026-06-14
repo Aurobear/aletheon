@@ -4,6 +4,8 @@
 //! All cross-subsystem messages flow through the EventBus as typed events.
 
 use std::any::Any;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -60,6 +62,15 @@ pub enum EventType {
     ReActIterationStart,
     ReActIterationEnd,
     AgentForkCompleted,
+
+    // Self-evolution
+    RuleExtracted,
+    EvolutionTriggered,
+    EvolutionResult,
+
+    // Energy / agent lifecycle
+    CognitivePulse,
+    AgentSpawned,
 }
 
 /// Event priority — like IRQ priority levels.
@@ -99,6 +110,14 @@ pub trait Event: Send + Sync + 'static {
     fn summary(&self) -> String {
         format!("{:?} from {}", self.event_type(), self.source())
     }
+
+    /// Serialize the event to JSON for async handler delivery.
+    ///
+    /// Default returns `Null` — concrete event types should override
+    /// to provide structured data for `AsyncEventHandler`.
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
 }
 
 /// Handler function for event subscription.
@@ -106,6 +125,15 @@ pub trait Event: Send + Sync + 'static {
 /// Receives a reference to the event and returns whether to continue
 /// processing (true) or stop propagation (false).
 pub type EventHandler = Box<dyn Fn(&dyn Event) -> bool + Send + Sync>;
+
+/// Async handler for event subscription.
+///
+/// Receives the event as a serialized JSON value and returns whether to
+/// continue processing (true) or stop propagation (false). Use this when
+/// the handler needs to perform async I/O (e.g., memory writes, LLM calls).
+pub type AsyncEventHandler = Box<
+    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync,
+>;
 
 /// Maximum time to wait for a request-response cycle.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

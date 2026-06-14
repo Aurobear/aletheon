@@ -91,7 +91,7 @@ impl AgentKernel {
         parent: Option<Pid>,
     ) -> Pid {
         let pid = Pid::new();
-        let process = AgentProcess::new(config);
+        let process = AgentProcess::new_minimal(config);
 
         // Register IPC inbox.
         self.ipc.register(pid).await;
@@ -370,6 +370,7 @@ mod tests {
         AgentProcessConfig {
             id: id.to_string(),
             max_tokens_per_pulse: 1000,
+            ..Default::default()
         }
     }
 

@@ -89,7 +89,7 @@ mod tests {
     fn test_claim() {
         let budget = TokenBudget::new(500);
         let claimed = budget.claim(1000);
-        assert_eq!(claimed, 500);
+        assert_eq!(claimed, 500); // capped at max_per_pulse
         assert_eq!(budget.remaining(), 500);
         assert!(!budget.is_exhausted());
     }
@@ -119,7 +119,7 @@ mod tests {
 
         let remaining = budget.consume(200);
         assert_eq!(remaining, 0);
-        assert_eq!(budget.total_consumed(), 100);
+        assert_eq!(budget.total_consumed(), 100); // only actual consumed
         assert!(budget.is_exhausted());
     }
 
@@ -131,6 +131,7 @@ mod tests {
 
         budget.reset(800);
         assert_eq!(budget.remaining(), 800);
+        // total_consumed is preserved across resets
         assert_eq!(budget.total_consumed(), 300);
     }
 }

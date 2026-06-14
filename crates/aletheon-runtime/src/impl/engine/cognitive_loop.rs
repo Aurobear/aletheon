@@ -25,6 +25,41 @@ use aletheon_body::r#impl::tools::ToolRegistry;
 
 use super::config::EngineConfig;
 
+/// Result of a single engine turn with budget awareness.
+///
+/// Phase 1: wraps the existing `run_turn` return paths.
+/// Future phases will add token-budget-aware pause/resume.
+#[derive(Debug)]
+pub enum TurnResult {
+    /// Turn completed normally with assistant response text.
+    Complete(String),
+    /// A tool call is pending (not yet used in Phase 1; reserved for
+    /// future single-step execution mode).
+    NeedTool {
+        tool_name: String,
+        tool_input: serde_json::Value,
+    },
+    /// Reflection pass is needed before continuing (reserved for future use).
+    NeedReflection,
+    /// Turn ended with an error.
+    Error(String),
+}
+
+impl TurnResult {
+    /// Extract the text if this is a `Complete` result.
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            TurnResult::Complete(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Returns true if the turn finished without errors.
+    pub fn is_ok(&self) -> bool {
+        matches!(self, TurnResult::Complete(_) | TurnResult::NeedTool { .. } | TurnResult::NeedReflection)
+    }
+}
+
 /// The ReAct cognitive engine.
 pub struct Engine {
     pub(super) llm: Box<dyn LlmProvider>,
@@ -501,6 +536,42 @@ impl Engine {
                     ).await;
                 }
 
+                // Emit ToolObservationEvent if EventBus is configured
+                if let Some(ref bus) = self.config.event_bus {
+                    use aletheon_abi::evolution::ToolObservationPayload;
+                    use aletheon_comm::core::event::ConcreteEvent;
+                    use aletheon_abi::{EventType, Priority};
+
+                    let turn_uuid = uuid::Uuid::parse_str(&turn_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+                    let payload = ToolObservationPayload {
+                        turn_id: turn_uuid,
+                        tool_name: tool_name.to_string(),
+                        input: tool_input.clone(),
+                        output: serde_json::json!({
+                            "content": result.content,
+                            "is_error": result.is_error,
+                        }),
+                        duration_ms: elapsed_ms,
+                        error: if result.is_error { Some(result.content.clone()) } else { None },
+                        rules_applied: Vec::new(), // Will be populated by BrainCore after reflection
+                    };
+
+                    let event = ConcreteEvent::new(
+                        EventType::ToolObservation,
+                        Priority::Normal,
+                        "runtime.engine".to_string(),
+                        Box::new(serde_json::to_value(&payload).unwrap_or_default()),
+                    );
+
+                    // Fire-and-forget: non-blocking event emission
+                    let bus_clone = Arc::clone(bus);
+                    tokio::spawn(async move {
+                        if let Err(e) = bus_clone.publish(Box::new(event)).await {
+                            warn!(error = %e, "Failed to publish ToolObservationEvent");
+                        }
+                    });
+                }
+
                 // Add tool result as user message
                 self.messages.push(Message::tool_result(
                     tool_id,
@@ -565,6 +636,27 @@ impl Engine {
             "Max iterations ({}) exceeded",
             self.config.max_iterations
         ))
+    }
+
+    /// Run a single user turn with a token budget.
+    ///
+    /// Phase 1: delegates to `run_turn` and wraps the result in [`TurnResult`].
+    /// The `budget` parameter is accepted but not yet enforced; it will be used
+    /// in future phases to pause execution when the energy pool is exhausted.
+    ///
+    /// # Arguments
+    /// * `user_input` - the user's message text
+    /// * `budget` - available token budget for this turn (reserved for Phase 2+)
+    pub async fn run_turn_with_budget(
+        &mut self,
+        user_input: &str,
+        budget: u32,
+    ) -> TurnResult {
+        debug!(budget, "run_turn_with_budget called (Phase 1: delegating to run_turn)");
+        match self.run_turn(user_input).await {
+            Ok(text) => TurnResult::Complete(text),
+            Err(e) => TurnResult::Error(e.to_string()),
+        }
     }
 
     /// Get current message history.

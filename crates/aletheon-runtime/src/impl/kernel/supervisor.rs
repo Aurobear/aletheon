@@ -222,6 +222,7 @@ mod tests {
         AgentProcessConfig {
             id: id.to_string(),
             max_tokens_per_pulse: 1000,
+            ..Default::default()
         }
     }
 

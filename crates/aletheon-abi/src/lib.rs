@@ -21,6 +21,7 @@ pub mod meta;
 pub mod runtime;
 pub mod genome;
 pub mod paths;
+pub mod evolution;
 
 // Shared types (message, tool, sandbox, IPC, LLM)
 pub mod message;
@@ -41,13 +42,14 @@ pub mod observable;
 
 // Re-export key types at crate root for convenience
 pub use subsystem::{Subsystem, SubsystemHealth, SubsystemContext, Version, InitPhase};
-pub use event::{Event, EventType, Priority, SubscriptionId, EventHandler};
+pub use event::{Event, EventType, Priority, SubscriptionId, EventHandler, AsyncEventHandler};
 pub use event_bus::EventBus;
 pub use context::{Context, TraceState};
 pub use capability::{Capability, CapabilitySet, PermissionLevel};
 pub use body::{Action, ActionResult, BodyRuntime};
 pub use memory::{MemoryBackend, MemoryEntry, MemoryHandle, MemoryQuery, MemoryType, MemoryFilter, CompactStrategy, CompactResult, MemoryStats};
-pub use self_field::{SelfFieldOps, Verdict, Intent, IntentSource, Identity, Care, Conflict, Resolution, MutationIntent};
+pub use self_field::{SelfFieldOps, Verdict, Intent, IntentSource, Identity, Care, Conflict, Resolution, MutationIntent,
+    SelfAwareness, AwarenessCore, AwarenessExtension, SelfState, AwarenessExtensionCounts, AwarenessGrowthSuggestion};
 pub use brain::{BrainCoreOps, Plan, PlanStep, CostEstimate, ExecutionResult, Reflection, Critique, LearnedRule, Experience, Observation,
     ReflectionEntry, ReflectionTrigger, ReflectionOutcome, EvolutionLogEntry, BehaviorAdjustment};
 pub use meta::{MetaRuntimeOps, RuntimeCandidate, TestResult, Evaluation, MigrationResult};

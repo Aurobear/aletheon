@@ -6,10 +6,16 @@ pub mod cache_shape;
 pub mod mcp_embedded;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tracing::info;
+
+use aletheon_comm::KernelEventBus;
+use aletheon_brain::r#impl::llm::pulse::{LlmPulse, PulseConfig};
+use aletheon_brain::r#impl::llm::scheduler::{LlmScheduler, SchedulerConfig, SchedulerProviderConfig, RoutingRule};
+use aletheon_abi::evolution::LlmPurpose;
 
 use crate::ProviderRegistry;
 
@@ -124,6 +130,59 @@ pub async fn run(
         "Starting agentd"
     );
 
+    // Create event bus and start LlmPulse if LLM providers are configured
+    let bus: Arc<dyn aletheon_abi::EventBus> = Arc::new(KernelEventBus::new(4096));
+
+    let pulse_handle = if !app_config.providers.is_empty() {
+        let mut routing = std::collections::HashMap::new();
+        routing.insert(LlmPurpose::Execute, default_provider_config.name.clone());
+        routing.insert(LlmPurpose::Reflect, default_provider_config.name.clone());
+
+        let scheduler_config = SchedulerConfig {
+            providers: app_config
+                .providers
+                .iter()
+                .map(|p| SchedulerProviderConfig {
+                    name: p.name.clone(),
+                    base_url: p.base_url.clone(),
+                    api_key: p.api_key.clone(),
+                    kind: match p.transport {
+                        aletheon_brain::config::Transport::Anthropic => "anthropic".to_string(),
+                        aletheon_brain::config::Transport::Openai => "openai".to_string(),
+                        aletheon_brain::config::Transport::Auto => "openai".to_string(),
+                    },
+                    model: p.models.first().cloned().unwrap_or_default(),
+                })
+                .collect(),
+            routing: routing
+                .into_iter()
+                .map(|(purpose, provider_name)| RoutingRule { purpose, provider_name })
+                .collect(),
+        };
+
+        match LlmScheduler::new(&scheduler_config) {
+            Ok(scheduler) => {
+                let scheduler = Arc::new(scheduler);
+                let pulse = LlmPulse::new(scheduler, bus.clone(), PulseConfig::default());
+                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+                let handle = tokio::spawn(async move {
+                    pulse.run(shutdown_rx).await;
+                });
+
+                tracing::info!("LlmPulse started");
+                Some((shutdown_tx, handle))
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create LlmScheduler, skipping LlmPulse: {}", e);
+                None
+            }
+        }
+    } else {
+        tracing::info!("No LLM providers configured, skipping LlmPulse");
+        None
+    };
+
     // Start perception manager and bridge
     let (event_tx, event_rx) = mpsc::channel::<aletheon_self::r#impl::perception::PerceptionEvent>(256);
     let (injection_tx, injection_rx) = mpsc::channel::<aletheon_self::r#impl::perception::bridge::PerceptionInjection>(64);
@@ -155,15 +214,27 @@ pub async fn run(
 
     let unix_server = server::UnixServer::new(&socket, request_handler).await?;
 
-    // Clean up PID file on exit
+    // Clean up PID file and pulse on exit
     let pid_file_clone = pid_file.clone();
+    let pulse_handle_clone = pulse_handle.as_ref().map(|(tx, _)| tx.clone());
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
+        // Signal LlmPulse to shut down
+        if let Some(tx) = pulse_handle_clone {
+            let _ = tx.send(true);
+        }
         std::fs::remove_file(&pid_file_clone).ok();
         std::process::exit(0);
     });
 
     unix_server.run().await?;
+
+    // Graceful shutdown: stop LlmPulse
+    if let Some((shutdown_tx, handle)) = pulse_handle {
+        let _ = shutdown_tx.send(true);
+        // Give pulse a moment to finish
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+    }
 
     // Clean up PID file on normal exit
     std::fs::remove_file(&pid_file).ok();

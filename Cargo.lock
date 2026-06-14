@@ -93,6 +93,7 @@ version = "0.1.0"
 dependencies = [
  "aletheon-abi",
  "aletheon-body",
+ "aletheon-comm",
  "anyhow",
  "async-trait",
  "chrono",
@@ -193,6 +194,7 @@ dependencies = [
  "aletheon-abi",
  "aletheon-body",
  "aletheon-brain",
+ "aletheon-comm",
  "aletheon-memory",
  "aletheon-meta",
  "aletheon-self",
@@ -225,6 +227,7 @@ version = "0.1.0"
 dependencies = [
  "aletheon-abi",
  "aletheon-body",
+ "aletheon-brain",
  "aletheon-comm",
  "aletheon-memory",
  "anyhow",
@@ -555,6 +558,20 @@ name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
+name = "basic-agent-example"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "aletheon-runtime",
+ "anyhow",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "bincode"
@@ -2585,6 +2602,27 @@ checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "self-evolution-loop-example"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "aletheon-body",
+ "aletheon-brain",
+ "aletheon-comm",
+ "aletheon-memory",
+ "aletheon-meta",
+ "aletheon-runtime",
+ "aletheon-self",
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

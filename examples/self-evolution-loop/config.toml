@@ -1,0 +1,18 @@
+[llm_scheduler.executor]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[llm_scheduler.reflector]
+provider = "openai"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[engine]
+learning_enabled = true
+
+[evolution]
+consecutive_failure_threshold = 3
+batch_size = 3
+evolution_interval_hours = 0

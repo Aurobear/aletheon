@@ -31,6 +31,13 @@ impl Event for ConcreteEvent {
     fn priority(&self) -> Priority { self.priority }
     fn source(&self) -> &str { &self.source }
     fn payload(&self) -> &dyn Any { &*self.payload }
+
+    fn to_json(&self) -> serde_json::Value {
+        self.payload
+            .downcast_ref::<serde_json::Value>()
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    }
 }
 
 #[cfg(test)]

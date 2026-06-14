@@ -1,23 +1,29 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
+use aletheon_abi::agent::Pid;
+use aletheon_abi::evolution::CognitivePulseEvent;
+use aletheon_abi::EventBus;
 use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_body::r#impl::tools::Tool;
 use super::agent::Agent;
 use super::config_agent::ConfigAgent;
+use crate::r#impl::agent::{AgentProcess, AgentProcessConfig};
 
-/// Registry of available agents.
+/// Registry of available agents and running processes.
 pub struct AgentRegistry {
     agents: RwLock<HashMap<String, Arc<RwLock<dyn Agent>>>>,
+    processes: RwLock<HashMap<Pid, Arc<Mutex<AgentProcess>>>>,
 }
 
 impl AgentRegistry {
     pub fn new() -> Self {
         Self {
             agents: RwLock::new(HashMap::new()),
+            processes: RwLock::new(HashMap::new()),
         }
     }
 
@@ -82,6 +88,47 @@ impl AgentRegistry {
     /// Count registered agents.
     pub async fn count(&self) -> usize {
         self.agents.read().await.len()
+    }
+
+    // --- Process table methods ---
+
+    /// Spawn a new AgentProcess, start it, and register it in the process table.
+    pub async fn spawn_process(
+        &self,
+        task: String,
+        config: AgentProcessConfig,
+        bus: Arc<dyn EventBus>,
+    ) -> anyhow::Result<Pid> {
+        let mut process = AgentProcess::new(None, task, bus, config);
+        process.start().await?;
+        let pid = process.pid;
+        info!(%pid, "Spawning agent process");
+        self.processes
+            .write()
+            .await
+            .insert(pid, Arc::new(Mutex::new(process)));
+        Ok(pid)
+    }
+
+    /// Dispatch a cognitive pulse to all running processes.
+    pub async fn dispatch_pulse(&self, pulse: &CognitivePulseEvent) {
+        let processes = self.processes.read().await;
+        for (pid, proc_arc) in processes.iter() {
+            let mut proc = proc_arc.lock().await;
+            if let Err(e) = proc.on_pulse(pulse).await {
+                tracing::warn!(%pid, error = %e, "Process failed to handle pulse");
+            }
+        }
+    }
+
+    /// Get a handle to a running process by PID.
+    pub async fn get_process(&self, pid: &Pid) -> Option<Arc<Mutex<AgentProcess>>> {
+        self.processes.read().await.get(pid).cloned()
+    }
+
+    /// Count running processes.
+    pub async fn process_count(&self) -> usize {
+        self.processes.read().await.len()
     }
 
     /// Load agents from TOML config files in a directory.
