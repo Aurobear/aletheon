@@ -1,5 +1,40 @@
 use serde::{Deserialize, Serialize};
 
+/// Plugin entry point type — replaces fragile string prefix parsing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntryType {
+    /// Shell script entry point.
+    Cmd(String),
+    /// Native shared library.
+    Native(String),
+    /// WebAssembly module.
+    Wasm(String),
+}
+
+impl EntryType {
+    /// Get the entry path.
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Cmd(p) | Self::Native(p) | Self::Wasm(p) => p,
+        }
+    }
+}
+
+impl std::str::FromStr for EntryType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (prefix, path) = s
+            .split_once(':')
+            .ok_or_else(|| format!("Entry '{}' missing type prefix (expected 'cmd:', 'native:', 'wasm:')", s))?;
+        match prefix {
+            "cmd" => Ok(Self::Cmd(path.to_string())),
+            "native" => Ok(Self::Native(path.to_string())),
+            "wasm" => Ok(Self::Wasm(path.to_string())),
+            other => Err(format!("Unknown entry type '{}'", other)),
+        }
+    }
+}
+
 /// Plugin manifest (plugin.toml).
 ///
 /// Supports two formats:
@@ -92,7 +127,13 @@ impl PluginManifest {
         if self.entry.is_empty() {
             return Err("Plugin entry point cannot be empty".into());
         }
+        self.parsed_entry()?; // validate entry format
         Ok(())
+    }
+
+    /// Parse the entry string into a typed EntryType.
+    pub fn parsed_entry(&self) -> Result<EntryType, String> {
+        self.entry.parse()
     }
 
     /// Get the entry type prefix (e.g. "cmd", "native", "wasm").
@@ -161,6 +202,33 @@ mod tests {
         let manifest = make_manifest("native:./lib.so");
         assert_eq!(manifest.entry_type(), "native");
         assert_eq!(manifest.entry_path(), "./lib.so");
+    }
+
+    #[test]
+    fn test_entry_type_enum() {
+        assert_eq!(
+            "cmd:./run.sh".parse::<EntryType>().unwrap(),
+            EntryType::Cmd("./run.sh".into())
+        );
+        assert_eq!(
+            "native:./lib.so".parse::<EntryType>().unwrap(),
+            EntryType::Native("./lib.so".into())
+        );
+        assert_eq!(
+            "wasm:./module.wasm".parse::<EntryType>().unwrap(),
+            EntryType::Wasm("./module.wasm".into())
+        );
+        assert!("bad_path".parse::<EntryType>().is_err());
+        assert!("unknown:./x".parse::<EntryType>().is_err());
+    }
+
+    #[test]
+    fn test_parsed_entry() {
+        let manifest = make_manifest("cmd:./run.sh");
+        assert_eq!(manifest.parsed_entry().unwrap(), EntryType::Cmd("./run.sh".into()));
+
+        let bad = make_manifest("bad");
+        assert!(bad.parsed_entry().is_err());
     }
 
     #[test]
