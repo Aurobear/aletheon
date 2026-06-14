@@ -12,6 +12,8 @@ use crate::r#impl::orchestration::builtin::{FsAgent, NetAgent, CodeAgent};
 use crate::ProviderRegistry;
 use crate::session::store::SessionStore;
 use aletheon_self::r#impl::perception::bridge::PerceptionInjection;
+use aletheon_self::{SelfField, SelfFieldConfig};
+use aletheon_meta::r#impl::meta_runtime::self_reader::SelfReader;
 use aletheon_body::r#impl::sandbox::executor::{SandboxExecutor, SandboxPreference};
 use aletheon_body::r#impl::security::audit::AuditLogger;
 use aletheon_body::r#impl::security::runner::ToolRunnerWithGuard;
@@ -39,6 +41,8 @@ struct SessionState {
     runtime: AletheonRuntime,
     /// Pending input waiting to be processed via the cognitive pipeline.
     pending_input: Option<String>,
+    /// Number of chat turns in this session.
+    turn_count: usize,
 }
 
 #[derive(Clone)]
@@ -50,6 +54,8 @@ pub struct RequestHandler {
     agent_registry: Arc<AgentRegistry>,
     reflector: Reflector,
     episodic_memory: Arc<Mutex<EpisodicMemory>>,
+    /// SelfField — the policy engine that provides identity, cares, and boundary data.
+    self_field: Arc<Mutex<SelfField>>,
 }
 
 impl RequestHandler {
@@ -135,15 +141,24 @@ impl RequestHandler {
         episodic_memory.init(&ctx).await?;
         let episodic_memory = Arc::new(Mutex::new(episodic_memory));
 
+        // Create SelfField for genome reads and policy engine
+        let self_field_config = SelfFieldConfig {
+            db_path: Some(data_dir.join("self_field.db")),
+            ..Default::default()
+        };
+        let self_field = Arc::new(Mutex::new(SelfField::new(self_field_config)));
+
         Ok(Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
                 pending_input: None,
+                turn_count: 0,
             })),
             llm,
             agent_registry,
             reflector,
             episodic_memory,
+            self_field,
         })
     }
 
@@ -177,15 +192,71 @@ impl RequestHandler {
                             .join("");
                         info!(tokens = response.usage.output_tokens, "Chat response generated");
 
-                        // Trigger post-chat reflection
-                        let task_summary = &message[..message.len().min(100)];
+                        // Increment turn count
+                        let turn = {
+                            let mut state = self.state.lock().await;
+                            state.turn_count += 1;
+                            state.turn_count
+                        };
+
+                        // Enhanced reflection: analyze question and response quality
+                        let task_summary = if message.len() > 100 {
+                            format!("{}...", &message[..100])
+                        } else {
+                            message.to_string()
+                        };
+
+                        let mut what_worked = Vec::new();
+                        let mut what_failed = Vec::new();
+                        let mut learned = Vec::new();
+
+                        // Response length as a quality indicator
+                        let resp_len = text.len();
+                        if resp_len > 500 {
+                            what_worked.push(format!("Detailed response ({} chars)", resp_len));
+                        } else if resp_len > 100 {
+                            what_worked.push(format!("Concise response ({} chars)", resp_len));
+                        } else {
+                            what_worked.push(format!("Brief response ({} chars)", resp_len));
+                        }
+
+                        // Token efficiency
+                        if response.usage.output_tokens > 0 {
+                            let chars_per_token = resp_len as f64 / response.usage.output_tokens as f64;
+                            what_worked.push(format!(
+                                "Token efficiency: {:.1} chars/token ({} output tokens)",
+                                chars_per_token, response.usage.output_tokens
+                            ));
+                        }
+
+                        // Detect error indicators in response
+                        let text_lower = text.to_lowercase();
+                        let error_indicators = ["error", "failed", "unable", "cannot", "couldn't", "sorry, i", "i don't know"];
+                        for indicator in &error_indicators {
+                            if text_lower.contains(indicator) {
+                                what_failed.push(format!("Response contains '{}'", indicator));
+                            }
+                        }
+
+                        // Detect learning/self-correction indicators
+                        let learning_indicators = ["i learned", "i now understand", "i realize", "correction:", "actually,"];
+                        for indicator in &learning_indicators {
+                            if text_lower.contains(indicator) {
+                                learned.push(format!("Self-correction detected: '{}'", indicator));
+                            }
+                        }
+
+                        // Track turn context
+                        what_worked.push(format!("Conversation turn #{}", turn));
+
+                        let has_failures = !what_failed.is_empty();
                         let entry = self.reflector.reflect_conversation(
-                            task_summary,
+                            &task_summary,
                             ReflectionTrigger::TaskComplete,
-                            true,
-                            vec!["LLM responded successfully".to_string()],
-                            vec![],
-                            vec![],
+                            !has_failures,
+                            what_worked,
+                            what_failed,
+                            learned,
                         );
                         if let Err(e) = self.episodic_memory.lock().await.store_reflection(&entry) {
                             warn!(error = %e, "Failed to store chat reflection");
@@ -213,7 +284,7 @@ impl RequestHandler {
                         json!({
                             "jsonrpc": "2.0",
                             "id": id,
-                            "result": { "response": text }
+                            "result": { "response": text, "turn": turn }
                         })
                     }
                     Err(e) => {
@@ -267,34 +338,38 @@ impl RequestHandler {
                 })
             }
             "genome" => {
-                // Return the agent's genome (self-description).
-                // Currently returns a static initial genome; MetaRuntime integration pending.
-                let genome = json!({
-                    "topology": {
-                        "subsystems": [
-                            {"name": "self_field", "subsystem_type": "Policy", "version": "0.1.0", "dependencies": [], "config": {}},
-                            {"name": "brain_core", "subsystem_type": "Cognitive", "version": "0.1.0", "dependencies": ["self_field"], "config": {}},
-                            {"name": "body_runtime", "subsystem_type": "Execution", "version": "0.1.0", "dependencies": ["brain_core"], "config": {}},
-                            {"name": "memory", "subsystem_type": "Storage", "version": "0.1.0", "dependencies": [], "config": {}},
-                            {"name": "meta_runtime", "subsystem_type": "Evolution", "version": "0.1.0", "dependencies": ["memory"], "config": {}}
-                        ]
-                    },
-                    "identity": {
-                        "name": "aletheon",
-                        "description": "Autonomous cognitive agent",
-                        "self_model": "4-layer architecture: self-field -> brain-core -> body-runtime -> memory"
-                    },
-                    "boundary": {"rules": []},
-                    "care": {"priorities": [{"topic": "user_safety", "weight": 1.0}, {"topic": "self_coherence", "weight": 0.8}]},
-                    "memory": {"backends": ["episodic", "core"], "compaction_strategy": "age_based"},
-                    "mutation": {"allowed_targets": ["config", "prompts"], "require_sandbox": true, "require_self_field_approval": true},
-                    "lifecycle": {"auto_compact": true, "health_check_interval_secs": 300, "max_idle_time_secs": 3600}
-                });
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": { "genome": genome }
-                })
+                // Read the genome dynamically from SelfField using SelfReader.
+                let self_field = self.self_field.lock().await;
+                let reader = SelfReader::new();
+                match reader.read_genome(&*self_field).await {
+                    Ok(genome) => {
+                        match serde_yaml::to_string(&genome) {
+                            Ok(yaml) => {
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "result": { "genome": yaml }
+                                })
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "Failed to serialize genome to YAML");
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "error": { "code": -32004, "message": format!("Genome serialization error: {}", e) }
+                                })
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to read genome from SelfField");
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32004, "message": format!("Genome read error: {}", e) }
+                        })
+                    }
+                }
             }
             "evolution" => {
                 // Return recent evolution log entries from episodic memory.
@@ -317,6 +392,92 @@ impl RequestHandler {
                             "error": { "code": -32002, "message": format!("Evolution recall error: {}", e) }
                         })
                     }
+                }
+            }
+            "reflect_now" => {
+                // Run an immediate reflection on the current session state
+                let (turn, session_id, iteration) = {
+                    let state = self.state.lock().await;
+                    (state.turn_count, state.runtime.config().session_id.clone(), state.runtime.iteration())
+                };
+
+                let task_summary = format!(
+                    "Session {} after {} turns (iteration {})",
+                    session_id, turn, iteration
+                );
+
+                let mut what_worked = Vec::new();
+                let mut what_failed = Vec::new();
+                let mut learned = Vec::new();
+
+                what_worked.push(format!("Session is active with {} turns", turn));
+                what_worked.push(format!("Runtime iteration count: {}", iteration));
+
+                if turn == 0 {
+                    what_failed.push("No chat turns recorded yet".to_string());
+                }
+
+                // Check if there are recent reflections to draw from
+                match self.episodic_memory.lock().await.recall_reflections(5) {
+                    Ok(recent) if !recent.is_empty() => {
+                        learned.push(format!(
+                            "Reviewed {} recent reflections",
+                            recent.len()
+                        ));
+                        // Aggregate failure patterns
+                        let failure_count: usize = recent.iter()
+                            .map(|r| r.what_failed.len())
+                            .sum();
+                        if failure_count > 0 {
+                            what_failed.push(format!(
+                                "{} failure items across recent reflections",
+                                failure_count
+                            ));
+                        }
+                    }
+                    Ok(_) => {
+                        learned.push("No prior reflections available for context".to_string());
+                    }
+                    Err(e) => {
+                        what_failed.push(format!("Could not recall reflections: {}", e));
+                    }
+                }
+
+                let has_failures = !what_failed.is_empty() || turn == 0;
+                let entry = self.reflector.reflect_conversation(
+                    &task_summary,
+                    ReflectionTrigger::Manual,
+                    !has_failures,
+                    what_worked,
+                    what_failed,
+                    learned,
+                );
+                if let Err(e) = self.episodic_memory.lock().await.store_reflection(&entry) {
+                    warn!(error = %e, "Failed to store manual reflection");
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32003, "message": format!("Reflect now error: {}", e) }
+                    })
+                } else {
+                    info!(id = %entry.id, "Manual reflection stored via reflect_now");
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "reflection": {
+                                "id": entry.id,
+                                "timestamp": entry.timestamp.to_rfc3339(),
+                                "task_summary": entry.task_summary,
+                                "outcome": entry.outcome.to_string(),
+                                "what_worked": entry.what_worked,
+                                "what_failed": entry.what_failed,
+                                "learned": entry.learned,
+                                "confidence": entry.confidence,
+                                "turn_count": turn,
+                            }
+                        }
+                    })
                 }
             }
             _ => json!({

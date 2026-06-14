@@ -167,6 +167,11 @@ impl SelfField {
     /// Persist all layer states to the SQLite store (no-op if no store).
     pub fn save_all(&self) -> Result<()> {
         if let Some(ref store) = self.store {
+            self.narrative.save_to_store(store)?;
+            self.attention.save_to_store(store)?;
+            self.care.save_to_store(store)?;
+            self.boundary.save_to_store(store)?;
+            self.identity.save_to_store(store)?;
             self.mutation.save_to_store(store)?;
             self.continuity.save_to_store(store)?;
             info!("SelfField: all layers persisted to store");
@@ -177,6 +182,11 @@ impl SelfField {
     /// Load all layer states from the SQLite store (no-op if no store).
     pub fn load_all(&mut self) -> Result<()> {
         if let Some(ref store) = self.store {
+            self.narrative.load_from_store(store)?;
+            self.attention.load_from_store(store)?;
+            self.care.load_from_store(store)?;
+            self.boundary.load_from_store(store)?;
+            self.identity.load_from_store(store)?;
             self.mutation.load_from_store(store)?;
             self.continuity.load_from_store(store)?;
             info!("SelfField: all layers loaded from store");
