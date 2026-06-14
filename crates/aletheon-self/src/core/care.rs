@@ -5,10 +5,12 @@
 //! score for a given action description.
 
 use aletheon_abi::Care;
+use anyhow::Result;
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 
 /// A weighted concern with associated keywords.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CareEntry {
     pub care: Care,
     /// Keywords that activate this care when found in an action description.
@@ -112,6 +114,80 @@ impl CareLayer {
     pub fn weight_of(&self, topic: &str) -> Option<f64> {
         self.cares.read().iter().find(|c| c.care.topic == topic).map(|c| c.care.weight)
     }
+
+    /// Adjust the weight of a care by a delta value.
+    ///
+    /// - Clamps the resulting weight to `[0.1, 1.0]`.
+    /// - The `"safety"` care can never go below `0.8`.
+    /// - Returns `Some((old_value, new_value))` if the care was found, `None` otherwise.
+    pub fn adjust_weight(&self, care_name: &str, delta: f64) -> Option<(f64, f64)> {
+        let mut cares = self.cares.write();
+        let entry = cares.iter_mut().find(|c| c.care.topic == care_name)?;
+        let old = entry.care.weight;
+        let mut new_val = old + delta;
+
+        // Safety floor
+        if care_name == "safety" {
+            new_val = new_val.max(0.8);
+        }
+
+        // General clamp
+        new_val = new_val.clamp(0.1, 1.0);
+
+        entry.care.weight = new_val;
+        Some((old, new_val))
+    }
+
+    /// Persist all cares to the SQLite store.
+    pub fn save_to_store(&self, store: &crate::core::store::SelfFieldStore) -> Result<()> {
+        let conn = store.conn();
+        let cares = self.cares.read();
+
+        conn.execute("DELETE FROM care_entries", [])?;
+
+        let mut stmt = conn.prepare(
+            "INSERT INTO care_entries (topic, weight, description, keywords) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for entry in cares.iter() {
+            let keywords_json = serde_json::to_string(&entry.keywords)?;
+            stmt.execute(rusqlite::params![
+                entry.care.topic,
+                entry.care.weight,
+                entry.care.description,
+                keywords_json,
+            ])?;
+        }
+        Ok(())
+    }
+
+    /// Load cares from the SQLite store, replacing current state.
+    pub fn load_from_store(&mut self, store: &crate::core::store::SelfFieldStore) -> Result<()> {
+        let conn = store.conn();
+        let mut stmt = conn.prepare(
+            "SELECT topic, weight, description, keywords FROM care_entries",
+        )?;
+
+        let loaded: Vec<CareEntry> = stmt
+            .query_map([], |row| {
+                let keywords_json: String = row.get(3)?;
+                let keywords: Vec<String> =
+                    serde_json::from_str(&keywords_json).unwrap_or_default();
+                Ok(CareEntry {
+                    care: Care {
+                        topic: row.get(0)?,
+                        weight: row.get(1)?,
+                        description: row.get(2)?,
+                    },
+                    keywords,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        if !loaded.is_empty() {
+            *self.cares.write() = loaded;
+        }
+        Ok(())
+    }
 }
 
 impl Default for CareLayer {
@@ -187,5 +263,44 @@ mod tests {
         let layer = CareLayer::new();
         assert_eq!(layer.weight_of("safety"), Some(1.0));
         assert_eq!(layer.weight_of("nonexistent"), None);
+    }
+
+    #[test]
+    fn adjust_weight_basic() {
+        let layer = CareLayer::new();
+        // efficiency starts at 0.5, adjust by +0.2
+        let result = layer.adjust_weight("efficiency", 0.2);
+        assert_eq!(result, Some((0.5, 0.7)));
+        assert_eq!(layer.weight_of("efficiency"), Some(0.7));
+    }
+
+    #[test]
+    fn adjust_weight_clamp_upper() {
+        let layer = CareLayer::new();
+        // user_intent starts at 0.8, adjust by +0.5 -> clamped to 1.0
+        let result = layer.adjust_weight("user_intent", 0.5);
+        assert_eq!(result, Some((0.8, 1.0)));
+    }
+
+    #[test]
+    fn adjust_weight_clamp_lower() {
+        let layer = CareLayer::new();
+        // learning starts at 0.3, adjust by -0.5 -> clamped to 0.1
+        let result = layer.adjust_weight("learning", -0.5);
+        assert_eq!(result, Some((0.3, 0.1)));
+    }
+
+    #[test]
+    fn adjust_weight_safety_floor() {
+        let layer = CareLayer::new();
+        // safety starts at 1.0, adjust by -0.5 -> safety floor is 0.8
+        let result = layer.adjust_weight("safety", -0.5);
+        assert_eq!(result, Some((1.0, 0.8)));
+    }
+
+    #[test]
+    fn adjust_weight_nonexistent() {
+        let layer = CareLayer::new();
+        assert!(layer.adjust_weight("nonexistent", 0.1).is_none());
     }
 }

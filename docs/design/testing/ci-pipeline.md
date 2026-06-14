@@ -12,8 +12,8 @@
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
 | CI Pipeline | 🟡 Design Ready | `.github/workflows/ci.yml` (待创建) | 设计完成，workflow 配置待落地 |
-| Unit test suite | ✅ Implemented | `crates/agent-core/src/` | 533 tests pass |
-| Mock infrastructure | ✅ Implemented | `crates/agent-core/src/testing/` | MockLlm, MockSandbox, MockMemory, MockPerception |
+| Unit test suite | ✅ Implemented | `crates/aletheon-*/src/` | 614 tests pass |
+| Mock infrastructure | ✅ Implemented | `crates/aletheon-*/src/testing/` | MockLlm, MockSandbox, MockMemory, MockPerception |
 
 ---
 
@@ -205,7 +205,7 @@ tag v0.x.x
 | Component | Status | Notes |
 |-----------|--------|-------|
 | CI Pipeline | 🟡 Design Ready | `.github/workflows/ci.yml` 待创建，设计阶段已完成 |
-| Unit test suite | ✅ Implemented | 533 tests pass in agent-core |
+| Unit test suite | ✅ Implemented | 614 tests pass across all crates |
 | Mock infrastructure | ✅ Implemented | MockLlm, MockSandbox, MockMemory, MockPerception |
 | Build/package | 未实现 | 无 .deb / .pkg 构建脚本 |
 | E2E tests | 未实现 | — |

@@ -17,9 +17,14 @@ use aletheon_body::r#impl::security::audit::AuditLogger;
 use aletheon_body::r#impl::security::runner::ToolRunnerWithGuard;
 use aletheon_body::r#impl::tools::Tool;
 use aletheon_body::r#impl::tools::ToolRegistry;
+use aletheon_brain::r#impl::llm::LlmProvider;
+use aletheon_brain::core::reflector::Reflector;
+use aletheon_brain::core::ExperienceSummarizer;
+use aletheon_abi::{Message, Role, ContentBlock, ReflectionTrigger, Subsystem, SubsystemContext};
+use aletheon_memory::episodic::EpisodicMemory;
 use serde_json::json;
 use tokio::sync::{mpsc, Mutex};
-use tracing::info;
+use tracing::{info, warn};
 
 use super::DaemonConfig;
 
@@ -39,14 +44,18 @@ struct SessionState {
 #[derive(Clone)]
 pub struct RequestHandler {
     state: Arc<Mutex<SessionState>>,
+    llm: Arc<dyn LlmProvider>,
     /// Retained for future use; currently unused after Engine removal.
     #[allow(dead_code)]
     agent_registry: Arc<AgentRegistry>,
+    reflector: Reflector,
+    episodic_memory: Arc<Mutex<EpisodicMemory>>,
 }
 
 impl RequestHandler {
     pub async fn new(config: &DaemonConfig, registry: &ProviderRegistry, _perception_rx: mpsc::Receiver<PerceptionInjection>) -> anyhow::Result<Self> {
-        let _llm = registry.resolve_and_create("")?;
+        let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create("")?);
+        info!(provider = llm.name(), "LLM provider initialized");
 
         // Create session and journal
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -114,12 +123,27 @@ impl RequestHandler {
 
         let runtime = AletheonRuntime::new(runtime_config);
 
+        // Create reflector and episodic memory for post-chat reflection
+        let reflector = Reflector::new();
+        let episodic_db_path = data_dir.join("episodic.db");
+        let mut episodic_memory = EpisodicMemory::new(episodic_db_path);
+        let ctx = SubsystemContext {
+            name: "episodic_memory".into(),
+            working_dir: data_dir.clone(),
+            config: serde_json::Value::Null,
+        };
+        episodic_memory.init(&ctx).await?;
+        let episodic_memory = Arc::new(Mutex::new(episodic_memory));
+
         Ok(Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
                 pending_input: None,
             })),
+            llm,
             agent_registry,
+            reflector,
+            episodic_memory,
         })
     }
 
@@ -130,16 +154,77 @@ impl RequestHandler {
         match method {
             "chat" => {
                 let message = request["params"]["message"].as_str().unwrap_or("");
-                let mut state = self.state.lock().await;
-                // Store input for processing; actual LLM invocation requires
-                // injecting review/think/execute callbacks which will be wired
-                // up in a follow-up migration.
-                state.pending_input = Some(message.to_string());
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": { "response": format!("[pending] {}", message) }
-                })
+                info!(message = %message, "Chat request received");
+
+                let messages = vec![
+                    Message {
+                        role: Role::System,
+                        content: vec![ContentBlock::Text {
+                            text: "You are Aletheon, an AI agent running on the user's machine. Be helpful, concise, and friendly.".to_string(),
+                        }],
+                    },
+                    Message::user(message),
+                ];
+
+                match self.llm.complete(&messages, &[]).await {
+                    Ok(response) => {
+                        let text = response.content.iter()
+                            .filter_map(|block| match block {
+                                ContentBlock::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("");
+                        info!(tokens = response.usage.output_tokens, "Chat response generated");
+
+                        // Trigger post-chat reflection
+                        let task_summary = &message[..message.len().min(100)];
+                        let entry = self.reflector.reflect_conversation(
+                            task_summary,
+                            ReflectionTrigger::TaskComplete,
+                            true,
+                            vec!["LLM responded successfully".to_string()],
+                            vec![],
+                            vec![],
+                        );
+                        if let Err(e) = self.episodic_memory.lock().await.store_reflection(&entry) {
+                            warn!(error = %e, "Failed to store chat reflection");
+                        } else {
+                            info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
+
+                            // Periodic evolution trigger: every 10 reflections, run ExperienceSummarizer
+                            let mem = self.episodic_memory.lock().await;
+                            if let Ok(count) = mem.reflection_count() {
+                                if count > 0 && count % 10 == 0 {
+                                    info!(count = count, "Running ExperienceSummarizer (periodic trigger)");
+                                    if let Ok(recent) = mem.recall_reflections(20) {
+                                        if let Some(evo_entry) = ExperienceSummarizer::summarize(&recent) {
+                                            if let Err(e) = mem.store_evolution_log(&evo_entry) {
+                                                warn!(error = %e, "Failed to store evolution log");
+                                            } else {
+                                                info!(id = %evo_entry.id, patterns = evo_entry.patterns_detected.len(), "Evolution log stored");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "result": { "response": text }
+                        })
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "LLM call failed");
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32000, "message": format!("LLM error: {}", e) }
+                        })
+                    }
+                }
             }
             "clear" => {
                 let mut state = self.state.lock().await;
@@ -149,6 +234,26 @@ impl RequestHandler {
                     "id": id,
                     "result": { "status": "ok" }
                 })
+            }
+            "reflect" => {
+                let reflections = self.episodic_memory.lock().await.recall_reflections(10);
+                match reflections {
+                    Ok(entries) => {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "result": { "reflections": entries }
+                        })
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to recall reflections");
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32001, "message": format!("Reflection recall error: {}", e) }
+                        })
+                    }
+                }
             }
             "status" => {
                 let state = self.state.lock().await;
@@ -160,6 +265,59 @@ impl RequestHandler {
                         "config": state.runtime.config().session_id,
                     }
                 })
+            }
+            "genome" => {
+                // Return the agent's genome (self-description).
+                // Currently returns a static initial genome; MetaRuntime integration pending.
+                let genome = json!({
+                    "topology": {
+                        "subsystems": [
+                            {"name": "self_field", "subsystem_type": "Policy", "version": "0.1.0", "dependencies": [], "config": {}},
+                            {"name": "brain_core", "subsystem_type": "Cognitive", "version": "0.1.0", "dependencies": ["self_field"], "config": {}},
+                            {"name": "body_runtime", "subsystem_type": "Execution", "version": "0.1.0", "dependencies": ["brain_core"], "config": {}},
+                            {"name": "memory", "subsystem_type": "Storage", "version": "0.1.0", "dependencies": [], "config": {}},
+                            {"name": "meta_runtime", "subsystem_type": "Evolution", "version": "0.1.0", "dependencies": ["memory"], "config": {}}
+                        ]
+                    },
+                    "identity": {
+                        "name": "aletheon",
+                        "description": "Autonomous cognitive agent",
+                        "self_model": "4-layer architecture: self-field -> brain-core -> body-runtime -> memory"
+                    },
+                    "boundary": {"rules": []},
+                    "care": {"priorities": [{"topic": "user_safety", "weight": 1.0}, {"topic": "self_coherence", "weight": 0.8}]},
+                    "memory": {"backends": ["episodic", "core"], "compaction_strategy": "age_based"},
+                    "mutation": {"allowed_targets": ["config", "prompts"], "require_sandbox": true, "require_self_field_approval": true},
+                    "lifecycle": {"auto_compact": true, "health_check_interval_secs": 300, "max_idle_time_secs": 3600}
+                });
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "genome": genome }
+                })
+            }
+            "evolution" => {
+                // Return recent evolution log entries from episodic memory.
+                match self.episodic_memory.lock().await.recall_evolution_logs(20) {
+                    Ok(entries) => {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "result": {
+                                "evolution": entries,
+                                "current_version": "0.1.0"
+                            }
+                        })
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to recall evolution logs");
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32002, "message": format!("Evolution recall error: {}", e) }
+                        })
+                    }
+                }
             }
             _ => json!({
                 "jsonrpc": "2.0",

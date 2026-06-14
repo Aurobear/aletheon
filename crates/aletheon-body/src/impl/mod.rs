@@ -12,3 +12,7 @@ pub mod platform;
 pub mod acix;
 
 pub mod ui;
+
+#[cfg(feature = "cli")]
+pub mod cli;
+

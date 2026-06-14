@@ -4,11 +4,13 @@
 //! the previous state in a history chain.
 
 use aletheon_abi::Identity;
+use anyhow::Result;
 use chrono::Utc;
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 
 /// Record of a past identity state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentityRecord {
     pub identity: Identity,
     pub mutated_at: chrono::DateTime<chrono::Utc>,
@@ -82,6 +84,109 @@ impl IdentityLayer {
     /// Number of mutations applied.
     pub fn mutation_count(&self) -> usize {
         self.history.read().len()
+    }
+
+    /// Persist current identity and history to the SQLite store.
+    pub fn save_to_store(&self, store: &crate::core::store::SelfFieldStore) -> Result<()> {
+        let conn = store.conn();
+        let current = self.current.read();
+        let history = self.history.read();
+
+        // Clear both tables
+        conn.execute("DELETE FROM identity_current", [])?;
+        conn.execute("DELETE FROM identity_history", [])?;
+
+        // Save current identity
+        conn.execute(
+            "INSERT INTO identity_current (name, description, version, created_at, last_mutation) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                current.name,
+                current.description,
+                current.version,
+                current.created_at.to_rfc3339(),
+                current.last_mutation.map(|t| t.to_rfc3339()),
+            ],
+        )?;
+
+        // Save history
+        let mut stmt = conn.prepare(
+            "INSERT INTO identity_history (name, description, version, created_at, last_mutation, mutated_at, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for record in history.iter() {
+            stmt.execute(rusqlite::params![
+                record.identity.name,
+                record.identity.description,
+                record.identity.version,
+                record.identity.created_at.to_rfc3339(),
+                record.identity.last_mutation.map(|t| t.to_rfc3339()),
+                record.mutated_at.to_rfc3339(),
+                record.reason,
+            ])?;
+        }
+        Ok(())
+    }
+
+    /// Load identity and history from the SQLite store, replacing current state.
+    pub fn load_from_store(&mut self, store: &crate::core::store::SelfFieldStore) -> Result<()> {
+        let conn = store.conn();
+
+        // Load current identity
+        {
+            let mut stmt = conn.prepare(
+                "SELECT name, description, version, created_at, last_mutation FROM identity_current LIMIT 1",
+            )?;
+            let mut rows = stmt.query([])?;
+            if let Some(row) = rows.next()? {
+                let created_at: String = row.get(3)?;
+                let last_mutation: Option<String> = row.get(4)?;
+                let identity = Identity {
+                    name: row.get(0)?,
+                    description: row.get(1)?,
+                    version: row.get(2)?,
+                    created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    last_mutation: last_mutation
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .map(|dt| dt.with_timezone(&Utc)),
+                };
+                *self.current.write() = identity;
+            }
+        }
+
+        // Load history
+        {
+            let mut stmt = conn.prepare(
+                "SELECT name, description, version, created_at, last_mutation, mutated_at, reason FROM identity_history ORDER BY id ASC",
+            )?;
+            let loaded: Vec<IdentityRecord> = stmt
+                .query_map([], |row| {
+                    let created_at: String = row.get(3)?;
+                    let last_mutation: Option<String> = row.get(4)?;
+                    let mutated_at: String = row.get(5)?;
+                    Ok(IdentityRecord {
+                        identity: Identity {
+                            name: row.get(0)?,
+                            description: row.get(1)?,
+                            version: row.get(2)?,
+                            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+                                .map(|dt| dt.with_timezone(&Utc))
+                                .unwrap_or_else(|_| Utc::now()),
+                            last_mutation: last_mutation
+                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                                .map(|dt| dt.with_timezone(&Utc)),
+                        },
+                        mutated_at: chrono::DateTime::parse_from_rfc3339(&mutated_at)
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .unwrap_or_else(|_| Utc::now()),
+                        reason: row.get(6)?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            *self.history.write() = loaded;
+        }
+        Ok(())
     }
 }
 

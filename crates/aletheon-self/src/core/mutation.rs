@@ -132,6 +132,91 @@ impl MutationLayer {
             false
         }
     }
+
+    /// Save all mutation records to the SQLite store.
+    pub fn save_to_store(&self, store: &crate::core::store::SelfFieldStore) -> anyhow::Result<()> {
+        let conn = store.conn();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS mutation_records (
+                target TEXT NOT NULL,
+                change TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                reversible INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                reviewed_at TEXT,
+                denial_reason TEXT
+            );"
+        )?;
+        conn.execute("DELETE FROM mutation_records", [])?;
+        let records = self.records.read();
+        for r in records.iter() {
+            conn.execute(
+                "INSERT INTO mutation_records (target, change, reason, reversible, status, reviewed_at, denial_reason)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    r.target,
+                    serde_json::to_string(&r.change).unwrap_or_default(),
+                    r.reason,
+                    r.reversible as i32,
+                    serde_json::to_string(&r.status).unwrap_or_default(),
+                    r.reviewed_at.map(|dt| dt.to_rfc3339()),
+                    r.denial_reason,
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Load mutation records from the SQLite store.
+    pub fn load_from_store(&mut self, store: &crate::core::store::SelfFieldStore) -> anyhow::Result<()> {
+        let conn = store.conn();
+        // Table may not exist yet on first load
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='mutation_records'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if !table_exists {
+            return Ok(());
+        }
+        let mut stmt = conn.prepare(
+            "SELECT target, change, reason, reversible, status, reviewed_at, denial_reason FROM mutation_records",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i32>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+            ))
+        })?;
+        let mut loaded = Vec::new();
+        for row in rows {
+            let (target, change_str, reason, reversible, status_str, reviewed_at, denial_reason) = row?;
+            let change: serde_json::Value = serde_json::from_str(&change_str).unwrap_or(serde_json::Value::Null);
+            let status: MutationStatus = serde_json::from_str(&status_str).unwrap_or(MutationStatus::Pending);
+            let reviewed_at_parsed = reviewed_at
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+            loaded.push(MutationRecord {
+                target,
+                change,
+                reason,
+                reversible: reversible != 0,
+                status,
+                reviewed_at: reviewed_at_parsed,
+                denial_reason,
+            });
+        }
+        *self.records.write() = loaded;
+        Ok(())
+    }
 }
 
 impl Default for MutationLayer {

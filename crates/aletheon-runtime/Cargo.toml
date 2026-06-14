@@ -7,6 +7,7 @@ edition = "2021"
 aletheon-abi = { path = "../aletheon-abi" }
 aletheon-brain = { path = "../aletheon-brain" }
 aletheon-body = { path = "../aletheon-body" }
+aletheon-memory = { path = "../aletheon-memory" }
 aletheon-self = { path = "../aletheon-self" }
 anyhow = "1"
 async-trait = "0.1"

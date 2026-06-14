@@ -1,6 +1,6 @@
 # 测试策略 (Test Strategy)
 
-> 测试分层、覆盖目标和验收标准。系统化单元测试已就位，533 tests pass，Mock 基础设施完整。
+> 测试分层、覆盖目标和验收标准。系统化单元测试已就位，614 tests pass，Mock 基础设施完整。
 
 **关联模块:** [Mock 策略](mock-strategy.md), [CI 流水线](ci-pipeline.md)
 **最后更新:** 2026-06-07 (B1-B5 merged)
@@ -11,8 +11,8 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| Unit tests | ✅ Implemented | `crates/agent-core/src/` | 533 tests pass |
-| Mock infrastructure | ✅ Implemented | `crates/agent-core/src/testing/` | MockLlm, MockSandbox, MockMemory, MockPerception |
+| Unit tests | ✅ Implemented | `crates/aletheon-*/src/` | 614 tests pass |
+| Mock infrastructure | ✅ Implemented | `crates/aletheon-*/src/testing/` | MockLlm, MockSandbox, MockMemory, MockPerception |
 | Integration tests | 🟡 Partial | inline `#[cfg(test)]` | 模块内集成测试存在 |
 | E2E tests | ⬜ Planned | — | 待 CI 落地后实现 |
 | Performance benchmarks | ⬜ Planned | — | criterion 未集成 |
@@ -177,8 +177,8 @@ fn test_crash_recovery_from_checkpoint() {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Unit tests | ✅ Implemented | 533 tests pass in agent-core |
-| Mock infrastructure | ✅ Implemented | MockLlm, MockSandbox, MockMemory, MockPerception in `crates/agent-core/src/testing/` |
+| Unit tests | ✅ Implemented | 614 tests pass across all crates |
+| Mock infrastructure | ✅ Implemented | MockLlm, MockSandbox, MockMemory, MockPerception in `crates/aletheon-*/src/testing/` |
 | Integration tests | 🟡 Partial | 模块内 `#[cfg(test)]` 集成测试存在，无 dedicated test suite |
 | E2E tests | 未实现 | — |
 | Performance benchmarks | 未实现 | criterion 未集成 |

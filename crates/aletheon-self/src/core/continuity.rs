@@ -6,9 +6,10 @@
 
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 
 /// A lineage record — a snapshot of identity at a point in time.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineageRecord {
     pub identity_name: String,
     pub identity_version: String,
@@ -75,6 +76,76 @@ impl ContinuityLayer {
     /// Whether there are no records.
     pub fn is_empty(&self) -> bool {
         self.records.read().is_empty()
+    }
+
+    /// Save all lineage records to the SQLite store.
+    pub fn save_to_store(&self, store: &crate::core::store::SelfFieldStore) -> anyhow::Result<()> {
+        let conn = store.conn();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS continuity_records (
+                identity_name TEXT NOT NULL,
+                identity_version TEXT NOT NULL,
+                recorded_at TEXT NOT NULL,
+                event TEXT NOT NULL
+            );"
+        )?;
+        conn.execute("DELETE FROM continuity_records", [])?;
+        let records = self.records.read();
+        for r in records.iter() {
+            conn.execute(
+                "INSERT INTO continuity_records (identity_name, identity_version, recorded_at, event)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    r.identity_name,
+                    r.identity_version,
+                    r.recorded_at.to_rfc3339(),
+                    r.event,
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Load lineage records from the SQLite store.
+    pub fn load_from_store(&mut self, store: &crate::core::store::SelfFieldStore) -> anyhow::Result<()> {
+        let conn = store.conn();
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='continuity_records'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if !table_exists {
+            return Ok(());
+        }
+        let mut stmt = conn.prepare(
+            "SELECT identity_name, identity_version, recorded_at, event FROM continuity_records",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut loaded = Vec::new();
+        for row in rows {
+            let (identity_name, identity_version, recorded_at_str, event) = row?;
+            let recorded_at = chrono::DateTime::parse_from_rfc3339(&recorded_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            loaded.push(LineageRecord {
+                identity_name,
+                identity_version,
+                recorded_at,
+                event,
+            });
+        }
+        *self.records.write() = loaded;
+        Ok(())
     }
 }
 

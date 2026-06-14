@@ -12,6 +12,7 @@ pub mod continuity;
 pub mod identity;
 pub mod mutation;
 pub mod narrative;
+pub mod store;
 
 use aletheon_abi::{
     Care, Conflict, Context, Identity, Intent, MutationIntent,
@@ -35,6 +36,8 @@ use crate::core::mutation::MutationLayer;
 use crate::core::narrative::NarrativeLayer;
 use crate::bridge::policy::PolicyBridge;
 
+use crate::core::store::SelfFieldStore;
+
 /// Configuration for SelfField construction.
 pub struct SelfFieldConfig {
     pub agent_name: String,
@@ -44,6 +47,8 @@ pub struct SelfFieldConfig {
     pub narrative_capacity: usize,
     pub attention_decay_rate: f64,
     pub continuity_max_gap: Duration,
+    /// Optional path for SQLite persistence. If None, no persistence is used.
+    pub db_path: Option<std::path::PathBuf>,
 }
 
 impl Default for SelfFieldConfig {
@@ -56,6 +61,7 @@ impl Default for SelfFieldConfig {
             narrative_capacity: 1000,
             attention_decay_rate: 0.001,
             continuity_max_gap: Duration::hours(24),
+            db_path: None,
         }
     }
 }
@@ -71,6 +77,8 @@ pub struct SelfField {
     continuity: ContinuityLayer,
     mutation: MutationLayer,
     initialized: bool,
+    /// Optional SQLite store for persistence.
+    store: Option<SelfFieldStore>,
     // Bridges to external subsystems
     policy_bridge: PolicyBridge,
     loop_bridge: LoopBridge,
@@ -95,6 +103,10 @@ impl SelfField {
         // Record initial identity in continuity
         continuity.record(&config.agent_name, &config.agent_version, "initialized");
 
+        let store = config.db_path.and_then(|path| {
+            SelfFieldStore::new(path).ok()
+        });
+
         Self {
             boundary,
             identity,
@@ -105,6 +117,7 @@ impl SelfField {
             continuity,
             mutation: MutationLayer::new(),
             initialized: false,
+            store,
             policy_bridge: PolicyBridge::new(),
             loop_bridge: LoopBridge::new(),
             hook_bridge: HookBridge::new(),
@@ -150,6 +163,26 @@ impl SelfField {
     pub fn end_turn(&self, turn_id: &str) {
         self.loop_bridge.end_turn(turn_id);
     }
+
+    /// Persist all layer states to the SQLite store (no-op if no store).
+    pub fn save_all(&self) -> Result<()> {
+        if let Some(ref store) = self.store {
+            self.mutation.save_to_store(store)?;
+            self.continuity.save_to_store(store)?;
+            info!("SelfField: all layers persisted to store");
+        }
+        Ok(())
+    }
+
+    /// Load all layer states from the SQLite store (no-op if no store).
+    pub fn load_all(&mut self) -> Result<()> {
+        if let Some(ref store) = self.store {
+            self.mutation.load_from_store(store)?;
+            self.continuity.load_from_store(store)?;
+            info!("SelfField: all layers loaded from store");
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -160,6 +193,7 @@ impl Subsystem for SelfField {
 
     async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
         info!("SelfField initializing");
+        self.load_all()?;
         self.narrative.narrate("init", "SelfField subsystem initialized");
         self.initialized = true;
         Ok(())
@@ -177,6 +211,7 @@ impl Subsystem for SelfField {
     async fn shutdown(&mut self) -> Result<()> {
         info!("SelfField shutting down");
         self.narrative.narrate("shutdown", "SelfField subsystem shutting down");
+        self.save_all()?;
         self.initialized = false;
         Ok(())
     }
@@ -361,6 +396,7 @@ mod tests {
             action: crate::core::boundary::BoundaryAction::Deny,
             risk_level: RiskLevel::Critical,
             description: "no purge".to_string(),
+            immutable: false,
         });
         let sf = SelfField::new(config);
         let intent = make_intent("purge data", "purge all data");
@@ -378,6 +414,7 @@ mod tests {
             action: crate::core::boundary::BoundaryAction::Sandbox,
             risk_level: RiskLevel::High,
             description: "sandbox deploys".to_string(),
+            immutable: false,
         });
         let sf = SelfField::new(config);
         let intent = make_intent("deploy.prod", "deploy to production");
@@ -395,6 +432,7 @@ mod tests {
             action: crate::core::boundary::BoundaryAction::RequireConfirmation,
             risk_level: RiskLevel::Medium,
             description: "confirm writes".to_string(),
+            immutable: false,
         });
         let sf = SelfField::new(config);
         let intent = make_intent("write.config", "write config file");

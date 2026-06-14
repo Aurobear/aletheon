@@ -2,7 +2,7 @@
 
 > 统一 6 Phase 定义，每个阶段独立交付价值。
 >
-> **Phase 1-4 已全部实现，Phase 5 已实质完成（eBPF mock、向量记忆、FUSE real mount、Split Sandbox、Container Sandbox、Integrity Monitor），Phase 6 部分实现（自动化系统已实现，多设备/内核 IPC 延后）。B1-B5 实现批次 + 设计改进 PR 均已合并。** 下方为各 Phase 的设计规格，实现代码在 `crates/agent-core/src/`。
+> **Phase 1-4 已全部实现，Phase 5 已实质完成（eBPF mock、向量记忆、FUSE real mount、Split Sandbox、Container Sandbox、Integrity Monitor），Phase 6 部分实现（自动化系统已实现，多设备/内核 IPC 延后）。B1-B5 实现批次 + 设计改进 PR 均已合并。** 下方为各 Phase 的设计规格，实现代码在 `crates/aletheon-*/src/`。
 
 ### Phase 1: 最小可用 Agent (2-3 周)
 
@@ -14,7 +14,7 @@
 目标: 能在 Arch Linux 上跑起来的 agentd
 
 ├── 项目骨架搭建
-│   ├── Cargo workspace (agent-core, agent-cli, agentd)
+│   ├── Cargo workspace (aletheon-abi, aletheon-comm, aletheon-memory, aletheon-body, aletheon-self, aletheon-brain, aletheon-runtime, aletheon-meta, aletheond, aletheon-cli)
 │   ├── 目录结构
 │   └── CI/CD 基础
 │

@@ -51,6 +51,12 @@ a11y = ["atspi"]
 sandbox-primitives = ["nix"]
 ocr = []
 ocr-tesseract = ["ocr", "tesseract"]
+cli = []
+
+[[bin]]
+name = "aletheon-cli"
+path = "src/bin/cli.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 tokio-test = "0.4"

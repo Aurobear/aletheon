@@ -4,9 +4,12 @@
 //! decision and why it was made. Uses a fixed-capacity ring buffer so old
 //! entries are evicted when the buffer is full.
 
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+
+use crate::core::store::SelfFieldStore;
 
 /// A single narrative entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +95,75 @@ impl NarrativeLayer {
     pub fn capacity(&self) -> usize {
         self.capacity
     }
+
+    /// Persist all current buffer entries to the store (replaces existing rows).
+    pub fn save_to_store(&self, store: &SelfFieldStore) -> Result<()> {
+        let conn = store.conn();
+        conn.execute("DELETE FROM narrative_entries", [])
+            .context("Failed to clear narrative_entries")?;
+
+        let buffer = self.buffer.read();
+        let mut stmt = conn
+            .prepare(
+                "INSERT INTO narrative_entries (event, reason, action, verdict, timestamp)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .context("Failed to prepare narrative insert")?;
+        for entry in buffer.iter() {
+            stmt.execute(rusqlite::params![
+                entry.event,
+                entry.reason,
+                entry.action,
+                entry.verdict,
+                entry.timestamp.to_rfc3339(),
+            ])
+            .context("Failed to insert narrative entry")?;
+        }
+        Ok(())
+    }
+
+    /// Load entries from the store into the buffer, replacing current contents.
+    pub fn load_from_store(&mut self, store: &SelfFieldStore) -> Result<()> {
+        let conn = store.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT event, reason, action, verdict, timestamp
+                 FROM narrative_entries ORDER BY id ASC",
+            )
+            .context("Failed to prepare narrative select")?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let ts_str: String = row.get(4)?;
+                Ok(NarrativeEntry {
+                    event: row.get(0)?,
+                    reason: row.get(1)?,
+                    action: row.get(2)?,
+                    verdict: row.get(3)?,
+                    timestamp: DateTime::parse_from_rfc3339(&ts_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            })
+            .context("Failed to query narrative_entries")?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(row.context("Failed to read narrative row")?);
+        }
+
+        // Trim to capacity if needed
+        let start = if entries.len() > self.capacity {
+            entries.len() - self.capacity
+        } else {
+            0
+        };
+        let entries: Vec<_> = entries[start..].to_vec();
+
+        let mut buffer = self.buffer.write();
+        *buffer = entries;
+        Ok(())
+    }
 }
 
 impl Default for NarrativeLayer {
@@ -145,5 +217,48 @@ mod tests {
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].event, "e7");
         assert_eq!(entries[2].event, "e9");
+    }
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        use tempfile::NamedTempFile;
+
+        let tmp = NamedTempFile::new().unwrap();
+        let store = crate::core::store::SelfFieldStore::new(tmp.path().to_path_buf()).unwrap();
+
+        let layer = NarrativeLayer::new(100);
+        layer.narrate("evt1", "reason1");
+        layer.narrate("evt2", "reason2");
+
+        layer.save_to_store(&store).unwrap();
+
+        let mut loaded = NarrativeLayer::new(100);
+        loaded.load_from_store(&store).unwrap();
+
+        assert_eq!(loaded.len(), 2);
+        let entries = loaded.recent(10);
+        assert_eq!(entries[0].event, "evt1");
+        assert_eq!(entries[1].reason, "reason2");
+    }
+
+    #[test]
+    fn save_clears_previous() {
+        use tempfile::NamedTempFile;
+
+        let tmp = NamedTempFile::new().unwrap();
+        let store = crate::core::store::SelfFieldStore::new(tmp.path().to_path_buf()).unwrap();
+
+        let layer = NarrativeLayer::new(100);
+        layer.narrate("old", "old_reason");
+        layer.save_to_store(&store).unwrap();
+
+        let layer2 = NarrativeLayer::new(100);
+        layer2.narrate("new", "new_reason");
+        layer2.save_to_store(&store).unwrap();
+
+        let mut loaded = NarrativeLayer::new(100);
+        loaded.load_from_store(&store).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded.recent(10)[0].event, "new");
     }
 }

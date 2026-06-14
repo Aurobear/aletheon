@@ -3,12 +3,19 @@
 //! Analyzes execution results to determine what worked, what failed,
 //! and what should be improved. Produces Reflection structs that feed
 //! into the Learner for rule extraction.
+//!
+//! Also produces structured ReflectionEntry for persistent self-evolution.
 
-use aletheon_abi::brain::{ExecutionResult, Reflection};
+use aletheon_abi::brain::{
+    ExecutionResult, Reflection, ReflectionEntry, ReflectionOutcome, ReflectionTrigger,
+};
+use chrono::Utc;
+use uuid::Uuid;
 
 /// The reflector component.
 ///
 /// Performs post-execution analysis to extract lessons from outcomes.
+#[derive(Clone)]
 pub struct Reflector;
 
 impl Reflector {
@@ -92,6 +99,78 @@ impl Reflector {
         };
 
         (completion_ratio * 0.8 + success_bonus - time_penalty).clamp(0.0, 1.0)
+    }
+
+    /// Produce a structured ReflectionEntry for persistent storage.
+    pub fn reflect_entry(
+        &self,
+        task_summary: &str,
+        trigger: ReflectionTrigger,
+        execution: &ExecutionResult,
+    ) -> ReflectionEntry {
+        let reflection = self.reflect(execution);
+
+        let outcome = if execution.success {
+            if execution.steps_completed < execution.steps_total {
+                ReflectionOutcome::Partial
+            } else {
+                ReflectionOutcome::Success
+            }
+        } else {
+            ReflectionOutcome::Failure
+        };
+
+        // Derive learned lessons from what_to_improve
+        let learned: Vec<String> = reflection
+            .what_to_improve
+            .iter()
+            .map(|s| s.clone())
+            .collect();
+
+        ReflectionEntry {
+            id: format!("reflect-{}", Uuid::new_v4()),
+            timestamp: Utc::now(),
+            trigger,
+            task_summary: task_summary.to_string(),
+            outcome,
+            what_worked: reflection.what_worked,
+            what_failed: reflection.what_failed,
+            learned,
+            behavior_changes: vec![], // Populated by ExperienceSummarizer in Phase 2
+            confidence: reflection.confidence,
+        }
+    }
+
+    /// Produce a ReflectionEntry from a conversational task (no ExecutionResult).
+    ///
+    /// Used for chat-based tasks where we reflect on the conversation itself.
+    pub fn reflect_conversation(
+        &self,
+        task_summary: &str,
+        trigger: ReflectionTrigger,
+        success: bool,
+        what_worked: Vec<String>,
+        what_failed: Vec<String>,
+        learned: Vec<String>,
+    ) -> ReflectionEntry {
+        let confidence = if success { 0.8 } else { 0.3 };
+
+        ReflectionEntry {
+            id: format!("reflect-{}", Uuid::new_v4()),
+            timestamp: Utc::now(),
+            trigger,
+            task_summary: task_summary.to_string(),
+            outcome: if success {
+                ReflectionOutcome::Success
+            } else {
+                ReflectionOutcome::Failure
+            },
+            what_worked,
+            what_failed,
+            learned,
+            behavior_changes: vec![],
+            confidence,
+        }
     }
 }
 
@@ -179,5 +258,135 @@ mod tests {
         // Full failure
         let r2 = reflector.reflect(&make_execution(false, 0, 5));
         assert!(r2.confidence >= 0.0);
+    }
+
+    // --- reflect_entry() tests ---
+
+    #[test]
+    fn reflect_entry_success_outcome() {
+        let reflector = Reflector::new();
+        let entry = reflector.reflect_entry(
+            "deploy service",
+            ReflectionTrigger::TaskComplete,
+            &make_execution(true, 3, 3),
+        );
+        assert_eq!(entry.outcome, ReflectionOutcome::Success);
+        assert_eq!(entry.trigger, ReflectionTrigger::TaskComplete);
+        assert_eq!(entry.task_summary, "deploy service");
+        assert!(entry.id.starts_with("reflect-"));
+        assert!(!entry.what_worked.is_empty());
+        assert!(entry.what_failed.is_empty());
+        assert!(entry.confidence > 0.8);
+    }
+
+    #[test]
+    fn reflect_entry_failure_outcome() {
+        let reflector = Reflector::new();
+        let entry = reflector.reflect_entry(
+            "run tests",
+            ReflectionTrigger::TaskComplete,
+            &make_execution(false, 1, 3),
+        );
+        assert_eq!(entry.outcome, ReflectionOutcome::Failure);
+        assert!(!entry.what_failed.is_empty());
+        assert!(!entry.learned.is_empty());
+        assert!(entry.confidence < 0.5);
+    }
+
+    #[test]
+    fn reflect_entry_partial_outcome() {
+        let reflector = Reflector::new();
+        let entry = reflector.reflect_entry(
+            "partial task",
+            ReflectionTrigger::Impasse,
+            &make_execution(true, 2, 5),
+        );
+        assert_eq!(entry.outcome, ReflectionOutcome::Partial);
+        assert_eq!(entry.trigger, ReflectionTrigger::Impasse);
+        assert!(entry.learned.iter().any(|l| l.contains("partial")));
+    }
+
+    #[test]
+    fn reflect_entry_behavior_changes_empty() {
+        let reflector = Reflector::new();
+        let entry = reflector.reflect_entry(
+            "any task",
+            ReflectionTrigger::Manual,
+            &make_execution(true, 1, 1),
+        );
+        assert!(entry.behavior_changes.is_empty());
+    }
+
+    // --- reflect_conversation() tests ---
+
+    #[test]
+    fn reflect_conversation_success() {
+        let reflector = Reflector::new();
+        let entry = reflector.reflect_conversation(
+            "explain architecture",
+            ReflectionTrigger::Manual,
+            true,
+            vec!["clear explanation".to_string()],
+            vec![],
+            vec!["user prefers diagrams".to_string()],
+        );
+        assert_eq!(entry.outcome, ReflectionOutcome::Success);
+        assert_eq!(entry.trigger, ReflectionTrigger::Manual);
+        assert_eq!(entry.task_summary, "explain architecture");
+        assert_eq!(entry.what_worked, vec!["clear explanation"]);
+        assert!(entry.what_failed.is_empty());
+        assert_eq!(entry.learned, vec!["user prefers diagrams"]);
+        assert!(entry.confidence > 0.7);
+    }
+
+    #[test]
+    fn reflect_conversation_failure() {
+        let reflector = Reflector::new();
+        let entry = reflector.reflect_conversation(
+            "debug crash",
+            ReflectionTrigger::Impasse,
+            false,
+            vec!["identified stack trace".to_string()],
+            vec!["could not reproduce".to_string()],
+            vec!["need more logs".to_string()],
+        );
+        assert_eq!(entry.outcome, ReflectionOutcome::Failure);
+        assert_eq!(entry.trigger, ReflectionTrigger::Impasse);
+        assert_eq!(entry.what_failed, vec!["could not reproduce"]);
+        assert_eq!(entry.learned, vec!["need more logs"]);
+        assert!(entry.confidence < 0.5);
+    }
+
+    #[test]
+    fn reflect_conversation_id_unique() {
+        let reflector = Reflector::new();
+        let e1 = reflector.reflect_conversation(
+            "task a",
+            ReflectionTrigger::Manual,
+            true,
+            vec![], vec![], vec![],
+        );
+        let e2 = reflector.reflect_conversation(
+            "task b",
+            ReflectionTrigger::Manual,
+            false,
+            vec![], vec![], vec![],
+        );
+        assert_ne!(e1.id, e2.id);
+    }
+
+    #[test]
+    fn reflect_conversation_empty_lists() {
+        let reflector = Reflector::new();
+        let entry = reflector.reflect_conversation(
+            "noop",
+            ReflectionTrigger::TaskComplete,
+            true,
+            vec![], vec![], vec![],
+        );
+        assert!(entry.what_worked.is_empty());
+        assert!(entry.what_failed.is_empty());
+        assert!(entry.learned.is_empty());
+        assert!(entry.behavior_changes.is_empty());
     }
 }

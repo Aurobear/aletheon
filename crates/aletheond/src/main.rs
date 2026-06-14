@@ -5,7 +5,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "agentd", about = "OS-Agent daemon")]
+#[command(name = "aletheond", about = "Aletheon daemon")]
 struct Args {
     /// Path to config file
     #[arg(short, long)]
@@ -16,7 +16,7 @@ struct Args {
     env: Option<PathBuf>,
 
     /// Socket path
-    #[arg(short, long, default_value = "/run/agentd/agentd.sock")]
+    #[arg(short, long, default_value = "/run/aletheond/aletheond.sock")]
     socket: PathBuf,
 }
 
@@ -24,7 +24,7 @@ struct Args {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("agentd=info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("aletheond=info")),
         )
         .init();
 

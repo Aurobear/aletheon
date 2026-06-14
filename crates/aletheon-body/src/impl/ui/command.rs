@@ -8,6 +8,10 @@ pub enum BuiltinCommand {
     Status,
     Quit,
     Input,
+    Copy,
+    Reflect,
+    Evolution,
+    Genome,
     Computer { args: String },
 }
 
@@ -35,6 +39,10 @@ pub fn parse_command(input: &str) -> Option<CommandType> {
         "status" => Some(CommandType::Builtin(BuiltinCommand::Status)),
         "quit" | "exit" => Some(CommandType::Builtin(BuiltinCommand::Quit)),
         "input" | "i" => Some(CommandType::Builtin(BuiltinCommand::Input)),
+        "copy" | "cp" => Some(CommandType::Builtin(BuiltinCommand::Copy)),
+        "reflect" | "r" => Some(CommandType::Builtin(BuiltinCommand::Reflect)),
+        "evolution" | "evo" => Some(CommandType::Builtin(BuiltinCommand::Evolution)),
+        "genome" | "gene" => Some(CommandType::Builtin(BuiltinCommand::Genome)),
         "computer" => Some(CommandType::Builtin(BuiltinCommand::Computer {
             args: args.to_string(),
         })),
@@ -94,5 +102,41 @@ mod tests {
     fn test_parse_quit_alias() {
         let result = parse_command("/exit").unwrap();
         assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Quit)));
+    }
+
+    #[test]
+    fn test_parse_reflect() {
+        let result = parse_command("/reflect").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Reflect)));
+    }
+
+    #[test]
+    fn test_parse_reflect_alias() {
+        let result = parse_command("/r").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Reflect)));
+    }
+
+    #[test]
+    fn test_parse_evolution() {
+        let result = parse_command("/evolution").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Evolution)));
+    }
+
+    #[test]
+    fn test_parse_evolution_alias() {
+        let result = parse_command("/evo").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Evolution)));
+    }
+
+    #[test]
+    fn test_parse_genome() {
+        let result = parse_command("/genome").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Genome)));
+    }
+
+    #[test]
+    fn test_parse_genome_alias() {
+        let result = parse_command("/gene").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Genome)));
     }
 }

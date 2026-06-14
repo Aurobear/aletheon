@@ -110,10 +110,6 @@ version = "0.1.0"
 dependencies = [
  "aletheon-body",
  "anyhow",
- "atty",
- "clap",
- "serde",
- "serde_json",
  "tokio",
 ]
 
@@ -159,10 +155,12 @@ dependencies = [
  "aletheon-abi",
  "anyhow",
  "async-trait",
+ "chrono",
  "serde",
  "serde_json",
  "serde_yaml",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -172,6 +170,7 @@ dependencies = [
  "aletheon-abi",
  "aletheon-body",
  "aletheon-brain",
+ "aletheon-memory",
  "aletheon-self",
  "anyhow",
  "async-trait",
@@ -211,6 +210,7 @@ dependencies = [
  "libc",
  "parking_lot",
  "regex",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
