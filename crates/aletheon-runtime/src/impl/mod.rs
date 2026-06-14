@@ -9,3 +9,4 @@ pub mod memory;
 pub mod daemon;
 pub mod skills;
 pub mod hooks;
+pub mod kernel;
