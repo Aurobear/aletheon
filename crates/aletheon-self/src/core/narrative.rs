@@ -4,6 +4,8 @@
 //! decision and why it was made. Uses a fixed-capacity ring buffer so old
 //! entries are evicted when the buffer is full.
 
+use std::collections::VecDeque;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -23,7 +25,7 @@ pub struct NarrativeEntry {
 
 /// NarrativeLayer — in-memory ring buffer of decision records.
 pub struct NarrativeLayer {
-    buffer: RwLock<Vec<NarrativeEntry>>,
+    buffer: RwLock<VecDeque<NarrativeEntry>>,
     capacity: usize,
 }
 
@@ -31,7 +33,7 @@ impl NarrativeLayer {
     /// Create with a given capacity (default 1000).
     pub fn new(capacity: usize) -> Self {
         Self {
-            buffer: RwLock::new(Vec::with_capacity(capacity)),
+            buffer: RwLock::new(VecDeque::with_capacity(capacity)),
             capacity,
         }
     }
@@ -53,9 +55,9 @@ impl NarrativeLayer {
         };
         let mut buffer = self.buffer.write();
         if buffer.len() >= self.capacity {
-            buffer.remove(0);
+            buffer.pop_front();
         }
-        buffer.push(entry);
+        buffer.push_back(entry);
     }
 
     /// Record a narrative event (for SelfFieldOps::narrate).
@@ -69,16 +71,16 @@ impl NarrativeLayer {
         };
         let mut buffer = self.buffer.write();
         if buffer.len() >= self.capacity {
-            buffer.remove(0);
+            buffer.pop_front();
         }
-        buffer.push(entry);
+        buffer.push_back(entry);
     }
 
     /// Get the N most recent entries (newest last).
     pub fn recent(&self, n: usize) -> Vec<NarrativeEntry> {
         let buffer = self.buffer.read();
         let skip = if n >= buffer.len() { 0 } else { buffer.len() - n };
-        buffer[skip..].to_vec()
+        buffer.iter().skip(skip).cloned().collect()
     }
 
     /// Total entries currently stored.
@@ -161,7 +163,7 @@ impl NarrativeLayer {
         let entries: Vec<_> = entries[start..].to_vec();
 
         let mut buffer = self.buffer.write();
-        *buffer = entries;
+        *buffer = entries.into();
         Ok(())
     }
 }
