@@ -1,3 +1,6 @@
+pub mod budget;
+pub use budget::TokenBudget;
+
 use anyhow::Result;
 use aletheon_abi::runtime::{AgentInfo, AgentStatus, ScheduledTask};
 use aletheon_abi::subsystem::{Subsystem, SubsystemHealth, SubsystemContext, Version};
