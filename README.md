@@ -1,11 +1,16 @@
 # Aletheon: A Persistent Self-Evolving Agent Runtime
 
+[![CI](https://github.com/Aurobear/aletheon/actions/workflows/ci.yml/badge.svg)](https://github.com/Aurobear/aletheon/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 > An Agent that is not merely executed, but continuously exists.
 > Deep integration with operating system kernels and system services.
 
 **Platform:** Linux (Arch Linux primary) / Android / Embedded
 **Created:** 2026-06-06
 **Author:** aurobear
+
+**[Quick Start](docs/guide/getting-started.md)** | **[Contributing](CONTRIBUTING.md)** | **[Demo](examples/self-evolution-demo/README.md)**
 
 ---
 

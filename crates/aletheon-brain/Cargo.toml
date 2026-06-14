@@ -3,7 +3,7 @@ name = "aletheon-brain"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "BrainCore — the cognitive computation engine for Aletheon. Handles 'how do I?' reasoning, planning, critique, reflection, and learning."
+description = "Aletheon Brain core - reasoning, planning, and reflection"
 
 [dependencies]
 aletheon-abi = { path = "../aletheon-abi" }

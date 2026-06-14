@@ -3,7 +3,7 @@ name = "aletheon-self"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "SelfField — the policy engine that reviews intents, enforces boundaries, resolves conflicts, and maintains identity continuity"
+description = "Aletheon Self-evolution - reflection, behavior evolution, and genome generation"
 
 [dependencies]
 aletheon-abi = { path = "../aletheon-abi" }

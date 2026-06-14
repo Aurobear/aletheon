@@ -765,16 +765,16 @@ pub fn default_aci() -> Arc<Aci> {
 
 /// Register all ACIX tools into the given `ToolRegistry` using a caller-provided `Aci`.
 pub fn register_acix_tools_with(registry: &mut super::ToolRegistry, aci: Arc<Aci>) {
-    registry.register(Arc::new(ScreenshotTool { aci: Arc::clone(&aci) }));
-    registry.register(Arc::new(TreeTool { aci: Arc::clone(&aci) }));
-    registry.register(Arc::new(ClickTool { aci: Arc::clone(&aci) }));
-    registry.register(Arc::new(TypeTool { aci: Arc::clone(&aci) }));
-    registry.register(Arc::new(FindTool { aci: Arc::clone(&aci) }));
-    registry.register(Arc::new(ObserveTool { aci: Arc::clone(&aci) }));
-    registry.register(Arc::new(DragTool { aci: Arc::clone(&aci) }));
-    registry.register(Arc::new(HotkeyTool { aci: Arc::clone(&aci) }));
-    registry.register(Arc::new(ScrollTool { aci: Arc::clone(&aci) }));
-    registry.register(Arc::new(RightClickTool { aci }));
+    let _ = registry.register(Arc::new(ScreenshotTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(TreeTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(ClickTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(TypeTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(FindTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(ObserveTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(DragTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(HotkeyTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(ScrollTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(RightClickTool { aci }));
 }
 
 /// Register all ACIX tools into the given `ToolRegistry` with mock drivers.
@@ -793,5 +793,5 @@ pub fn register_acix_ground_tool(
     aci: Arc<Aci>,
     grounding: Arc<dyn GroundingProvider>,
 ) {
-    registry.register(Arc::new(AcixGroundTool::new(aci, grounding)));
+    let _ = registry.register(Arc::new(AcixGroundTool::new(aci, grounding)));
 }

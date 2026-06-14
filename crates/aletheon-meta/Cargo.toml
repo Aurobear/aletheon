@@ -2,6 +2,8 @@
 name = "aletheon-meta"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "Aletheon Meta runtime - self-update and morphological evolution"
 
 [dependencies]
 aletheon-abi = { path = "../aletheon-abi" }

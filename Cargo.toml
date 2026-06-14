@@ -12,12 +12,13 @@ members = [
     "crates/aletheon-body",
     "crates/aletheon-runtime",
     "crates/aletheon-meta",
+    "examples/basic-agent",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
