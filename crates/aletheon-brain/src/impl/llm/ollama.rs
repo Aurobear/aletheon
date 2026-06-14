@@ -385,9 +385,11 @@ impl LlmProvider for OllamaProvider {
                                         }
                                     }
 
-                                    // Handle tool calls
+                                    // Handle tool calls — Ollama sends full arguments
+                                    // in each chunk, so we process the first tool call
+                                    // and return immediately.
                                     if let Some(tool_calls) = msg.tool_calls {
-                                        for tc in tool_calls {
+                                        if let Some(tc) = tool_calls.into_iter().next() {
                                             let idx = state.tool_state.next_index();
                                             let id = format!("ollama_tc_{}", uuid::Uuid::new_v4());
                                             state.tool_state.start_call(
@@ -395,9 +397,6 @@ impl LlmProvider for OllamaProvider {
                                                 id.clone(),
                                                 tc.function.name.clone(),
                                             );
-                                            // Ollama sends the full arguments in each chunk
-                                            // (not incremental like OpenAI), so we can
-                                            // immediately complete the tool call.
                                             state.tool_state.set_args(
                                                 idx,
                                                 serde_json::to_string(&tc.function.arguments)
