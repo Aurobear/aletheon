@@ -34,18 +34,13 @@ impl std::fmt::Display for Version {
 }
 
 /// Initialization phase — like Linux kernel's `early_initcall` / `subsys_initcall`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InitPhase {
     Core = 0,
+    #[default]
     Subsystem = 1,
     Service = 2,
     Late = 3,
-}
-
-impl Default for InitPhase {
-    fn default() -> Self {
-        Self::Subsystem
-    }
 }
 
 /// Subsystem health status.

@@ -426,22 +426,17 @@ pub fn handle_tool_error(error: &AgentError, tool_name: &str, attempt: u32) -> T
                 message: error.message.clone(),
             },
         },
-        ErrorCategory::Llm { kind, .. } => match kind {
-            LlmErrorKind::Timeout | LlmErrorKind::RateLimited => {
-                if attempt < 3 {
-                    ToolErrorAction::Retry {
-                        delay: llm_backoff().delay_for_attempt(attempt),
-                    }
-                } else {
-                    ToolErrorAction::ReportToUser {
-                        message: format!("LLM unavailable after {} retries", attempt),
-                    }
+        ErrorCategory::Llm { kind: LlmErrorKind::Timeout | LlmErrorKind::RateLimited, .. } => {
+            if attempt < 3 {
+                ToolErrorAction::Retry {
+                    delay: llm_backoff().delay_for_attempt(attempt),
+                }
+            } else {
+                ToolErrorAction::ReportToUser {
+                    message: format!("LLM unavailable after {} retries", attempt),
                 }
             }
-            _ => ToolErrorAction::ReportToUser {
-                message: error.message.clone(),
-            },
-        },
+        }
         _ => ToolErrorAction::ReportToUser {
             message: error.message.clone(),
         },
