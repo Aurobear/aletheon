@@ -1,0 +1,23 @@
+[agent]
+default_model = "claude-sonnet-4-20250514"
+max_iterations = 50
+
+[sandbox]
+preference = "auto"
+# bubblewrap_path = "/usr/bin/bwrap"
+
+# [[mcp_servers]]
+# name = "filesystem"
+# transport = "stdio"
+# command = "mcp-fs"
+
+[plugins]
+directories = []
+
+[memory]
+backend = "sqlite"
+data_dir = "~/.aletheon/memory"
+
+[daemon]
+socket_path = "/run/aletheon/aletheon.sock"
+log_level = "info"

@@ -1,0 +1,373 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Aletheon setup script
+# Usage: ./setup.sh [--dev]
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log()   { echo -e "${GREEN}[aletheon]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
+err()   { echo -e "${RED}[error]${NC} $*" >&2; }
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+DEV_MODE=false
+[[ "${1:-}" == "--dev" ]] && DEV_MODE=true
+
+if $DEV_MODE; then
+    PROFILE="debug"
+    CARGO_FLAGS=""
+else
+    PROFILE="release"
+    CARGO_FLAGS="--release"
+fi
+
+# ─── 1. Rust toolchain ───────────────────────────────────────────────
+check_rust() {
+    if command -v rustc &>/dev/null; then
+        log "Rust $(rustc --version) found"
+        return 0
+    fi
+    return 1
+}
+
+install_rust() {
+    log "Installing Rust via rustup..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source "$HOME/.cargo/env"
+    log "Rust $(rustc --version) installed"
+}
+
+if ! check_rust; then
+    install_rust
+fi
+
+# ─── 2. System dependencies ──────────────────────────────────────────
+install_deps() {
+    local pkg_mgr=""
+    local pkgs=""
+
+    if command -v pacman &>/dev/null; then
+        pkg_mgr="pacman"
+        pkgs="bubblewrap sqlite"
+    elif command -v apt-get &>/dev/null; then
+        pkg_mgr="apt"
+        pkgs="bubblewrap libsqlite3-dev"
+    elif command -v dnf &>/dev/null; then
+        pkg_mgr="dnf"
+        pkgs="bubblewrap sqlite-devel"
+    else
+        warn "Unknown package manager — install bubblewrap and sqlite manually"
+        return
+    fi
+
+    local missing=()
+    for p in $pkgs; do
+        case $pkg_mgr in
+            pacman) pacman -Qi "$p" &>/dev/null || missing+=("$p") ;;
+            apt)    dpkg -s "$p" &>/dev/null    || missing+=("$p") ;;
+            dnf)    rpm -q "$p" &>/dev/null      || missing+=("$p") ;;
+        esac
+    done
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        log "System dependencies OK"
+        return
+    fi
+
+    log "Installing missing: ${missing[*]}"
+    case $pkg_mgr in
+        pacman) sudo pacman -S --noconfirm "${missing[@]}" ;;
+        apt)    sudo apt-get install -y "${missing[@]}" ;;
+        dnf)    sudo dnf install -y "${missing[@]}" ;;
+    esac
+}
+
+install_deps
+
+# ─── 3. Build ────────────────────────────────────────────────────────
+build() {
+    log "Building ($PROFILE)..."
+    cargo build $CARGO_FLAGS 2>&1
+
+    log "Running tests..."
+    cargo test 2>&1
+
+    log "Build complete: target/$PROFILE/"
+}
+
+build
+
+# ─── 4. Config ───────────────────────────────────────────────────────
+CONFIG_DIR="$HOME/.aletheon"
+CONFIG_FILE="$CONFIG_DIR/config.toml"
+ENV_FILE="$CONFIG_DIR/.env"
+
+setup_config() {
+    mkdir -p "$CONFIG_DIR"
+
+    if [[ -f "$CONFIG_FILE" ]]; then
+        log "Config exists at $CONFIG_FILE"
+    else
+        log "Creating default config..."
+        cat > "$CONFIG_FILE" <<'TOML'
+# Aletheon configuration
+# API keys: set in ~/.aletheon/.env or environment variables
+
+[agent]
+default_provider = "mimo"
+default_model = "mimo-v2.5-pro"
+max_iterations = 25
+max_tokens = 100000
+
+# ─── Providers ─────────────────────────────────────────────────────────
+# transport: "auto" (detect from URL) | "openai" | "anthropic"
+
+[[providers]]
+name = "mimo"
+base_url = "https://token-plan-sgp.xiaomimimo.com"
+api_key = ""
+transport = "auto"
+models = ["mimo-v2.5-pro", "mimo-v2.5-flash"]
+
+[[providers]]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+api_key = ""
+transport = "openai"
+models = ["deepseek-v4-pro", "deepseek-v4-flash"]
+
+[[providers]]
+name = "openai"
+base_url = "https://api.openai.com"
+api_key = ""
+transport = "openai"
+models = ["gpt-4o", "gpt-4o-mini"]
+
+[[providers]]
+name = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key = ""
+transport = "anthropic"
+models = ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]
+
+[[providers]]
+name = "ollama"
+base_url = "http://localhost:11434"
+api_key = ""
+transport = "openai"
+models = ["qwen3:8b", "llama3:8b"]
+
+# ─── Model Aliases ─────────────────────────────────────────────────────
+[model_aliases]
+pro = "mimo/mimo-v2.5-pro"
+flash = "mimo/mimo-v2.5-flash"
+deepseek = "deepseek/deepseek-v4-pro"
+local = "ollama/qwen3:8b"
+TOML
+        log "Config written to $CONFIG_FILE"
+    fi
+
+    if [[ -f "$ENV_FILE" ]]; then
+        log "Env file exists at $ENV_FILE"
+    else
+        log "Creating placeholder .env..."
+        cat > "$ENV_FILE" <<'ENV'
+# Aletheon provider API keys
+# Uncomment and fill in the keys you want to use
+
+# Xiaomi MiMo Token Plan
+# MIMO_API_KEY=tp-...
+
+# DeepSeek
+# DEEPSEEK_API_KEY=sk-...
+
+# OpenAI
+# OPENAI_API_KEY=sk-...
+
+# Anthropic
+# ANTHROPIC_API_KEY=sk-ant-...
+ENV
+        log "Env file written to $ENV_FILE"
+    fi
+}
+
+setup_config
+
+# ─── 5. Create convenience wrapper ──────────────────────────────────
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
+
+WRAPPER="$BIN_DIR/aletheon"
+TARGET_DIR="target/$PROFILE"
+
+cat > "$WRAPPER" <<WRAPPER_EOF
+#!/usr/bin/env bash
+# Aletheon wrapper — generated by setup.sh
+ALETHEON_ROOT="$SCRIPT_DIR"
+ALETHEON_CONFIG="\$HOME/.aletheon/config.toml"
+ALETHEON_ENV="\$HOME/.aletheon/.env"
+ALETHEON_SOCKET="/tmp/aletheon/aletheon.sock"
+
+export RUST_LOG="\${RUST_LOG:-info}"
+
+usage() {
+    cat <<EOF
+Aletheon — AI agent with sandbox, multi-agent, IPC
+
+Usage:
+    aletheon run                 Start daemon + TUI (recommended)
+    aletheon daemon              Start daemon (foreground, for debugging)
+    aletheon start               Start daemon via systemd
+    aletheon stop                Stop daemon
+    aletheon restart             Restart daemon
+    aletheon status              Show daemon status
+    aletheon logs                Follow daemon logs
+    aletheon -m <message>        Send a single message
+    aletheon                     Interactive mode (TUI if terminal)
+    aletheon --help              Show this help
+
+Config:  \$ALETHEON_CONFIG
+Env:     \$ALETHEON_ENV
+Socket:  \$ALETHEON_SOCKET
+EOF
+}
+
+case "\${1:-}" in
+    daemon)
+        mkdir -p "\$(dirname "\$ALETHEON_SOCKET")"
+        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheond" \\
+            --config "\$ALETHEON_CONFIG" \\
+            --env "\$ALETHEON_ENV" \\
+            --socket "\$ALETHEON_SOCKET" \\
+            "\${@:2}"
+        ;;
+    run)
+        LOG_FILE="\${XDG_STATE_HOME:-\$HOME/.local/state}/aletheon/daemon.log"
+        mkdir -p "\$(dirname "\$LOG_FILE")"
+        mkdir -p "\$(dirname "\$ALETHEON_SOCKET")"
+
+        if [ -S "\$ALETHEON_SOCKET" ]; then
+            if ! lsof "\$ALETHEON_SOCKET" >/dev/null 2>&1; then
+                rm -f "\$ALETHEON_SOCKET"
+            fi
+        fi
+
+        if [ ! -S "\$ALETHEON_SOCKET" ]; then
+            "\$ALETHEON_ROOT/$TARGET_DIR/aletheond" \\
+                --config "\$ALETHEON_CONFIG" \\
+                --env "\$ALETHEON_ENV" \\
+                --socket "\$ALETHEON_SOCKET" \\
+                >> "\$LOG_FILE" 2>&1 &
+            DAEMON_PID=\$!
+            echo "Daemon started (pid: \$DAEMON_PID, log: \$LOG_FILE)"
+            for i in {1..10}; do
+                [ -S "\$ALETHEON_SOCKET" ] && break
+                sleep 0.5
+            done
+        fi
+
+        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon-cli" \\
+            --socket "\$ALETHEON_SOCKET" \\
+            "\${@:2}"
+        ;;
+    start)
+        systemctl --user start aletheon
+        systemctl --user status aletheon --no-pager
+        ;;
+    stop)
+        systemctl --user stop aletheon
+        ;;
+    restart)
+        systemctl --user restart aletheon
+        systemctl --user status aletheon --no-pager
+        ;;
+    status)
+        systemctl --user status aletheon --no-pager
+        ;;
+    logs)
+        journalctl --user -u aletheon -f
+        ;;
+    -m|--message)
+        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon-cli" \\
+            --socket "\$ALETHEON_SOCKET" \\
+            -m "\${@:2}"
+        ;;
+    --help|-h|help)
+        usage
+        ;;
+    *)
+        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon-cli" \\
+            --socket "\$ALETHEON_SOCKET"
+        ;;
+esac
+WRAPPER_EOF
+
+chmod +x "$WRAPPER"
+log "Wrapper installed: $WRAPPER"
+
+# ─── 6. Systemd service ──────────────────────────────────────────────
+setup_systemd() {
+    local service_dir="$HOME/.config/systemd/user"
+    local service_file="$service_dir/aletheon.service"
+    local socket_path="/tmp/aletheon/aletheon.sock"
+
+    mkdir -p "$service_dir"
+
+    cat > "$service_file" <<SERVICE_EOF
+[Unit]
+Description=Aletheon AI agent daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$SCRIPT_DIR/$TARGET_DIR/aletheond \\
+    --config $CONFIG_FILE \\
+    --env $ENV_FILE \\
+    --socket $socket_path
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
+SERVICE_EOF
+
+    log "Systemd service created: $service_file"
+
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable aletheon.service 2>/dev/null || true
+
+    echo ""
+    echo "  Systemd commands:"
+    echo "    systemctl --user start aletheon     # start"
+    echo "    systemctl --user stop aletheon      # stop"
+    echo "    systemctl --user status aletheon    # status"
+    echo "    journalctl --user -u aletheon -f    # logs"
+}
+
+setup_systemd
+
+# ─── Done ─────────────────────────────────────────────────────────────
+echo ""
+log "Setup complete!"
+echo ""
+echo "  Config:    $CONFIG_FILE"
+echo "  Env:       $ENV_FILE"
+echo "  Binaries:  $SCRIPT_DIR/$TARGET_DIR/"
+echo "  Wrapper:   $WRAPPER"
+echo ""
+echo "  Quick start:"
+echo "    export MIMO_API_KEY='tp-...'"
+echo "    aletheon run              # start daemon + TUI"
+echo "    aletheon -m 'hello'       # single message"
+echo ""
+echo "  Or without wrapper:"
+echo "    ./target/${PROFILE}/aletheond --config $CONFIG_FILE --env $ENV_FILE --socket /tmp/aletheon/aletheon.sock"
+echo "    ./target/${PROFILE}/aletheon-cli --socket /tmp/aletheon/aletheon.sock -m 'hello'"
+echo ""

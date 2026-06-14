@@ -1,0 +1,9 @@
+[agent]
+id = "net-agent"
+name = "Network Agent"
+description = "Handles network diagnostics and system status"
+capabilities = ["network", "system_status"]
+tools = ["system_status", "process_list"]
+role = "Leaf"
+max_iterations = 10
+system_prompt = "net-agent.md"

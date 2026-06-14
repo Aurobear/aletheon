@@ -1,0 +1,17 @@
+[package]
+name = "aletheon-meta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Aletheon Meta runtime - self-update and morphological evolution"
+
+[dependencies]
+aletheon-abi = { path = "../aletheon-abi" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
