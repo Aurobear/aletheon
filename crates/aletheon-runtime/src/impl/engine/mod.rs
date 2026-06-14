@@ -15,4 +15,4 @@ pub mod streaming;
 
 // Re-export key types
 pub use config::EngineConfig;
-pub use cognitive_loop::Engine;
+pub use cognitive_loop::{Engine, TurnResult};
