@@ -501,6 +501,42 @@ impl Engine {
                     ).await;
                 }
 
+                // Emit ToolObservationEvent if EventBus is configured
+                if let Some(ref bus) = self.config.event_bus {
+                    use aletheon_abi::evolution::ToolObservationPayload;
+                    use aletheon_comm::core::event::ConcreteEvent;
+                    use aletheon_abi::{EventType, Priority};
+
+                    let turn_uuid = uuid::Uuid::parse_str(&turn_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+                    let payload = ToolObservationPayload {
+                        turn_id: turn_uuid,
+                        tool_name: tool_name.to_string(),
+                        input: tool_input.clone(),
+                        output: serde_json::json!({
+                            "content": result.content,
+                            "is_error": result.is_error,
+                        }),
+                        duration_ms: elapsed_ms,
+                        error: if result.is_error { Some(result.content.clone()) } else { None },
+                        rules_applied: Vec::new(), // Will be populated by BrainCore after reflection
+                    };
+
+                    let event = ConcreteEvent::new(
+                        EventType::ToolObservation,
+                        Priority::Normal,
+                        "runtime.engine".to_string(),
+                        Box::new(serde_json::to_value(&payload).unwrap_or_default()),
+                    );
+
+                    // Fire-and-forget: non-blocking event emission
+                    let bus_clone = Arc::clone(bus);
+                    tokio::spawn(async move {
+                        if let Err(e) = bus_clone.publish(Box::new(event)).await {
+                            warn!(error = %e, "Failed to publish ToolObservationEvent");
+                        }
+                    });
+                }
+
                 // Add tool result as user message
                 self.messages.push(Message::tool_result(
                     tool_id,

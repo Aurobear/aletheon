@@ -9,6 +9,7 @@ description = "Aletheon Runtime - core agent runtime and orchestration"
 aletheon-abi = { path = "../aletheon-abi" }
 aletheon-brain = { path = "../aletheon-brain" }
 aletheon-body = { path = "../aletheon-body" }
+aletheon-comm = { path = "../aletheon-comm" }
 aletheon-memory = { path = "../aletheon-memory" }
 aletheon-self = { path = "../aletheon-self" }
 aletheon-meta = { path = "../aletheon-meta" }
