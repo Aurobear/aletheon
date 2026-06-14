@@ -50,6 +50,10 @@ pub struct LlmResponse {
     pub content: Vec<aletheon_abi::message::ContentBlock>,
     pub stop_reason: StopReason,
     pub usage: Usage,
+    /// Tokens that hit the provider's cache (e.g. DeepSeek cached_tokens, Anthropic cache_read)
+    pub cache_hit_tokens: u32,
+    /// Tokens that missed the cache and were processed fresh
+    pub cache_miss_tokens: u32,
 }
 
 #[derive(Debug, Clone)]

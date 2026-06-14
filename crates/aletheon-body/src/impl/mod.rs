@@ -4,6 +4,7 @@ pub mod tools;
 pub mod sandbox;
 pub mod driver;
 pub mod security;
+pub mod hooks;
 pub mod mcp;
 pub mod platform;
 

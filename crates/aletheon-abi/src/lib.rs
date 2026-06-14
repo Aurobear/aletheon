@@ -24,6 +24,7 @@ pub mod paths;
 // Shared types (message, tool, sandbox, IPC, LLM)
 pub mod message;
 pub mod tool;
+pub mod hook;
 pub mod sandbox;
 pub mod ipc_types;
 pub mod llm_types;
@@ -31,8 +32,13 @@ pub mod llm_types;
 // Shared error types
 pub mod error;
 
+// Kernel-style foundations
+pub mod registry;
+pub mod resource;
+pub mod observable;
+
 // Re-export key types at crate root for convenience
-pub use subsystem::{Subsystem, SubsystemHealth, SubsystemContext, Version};
+pub use subsystem::{Subsystem, SubsystemHealth, SubsystemContext, Version, InitPhase};
 pub use event::{Event, EventType, Priority, SubscriptionId, EventHandler};
 pub use event_bus::EventBus;
 pub use context::{Context, TraceState};
@@ -51,10 +57,17 @@ pub use runtime::{RuntimeOps, AgentInfo, AgentStatus, ScheduledTask, ScheduleKin
 // to avoid conflict with capability::PermissionLevel (ReadOnly/SandboxWrite/...).
 pub use message::{Message, ContentBlock, Role, ImageSource, Priority as MessagePriority};
 pub use tool::{Tool, ToolResult, ToolResultMeta, ToolContext, PermissionLevel as ToolPermissionLevel};
+pub use hook::{HookPoint, HookContext, HookToolResult, HookResult};
 pub use llm_types::ToolDefinition;
 pub use sandbox::{SandboxBackend, SandboxConfig, SandboxResult, SandboxCapabilities, IsolationLevel};
 pub use ipc_types::{IpcBackend, IpcPreference, IpcProbeError, AgentMessage, AgentId, MessageType, IpcPriority};
 
 // Re-export key error types
 pub use error::{AgentError, ErrorSeverity, ErrorCategory, BackoffStrategy, DegradationStrategy, ToolErrorAction,
-    DegradationChain, handle_tool_error, tool_backoff, llm_backoff, llm_degradation_chain, tool_degradation_chain};
+    DegradationChain, handle_tool_error, tool_backoff, llm_backoff, llm_degradation_chain, tool_degradation_chain,
+    RegistryErrorKind};
+
+// Re-export kernel-style foundations
+pub use registry::{Registry, RegistrationId};
+pub use resource::{ManagedResource, ResourceState};
+pub use observable::{Observable, SubsystemStatus};

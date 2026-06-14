@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;

@@ -1,5 +1,9 @@
 pub mod handler;
+pub mod prefix_builder;
 pub mod server;
+pub mod session_manager;
+pub mod cache_shape;
+pub mod mcp_embedded;
 
 use std::path::PathBuf;
 
@@ -60,6 +64,13 @@ pub async fn run(
     env_path: Option<PathBuf>,
     socket: PathBuf,
 ) -> Result<()> {
+    // Write PID file for daemon management
+    let pid_file = PathBuf::from("/tmp/aletheon/aletheond.pid");
+    if let Some(parent) = pid_file.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(&pid_file, std::process::id().to_string()).ok();
+
     // Load .env file
     let env_path = env_path.unwrap_or_else(|| {
         // Search: ~/.aletheon/.env
@@ -71,11 +82,14 @@ pub async fn run(
     });
     load_dotenv(&env_path);
 
-    // Load AppConfig from TOML
-    let config_path = config_path.unwrap_or_else(default_config_path);
-    let app_config = aletheon_brain::config::AppConfig::load_or_default(&config_path);
+    // Load AppConfig with layered merging (defaults -> global -> project)
+    let app_config = if let Some(ref path) = config_path {
+        aletheon_brain::config::AppConfig::load_or_default(path)
+    } else {
+        aletheon_brain::config::AppConfig::load_layered(None)
+    };
 
-    tracing::info!(path = %config_path.display(), providers = %app_config.providers.len(), "Loaded config");
+    tracing::info!(providers = %app_config.providers.len(), "Loaded config");
 
     // Build provider registry
     let registry = ProviderRegistry::from_config(&app_config)?;
@@ -140,7 +154,19 @@ pub async fn run(
     info!(socket = %socket.display(), "Binding unix socket...");
 
     let unix_server = server::UnixServer::new(&socket, request_handler).await?;
+
+    // Clean up PID file on exit
+    let pid_file_clone = pid_file.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        std::fs::remove_file(&pid_file_clone).ok();
+        std::process::exit(0);
+    });
+
     unix_server.run().await?;
+
+    // Clean up PID file on normal exit
+    std::fs::remove_file(&pid_file).ok();
 
     Ok(())
 }

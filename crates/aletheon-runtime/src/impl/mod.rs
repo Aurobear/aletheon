@@ -7,3 +7,5 @@ pub mod engine;
 pub mod coordinator;
 pub mod memory;
 pub mod daemon;
+pub mod skills;
+pub mod hooks;

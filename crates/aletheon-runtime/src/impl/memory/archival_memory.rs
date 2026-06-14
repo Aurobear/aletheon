@@ -185,7 +185,7 @@ impl ArchivalMemory for VectorArchival {
         Ok(results)
     }
 
-    async fn get(&self, id: &str) -> anyhow::Result<Option<ArchivalEntry>> {
+    async fn get(&self, _id: &str) -> anyhow::Result<Option<ArchivalEntry>> {
         // VectorStore doesn't have a direct get by ID; search would be needed
         // For now, return None (implement with metadata filter if needed)
         Ok(None)

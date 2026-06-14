@@ -33,6 +33,21 @@ impl std::fmt::Display for Version {
     }
 }
 
+/// Initialization phase — like Linux kernel's `early_initcall` / `subsys_initcall`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InitPhase {
+    Core = 0,
+    Subsystem = 1,
+    Service = 2,
+    Late = 3,
+}
+
+impl Default for InitPhase {
+    fn default() -> Self {
+        Self::Subsystem
+    }
+}
+
 /// Subsystem health status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubsystemHealth {
@@ -77,4 +92,9 @@ pub trait Subsystem: Send + Sync {
     /// Subsystem version. Used for ABI compatibility checks
     /// before hot-upgrade.
     fn version(&self) -> Version;
+
+    /// Initialization phase. Subsystems with lower phases init first.
+    fn init_phase(&self) -> InitPhase {
+        InitPhase::Subsystem
+    }
 }

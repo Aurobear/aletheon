@@ -76,7 +76,7 @@
 
 ## 6. 命令执行与 Exit Code 语义
 
-**命令执行** — 通过 shell 执行 handler 命令，注入环境变量（OS_AGENT_HOOK_EVENT, OS_AGENT_CWD），通过 stdin 传递 JSON 输入，解析 stdout JSON 输出。
+**命令执行** — 通过 shell 执行 handler 命令，注入环境变量（ALETHEOND_HOOK_EVENT, ALETHEOND_CWD），通过 stdin 传递 JSON 输入，解析 stdout JSON 输出。
 
 **Exit code 语义：**
 - 0 = 成功，解析 stdout JSON

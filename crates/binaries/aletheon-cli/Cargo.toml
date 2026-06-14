@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "aletheon-cli"
+name = "aletheon"
 path = "src/main.rs"
 
 [dependencies]
 tokio.workspace = true
 anyhow.workspace = true
-aletheon-body = { path = "../aletheon-body", features = ["cli", "input", "display", "a11y", "ocr"] }
+aletheon-body = { path = "../../aletheon-body", features = ["cli", "input", "display", "a11y", "ocr"] }

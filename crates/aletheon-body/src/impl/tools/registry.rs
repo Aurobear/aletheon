@@ -53,6 +53,9 @@ impl Default for ToolRegistry {
         registry.register(Arc::new(super::module_build::ModuleBuildTool));
         registry.register(Arc::new(super::module_load::ModuleLoadTool));
         registry.register(Arc::new(super::kernel_build::KernelBuildTool));
+        registry.register(Arc::new(super::code_graph::CodeGraphTool));
+        registry.register(Arc::new(super::file_search::FileSearchTool));
+        registry.register(Arc::new(super::apply_patch::ApplyPatchTool));
         registry
     }
 }

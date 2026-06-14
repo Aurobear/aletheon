@@ -8,7 +8,7 @@ name = "aletheond"
 path = "src/main.rs"
 
 [dependencies]
-aletheon-runtime = { path = "../aletheon-runtime" }
+aletheon-runtime = { path = "../../aletheon-runtime" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

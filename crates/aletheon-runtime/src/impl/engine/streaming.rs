@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tracing::{debug, info, warn};
 
-use aletheon_abi::{Message, ContentBlock, Role, ToolDefinition};
+use aletheon_abi::{Message, ContentBlock, Role};
 use aletheon_abi::tool::{ToolResult, Tool as ToolTrait};
 use aletheon_brain::r#impl::llm::{StreamChunk, Usage, StopReason};
 use futures::StreamExt;

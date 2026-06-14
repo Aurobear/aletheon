@@ -16,6 +16,16 @@ pub struct AppConfig {
     pub providers: Vec<ProviderConfig>,
     #[serde(default)]
     pub model_aliases: HashMap<String, String>,
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerConfig>,
+    #[serde(default)]
+    pub plugins: PluginsConfig,
+    #[serde(default)]
+    pub memory: MemoryConfig,
+    #[serde(default)]
+    pub daemon: DaemonConfig,
 }
 
 /// Agent-level settings.
@@ -81,6 +91,121 @@ pub struct ProviderConfig {
     pub models: Vec<String>,
 }
 
+// ---------------------------------------------------------------------------
+// New config sub-structs
+// ---------------------------------------------------------------------------
+
+/// Sandbox execution preference.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxConfig {
+    /// "auto", "require", or "forbid"
+    #[serde(default = "default_sandbox_preference")]
+    pub preference: String,
+    #[serde(default)]
+    pub bubblewrap_path: Option<String>,
+}
+
+fn default_sandbox_preference() -> String { "auto".to_string() }
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            preference: default_sandbox_preference(),
+            bubblewrap_path: None,
+        }
+    }
+}
+
+/// MCP (Model Context Protocol) server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub name: String,
+    /// "stdio", "http", or "sse"
+    #[serde(default = "default_mcp_transport")]
+    pub transport: String,
+    /// For stdio transport: command to run
+    #[serde(default)]
+    pub command: Option<String>,
+    /// For http/sse transport: URL to connect to
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+fn default_mcp_transport() -> String { "stdio".to_string() }
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            transport: default_mcp_transport(),
+            command: None,
+            url: None,
+        }
+    }
+}
+
+/// Plugin directories.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginsConfig {
+    #[serde(default)]
+    pub directories: Vec<String>,
+}
+
+impl Default for PluginsConfig {
+    fn default() -> Self {
+        Self {
+            directories: Vec::new(),
+        }
+    }
+}
+
+/// Memory backend configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// "sqlite" or "in_memory"
+    #[serde(default = "default_memory_backend")]
+    pub backend: String,
+    #[serde(default = "default_memory_data_dir")]
+    pub data_dir: String,
+}
+
+fn default_memory_backend() -> String { "sqlite".to_string() }
+fn default_memory_data_dir() -> String { "~/.aletheon/memory".to_string() }
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_memory_backend(),
+            data_dir: default_memory_data_dir(),
+        }
+    }
+}
+
+/// Daemon runtime settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    #[serde(default = "default_daemon_socket_path")]
+    pub socket_path: String,
+    #[serde(default = "default_daemon_log_level")]
+    pub log_level: String,
+}
+
+fn default_daemon_socket_path() -> String { "/run/aletheon/aletheon.sock".to_string() }
+fn default_daemon_log_level() -> String { "info".to_string() }
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            socket_path: default_daemon_socket_path(),
+            log_level: default_daemon_log_level(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AppConfig methods
+// ---------------------------------------------------------------------------
+
 impl AppConfig {
     pub fn from_file(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
@@ -91,6 +216,104 @@ impl AppConfig {
     pub fn load_or_default(path: &Path) -> Self {
         Self::from_file(path).unwrap_or_default()
     }
+
+    /// Merge `other` into `self`. Fields in `other` that are non-default
+    /// override `self`. Lists are appended (providers merged by name).
+    pub fn merge(&mut self, other: AppConfig) {
+        // Agent: override non-default values
+        if other.agent.default_provider.is_some() {
+            self.agent.default_provider = other.agent.default_provider;
+        }
+        if other.agent.default_model.is_some() {
+            self.agent.default_model = other.agent.default_model;
+        }
+        if other.agent.max_iterations != default_max_iterations() {
+            self.agent.max_iterations = other.agent.max_iterations;
+        }
+        if other.agent.max_tokens != default_max_tokens() {
+            self.agent.max_tokens = other.agent.max_tokens;
+        }
+        if other.agent.compaction_keep_recent != default_compaction_keep_recent() {
+            self.agent.compaction_keep_recent = other.agent.compaction_keep_recent;
+        }
+        if other.agent.compaction_threshold != default_compaction_threshold() {
+            self.agent.compaction_threshold = other.agent.compaction_threshold;
+        }
+
+        // Providers: merge by name, append new ones
+        for other_provider in other.providers {
+            if let Some(existing) = self.providers.iter_mut().find(|p| p.name == other_provider.name) {
+                *existing = other_provider;
+            } else {
+                self.providers.push(other_provider);
+            }
+        }
+
+        // Model aliases: merge (other wins)
+        for (key, value) in other.model_aliases {
+            self.model_aliases.insert(key, value);
+        }
+
+        // Sandbox: override if non-default
+        if other.sandbox.preference != default_sandbox_preference() {
+            self.sandbox.preference = other.sandbox.preference;
+        }
+        if other.sandbox.bubblewrap_path.is_some() {
+            self.sandbox.bubblewrap_path = other.sandbox.bubblewrap_path;
+        }
+
+        // MCP servers: append
+        self.mcp_servers.extend(other.mcp_servers);
+
+        // Plugins: append directories
+        self.plugins.directories.extend(other.plugins.directories);
+
+        // Memory: override if non-default
+        if other.memory.backend != default_memory_backend() {
+            self.memory.backend = other.memory.backend;
+        }
+        if other.memory.data_dir != default_memory_data_dir() {
+            self.memory.data_dir = other.memory.data_dir;
+        }
+
+        // Daemon: override if non-default
+        if other.daemon.socket_path != default_daemon_socket_path() {
+            self.daemon.socket_path = other.daemon.socket_path;
+        }
+        if other.daemon.log_level != default_daemon_log_level() {
+            self.daemon.log_level = other.daemon.log_level;
+        }
+    }
+
+    /// Load config with layer merging:
+    /// - Layer 0: compiled defaults
+    /// - Layer 1: user global (~/.aletheon/config.toml)
+    /// - Layer 2: project local (.aletheon/config.toml in `project_dir`)
+    pub fn load_layered(project_dir: Option<&Path>) -> Self {
+        let mut config = Self::default();
+
+        // Layer 1: user global
+        let global_path = dirs::home_dir()
+            .map(|h| h.join(".aletheon/config.toml"))
+            .filter(|p| p.exists());
+        if let Some(path) = global_path {
+            if let Ok(user_config) = Self::from_file(&path) {
+                config.merge(user_config);
+            }
+        }
+
+        // Layer 2: project local
+        if let Some(dir) = project_dir {
+            let project_path = dir.join(".aletheon/config.toml");
+            if project_path.exists() {
+                if let Ok(project_config) = Self::from_file(&project_path) {
+                    config.merge(project_config);
+                }
+            }
+        }
+
+        config
+    }
 }
 
 impl Default for AppConfig {
@@ -99,6 +322,11 @@ impl Default for AppConfig {
             agent: AgentConfig::default(),
             providers: Vec::new(),
             model_aliases: HashMap::new(),
+            sandbox: SandboxConfig::default(),
+            mcp_servers: Vec::new(),
+            plugins: PluginsConfig::default(),
+            memory: MemoryConfig::default(),
+            daemon: DaemonConfig::default(),
         }
     }
 }

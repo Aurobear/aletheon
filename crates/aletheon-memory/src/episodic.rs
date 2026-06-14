@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use aletheon_abi::{
-    BehaviorAdjustment, CompactResult, CompactStrategy, EvolutionLogEntry, MemoryBackend,
+    CompactResult, CompactStrategy, EvolutionLogEntry, MemoryBackend,
     MemoryEntry, MemoryFilter, MemoryHandle, MemoryQuery, MemoryStats, MemoryType,
     ReflectionEntry, ReflectionTrigger, Subsystem, SubsystemContext, SubsystemHealth, Version,
 };
@@ -560,6 +560,7 @@ impl MemoryBackend for EpisodicMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_abi::BehaviorAdjustment;
 
     fn setup() -> (tempfile::NamedTempFile, EpisodicMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();

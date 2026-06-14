@@ -4,8 +4,7 @@ use tracing::{info, warn};
 use aletheon_abi::message::Message;
 use super::agent::{Agent, AgentResponse, AgentResponseStatus};
 use super::registry::AgentRegistry;
-use super::budget::{IterationBudget, BudgetStatus};
-use super::termination::{TerminationCondition, default_termination};
+use super::budget::IterationBudget;
 
 /// Handoff configuration.
 pub struct HandoffConfig {
@@ -58,7 +57,7 @@ impl HandoffStrategy {
         initial_agent_id: &str,
         message: &str,
     ) -> Result<AgentResponse> {
-        let budget = IterationBudget::new(self.config.max_iterations_per_agent * self.config.max_handoffs);
+        let _budget = IterationBudget::new(self.config.max_iterations_per_agent * self.config.max_handoffs);
         let mut current_agent_id = initial_agent_id.to_string();
         let mut current_message = message.to_string();
         let mut handoff_count = 0;
@@ -80,7 +79,7 @@ impl HandoffStrategy {
 
             info!(agent_id = %current_agent_id, handoff = handoff_count, "Executing with agent");
 
-            let mut agent_write = agent.write().await;
+            let agent_write = agent.write().await;
             let msg = Message::user(&current_message);
             let response = agent_write.on_message(msg).await?;
 

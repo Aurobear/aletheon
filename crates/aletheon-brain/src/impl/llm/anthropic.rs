@@ -53,6 +53,8 @@ struct ApiTool {
     name: String,
     description: String,
     input_schema: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +82,10 @@ struct ApiContent {
 struct ApiUsage {
     input_tokens: u32,
     output_tokens: u32,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u32>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u32>,
 }
 
 /// SSE streaming event types for Anthropic API
@@ -144,21 +150,41 @@ struct StreamUsage {
 }
 
 fn messages_to_api(messages: &[Message]) -> Vec<ApiMessage> {
+    let len = messages.len();
     messages
         .iter()
-        .map(|m| {
+        .enumerate()
+        .map(|(i, m)| {
             let role = match m.role {
                 Role::User => "user",
                 Role::Assistant => "assistant",
                 Role::System => "user", // Anthropic uses system param, but we fold into user
             };
-            let content = if m.content.len() == 1 {
-                match &m.content[0] {
-                    ContentBlock::Text { text } => serde_json::json!(text),
-                    _ => serde_json::to_value(&m.content).unwrap_or_default(),
+            let content = if i == len - 1 {
+                // Add cache_control to last content block of last message
+                if m.content.len() == 1 {
+                    match &m.content[0] {
+                        ContentBlock::Text { text } => {
+                            serde_json::json!([{
+                                "type": "text",
+                                "text": text,
+                                "cache_control": {"type": "ephemeral"}
+                            }])
+                        }
+                        _ => serde_json::to_value(&m.content).unwrap_or_default(),
+                    }
+                } else {
+                    serde_json::to_value(&m.content).unwrap_or_default()
                 }
             } else {
-                serde_json::to_value(&m.content).unwrap_or_default()
+                if m.content.len() == 1 {
+                    match &m.content[0] {
+                        ContentBlock::Text { text } => serde_json::json!(text),
+                        _ => serde_json::to_value(&m.content).unwrap_or_default(),
+                    }
+                } else {
+                    serde_json::to_value(&m.content).unwrap_or_default()
+                }
             };
             ApiMessage {
                 role: role.to_string(),
@@ -169,12 +195,19 @@ fn messages_to_api(messages: &[Message]) -> Vec<ApiMessage> {
 }
 
 fn tools_to_api(tools: &[ToolDefinition]) -> Vec<ApiTool> {
+    let len = tools.len();
     tools
         .iter()
-        .map(|t| ApiTool {
+        .enumerate()
+        .map(|(i, t)| ApiTool {
             name: t.name.clone(),
             description: t.description.clone(),
             input_schema: t.input_schema.clone(),
+            cache_control: if i == len - 1 {
+                Some(serde_json::json!({"type": "ephemeral"}))
+            } else {
+                None
+            },
         })
         .collect()
 }
@@ -248,6 +281,8 @@ impl LlmProvider for AnthropicProvider {
                 input_tokens: api_resp.usage.input_tokens,
                 output_tokens: api_resp.usage.output_tokens,
             },
+            cache_hit_tokens: api_resp.usage.cache_read_input_tokens.unwrap_or(0),
+            cache_miss_tokens: api_resp.usage.cache_creation_input_tokens.unwrap_or(0),
         })
     }
 

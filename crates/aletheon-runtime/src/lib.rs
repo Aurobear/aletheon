@@ -3,7 +3,8 @@ pub mod bridge;
 pub mod r#impl;
 
 // Re-export from core for backward compatibility
-pub use core::config::{RuntimeConfig, AppConfig, AgentConfig, ProviderConfig, Transport};
+pub use core::config::{RuntimeConfig, AppConfig, AgentConfig, ProviderConfig, Transport,
+    SandboxConfig, McpServerConfig, PluginsConfig, MemoryConfig, DaemonConfig};
 pub use core::orchestrator::AletheonRuntime;
 pub use core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use core::react_loop::ReActLoop;

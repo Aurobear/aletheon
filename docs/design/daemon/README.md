@@ -116,7 +116,7 @@
 
 ```rust
 #[derive(Parser)]
-#[command(name = "agentd", about = "OS-Agent daemon")]
+#[command(name = "aletheond", about = "Aletheon daemon")]
 struct Args {
     /// Path to config file
     #[arg(short, long)]

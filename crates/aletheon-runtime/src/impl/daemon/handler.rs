@@ -4,10 +4,10 @@ use std::sync::Arc;
 use crate::core::orchestrator::AletheonRuntime;
 use crate::core::config::RuntimeConfig;
 use crate::r#impl::orchestration::registry::AgentRegistry;
-use crate::r#impl::session::journal::EventJournal;
 use crate::CoreMemory;
 use crate::RecallMemory;
 use crate::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
+use super::session_manager::SessionManager;
 use crate::r#impl::orchestration::builtin::{FsAgent, NetAgent, CodeAgent};
 use crate::ProviderRegistry;
 use crate::session::store::SessionStore;
@@ -22,13 +22,21 @@ use aletheon_body::r#impl::tools::ToolRegistry;
 use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_brain::core::reflector::Reflector;
 use aletheon_brain::core::ExperienceSummarizer;
-use aletheon_abi::{Message, Role, ContentBlock, ReflectionTrigger, Subsystem, SubsystemContext,
+use aletheon_abi::{Message, ContentBlock, ReflectionTrigger, Subsystem, SubsystemContext,
     SelfFieldOps, Intent, IntentSource, Verdict, Context as AbiContext};
+use aletheon_abi::hook::{HookPoint, HookContext, HookResult};
 use aletheon_memory::episodic::EpisodicMemory;
 use serde_json::json;
+use std::collections::HashMap;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
+use crate::r#impl::hooks::registry::HookRegistry;
+use crate::r#impl::hooks::builtin::audit_hook;
+use crate::r#impl::skills::loader::SkillLoader;
+use crate::r#impl::skills::plugin::register_skill;
+
+use super::prefix_builder::PrefixBuilder;
 use super::DaemonConfig;
 
 /// Session state wrapping the new AletheonRuntime.
@@ -42,14 +50,15 @@ struct SessionState {
     runtime: AletheonRuntime,
     /// Pending input waiting to be processed via the cognitive pipeline.
     pending_input: Option<String>,
-    /// Number of chat turns in this session.
-    turn_count: usize,
 }
 
 #[derive(Clone)]
 pub struct RequestHandler {
     state: Arc<Mutex<SessionState>>,
     llm: Arc<dyn LlmProvider>,
+    session_manager: Arc<Mutex<SessionManager>>,
+    recall_memory: Arc<Mutex<RecallMemory>>,
+    data_dir: PathBuf,
     /// Retained for future use; currently unused after Engine removal.
     #[allow(dead_code)]
     agent_registry: Arc<AgentRegistry>,
@@ -57,6 +66,21 @@ pub struct RequestHandler {
     episodic_memory: Arc<Mutex<EpisodicMemory>>,
     /// SelfField — the policy engine that provides identity, cares, and boundary data.
     self_field: Arc<Mutex<SelfField>>,
+    /// Loads skill markdown files from the skills directory and caches them.
+    skill_loader: Arc<Mutex<SkillLoader>>,
+    /// Cache-stable system prompt prefix, built once at boot.
+    /// Same inputs = same bytes = cache hit on DeepSeek/Mimo.
+    cached_prefix: Arc<Mutex<String>>,
+    /// Queue for memory updates that arrive mid-session.
+    /// Drained into user turns as `<memory-update>` XML blocks
+    /// so the system prompt prefix stays byte-stable.
+    memory_queue: Arc<Mutex<Vec<String>>>,
+    /// The base system prompt from config, retained for prefix rebuilds.
+    config_prompt: String,
+    /// Core memory reference, retained for prefix rebuilds on skill reload.
+    core_memory: Arc<Mutex<CoreMemory>>,
+    /// Lifecycle hook registry.
+    hook_registry: Arc<Mutex<HookRegistry>>,
 }
 
 impl RequestHandler {
@@ -67,16 +91,22 @@ impl RequestHandler {
         // Create session and journal
         let session_id = uuid::Uuid::new_v4().to_string();
         let data_dir = PathBuf::from(&config.data_dir);
-        let _journal = EventJournal::create(&session_id, &data_dir).await?;
         let session_store = SessionStore::new(&data_dir)?;
         session_store.create_session(&session_id)?;
 
-        info!(session_id = %session_id, "Created new session with journal");
+        info!(session_id = %session_id, "Created new session");
 
         // Create memory instances
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
         let recall_db_path = data_dir.join("recall_memory.db");
         let recall_memory = Arc::new(Mutex::new(RecallMemory::new(&recall_db_path)?));
+
+        // Create SessionManager (owns the journal, history, and compaction)
+        let session_manager = SessionManager::new(
+            &data_dir,
+            session_id.clone(),
+            100_000, // max_tokens: ~100k default context window
+        ).await?;
 
         // Register tools including memory tools
         let mut tools = ToolRegistry::default();
@@ -149,18 +179,77 @@ impl RequestHandler {
         };
         let self_field = Arc::new(Mutex::new(SelfField::new(self_field_config)));
 
+        // Initialize skill loader from the default skills directory
+        let skills_dir = aletheon_abi::paths::skills_dir();
+        let mut skill_loader = SkillLoader::new(skills_dir);
+        let loaded = skill_loader.load_all_enhanced();
+        if loaded > 0 {
+            info!(count = loaded, "Skills loaded at startup");
+        }
+
+        // Create hook registry and register builtin hooks
+        let mut hook_registry = HookRegistry::new();
+        audit_hook::register_audit_hook(&mut hook_registry);
+
+        // Register skill hooks from loaded plugins
+        for plugin in skill_loader.plugins() {
+            register_skill(plugin, &mut tools, &mut hook_registry);
+        }
+        let hook_registry = Arc::new(Mutex::new(hook_registry));
+
+        // Build the cache-stable prefix once at boot.
+        // Same inputs = same bytes = cache hit on DeepSeek/Mimo.
+        let cm = core_memory.lock().await;
+        let cached_prefix = PrefixBuilder::build(
+            &config.system_prompt,
+            skill_loader.skills(),
+            &cm,
+        );
+        drop(cm);
+        info!(len = cached_prefix.len(), "Cache-stable prefix built");
+
         Ok(Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
                 pending_input: None,
-                turn_count: 0,
             })),
             llm,
+            session_manager: Arc::new(Mutex::new(session_manager)),
+            recall_memory,
+            data_dir,
             agent_registry,
             reflector,
             episodic_memory,
             self_field,
+            skill_loader: Arc::new(Mutex::new(skill_loader)),
+            cached_prefix: Arc::new(Mutex::new(cached_prefix)),
+            memory_queue: Arc::new(Mutex::new(Vec::new())),
+            config_prompt: config.system_prompt.clone(),
+            core_memory,
+            hook_registry,
         })
+    }
+
+    /// Drain all queued memory updates into a `<memory-update>` XML block.
+    /// Returns empty string if the queue is empty.
+    /// This keeps the system prompt prefix stable while still delivering
+    /// mid-session memory changes to the LLM on every user turn.
+    async fn drain_memory_queue(&self) -> String {
+        let mut queue = self.memory_queue.lock().await;
+        if queue.is_empty() {
+            return String::new();
+        }
+        let updates: Vec<String> = queue.drain(..).collect();
+        drop(queue);
+
+        let mut xml = String::with_capacity(512);
+        xml.push_str("<memory-update>\n");
+        for update in &updates {
+            xml.push_str(update);
+            xml.push('\n');
+        }
+        xml.push_str("</memory-update>");
+        xml
     }
 
     pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value {
@@ -189,8 +278,6 @@ impl RequestHandler {
                     sf.review(&intent, &sf_ctx).await
                 };
 
-                let mut system_prompt = "You are Aletheon, an AI agent running on the user's machine. Be helpful, concise, and friendly.".to_string();
-
                 match verdict {
                     Ok(Verdict::Deny { ref reason }) => {
                         warn!(reason = %reason, "SelfField denied chat intent");
@@ -202,30 +289,93 @@ impl RequestHandler {
                             "error": { "code": -32010, "message": format!("Intent denied by SelfField: {}", reason) }
                         });
                     }
-                    Ok(Verdict::SandboxFirst { ref reason }) => {
-                        info!(reason = %reason, "SelfField flagged chat for sandbox");
-                        system_prompt.push_str(&format!(
-                            "\n\n[SelfField note: This interaction has been flagged for sandbox review. Reason: {}]",
-                            reason
-                        ));
-                    }
-                    Ok(ref v) => {
-                        info!(verdict = ?v, "SelfField approved chat intent");
-                    }
-                    Err(ref e) => {
-                        warn!(error = %e, "SelfField review error, proceeding with caution");
+                    _ => {} // SandboxFirst and other verdicts handled below in user turn
+                }
+
+                // Use the cache-stable prefix (built once at boot)
+                let system_prompt = {
+                    let prefix = self.cached_prefix.lock().await;
+                    prefix.clone()
+                };
+
+                // Build effective user message with memory updates and SandboxFirst note.
+                // Both go into the user turn to preserve cache-stable system prompt.
+                let memory_update = self.drain_memory_queue().await;
+                let mut effective_message = String::new();
+
+                // Memory updates first (if any)
+                if !memory_update.is_empty() {
+                    effective_message.push_str(&memory_update);
+                    effective_message.push_str("\n\n");
+                }
+
+                // SelfField SandboxFirst note (if flagged) — injected into user turn
+                if let Ok(Verdict::SandboxFirst { ref reason }) = verdict {
+                    info!(reason = %reason, "SelfField flagged chat for sandbox");
+                    effective_message.push_str(&format!(
+                        "<selffield-note>SandboxFirst: This interaction has been flagged for sandbox review. Reason: {}</selffield-note>\n\n",
+                        reason
+                    ));
+                } else if let Err(ref e) = verdict {
+                    warn!(error = %e, "SelfField review error, proceeding with caution");
+                }
+
+                effective_message.push_str(message);
+
+                // --- PreTurn hooks ---
+                {
+                    // Gather session info before locking hook_registry
+                    let (session_id, turn_count) = {
+                        let sm = self.session_manager.lock().await;
+                        (sm.session_id.clone(), sm.turn_count())
+                    };
+                    let hr = self.hook_registry.lock().await;
+                    let ctx = HookContext {
+                        point: HookPoint::PreTurn,
+                        session_id,
+                        turn_count,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_result: None,
+                        message: Some(message.to_string()),
+                        metadata: HashMap::new(),
+                    };
+                    match hr.execute(&ctx).await {
+                        HookResult::Block { reason } => {
+                            warn!(reason = %reason, "PreTurn hook blocked");
+                            return json!({
+                                "jsonrpc": "2.0", "id": id,
+                                "error": {"code": -32015, "message": format!("Blocked by hook: {}", reason)}
+                            });
+                        }
+                        HookResult::Inject(text) => {
+                            effective_message.push_str(&text);
+                            effective_message.push('\n');
+                        }
+                        _ => {}
                     }
                 }
 
-                let messages = vec![
-                    Message {
-                        role: Role::System,
-                        content: vec![ContentBlock::Text {
-                            text: system_prompt,
-                        }],
-                    },
-                    Message::user(message),
-                ];
+                // Push user message into session history
+                {
+                    let mut sm = self.session_manager.lock().await;
+                    if sm.turn_count() == 0 {
+                        sm.push_system(&system_prompt);
+                    }
+                    sm.push_user(&effective_message).await;
+                }
+                // Persist user message to recall memory
+                {
+                    let session_id = self.session_manager.lock().await.session_id.clone();
+                    let rm = self.recall_memory.lock().await;
+                    let _ = rm.store(&session_id, "user_message", message, None);
+                }
+
+                // Build messages from session history
+                let messages: Vec<Message> = {
+                    let sm = self.session_manager.lock().await;
+                    sm.history().to_vec()
+                };
 
                 match self.llm.complete(&messages, &[]).await {
                     Ok(response) => {
@@ -251,12 +401,40 @@ impl RequestHandler {
                             ).await;
                         }
 
-                        // Increment turn count
+                        // --- PostTurn hooks ---
+                        {
+                            // Gather session info before locking hook_registry
+                            let (session_id, turn_count) = {
+                                let sm = self.session_manager.lock().await;
+                                (sm.session_id.clone(), sm.turn_count())
+                            };
+                            let hr = self.hook_registry.lock().await;
+                            let ctx = HookContext {
+                                point: HookPoint::PostTurn,
+                                session_id,
+                                turn_count,
+                                tool_name: None,
+                                tool_input: None,
+                                tool_result: None,
+                                message: None,
+                                metadata: HashMap::new(),
+                            };
+                            hr.execute(&ctx).await;
+                        }
+
+                        // Push assistant response and compact if needed
                         let turn = {
-                            let mut state = self.state.lock().await;
-                            state.turn_count += 1;
-                            state.turn_count
+                            let mut sm = self.session_manager.lock().await;
+                            sm.push_assistant(&text).await;
+                            let _ = sm.compact_if_needed(&*self.llm).await;
+                            sm.turn_count()
                         };
+                        // Persist assistant response to recall memory
+                        {
+                            let session_id = self.session_manager.lock().await.session_id.clone();
+                            let rm = self.recall_memory.lock().await;
+                            let _ = rm.store(&session_id, "assistant_message", &text, None);
+                        }
 
                         // Enhanced reflection: analyze question and response quality
                         let task_summary = if message.len() > 100 {
@@ -317,7 +495,12 @@ impl RequestHandler {
                             what_failed,
                             learned,
                         );
-                        if let Err(e) = self.episodic_memory.lock().await.store_reflection(&entry) {
+                        // Store reflection — drop lock guard before re-locking for evolution check
+                        let store_result = {
+                            let mem = self.episodic_memory.lock().await;
+                            mem.store_reflection(&entry)
+                        };
+                        if let Err(e) = store_result {
                             warn!(error = %e, "Failed to store chat reflection");
                         } else {
                             info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
@@ -388,9 +571,9 @@ impl RequestHandler {
             "status" => {
                 let state = self.state.lock().await;
                 let session_id = state.runtime.config().session_id.clone();
-                let turn_count = state.turn_count;
                 let iteration = state.runtime.iteration();
                 drop(state);
+                let turn_count = self.session_manager.lock().await.turn_count();
 
                 // Reflection and evolution counts from episodic memory
                 let reflection_count = self.episodic_memory.lock().await
@@ -491,7 +674,11 @@ impl RequestHandler {
                 // Run an immediate reflection on the current session state
                 let (turn, session_id, iteration) = {
                     let state = self.state.lock().await;
-                    (state.turn_count, state.runtime.config().session_id.clone(), state.runtime.iteration())
+                    let session_id = state.runtime.config().session_id.clone();
+                    let iteration = state.runtime.iteration();
+                    drop(state);
+                    let turn = self.session_manager.lock().await.turn_count();
+                    (turn, session_id, iteration)
                 };
 
                 let task_summary = format!(
@@ -572,6 +759,121 @@ impl RequestHandler {
                         }
                     })
                 }
+            }
+            "sessions" => {
+                match SessionStore::new(&self.data_dir) {
+                    Ok(store) => match store.list_sessions() {
+                        Ok(ids) => json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "result": { "sessions": ids }
+                        }),
+                        Err(e) => json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32020, "message": format!("Session list error: {}", e) }
+                        }),
+                    },
+                    Err(e) => json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32020, "message": format!("SessionStore init error: {}", e) }
+                    }),
+                }
+            }
+            "resume" => {
+                let target_session_id = request["params"]["session_id"].as_str().unwrap_or("");
+                if target_session_id.is_empty() {
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32021, "message": "Missing session_id parameter" }
+                    })
+                } else {
+                    match SessionManager::recover(&self.data_dir, target_session_id).await {
+                        Some(msgs) => {
+                            match SessionManager::new(
+                                &self.data_dir,
+                                target_session_id.to_string(),
+                                100_000,
+                            ).await {
+                                Ok(new_sm) => {
+                                    let msg_count = msgs.len();
+                                    *self.session_manager.lock().await = new_sm;
+                                    info!(
+                                        session_id = target_session_id,
+                                        messages = msg_count,
+                                        "Session resumed"
+                                    );
+                                    json!({
+                                        "jsonrpc": "2.0",
+                                        "id": id,
+                                        "result": {
+                                            "session_id": target_session_id,
+                                            "recovered_messages": msg_count,
+                                        }
+                                    })
+                                }
+                                Err(e) => json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "error": { "code": -32021, "message": format!("SessionManager init error: {}", e) }
+                                }),
+                            }
+                        }
+                        None => json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32021, "message": format!("No recoverable session: {}", target_session_id) }
+                        }),
+                    }
+                }
+            }
+            "compact" => {
+                let did_compact = {
+                    let mut sm = self.session_manager.lock().await;
+                    // Force compaction by temporarily lowering threshold
+                    sm.force_compact(&*self.llm).await
+                };
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "compacted": did_compact }
+                })
+            }
+            "reload_skills" => {
+                let count = {
+                    let mut loader = self.skill_loader.lock().await;
+                    loader.reload()
+                };
+                info!(count = count, "Skills reloaded via reload_skills RPC");
+
+                // Rebuild the cached prefix with updated skills.
+                // Note: core_memory snapshot is from boot; mid-session memory
+                // changes ride the memory_queue, not the prefix.
+                {
+                    let loader = self.skill_loader.lock().await;
+                    let cm = self.core_memory.lock().await;
+                    let old_prefix = self.cached_prefix.lock().await;
+                    let new_prefix = PrefixBuilder::build(
+                        &self.config_prompt,
+                        loader.skills(),
+                        &cm,
+                    );
+                    if let Some(reason) = PrefixBuilder::diff_reason(&old_prefix, &new_prefix) {
+                        info!(reason = %reason, "Prefix changed after skill reload (cache will miss)");
+                    }
+                    drop(old_prefix);
+                    drop(cm);
+                    drop(loader);
+                    *self.cached_prefix.lock().await = new_prefix;
+                }
+
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "skills_loaded": count }
+                })
             }
             _ => json!({
                 "jsonrpc": "2.0",

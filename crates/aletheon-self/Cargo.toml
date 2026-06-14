@@ -1,8 +1,8 @@
 [package]
 name = "aletheon-self"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "SelfField — the policy engine that reviews intents, enforces boundaries, resolves conflicts, and maintains identity continuity"
 
 [dependencies]
@@ -33,3 +33,5 @@ rollback-btrfs = []
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
+[lints]
+workspace = true

@@ -33,8 +33,6 @@ use tokio::net::UnixStream;
 
 use self::chat::{ChatWidget, Role as ChatRole};
 use self::command::{BuiltinCommand, CommandType, parse_command};
-#[cfg(all(feature = "input", feature = "display", feature = "a11y"))]
-use self::computer::ComputerCommands;
 use self::skill::SkillLoader;
 use self::status::StatusBar;
 use self::term_compat::TermCaps;
@@ -433,7 +431,7 @@ async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Help)) => {
-                let help = "内置命令：\n  /help         显示帮助\n  /clear        清空对话\n  /copy         复制最后回复到剪贴板\n  /status (st)  查看自我演化状态\n  /reflect      查看反思记录\n  /reflect_now  执行即时反思\n  /evolution    查看演化历史\n  /genome       查看基因组\n  /quit         退出\n\n输入：\n  Shift+Enter 或 \\+Enter  换行\n  Enter                   发送\n  Ctrl+C                   清空/退出\n  Esc                      清空输入\n  PgUp/PgDn               滚动聊天";
+                let help = "内置命令：\n  /help         显示帮助\n  /clear        清空对话\n  /copy         复制最后回复到剪贴板\n  /status (st)  查看自我演化状态\n  /reflect      查看反思记录\n  /reflect_now  执行即时反思\n  /evolution    查看演化历史\n  /genome       查看基因组\n  /sessions     列出会话\n  /resume <id>  恢复会话\n  /compact (cmp) 压缩上下文\n  /quit         退出\n\n输入：\n  Shift+Enter 或 \\+Enter  换行\n  Enter                   发送\n  Ctrl+C                   清空/退出\n  Esc                      清空输入\n  PgUp/PgDn               滚动聊天";
                 app.chat.add_message(ChatRole::System, help.to_string());
                 return;
             }
@@ -495,6 +493,47 @@ async fn submit_message(app: &mut App, text: String) {
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
                 app.chat.add_message(ChatRole::System, "查询基因组中...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
+                let msg = serde_json::json!({
+                    "jsonrpc": "2.0", "method": "sessions", "id": 1
+                });
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                use tokio::io::AsyncWriteExt;
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat.add_message(ChatRole::System, "查询会话列表中...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Resume { id })) => {
+                if id.is_empty() {
+                    app.chat.add_message(ChatRole::System, "用法: /resume <session_id>".to_string());
+                    return;
+                }
+                let msg = serde_json::json!({
+                    "jsonrpc": "2.0", "method": "resume", "id": 1,
+                    "params": { "session_id": id }
+                });
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                use tokio::io::AsyncWriteExt;
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat.add_message(ChatRole::System, format!("恢复会话 {}...", id));
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
+                let msg = serde_json::json!({
+                    "jsonrpc": "2.0", "method": "compact", "id": 1
+                });
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                use tokio::io::AsyncWriteExt;
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat.add_message(ChatRole::System, "压缩上下文中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(_)) => return,
@@ -599,6 +638,13 @@ fn process_response(app: &mut App, msg: serde_json::Value) {
             // /status response — rich self-evolution state
             let formatted = format_status(status);
             app.chat.update_last_message(formatted);
+        } else if let Some(sessions) = result.get("sessions") {
+            // /sessions response
+            let formatted = format_sessions(sessions);
+            app.chat.update_last_message(formatted);
+        } else if let Some(msg_text) = result.get("message").and_then(|v| v.as_str()) {
+            // Generic message response (e.g. /resume, /compact)
+            app.chat.update_last_message(msg_text.to_string());
         }
     } else if let Some(error) = msg.get("error") {
         let err = error.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
@@ -696,6 +742,26 @@ fn format_evolution(evo: &serde_json::Value) -> String {
     }
     // Handle object form with version/message fields
     serde_json::to_string_pretty(evo).unwrap_or_else(|_| format!("{:?}", evo))
+}
+
+/// Format sessions list for display.
+fn format_sessions(sessions: &serde_json::Value) -> String {
+    let empty = vec![];
+    let arr = sessions.as_array().unwrap_or(&empty);
+    if arr.is_empty() {
+        return "No sessions found.".to_string();
+    }
+    let mut lines = Vec::new();
+    lines.push(format!("=== Sessions ({}) ===\n", arr.len()));
+    for entry in arr {
+        let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+        let created = entry.get("created").and_then(|v| v.as_str()).unwrap_or("");
+        let turns = entry.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let summary = entry.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+        let short_id = &id[..8.min(id.len())];
+        lines.push(format!("[{}] {} ({} turns) {}", short_id, created, turns, summary));
+    }
+    lines.join("\n")
 }
 
 /// Format status response for display.
@@ -926,6 +992,16 @@ async fn simple_line_mode(mut stream: UnixStream, _caps: TermCaps, model_name: S
                 "status" | "st" => serde_json::json!({
                     "jsonrpc": "2.0", "method": "status", "id": 1
                 }),
+                "sessions" | "sess" => serde_json::json!({
+                    "jsonrpc": "2.0", "method": "sessions", "id": 1
+                }),
+                "resume" => serde_json::json!({
+                    "jsonrpc": "2.0", "method": "resume", "id": 1,
+                    "params": { "session_id": _args }
+                }),
+                "compact" | "cmp" => serde_json::json!({
+                    "jsonrpc": "2.0", "method": "compact", "id": 1
+                }),
                 _ => serde_json::json!({
                     "jsonrpc": "2.0", "method": "chat", "id": 1,
                     "params": { "message": trimmed }
@@ -958,6 +1034,10 @@ async fn simple_line_mode(mut stream: UnixStream, _caps: TermCaps, model_name: S
                             println!("\n{}\n", format_evolution(&msg["result"]["evolution"]));
                         } else if !msg["result"]["status"].is_null() {
                             println!("\n{}\n", format_status(&msg["result"]["status"]));
+                        } else if !msg["result"]["sessions"].is_null() {
+                            println!("\n{}\n", format_sessions(&msg["result"]["sessions"]));
+                        } else if let Some(msg_text) = msg["result"]["message"].as_str() {
+                            println!("\n{}\n", msg_text);
                         } else if let Some(err) = msg["error"]["message"].as_str() {
                             eprintln!("Error: {}\n", err);
                         }

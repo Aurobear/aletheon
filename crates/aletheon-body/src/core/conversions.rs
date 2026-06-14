@@ -1,7 +1,7 @@
-use aletheon_abi::body::{Action, ActionResult, SideEffect, SideEffectKind};
+use aletheon_abi::body::{Action, ActionResult};
 use aletheon_abi::capability::{Capability, PermissionLevel as AbiPermissionLevel};
 use aletheon_abi::context::Context;
-use aletheon_abi::tool::{ToolResult, ToolResultMeta, PermissionLevel as ToolPermissionLevel, ToolContext};
+use aletheon_abi::tool::{ToolResult, PermissionLevel as ToolPermissionLevel, ToolContext};
 use std::time::Duration;
 
 /// Convert Action to tool name + JSON input
@@ -56,6 +56,7 @@ pub fn elapsed_to_duration(ms: u64) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_abi::tool::ToolResultMeta;
 
     #[test]
     fn test_action_roundtrip() {

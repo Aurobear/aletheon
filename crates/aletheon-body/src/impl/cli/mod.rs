@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
@@ -14,32 +14,186 @@ use tokio::net::UnixStream;
 pub const DEFAULT_SOCKET: &str = "/tmp/aletheon/aletheon.sock";
 
 #[derive(Parser)]
-#[command(name = "aletheon-cli", about = "Aletheon CLI client")]
+#[command(
+    name = "aletheon",
+    about = "Aletheon — self-evolving AI agent",
+    version,
+    after_help = "Examples:\n  aletheon                    # Start interactive mode\n  aletheon status             # Check daemon status\n  aletheon hello              # Send a chat message\n  aletheon daemon start       # Start the daemon\n  aletheon -m \"what is X?\"   # Single message mode"
+)]
 pub struct Args {
     /// Socket path
-    #[arg(short, long, default_value = DEFAULT_SOCKET)]
+    #[arg(short, long, default_value = DEFAULT_SOCKET, global = true)]
     pub socket: PathBuf,
 
     /// Single message mode (non-interactive)
     #[arg(short, long)]
     pub message: Option<String>,
 
-    /// Force TUI mode (default when no args)
+    /// Force TUI mode
     #[arg(long)]
     pub tui: bool,
+
+    /// Subcommand or positional message
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
+    /// Positional message (treated as chat if no subcommand)
+    #[arg(trailing_var_arg = true, hide = true)]
+    pub message_args: Vec<String>,
+}
+
+#[derive(Subcommand)]
+pub enum Command {
+    /// Daemon management
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
+
+    /// Show reflections
+    #[command(alias = "r")]
+    Reflect,
+
+    /// Show reflection history (alias: rn)
+    #[command(alias = "rn")]
+    ReflectNow,
+
+    /// Show evolution history (alias: evo)
+    #[command(alias = "evo")]
+    Evolution,
+
+    /// Show genome (alias: gene)
+    #[command(alias = "gene")]
+    Genome,
+
+    /// Show daemon status (alias: st)
+    #[command(alias = "st")]
+    Status,
+}
+
+#[derive(Subcommand)]
+pub enum DaemonAction {
+    /// Start the daemon
+    Start {
+        /// Run in background
+        #[arg(short, long)]
+        detach: bool,
+    },
+
+    /// Stop the daemon
+    Stop,
+
+    /// Show daemon status
+    Status,
 }
 
 /// CLI entry point — parses args and dispatches to the appropriate mode.
 pub async fn run() -> Result<()> {
     let args = Args::parse();
 
-    // Single message mode: send one message and exit
+    // Handle subcommands
+    if let Some(cmd) = args.command {
+        return handle_command(&args.socket, cmd).await;
+    }
+
+    // Handle positional message args
+    if !args.message_args.is_empty() {
+        let msg = args.message_args.join(" ");
+        return single_message(&args.socket, &msg).await;
+    }
+
+    // Handle -m flag
     if let Some(msg) = args.message {
         return single_message(&args.socket, &msg).await;
     }
 
     // Interactive mode: use the line-based TUI (IME-compatible)
     super::ui::run(args.socket.to_str().unwrap_or(DEFAULT_SOCKET)).await
+}
+
+/// Handle subcommands.
+async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
+    match cmd {
+        Command::Daemon { action } => handle_daemon_action(action).await,
+        Command::Reflect => single_message(socket, "/reflect").await,
+        Command::ReflectNow => single_message(socket, "/reflect_now").await,
+        Command::Evolution => single_message(socket, "/evolution").await,
+        Command::Genome => single_message(socket, "/genome").await,
+        Command::Status => single_message(socket, "/status").await,
+    }
+}
+
+/// Find the aletheond binary.
+fn find_aletheond() -> Result<std::path::PathBuf> {
+    // Try which first
+    if let Ok(path) = which::which("aletheond") {
+        return Ok(path);
+    }
+    // Try same directory as current binary
+    let current = std::env::current_exe()?;
+    let dir = current.parent().unwrap_or(std::path::Path::new("."));
+    let path = dir.join("aletheond");
+    if path.exists() {
+        return Ok(path);
+    }
+    Err(anyhow::anyhow!("Cannot find aletheond binary. Install it or add to PATH"))
+}
+
+/// Handle daemon subcommands.
+async fn handle_daemon_action(action: DaemonAction) -> Result<()> {
+    match action {
+        DaemonAction::Start { detach } => {
+            let exe = find_aletheond()?;
+
+            if detach {
+                // Start daemon in background
+                let mut cmd = std::process::Command::new(exe);
+                cmd.arg("--socket").arg(DEFAULT_SOCKET);
+                cmd.stdout(std::process::Stdio::null());
+                cmd.stderr(std::process::Stdio::null());
+                cmd.stdin(std::process::Stdio::null());
+                let child = cmd.spawn()?;
+                println!("Daemon started in background (PID: {})", child.id());
+                println!("Socket: {}", DEFAULT_SOCKET);
+            } else {
+                // Start daemon in foreground
+                println!("Starting daemon (Ctrl+C to stop)...");
+                let status = std::process::Command::new(exe)
+                    .arg("--socket").arg(DEFAULT_SOCKET)
+                    .status()?;
+                std::process::exit(status.code().unwrap_or(1));
+            }
+        }
+        DaemonAction::Stop => {
+            // Send SIGTERM to daemon
+            let pid_file = std::path::Path::new("/tmp/aletheon/aletheond.pid");
+            if pid_file.exists() {
+                let pid_str = std::fs::read_to_string(pid_file)?;
+                let pid: i32 = pid_str.trim().parse()?;
+                unsafe {
+                    libc::kill(pid, libc::SIGTERM);
+                }
+                println!("Sent SIGTERM to daemon (PID: {})", pid);
+                std::fs::remove_file(pid_file).ok();
+            } else {
+                println!("No daemon PID file found");
+            }
+        }
+        DaemonAction::Status => {
+            println!("Daemon status: checking...");
+            // Try to connect to socket
+            let socket = std::path::Path::new(DEFAULT_SOCKET);
+            if socket.exists() {
+                match UnixStream::connect(socket).await {
+                    Ok(_) => println!("Daemon is running"),
+                    Err(e) => println!("Daemon socket exists but connection failed: {}", e),
+                }
+            } else {
+                println!("Daemon is not running (no socket)");
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Send a single message and print the response.

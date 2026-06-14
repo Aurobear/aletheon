@@ -6,7 +6,7 @@ use tokio::fs;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use super::state_db::{StateDatabase, Stage1Status};
+use super::state_db::StateDatabase;
 use super::Phase1Config;
 
 /// Result of a successful Phase 1 extraction for a single session.
@@ -244,7 +244,7 @@ fn current_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::memory::pipeline::state_db::SessionRecord;
+    use crate::r#impl::memory::pipeline::state_db::{SessionRecord, Stage1Status};
     use tempfile::TempDir;
 
     fn default_phase1_config() -> Phase1Config {

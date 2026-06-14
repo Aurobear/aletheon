@@ -3,7 +3,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Mutex;
-use tracing::{debug, info};
+use tracing::debug;
 
 use aletheon_abi::ipc_types::{IpcBackend, IpcProbeError, AgentMessage};
 

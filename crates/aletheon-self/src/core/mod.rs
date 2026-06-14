@@ -9,6 +9,7 @@ pub mod boundary;
 pub mod care;
 pub mod conflict;
 pub mod continuity;
+pub mod evolution_validator;
 pub mod identity;
 pub mod mutation;
 pub mod narrative;
@@ -136,6 +137,13 @@ impl SelfField {
 
     /// Access the care layer.
     pub fn care(&self) -> &CareLayer {
+        &self.care
+    }
+
+    /// Access the care layer (mutable).
+    pub fn care_mut(&mut self) -> &CareLayer {
+        // CareLayer uses interior mutability (RwLock), so &CareLayer suffices for mutation.
+        // This method exists for API clarity when the caller intends to modify.
         &self.care
     }
 

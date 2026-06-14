@@ -12,6 +12,8 @@ pub mod semantic;
 pub mod procedural;
 pub mod self_memory;
 pub mod router;
+pub mod activation;
+pub mod decay;
 
 // Re-export primary types
 pub use episodic::EpisodicMemory;

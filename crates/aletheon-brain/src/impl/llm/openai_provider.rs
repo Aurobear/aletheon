@@ -105,9 +105,17 @@ struct ChatResponseMessage {
 }
 
 #[derive(Deserialize)]
+struct PromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u32>,
+}
+
+#[derive(Deserialize)]
 struct ApiUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
 /// SSE streaming response structures
@@ -351,15 +359,29 @@ impl LlmProvider for OpenAiProvider {
             _ => StopReason::EndTurn,
         };
 
-        let usage = api_resp.usage.map(|u| Usage {
-            input_tokens: u.prompt_tokens,
-            output_tokens: u.completion_tokens,
-        }).unwrap_or_default();
+        let (cache_hit, cache_miss, usage) = if let Some(u) = api_resp.usage {
+            let hit = u.prompt_tokens_details.as_ref()
+                .and_then(|d| d.cached_tokens)
+                .unwrap_or(0);
+            let miss = u.prompt_tokens.saturating_sub(hit);
+            (
+                hit,
+                miss,
+                Usage {
+                    input_tokens: u.prompt_tokens,
+                    output_tokens: u.completion_tokens,
+                },
+            )
+        } else {
+            (0, 0, Usage::default())
+        };
 
         Ok(LlmResponse {
             content,
             stop_reason,
             usage,
+            cache_hit_tokens: cache_hit,
+            cache_miss_tokens: cache_miss,
         })
     }
 

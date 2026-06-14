@@ -8,6 +8,7 @@ pub mod circuit_breaker;
 pub mod output_guardrail;
 pub mod audit;
 pub mod policy;
+pub mod exec_policy;
 pub mod runner;
 
 // Re-export key types
@@ -17,4 +18,5 @@ pub use circuit_breaker::LoopCircuitBreaker;
 pub use output_guardrail::OutputGuardrail;
 pub use audit::AuditLogger;
 pub use policy::{PolicyEngine, PolicyVerdict};
+pub use exec_policy::{ExecPolicyEngine, PolicyDecision as ExecPolicyDecision, PolicyAction as ExecPolicyAction};
 pub use runner::ToolRunnerWithGuard;

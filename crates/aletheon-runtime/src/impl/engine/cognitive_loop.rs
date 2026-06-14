@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use aletheon_abi::{Message, ContentBlock, Role, ToolDefinition};
 use aletheon_abi::tool::Tool as ToolTrait;
 use aletheon_brain::r#impl::learning::{OutcomeRecorder, PatternExtractor, RuleStore};
-use aletheon_brain::r#impl::llm::{LlmProvider, StreamChunk};
+use aletheon_brain::r#impl::llm::LlmProvider;
 use crate::r#impl::memory::compressor::AdvancedCompressor;
 use crate::r#impl::memory::core_memory::CoreMemory;
 use crate::r#impl::memory::recall_memory::RecallMemory;

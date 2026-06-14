@@ -7,7 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;

@@ -1,7 +1,7 @@
 [package]
 name = "aletheon-body"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 aletheon-abi = { path = "../aletheon-abi" }
@@ -22,13 +22,17 @@ futures = "0.3"
 tempfile = "3"
 which = "7"
 hostname = "0.4"
+walkdir = { workspace = true }
+toml = "0.8"
+tree-sitter = { workspace = true }
+tree-sitter-rust = { workspace = true }
 
 # TUI dependencies
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 pulldown-cmark = "0.12"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "cargo"] }
 atty = "0.2"
 dirs-next = "2"
 

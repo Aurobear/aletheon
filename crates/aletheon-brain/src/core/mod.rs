@@ -12,6 +12,8 @@ pub mod critic;
 pub mod reflector;
 pub mod learner;
 pub mod world_model;
+pub mod evolution_trigger;
+pub mod skill_extractor;
 
 use aletheon_abi::{
     brain::{
@@ -32,9 +34,11 @@ use self::learner::Learner;
 use self::planner::Planner;
 use self::reasoner::{Reasoner, ReasoningStrategy};
 use self::reflector::Reflector;
+use self::skill_extractor::SkillExtractor;
 use self::world_model::WorldModel;
 use crate::bridge::learning::LearningBridge;
 use crate::bridge::llm::LlmBridge;
+use crate::bridge::dual_model::{DualModelBridge, TaskComplexity};
 
 /// ExperienceSummarizer — analyzes accumulated reflections and produces evolution log entries.
 ///
@@ -206,9 +210,11 @@ pub struct BrainCore {
     reflector: Reflector,
     learner: Learner,
     world_model: WorldModel,
+    skill_extractor: SkillExtractor,
     initialized: bool,
     // Real implementations
     llm: Option<LlmBridge>,
+    dual_model: Option<DualModelBridge>,
     learning: Option<LearningBridge>,
 }
 
@@ -221,8 +227,10 @@ impl BrainCore {
             reflector: Reflector::new(),
             learner: Learner::new(config.max_learned_rules),
             world_model: WorldModel::new(config.max_world_observations),
+            skill_extractor: SkillExtractor::new(),
             initialized: false,
             llm: None,
+            dual_model: None,
             learning: None,
         }
     }
@@ -230,6 +238,12 @@ impl BrainCore {
     /// Set the LLM provider for real reasoning.
     pub fn with_llm(mut self, llm: LlmBridge) -> Self {
         self.llm = Some(llm);
+        self
+    }
+
+    /// Set the dual-model bridge for planner/executor routing.
+    pub fn with_dual_model(mut self, dual_model: DualModelBridge) -> Self {
+        self.dual_model = Some(dual_model);
         self
     }
 
@@ -252,6 +266,39 @@ impl BrainCore {
     /// Access the reasoner (for strategy changes).
     pub fn reasoner_mut(&mut self) -> &mut Reasoner {
         &mut self.reasoner
+    }
+
+    /// Estimate task complexity from intent.
+    ///
+    /// Simple heuristics based on parameter/description size.
+    pub fn estimate_complexity(intent: &Intent) -> TaskComplexity {
+        let param_len = intent.parameters.to_string().len();
+        let desc_len = intent.description.len();
+
+        if param_len > 512 || desc_len > 512 {
+            TaskComplexity::Complex
+        } else if param_len > 128 || desc_len > 128 {
+            TaskComplexity::Medium
+        } else {
+            TaskComplexity::Simple
+        }
+    }
+
+    /// Get the effective LLM for a given complexity level.
+    ///
+    /// If dual_model is configured, routes through it. Otherwise falls back to
+    /// the single `llm` bridge.
+    fn effective_llm(&self, complexity: TaskComplexity) -> Option<&LlmBridge> {
+        if let Some(dm) = &self.dual_model {
+            Some(dm.route(complexity))
+        } else {
+            self.llm.as_ref()
+        }
+    }
+
+    /// Access the skill extractor (for extracting skills from reflections).
+    pub fn skill_extractor(&self) -> &SkillExtractor {
+        &self.skill_extractor
     }
 }
 
@@ -292,13 +339,77 @@ impl Subsystem for BrainCore {
 impl BrainCoreOps for BrainCore {
     /// Think about an intent and produce a plan.
     ///
-    /// When an LLM bridge is available, uses real LLM reasoning.
-    /// Falls back to the template-based reasoner otherwise.
+    /// When a dual-model bridge is configured and the task is complex, the planner
+    /// model analyzes first and its output guides the executor. Otherwise uses the
+    /// single LLM bridge. Falls back to the template-based reasoner if no LLM is set.
     async fn think(&self, intent: &Intent, ctx: &Context) -> Result<Plan> {
         let world_state = self.world_model.snapshot();
+        let complexity = Self::estimate_complexity(intent);
 
-        if let Some(llm) = &self.llm {
-            // REAL reasoning path: use LLM
+        // Two-pass flow: planner analyzes, then executor produces the plan.
+        let use_two_pass =
+            self.dual_model.is_some() && complexity == TaskComplexity::Complex;
+
+        if use_two_pass {
+            let dm = self.dual_model.as_ref().unwrap();
+            let learned_rules = self
+                .learning
+                .as_ref()
+                .map(|l| l.rules_for_context())
+                .unwrap_or_default();
+
+            // Pass 1: planner analyzes the task
+            let planner_prompt = format!(
+                "You are an analytical planning model. Current world state:\n{}\n\n\
+                 Learned rules:\n{}\n\n\
+                 Intent: {}\nParameters: {}\nDescription: {}\n\n\
+                 Analyze the intent and produce a brief analysis of the best approach, \
+                 potential risks, and recommended steps.",
+                world_state, learned_rules, intent.action, intent.parameters, intent.description
+            );
+            let planner_msgs = vec![
+                LlmBridge::system_message("You are a planning/analysis model."),
+                LlmBridge::user_message(&planner_prompt),
+            ];
+            let planner_resp = dm.planner().complete(&planner_msgs, &[]).await?;
+            let planner_analysis: String = planner_resp
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+
+            // Pass 2: executor produces the final plan, guided by the planner's analysis
+            let executor_prompt = format!(
+                "Intent: {}\nParameters: {}\nDescription: {}\n\n\
+                 Planner analysis:\n{}\n\n\
+                 Based on the above analysis, generate a plan with rollback actions.",
+                intent.action, intent.parameters, intent.description, planner_analysis
+            );
+            let executor_msgs = vec![
+                LlmBridge::system_message(
+                    "You are an execution model that produces actionable plans.",
+                ),
+                LlmBridge::user_message(&executor_prompt),
+            ];
+            let executor_resp = dm.executor().complete(&executor_msgs, &[]).await?;
+            let reasoning: String = executor_resp
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+
+            let plan = self.planner.generate_plan(intent, &reasoning, ctx);
+            Ok(plan)
+        } else if let Some(llm) = self.effective_llm(complexity) {
+            // Single-LLM reasoning path
             let learned_rules = self
                 .learning
                 .as_ref()
@@ -722,5 +833,119 @@ mod tests {
             .adjustments
             .iter()
             .any(|a| a.target == "care.learning.weight"));
+    }
+
+    // --- Dual-model tests ---
+
+    use crate::bridge::dual_model::{DualModelBridge, DualModelConfig, TaskComplexity};
+    use crate::r#impl::llm::{LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage};
+    use aletheon_abi::message::Message;
+    use std::sync::Arc;
+
+    /// Stub provider whose name appears in its response text.
+    struct StubProvider {
+        tag: String,
+    }
+
+    #[async_trait]
+    impl LlmProvider for StubProvider {
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: format!("{} response", self.tag),
+                }],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                },
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+        async fn complete_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unimplemented!()
+        }
+        fn name(&self) -> &str {
+            &self.tag
+        }
+        fn max_context_length(&self) -> usize {
+            128_000
+        }
+    }
+
+    fn make_dual_brain_core() -> BrainCore {
+        let planner = LlmBridge::new(Arc::new(StubProvider { tag: "planner".into() }));
+        let executor = LlmBridge::new(Arc::new(StubProvider { tag: "executor".into() }));
+        let dm = DualModelBridge::new(planner, executor, DualModelConfig::default());
+        BrainCore::new(make_config()).with_dual_model(dm)
+    }
+
+    #[tokio::test]
+    async fn dual_model_think_simple_uses_executor_only() {
+        let bc = make_dual_brain_core();
+        let plan = bc.think(&make_intent(), &make_ctx()).await.unwrap();
+        // Simple task → executor only, so reasoning should contain "executor"
+        assert!(plan.reasoning.contains("executor response"));
+    }
+
+    #[tokio::test]
+    async fn dual_model_think_complex_uses_planner_then_executor() {
+        let bc = make_dual_brain_core();
+        // Build a complex intent (description > 512 chars)
+        let long_desc = "x".repeat(600);
+        let intent = Intent {
+            action: "complex.task".to_string(),
+            parameters: json!({"data": "small"}),
+            source: IntentSource::User,
+            description: long_desc,
+        };
+        let plan = bc.think(&intent, &make_ctx()).await.unwrap();
+        // Complex task → two-pass: executor is the final responder
+        assert!(plan.reasoning.contains("executor response"));
+    }
+
+    #[test]
+    fn estimate_complexity_simple() {
+        let intent = make_intent(); // short description
+        assert_eq!(BrainCore::estimate_complexity(&intent), TaskComplexity::Simple);
+    }
+
+    #[test]
+    fn estimate_complexity_complex() {
+        let intent = Intent {
+            action: "test".into(),
+            parameters: json!({}),
+            source: IntentSource::User,
+            description: "y".repeat(600),
+        };
+        assert_eq!(BrainCore::estimate_complexity(&intent), TaskComplexity::Complex);
+    }
+
+    #[test]
+    fn estimate_complexity_medium() {
+        let intent = Intent {
+            action: "test".into(),
+            parameters: json!({}),
+            source: IntentSource::User,
+            description: "z".repeat(200),
+        };
+        assert_eq!(BrainCore::estimate_complexity(&intent), TaskComplexity::Medium);
+    }
+
+    #[tokio::test]
+    async fn dual_model_fallback_single_llm() {
+        // When dual_model is set but task is Simple, effective_llm returns executor
+        let bc = make_dual_brain_core();
+        let plan = bc.think(&make_intent(), &make_ctx()).await.unwrap();
+        assert!(!plan.steps.is_empty());
     }
 }

@@ -1,8 +1,8 @@
 [package]
 name = "aletheon-brain"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "BrainCore — the cognitive computation engine for Aletheon. Handles 'how do I?' reasoning, planning, critique, reflection, and learning."
 
 [dependencies]
@@ -21,6 +21,7 @@ tracing = "0.1"
 futures = "0.3"
 reqwest = { version = "0.12", features = ["stream"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+dirs = "5"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

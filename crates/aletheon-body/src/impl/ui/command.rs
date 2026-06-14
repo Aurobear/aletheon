@@ -14,6 +14,9 @@ pub enum BuiltinCommand {
     Evolution,
     Genome,
     Computer { args: String },
+    Sessions,
+    Resume { id: String },
+    Compact,
 }
 
 /// Parsed command type.
@@ -48,6 +51,11 @@ pub fn parse_command(input: &str) -> Option<CommandType> {
         "computer" => Some(CommandType::Builtin(BuiltinCommand::Computer {
             args: args.to_string(),
         })),
+        "sessions" | "sess" => Some(CommandType::Builtin(BuiltinCommand::Sessions)),
+        "resume" => Some(CommandType::Builtin(BuiltinCommand::Resume {
+            id: args.to_string(),
+        })),
+        "compact" | "cmp" => Some(CommandType::Builtin(BuiltinCommand::Compact)),
         _ => Some(CommandType::Skill {
             name: name.to_string(),
             args: args.to_string(),
@@ -164,5 +172,40 @@ mod tests {
     fn test_parse_status_alias() {
         let result = parse_command("/st").unwrap();
         assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Status)));
+    }
+
+    #[test]
+    fn test_parse_sessions() {
+        let result = parse_command("/sessions").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Sessions)));
+    }
+
+    #[test]
+    fn test_parse_sessions_alias() {
+        let result = parse_command("/sess").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Sessions)));
+    }
+
+    #[test]
+    fn test_parse_resume() {
+        let result = parse_command("/resume abc123").unwrap();
+        match result {
+            CommandType::Builtin(BuiltinCommand::Resume { id }) => {
+                assert_eq!(id, "abc123");
+            }
+            _ => panic!("Expected Resume"),
+        }
+    }
+
+    #[test]
+    fn test_parse_compact() {
+        let result = parse_command("/compact").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Compact)));
+    }
+
+    #[test]
+    fn test_parse_compact_alias() {
+        let result = parse_command("/cmp").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Compact)));
     }
 }

@@ -56,6 +56,9 @@ pub enum ErrorCategory {
     Config {
         kind: ConfigErrorKind,
     },
+    Registry {
+        kind: RegistryErrorKind,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -114,6 +117,15 @@ pub enum ConfigErrorKind {
     Missing,
     Invalid,
     Incompatible,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RegistryErrorKind {
+    AlreadyExists,
+    NotFound,
+    DependencyCycle,
+    DependencyMissing,
+    VersionIncompatible,
 }
 
 // ── AgentError ──────────────────────────────────────────────────────────────
@@ -211,6 +223,47 @@ impl AgentError {
                 kind: ConfigErrorKind::Missing,
             },
             format!("Missing config key: {}", key),
+        )
+    }
+
+    pub fn already_exists(name: &str) -> Self {
+        Self::new(
+            ErrorSeverity::Unrecoverable,
+            ErrorCategory::Registry {
+                kind: RegistryErrorKind::AlreadyExists,
+            },
+            format!("'{}' already registered", name),
+        )
+    }
+
+    pub fn not_found(name: &str) -> Self {
+        Self::new(
+            ErrorSeverity::Unrecoverable,
+            ErrorCategory::Registry {
+                kind: RegistryErrorKind::NotFound,
+            },
+            format!("'{}' not found", name),
+        )
+    }
+
+    pub fn dependency_cycle(detail: &str) -> Self {
+        Self::new(
+            ErrorSeverity::Unrecoverable,
+            ErrorCategory::Registry {
+                kind: RegistryErrorKind::DependencyCycle,
+            },
+            format!("Dependency cycle: {}", detail),
+        )
+    }
+
+    pub fn hook_timeout(hook: &str, secs: u64) -> Self {
+        Self::new(
+            ErrorSeverity::Degraded,
+            ErrorCategory::Tool {
+                tool: hook.to_string(),
+                kind: ToolErrorKind::Timeout,
+            },
+            format!("Hook '{}' timed out after {}s", hook, secs),
         )
     }
 }
@@ -721,6 +774,52 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_registry_constructors() {
+        let e = AgentError::already_exists("my_subsystem");
+        assert!(!e.is_retryable());
+        assert!(e.message.contains("my_subsystem"));
+        assert!(e.message.contains("already registered"));
+        assert!(matches!(
+            e.category,
+            ErrorCategory::Registry {
+                kind: RegistryErrorKind::AlreadyExists
+            }
+        ));
+
+        let e = AgentError::not_found("missing");
+        assert!(!e.is_retryable());
+        assert!(e.message.contains("missing"));
+        assert!(matches!(
+            e.category,
+            ErrorCategory::Registry {
+                kind: RegistryErrorKind::NotFound
+            }
+        ));
+
+        let e = AgentError::dependency_cycle("A -> B -> A");
+        assert!(!e.is_retryable());
+        assert!(e.message.contains("A -> B -> A"));
+        assert!(matches!(
+            e.category,
+            ErrorCategory::Registry {
+                kind: RegistryErrorKind::DependencyCycle
+            }
+        ));
+
+        let e = AgentError::hook_timeout("pre_init", 30);
+        assert!(e.is_retryable());
+        assert!(e.message.contains("pre_init"));
+        assert!(e.message.contains("30s"));
+        assert!(matches!(
+            e.category,
+            ErrorCategory::Tool {
+                kind: ToolErrorKind::Timeout,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]

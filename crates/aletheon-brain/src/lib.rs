@@ -32,6 +32,7 @@ pub use core::world_model::WorldModel;
 
 // Re-export bridge components
 pub use bridge::llm::LlmBridge;
+pub use bridge::dual_model::{DualModelBridge, DualModelConfig, TaskComplexity};
 pub use bridge::inference::InferenceBridge;
 pub use bridge::learning::LearningBridge;
 

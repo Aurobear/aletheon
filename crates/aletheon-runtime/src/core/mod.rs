@@ -6,4 +6,5 @@ pub mod config;
 pub use orchestrator::AletheonRuntime;
 pub use behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use react_loop::ReActLoop;
-pub use config::{RuntimeConfig, AppConfig, AgentConfig, ProviderConfig, Transport};
+pub use config::{RuntimeConfig, AppConfig, AgentConfig, ProviderConfig, Transport,
+    SandboxConfig, McpServerConfig, PluginsConfig, MemoryConfig, DaemonConfig};

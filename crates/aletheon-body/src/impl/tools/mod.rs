@@ -17,6 +17,10 @@ pub mod toolset;
 #[cfg(all(feature = "input", feature = "display", feature = "a11y"))]
 pub mod acix_tools;
 pub mod exposure;
+pub mod code_graph;
+pub mod file_search;
+pub mod apply_patch;
+pub mod script_tool;
 
 // Re-export types from aletheon-abi (the canonical definitions)
 pub use aletheon_abi::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};

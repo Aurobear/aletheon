@@ -41,6 +41,8 @@ impl MockLlmProvider {
                 input_tokens: 10,
                 output_tokens: 5,
             },
+            cache_hit_tokens: 0,
+            cache_miss_tokens: 0,
         });
     }
 
