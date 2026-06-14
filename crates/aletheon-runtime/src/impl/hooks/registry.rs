@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use tracing::warn;
 
@@ -44,6 +45,19 @@ impl HookRegistry {
         let entry = self.hooks.entry(hook.point).or_default();
         entry.push(hook);
         entry.sort_by_key(|h| h.priority);
+    }
+
+    /// Unregister all hooks with the given name. Returns `true` if at least one was removed.
+    pub fn unregister(&mut self, name: &str) -> bool {
+        let mut removed = false;
+        for hooks in self.hooks.values_mut() {
+            let before = hooks.len();
+            hooks.retain(|h| h.name != name);
+            if hooks.len() < before {
+                removed = true;
+            }
+        }
+        removed
     }
 
     /// Execute all hooks for a given point.
@@ -117,10 +131,28 @@ impl HookRegistry {
             let _ = stdin.write_all(ctx_json.as_bytes()).await;
         }
 
-        match child.wait_with_output().await {
-            Ok(output) => parse_hook_output(&output.stdout),
-            Err(e) => {
+        // Wait for the child with a 30-second timeout.
+        // We use `child.wait()` so we retain ownership and can `kill()` on timeout.
+        let deadline = tokio::time::timeout(Duration::from_secs(30), async {
+            let stdout = child.stdout.take();
+            let status = child.wait().await?;
+            let mut out = Vec::new();
+            if let Some(mut s) = stdout {
+                use tokio::io::AsyncReadExt;
+                let _ = s.read_to_end(&mut out).await;
+            }
+            Ok::<_, std::io::Error>((status, out))
+        });
+
+        match deadline.await {
+            Ok(Ok((_status, stdout))) => parse_hook_output(&stdout),
+            Ok(Err(e)) => {
                 warn!(hook = %hook.name, error = %e, "Hook execution failed");
+                HookResult::Continue
+            }
+            Err(_) => {
+                warn!(hook = %hook.name, "Hook execution timed out after 30s");
+                child.kill().await.ok();
                 HookResult::Continue
             }
         }
@@ -340,5 +372,65 @@ mod tests {
             HookResult::ModifyInput(v) => assert_eq!(v["key"], "value"),
             _ => panic!("Expected ModifyInput"),
         }
+    }
+
+    #[test]
+    fn unregister_hook() {
+        let mut reg = HookRegistry::new();
+        reg.register(make_hook("a", HookPoint::PreTool, 10));
+        reg.register(make_hook("b", HookPoint::PreTool, 5));
+        reg.register(make_hook("a", HookPoint::PostTool, 100));
+
+        // Should remove both hooks named "a" across different points.
+        assert!(reg.unregister("a"));
+        assert_eq!(reg.count(&HookPoint::PreTool), 1);
+        assert_eq!(reg.count(&HookPoint::PostTool), 0);
+        assert_eq!(reg.total_count(), 1);
+
+        // Unregistering a non-existent name returns false.
+        assert!(!reg.unregister("nonexistent"));
+    }
+
+    #[tokio::test]
+    async fn hook_timeout_kills_hanging_script() {
+        let dir = TempDir::new().unwrap();
+        let script = dir.path().join("hanging.sh");
+        // Script sleeps for 3600s -- far beyond the 30s timeout.
+        std::fs::write(&script, "#!/bin/bash\nsleep 3600").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let mut reg = HookRegistry::new();
+        reg.register(RegisteredHook {
+            name: "test:timeout".into(),
+            source: "test".into(),
+            script_path: Some(script),
+            point: HookPoint::PostTurn,
+            priority: 10,
+        });
+
+        let ctx = HookContext {
+            point: HookPoint::PostTurn,
+            session_id: "test".into(),
+            turn_count: 1,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: HashMap::new(),
+        };
+
+        let start = std::time::Instant::now();
+        let result = reg.execute(&ctx).await;
+        let elapsed = start.elapsed();
+
+        // Should return Continue (not hang for 3600s).
+        assert!(matches!(result, HookResult::Continue));
+        // Should complete in roughly 30s, with some tolerance.
+        assert!(elapsed < std::time::Duration::from_secs(60),
+            "Expected timeout ~30s, but took {:?}", elapsed);
     }
 }
