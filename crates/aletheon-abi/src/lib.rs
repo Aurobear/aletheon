@@ -7,6 +7,7 @@
 //! (`file_operations`, `net_proto_ops`), this crate defines the contracts
 //! between Aletheon subsystems.
 
+pub mod agent;
 pub mod subsystem;
 pub mod event;
 pub mod event_bus;
@@ -26,6 +27,7 @@ pub mod message;
 pub mod tool;
 pub mod hook;
 pub mod sandbox;
+pub mod ipc;
 pub mod ipc_types;
 pub mod llm_types;
 
@@ -60,6 +62,7 @@ pub use tool::{Tool, ToolResult, ToolResultMeta, ToolContext, PermissionLevel as
 pub use hook::{HookPoint, HookContext, HookToolResult, HookResult};
 pub use llm_types::ToolDefinition;
 pub use sandbox::{SandboxBackend, SandboxConfig, SandboxResult, SandboxCapabilities, IsolationLevel};
+pub use ipc::{IpcMessage, MessageKind, Signal, ForkDirective, ForkResult, GroupId};
 pub use ipc_types::{IpcBackend, IpcPreference, IpcProbeError, AgentMessage, AgentId, MessageType, IpcPriority};
 
 // Re-export key error types
