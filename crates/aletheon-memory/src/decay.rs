@@ -3,7 +3,7 @@
 /// Memories lose "strength" over time unless accessed.
 /// Accessed memories get a strength boost (re-consolidation).
 /// Memories below a threshold are candidates for forgetting.
-
+///
 /// Compute current strength of a memory entry.
 ///
 /// Uses a simplified Ebbinghaus model:

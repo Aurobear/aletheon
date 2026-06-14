@@ -1,7 +1,6 @@
 //! MemoryRouter — dispatches to the correct backend by MemoryType.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use aletheon_abi::{
     CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
@@ -18,7 +17,6 @@ use crate::self_memory::SelfMemory;
 /// Routes memory operations to dynamically registered backends.
 pub struct MemoryRouter {
     backends: Vec<(MemoryType, Box<dyn MemoryBackend + Send + Sync>)>,
-    db_dir: PathBuf,
 }
 
 impl MemoryRouter {
@@ -28,7 +26,6 @@ impl MemoryRouter {
     pub fn new(db_dir: &std::path::Path) -> Self {
         let mut router = Self {
             backends: Vec::new(),
-            db_dir: db_dir.to_path_buf(),
         };
         router.register(MemoryType::Episodic, EpisodicMemory::new(db_dir.join("episodic.db")));
         router.register(MemoryType::Semantic, SemanticMemory::new(db_dir.join("semantic.db")));
@@ -146,7 +143,7 @@ impl MemoryBackend for MemoryRouter {
             }
         }
 
-        all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        all.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         if filter.limit > 0 {
             all.truncate(filter.limit);
         }
