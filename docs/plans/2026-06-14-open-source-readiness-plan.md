@@ -54,7 +54,28 @@ edition = "2021"
 license = "MIT"
 ```
 
-- [ ] **Step 3: 验证**
+- [ ] **Step 3: 为所有 crate 添加 license.workspace = true**
+
+检查并更新以下 crate 的 `Cargo.toml`，确保包含 `license.workspace = true`：
+
+- `crates/aletheon-abi/Cargo.toml` ✅ 已有
+- `crates/aletheon-body/Cargo.toml` - 需添加
+- `crates/aletheon-brain/Cargo.toml` - 需添加
+- `crates/aletheon-comm/Cargo.toml` - 需添加
+- `crates/aletheon-memory/Cargo.toml` - 需添加
+- `crates/aletheon-meta/Cargo.toml` - 需添加
+- `crates/aletheon-runtime/Cargo.toml` - 需添加
+- `crates/aletheon-self/Cargo.toml` - 需添加
+- `crates/binaries/aletheond/Cargo.toml` - 需添加
+- `crates/binaries/aletheon-exec/Cargo.toml` - 需添加
+- `crates/binaries/aletheon-cli/Cargo.toml` - 需添加
+
+在每个 crate 的 `[package]` 部分添加：
+```toml
+license.workspace = true
+```
+
+- [ ] **Step 4: 验证**
 
 ```bash
 cargo metadata --no-deps --format-version 1 | jq '.packages[].license'
@@ -62,10 +83,10 @@ cargo metadata --no-deps --format-version 1 | jq '.packages[].license'
 
 Expected: 所有包显示 `"MIT"`
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 5: 提交**
 
 ```bash
-git add LICENSE Cargo.toml
+git add LICENSE Cargo.toml crates/*/Cargo.toml crates/binaries/*/Cargo.toml
 git commit -m "chore: add MIT license and update workspace metadata"
 ```
 
@@ -468,7 +489,7 @@ cd examples/self-evolution-demo
 
 - [核心概念](concepts.md) - 了解 SelfField、BrainCore、BodyRuntime
 - [配置参考](configuration.md) - 详细的配置选项
-- [架构概览](../architecture/overview.md) - 深入了解系统架构
+- [架构概览](../design/architecture-overview.md) - 深入了解系统架构
 ```
 
 - [ ] **Step 2: 提交**
@@ -551,7 +572,7 @@ Aletheon 的记忆系统分为三层:
 2. **Semantic Memory**: 存储知识和概念
 3. **Procedural Memory**: 记录操作步骤
 
-详见 [记忆系统](../architecture/memory-system.md)
+详见 [记忆系统](../design/memory/README.md)
 
 ## Plugin System (插件系统)
 
@@ -561,7 +582,7 @@ Aletheon 支持通过插件扩展功能:
 - **WASM Plugins**: WebAssembly 插件，安全隔离
 - **Script Plugins**: 脚本插件，快速开发
 
-详见 [插件系统](../architecture/plugin-system.md)
+详见 [插件系统](../design/runtime/plugin.md)
 
 ## Linux Integration (Linux 集成)
 
@@ -1259,7 +1280,7 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../aletheon-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
-            aletheond aletheon-exec aletheon-cli
+            aletheond aletheon-exec aletheon
           cd ../../..
       
       - name: Upload artifact
@@ -1345,6 +1366,7 @@ git commit -m "ci: add release workflow for automated releases"
 **Files:**
 - Create: `examples/self-evolution-demo/README.md`
 - Create: `examples/self-evolution-demo/setup.sh`
+- Create: `examples/self-evolution-demo/run-demo.sh`
 - Create: `examples/self-evolution-demo/config.toml`
 
 - [ ] **Step 1: 创建 Demo README**
@@ -1486,7 +1508,38 @@ echo "环境准备完成！"
 echo "运行 demo: ./run-demo.sh"
 ```
 
-- [ ] **Step 3: 创建 config.toml**
+- [ ] **Step 3: 创建 run-demo.sh**
+
+```bash
+#!/bin/bash
+set -e
+
+echo "=== Self-Evolution Demo ==="
+echo ""
+echo "这个 demo 展示 Agent 如何通过反思和进化学会使用新工具。"
+echo ""
+
+# 检查是否已运行 setup
+if [ ! -f ~/.config/aletheon/config.toml ]; then
+    echo "错误: 请先运行 ./setup.sh"
+    exit 1
+fi
+
+# 运行 demo
+echo "启动 Agent..."
+cd ../..
+cargo run --release --bin aletheond -- --demo self-evolution
+cd examples/self-evolution-demo
+
+echo ""
+echo "=== Demo 完成 ==="
+echo ""
+echo "查看结果:"
+echo "  cat expected-output/genome-after.json"
+echo "  cat expected-output/reflection-log.md"
+```
+
+- [ ] **Step 4: 创建 config.toml**
 
 ```toml
 [agent]
@@ -1701,6 +1754,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ```bash
 git add CHANGELOG.md
 git commit -m "docs: add changelog"
+```
+
+---
+
+### Task 17: 为所有 crate 添加 description 字段（crates.io 发布必需）
+
+**Files:**
+- Modify: `crates/aletheon-abi/Cargo.toml`
+- Modify: `crates/aletheon-body/Cargo.toml`
+- Modify: `crates/aletheon-brain/Cargo.toml`
+- Modify: `crates/aletheon-comm/Cargo.toml`
+- Modify: `crates/aletheon-memory/Cargo.toml`
+- Modify: `crates/aletheon-meta/Cargo.toml`
+- Modify: `crates/aletheon-runtime/Cargo.toml`
+- Modify: `crates/aletheon-self/Cargo.toml`
+
+- [ ] **Step 1: 为每个 crate 添加 description 字段**
+
+在每个 crate 的 `[package]` 部分添加 `description`：
+
+```toml
+# aletheon-abi
+description = "Aletheon ABI layer - public API interfaces for agent runtime"
+
+# aletheon-body
+description = "Aletheon Body runtime - tool execution and system interaction"
+
+# aletheon-brain
+description = "Aletheon Brain core - reasoning, planning, and reflection"
+
+# aletheon-comm
+description = "Aletheon Communication layer - inter-process communication"
+
+# aletheon-memory
+description = "Aletheon Memory system - episodic, semantic, and procedural memory"
+
+# aletheon-meta
+description = "Aletheon Meta runtime - self-update and morphological evolution"
+
+# aletheon-runtime
+description = "Aletheon Runtime - core agent runtime and orchestration"
+
+# aletheon-self
+description = "Aletheon Self-evolution - reflection, behavior evolution, and genome generation"
+```
+
+- [ ] **Step 2: 验证**
+
+```bash
+cargo package --list -p aletheon-abi
+```
+
+Expected: 无错误输出
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add crates/*/Cargo.toml
+git commit -m "chore: add description fields for crates.io publishing"
 ```
 
 ---
