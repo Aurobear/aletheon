@@ -59,6 +59,7 @@ pub enum EventType {
     BootPhaseChanged,
     ReActIterationStart,
     ReActIterationEnd,
+    AgentForkCompleted,
 }
 
 /// Event priority — like IRQ priority levels.

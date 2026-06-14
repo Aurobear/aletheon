@@ -1,8 +1,10 @@
 pub mod budget;
+pub mod fork;
 pub mod harness;
 pub mod process;
 
 pub use budget::TokenBudget;
+pub use fork::{AgentFork, AgentForkCompletedPayload, ForkState};
 pub use harness::{AgentHarness, AttemptParams, AttemptResult, AttemptStatus, HarnessBid, HarnessContext, RuntimePlan};
 pub use process::{AgentProcess, AgentProcessConfig, AgentState};
 
