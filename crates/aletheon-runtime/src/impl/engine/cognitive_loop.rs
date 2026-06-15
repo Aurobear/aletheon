@@ -22,6 +22,8 @@ use aletheon_self::r#impl::security::runner::{ToolRunnerWithGuard, ToolError};
 use crate::r#impl::session::journal::{EventJournal, SessionEvent};
 use aletheon_abi::tool::{ToolContext, ToolResult};
 use aletheon_body::r#impl::tools::ToolRegistry;
+use aletheon_abi::envelope::Envelope;
+use aletheon_comm::CommunicationBus;
 
 use super::config::EngineConfig;
 
@@ -75,12 +77,18 @@ pub struct Engine {
     pub(super) selector: Option<SelectorStrategy>,
     /// Temporary system prompt override for the current turn.
     pub(super) temp_system_prompt: Option<String>,
-    /// Receiver for perception events from the bridge.
+    /// Subscriber for perception events from the CommunicationBus topic.
+    /// When `None`, falls back to the legacy mpsc receiver.
+    pub(super) perception_sub: Option<tokio::sync::broadcast::Receiver<Envelope>>,
+    /// Legacy mpsc receiver for backward compatibility when no bus is configured.
     pub(super) perception_rx: Option<tokio::sync::mpsc::Receiver<PerceptionInjection>>,
     /// Hook dispatcher for lifecycle events.
     pub(super) hook_dispatcher: Option<HookDispatcher>,
     /// Advanced context compressor with token-budget tail protection.
     pub(super) compressor: AdvancedCompressor,
+    /// CommunicationBus for inter-module communication (request-response, pub-sub).
+    /// When `None`, direct lock-based fallback is used for backward compatibility.
+    pub(super) bus: Option<Arc<CommunicationBus>>,
     /// Records tool call outcomes for learning (only if learning_enabled).
     pub(super) outcome_recorder: Option<OutcomeRecorder>,
     /// Extracts patterns from historical outcomes.
@@ -118,6 +126,7 @@ impl Engine {
             (None, None)
         };
         let learning_max_rules = config.learning_max_rules;
+        let bus = config.bus.clone();
 
         Self {
             llm,
@@ -132,9 +141,11 @@ impl Engine {
             agent_registry: None,
             selector: None,
             temp_system_prompt: None,
+            perception_sub: None,
             perception_rx: None,
             hook_dispatcher: HookDispatcher::try_load(),
             compressor,
+            bus,
             outcome_recorder,
             pattern_extractor,
             rule_store: RuleStore::new(learning_max_rules),
@@ -177,13 +188,63 @@ impl Engine {
         self
     }
 
-    /// Set the perception event receiver from the bridge.
+    /// Set the CommunicationBus for inter-module communication.
+    pub fn with_bus(mut self, bus: Arc<CommunicationBus>) -> Self {
+        self.bus = Some(bus);
+        self
+    }
+
+    /// Subscribe to the "perception.events" topic on the CommunicationBus.
+    /// Call this when a bus is configured to receive perception events via pub-sub.
+    pub fn subscribe_perception(&mut self) {
+        if let Some(ref bus) = self.bus {
+            let rx = bus.subscribe_topic("perception.events", None);
+            self.perception_sub = Some(rx);
+        }
+    }
+
+    /// Set the perception event receiver from the bridge (legacy mpsc path).
     pub fn set_perception_rx(&mut self, rx: tokio::sync::mpsc::Receiver<PerceptionInjection>) {
         self.perception_rx = Some(rx);
     }
 
     /// Drain pending perception events and inject into message history.
+    ///
+    /// Prefers the bus-based broadcast subscriber; falls back to the legacy
+    /// mpsc receiver for backward compatibility.
     pub fn drain_perceptions(&mut self) {
+        // Try bus-based perception subscription first
+        if self.perception_sub.is_some() {
+            let mut envelopes = Vec::new();
+            let mut closed = false;
+            if let Some(rx) = &mut self.perception_sub {
+                loop {
+                    match rx.try_recv() {
+                        Ok(envelope) => {
+                            envelopes.push(envelope);
+                        }
+                        Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                        Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                            warn!(skipped = n, "Perception subscription lagged, skipping messages");
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                            closed = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if closed {
+                self.perception_sub = None;
+            }
+            for envelope in &envelopes {
+                self.handle_perception_envelope(envelope);
+            }
+            return;
+        }
+
+        // Fallback: legacy mpsc receiver
         if let Some(rx) = &mut self.perception_rx {
             while let Ok(injection) = rx.try_recv() {
                 match injection {
@@ -208,6 +269,28 @@ impl Engine {
                             self.messages.insert(insert_pos, msg);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Handle a single perception envelope from the bus topic.
+    fn handle_perception_envelope(&mut self, envelope: &Envelope) {
+        use super::modules::PerceptionEventMsg;
+
+        if let aletheon_abi::envelope::Payload::Json(val) = &envelope.payload {
+            match serde_json::from_value::<PerceptionEventMsg>(val.clone()) {
+                Ok(event_msg) => {
+                    let msg = Message::system(format!(
+                        "[Perception Alert] source={}, priority={}, summary={}",
+                        event_msg.source, event_msg.priority, event_msg.summary,
+                    ));
+                    let insert_pos = self.messages.iter().rposition(|m| m.role == Role::User)
+                        .unwrap_or(self.messages.len());
+                    self.messages.insert(insert_pos, msg);
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to deserialize PerceptionEventMsg from bus envelope");
                 }
             }
         }
@@ -240,22 +323,14 @@ impl Engine {
             false
         };
 
-        // Inject core memory into system prompt context
-        let core_memory_content = {
-            let cm = self.core_memory.lock().await;
-            cm.format_for_context()
-        };
+        // Inject core memory into system prompt context (bus-aware)
+        let core_memory_content = self.get_core_memory_context().await;
         if !core_memory_content.is_empty() {
             debug!(len = core_memory_content.len(), "Core memory injected into context");
         }
 
-        // Store user message in recall memory
-        {
-            let rm = self.recall_memory.lock().await;
-            if let Err(e) = rm.store(&self.config.session_id, "user", user_input, None) {
-                warn!(error = %e, "Failed to store user message in recall memory");
-            }
-        }
+        // Store user message in recall memory (bus-aware)
+        self.store_recall(&self.config.session_id, "user", user_input, None).await;
 
         // Add user message
         self.messages.push(Message::user(user_input));
@@ -269,7 +344,7 @@ impl Engine {
         }
 
         let session_id = self.config.session_id.clone();
-        let mut tool_defs = self.tools.definitions();
+        let mut tool_defs = self.get_tool_definitions().await;
 
         // Add delegate_task tool definition if agent registry is configured
         if self.agent_registry.is_some() {
@@ -338,13 +413,8 @@ impl Engine {
                 let final_text = text_parts.join("\n");
                 self.messages.push(Message::assistant(&final_text));
 
-                // Store assistant response in recall memory
-                {
-                    let rm = self.recall_memory.lock().await;
-                    if let Err(e) = rm.store(&self.config.session_id, "assistant", &final_text, None) {
-                        warn!(error = %e, "Failed to store assistant response in recall memory");
-                    }
-                }
+                // Store assistant response in recall memory (bus-aware)
+                self.store_recall(&self.config.session_id, "assistant", &final_text, None).await;
 
                 // Record assistant message in journal
                 if let Some(j) = &self.journal {
@@ -536,8 +606,8 @@ impl Engine {
                     ).await;
                 }
 
-                // Emit ToolObservationEvent if EventBus is configured
-                if let Some(ref bus) = self.config.event_bus {
+                // Emit ToolObservationEvent via CommunicationBus (or legacy EventBus fallback)
+                if let Some(ref bus) = self.bus {
                     use aletheon_abi::evolution::ToolObservationPayload;
                     use aletheon_comm::core::event::ConcreteEvent;
                     use aletheon_abi::{EventType, Priority};
@@ -566,7 +636,7 @@ impl Engine {
                     // Fire-and-forget: non-blocking event emission
                     let bus_clone = Arc::clone(bus);
                     tokio::spawn(async move {
-                        if let Err(e) = bus_clone.publish(Box::new(event)).await {
+                        if let Err(e) = bus_clone.publish_event(Box::new(event)).await {
                             warn!(error = %e, "Failed to publish ToolObservationEvent");
                         }
                     });

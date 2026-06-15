@@ -12,6 +12,7 @@ pub mod cognitive_loop;
 pub mod tool_dispatch;
 pub mod memory_integration;
 pub mod streaming;
+pub mod modules;
 
 // Re-export key types
 pub use config::EngineConfig;

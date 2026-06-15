@@ -1,9 +1,16 @@
+use std::sync::Arc;
+use std::time::Duration;
+
 use tracing::{info, warn};
 
+use aletheon_abi::envelope::*;
 use aletheon_brain::r#impl::learning::{OutcomeRecord, OutcomeContext};
 use aletheon_abi::tool::ToolResult;
+use aletheon_comm::CommunicationBus;
+use aletheon_comm::envelope::Payload;
 
 use super::cognitive_loop::Engine;
+use super::modules::{MemoryRequest, MemoryResponse};
 
 impl Engine {
     /// Record a tool call outcome for the learning pipeline.
@@ -69,6 +76,99 @@ impl Engine {
                     self.rule_store.add(rule);
                 }
             }
+        }
+    }
+
+    /// Get core memory context for system prompt injection.
+    ///
+    /// Uses the CommunicationBus (request to MemoryModule) if available,
+    /// falls back to direct lock on CoreMemory for backward compatibility.
+    pub(super) async fn get_core_memory_context(&self) -> String {
+        if let Some(ref bus) = self.bus {
+            let req = MemoryRequest::FormatForContext;
+            let envelope = Envelope::request(
+                Endpoint::Module(ModuleId::Runtime),
+                Target::Module(ModuleId::Memory),
+                Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
+                Duration::from_secs(5),
+            );
+            match bus.request(envelope).await {
+                Ok(resp_envelope) => {
+                    if let Payload::Json(val) = &resp_envelope.payload {
+                        match serde_json::from_value::<MemoryResponse>(val.clone()) {
+                            Ok(MemoryResponse::ContextFormatted { text }) => return text,
+                            Ok(MemoryResponse::Error { message }) => {
+                                warn!(error = %message, "MemoryModule returned error for FormatForContext");
+                            }
+                            Ok(other) => {
+                                warn!(?other, "Unexpected response from MemoryModule for FormatForContext");
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "Failed to deserialize MemoryResponse");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Bus request for FormatForContext failed, falling back to direct lock");
+                }
+            }
+        }
+        // Fallback: direct lock
+        let cm = self.core_memory.lock().await;
+        cm.format_for_context()
+    }
+
+    /// Store a recall memory entry.
+    ///
+    /// Uses the CommunicationBus (request to MemoryModule) if available,
+    /// falls back to direct lock on RecallMemory for backward compatibility.
+    pub(super) async fn store_recall(
+        &self,
+        session_id: &str,
+        entry_type: &str,
+        content: &str,
+        metadata: Option<&str>,
+    ) {
+        if let Some(ref bus) = self.bus {
+            let req = MemoryRequest::StoreRecall {
+                session_id: session_id.to_string(),
+                entry_type: entry_type.to_string(),
+                content: content.to_string(),
+                metadata: metadata.map(|s| s.to_string()),
+            };
+            let envelope = Envelope::request(
+                Endpoint::Module(ModuleId::Runtime),
+                Target::Module(ModuleId::Memory),
+                Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
+                Duration::from_secs(5),
+            );
+            match bus.request(envelope).await {
+                Ok(resp_envelope) => {
+                    if let Payload::Json(val) = &resp_envelope.payload {
+                        match serde_json::from_value::<MemoryResponse>(val.clone()) {
+                            Ok(MemoryResponse::RecallStored { .. }) => return,
+                            Ok(MemoryResponse::Error { message }) => {
+                                warn!(error = %message, "MemoryModule returned error for StoreRecall");
+                            }
+                            Ok(other) => {
+                                warn!(?other, "Unexpected response from MemoryModule for StoreRecall");
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "Failed to deserialize MemoryResponse");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Bus request for StoreRecall failed, falling back to direct lock");
+                }
+            }
+        }
+        // Fallback: direct lock
+        let rm = self.recall_memory.lock().await;
+        if let Err(e) = rm.store(session_id, entry_type, content, metadata) {
+            warn!(error = %e, "Failed to store recall memory entry (fallback)");
         }
     }
 }

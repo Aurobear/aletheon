@@ -5,4 +5,4 @@
 
 pub mod event;
 pub mod bus;
-pub mod transport;
+pub mod envelope;

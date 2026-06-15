@@ -8,12 +8,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aletheon_abi::agent::Pid;
-use aletheon_abi::{EventBus, ForkDirective, ForkResult, IpcMessage};
+use aletheon_abi::envelope::Envelope;
+use aletheon_abi::{ForkDirective, ForkResult};
+use aletheon_comm::CommunicationBus;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::r#impl::agent::fork::AgentFork;
 use crate::r#impl::agent::process::{AgentProcess, AgentProcessConfig};
-use crate::r#impl::kernel::ipc::{IpcSendError, MessageChannel, SharedScratchpad};
+use crate::r#impl::kernel::ipc::SharedScratchpad;
 
 // ---------------------------------------------------------------------------
 // KernelError
@@ -57,24 +59,21 @@ pub struct AgentKernel {
     forks: RwLock<HashMap<Pid, Arc<Mutex<AgentFork>>>>,
     /// Parent `Pid` → list of child `Pid`s.
     children: RwLock<HashMap<Pid, Vec<Pid>>>,
-    /// Point-to-point message channel.
-    ipc: MessageChannel,
+    /// Unified communication bus for IPC and lifecycle events.
+    bus: Arc<CommunicationBus>,
     /// Task-scoped shared scratchpads.
     scratchpads: RwLock<HashMap<String, Arc<SharedScratchpad>>>,
-    /// Event bus reference.
-    bus: Arc<dyn EventBus>,
 }
 
 impl AgentKernel {
-    /// Create a new kernel with the given event bus.
-    pub fn new(bus: Arc<dyn EventBus>) -> Self {
+    /// Create a new kernel with the given communication bus.
+    pub fn new(bus: Arc<CommunicationBus>) -> Self {
         Self {
             processes: RwLock::new(HashMap::new()),
             forks: RwLock::new(HashMap::new()),
             children: RwLock::new(HashMap::new()),
-            ipc: MessageChannel::new(64),
-            scratchpads: RwLock::new(HashMap::new()),
             bus,
+            scratchpads: RwLock::new(HashMap::new()),
         }
     }
 
@@ -91,10 +90,11 @@ impl AgentKernel {
         parent: Option<Pid>,
     ) -> Pid {
         let pid = Pid::new();
-        let process = AgentProcess::new_minimal(config);
+        let mut process = AgentProcess::new_minimal(config);
 
-        // Register IPC inbox.
-        self.ipc.register(pid).await;
+        // Register agent inbox on the communication bus and store the receiver.
+        let inbox = self.bus.register_agent(pid.as_u64(), Some(64)).await;
+        process.inbox = Some(inbox);
 
         // Store in process table.
         self.processes
@@ -142,11 +142,12 @@ impl AgentKernel {
             }
         };
 
-        let fork = AgentFork::new(parent_pid, directive, parent_remaining, self.bus.clone());
+        let mut fork = AgentFork::new(parent_pid, directive, parent_remaining, self.bus.event_bus().clone());
         let child_pid = fork.pid;
 
-        // Register IPC inbox for the fork.
-        self.ipc.register(child_pid).await;
+        // Register agent inbox on the communication bus and store the receiver.
+        let inbox = self.bus.register_agent(child_pid.as_u64(), Some(64)).await;
+        fork.inbox = Some(inbox);
 
         // Store in fork table.
         self.forks
@@ -258,7 +259,7 @@ impl AgentKernel {
             let mut processes = self.processes.write().await;
             if processes.remove(&pid).is_some() {
                 drop(processes);
-                self.ipc.unregister(&pid).await;
+                self.bus.unregister_agent(&pid.as_u64()).await;
                 return Ok(());
             }
         }
@@ -268,7 +269,7 @@ impl AgentKernel {
             let mut forks = self.forks.write().await;
             if forks.remove(&pid).is_some() {
                 drop(forks);
-                self.ipc.unregister(&pid).await;
+                self.bus.unregister_agent(&pid.as_u64()).await;
                 return Ok(());
             }
         }
@@ -278,11 +279,9 @@ impl AgentKernel {
 
     // -- send ----------------------------------------------------------------
 
-    /// Send an IPC message.
-    ///
-    /// Delegates to the underlying [`MessageChannel`].
-    pub async fn send(&self, msg: IpcMessage) -> Result<(), IpcSendError> {
-        self.ipc.send(msg).await
+    /// Send an envelope via the communication bus.
+    pub async fn send(&self, envelope: Envelope) -> anyhow::Result<()> {
+        self.bus.send(envelope).await
     }
 
     // -- scratchpad ----------------------------------------------------------
@@ -330,40 +329,10 @@ impl AgentKernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_abi::Event;
-
-    // Minimal EventBus stub for tests.
-    struct NoopEventBus;
-
-    #[async_trait::async_trait]
-    impl EventBus for NoopEventBus {
-        async fn publish(&self, _event: Box<dyn Event>) -> anyhow::Result<()> {
-            Ok(())
-        }
-        async fn subscribe(
-            &self,
-            _event_type: aletheon_abi::EventType,
-            _handler: aletheon_abi::EventHandler,
-        ) -> anyhow::Result<aletheon_abi::SubscriptionId> {
-            Ok(aletheon_abi::SubscriptionId(0))
-        }
-        async fn request(
-            &self,
-            _event: Box<dyn Event>,
-            _timeout: std::time::Duration,
-        ) -> anyhow::Result<Box<dyn Event>> {
-            anyhow::bail!("not implemented")
-        }
-        async fn unsubscribe(&self, _id: aletheon_abi::SubscriptionId) -> anyhow::Result<()> {
-            Ok(())
-        }
-        async fn has_subscribers(&self, _event_type: &aletheon_abi::EventType) -> bool {
-            false
-        }
-    }
+    use aletheon_abi::envelope::{Endpoint, Payload, Target};
 
     fn make_kernel() -> AgentKernel {
-        AgentKernel::new(Arc::new(NoopEventBus))
+        AgentKernel::new(Arc::new(CommunicationBus::new()))
     }
 
     fn make_config(id: &str) -> AgentProcessConfig {
@@ -372,6 +341,15 @@ mod tests {
             max_tokens_per_pulse: 1000,
             ..Default::default()
         }
+    }
+
+    /// Helper: build a simple FireAndForget envelope addressed to `to_pid`.
+    fn make_envelope(from: Pid, to: Pid, body: &str) -> Envelope {
+        Envelope::fire_and_forget(
+            Endpoint::Agent(from.as_u64()),
+            Target::Agent(to.as_u64()),
+            Payload::Json(serde_json::Value::String(body.to_string())),
+        )
     }
 
     #[tokio::test]
@@ -454,27 +432,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_no_recipient() {
-        let kernel = make_kernel();
-        let from = Pid::new();
-        let to = Pid::new();
-        let msg = IpcMessage::task(from, to, "hello".into());
-        let err = kernel.send(msg).await.unwrap_err();
-        assert!(matches!(err, IpcSendError::RecipientNotFound(p) if p == to));
-    }
-
-    #[tokio::test]
-    async fn test_send_to_spawned_process_inbox_exists() {
+    async fn test_send_to_spawned_process_succeeds() {
         let kernel = make_kernel();
         let pid = kernel
             .spawn("t".into(), make_config("a"), None)
             .await;
         let sender = Pid::new();
-        let msg = IpcMessage::task(sender, pid, "work".into());
-        // The inbox is registered (sender exists) but the receiver half is not
-        // held by the stub AgentProcess, so sending returns RecipientGone.
-        let err = kernel.send(msg).await.unwrap_err();
-        assert!(matches!(err, IpcSendError::RecipientGone));
+        let envelope = make_envelope(sender, pid, "work");
+        // The inbox is wired via CommunicationBus, so sending should succeed.
+        kernel.send(envelope).await.expect("send should succeed");
     }
 
     #[tokio::test]

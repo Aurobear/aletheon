@@ -10,7 +10,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
 use aletheon_abi::agent::Pid;
-use aletheon_abi::{EventBus, EventType, IpcMessage, Priority};
+use aletheon_abi::envelope::Envelope;
+use aletheon_abi::{EventBus, EventType, Priority};
 use aletheon_abi::evolution::{
     AgentStartedPayload, AgentStoppedPayload, AgentSpawnedPayload,
     CognitivePulseEvent,
@@ -80,7 +81,7 @@ pub struct AgentProcess {
     task: String,
     bus: Option<Arc<dyn EventBus>>,
     config: AgentProcessConfig,
-    pub inbox: Option<mpsc::Receiver<IpcMessage>>,
+    pub inbox: Option<mpsc::Receiver<Envelope>>,
     pub last_heartbeat_ms: AtomicU64,
 }
 

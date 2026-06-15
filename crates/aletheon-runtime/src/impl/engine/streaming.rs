@@ -26,22 +26,14 @@ impl Engine {
             false
         };
 
-        // Inject core memory into system prompt context
-        let core_memory_content = {
-            let cm = self.core_memory.lock().await;
-            cm.format_for_context()
-        };
+        // Inject core memory into system prompt context (bus-aware)
+        let core_memory_content = self.get_core_memory_context().await;
         if !core_memory_content.is_empty() {
             debug!(len = core_memory_content.len(), "Core memory injected into context");
         }
 
-        // Store user message in recall memory
-        {
-            let rm = self.recall_memory.lock().await;
-            if let Err(e) = rm.store(&self.config.session_id, "user", user_input, None) {
-                warn!(error = %e, "Failed to store user message in recall memory");
-            }
-        }
+        // Store user message in recall memory (bus-aware)
+        self.store_recall(&self.config.session_id, "user", user_input, None).await;
 
         // Add user message
         self.messages.push(Message::user(user_input));
@@ -55,7 +47,7 @@ impl Engine {
         }
 
         let session_id = self.config.session_id.clone();
-        let mut tool_defs = self.tools.definitions();
+        let mut tool_defs = self.get_tool_definitions().await;
 
         // Add delegate_task tool definition if agent registry is configured
         if self.agent_registry.is_some() {
@@ -160,13 +152,8 @@ impl Engine {
                 let final_text = text_buffer;
                 self.messages.push(Message::assistant(&final_text));
 
-                // Store assistant response in recall memory
-                {
-                    let rm = self.recall_memory.lock().await;
-                    if let Err(e) = rm.store(&self.config.session_id, "assistant", &final_text, None) {
-                        warn!(error = %e, "Failed to store assistant response in recall memory");
-                    }
-                }
+                // Store assistant response in recall memory (bus-aware)
+                self.store_recall(&self.config.session_id, "assistant", &final_text, None).await;
 
                 // Record assistant message in journal
                 if let Some(j) = &self.journal {

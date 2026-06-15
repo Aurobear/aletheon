@@ -2,52 +2,19 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use aletheon_abi::agent::Pid;
-use aletheon_abi::{Event, EventBus, EventHandler, EventType, ForkDirective, IpcMessage, SubscriptionId};
-use aletheon_runtime::r#impl::kernel::ipc::IpcSendError;
+use aletheon_abi::envelope::{Endpoint, Payload, Target};
+use aletheon_abi::ForkDirective;
+use aletheon_comm::CommunicationBus;
 use aletheon_runtime::r#impl::kernel::{AgentKernel, KernelError};
 use aletheon_runtime::r#impl::agent::process::AgentProcessConfig;
-
-// ---------------------------------------------------------------------------
-// Minimal EventBus stub for integration tests
-// ---------------------------------------------------------------------------
-
-struct NoopEventBus;
-
-#[async_trait]
-impl EventBus for NoopEventBus {
-    async fn publish(&self, _event: Box<dyn Event>) -> anyhow::Result<()> {
-        Ok(())
-    }
-    async fn subscribe(
-        &self,
-        _event_type: EventType,
-        _handler: EventHandler,
-    ) -> anyhow::Result<SubscriptionId> {
-        Ok(SubscriptionId(0))
-    }
-    async fn request(
-        &self,
-        _event: Box<dyn Event>,
-        _timeout: std::time::Duration,
-    ) -> anyhow::Result<Box<dyn Event>> {
-        anyhow::bail!("not implemented")
-    }
-    async fn unsubscribe(&self, _id: SubscriptionId) -> anyhow::Result<()> {
-        Ok(())
-    }
-    async fn has_subscribers(&self, _event_type: &EventType) -> bool {
-        false
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 fn make_kernel() -> AgentKernel {
-    AgentKernel::new(Arc::new(NoopEventBus))
+    AgentKernel::new(Arc::new(CommunicationBus::new()))
 }
 
 fn make_config(id: &str) -> AgentProcessConfig {
@@ -56,6 +23,15 @@ fn make_config(id: &str) -> AgentProcessConfig {
         max_tokens_per_pulse: 1000,
         ..Default::default()
     }
+}
+
+/// Helper: build a simple FireAndForget envelope addressed to `to_pid`.
+fn make_envelope(from: Pid, to: Pid, body: &str) -> aletheon_abi::envelope::Envelope {
+    aletheon_abi::envelope::Envelope::fire_and_forget(
+        Endpoint::Agent(from.as_u64()),
+        Target::Agent(to.as_u64()),
+        Payload::Json(serde_json::Value::String(body.to_string())),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -99,22 +75,15 @@ async fn test_kill_not_found() {
 }
 
 #[tokio::test]
-async fn test_ipc_send_recv() {
+async fn test_send_to_spawned_process_succeeds() {
     let kernel = make_kernel();
     let sender = kernel.spawn("sender".into(), make_config("s"), None).await;
     let receiver = kernel.spawn("receiver".into(), make_config("r"), None).await;
 
-    let msg = IpcMessage::task(sender, receiver, "hello".into());
+    let envelope = make_envelope(sender, receiver, "hello");
 
-    // The kernel registers an IPC inbox for each spawned process, but the stub
-    // AgentProcess does not hold the receiver half.  The send attempt therefore
-    // returns RecipientGone — this is expected behaviour for the current stub.
-    let result = kernel.send(msg).await;
-    assert!(
-        matches!(result, Err(IpcSendError::RecipientGone)),
-        "expected RecipientGone with stub AgentProcess, got: {:?}",
-        result,
-    );
+    // The inbox is wired via CommunicationBus, so sending should succeed.
+    kernel.send(envelope).await.expect("send should succeed");
 }
 
 #[tokio::test]

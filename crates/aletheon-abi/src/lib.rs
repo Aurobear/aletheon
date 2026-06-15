@@ -40,6 +40,11 @@ pub mod registry;
 pub mod resource;
 pub mod observable;
 
+// Communication protocol types
+pub mod envelope;
+pub mod transport;
+pub mod protocol;
+
 // Re-export key types at crate root for convenience
 pub use subsystem::{Subsystem, SubsystemHealth, SubsystemContext, Version, InitPhase};
 pub use event::{Event, EventType, Priority, SubscriptionId, EventHandler, AsyncEventHandler};
@@ -76,3 +81,8 @@ pub use error::{AgentError, ErrorSeverity, ErrorCategory, BackoffStrategy, Degra
 pub use registry::{Registry, RegistrationId};
 pub use resource::{ManagedResource, ResourceState};
 pub use observable::{Observable, SubsystemStatus};
+
+// Re-export communication protocol types
+pub use envelope::{Envelope, Endpoint, Target, Pattern, Payload, ModuleId, EnvelopeId};
+pub use transport::{Transport as EnvelopeTransport, TransportKind, HealthStatus, TransportHealth};
+pub use protocol::Protocol;

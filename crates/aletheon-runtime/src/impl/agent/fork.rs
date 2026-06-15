@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use aletheon_abi::{Event, EventBus, EventType, ForkDirective, ForkResult, Priority};
 use aletheon_abi::agent::Pid;
+use aletheon_abi::envelope::Envelope;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 use super::budget::TokenBudget;
 
@@ -37,6 +39,7 @@ pub struct AgentFork {
     pub budget: TokenBudget,
     pub state: ForkState,
     pub result: Option<ForkResult>,
+    pub inbox: Option<mpsc::Receiver<Envelope>>,
     bus: Arc<dyn EventBus>,
 }
 
@@ -103,6 +106,7 @@ impl AgentFork {
             budget: TokenBudget::new(max_tokens),
             state: ForkState::Running,
             result: None,
+            inbox: None,
             bus,
         }
     }

@@ -5,7 +5,7 @@
 //!
 //! ## Architecture
 //!
-//! - `core/` — Abstract traits and types (Event, EventBus, Transport)
+//! - `core/` — Abstract traits and types (Event, EventBus)
 //! - `bridge/` — Adapters connecting core to impl
 //! - `impl/` — Concrete implementations (KernelEventBus, EventLog, IPC)
 
@@ -17,7 +17,6 @@ pub mod r#impl;
 // Re-exports from core
 pub use crate::core::event::{ConcreteEvent, Event, EventType, Priority};
 pub use crate::core::bus::{EventBus, EventHandler, SubscriptionId};
-pub use crate::core::transport::Transport;
 
 // Re-exports from impl
 pub use crate::r#impl::kernel_bus::KernelEventBus;
@@ -25,6 +24,15 @@ pub use crate::r#impl::event_log::{EventLog, LogEntry};
 pub use crate::r#impl::routing_policy::{RoutingPolicy, RouteAction};
 pub use crate::r#impl::subscription::SubscriptionRegistry;
 pub use crate::r#impl::ipc::{IpcManager, IpcBackendKind, Environment, PriorityQueue, JsonRpcAdapter};
+pub use crate::r#impl::communication_bus::{CommunicationBus, BusConfig};
+pub use crate::r#impl::in_process::InProcessTransport;
+pub use crate::r#impl::request_response::RequestResponseProtocol;
+pub use crate::r#impl::pubsub::PubSubProtocol;
+
+// Re-export protocol types from aletheon-abi
+pub use aletheon_abi::envelope;
+pub use aletheon_abi::transport;
+pub use aletheon_abi::protocol;
 
 #[cfg(test)]
 mod integration_tests {

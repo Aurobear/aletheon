@@ -19,8 +19,9 @@ pub struct EngineConfig {
     pub learning_success_threshold: f64,
     /// Maximum number of learned rules to keep in memory.
     pub learning_max_rules: usize,
-    /// Optional EventBus for emitting self-evolution events (e.g., ToolObservationEvent).
-    pub event_bus: Option<std::sync::Arc<dyn aletheon_abi::EventBus>>,
+    /// Optional CommunicationBus for inter-module communication.
+    /// Replaces the old event_bus; provides request-response, pub-sub, and module mailbox APIs.
+    pub bus: Option<std::sync::Arc<aletheon_comm::CommunicationBus>>,
 }
 
 impl Default for EngineConfig {
@@ -39,7 +40,7 @@ impl Default for EngineConfig {
             learning_min_occurrences: 3,
             learning_success_threshold: 0.5,
             learning_max_rules: 100,
-            event_bus: None,
+            bus: None,
         }
     }
 }

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::core::orchestrator::AletheonRuntime;
 use crate::core::config::RuntimeConfig;
@@ -13,6 +14,7 @@ use crate::ProviderRegistry;
 use crate::session::store::SessionStore;
 use aletheon_self::r#impl::perception::bridge::PerceptionInjection;
 use aletheon_abi::Registry;
+use aletheon_abi::envelope::*;
 use aletheon_self::{SelfField, SelfFieldConfig};
 use aletheon_meta::r#impl::meta_runtime::self_reader::SelfReader;
 use aletheon_body::r#impl::sandbox::executor::{SandboxExecutor, SandboxPreference};
@@ -26,6 +28,8 @@ use aletheon_brain::core::ExperienceSummarizer;
 use aletheon_abi::{Message, ContentBlock, ReflectionTrigger, Subsystem, SubsystemContext,
     SelfFieldOps, Intent, IntentSource, Verdict, Context as AbiContext};
 use aletheon_abi::hook::{HookPoint, HookContext, HookResult};
+use aletheon_comm::CommunicationBus;
+use aletheon_comm::envelope::Payload;
 use aletheon_memory::episodic::EpisodicMemory;
 use serde_json::json;
 use std::collections::HashMap;
@@ -36,6 +40,7 @@ use crate::r#impl::hooks::registry::HookRegistry;
 use crate::r#impl::hooks::builtin::audit_hook;
 use crate::r#impl::skills::loader::SkillLoader;
 use crate::r#impl::skills::plugin::register_skill;
+use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
 
 use super::prefix_builder::PrefixBuilder;
 use super::DaemonConfig;
@@ -82,6 +87,9 @@ pub struct RequestHandler {
     core_memory: Arc<Mutex<CoreMemory>>,
     /// Lifecycle hook registry.
     hook_registry: Arc<Mutex<HookRegistry>>,
+    /// CommunicationBus for inter-module communication.
+    /// When `Some`, SelfField review/narrate calls go through the bus.
+    bus: Option<Arc<CommunicationBus>>,
 }
 
 impl RequestHandler {
@@ -209,6 +217,42 @@ impl RequestHandler {
         drop(cm);
         info!(len = cached_prefix.len(), "Cache-stable prefix built");
 
+        // Create CommunicationBus and spawn module handlers
+        let bus = Arc::new(CommunicationBus::new());
+
+        // Spawn SelfFieldModule handler — shares the same SelfField instance
+        {
+            let sf_module = crate::r#impl::engine::modules::self_field_module::SelfFieldModule::new(self_field.clone());
+            let bus_clone = bus.clone();
+            tokio::spawn(async move {
+                sf_module.run(bus_clone).await;
+            });
+        }
+
+        // Spawn MemoryModule handler — shares the same CoreMemory and RecallMemory instances
+        {
+            let mem_module = crate::r#impl::engine::modules::memory_module::MemoryModule::new(
+                core_memory.clone(),
+                Some(recall_memory.clone()),
+            );
+            let bus_clone = bus.clone();
+            tokio::spawn(async move {
+                mem_module.run(bus_clone).await;
+            });
+        }
+
+        // Spawn BodyModule handler — shares the same ToolRegistry instance
+        {
+            let tools = Arc::new(Mutex::new(tools));
+            let body_module = crate::r#impl::engine::modules::body_module::BodyModule::new(tools);
+            let bus_clone = bus.clone();
+            tokio::spawn(async move {
+                body_module.run(bus_clone).await;
+            });
+        }
+
+        info!("CommunicationBus created with SelfField, Memory, and Body module handlers");
+
         Ok(Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
@@ -228,7 +272,86 @@ impl RequestHandler {
             config_prompt: config.system_prompt.clone(),
             core_memory,
             hook_registry,
+            bus: Some(bus),
         })
+    }
+
+    /// Review an intent through SelfField via CommunicationBus.
+    /// Falls back to direct lock if bus is not configured.
+    async fn sf_review(&self, intent: &Intent, ctx: &AbiContext) -> anyhow::Result<Verdict> {
+        if let Some(ref bus) = self.bus {
+            let req = SelfFieldRequest::Review {
+                intent: intent.clone(),
+                ctx: serde_json::to_value(ctx).unwrap_or_default(),
+            };
+            let envelope = Envelope::request(
+                Endpoint::Module(ModuleId::Runtime),
+                Target::Module(ModuleId::SelfField),
+                Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
+                Duration::from_secs(5),
+            );
+            match bus.request(envelope).await {
+                Ok(resp_envelope) => {
+                    if let Payload::Json(val) = &resp_envelope.payload {
+                        match serde_json::from_value::<SelfFieldResponse>(val.clone()) {
+                            Ok(SelfFieldResponse::Verdict { verdict }) => return Ok(verdict),
+                            Ok(SelfFieldResponse::Error { message }) => {
+                                return Err(anyhow::anyhow!("SelfField review error: {}", message));
+                            }
+                            Ok(other) => {
+                                return Err(anyhow::anyhow!("Unexpected SelfField response: {:?}", other));
+                            }
+                            Err(e) => {
+                                return Err(anyhow::anyhow!("Failed to deserialize SelfFieldResponse: {}", e));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Bus request for SelfField review failed, falling back to direct");
+                }
+            }
+        }
+        // Fallback: direct lock
+        let sf = self.self_field.lock().await;
+        sf.review(intent, ctx).await
+    }
+
+    /// Record a narrative entry in SelfField via CommunicationBus.
+    /// Falls back to direct lock if bus is not configured.
+    async fn sf_narrate(&self, event: &str, reason: &str) {
+        if let Some(ref bus) = self.bus {
+            let req = SelfFieldRequest::Narrate {
+                event: event.to_string(),
+                reason: reason.to_string(),
+            };
+            let envelope = Envelope::request(
+                Endpoint::Module(ModuleId::Runtime),
+                Target::Module(ModuleId::SelfField),
+                Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
+                Duration::from_secs(5),
+            );
+            match bus.request(envelope).await {
+                Ok(resp_envelope) => {
+                    if let Payload::Json(val) = &resp_envelope.payload {
+                        match serde_json::from_value::<SelfFieldResponse>(val.clone()) {
+                            Ok(SelfFieldResponse::Narrated) => return,
+                            Ok(SelfFieldResponse::Error { message }) => {
+                                warn!(error = %message, "SelfField narrate error via bus");
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Bus request for SelfField narrate failed, falling back to direct");
+                }
+            }
+        }
+        // Fallback: direct lock
+        let sf = self.self_field.lock().await;
+        let _ = sf.narrate(event, reason).await;
     }
 
     /// Drain all queued memory updates into a `<memory-update>` XML block.
@@ -274,16 +397,12 @@ impl RequestHandler {
                     std::env::current_dir().unwrap_or_default(),
                 );
 
-                let verdict = {
-                    let sf = self.self_field.lock().await;
-                    sf.review(&intent, &sf_ctx).await
-                };
+                let verdict = self.sf_review(&intent, &sf_ctx).await;
 
                 match verdict {
                     Ok(Verdict::Deny { ref reason }) => {
                         warn!(reason = %reason, "SelfField denied chat intent");
-                        let sf = self.self_field.lock().await;
-                        let _ = sf.narrate("chat_denied", reason).await;
+                        self.sf_narrate("chat_denied", reason).await;
                         return json!({
                             "jsonrpc": "2.0",
                             "id": id,
@@ -389,18 +508,15 @@ impl RequestHandler {
                             .join("");
                         info!(tokens = response.usage.output_tokens, "Chat response generated");
 
-                        // Narrate the completed interaction in the SelfField narrative layer
-                        {
-                            let sf = self.self_field.lock().await;
-                            let _ = sf.narrate(
-                                "chat_completed",
-                                &format!("User asked: '{}...' | Response: {} chars, {} tokens",
-                                    &message[..message.len().min(60)],
-                                    text.len(),
-                                    response.usage.output_tokens,
-                                ),
-                            ).await;
-                        }
+                        // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
+                        self.sf_narrate(
+                            "chat_completed",
+                            &format!("User asked: '{}...' | Response: {} chars, {} tokens",
+                                &message[..message.len().min(60)],
+                                text.len(),
+                                response.usage.output_tokens,
+                            ),
+                        ).await;
 
                         // --- PostTurn hooks ---
                         {
