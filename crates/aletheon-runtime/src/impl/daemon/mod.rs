@@ -218,7 +218,7 @@ pub async fn run(
     let request_handler = handler::RequestHandler::new(&config, &registry, injection_rx).await?;
     info!(socket = %socket.display(), "Binding unix socket...");
 
-    let unix_server = server::UnixServer::new(&socket, request_handler).await?;
+    let mut unix_server = server::UnixServer::new(&socket, request_handler).await?;
 
     // Clean up PID file and pulse on exit
     let pid_file_clone = pid_file.clone();

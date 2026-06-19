@@ -20,8 +20,10 @@ use aletheon_abi::{
     SubsystemContext, Verdict,
 };
 use aletheon_body::r#impl::sandbox::executor::{SandboxExecutor, SandboxPreference};
+use aletheon_body::r#impl::security::approval::ApprovalDecision;
 use aletheon_body::r#impl::security::audit::AuditLogger;
 use aletheon_body::r#impl::security::runner::ToolRunnerWithGuard;
+use aletheon_body::r#impl::security::socket_approval::{PendingApproval, SocketApprovalGate};
 use aletheon_body::r#impl::tools::Tool;
 use aletheon_body::r#impl::tools::ToolRegistry;
 use aletheon_brain::core::reflector::Reflector;
@@ -35,7 +37,7 @@ use aletheon_self::r#impl::perception::bridge::PerceptionInjection;
 use aletheon_self::{SelfField, SelfFieldConfig};
 use serde_json::json;
 use std::collections::HashMap;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{info, warn};
 
 use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
@@ -93,13 +95,35 @@ pub struct RequestHandler {
     /// When `Some`, SelfField review/narrate calls go through the bus.
     bus: Option<Arc<CommunicationBus>>,
     /// Guarded tool runner (policy -> approval -> loop detector -> sandbox -> audit).
-    /// Conservative default gate (AutoDeny for L2+) until the Phase 2 socket gate.
+    /// Wired to the SocketApprovalGate so L2+ requests are forwarded to the client.
     tool_runner: Arc<Mutex<ToolRunnerWithGuard>>,
     /// Tool registry shared with BodyModule; kept here for ReAct loop tool execution.
     tools: Arc<Mutex<ToolRegistry>>,
+    /// Receiver for pending approval requests from the SocketApprovalGate.
+    /// Drained during chat turns to relay approval requests to the client.
+    approval_rx: Arc<Mutex<mpsc::Receiver<PendingApproval>>>,
+    /// Map from approval_id to the oneshot sender that resolves the pending approval.
+    pending_approvals: Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>,
+    /// Channel to send out-of-band JSON-RPC notifications to the connected client.
+    /// Used to push `approval_request` notifications during a chat turn.
+    notify_tx: Option<mpsc::Sender<String>>,
 }
 
 impl RequestHandler {
+    /// Set the notification channel for out-of-band messages to the client.
+    /// Returns the receiver end that the server should drain alongside responses.
+    pub fn set_notify_channel(&mut self, tx: mpsc::Sender<String>) {
+        self.notify_tx = Some(tx);
+    }
+
+    /// Create a notification channel and wire it to the handler.
+    /// Returns the receiver for the server to consume out-of-band notifications.
+    pub fn create_notify_channel(&mut self) -> mpsc::Receiver<String> {
+        let (tx, rx) = mpsc::channel(64);
+        self.notify_tx = Some(tx);
+        rx
+    }
+
     pub async fn new(
         config: &DaemonConfig,
         registry: &ProviderRegistry,
@@ -146,7 +170,14 @@ impl RequestHandler {
         let sandbox = SandboxExecutor::new(sandbox_pref);
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
-        let tool_runner = Arc::new(Mutex::new(ToolRunnerWithGuard::new(sandbox, audit_logger)));
+
+        // Install SocketApprovalGate — forwards L2+ approval requests to the
+        // connected client via out-of-band JSON-RPC notifications.
+        let (approval_gate, approval_rx) = SocketApprovalGate::new();
+        let tool_runner = Arc::new(Mutex::new(
+            ToolRunnerWithGuard::new(sandbox, audit_logger)
+                .with_approval_gate(Arc::new(approval_gate)),
+        ));
 
         let runtime_config = RuntimeConfig {
             session_id: session_id.clone(),
@@ -298,6 +329,9 @@ impl RequestHandler {
             bus: Some(bus),
             tool_runner,
             tools,
+            approval_rx: Arc::new(Mutex::new(approval_rx)),
+            pending_approvals: Arc::new(Mutex::new(HashMap::new())),
+            notify_tx: None,
         })
     }
 
@@ -570,19 +604,74 @@ impl RequestHandler {
 
                 // Drive the ReAct loop.  SelfField review already ran above,
                 // so the inner review_fn returns Allow to avoid double-gating.
+                //
+                // We spawn the ReAct loop as a background task so we can
+                // concurrently pump approval requests from the SocketApprovalGate.
+                let approval_rx = self.approval_rx.clone();
+                let pending_approvals = self.pending_approvals.clone();
+                let notify_tx = self.notify_tx.clone();
+                let llm = self.llm.clone();
+
                 let mut rt = AletheonRuntime::new(self.state.lock().await.runtime.config().clone());
-                let react_result = rt
-                    .process_react(
+                let mut react_task = tokio::spawn(async move {
+                    rt.process_react(
                         &effective_message,
                         &sf_ctx,
                         |_intent: &Intent, _c: &AbiContext| Ok::<_, anyhow::Error>(Verdict::Allow),
-                        &*self.llm,
+                        &*llm,
                         &tool_defs,
                         execute_tool,
                     )
-                    .await;
+                    .await
+                });
 
-                let text = react_result.unwrap_or_else(|e| format!("error: {e}"));
+                // Pump approval requests while the ReAct loop is running.
+                // When a tool needs L2+ approval, the SocketApprovalGate sends
+                // a PendingApproval through the channel. We generate an
+                // approval_id, store the oneshot sender, and notify the client.
+                let text = loop {
+                    tokio::select! {
+                        result = &mut react_task => {
+                            // ReAct loop finished — drain any remaining approvals
+                            // (they get auto-denied by the 120s timeout in the gate).
+                            break result.unwrap_or_else(|e| Err(anyhow::anyhow!("react task panicked: {e}")));
+                        }
+                        Some(pending) = async {
+                            let mut rx = approval_rx.lock().await;
+                            rx.recv().await
+                        } => {
+                            let approval_id = uuid::Uuid::new_v4().to_string();
+                            let notification = json!({
+                                "jsonrpc": "2.0",
+                                "method": "approval_request",
+                                "params": {
+                                    "approval_id": approval_id,
+                                    "tool": pending.request.tool,
+                                    "action_summary": pending.request.action_summary,
+                                    "risk_level": pending.request.risk_level,
+                                    "detail": pending.request.detail,
+                                }
+                            });
+
+                            // Store the oneshot sender so approval_response can resolve it.
+                            {
+                                let mut map = pending_approvals.lock().await;
+                                map.insert(approval_id.clone(), pending.respond);
+                            }
+
+                            // Send notification to client.
+                            if let Some(ref tx) = notify_tx {
+                                if tx.send(notification.to_string()).await.is_err() {
+                                    warn!("Failed to send approval_request notification — client disconnected?");
+                                }
+                            } else {
+                                warn!("No notify_tx configured — approval request will timeout (fail-safe deny)");
+                            }
+                        }
+                    }
+                };
+
+                let text = text.unwrap_or_else(|e| format!("error: {e}"));
                 info!(len = text.len(), "ReAct loop completed");
 
                 // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
@@ -1067,6 +1156,30 @@ impl RequestHandler {
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": { "skills_loaded": count }
+                })
+            }
+            "approval_response" => {
+                // Resolve a pending approval request. The client sends this
+                // in response to an "approval_request" notification.
+                let aid = request["params"]["approval_id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let decision = match request["params"]["decision"].as_str().unwrap_or("deny") {
+                    "approve" => ApprovalDecision::Approve,
+                    "approve_for_session" => ApprovalDecision::ApproveForSession,
+                    _ => ApprovalDecision::Deny,
+                };
+                if let Some(tx) = self.pending_approvals.lock().await.remove(&aid) {
+                    let _ = tx.send(decision);
+                    info!(approval_id = %aid, decision = ?request["params"]["decision"], "Approval resolved");
+                } else {
+                    warn!(approval_id = %aid, "No pending approval found for id");
+                }
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "ok": true }
                 })
             }
             _ => json!({
