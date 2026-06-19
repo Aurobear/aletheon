@@ -11,7 +11,7 @@ impl Default for TailProtectionConfig {
     fn default() -> Self {
         Self {
             tail_token_budget: 20_000,
-            min_tail_messages: 3,
+            min_tail_messages: 1,
             soft_ceiling_multiplier: 1.5,
         }
     }
@@ -47,14 +47,22 @@ fn align_boundary_backward(messages: &[Message], cut: usize) -> usize {
     if cut == 0 || cut >= messages.len() {
         return cut;
     }
+    let original_cut = cut;
     let mut aligned = cut;
     while aligned > 0 && aletheon_abi::message::is_tool_message(&messages[aligned]) {
         aligned -= 1;
     }
-    aligned
+    // If alignment collapsed to a non-useful position (all preceding messages
+    // are tool messages), use the original cut to ensure compaction still happens.
+    if aligned == 0 && original_cut > 1 {
+        original_cut
+    } else {
+        aligned
+    }
 }
 
 fn ensure_last_user_message_in_tail(messages: &[Message], cut: usize) -> usize {
+    // Find the last user message before the cut.
     let last_user_before_cut = messages[..cut]
         .iter()
         .rposition(|m| m.role == aletheon_abi::message::Role::User);
@@ -62,7 +70,9 @@ fn ensure_last_user_message_in_tail(messages: &[Message], cut: usize) -> usize {
     match last_user_before_cut {
         Some(pos) => {
             let distance = cut - pos;
-            if distance <= 6 {
+            // Only pull back if the user message is immediately before the cut
+            // (within 1 message) to keep user+response together.
+            if distance <= 1 && pos > 0 {
                 pos
             } else {
                 cut

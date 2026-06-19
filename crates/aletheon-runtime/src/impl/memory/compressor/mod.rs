@@ -33,10 +33,10 @@ impl AdvancedCompressor {
 
     /// Check if compaction is needed and perform it.
     /// Returns true if compaction was performed.
-    pub async fn maybe_compact(
+    pub async fn maybe_compact<L: LlmProvider + ?Sized>(
         &mut self,
         messages: &mut Vec<Message>,
-        llm: &dyn LlmProvider,
+        llm: &L,
     ) -> Result<bool> {
         let total_tokens: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
 
@@ -49,15 +49,10 @@ impl AdvancedCompressor {
             return Ok(false);
         }
 
-        let system_msgs: Vec<Message> = messages
-            .iter()
-            .take_while(|m| m.role == aletheon_abi::message::Role::System)
-            .cloned()
-            .collect();
-        let actual_cut = std::cmp::max(cut, system_msgs.len());
-
-        let old_messages = &messages[system_msgs.len()..actual_cut];
-        let tail_messages = &messages[actual_cut..];
+        // Split: everything before the cut is "old" (to be summarized),
+        // everything from the cut onward is "tail" (preserved verbatim).
+        let old_messages = &messages[..cut];
+        let tail_messages = &messages[cut..];
 
         if old_messages.is_empty() {
             return Ok(false);
@@ -69,7 +64,7 @@ impl AdvancedCompressor {
 
         let summary = self.generate_summary(&pruned_messages, llm).await?;
 
-        let mut compacted = system_msgs;
+        let mut compacted = Vec::new();
         compacted.push(Message::system(format!(
             "{}\n{}\n[End Summary]",
             SUMMARY_PREFIX, summary
@@ -83,17 +78,17 @@ impl AdvancedCompressor {
         info!(
             before = before,
             after = messages.len(),
-            cut = actual_cut,
+            cut = cut,
             "Context compacted with token-budget tail protection"
         );
 
         Ok(true)
     }
 
-    async fn generate_summary(
+    async fn generate_summary<L: LlmProvider + ?Sized>(
         &self,
         messages: &[Message],
-        llm: &dyn LlmProvider,
+        llm: &L,
     ) -> Result<String> {
         let prompt_text = match &self.previous_summary {
             Some(prev) => self
@@ -121,6 +116,11 @@ impl AdvancedCompressor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_abi::ToolDefinition;
+    use aletheon_brain::r#impl::llm::provider::{
+        LlmProvider, LlmResponse, LlmStream, StopReason, Usage,
+    };
+    use async_trait::async_trait;
 
     #[test]
     fn test_new_compressor() {
@@ -128,5 +128,70 @@ mod tests {
         assert_eq!(compressor.tail_config.tail_token_budget, 20_000);
         assert_eq!(compressor.target_summary_chars, 4_000);
         assert!(compressor.previous_summary.is_none());
+    }
+
+    struct SimpleLlm;
+
+    #[async_trait]
+    impl LlmProvider for SimpleLlm {
+        async fn complete(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "this is a summary".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+        async fn complete_stream(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unimplemented!()
+        }
+        fn name(&self) -> &str {
+            "simple"
+        }
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compressor_actually_compacts() {
+        let mut compressor = AdvancedCompressor::new(100, 200);
+        let llm = SimpleLlm;
+
+        // Build many large messages to exceed threshold
+        let mut messages = vec![Message::user("start")];
+        for i in 0..10 {
+            messages.push(Message::assistant(&format!("response {}", "x".repeat(5000))));
+            messages.push(Message::tool_result(
+                &format!("tool_{}", i),
+                &"y".repeat(5000),
+                false,
+            ));
+        }
+
+        let before = messages.len();
+        let result = compressor.maybe_compact(&mut messages, &llm).await;
+        assert!(result.is_ok(), "maybe_compact failed: {:?}", result.err());
+        assert!(
+            result.unwrap(),
+            "compaction should have been performed"
+        );
+        assert!(
+            messages.len() < before,
+            "messages should be fewer after compaction: {} -> {}",
+            before,
+            messages.len()
+        );
     }
 }
