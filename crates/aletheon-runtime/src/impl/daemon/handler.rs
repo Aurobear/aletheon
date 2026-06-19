@@ -554,6 +554,31 @@ impl RequestHandler {
                     warn!(error = %e, "SelfField review error, proceeding with caution");
                 }
 
+                // --- Keyword skill injection ---
+                // Gather loaded skills with keywords and match against user message.
+                {
+                    let loader = self.skill_loader.lock().await;
+                    let skill_keywords: Vec<crate::r#impl::skills::keyword_matcher::SkillKeywords> =
+                        loader
+                            .plugins()
+                            .iter()
+                            .filter(|p| !p.keywords.is_empty())
+                            .map(|p| crate::r#impl::skills::keyword_matcher::SkillKeywords {
+                                name: p.name.clone(),
+                                keywords: p.keywords.clone(),
+                                body: p.system_prompt.clone(),
+                            })
+                            .collect();
+                    drop(loader);
+                    let matched =
+                        crate::r#impl::skills::keyword_matcher::match_skills(message, &skill_keywords);
+                    for body in matched {
+                        effective_message.push_str("\n<activated-skill>\n");
+                        effective_message.push_str(&body);
+                        effective_message.push_str("\n</activated-skill>\n");
+                    }
+                }
+
                 effective_message.push_str(message);
 
                 // --- PreTurn hooks ---
@@ -1336,6 +1361,160 @@ impl RequestHandler {
                     "id": id,
                     "result": { "ok": true }
                 })
+            }
+            "new_session" => {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                // Fire OnSessionEnd for the outgoing session
+                {
+                    let (old_id, turn_count) = {
+                        let sm = self.session_manager.lock().await;
+                        (sm.session_id.clone(), sm.turn_count())
+                    };
+                    let hr = self.hook_registry.lock().await;
+                    let ctx = HookContext {
+                        point: HookPoint::OnSessionEnd,
+                        session_id: old_id,
+                        turn_count,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_result: None,
+                        message: None,
+                        metadata: HashMap::new(),
+                    };
+                    hr.execute(&ctx).await;
+                }
+                // Create new session and replace SessionManager
+                match SessionManager::new(&self.data_dir, new_id.clone(), 100_000).await {
+                    Ok(new_sm) => {
+                        // Register session in store
+                        if let Ok(store) = SessionStore::new(&self.data_dir) {
+                            let _ = store.create_session(&new_id);
+                        }
+                        *self.session_manager.lock().await = new_sm;
+                        // Fire OnSessionStart for the new session
+                        {
+                            let hr = self.hook_registry.lock().await;
+                            let ctx = HookContext {
+                                point: HookPoint::OnSessionStart,
+                                session_id: new_id.clone(),
+                                turn_count: 0,
+                                tool_name: None,
+                                tool_input: None,
+                                tool_result: None,
+                                message: None,
+                                metadata: HashMap::new(),
+                            };
+                            hr.execute(&ctx).await;
+                        }
+                        info!(session_id = %new_id, "New session created");
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "result": { "session_id": new_id }
+                        })
+                    }
+                    Err(e) => json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32030, "message": format!("Failed to create session: {}", e) }
+                    }),
+                }
+            }
+            "load_recent" => {
+                match SessionStore::new(&self.data_dir) {
+                    Ok(store) => match store.most_recent() {
+                        Ok(Some(recent_id)) => {
+                            match SessionManager::recover(&self.data_dir, &recent_id).await {
+                                Some(msgs) => {
+                                    match SessionManager::new(
+                                        &self.data_dir,
+                                        recent_id.clone(),
+                                        100_000,
+                                    )
+                                    .await
+                                    {
+                                        Ok(new_sm) => {
+                                            let msg_count = msgs.len();
+                                            *self.session_manager.lock().await = new_sm;
+                                            info!(
+                                                session_id = %recent_id,
+                                                messages = msg_count,
+                                                "Loaded most recent session"
+                                            );
+                                            json!({
+                                                "jsonrpc": "2.0",
+                                                "id": id,
+                                                "result": {
+                                                    "session_id": recent_id,
+                                                    "recovered_messages": msg_count,
+                                                }
+                                            })
+                                        }
+                                        Err(e) => json!({
+                                            "jsonrpc": "2.0",
+                                            "id": id,
+                                            "error": { "code": -32031, "message": format!("SessionManager init error: {}", e) }
+                                        }),
+                                    }
+                                }
+                                None => {
+                                    // No recoverable journal — create fresh session with this id
+                                    match SessionManager::new(&self.data_dir, recent_id.clone(), 100_000).await {
+                                        Ok(new_sm) => {
+                                            *self.session_manager.lock().await = new_sm;
+                                            info!(session_id = %recent_id, "Loaded recent session (no journal, fresh)");
+                                            json!({
+                                                "jsonrpc": "2.0",
+                                                "id": id,
+                                                "result": {
+                                                    "session_id": recent_id,
+                                                    "recovered_messages": 0,
+                                                }
+                                            })
+                                        }
+                                        Err(e) => json!({
+                                            "jsonrpc": "2.0",
+                                            "id": id,
+                                            "error": { "code": -32031, "message": format!("SessionManager init error: {}", e) }
+                                        }),
+                                    }
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            // No sessions exist at all — create a new one
+                            let new_id = uuid::Uuid::new_v4().to_string();
+                            match SessionManager::new(&self.data_dir, new_id.clone(), 100_000).await {
+                                Ok(new_sm) => {
+                                    if let Ok(store) = SessionStore::new(&self.data_dir) {
+                                        let _ = store.create_session(&new_id);
+                                    }
+                                    *self.session_manager.lock().await = new_sm;
+                                    json!({
+                                        "jsonrpc": "2.0",
+                                        "id": id,
+                                        "result": { "session_id": new_id, "recovered_messages": 0 }
+                                    })
+                                }
+                                Err(e) => json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "error": { "code": -32031, "message": format!("SessionManager init error: {}", e) }
+                                }),
+                            }
+                        }
+                        Err(e) => json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32031, "message": format!("SessionStore query error: {}", e) }
+                        }),
+                    },
+                    Err(e) => json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32031, "message": format!("SessionStore init error: {}", e) }
+                    }),
+                }
             }
             _ => json!({
                 "jsonrpc": "2.0",
