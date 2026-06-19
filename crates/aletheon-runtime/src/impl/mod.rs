@@ -9,4 +9,5 @@ pub mod memory;
 pub mod orchestration;
 pub mod plugin;
 pub mod session;
+pub mod skill_router;
 pub mod skills;
