@@ -1261,11 +1261,9 @@ async fn simple_line_mode(
                         {
                             let params = &msg["params"];
                             let tool = params["tool"].as_str().unwrap_or("?");
-                            let action_summary =
-                                params["action_summary"].as_str().unwrap_or("");
+                            let action_summary = params["action_summary"].as_str().unwrap_or("");
                             let risk_level = params["risk_level"].as_str().unwrap_or("");
-                            let approval_id =
-                                params["approval_id"].as_str().unwrap_or("");
+                            let approval_id = params["approval_id"].as_str().unwrap_or("");
                             println!(
                                 "\n⚠  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
                                 risk_level, tool, action_summary,

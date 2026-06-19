@@ -3,6 +3,7 @@
 //! TUI mode delegates to [`super::ui::run`]. Single-message mode sends one
 //! JSON-RPC request over the daemon socket and exits.
 
+use std::io;
 use std::path::PathBuf;
 
 use anyhow::Result;

@@ -91,7 +91,12 @@ impl PermissionContext {
     ///    - `Plan` → Deny
     ///    - `AcceptEdits` → Allow (unless `is_dangerous` → Ask)
     ///    - `Default` → Allow (unless `is_dangerous` → Ask)
-    pub fn resolve(&self, tool: &str, action_summary: &str, is_dangerous: bool) -> PermissionBehavior {
+    pub fn resolve(
+        &self,
+        tool: &str,
+        action_summary: &str,
+        is_dangerous: bool,
+    ) -> PermissionBehavior {
         // 1. Session approvals
         let key = format!("{}:{}", tool, action_summary);
         if self.session_approvals.contains(&key) {

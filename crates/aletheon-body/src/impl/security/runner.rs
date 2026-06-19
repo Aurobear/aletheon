@@ -178,10 +178,7 @@ impl ToolRunnerWithGuard {
                                         )
                                         .await;
                                         return Err(ToolError::PolicyDenied {
-                                            reason: format!(
-                                                "{}: denied by approval gate",
-                                                reason
-                                            ),
+                                            reason: format!("{}: denied by approval gate", reason),
                                         });
                                     }
                                 }

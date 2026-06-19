@@ -29,7 +29,11 @@ impl UnixServer {
         // Create the notification channel: handler writes, server reads.
         let notify_rx = handler.create_notify_channel();
 
-        Ok(Self { listener, handler, notify_rx })
+        Ok(Self {
+            listener,
+            handler,
+            notify_rx,
+        })
     }
 
     pub async fn run(&mut self) -> Result<()> {

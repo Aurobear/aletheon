@@ -46,8 +46,7 @@ struct RuleToml {
 /// behavior = "allow"
 /// ```
 pub fn load_permission_context_from_str(s: &str) -> Result<PermissionContext> {
-    let file: SettingsFile =
-        toml::from_str(s).context("failed to parse settings.toml")?;
+    let file: SettingsFile = toml::from_str(s).context("failed to parse settings.toml")?;
 
     let section = match file.permissions {
         Some(s) => s,
@@ -76,8 +75,7 @@ pub fn load_permission_context_from_str(s: &str) -> Result<PermissionContext> {
 /// Returns a default context if the file does not exist or cannot be parsed.
 pub fn load_permission_context(path: &Path) -> PermissionContext {
     match std::fs::read_to_string(path) {
-        Ok(content) => load_permission_context_from_str(&content)
-            .unwrap_or_default(),
+        Ok(content) => load_permission_context_from_str(&content).unwrap_or_default(),
         Err(_) => PermissionContext::default(),
     }
 }
