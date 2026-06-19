@@ -34,6 +34,7 @@ pub mod tool;
 
 // Shared error types
 pub mod error;
+pub mod permission;
 
 // Kernel-style foundations
 pub mod observable;
@@ -103,3 +104,6 @@ pub use resource::{ManagedResource, ResourceState};
 pub use envelope::{Endpoint, Envelope, EnvelopeId, ModuleId, Pattern, Payload, Target};
 pub use protocol::Protocol;
 pub use transport::{HealthStatus, Transport as EnvelopeTransport, TransportHealth, TransportKind};
+
+// Re-export permission types
+pub use permission::{PermissionBehavior, PermissionContext, PermissionMode, PermissionRule};
