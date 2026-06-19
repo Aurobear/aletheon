@@ -33,6 +33,8 @@ pub struct DaemonConfig {
     pub sandbox_preference: String,
     /// MCP server definitions loaded from config (passed through to McpManager at handler init).
     pub mcp_servers: Vec<aletheon_body::r#impl::mcp::config::McpServerConfig>,
+    /// Hook script configuration from the [hooks] config section.
+    pub hooks: crate::core::config::HooksConfig,
 }
 
 /// Load .env file (simple KEY=VALUE parser, no shell expansion).
@@ -148,6 +150,11 @@ pub async fn run(
                 enabled: true,
             })
             .collect(),
+        hooks: {
+            // Load hooks config from the runtime's own AppConfig
+            let rt_config = crate::core::config::AppConfig::load_layered(None);
+            rt_config.hooks
+        },
     };
 
     // Ensure data directory exists

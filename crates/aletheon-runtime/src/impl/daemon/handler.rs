@@ -48,6 +48,8 @@ use crate::core::storm_breaker::StormBreaker;
 use crate::r#impl::hooks::builtin::audit_hook;
 use crate::r#impl::hooks::registry::HookRegistry;
 use crate::r#impl::memory::fact_store::FactStore;
+use crate::r#impl::agent_loader::AgentLoader;
+use crate::core::config::HooksConfig;
 use crate::r#impl::skill_router::SkillRouter;
 use crate::r#impl::skills::loader::SkillLoader;
 use crate::r#impl::skills::plugin::register_skill;
@@ -121,6 +123,10 @@ pub struct RequestHandler {
     checkpoint_store: Arc<Mutex<CheckpointStore>>,
     /// Keyword-based skill router for prompt-to-skill matching.
     skill_router: Arc<Mutex<SkillRouter>>,
+    /// Agent role loader — loads agent markdown definitions from ~/.aletheon/agents/.
+    agent_loader: Arc<Mutex<AgentLoader>>,
+    /// Configured hook scripts from the [hooks] config section.
+    hooks_config: HooksConfig,
 }
 
 impl RequestHandler {
@@ -377,6 +383,18 @@ impl RequestHandler {
         }
         let skill_router = Arc::new(Mutex::new(skill_router));
 
+        // ── AgentLoader ───────────────────────────────────────────────────────
+        let mut agent_loader = AgentLoader::new();
+        let agents_dir = aletheon_dir.join("agents");
+        if agents_dir.exists() {
+            let _ = agent_loader.load_from_dir(&agents_dir);
+            info!("Loaded {} agent roles", agent_loader.list().len());
+        }
+        let agent_loader = Arc::new(Mutex::new(agent_loader));
+
+        // ── HooksConfig ───────────────────────────────────────────────────────
+        let hooks_config = config.hooks.clone();
+
         let handler = Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
@@ -406,6 +424,8 @@ impl RequestHandler {
             storm_breaker,
             checkpoint_store,
             skill_router,
+            agent_loader,
+            hooks_config,
         };
 
         // Fire OnSessionStart hook
@@ -530,6 +550,74 @@ impl RequestHandler {
 
         let items: Vec<String> = updates.iter().map(|m| format!("- {}", m)).collect();
         format!("<memory-update>\n{}\n</memory-update>", items.join("\n"))
+    }
+
+    /// Execute configured hook scripts at a lifecycle point.
+    ///
+    /// Each script is spawned as a subprocess with `input_json` piped to stdin.
+    /// Stdout from successful scripts is collected and returned.
+    /// Each script has a 30-second timeout.
+    async fn run_hook_scripts(&self, scripts: &[String], input_json: &str) -> Vec<String> {
+        let mut outputs = Vec::new();
+        for script_path in scripts {
+            let path = expand_tilde(script_path);
+            if !std::path::Path::new(&path).exists() {
+                tracing::warn!(path = %path, "Hook script not found, skipping");
+                continue;
+            }
+            let spawn_result = tokio::process::Command::new(&path)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+
+            match spawn_result {
+                Ok(mut child) => {
+                    // Write input to stdin
+                    if let Some(stdin) = child.stdin.take() {
+                        let input = input_json.to_string();
+                        tokio::spawn(async move {
+                            use tokio::io::AsyncWriteExt;
+                            let mut stdin = stdin;
+                            let _ = stdin.write_all(input.as_bytes()).await;
+                        });
+                    }
+                    // Capture stdout before waiting
+                    let mut stdout_pipe = child.stdout.take();
+                    // Wait with 30-second timeout
+                    match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+                        Ok(Ok(status)) if status.success() => {
+                            // Read captured stdout
+                            if let Some(ref mut stdout) = stdout_pipe {
+                                use tokio::io::AsyncReadExt;
+                                let mut buf = String::new();
+                                if stdout.read_to_string(&mut buf).await.is_ok() && !buf.is_empty() {
+                                    outputs.push(buf);
+                                }
+                            }
+                        }
+                        Ok(Ok(status)) => {
+                            tracing::warn!(
+                                path = %path,
+                                code = status.code(),
+                                "Hook script exited with non-zero status"
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(path = %path, error = %e, "Hook script I/O error");
+                        }
+                        Err(_) => {
+                            tracing::warn!(path = %path, "Hook script timed out (30s)");
+                            child.kill().await.ok();
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path, error = %e, "Failed to spawn hook script");
+                }
+            }
+        }
+        outputs
     }
 
     pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value {
@@ -684,6 +772,21 @@ impl RequestHandler {
                 {
                     let fs = self.fact_store.lock().await;
                     let _ = fs.decay_stale();
+                }
+
+                // --- Configured pre_turn hook scripts ---
+                if !self.hooks_config.pre_turn.is_empty() {
+                    let hook_session_id = self.session_manager.lock().await.session_id.clone();
+                    let hook_input = serde_json::json!({
+                        "prompt": message,
+                        "session_id": hook_session_id
+                    });
+                    let hook_outputs = self
+                        .run_hook_scripts(&self.hooks_config.pre_turn, &hook_input.to_string())
+                        .await;
+                    for output in hook_outputs {
+                        effective_message.push_str(&format!("\n[Hook output]\n{}\n", output));
+                    }
                 }
 
                 effective_message.push_str(message);
@@ -1124,6 +1227,20 @@ impl RequestHandler {
                     };
                     hr.execute(&ctx).await;
                 }
+                // Run configured on_session_end hook scripts
+                if !self.hooks_config.on_session_end.is_empty() {
+                    let hook_session_id = self.session_manager.lock().await.session_id.clone();
+                    let hook_input = serde_json::json!({
+                        "session_id": hook_session_id,
+                        "cwd": std::env::current_dir().unwrap_or_default()
+                    });
+                    let _ = self
+                        .run_hook_scripts(
+                            &self.hooks_config.on_session_end,
+                            &hook_input.to_string(),
+                        )
+                        .await;
+                }
                 // Distill session facts into FactStore
                 {
                     let fs = self.fact_store.lock().await;
@@ -1528,6 +1645,19 @@ impl RequestHandler {
                     };
                     hr.execute(&ctx).await;
                 }
+                // Run configured on_session_end hook scripts
+                if !self.hooks_config.on_session_end.is_empty() {
+                    let hook_input = serde_json::json!({
+                        "session_id": self.session_manager.lock().await.session_id.clone(),
+                        "cwd": std::env::current_dir().unwrap_or_default()
+                    });
+                    let _ = self
+                        .run_hook_scripts(
+                            &self.hooks_config.on_session_end,
+                            &hook_input.to_string(),
+                        )
+                        .await;
+                }
                 // Create new session and replace SessionManager
                 match SessionManager::new(&self.data_dir, new_id.clone(), 100_000).await {
                     Ok(new_sm) => {
@@ -1675,4 +1805,20 @@ impl RequestHandler {
             }),
         }
     }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Expand leading `~` to the user's home directory.
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).to_string_lossy().to_string();
+        }
+    } else if path == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home.to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
 }

@@ -53,6 +53,8 @@ pub struct AppConfig {
     pub memory: MemoryConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
+    #[serde(default)]
+    pub hooks: HooksConfig,
 }
 
 /// Agent-level settings.
@@ -256,6 +258,37 @@ impl Default for DaemonConfig {
     }
 }
 
+/// Hook script configuration.
+///
+/// Each field is a list of script paths to execute at the specified lifecycle point.
+/// Paths may use `~` for home directory expansion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HooksConfig {
+    /// Scripts to run before each turn (receives user prompt as JSON on stdin).
+    #[serde(default)]
+    pub pre_turn: Vec<String>,
+    /// Scripts to run after each tool call (receives tool name + result as JSON on stdin).
+    #[serde(default)]
+    pub post_tool: Vec<String>,
+    /// Scripts to run on session end (receives session_id + cwd as JSON on stdin).
+    #[serde(default)]
+    pub on_session_end: Vec<String>,
+    /// Scripts to run before each tool call (can block execution).
+    #[serde(default)]
+    pub pre_tool: Vec<String>,
+}
+
+impl Default for HooksConfig {
+    fn default() -> Self {
+        Self {
+            pre_turn: Vec::new(),
+            post_tool: Vec::new(),
+            on_session_end: Vec::new(),
+            pre_tool: Vec::new(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AppConfig methods
 // ---------------------------------------------------------------------------
@@ -345,6 +378,12 @@ impl AppConfig {
         if other.daemon.log_level != default_daemon_log_level() {
             self.daemon.log_level = other.daemon.log_level;
         }
+
+        // Hooks: append script paths (allow multiple config layers to add hooks)
+        self.hooks.pre_turn.extend(other.hooks.pre_turn);
+        self.hooks.post_tool.extend(other.hooks.post_tool);
+        self.hooks.on_session_end.extend(other.hooks.on_session_end);
+        self.hooks.pre_tool.extend(other.hooks.pre_tool);
     }
 
     /// Load config with layer merging:
@@ -389,6 +428,7 @@ impl Default for AppConfig {
             plugins: PluginsConfig::default(),
             memory: MemoryConfig::default(),
             daemon: DaemonConfig::default(),
+            hooks: HooksConfig::default(),
         }
     }
 }
@@ -675,5 +715,72 @@ preference = "require"
         assert_eq!(config.target_summary_chars, 2_000);
         assert_eq!(config.context_window_tokens, 128_000);
         assert!(config.compaction_enabled);
+    }
+
+    #[test]
+    fn test_hooks_config_default() {
+        let hooks = HooksConfig::default();
+        assert!(hooks.pre_turn.is_empty());
+        assert!(hooks.post_tool.is_empty());
+        assert!(hooks.on_session_end.is_empty());
+        assert!(hooks.pre_tool.is_empty());
+    }
+
+    #[test]
+    fn test_hooks_config_from_toml() {
+        let toml = r#"
+[hooks]
+pre_turn = ["~/.aletheon/hooks/pre_turn.sh"]
+post_tool = ["/usr/local/bin/post_tool.sh"]
+on_session_end = ["~/.aletheon/hooks/cleanup.sh"]
+pre_tool = []
+
+[[providers]]
+name = "test"
+base_url = "http://localhost"
+"#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.hooks.pre_turn, vec!["~/.aletheon/hooks/pre_turn.sh"]);
+        assert_eq!(
+            config.hooks.post_tool,
+            vec!["/usr/local/bin/post_tool.sh"]
+        );
+        assert_eq!(
+            config.hooks.on_session_end,
+            vec!["~/.aletheon/hooks/cleanup.sh"]
+        );
+        assert!(config.hooks.pre_tool.is_empty());
+    }
+
+    #[test]
+    fn test_hooks_config_default_in_app_config() {
+        let toml = r#"
+[[providers]]
+name = "test"
+base_url = "http://localhost"
+"#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        // hooks section absent => defaults to empty
+        assert!(config.hooks.pre_turn.is_empty());
+        assert!(config.hooks.post_tool.is_empty());
+        assert!(config.hooks.on_session_end.is_empty());
+        assert!(config.hooks.pre_tool.is_empty());
+    }
+
+    #[test]
+    fn test_merge_hooks_append() {
+        let mut base = AppConfig::default();
+        base.hooks.pre_turn.push("/base/pre.sh".to_string());
+
+        let mut other = AppConfig::default();
+        other.hooks.pre_turn.push("/other/pre.sh".to_string());
+        other.hooks.on_session_end.push("/other/end.sh".to_string());
+
+        base.merge(other);
+
+        assert_eq!(base.hooks.pre_turn.len(), 2);
+        assert_eq!(base.hooks.pre_turn[0], "/base/pre.sh");
+        assert_eq!(base.hooks.pre_turn[1], "/other/pre.sh");
+        assert_eq!(base.hooks.on_session_end, vec!["/other/end.sh"]);
     }
 }
