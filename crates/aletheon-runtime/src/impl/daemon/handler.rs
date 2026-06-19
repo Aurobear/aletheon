@@ -25,7 +25,7 @@ use aletheon_body::r#impl::tools::ToolRegistry;
 use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_brain::core::reflector::Reflector;
 use aletheon_brain::core::ExperienceSummarizer;
-use aletheon_abi::{Message, ContentBlock, ReflectionTrigger, Subsystem, SubsystemContext,
+use aletheon_abi::{ReflectionTrigger, Subsystem, SubsystemContext,
     SelfFieldOps, Intent, IntentSource, Verdict, Context as AbiContext};
 use aletheon_abi::hook::{HookPoint, HookContext, HookResult};
 use aletheon_comm::CommunicationBus;
@@ -90,6 +90,11 @@ pub struct RequestHandler {
     /// CommunicationBus for inter-module communication.
     /// When `Some`, SelfField review/narrate calls go through the bus.
     bus: Option<Arc<CommunicationBus>>,
+    /// Guarded tool runner (policy -> approval -> loop detector -> sandbox -> audit).
+    /// Conservative default gate (AutoDeny for L2+) until the Phase 2 socket gate.
+    tool_runner: Arc<Mutex<ToolRunnerWithGuard>>,
+    /// Tool registry shared with BodyModule; kept here for ReAct loop tool execution.
+    tools: Arc<Mutex<ToolRegistry>>,
 }
 
 impl RequestHandler {
@@ -128,7 +133,9 @@ impl RequestHandler {
         let sandbox = SandboxExecutor::new(sandbox_pref);
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
-        let _tool_runner = ToolRunnerWithGuard::new(sandbox, audit_logger);
+        let tool_runner = Arc::new(Mutex::new(
+            ToolRunnerWithGuard::new(sandbox, audit_logger)
+        ));
 
         let runtime_config = RuntimeConfig {
             session_id: session_id.clone(),
@@ -242,9 +249,9 @@ impl RequestHandler {
         }
 
         // Spawn BodyModule handler — shares the same ToolRegistry instance
+        let tools = Arc::new(Mutex::new(tools));
         {
-            let tools = Arc::new(Mutex::new(tools));
-            let body_module = crate::r#impl::engine::modules::body_module::BodyModule::new(tools);
+            let body_module = crate::r#impl::engine::modules::body_module::BodyModule::new(tools.clone());
             let bus_clone = bus.clone();
             tokio::spawn(async move {
                 body_module.run(bus_clone).await;
@@ -273,6 +280,8 @@ impl RequestHandler {
             core_memory,
             hook_registry,
             bus: Some(bus),
+            tool_runner,
+            tools,
         })
     }
 
@@ -491,170 +500,190 @@ impl RequestHandler {
                     let _ = rm.store(&session_id, "user_message", message, None);
                 }
 
-                // Build messages from session history
-                let messages: Vec<Message> = {
-                    let sm = self.session_manager.lock().await;
-                    sm.history().to_vec()
+                // --- Interleaved ReAct loop with tools ---
+                // Build tool definitions from the shared tool registry.
+                let tool_defs = {
+                    let tools = self.tools.lock().await;
+                    tools.definitions()
                 };
 
-                match self.llm.complete(&messages, &[]).await {
-                    Ok(response) => {
-                        let text = response.content.iter()
-                            .filter_map(|block| match block {
-                                ContentBlock::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("");
-                        info!(tokens = response.usage.output_tokens, "Chat response generated");
+                // Prepare execute_tool closure that runs tools through the guarded runner.
+                let runner = self.tool_runner.clone();
+                let tools_arc = self.tools.clone();
+                let working_dir = std::env::current_dir().unwrap_or_default();
+                let session_id = self.session_manager.lock().await.session_id.clone();
 
-                        // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
-                        self.sf_narrate(
-                            "chat_completed",
-                            &format!("User asked: '{}...' | Response: {} chars, {} tokens",
-                                &message[..message.len().min(60)],
-                                text.len(),
-                                response.usage.output_tokens,
-                            ),
-                        ).await;
-
-                        // --- PostTurn hooks ---
-                        {
-                            // Gather session info before locking hook_registry
-                            let (session_id, turn_count) = {
-                                let sm = self.session_manager.lock().await;
-                                (sm.session_id.clone(), sm.turn_count())
-                            };
-                            let hr = self.hook_registry.lock().await;
-                            let ctx = HookContext {
-                                point: HookPoint::PostTurn,
-                                session_id,
-                                turn_count,
-                                tool_name: None,
-                                tool_input: None,
-                                tool_result: None,
-                                message: None,
-                                metadata: HashMap::new(),
-                            };
-                            hr.execute(&ctx).await;
-                        }
-
-                        // Push assistant response and compact if needed
-                        let turn = {
-                            let mut sm = self.session_manager.lock().await;
-                            sm.push_assistant(&text).await;
-                            let _ = sm.compact_if_needed(&*self.llm).await;
-                            sm.turn_count()
+                let execute_tool = move |_id: &str, name: &str, input: &serde_json::Value| {
+                    let runner = runner.clone();
+                    let tools_arc = tools_arc.clone();
+                    let name = name.to_string();
+                    let input = input.clone();
+                    let working_dir = working_dir.clone();
+                    let session_id = session_id.clone();
+                    async move {
+                        let tool = {
+                            let reg = tools_arc.lock().await;
+                            reg.get(&name).cloned()
                         };
-                        // Persist assistant response to recall memory
-                        {
-                            let session_id = self.session_manager.lock().await.session_id.clone();
-                            let rm = self.recall_memory.lock().await;
-                            let _ = rm.store(&session_id, "assistant_message", &text, None);
-                        }
-
-                        // Enhanced reflection: analyze question and response quality
-                        let task_summary = if message.len() > 100 {
-                            format!("{}...", &message[..100])
-                        } else {
-                            message.to_string()
+                        let exec_ctx = aletheon_abi::tool::ToolContext {
+                            working_dir,
+                            session_id,
                         };
-
-                        let mut what_worked = Vec::new();
-                        let mut what_failed = Vec::new();
-                        let mut learned = Vec::new();
-
-                        // Response length as a quality indicator
-                        let resp_len = text.len();
-                        if resp_len > 500 {
-                            what_worked.push(format!("Detailed response ({} chars)", resp_len));
-                        } else if resp_len > 100 {
-                            what_worked.push(format!("Concise response ({} chars)", resp_len));
-                        } else {
-                            what_worked.push(format!("Brief response ({} chars)", resp_len));
-                        }
-
-                        // Token efficiency
-                        if response.usage.output_tokens > 0 {
-                            let chars_per_token = resp_len as f64 / response.usage.output_tokens as f64;
-                            what_worked.push(format!(
-                                "Token efficiency: {:.1} chars/token ({} output tokens)",
-                                chars_per_token, response.usage.output_tokens
-                            ));
-                        }
-
-                        // Detect error indicators in response
-                        let text_lower = text.to_lowercase();
-                        let error_indicators = ["error", "failed", "unable", "cannot", "couldn't", "sorry, i", "i don't know"];
-                        for indicator in &error_indicators {
-                            if text_lower.contains(indicator) {
-                                what_failed.push(format!("Response contains '{}'", indicator));
+                        match tool {
+                            Some(t) => {
+                                let mut r = runner.lock().await;
+                                let res = r.run(t.as_ref(), input, &exec_ctx, "chat-turn").await;
+                                (res.content, res.is_error)
                             }
+                            None => (format!("Unknown tool: {}", name), true),
                         }
+                    }
+                };
 
-                        // Detect learning/self-correction indicators
-                        let learning_indicators = ["i learned", "i now understand", "i realize", "correction:", "actually,"];
-                        for indicator in &learning_indicators {
-                            if text_lower.contains(indicator) {
-                                learned.push(format!("Self-correction detected: '{}'", indicator));
-                            }
-                        }
+                // Drive the ReAct loop.  SelfField review already ran above,
+                // so the inner review_fn returns Allow to avoid double-gating.
+                let mut rt = AletheonRuntime::new(
+                    self.state.lock().await.runtime.config().clone()
+                );
+                let react_result = rt.process_react(
+                    &effective_message,
+                    &sf_ctx,
+                    |_intent: &Intent, _c: &AbiContext| Ok::<_, anyhow::Error>(Verdict::Allow),
+                    &*self.llm,
+                    &tool_defs,
+                    execute_tool,
+                ).await;
 
-                        // Track turn context
-                        what_worked.push(format!("Conversation turn #{}", turn));
+                let text = react_result.unwrap_or_else(|e| format!("error: {e}"));
+                info!(len = text.len(), "ReAct loop completed");
 
-                        let has_failures = !what_failed.is_empty();
-                        let entry = self.reflector.reflect_conversation(
-                            &task_summary,
-                            ReflectionTrigger::TaskComplete,
-                            !has_failures,
-                            what_worked,
-                            what_failed,
-                            learned,
-                        );
-                        // Store reflection — drop lock guard before re-locking for evolution check
-                        let store_result = {
-                            let mem = self.episodic_memory.lock().await;
-                            mem.store_reflection(&entry)
-                        };
-                        if let Err(e) = store_result {
-                            warn!(error = %e, "Failed to store chat reflection");
-                        } else {
-                            info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
+                // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
+                self.sf_narrate(
+                    "chat_completed",
+                    &format!("User asked: '{}...' | Response: {} chars",
+                        &message[..message.len().min(60)],
+                        text.len(),
+                    ),
+                ).await;
 
-                            // Periodic evolution trigger: every 10 reflections, run ExperienceSummarizer
-                            let mem = self.episodic_memory.lock().await;
-                            if let Ok(count) = mem.reflection_count() {
-                                if count > 0 && count % 10 == 0 {
-                                    info!(count = count, "Running ExperienceSummarizer (periodic trigger)");
-                                    if let Ok(recent) = mem.recall_reflections(20) {
-                                        if let Some(evo_entry) = ExperienceSummarizer::summarize(&recent) {
-                                            if let Err(e) = mem.store_evolution_log(&evo_entry) {
-                                                warn!(error = %e, "Failed to store evolution log");
-                                            } else {
-                                                info!(id = %evo_entry.id, patterns = evo_entry.patterns_detected.len(), "Evolution log stored");
-                                            }
-                                        }
+                // --- PostTurn hooks ---
+                {
+                    // Gather session info before locking hook_registry
+                    let (session_id, turn_count) = {
+                        let sm = self.session_manager.lock().await;
+                        (sm.session_id.clone(), sm.turn_count())
+                    };
+                    let hr = self.hook_registry.lock().await;
+                    let ctx = HookContext {
+                        point: HookPoint::PostTurn,
+                        session_id,
+                        turn_count,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_result: None,
+                        message: None,
+                        metadata: HashMap::new(),
+                    };
+                    hr.execute(&ctx).await;
+                }
+
+                // Push assistant response and compact if needed
+                let turn = {
+                    let mut sm = self.session_manager.lock().await;
+                    sm.push_assistant(&text).await;
+                    let _ = sm.compact_if_needed(&*self.llm).await;
+                    sm.turn_count()
+                };
+                // Persist assistant response to recall memory
+                {
+                    let session_id = self.session_manager.lock().await.session_id.clone();
+                    let rm = self.recall_memory.lock().await;
+                    let _ = rm.store(&session_id, "assistant_message", &text, None);
+                }
+
+                // Enhanced reflection: analyze question and response quality
+                let task_summary = if message.len() > 100 {
+                    format!("{}...", &message[..100])
+                } else {
+                    message.to_string()
+                };
+
+                let mut what_worked = Vec::new();
+                let mut what_failed = Vec::new();
+                let mut learned = Vec::new();
+
+                // Response length as a quality indicator
+                let resp_len = text.len();
+                if resp_len > 500 {
+                    what_worked.push(format!("Detailed response ({} chars)", resp_len));
+                } else if resp_len > 100 {
+                    what_worked.push(format!("Concise response ({} chars)", resp_len));
+                } else {
+                    what_worked.push(format!("Brief response ({} chars)", resp_len));
+                }
+
+                // Detect error indicators in response
+                let text_lower = text.to_lowercase();
+                let error_indicators = ["error", "failed", "unable", "cannot", "couldn't", "sorry, i", "i don't know"];
+                for indicator in &error_indicators {
+                    if text_lower.contains(indicator) {
+                        what_failed.push(format!("Response contains '{}'", indicator));
+                    }
+                }
+
+                // Detect learning/self-correction indicators
+                let learning_indicators = ["i learned", "i now understand", "i realize", "correction:", "actually,"];
+                for indicator in &learning_indicators {
+                    if text_lower.contains(indicator) {
+                        learned.push(format!("Self-correction detected: '{}'", indicator));
+                    }
+                }
+
+                // Track turn context
+                what_worked.push(format!("Conversation turn #{}", turn));
+
+                let has_failures = !what_failed.is_empty();
+                let entry = self.reflector.reflect_conversation(
+                    &task_summary,
+                    ReflectionTrigger::TaskComplete,
+                    !has_failures,
+                    what_worked,
+                    what_failed,
+                    learned,
+                );
+                // Store reflection — drop lock guard before re-locking for evolution check
+                let store_result = {
+                    let mem = self.episodic_memory.lock().await;
+                    mem.store_reflection(&entry)
+                };
+                if let Err(e) = store_result {
+                    warn!(error = %e, "Failed to store chat reflection");
+                } else {
+                    info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
+
+                    // Periodic evolution trigger: every 10 reflections, run ExperienceSummarizer
+                    let mem = self.episodic_memory.lock().await;
+                    if let Ok(count) = mem.reflection_count() {
+                        if count > 0 && count % 10 == 0 {
+                            info!(count = count, "Running ExperienceSummarizer (periodic trigger)");
+                            if let Ok(recent) = mem.recall_reflections(20) {
+                                if let Some(evo_entry) = ExperienceSummarizer::summarize(&recent) {
+                                    if let Err(e) = mem.store_evolution_log(&evo_entry) {
+                                        warn!(error = %e, "Failed to store evolution log");
+                                    } else {
+                                        info!(id = %evo_entry.id, patterns = evo_entry.patterns_detected.len(), "Evolution log stored");
                                     }
                                 }
                             }
                         }
-
-                        json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "result": { "response": text, "turn": turn }
-                        })
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "LLM call failed");
-                        json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "error": { "code": -32000, "message": format!("LLM error: {}", e) }
-                        })
                     }
                 }
+
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "response": text, "turn": turn }
+                })
             }
             "clear" => {
                 let mut state = self.state.lock().await;
