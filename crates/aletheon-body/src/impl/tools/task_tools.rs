@@ -120,12 +120,373 @@ pub fn new_shared_task_store() -> SharedTaskStore {
 }
 
 // ---------------------------------------------------------------------------
-// Tests (store only -- tools will be added in the next commit)
+// Tools
+// ---------------------------------------------------------------------------
+
+pub struct TaskCreateTool {
+    store: SharedTaskStore,
+}
+
+impl TaskCreateTool {
+    pub fn new(store: SharedTaskStore) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl Tool for TaskCreateTool {
+    fn name(&self) -> &str {
+        "task_create"
+    }
+
+    fn description(&self) -> &str {
+        "Create a new task with subject and description"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "subject": {
+                    "type": "string",
+                    "description": "Short task subject"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Detailed task description"
+                }
+            },
+            "required": ["subject", "description"]
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L0
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(TaskCreateTool {
+            store: Arc::clone(&self.store),
+        })
+    }
+
+    fn concurrency_class(&self) -> ConcurrencyClass {
+        ConcurrencyClass::SideEffect
+    }
+
+    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+        let start = std::time::Instant::now();
+
+        let subject = match input["subject"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                return ToolResult {
+                    content: "Missing or empty 'subject'".to_string(),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        truncated: false,
+                    },
+                };
+            }
+        };
+
+        let description = input["description"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        let task = self.store.lock().create(subject, description);
+
+        ToolResult {
+            content: serde_json::to_string_pretty(&task).unwrap_or_default(),
+            is_error: false,
+            metadata: ToolResultMeta {
+                execution_time_ms: start.elapsed().as_millis() as u64,
+                truncated: false,
+            },
+        }
+    }
+}
+
+pub struct TaskUpdateTool {
+    store: SharedTaskStore,
+}
+
+impl TaskUpdateTool {
+    pub fn new(store: SharedTaskStore) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl Tool for TaskUpdateTool {
+    fn name(&self) -> &str {
+        "task_update"
+    }
+
+    fn description(&self) -> &str {
+        "Update the status of an existing task"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Task ID"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "completed"],
+                    "description": "New status value"
+                }
+            },
+            "required": ["id", "status"]
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L0
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(TaskUpdateTool {
+            store: Arc::clone(&self.store),
+        })
+    }
+
+    fn concurrency_class(&self) -> ConcurrencyClass {
+        ConcurrencyClass::SideEffect
+    }
+
+    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+        let start = std::time::Instant::now();
+
+        let id = match input["id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                return ToolResult {
+                    content: "Missing or empty 'id'".to_string(),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        truncated: false,
+                    },
+                };
+            }
+        };
+
+        let status_str = match input["status"].as_str() {
+            Some(s) => s,
+            _ => {
+                return ToolResult {
+                    content: "Missing 'status'".to_string(),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        truncated: false,
+                    },
+                };
+            }
+        };
+
+        let status = match TaskStatus::from_str(status_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult {
+                    content: format!(
+                        "Invalid status '{}', expected: pending, in_progress, completed",
+                        status_str
+                    ),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        truncated: false,
+                    },
+                };
+            }
+        };
+
+        match self.store.lock().update_status(id, status) {
+            Some(task) => ToolResult {
+                content: serde_json::to_string_pretty(&task).unwrap_or_default(),
+                is_error: false,
+                metadata: ToolResultMeta {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    truncated: false,
+                },
+            },
+            None => ToolResult {
+                content: format!("Task not found: {}", id),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    truncated: false,
+                },
+            },
+        }
+    }
+}
+
+pub struct TaskListTool {
+    store: SharedTaskStore,
+}
+
+impl TaskListTool {
+    pub fn new(store: SharedTaskStore) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl Tool for TaskListTool {
+    fn name(&self) -> &str {
+        "task_list"
+    }
+
+    fn description(&self) -> &str {
+        "List all tasks in the store"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {}
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L0
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(TaskListTool {
+            store: Arc::clone(&self.store),
+        })
+    }
+
+    fn concurrency_class(&self) -> ConcurrencyClass {
+        ConcurrencyClass::ReadOnly
+    }
+
+    async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+        let start = std::time::Instant::now();
+
+        let tasks = self.store.lock().list();
+
+        ToolResult {
+            content: serde_json::to_string_pretty(&tasks).unwrap_or_default(),
+            is_error: false,
+            metadata: ToolResultMeta {
+                execution_time_ms: start.elapsed().as_millis() as u64,
+                truncated: false,
+            },
+        }
+    }
+}
+
+pub struct TaskGetTool {
+    store: SharedTaskStore,
+}
+
+impl TaskGetTool {
+    pub fn new(store: SharedTaskStore) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl Tool for TaskGetTool {
+    fn name(&self) -> &str {
+        "task_get"
+    }
+
+    fn description(&self) -> &str {
+        "Get a single task by ID"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Task ID"
+                }
+            },
+            "required": ["id"]
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L0
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(TaskGetTool {
+            store: Arc::clone(&self.store),
+        })
+    }
+
+    fn concurrency_class(&self) -> ConcurrencyClass {
+        ConcurrencyClass::ReadOnly
+    }
+
+    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+        let start = std::time::Instant::now();
+
+        let id = match input["id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                return ToolResult {
+                    content: "Missing or empty 'id'".to_string(),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        truncated: false,
+                    },
+                };
+            }
+        };
+
+        match self.store.lock().get(id) {
+            Some(task) => ToolResult {
+                content: serde_json::to_string_pretty(&task).unwrap_or_default(),
+                is_error: false,
+                metadata: ToolResultMeta {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    truncated: false,
+                },
+            },
+            None => ToolResult {
+                content: format!("Task not found: {}", id),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    truncated: false,
+                },
+            },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn ctx() -> ToolContext {
+        ToolContext {
+            working_dir: PathBuf::from("/tmp"),
+            session_id: "test".to_string(),
+        }
+    }
 
     // --- TaskStore round-trip ---
 
@@ -154,5 +515,106 @@ mod tests {
         // confirm via get
         let got2 = store.get(&id).unwrap();
         assert_eq!(got2.status, TaskStatus::InProgress);
+    }
+
+    // --- Tool integration tests ---
+
+    #[tokio::test]
+    async fn task_create_tool_returns_id() {
+        let store = new_shared_task_store();
+        let tool = TaskCreateTool::new(Arc::clone(&store));
+
+        let result = tool
+            .execute(
+                json!({"subject": "Test", "description": "desc"}),
+                &ctx(),
+            )
+            .await;
+
+        assert!(!result.is_error);
+        let task: Task = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(task.subject, "Test");
+        assert_eq!(task.status, TaskStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn task_list_tool_shows_created() {
+        let store = new_shared_task_store();
+        store.lock().create("A".to_string(), "".to_string());
+
+        let tool = TaskListTool::new(Arc::clone(&store));
+        let result = tool.execute(json!({}), &ctx()).await;
+
+        assert!(!result.is_error);
+        let tasks: Vec<Task> = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].subject, "A");
+    }
+
+    #[tokio::test]
+    async fn task_update_tool_flips_status() {
+        let store = new_shared_task_store();
+        let task = store.lock().create("B".to_string(), "".to_string());
+        let id = task.id.clone();
+
+        let tool = TaskUpdateTool::new(Arc::clone(&store));
+        let result = tool
+            .execute(json!({"id": id, "status": "completed"}), &ctx())
+            .await;
+
+        assert!(!result.is_error);
+        let updated: Task = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(updated.status, TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn task_get_tool_reflects_update() {
+        let store = new_shared_task_store();
+        let task = store.lock().create("C".to_string(), "".to_string());
+        let id = task.id.clone();
+
+        store.lock().update_status(&id, TaskStatus::InProgress);
+
+        let tool = TaskGetTool::new(Arc::clone(&store));
+        let result = tool.execute(json!({"id": id}), &ctx()).await;
+
+        assert!(!result.is_error);
+        let got: Task = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(got.status, TaskStatus::InProgress);
+    }
+
+    #[tokio::test]
+    async fn task_get_tool_not_found() {
+        let store = new_shared_task_store();
+        let tool = TaskGetTool::new(Arc::clone(&store));
+        let result = tool
+            .execute(json!({"id": "nonexistent"}), &ctx())
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.content.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn task_update_tool_not_found() {
+        let store = new_shared_task_store();
+        let tool = TaskUpdateTool::new(Arc::clone(&store));
+        let result = tool
+            .execute(json!({"id": "nonexistent", "status": "completed"}), &ctx())
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.content.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn task_create_tool_missing_subject() {
+        let store = new_shared_task_store();
+        let tool = TaskCreateTool::new(Arc::clone(&store));
+        let result = tool
+            .execute(json!({"description": "desc"}), &ctx())
+            .await;
+
+        assert!(result.is_error);
     }
 }
