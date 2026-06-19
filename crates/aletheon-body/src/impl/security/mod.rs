@@ -12,6 +12,7 @@ pub mod output_guardrail;
 pub mod policy;
 pub mod risk_classifier;
 pub mod runner;
+pub mod socket_approval;
 
 // Re-export key types
 pub use approval::{
@@ -29,3 +30,4 @@ pub use policy::{PolicyEngine, PolicyVerdict};
 pub use risk_classifier::{RiskCategory, RiskClassifier};
 pub use permission_rules::{load_permission_context, load_permission_context_from_str};
 pub use runner::ToolRunnerWithGuard;
+pub use socket_approval::{PendingApproval, SocketApprovalGate};
