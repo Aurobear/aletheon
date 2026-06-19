@@ -169,6 +169,32 @@ impl AletheonRuntime {
         self.react_loop.iteration()
     }
 
+    /// Process input via the interleaved ReAct loop.
+    pub async fn process_react<L, R, F, Fut>(
+        &mut self,
+        input: &str,
+        ctx: &Context,
+        review_fn: R,
+        llm: &L,
+        tool_defs: &[aletheon_abi::ToolDefinition],
+        execute_tool: F,
+    ) -> Result<String>
+    where
+        L: aletheon_brain::r#impl::llm::provider::LlmProvider + ?Sized,
+        R: Fn(&Intent, &Context) -> Result<Verdict>,
+        F: Fn(&str, &str, &serde_json::Value) -> Fut,
+        Fut: std::future::Future<Output = (String, bool)>,
+    {
+        self.react_loop.reset();
+        let intent = self.react_loop.build_intent(input);
+        let verdict = review_fn(&intent, ctx)?;
+        debug!("SelfField verdict: {:?}", verdict);
+        if let Verdict::Deny { reason } = verdict {
+            return Ok(format!("Denied by SelfField: {}", reason));
+        }
+        self.react_loop.run(input, llm, tool_defs, execute_tool).await
+    }
+
     /// Get config
     pub fn config(&self) -> &RuntimeConfig {
         &self.config
