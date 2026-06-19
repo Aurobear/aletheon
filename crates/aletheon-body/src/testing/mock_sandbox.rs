@@ -70,10 +70,7 @@ impl MockSandbox {
 
     /// Write a file to the in-memory filesystem.
     pub fn write_file(&self, path: impl Into<String>, content: impl Into<String>) {
-        self.fs
-            .lock()
-            .unwrap()
-            .insert(path.into(), content.into());
+        self.fs.lock().unwrap().insert(path.into(), content.into());
     }
 
     /// Read a file from the in-memory filesystem.

@@ -89,9 +89,7 @@ impl<T> ManagedResource<T> {
                 Ordering::AcqRel,
                 Ordering::Acquire,
             )
-            .map_err(|_| {
-                AgentError::already_exists(&format!("resource '{}'", self.name))
-            })?;
+            .map_err(|_| AgentError::already_exists(&format!("resource '{}'", self.name)))?;
         debug_assert_eq!(prev, ResourceState::Uninit as u8);
         let mut guard = self.inner.lock().unwrap();
         *guard = Some(value);
@@ -131,7 +129,8 @@ impl<T> ManagedResource<T> {
         // Drop the inner value.
         let mut guard = self.inner.lock().unwrap();
         *guard = None;
-        self.state.store(ResourceState::Dead as u8, Ordering::Release);
+        self.state
+            .store(ResourceState::Dead as u8, Ordering::Release);
         Ok(())
     }
 }

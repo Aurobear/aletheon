@@ -1,9 +1,11 @@
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use std::time::{Duration, Instant};
 use tracing::info;
 
-use crate::r#impl::sandbox::{SandboxBackend, IsolationLevel, SandboxCapabilities, SandboxConfig, SandboxResult};
+use crate::r#impl::sandbox::{
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
+};
 
 /// Process-level sandbox backend — uses resource limits but no namespace isolation.
 /// Compatible with Docker, WSL2, and environments without user namespace support.
@@ -37,8 +39,16 @@ impl SandboxBackend for ProcessBackend {
         }
     }
 
-    async fn execute(&self, cmd: &str, config: &SandboxConfig, timeout: Duration) -> Result<SandboxResult> {
-        info!(command = cmd, "Executing command with process-level sandbox");
+    async fn execute(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+    ) -> Result<SandboxResult> {
+        info!(
+            command = cmd,
+            "Executing command with process-level sandbox"
+        );
 
         let start = Instant::now();
 

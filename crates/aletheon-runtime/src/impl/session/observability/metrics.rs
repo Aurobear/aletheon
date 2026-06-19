@@ -42,12 +42,7 @@ impl MetricsExporter {
     }
 
     /// Record an LLM inference call.
-    pub fn record_inference(
-        &mut self,
-        input_tokens: u64,
-        output_tokens: u64,
-        latency_ms: u64,
-    ) {
+    pub fn record_inference(&mut self, input_tokens: u64, output_tokens: u64, latency_ms: u64) {
         self.state.llm_call_count += 1;
         self.state.total_inference_latency_ms += latency_ms;
         self.state.token_usage.input_tokens += input_tokens;

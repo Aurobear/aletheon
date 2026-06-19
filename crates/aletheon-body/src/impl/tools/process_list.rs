@@ -26,7 +26,9 @@ impl Tool for ProcessListTool {
         PermissionLevel::L0
     }
 
-    fn boxed_clone(&self) -> Box<dyn Tool> { Box::new(ProcessListTool) }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(ProcessListTool)
+    }
 
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let start = std::time::Instant::now();

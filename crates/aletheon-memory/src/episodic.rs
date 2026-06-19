@@ -83,46 +83,49 @@ impl EpisodicMemory {
     pub fn recall_reflections(&self, limit: usize) -> Result<Vec<ReflectionEntry>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT r.* FROM reflection_events r ORDER BY r.created_at DESC LIMIT ?1"
+                "SELECT r.* FROM reflection_events r ORDER BY r.created_at DESC LIMIT ?1",
             )?;
 
-            let entries = stmt.query_map(params![limit as i64], |row| {
-                let id: String = row.get("id")?;
-                let created_at: String = row.get("created_at")?;
-                let trigger_str: String = row.get("trigger_type")?;
-                let outcome_str: String = row.get("outcome")?;
-                let what_worked_str: String = row.get("what_worked")?;
-                let what_failed_str: String = row.get("what_failed")?;
-                let learned_str: String = row.get("learned")?;
-                let behavior_changes_str: String = row.get("behavior_changes")?;
-                let confidence: f64 = row.get("confidence")?;
-                let task_summary: String = row.get("task_summary")?;
+            let entries = stmt
+                .query_map(params![limit as i64], |row| {
+                    let id: String = row.get("id")?;
+                    let created_at: String = row.get("created_at")?;
+                    let trigger_str: String = row.get("trigger_type")?;
+                    let outcome_str: String = row.get("outcome")?;
+                    let what_worked_str: String = row.get("what_worked")?;
+                    let what_failed_str: String = row.get("what_failed")?;
+                    let learned_str: String = row.get("learned")?;
+                    let behavior_changes_str: String = row.get("behavior_changes")?;
+                    let confidence: f64 = row.get("confidence")?;
+                    let task_summary: String = row.get("task_summary")?;
 
-                let trigger = match trigger_str.as_str() {
-                    "impasse" => ReflectionTrigger::Impasse,
-                    "manual" => ReflectionTrigger::Manual,
-                    _ => ReflectionTrigger::TaskComplete,
-                };
+                    let trigger = match trigger_str.as_str() {
+                        "impasse" => ReflectionTrigger::Impasse,
+                        "manual" => ReflectionTrigger::Manual,
+                        _ => ReflectionTrigger::TaskComplete,
+                    };
 
-                let outcome = match outcome_str.as_str() {
-                    "partial" => aletheon_abi::ReflectionOutcome::Partial,
-                    "failure" => aletheon_abi::ReflectionOutcome::Failure,
-                    _ => aletheon_abi::ReflectionOutcome::Success,
-                };
+                    let outcome = match outcome_str.as_str() {
+                        "partial" => aletheon_abi::ReflectionOutcome::Partial,
+                        "failure" => aletheon_abi::ReflectionOutcome::Failure,
+                        _ => aletheon_abi::ReflectionOutcome::Success,
+                    };
 
-                Ok(ReflectionEntry {
-                    id,
-                    timestamp: created_at.parse().unwrap_or_else(|_| Utc::now()),
-                    trigger,
-                    task_summary,
-                    outcome,
-                    what_worked: serde_json::from_str(&what_worked_str).unwrap_or_default(),
-                    what_failed: serde_json::from_str(&what_failed_str).unwrap_or_default(),
-                    learned: serde_json::from_str(&learned_str).unwrap_or_default(),
-                    behavior_changes: serde_json::from_str(&behavior_changes_str).unwrap_or_default(),
-                    confidence,
-                })
-            })?.collect::<std::result::Result<Vec<_>, _>>()?;
+                    Ok(ReflectionEntry {
+                        id,
+                        timestamp: created_at.parse().unwrap_or_else(|_| Utc::now()),
+                        trigger,
+                        task_summary,
+                        outcome,
+                        what_worked: serde_json::from_str(&what_worked_str).unwrap_or_default(),
+                        what_failed: serde_json::from_str(&what_failed_str).unwrap_or_default(),
+                        learned: serde_json::from_str(&learned_str).unwrap_or_default(),
+                        behavior_changes: serde_json::from_str(&behavior_changes_str)
+                            .unwrap_or_default(),
+                        confidence,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
 
             Ok(entries)
         })
@@ -131,11 +134,8 @@ impl EpisodicMemory {
     /// Count total reflections stored.
     pub fn reflection_count(&self) -> Result<usize> {
         self.with_conn(|conn| {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM reflection_events",
-                [],
-                |r| r.get(0),
-            )?;
+            let count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM reflection_events", [], |r| r.get(0))?;
             Ok(count as usize)
         })
     }
@@ -143,11 +143,10 @@ impl EpisodicMemory {
     /// Count total evolution log entries stored.
     pub fn evolution_log_count(&self) -> Result<usize> {
         self.with_conn(|conn| {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM evolution_log_events",
-                [],
-                |r| r.get(0),
-            )?;
+            let count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM evolution_log_events", [], |r| {
+                    r.get(0)
+                })?;
             Ok(count as usize)
         })
     }
@@ -157,11 +156,7 @@ impl EpisodicMemory {
     /// The awareness is stored as a first-class record, not just
     /// serialized bytes in the event. This enables pattern analysis
     /// for growth.
-    pub fn store_awareness(
-        &self,
-        memory_id: &str,
-        awareness: &SelfAwareness,
-    ) -> Result<()> {
+    pub fn store_awareness(&self, memory_id: &str, awareness: &SelfAwareness) -> Result<()> {
         self.with_conn(|conn| {
             let id = Uuid::new_v4().to_string();
             let now = Utc::now().to_rfc3339();
@@ -191,22 +186,24 @@ impl EpisodicMemory {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT action, aware, extensions FROM awareness_events
-                 ORDER BY created_at DESC LIMIT ?1"
+                 ORDER BY created_at DESC LIMIT ?1",
             )?;
 
-            let entries = stmt.query_map(params![limit as i64], |row| {
-                let action: String = row.get("action")?;
-                let aware: bool = row.get::<_, i32>("aware")? != 0;
-                let extensions_str: String = row.get("extensions")?;
+            let entries = stmt
+                .query_map(params![limit as i64], |row| {
+                    let action: String = row.get("action")?;
+                    let aware: bool = row.get::<_, i32>("aware")? != 0;
+                    let extensions_str: String = row.get("extensions")?;
 
-                let extensions: Vec<AwarenessExtension> =
-                    serde_json::from_str(&extensions_str).unwrap_or_default();
+                    let extensions: Vec<AwarenessExtension> =
+                        serde_json::from_str(&extensions_str).unwrap_or_default();
 
-                Ok(SelfAwareness {
-                    core: AwarenessCore { action, aware },
-                    extensions,
-                })
-            })?.collect::<std::result::Result<Vec<_>, _>>()?;
+                    Ok(SelfAwareness {
+                        core: AwarenessCore { action, aware },
+                        extensions,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
 
             Ok(entries)
         })
@@ -218,9 +215,7 @@ impl EpisodicMemory {
     /// Used to identify which extension types are most/least used.
     pub fn awareness_extension_stats(&self) -> Result<AwarenessExtensionCounts> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT extensions FROM awareness_events"
-            )?;
+            let mut stmt = conn.prepare("SELECT extensions FROM awareness_events")?;
 
             let mut counts = AwarenessExtensionCounts::default();
 
@@ -273,9 +268,8 @@ impl EpisodicMemory {
     /// Recall recent evolution log entries.
     pub fn recall_evolution_logs(&self, limit: usize) -> Result<Vec<EvolutionLogEntry>> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT * FROM evolution_log_events ORDER BY created_at DESC LIMIT ?1",
-            )?;
+            let mut stmt = conn
+                .prepare("SELECT * FROM evolution_log_events ORDER BY created_at DESC LIMIT ?1")?;
 
             let entries = stmt
                 .query_map(params![limit as i64], |row| {
@@ -291,8 +285,7 @@ impl EpisodicMemory {
                         timestamp: created_at.parse().unwrap_or_else(|_| Utc::now()),
                         trigger,
                         basis: serde_json::from_str(&basis_str).unwrap_or_default(),
-                        patterns_detected: serde_json::from_str(&patterns_str)
-                            .unwrap_or_default(),
+                        patterns_detected: serde_json::from_str(&patterns_str).unwrap_or_default(),
                         adjustments: serde_json::from_str(&adjustments_str).unwrap_or_default(),
                     })
                 })?
@@ -506,9 +499,8 @@ impl MemoryBackend for EpisodicMemory {
 
     async fn list(&self, filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> {
         self.with_conn(|conn| {
-            let mut sql = String::from(
-                "SELECT * FROM aletheon_memory WHERE memory_type = 'episodic'",
-            );
+            let mut sql =
+                String::from("SELECT * FROM aletheon_memory WHERE memory_type = 'episodic'");
             let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
             let mut param_idx = 1;
 
@@ -833,10 +825,16 @@ mod tests {
         // Most recent first
         assert_eq!(recalled[0].task_summary, "stuck on parser bug");
         assert_eq!(recalled[0].trigger, ReflectionTrigger::Impasse);
-        assert_eq!(recalled[0].outcome, aletheon_abi::ReflectionOutcome::Failure);
+        assert_eq!(
+            recalled[0].outcome,
+            aletheon_abi::ReflectionOutcome::Failure
+        );
         assert_eq!(recalled[1].task_summary, "deployed feature X");
         assert_eq!(recalled[1].trigger, ReflectionTrigger::TaskComplete);
-        assert_eq!(recalled[1].outcome, aletheon_abi::ReflectionOutcome::Success);
+        assert_eq!(
+            recalled[1].outcome,
+            aletheon_abi::ReflectionOutcome::Success
+        );
     }
 
     #[tokio::test]
@@ -981,7 +979,10 @@ mod tests {
         assert_eq!(r.adjustments[0].target, "care.efficiency.weight");
         assert!((r.adjustments[0].old_value.unwrap() - 0.5).abs() < f64::EPSILON);
         assert!((r.adjustments[0].new_value.unwrap() - 0.7).abs() < f64::EPSILON);
-        assert_eq!(r.adjustments[0].reason, "efficiency improved after parser fix");
+        assert_eq!(
+            r.adjustments[0].reason,
+            "efficiency improved after parser fix"
+        );
     }
 
     #[tokio::test]

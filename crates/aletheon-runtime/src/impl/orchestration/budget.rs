@@ -1,11 +1,11 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::warn;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BudgetStatus {
     Ok,
-    Warning,   // >= 80% used
+    Warning, // >= 80% used
     Exhausted,
 }
 
@@ -28,7 +28,11 @@ impl IterationBudget {
         let prev = self.used.fetch_add(1, Ordering::SeqCst);
         let now = prev + 1;
         if now >= self.max_total {
-            warn!(used = now, max = self.max_total, "Iteration budget exhausted");
+            warn!(
+                used = now,
+                max = self.max_total,
+                "Iteration budget exhausted"
+            );
             BudgetStatus::Exhausted
         } else if now as f64 / self.max_total as f64 >= 0.8 {
             BudgetStatus::Warning
@@ -55,7 +59,8 @@ impl IterationBudget {
     }
 
     pub fn remaining(&self) -> usize {
-        self.max_total.saturating_sub(self.used.load(Ordering::SeqCst))
+        self.max_total
+            .saturating_sub(self.used.load(Ordering::SeqCst))
     }
 
     pub fn used(&self) -> usize {

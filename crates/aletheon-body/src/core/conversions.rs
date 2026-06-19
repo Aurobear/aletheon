@@ -1,7 +1,7 @@
 use aletheon_abi::body::{Action, ActionResult};
 use aletheon_abi::capability::{Capability, PermissionLevel as AbiPermissionLevel};
 use aletheon_abi::context::Context;
-use aletheon_abi::tool::{ToolResult, PermissionLevel as ToolPermissionLevel, ToolContext};
+use aletheon_abi::tool::{PermissionLevel as ToolPermissionLevel, ToolContext, ToolResult};
 use std::time::Duration;
 
 /// Convert Action to tool name + JSON input
@@ -14,7 +14,11 @@ pub fn tool_result_toActionResult(result: &ToolResult) -> ActionResult {
     ActionResult {
         success: !result.is_error,
         output: result.content.clone(),
-        error: if result.is_error { Some(result.content.clone()) } else { None },
+        error: if result.is_error {
+            Some(result.content.clone())
+        } else {
+            None
+        },
         elapsed_ms: result.metadata.execution_time_ms,
         truncated: result.metadata.truncated,
         side_effects: Vec::new(), // ToolResult doesn't track side effects
@@ -89,7 +93,13 @@ mod tests {
 
     #[test]
     fn test_permission_mapping() {
-        assert_eq!(tool_to_abi_permission(ToolPermissionLevel::L0), AbiPermissionLevel::ReadOnly);
-        assert_eq!(tool_to_abi_permission(ToolPermissionLevel::L3), AbiPermissionLevel::Destructive);
+        assert_eq!(
+            tool_to_abi_permission(ToolPermissionLevel::L0),
+            AbiPermissionLevel::ReadOnly
+        );
+        assert_eq!(
+            tool_to_abi_permission(ToolPermissionLevel::L3),
+            AbiPermissionLevel::Destructive
+        );
     }
 }

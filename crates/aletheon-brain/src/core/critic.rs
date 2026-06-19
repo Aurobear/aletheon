@@ -4,7 +4,7 @@
 //! risk, efficiency, consistency, and reversibility. Produces Critique
 //! items with severity levels and actionable suggestions.
 
-use aletheon_abi::brain::{Critique, CriticismDimension, CriticismSeverity, Plan};
+use aletheon_abi::brain::{CriticismDimension, CriticismSeverity, Critique, Plan};
 
 /// The critic component.
 ///
@@ -55,7 +55,9 @@ impl Critic {
                             "Step '{}' depends on non-existent step '{}'.",
                             step.id, dep
                         ),
-                        suggestion: Some("Fix dependency reference or add missing step.".to_string()),
+                        suggestion: Some(
+                            "Fix dependency reference or add missing step.".to_string(),
+                        ),
                     });
                 }
             }
@@ -82,9 +84,7 @@ impl Critic {
                         "Destructive action '{}' has no rollback action.",
                         step.action.name
                     ),
-                    suggestion: Some(
-                        "Add a rollback action or ensure backups exist.".to_string(),
-                    ),
+                    suggestion: Some("Add a rollback action or ensure backups exist.".to_string()),
                 });
             }
         }
@@ -136,7 +136,11 @@ impl Critic {
     fn check_reversibility(&self, plan: &Plan) -> Vec<Critique> {
         let mut critiques = Vec::new();
         let total = plan.steps.len();
-        let with_rollback = plan.steps.iter().filter(|s| s.rollback_action.is_some()).count();
+        let with_rollback = plan
+            .steps
+            .iter()
+            .filter(|s| s.rollback_action.is_some())
+            .count();
 
         if total > 0 {
             let ratio = with_rollback as f64 / total as f64;
@@ -146,7 +150,9 @@ impl Critic {
                     severity: CriticismSeverity::Info,
                     description: format!(
                         "Only {}/{} steps have rollback actions ({:.0}%).",
-                        with_rollback, total, ratio * 100.0
+                        with_rollback,
+                        total,
+                        ratio * 100.0
                     ),
                     suggestion: Some(
                         "Consider adding rollback actions for critical steps.".to_string(),
@@ -262,8 +268,12 @@ mod tests {
         let critic = Critic::new();
         let plan = make_plan(vec![]);
         let critiques = critic.critique(&plan);
-        assert!(critiques.iter().any(|c| c.severity == CriticismSeverity::Fatal));
-        assert!(critiques.iter().any(|c| matches!(c.dimension, CriticismDimension::Completeness)));
+        assert!(critiques
+            .iter()
+            .any(|c| c.severity == CriticismSeverity::Fatal));
+        assert!(critiques
+            .iter()
+            .any(|c| matches!(c.dimension, CriticismDimension::Completeness)));
     }
 
     #[test]
@@ -295,7 +305,9 @@ mod tests {
         }]);
         let critiques = critic.critique(&plan);
         // Should not have the "no rollback" warning
-        assert!(!critiques.iter().any(|c| c.description.contains("no rollback")));
+        assert!(!critiques
+            .iter()
+            .any(|c| c.description.contains("no rollback")));
     }
 
     #[test]
@@ -309,7 +321,9 @@ mod tests {
             rollback_action: None,
         }]);
         let critiques = critic.critique(&plan);
-        assert!(critiques.iter().any(|c| c.description.contains("non-existent")));
+        assert!(critiques
+            .iter()
+            .any(|c| c.description.contains("non-existent")));
     }
 
     #[test]
@@ -377,7 +391,9 @@ mod tests {
         let mut plan = make_plan(steps);
         plan.estimated_cost.estimated_tool_calls = 15;
         let critiques = critic.critique(&plan);
-        assert!(critiques.iter().any(|c| c.description.contains("tool calls")));
+        assert!(critiques
+            .iter()
+            .any(|c| c.description.contains("tool calls")));
     }
 
     #[test]
@@ -392,6 +408,8 @@ mod tests {
         }]);
         let critiques = critic.critique(&plan);
         // Read-only actions should have minimal critiques
-        assert!(critiques.iter().all(|c| c.severity <= CriticismSeverity::Info));
+        assert!(critiques
+            .iter()
+            .all(|c| c.severity <= CriticismSeverity::Info));
     }
 }

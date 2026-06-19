@@ -29,7 +29,9 @@ impl Default for EngineConfig {
         Self {
             max_iterations: 50,
             compact_threshold_tokens: 100_000,
-            system_prompt: "You are a helpful system assistant. You can execute commands and manage files.".to_string(),
+            system_prompt:
+                "You are a helpful system assistant. You can execute commands and manage files."
+                    .to_string(),
             session_id: uuid::Uuid::new_v4().to_string(),
             compaction_enabled: true,
             compaction_keep_recent: 10,

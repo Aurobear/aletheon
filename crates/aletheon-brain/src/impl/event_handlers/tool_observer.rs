@@ -168,8 +168,7 @@ Respond with JSON:
     /// Parse LLM response into ReflectionPayload.
     fn parse_reflection(&self, turn_id: Uuid, text: &str) -> Result<ReflectionPayload> {
         // Try JSON parse
-        let json: serde_json::Value =
-            serde_json::from_str(text).unwrap_or(serde_json::Value::Null);
+        let json: serde_json::Value = serde_json::from_str(text).unwrap_or(serde_json::Value::Null);
 
         let assessment = match json["assessment"].as_str().unwrap_or("Failure") {
             "Success" => Assessment::Success,
@@ -179,10 +178,7 @@ Respond with JSON:
 
         let suggested_rule = json["suggested_rule"].as_object().map(|obj| LearnedRule {
             id: Uuid::new_v4(),
-            condition: obj["condition"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
+            condition: obj["condition"].as_str().unwrap_or_default().to_string(),
             action: obj["action"].as_str().unwrap_or_default().to_string(),
             confidence: json["confidence"].as_f64().unwrap_or(0.5),
             source_reflections: vec![turn_id],

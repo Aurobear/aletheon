@@ -37,7 +37,11 @@ pub struct Capability {
 }
 
 impl Capability {
-    pub fn new(name: impl Into<String>, level: PermissionLevel, description: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        level: PermissionLevel,
+        description: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             level,
@@ -54,7 +58,9 @@ pub struct CapabilitySet {
 
 impl CapabilitySet {
     pub fn new() -> Self {
-        Self { capabilities: Vec::new() }
+        Self {
+            capabilities: Vec::new(),
+        }
     }
 
     pub fn with(mut self, cap: Capability) -> Self {

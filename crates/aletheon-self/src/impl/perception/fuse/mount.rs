@@ -104,8 +104,8 @@ impl FuseMount {
 mod fuse_impl {
     use super::AgentFs;
     use async_trait::async_trait;
-    use fuse3::path::PathFileSystem;
     use fuse3::path::reply::*;
+    use fuse3::path::PathFileSystem;
     use fuse3::Errno;
     use std::ffi::OsStr;
     use std::num::NonZeroU32;
@@ -117,7 +117,8 @@ mod fuse_impl {
 
     #[async_trait]
     impl PathFileSystem for AgentFs {
-        type DirEntryStream<'a> = Box<dyn futures::Stream<Item = Result<DirEntry, Errno>> + Send + 'a>;
+        type DirEntryStream<'a> =
+            Box<dyn futures::Stream<Item = Result<DirEntry, Errno>> + Send + 'a>;
 
         async fn init(&self) -> Result<(), Errno> {
             Ok(())
@@ -165,13 +166,13 @@ mod fuse_impl {
             }
         }
 
-        async fn getattr(
-            &self,
-            path: &OsStr,
-            _fh: Option<u64>,
-        ) -> Result<ReplyAttr, Errno> {
+        async fn getattr(&self, path: &OsStr, _fh: Option<u64>) -> Result<ReplyAttr, Errno> {
             let path_str = path.to_string_lossy().to_string();
-            let normalized = if path_str == "/" { "/".to_string() } else { path_str.trim_end_matches('/').to_string() };
+            let normalized = if path_str == "/" {
+                "/".to_string()
+            } else {
+                path_str.trim_end_matches('/').to_string()
+            };
 
             let nodes = self.nodes.read().await;
             match nodes.get(&normalized) {
@@ -218,7 +219,9 @@ mod fuse_impl {
             let start = offset as usize;
             let end = (start + size as usize).min(data.len());
             if start >= data.len() {
-                return Ok(ReplyData { data: Default::default() });
+                return Ok(ReplyData {
+                    data: Default::default(),
+                });
             }
             Ok(ReplyData {
                 data: data[start..end].to_vec().into(),
@@ -251,19 +254,16 @@ mod fuse_impl {
             let path_str = path.to_string_lossy().to_string();
             let entries = self.readdir(&path_str).await.map_err(to_errno)?;
 
-            let stream = futures::stream::iter(
-                entries
-                    .into_iter()
-                    .skip(offset as usize)
-                    .enumerate()
-                    .map(move |(i, name)| {
+            let stream =
+                futures::stream::iter(entries.into_iter().skip(offset as usize).enumerate().map(
+                    move |(i, name)| {
                         Ok(DirEntry {
                             name: name.into(),
                             kind: libc::DT_DIR,
                             offset: (offset + i as u64 + 1) as i64,
                         })
-                    }),
-            );
+                    },
+                ));
 
             Ok(ReplyDirectory {
                 entries: Box::new(stream),

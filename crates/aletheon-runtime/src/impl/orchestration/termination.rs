@@ -21,7 +21,12 @@ pub struct MaxIterations {
 }
 
 impl TerminationCondition for MaxIterations {
-    fn check(&self, iterations: usize, _tokens_used: usize, _elapsed: Duration) -> TerminationResult {
+    fn check(
+        &self,
+        iterations: usize,
+        _tokens_used: usize,
+        _elapsed: Duration,
+    ) -> TerminationResult {
         if iterations >= self.max {
             TerminationResult::Stop(format!("Max iterations ({}) reached", self.max))
         } else {
@@ -36,7 +41,12 @@ pub struct MaxTokens {
 }
 
 impl TerminationCondition for MaxTokens {
-    fn check(&self, _iterations: usize, tokens_used: usize, _elapsed: Duration) -> TerminationResult {
+    fn check(
+        &self,
+        _iterations: usize,
+        tokens_used: usize,
+        _elapsed: Duration,
+    ) -> TerminationResult {
         if tokens_used >= self.max {
             TerminationResult::Stop(format!("Max tokens ({}) reached", self.max))
         } else {
@@ -51,7 +61,12 @@ pub struct Timeout {
 }
 
 impl TerminationCondition for Timeout {
-    fn check(&self, _iterations: usize, _tokens_used: usize, elapsed: Duration) -> TerminationResult {
+    fn check(
+        &self,
+        _iterations: usize,
+        _tokens_used: usize,
+        elapsed: Duration,
+    ) -> TerminationResult {
         if elapsed >= self.duration {
             TerminationResult::Stop(format!("Timeout ({:?}) reached", self.duration))
         } else {
@@ -110,8 +125,12 @@ impl TerminationCondition for OrCondition {
 pub fn default_termination(max_iterations: usize) -> Box<dyn TerminationCondition> {
     Box::new(AndCondition {
         conditions: vec![
-            Box::new(MaxIterations { max: max_iterations }),
-            Box::new(Timeout { duration: Duration::from_secs(300) }),
+            Box::new(MaxIterations {
+                max: max_iterations,
+            }),
+            Box::new(Timeout {
+                duration: Duration::from_secs(300),
+            }),
         ],
     })
 }

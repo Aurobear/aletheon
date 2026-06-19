@@ -1,8 +1,8 @@
-use aletheon_runtime::{AletheonRuntime, RuntimeConfig};
-use aletheon_abi::context::Context;
-use aletheon_abi::self_field::{Verdict, RiskLevel, Intent};
 use aletheon_abi::body::{Action, ActionResult};
-use aletheon_abi::brain::{Plan, PlanStep, CostEstimate};
+use aletheon_abi::brain::{CostEstimate, Plan, PlanStep};
+use aletheon_abi::context::Context;
+use aletheon_abi::self_field::{Intent, RiskLevel, Verdict};
+use aletheon_runtime::{AletheonRuntime, RuntimeConfig};
 use std::path::PathBuf;
 
 fn test_ctx() -> Context {
@@ -30,18 +30,20 @@ fn success_action_result(output: &str) -> ActionResult {
 }
 
 fn make_plan(steps: usize) -> Plan {
-    let plan_steps = (0..steps).map(|i| PlanStep {
-        id: uuid::Uuid::new_v4(),
-        action: Action {
-            name: format!("tool_{}", i),
-            parameters: serde_json::json!({}),
-            requires_sandbox: false,
-            timeout: None,
-        },
-        depends_on: vec![],
-        expected_outcome: "ok".to_string(),
-        rollback_action: None,
-    }).collect();
+    let plan_steps = (0..steps)
+        .map(|i| PlanStep {
+            id: uuid::Uuid::new_v4(),
+            action: Action {
+                name: format!("tool_{}", i),
+                parameters: serde_json::json!({}),
+                requires_sandbox: false,
+                timeout: None,
+            },
+            depends_on: vec![],
+            expected_outcome: "ok".to_string(),
+            rollback_action: None,
+        })
+        .collect();
 
     Plan {
         id: uuid::Uuid::new_v4(),
@@ -63,19 +65,18 @@ async fn test_process_cognitive_path() {
     let mut runtime = AletheonRuntime::new(test_config());
     let ctx = test_ctx();
 
-    let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::Allow)
-    };
+    let review =
+        |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> { Ok(Verdict::Allow) };
 
-    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
-        Ok(make_plan(1))
-    };
+    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> { Ok(make_plan(1)) };
 
     let execute = |action: &Action, _ctx: &Context| -> anyhow::Result<ActionResult> {
         Ok(success_action_result(&format!("{}: done", action.name)))
     };
 
-    let result = runtime.process("test input", &ctx, review, think, execute).await;
+    let result = runtime
+        .process("test input", &ctx, review, think, execute)
+        .await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "tool_0: done");
 }
@@ -88,7 +89,9 @@ async fn test_process_denied_reflex() {
     let ctx = test_ctx();
 
     let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::Deny { reason: "not allowed".to_string() })
+        Ok(Verdict::Deny {
+            reason: "not allowed".to_string(),
+        })
     };
 
     // Should NOT be called: Deny routes to Reflex, skipping BrainCore
@@ -116,13 +119,10 @@ async fn test_max_iterations() {
     let mut runtime = AletheonRuntime::new(config);
     let ctx = test_ctx();
 
-    let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::Allow)
-    };
+    let review =
+        |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> { Ok(Verdict::Allow) };
 
-    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
-        Ok(make_plan(5))
-    };
+    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> { Ok(make_plan(5)) };
 
     let execute = |_action: &Action, _ctx: &Context| -> anyhow::Result<ActionResult> {
         Ok(success_action_result("ok"))
@@ -140,13 +140,10 @@ async fn test_process_step_failure_stops() {
     let mut runtime = AletheonRuntime::new(test_config());
     let ctx = test_ctx();
 
-    let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::Allow)
-    };
+    let review =
+        |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> { Ok(Verdict::Allow) };
 
-    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
-        Ok(make_plan(3))
-    };
+    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> { Ok(make_plan(3)) };
 
     let call_count = std::sync::atomic::AtomicUsize::new(0);
     let execute = |_action: &Action, _ctx: &Context| -> anyhow::Result<ActionResult> {
@@ -182,13 +179,10 @@ async fn test_process_multiple_steps_concatenated() {
     let mut runtime = AletheonRuntime::new(test_config());
     let ctx = test_ctx();
 
-    let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::Allow)
-    };
+    let review =
+        |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> { Ok(Verdict::Allow) };
 
-    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
-        Ok(make_plan(3))
-    };
+    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> { Ok(make_plan(3)) };
 
     let call_count = std::sync::atomic::AtomicUsize::new(0);
     let execute = |_action: &Action, _ctx: &Context| -> anyhow::Result<ActionResult> {
@@ -212,12 +206,12 @@ async fn test_process_volitional_path() {
     let ctx = test_ctx();
 
     let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::SandboxFirst { reason: "untested tool".to_string() })
+        Ok(Verdict::SandboxFirst {
+            reason: "untested tool".to_string(),
+        })
     };
 
-    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
-        Ok(make_plan(1))
-    };
+    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> { Ok(make_plan(1)) };
 
     let execute = |_action: &Action, _ctx: &Context| -> anyhow::Result<ActionResult> {
         Ok(success_action_result("sandboxed execution"))
@@ -247,7 +241,10 @@ async fn test_process_review_error() {
 
     let result = runtime.process("test", &ctx, review, think, execute).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("review system failure"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("review system failure"));
 }
 
 /// Test think error propagates as Err.
@@ -256,9 +253,8 @@ async fn test_process_think_error() {
     let mut runtime = AletheonRuntime::new(test_config());
     let ctx = test_ctx();
 
-    let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::Allow)
-    };
+    let review =
+        |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> { Ok(Verdict::Allow) };
 
     let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
         anyhow::bail!("planning failed")
@@ -279,13 +275,10 @@ async fn test_process_execute_error_breaks_loop() {
     let mut runtime = AletheonRuntime::new(test_config());
     let ctx = test_ctx();
 
-    let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::Allow)
-    };
+    let review =
+        |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> { Ok(Verdict::Allow) };
 
-    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
-        Ok(make_plan(3))
-    };
+    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> { Ok(make_plan(3)) };
 
     let call_count = std::sync::atomic::AtomicUsize::new(0);
     let execute = |_action: &Action, _ctx: &Context| -> anyhow::Result<ActionResult> {
@@ -311,9 +304,8 @@ async fn test_process_rollback_on_failure() {
     let mut runtime = AletheonRuntime::new(test_config());
     let ctx = test_ctx();
 
-    let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::Allow)
-    };
+    let review =
+        |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> { Ok(Verdict::Allow) };
 
     let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
         let mut plan = make_plan(1);
@@ -357,13 +349,10 @@ async fn test_process_empty_plan() {
     let mut runtime = AletheonRuntime::new(test_config());
     let ctx = test_ctx();
 
-    let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
-        Ok(Verdict::Allow)
-    };
+    let review =
+        |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> { Ok(Verdict::Allow) };
 
-    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
-        Ok(make_plan(0))
-    };
+    let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> { Ok(make_plan(0)) };
 
     let execute = |_action: &Action, _ctx: &Context| -> anyhow::Result<ActionResult> {
         panic!("should not be called for empty plan")

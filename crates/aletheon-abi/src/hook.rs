@@ -5,8 +5,8 @@
 //! Hooks are synchronous intervention points in the ReAct loop where
 //! external scripts or builtin logic can inspect and modify behavior.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Points in the execution lifecycle where hooks can intervene.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

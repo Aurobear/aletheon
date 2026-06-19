@@ -41,7 +41,7 @@ pub fn init_awareness_table(conn: &Connection) -> Result<()> {
             ON awareness_events(memory_id);
 
         CREATE INDEX IF NOT EXISTS idx_awareness_created_at
-            ON awareness_events(created_at);"
+            ON awareness_events(created_at);",
     )?;
     Ok(())
 }

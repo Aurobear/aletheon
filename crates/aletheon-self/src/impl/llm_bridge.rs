@@ -2,10 +2,10 @@
 //!
 //! Wraps an Arc<dyn LlmProvider> behind a purpose-based interface.
 
-use std::sync::Arc;
-use anyhow::Result;
 use aletheon_abi::message::Message;
 use aletheon_brain::llm::provider::{LlmProvider, LlmResponse};
+use anyhow::Result;
+use std::sync::Arc;
 
 pub struct LlmBridge {
     provider: Arc<dyn LlmProvider>,

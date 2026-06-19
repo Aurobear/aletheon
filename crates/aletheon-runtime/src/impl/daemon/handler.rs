@@ -2,45 +2,47 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::core::orchestrator::AletheonRuntime;
-use crate::core::config::RuntimeConfig;
-use crate::r#impl::orchestration::registry::AgentRegistry;
-use crate::CoreMemory;
-use crate::RecallMemory;
-use crate::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
 use super::session_manager::SessionManager;
-use crate::r#impl::orchestration::builtin::{FsAgent, NetAgent, CodeAgent};
-use crate::ProviderRegistry;
+use crate::core::config::RuntimeConfig;
+use crate::core::orchestrator::AletheonRuntime;
+use crate::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
+use crate::r#impl::orchestration::builtin::{CodeAgent, FsAgent, NetAgent};
+use crate::r#impl::orchestration::registry::AgentRegistry;
 use crate::session::store::SessionStore;
-use aletheon_self::r#impl::perception::bridge::PerceptionInjection;
-use aletheon_abi::Registry;
+use crate::CoreMemory;
+use crate::ProviderRegistry;
+use crate::RecallMemory;
 use aletheon_abi::envelope::*;
-use aletheon_self::{SelfField, SelfFieldConfig};
-use aletheon_meta::r#impl::meta_runtime::self_reader::SelfReader;
+use aletheon_abi::hook::{HookContext, HookPoint, HookResult};
+use aletheon_abi::Registry;
+use aletheon_abi::{
+    Context as AbiContext, Intent, IntentSource, ReflectionTrigger, SelfFieldOps, Subsystem,
+    SubsystemContext, Verdict,
+};
 use aletheon_body::r#impl::sandbox::executor::{SandboxExecutor, SandboxPreference};
 use aletheon_body::r#impl::security::audit::AuditLogger;
 use aletheon_body::r#impl::security::runner::ToolRunnerWithGuard;
 use aletheon_body::r#impl::tools::Tool;
 use aletheon_body::r#impl::tools::ToolRegistry;
-use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_brain::core::reflector::Reflector;
 use aletheon_brain::core::ExperienceSummarizer;
-use aletheon_abi::{ReflectionTrigger, Subsystem, SubsystemContext,
-    SelfFieldOps, Intent, IntentSource, Verdict, Context as AbiContext};
-use aletheon_abi::hook::{HookPoint, HookContext, HookResult};
-use aletheon_comm::CommunicationBus;
+use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_comm::envelope::Payload;
+use aletheon_comm::CommunicationBus;
 use aletheon_memory::episodic::EpisodicMemory;
+use aletheon_meta::r#impl::meta_runtime::self_reader::SelfReader;
+use aletheon_self::r#impl::perception::bridge::PerceptionInjection;
+use aletheon_self::{SelfField, SelfFieldConfig};
 use serde_json::json;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
-use crate::r#impl::hooks::registry::HookRegistry;
+use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
 use crate::r#impl::hooks::builtin::audit_hook;
+use crate::r#impl::hooks::registry::HookRegistry;
 use crate::r#impl::skills::loader::SkillLoader;
 use crate::r#impl::skills::plugin::register_skill;
-use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
 
 use super::prefix_builder::PrefixBuilder;
 use super::DaemonConfig;
@@ -98,7 +100,11 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
-    pub async fn new(config: &DaemonConfig, registry: &ProviderRegistry, _perception_rx: mpsc::Receiver<PerceptionInjection>) -> anyhow::Result<Self> {
+    pub async fn new(
+        config: &DaemonConfig,
+        registry: &ProviderRegistry,
+        _perception_rx: mpsc::Receiver<PerceptionInjection>,
+    ) -> anyhow::Result<Self> {
         let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create("")?);
         info!(provider = llm.name(), "LLM provider initialized");
 
@@ -120,22 +126,27 @@ impl RequestHandler {
             &data_dir,
             session_id.clone(),
             100_000, // max_tokens: ~100k default context window
-        ).await?;
+        )
+        .await?;
 
         // Register tools including memory tools
         let mut tools = ToolRegistry::default();
-        tools.register(Arc::new(CoreMemoryAppendTool { memory: core_memory.clone() }));
-        tools.register(Arc::new(CoreMemoryReplaceTool { memory: core_memory.clone() }));
-        tools.register(Arc::new(MemorySearchTool { recall: recall_memory.clone() }));
+        tools.register(Arc::new(CoreMemoryAppendTool {
+            memory: core_memory.clone(),
+        }));
+        tools.register(Arc::new(CoreMemoryReplaceTool {
+            memory: core_memory.clone(),
+        }));
+        tools.register(Arc::new(MemorySearchTool {
+            recall: recall_memory.clone(),
+        }));
 
         // Create security components
         let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
         let sandbox = SandboxExecutor::new(sandbox_pref);
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
-        let tool_runner = Arc::new(Mutex::new(
-            ToolRunnerWithGuard::new(sandbox, audit_logger)
-        ));
+        let tool_runner = Arc::new(Mutex::new(ToolRunnerWithGuard::new(sandbox, audit_logger)));
 
         let runtime_config = RuntimeConfig {
             session_id: session_id.clone(),
@@ -157,21 +168,27 @@ impl RequestHandler {
         // Each config-loaded agent needs its own LLM instance; factory creates fresh ones
         let llm_factory = || registry.resolve_and_create("");
         let agent_registry = Arc::new(
-            AgentRegistry::load_from_config(&agents_dir, &default_tools, &llm_factory).await
+            AgentRegistry::load_from_config(&agents_dir, &default_tools, &llm_factory).await,
         );
 
         // Register built-in agents as fallbacks if no config agents were loaded
         if agent_registry.count().await == 0 {
             info!("No config agents found, registering built-in agents");
-            agent_registry.register(Arc::new(tokio::sync::RwLock::new(
-                FsAgent::new(registry.resolve_and_create("")?),
-            ))).await;
-            agent_registry.register(Arc::new(tokio::sync::RwLock::new(
-                NetAgent::new(registry.resolve_and_create("")?),
-            ))).await;
-            agent_registry.register(Arc::new(tokio::sync::RwLock::new(
-                CodeAgent::new(registry.resolve_and_create("")?),
-            ))).await;
+            agent_registry
+                .register(Arc::new(tokio::sync::RwLock::new(FsAgent::new(
+                    registry.resolve_and_create("")?,
+                ))))
+                .await;
+            agent_registry
+                .register(Arc::new(tokio::sync::RwLock::new(NetAgent::new(
+                    registry.resolve_and_create("")?,
+                ))))
+                .await;
+            agent_registry
+                .register(Arc::new(tokio::sync::RwLock::new(CodeAgent::new(
+                    registry.resolve_and_create("")?,
+                ))))
+                .await;
         }
 
         let runtime = AletheonRuntime::new(runtime_config);
@@ -216,11 +233,7 @@ impl RequestHandler {
         // Build the cache-stable prefix once at boot.
         // Same inputs = same bytes = cache hit on DeepSeek/Mimo.
         let cm = core_memory.lock().await;
-        let cached_prefix = PrefixBuilder::build(
-            &config.system_prompt,
-            skill_loader.skills(),
-            &cm,
-        );
+        let cached_prefix = PrefixBuilder::build(&config.system_prompt, skill_loader.skills(), &cm);
         drop(cm);
         info!(len = cached_prefix.len(), "Cache-stable prefix built");
 
@@ -229,7 +242,9 @@ impl RequestHandler {
 
         // Spawn SelfFieldModule handler — shares the same SelfField instance
         {
-            let sf_module = crate::r#impl::engine::modules::self_field_module::SelfFieldModule::new(self_field.clone());
+            let sf_module = crate::r#impl::engine::modules::self_field_module::SelfFieldModule::new(
+                self_field.clone(),
+            );
             let bus_clone = bus.clone();
             tokio::spawn(async move {
                 sf_module.run(bus_clone).await;
@@ -251,7 +266,8 @@ impl RequestHandler {
         // Spawn BodyModule handler — shares the same ToolRegistry instance
         let tools = Arc::new(Mutex::new(tools));
         {
-            let body_module = crate::r#impl::engine::modules::body_module::BodyModule::new(tools.clone());
+            let body_module =
+                crate::r#impl::engine::modules::body_module::BodyModule::new(tools.clone());
             let bus_clone = bus.clone();
             tokio::spawn(async move {
                 body_module.run(bus_clone).await;
@@ -308,10 +324,16 @@ impl RequestHandler {
                                 return Err(anyhow::anyhow!("SelfField review error: {}", message));
                             }
                             Ok(other) => {
-                                return Err(anyhow::anyhow!("Unexpected SelfField response: {:?}", other));
+                                return Err(anyhow::anyhow!(
+                                    "Unexpected SelfField response: {:?}",
+                                    other
+                                ));
                             }
                             Err(e) => {
-                                return Err(anyhow::anyhow!("Failed to deserialize SelfFieldResponse: {}", e));
+                                return Err(anyhow::anyhow!(
+                                    "Failed to deserialize SelfFieldResponse: {}",
+                                    e
+                                ));
                             }
                         }
                     }
@@ -387,7 +409,10 @@ impl RequestHandler {
 
     pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value {
         let method = request["method"].as_str().unwrap_or("");
-        let id = request.get("id").cloned().unwrap_or(serde_json::Value::Null);
+        let id = request
+            .get("id")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
 
         match method {
             "chat" => {
@@ -399,7 +424,10 @@ impl RequestHandler {
                     action: "chat".to_string(),
                     parameters: serde_json::json!({ "message": message }),
                     source: IntentSource::User,
-                    description: format!("User chat message: {}", &message[..message.len().min(80)]),
+                    description: format!(
+                        "User chat message: {}",
+                        &message[..message.len().min(80)]
+                    ),
                 };
                 let sf_ctx = AbiContext::new(
                     &self.state.lock().await.runtime.config().session_id,
@@ -542,17 +570,17 @@ impl RequestHandler {
 
                 // Drive the ReAct loop.  SelfField review already ran above,
                 // so the inner review_fn returns Allow to avoid double-gating.
-                let mut rt = AletheonRuntime::new(
-                    self.state.lock().await.runtime.config().clone()
-                );
-                let react_result = rt.process_react(
-                    &effective_message,
-                    &sf_ctx,
-                    |_intent: &Intent, _c: &AbiContext| Ok::<_, anyhow::Error>(Verdict::Allow),
-                    &*self.llm,
-                    &tool_defs,
-                    execute_tool,
-                ).await;
+                let mut rt = AletheonRuntime::new(self.state.lock().await.runtime.config().clone());
+                let react_result = rt
+                    .process_react(
+                        &effective_message,
+                        &sf_ctx,
+                        |_intent: &Intent, _c: &AbiContext| Ok::<_, anyhow::Error>(Verdict::Allow),
+                        &*self.llm,
+                        &tool_defs,
+                        execute_tool,
+                    )
+                    .await;
 
                 let text = react_result.unwrap_or_else(|e| format!("error: {e}"));
                 info!(len = text.len(), "ReAct loop completed");
@@ -560,11 +588,13 @@ impl RequestHandler {
                 // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
                 self.sf_narrate(
                     "chat_completed",
-                    &format!("User asked: '{}...' | Response: {} chars",
+                    &format!(
+                        "User asked: '{}...' | Response: {} chars",
                         &message[..message.len().min(60)],
                         text.len(),
                     ),
-                ).await;
+                )
+                .await;
 
                 // --- PostTurn hooks ---
                 {
@@ -624,7 +654,15 @@ impl RequestHandler {
 
                 // Detect error indicators in response
                 let text_lower = text.to_lowercase();
-                let error_indicators = ["error", "failed", "unable", "cannot", "couldn't", "sorry, i", "i don't know"];
+                let error_indicators = [
+                    "error",
+                    "failed",
+                    "unable",
+                    "cannot",
+                    "couldn't",
+                    "sorry, i",
+                    "i don't know",
+                ];
                 for indicator in &error_indicators {
                     if text_lower.contains(indicator) {
                         what_failed.push(format!("Response contains '{}'", indicator));
@@ -632,7 +670,13 @@ impl RequestHandler {
                 }
 
                 // Detect learning/self-correction indicators
-                let learning_indicators = ["i learned", "i now understand", "i realize", "correction:", "actually,"];
+                let learning_indicators = [
+                    "i learned",
+                    "i now understand",
+                    "i realize",
+                    "correction:",
+                    "actually,",
+                ];
                 for indicator in &learning_indicators {
                     if text_lower.contains(indicator) {
                         learned.push(format!("Self-correction detected: '{}'", indicator));
@@ -665,7 +709,10 @@ impl RequestHandler {
                     let mem = self.episodic_memory.lock().await;
                     if let Ok(count) = mem.reflection_count() {
                         if count > 0 && count % 10 == 0 {
-                            info!(count = count, "Running ExperienceSummarizer (periodic trigger)");
+                            info!(
+                                count = count,
+                                "Running ExperienceSummarizer (periodic trigger)"
+                            );
                             if let Ok(recent) = mem.recall_reflections(20) {
                                 if let Some(evo_entry) = ExperienceSummarizer::summarize(&recent) {
                                     if let Err(e) = mem.store_evolution_log(&evo_entry) {
@@ -722,21 +769,32 @@ impl RequestHandler {
                 let turn_count = self.session_manager.lock().await.turn_count();
 
                 // Reflection and evolution counts from episodic memory
-                let reflection_count = self.episodic_memory.lock().await
+                let reflection_count = self
+                    .episodic_memory
+                    .lock()
+                    .await
                     .reflection_count()
                     .unwrap_or(0);
-                let evolution_count = self.episodic_memory.lock().await
+                let evolution_count = self
+                    .episodic_memory
+                    .lock()
+                    .await
                     .evolution_log_count()
                     .unwrap_or(0);
 
                 // Care weights, boundary rules, and attention from SelfField
                 let sf = self.self_field.lock().await;
-                let care_weights: Vec<serde_json::Value> = sf.care().all_cares().into_iter().map(|c| {
-                    json!({ "topic": c.topic, "weight": c.weight })
-                }).collect();
+                let care_weights: Vec<serde_json::Value> = sf
+                    .care()
+                    .all_cares()
+                    .into_iter()
+                    .map(|c| json!({ "topic": c.topic, "weight": c.weight }))
+                    .collect();
                 let boundary_total = sf.boundary().rule_count();
                 let boundary_immutable = sf.boundary().immutable_rule_count();
-                let attention_focus = sf.attention().current_focus()
+                let attention_focus = sf
+                    .attention()
+                    .current_focus()
                     .map(|f| f.topic)
                     .unwrap_or_default();
                 drop(sf);
@@ -764,25 +822,23 @@ impl RequestHandler {
                 let self_field = self.self_field.lock().await;
                 let reader = SelfReader::new();
                 match reader.read_genome(&*self_field).await {
-                    Ok(genome) => {
-                        match serde_yaml::to_string(&genome) {
-                            Ok(yaml) => {
-                                json!({
-                                    "jsonrpc": "2.0",
-                                    "id": id,
-                                    "result": { "genome": yaml }
-                                })
-                            }
-                            Err(e) => {
-                                warn!(error = %e, "Failed to serialize genome to YAML");
-                                json!({
-                                    "jsonrpc": "2.0",
-                                    "id": id,
-                                    "error": { "code": -32004, "message": format!("Genome serialization error: {}", e) }
-                                })
-                            }
+                    Ok(genome) => match serde_yaml::to_string(&genome) {
+                        Ok(yaml) => {
+                            json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "result": { "genome": yaml }
+                            })
                         }
-                    }
+                        Err(e) => {
+                            warn!(error = %e, "Failed to serialize genome to YAML");
+                            json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "error": { "code": -32004, "message": format!("Genome serialization error: {}", e) }
+                            })
+                        }
+                    },
                     Err(e) => {
                         warn!(error = %e, "Failed to read genome from SelfField");
                         json!({
@@ -846,14 +902,9 @@ impl RequestHandler {
                 // Check if there are recent reflections to draw from
                 match self.episodic_memory.lock().await.recall_reflections(5) {
                     Ok(recent) if !recent.is_empty() => {
-                        learned.push(format!(
-                            "Reviewed {} recent reflections",
-                            recent.len()
-                        ));
+                        learned.push(format!("Reviewed {} recent reflections", recent.len()));
                         // Aggregate failure patterns
-                        let failure_count: usize = recent.iter()
-                            .map(|r| r.what_failed.len())
-                            .sum();
+                        let failure_count: usize = recent.iter().map(|r| r.what_failed.len()).sum();
                         if failure_count > 0 {
                             what_failed.push(format!(
                                 "{} failure items across recent reflections",
@@ -906,27 +957,25 @@ impl RequestHandler {
                     })
                 }
             }
-            "sessions" => {
-                match SessionStore::new(&self.data_dir) {
-                    Ok(store) => match store.list_sessions() {
-                        Ok(ids) => json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "result": { "sessions": ids }
-                        }),
-                        Err(e) => json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "error": { "code": -32020, "message": format!("Session list error: {}", e) }
-                        }),
-                    },
+            "sessions" => match SessionStore::new(&self.data_dir) {
+                Ok(store) => match store.list_sessions() {
+                    Ok(ids) => json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": { "sessions": ids }
+                    }),
                     Err(e) => json!({
                         "jsonrpc": "2.0",
                         "id": id,
-                        "error": { "code": -32020, "message": format!("SessionStore init error: {}", e) }
+                        "error": { "code": -32020, "message": format!("Session list error: {}", e) }
                     }),
-                }
-            }
+                },
+                Err(e) => json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32020, "message": format!("SessionStore init error: {}", e) }
+                }),
+            },
             "resume" => {
                 let target_session_id = request["params"]["session_id"].as_str().unwrap_or("");
                 if target_session_id.is_empty() {
@@ -942,7 +991,9 @@ impl RequestHandler {
                                 &self.data_dir,
                                 target_session_id.to_string(),
                                 100_000,
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(new_sm) => {
                                     let msg_count = msgs.len();
                                     *self.session_manager.lock().await = new_sm;
@@ -1001,11 +1052,8 @@ impl RequestHandler {
                     let loader = self.skill_loader.lock().await;
                     let cm = self.core_memory.lock().await;
                     let old_prefix = self.cached_prefix.lock().await;
-                    let new_prefix = PrefixBuilder::build(
-                        &self.config_prompt,
-                        loader.skills(),
-                        &cm,
-                    );
+                    let new_prefix =
+                        PrefixBuilder::build(&self.config_prompt, loader.skills(), &cm);
                     if let Some(reason) = PrefixBuilder::diff_reason(&old_prefix, &new_prefix) {
                         info!(reason = %reason, "Prefix changed after skill reload (cache will miss)");
                     }

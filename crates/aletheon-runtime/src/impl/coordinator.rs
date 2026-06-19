@@ -11,9 +11,9 @@
 //!   Engine acts on the result (execute, deny, delay, etc.)
 //!   Engine does NOT delegate control flow to Coordinator permanently.
 
-use anyhow::Result;
-use aletheon_abi::self_field::{Verdict, RiskLevel};
 use aletheon_abi::brain::Plan;
+use aletheon_abi::self_field::{RiskLevel, Verdict};
+use anyhow::Result;
 
 /// The outcome of arbitration — what the Engine should do next.
 #[derive(Debug, Clone)]
@@ -32,7 +32,10 @@ pub enum ArbitrationResult {
     /// The Engine should feed this back to BrainCore for another think cycle.
     Reflect { reason: String },
     /// The plan should be mutated (rewritten) before execution.
-    Mutate { reason: String, suggested_modification: Option<String> },
+    Mutate {
+        reason: String,
+        suggested_modification: Option<String>,
+    },
 }
 
 /// Historical context from memory that informs arbitration decisions.
@@ -153,7 +156,7 @@ impl Coordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_abi::brain::{PlanStep, CostEstimate};
+    use aletheon_abi::brain::{CostEstimate, PlanStep};
 
     fn make_plan(risk: RiskLevel, reasoning: &str) -> Plan {
         Plan {
@@ -168,7 +171,9 @@ mod tests {
 
     #[tokio::test]
     async fn deny_verdict_overrides_everything() {
-        let verdict = Verdict::Deny { reason: "unsafe".into() };
+        let verdict = Verdict::Deny {
+            reason: "unsafe".into(),
+        };
         let plan = make_plan(RiskLevel::None, "low risk plan");
         let mem = MemoryContext::default();
 

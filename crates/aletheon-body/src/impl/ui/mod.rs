@@ -14,12 +14,11 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     event::{
-        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture,
-        EnableBracketedPaste, EnableFocusChange, EnableMouseCapture,
-        Event, KeyCode, KeyEvent, KeyModifiers,
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
     },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -32,7 +31,7 @@ use ratatui::{
 use tokio::net::UnixStream;
 
 use self::chat::{ChatWidget, Role as ChatRole};
-use self::command::{BuiltinCommand, CommandType, parse_command};
+use self::command::{parse_command, BuiltinCommand, CommandType};
 use self::skill::SkillLoader;
 use self::status::StatusBar;
 use self::term_compat::TermCaps;
@@ -53,7 +52,11 @@ pub async fn run(socket_path: &str) -> anyhow::Result<()> {
     };
 
     let model = std::env::var("OS_AGENT_MODEL").unwrap_or_default();
-    let model_name = if model.is_empty() { "mimo-v2.5-pro".to_string() } else { model };
+    let model_name = if model.is_empty() {
+        "mimo-v2.5-pro".to_string()
+    } else {
+        model
+    };
 
     // If not a TTY, fall back to simple line mode
     if !atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout) {
@@ -160,7 +163,7 @@ impl App {
                 || (0xFF00..=0xFFEF).contains(&cp)  // Fullwidth
                 || (0xAC00..=0xD7AF).contains(&cp)  // Korean Hangul
                 || (0x3040..=0x309F).contains(&cp)  // Hiragana
-                || (0x30A0..=0x30FF).contains(&cp)  // Katakana
+                || (0x30A0..=0x30FF).contains(&cp) // Katakana
         });
     }
 }
@@ -176,7 +179,10 @@ async fn run_app(
     // Clear daemon session on startup (avoids stale data from previous runs)
     let clear_msg = serde_json::json!({"jsonrpc": "2.0", "method": "clear", "id": 0});
     use tokio::io::AsyncWriteExt;
-    let _ = app.stream.write_all(format!("{}\n", clear_msg).as_bytes()).await;
+    let _ = app
+        .stream
+        .write_all(format!("{}\n", clear_msg).as_bytes())
+        .await;
     let _ = app.stream.flush().await;
 
     // Welcome message
@@ -412,7 +418,11 @@ async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(BuiltinCommand::Copy)) => {
                 // Copy last assistant message to clipboard via OSC 52
-                let last_assistant = app.chat.messages.iter().rev()
+                let last_assistant = app
+                    .chat
+                    .messages
+                    .iter()
+                    .rev()
                     .find(|m| m.role == ChatRole::Assistant)
                     .map(|m| m.content.clone());
                 match last_assistant {
@@ -422,10 +432,12 @@ async fn submit_message(app: &mut App, text: String) {
                         let osc = format!("\x1b]52;c;{}\x1b\\", encoded);
                         io::stdout().write_all(osc.as_bytes()).ok();
                         io::stdout().flush().ok();
-                        app.chat.add_message(ChatRole::System, "已复制到剪贴板".to_string());
+                        app.chat
+                            .add_message(ChatRole::System, "已复制到剪贴板".to_string());
                     }
                     _ => {
-                        app.chat.add_message(ChatRole::System, "没有可复制的内容".to_string());
+                        app.chat
+                            .add_message(ChatRole::System, "没有可复制的内容".to_string());
                     }
                 }
                 return;
@@ -444,7 +456,8 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, "查询状态中...".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "查询状态中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Reflect)) => {
@@ -456,7 +469,8 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, "查询反思记录中...".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "查询反思记录中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
@@ -468,7 +482,8 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, "执行即时反思中...".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "执行即时反思中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Evolution)) => {
@@ -480,7 +495,8 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, "查询演化历史中...".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "查询演化历史中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Genome)) => {
@@ -492,7 +508,8 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, "查询基因组中...".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "查询基因组中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
@@ -504,12 +521,14 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, "查询会话列表中...".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "查询会话列表中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Resume { id })) => {
                 if id.is_empty() {
-                    app.chat.add_message(ChatRole::System, "用法: /resume <session_id>".to_string());
+                    app.chat
+                        .add_message(ChatRole::System, "用法: /resume <session_id>".to_string());
                     return;
                 }
                 let msg = serde_json::json!({
@@ -521,7 +540,8 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, format!("恢复会话 {}...", id));
+                app.chat
+                    .add_message(ChatRole::System, format!("恢复会话 {}...", id));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
@@ -533,7 +553,8 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, "压缩上下文中...".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "压缩上下文中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(_)) => return,
@@ -542,7 +563,8 @@ async fn submit_message(app: &mut App, text: String) {
                 let skill = match app.skill_loader.get(&name) {
                     Some(s) => s.clone(),
                     None => {
-                        app.chat.add_message(ChatRole::System, format!("未知技能: /{}", name));
+                        app.chat
+                            .add_message(ChatRole::System, format!("未知技能: /{}", name));
                         return;
                     }
                 };
@@ -556,7 +578,8 @@ async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             None => {
-                app.chat.add_message(ChatRole::System, "无效命令".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "无效命令".to_string());
                 return;
             }
         }
@@ -580,7 +603,8 @@ async fn send_to_daemon(app: &mut App, text: &str) {
 
     use tokio::io::AsyncWriteExt;
     if app.stream.write_all(framed.as_bytes()).await.is_err() {
-        app.chat.add_message(ChatRole::System, "发送失败，请检查 daemon".to_string());
+        app.chat
+            .add_message(ChatRole::System, "发送失败，请检查 daemon".to_string());
         return;
     }
     let _ = app.stream.flush().await;
@@ -595,13 +619,16 @@ fn try_read_response(app: &mut App) {
             Ok(0) => {
                 app.streaming = false;
                 app.status.waiting = false;
-                app.chat.add_message(ChatRole::System, "连接断开".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "连接断开".to_string());
                 break;
             }
             Ok(n) => {
                 let chunk = String::from_utf8_lossy(&app.read_buf[..n]);
                 app.response_buf.push_str(&chunk);
-                if let Some(msg) = serde_json::from_str::<serde_json::Value>(app.response_buf.trim()).ok() {
+                if let Some(msg) =
+                    serde_json::from_str::<serde_json::Value>(app.response_buf.trim()).ok()
+                {
                     process_response(app, msg);
                     break;
                 }
@@ -647,7 +674,10 @@ fn process_response(app: &mut App, msg: serde_json::Value) {
             app.chat.update_last_message(msg_text.to_string());
         }
     } else if let Some(error) = msg.get("error") {
-        let err = error.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        let err = error
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
         app.chat.update_last_message(format!("Error: {}", err));
     }
     app.streaming = false;
@@ -665,21 +695,46 @@ fn format_reflections(entries: &serde_json::Value) -> String {
     let mut lines = Vec::new();
     lines.push(format!("=== Reflections ({}) ===\n", arr.len()));
     for (i, entry) in arr.iter().enumerate() {
-        let _trigger = entry.get("trigger").and_then(|v| {
-            if let Some(s) = v.as_str() { Some(s.to_string()) }
-            else { serde_json::to_string(v).ok() }
-        }).unwrap_or_else(|| "unknown".to_string());
-        let task = entry.get("task_summary").and_then(|v| v.as_str()).unwrap_or("");
-        let outcome = entry.get("outcome").and_then(|v| {
-            if let Some(s) = v.as_str() { Some(s.to_string()) }
-            else { serde_json::to_string(v).ok() }
-        }).unwrap_or_else(|| "unknown".to_string());
-        let confidence = entry.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let timestamp = entry.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+        let _trigger = entry
+            .get("trigger")
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    Some(s.to_string())
+                } else {
+                    serde_json::to_string(v).ok()
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        let task = entry
+            .get("task_summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let outcome = entry
+            .get("outcome")
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    Some(s.to_string())
+                } else {
+                    serde_json::to_string(v).ok()
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        let confidence = entry
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let timestamp = entry
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         lines.push(format!(
             "[{}] #{} {} ({}) conf={:.0}%",
-            timestamp, i + 1, task, outcome, confidence * 100.0
+            timestamp,
+            i + 1,
+            task,
+            outcome,
+            confidence * 100.0
         ));
 
         if let Some(arr) = entry.get("learned").and_then(|v| v.as_array()) {
@@ -735,7 +790,9 @@ fn format_evolution(evo: &serde_json::Value) -> String {
         let mut lines = Vec::new();
         lines.push(format!("=== Evolution History ({}) ===\n", arr.len()));
         for entry in arr {
-            lines.push(serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{:?}", entry)));
+            lines.push(
+                serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{:?}", entry)),
+            );
             lines.push(String::new());
         }
         return lines.join("\n");
@@ -756,27 +813,57 @@ fn format_sessions(sessions: &serde_json::Value) -> String {
     for entry in arr {
         let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("?");
         let created = entry.get("created").and_then(|v| v.as_str()).unwrap_or("");
-        let turns = entry.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let turns = entry
+            .get("turn_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let summary = entry.get("summary").and_then(|v| v.as_str()).unwrap_or("");
         let short_id = &id[..8.min(id.len())];
-        lines.push(format!("[{}] {} ({} turns) {}", short_id, created, turns, summary));
+        lines.push(format!(
+            "[{}] {} ({} turns) {}",
+            short_id, created, turns, summary
+        ));
     }
     lines.join("\n")
 }
 
 /// Format status response for display.
 fn format_status(status: &serde_json::Value) -> String {
-    let session_id = status.get("session_id").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let turn_count = status.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let reflection_count = status.get("reflection_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let evolution_count = status.get("evolution_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let boundary_rules = status.get("boundary_rules").and_then(|v| v.as_u64()).unwrap_or(0);
-    let boundary_immutable = status.get("boundary_immutable").and_then(|v| v.as_u64()).unwrap_or(0);
-    let attention_focus = status.get("attention_focus").and_then(|v| v.as_str()).unwrap_or("");
+    let session_id = status
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let turn_count = status
+        .get("turn_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let reflection_count = status
+        .get("reflection_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let evolution_count = status
+        .get("evolution_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let boundary_rules = status
+        .get("boundary_rules")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let boundary_immutable = status
+        .get("boundary_immutable")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let attention_focus = status
+        .get("attention_focus")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     let mut lines = Vec::new();
     lines.push("=== Aletheon Status ===".to_string());
-    lines.push(format!("Session: {}", &session_id[..8.min(session_id.len())]));
+    lines.push(format!(
+        "Session: {}",
+        &session_id[..8.min(session_id.len())]
+    ));
     lines.push(format!("Turns: {}", turn_count));
     lines.push(format!("Reflections: {}", reflection_count));
     lines.push(format!("Evolutions: {}", evolution_count));
@@ -792,9 +879,16 @@ fn format_status(status: &serde_json::Value) -> String {
     }
 
     lines.push(String::new());
-    lines.push(format!("Boundary Rules: {} (immutable: {})", boundary_rules, boundary_immutable));
+    lines.push(format!(
+        "Boundary Rules: {} (immutable: {})",
+        boundary_rules, boundary_immutable
+    ));
 
-    let focus_display = if attention_focus.is_empty() { "none" } else { attention_focus };
+    let focus_display = if attention_focus.is_empty() {
+        "none"
+    } else {
+        attention_focus
+    };
     lines.push(format!("Attention Focus: {}", focus_display));
 
     lines.join("\n")
@@ -849,7 +943,13 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> any
     Ok(())
 }
 
-fn render_header(f: &mut ratatui::Frame, area: Rect, caps: &TermCaps, model_name: &str, show_full: bool) {
+fn render_header(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    caps: &TermCaps,
+    model_name: &str,
+    show_full: bool,
+) {
     let bg = caps.color(20, 20, 60);
 
     if show_full {
@@ -879,20 +979,32 @@ fn render_header(f: &mut ratatui::Frame, area: Rect, caps: &TermCaps, model_name
     }
 }
 
-fn render_input(f: &mut ratatui::Frame, area: Rect, caps: &TermCaps, buf: &str, cursor: usize, has_cjk: bool) {
+fn render_input(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    caps: &TermCaps,
+    buf: &str,
+    cursor: usize,
+    has_cjk: bool,
+) {
     let border_h = caps.hline();
     let prompt = if caps.unicode { "❯ " } else { "> " };
 
     // Row 0: separator line
-    let sep = format!("  {}", border_h.repeat(area.width.saturating_sub(4) as usize));
+    let sep = format!(
+        "  {}",
+        border_h.repeat(area.width.saturating_sub(4) as usize)
+    );
     let sep_line = Line::from(Span::styled(sep, Style::default().fg(Color::DarkGray)));
     f.render_widget(Paragraph::new(sep_line), Rect { height: 1, ..area });
 
     // Row 1: input text with cursor
-    let input_area = Rect { y: area.y + 1, height: 1, ..area };
-    let mut spans = vec![
-        Span::styled(prompt, Style::default().fg(Color::Green)),
-    ];
+    let input_area = Rect {
+        y: area.y + 1,
+        height: 1,
+        ..area
+    };
+    let mut spans = vec![Span::styled(prompt, Style::default().fg(Color::Green))];
 
     // Split buffer at cursor for cursor display
     let before = &buf[..cursor.min(buf.len())];
@@ -903,14 +1015,25 @@ fn render_input(f: &mut ratatui::Frame, area: Rect, caps: &TermCaps, buf: &str, 
     }
 
     // Cursor character (reverse video)
-    let cursor_char = after.chars().next().map(|c| c.to_string()).unwrap_or_else(|| " ".to_string());
+    let cursor_char = after
+        .chars()
+        .next()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| " ".to_string());
     spans.push(Span::styled(
         cursor_char,
-        Style::default().fg(Color::Black).bg(Color::White).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::White)
+            .add_modifier(Modifier::BOLD),
     ));
 
     let rest = if after.chars().count() > 1 {
-        &after[after.char_indices().nth(1).map(|(i, _)| i).unwrap_or(after.len())..]
+        &after[after
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| i)
+            .unwrap_or(after.len())..]
     } else {
         ""
     };
@@ -920,25 +1043,39 @@ fn render_input(f: &mut ratatui::Frame, area: Rect, caps: &TermCaps, buf: &str, 
 
     // CJK indicator
     if has_cjk {
-        spans.push(Span::styled("  [CJK]", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            "  [CJK]",
+            Style::default().fg(Color::DarkGray),
+        ));
     }
 
     let input_line = Paragraph::new(Line::from(spans));
     f.render_widget(input_line, input_area);
 
     // Row 2: hint line
-    let hint_area = Rect { y: area.y + 2, height: 1, ..area };
+    let hint_area = Rect {
+        y: area.y + 2,
+        height: 1,
+        ..area
+    };
     let hint = if has_cjk {
         "  Enter 发送(延迟) │ Shift+Enter 换行 │ Esc 清空"
     } else {
         "  Enter 发送 │ Shift+Enter 换行 │ Esc 清空"
     };
-    let hint_line = Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))));
+    let hint_line = Paragraph::new(Line::from(Span::styled(
+        hint,
+        Style::default().fg(Color::DarkGray),
+    )));
     f.render_widget(hint_line, hint_area);
 }
 
 /// Simple line-based mode for non-TTY (piped) input.
-async fn simple_line_mode(mut stream: UnixStream, _caps: TermCaps, model_name: String) -> anyhow::Result<()> {
+async fn simple_line_mode(
+    mut stream: UnixStream,
+    _caps: TermCaps,
+    model_name: String,
+) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
     println!("aletheon v0.1.0 (model: {})", model_name);
@@ -1014,13 +1151,18 @@ async fn simple_line_mode(mut stream: UnixStream, _caps: TermCaps, model_name: S
             })
         };
         let payload = serde_json::to_string(&msg)?;
-        stream.write_all(format!("{}\n", payload).as_bytes()).await?;
+        stream
+            .write_all(format!("{}\n", payload).as_bytes())
+            .await?;
         stream.flush().await?;
 
         // Wait for response
         loop {
             match stream.try_read(&mut read_buf) {
-                Ok(0) => { println!("Connection lost"); return Ok(()); }
+                Ok(0) => {
+                    println!("Connection lost");
+                    return Ok(());
+                }
                 Ok(n) => {
                     let chunk = String::from_utf8_lossy(&read_buf[..n]);
                     if let Ok(msg) = serde_json::from_str::<serde_json::Value>(chunk.trim()) {

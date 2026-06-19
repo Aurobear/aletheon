@@ -51,7 +51,7 @@ impl ClipboardDriver for X11ClipboardDriver {
         // Create a temporary window to receive the selection data.
         let win = conn.generate_id().context("generate_id failed")?;
         conn.create_window(
-            0,        // depth: copy from parent
+            0, // depth: copy from parent
             win,
             root,
             0,

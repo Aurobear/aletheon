@@ -102,7 +102,9 @@ impl PolicyEngine {
     fn infer_tool_level(&self, tool_name: &str) -> PermissionLevel {
         match tool_name {
             "file_read" | "system_status" | "process_list" | "memory_search" => PermissionLevel::L0,
-            "bash_exec" | "file_write" | "core_memory_append" | "core_memory_replace" => PermissionLevel::L1,
+            "bash_exec" | "file_write" | "core_memory_append" | "core_memory_replace" => {
+                PermissionLevel::L1
+            }
             _ => PermissionLevel::L1,
         }
     }

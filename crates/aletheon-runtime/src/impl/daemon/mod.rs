@@ -1,9 +1,9 @@
+pub mod cache_shape;
 pub mod handler;
+pub mod mcp_embedded;
 pub mod prefix_builder;
 pub mod server;
 pub mod session_manager;
-pub mod cache_shape;
-pub mod mcp_embedded;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,10 +12,12 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use aletheon_comm::KernelEventBus;
-use aletheon_brain::r#impl::llm::pulse::{LlmPulse, PulseConfig};
-use aletheon_brain::r#impl::llm::scheduler::{LlmScheduler, SchedulerConfig, SchedulerProviderConfig, RoutingRule};
 use aletheon_abi::evolution::LlmPurpose;
+use aletheon_brain::r#impl::llm::pulse::{LlmPulse, PulseConfig};
+use aletheon_brain::r#impl::llm::scheduler::{
+    LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
+};
+use aletheon_comm::KernelEventBus;
 
 use crate::ProviderRegistry;
 
@@ -107,10 +109,12 @@ pub async fn run(
         api_key: default_provider_config.api_key.clone(),
         api_url: default_provider_config.base_url.clone(),
         model: default_model.clone(),
-        working_dir: std::env::var("AGENT_WORKING_DIR")
-            .unwrap_or_else(|_| "/tmp".to_string()),
-        data_dir: std::env::var("AGENT_DATA_DIR")
-            .unwrap_or_else(|_| aletheon_abi::paths::xdg_data_dir().to_string_lossy().to_string()),
+        working_dir: std::env::var("AGENT_WORKING_DIR").unwrap_or_else(|_| "/tmp".to_string()),
+        data_dir: std::env::var("AGENT_DATA_DIR").unwrap_or_else(|_| {
+            aletheon_abi::paths::xdg_data_dir()
+                .to_string_lossy()
+                .to_string()
+        }),
         system_prompt: std::env::var("AGENT_SYSTEM_PROMPT")
             .unwrap_or_else(|_| "You are a helpful system assistant.".to_string()),
         sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
@@ -119,9 +123,8 @@ pub async fn run(
 
     // Ensure data directory exists
     tracing::info!(data_dir = %config.data_dir, "Creating data directory...");
-    std::fs::create_dir_all(&config.data_dir).map_err(|e| {
-        anyhow::anyhow!("Failed to create data dir '{}': {}", config.data_dir, e)
-    })?;
+    std::fs::create_dir_all(&config.data_dir)
+        .map_err(|e| anyhow::anyhow!("Failed to create data dir '{}': {}", config.data_dir, e))?;
 
     tracing::info!(
         provider = %default_provider_config.name,
@@ -156,7 +159,10 @@ pub async fn run(
                 .collect(),
             routing: routing
                 .into_iter()
-                .map(|(purpose, provider_name)| RoutingRule { purpose, provider_name })
+                .map(|(purpose, provider_name)| RoutingRule {
+                    purpose,
+                    provider_name,
+                })
                 .collect(),
         };
 
@@ -184,13 +190,12 @@ pub async fn run(
     };
 
     // Start perception manager and bridge
-    let (event_tx, event_rx) = mpsc::channel::<aletheon_self::r#impl::perception::PerceptionEvent>(256);
-    let (injection_tx, injection_rx) = mpsc::channel::<aletheon_self::r#impl::perception::bridge::PerceptionInjection>(64);
+    let (event_tx, event_rx) =
+        mpsc::channel::<aletheon_self::r#impl::perception::PerceptionEvent>(256);
+    let (injection_tx, injection_rx) =
+        mpsc::channel::<aletheon_self::r#impl::perception::bridge::PerceptionInjection>(64);
 
-    let watch_paths = vec![
-        PathBuf::from("/etc"),
-        PathBuf::from("/var/log"),
-    ];
+    let watch_paths = vec![PathBuf::from("/etc"), PathBuf::from("/var/log")];
     tokio::spawn(async move {
         let mut manager = aletheon_self::r#impl::perception::manager::PerceptionManager::new(
             event_tx,
@@ -203,7 +208,8 @@ pub async fn run(
     });
 
     // Start perception bridge
-    let mut bridge = aletheon_self::r#impl::perception::bridge::PerceptionBridge::new(event_rx, injection_tx);
+    let mut bridge =
+        aletheon_self::r#impl::perception::bridge::PerceptionBridge::new(event_rx, injection_tx);
     tokio::spawn(async move {
         bridge.run().await;
     });

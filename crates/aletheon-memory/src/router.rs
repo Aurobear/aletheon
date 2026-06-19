@@ -11,8 +11,8 @@ use async_trait::async_trait;
 
 use crate::episodic::EpisodicMemory;
 use crate::procedural::ProceduralMemory;
-use crate::semantic::SemanticMemory;
 use crate::self_memory::SelfMemory;
+use crate::semantic::SemanticMemory;
 
 /// Routes memory operations to dynamically registered backends.
 pub struct MemoryRouter {
@@ -27,21 +27,40 @@ impl MemoryRouter {
         let mut router = Self {
             backends: Vec::new(),
         };
-        router.register(MemoryType::Episodic, EpisodicMemory::new(db_dir.join("episodic.db")));
-        router.register(MemoryType::Semantic, SemanticMemory::new(db_dir.join("semantic.db")));
-        router.register(MemoryType::Procedural, ProceduralMemory::new(db_dir.join("procedural.db")));
-        router.register(MemoryType::SelfMemory, SelfMemory::new(db_dir.join("self.db")));
+        router.register(
+            MemoryType::Episodic,
+            EpisodicMemory::new(db_dir.join("episodic.db")),
+        );
+        router.register(
+            MemoryType::Semantic,
+            SemanticMemory::new(db_dir.join("semantic.db")),
+        );
+        router.register(
+            MemoryType::Procedural,
+            ProceduralMemory::new(db_dir.join("procedural.db")),
+        );
+        router.register(
+            MemoryType::SelfMemory,
+            SelfMemory::new(db_dir.join("self.db")),
+        );
         router
     }
 
     /// Register a backend for a given memory type.
-    pub fn register(&mut self, mt: MemoryType, backend: impl MemoryBackend + Send + Sync + 'static) {
+    pub fn register(
+        &mut self,
+        mt: MemoryType,
+        backend: impl MemoryBackend + Send + Sync + 'static,
+    ) {
         self.backends.push((mt, Box::new(backend)));
     }
 
     /// Look up the backend for a given memory type.
     pub fn backend_for(&self, mt: MemoryType) -> Option<&(dyn MemoryBackend + Send + Sync)> {
-        self.backends.iter().find(|(t, _)| *t == mt).map(|(_, b)| b.as_ref())
+        self.backends
+            .iter()
+            .find(|(t, _)| *t == mt)
+            .map(|(_, b)| b.as_ref())
     }
 }
 
@@ -92,17 +111,17 @@ impl Subsystem for MemoryRouter {
 #[async_trait]
 impl MemoryBackend for MemoryRouter {
     async fn store(&self, entry: MemoryEntry) -> Result<MemoryHandle> {
-        let backend = self.backend_for(entry.memory_type).ok_or_else(|| {
-            anyhow::anyhow!("no backend registered for {:?}", entry.memory_type)
-        })?;
+        let backend = self
+            .backend_for(entry.memory_type)
+            .ok_or_else(|| anyhow::anyhow!("no backend registered for {:?}", entry.memory_type))?;
         backend.store(entry).await
     }
 
     async fn recall(&self, query: &MemoryQuery) -> Result<Vec<MemoryEntry>> {
         if let Some(mt) = query.memory_type {
-            let backend = self.backend_for(mt).ok_or_else(|| {
-                anyhow::anyhow!("no backend registered for {:?}", mt)
-            })?;
+            let backend = self
+                .backend_for(mt)
+                .ok_or_else(|| anyhow::anyhow!("no backend registered for {:?}", mt))?;
             return backend.recall(query).await;
         }
 
@@ -128,9 +147,9 @@ impl MemoryBackend for MemoryRouter {
 
     async fn list(&self, filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> {
         if let Some(mt) = filter.memory_type {
-            let backend = self.backend_for(mt).ok_or_else(|| {
-                anyhow::anyhow!("no backend registered for {:?}", mt)
-            })?;
+            let backend = self
+                .backend_for(mt)
+                .ok_or_else(|| anyhow::anyhow!("no backend registered for {:?}", mt))?;
             return backend.list(filter).await;
         }
 
@@ -151,9 +170,9 @@ impl MemoryBackend for MemoryRouter {
     }
 
     async fn forget(&self, handle: &MemoryHandle) -> Result<()> {
-        let backend = self.backend_for(handle.memory_type).ok_or_else(|| {
-            anyhow::anyhow!("no backend registered for {:?}", handle.memory_type)
-        })?;
+        let backend = self
+            .backend_for(handle.memory_type)
+            .ok_or_else(|| anyhow::anyhow!("no backend registered for {:?}", handle.memory_type))?;
         backend.forget(handle).await
     }
 

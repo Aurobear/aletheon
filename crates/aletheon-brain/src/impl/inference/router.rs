@@ -1,7 +1,7 @@
-use tracing::debug;
-use super::InferenceConfig;
-use super::classifier::{IntentClassifier, Complexity};
+use super::classifier::{Complexity, IntentClassifier};
 use super::provider_config::{ProviderConfig, ProviderType};
+use super::InferenceConfig;
+use tracing::debug;
 
 /// Routes inference requests to appropriate providers.
 pub struct InferenceRouter {
@@ -71,7 +71,8 @@ impl InferenceRouter {
         match complexity {
             Complexity::Simple => {
                 // Use local provider if available
-                self.providers.iter()
+                self.providers
+                    .iter()
                     .filter(|p| matches!(p.provider_type, ProviderType::Local))
                     .min_by_key(|p| p.latency_ms)
                     .or_else(|| self.providers.first())
@@ -79,15 +80,21 @@ impl InferenceRouter {
             }
             Complexity::Medium => {
                 // Use cost-optimal cloud provider
-                self.providers.iter()
+                self.providers
+                    .iter()
                     .filter(|p| matches!(p.provider_type, ProviderType::Cloud))
-                    .min_by(|a, b| a.cost_per_1k_tokens.partial_cmp(&b.cost_per_1k_tokens).unwrap())
+                    .min_by(|a, b| {
+                        a.cost_per_1k_tokens
+                            .partial_cmp(&b.cost_per_1k_tokens)
+                            .unwrap()
+                    })
                     .or_else(|| self.providers.first())
                     .unwrap()
             }
             Complexity::Complex => {
                 // Use quality-first cloud provider (longest context)
-                self.providers.iter()
+                self.providers
+                    .iter()
                     .filter(|p| matches!(p.provider_type, ProviderType::Cloud))
                     .max_by_key(|p| p.max_context_length)
                     .or_else(|| self.providers.first())
@@ -127,8 +134,7 @@ impl InferenceRouter {
         if self.should_upgrade(iterations, total_tool_calls) {
             debug!(
                 iterations,
-                total_tool_calls,
-                "Runtime upgrade threshold exceeded, forcing cloud model"
+                total_tool_calls, "Runtime upgrade threshold exceeded, forcing cloud model"
             );
             return &self.cloud_model;
         }
@@ -185,7 +191,8 @@ mod tests {
     #[test]
     fn test_complex_routes_to_quality() {
         let router = InferenceRouter::new(make_providers());
-        let provider = router.select_provider("analyze the architecture and design a migration plan");
+        let provider =
+            router.select_provider("analyze the architecture and design a migration plan");
         assert_eq!(provider.id, "cloud-quality");
     }
 

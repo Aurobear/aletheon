@@ -5,15 +5,18 @@ pub mod process;
 
 pub use budget::TokenBudget;
 pub use fork::{AgentFork, AgentForkCompletedPayload, ForkState};
-pub use harness::{AgentHarness, AttemptParams, AttemptResult, AttemptStatus, HarnessBid, HarnessContext, RuntimePlan};
+pub use harness::{
+    AgentHarness, AttemptParams, AttemptResult, AttemptStatus, HarnessBid, HarnessContext,
+    RuntimePlan,
+};
 pub use process::{AgentProcess, AgentProcessConfig, AgentState};
 
-use anyhow::Result;
 use aletheon_abi::runtime::{AgentInfo, AgentStatus, ScheduledTask};
-use aletheon_abi::subsystem::{Subsystem, SubsystemHealth, SubsystemContext, Version};
+use aletheon_abi::subsystem::{Subsystem, SubsystemContext, SubsystemHealth, Version};
+use anyhow::Result;
 use async_trait::async_trait;
-use std::collections::HashMap;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 
 /// Manages agent registration, dispatch, and lifecycle
 pub struct AgentRuntime {
@@ -62,7 +65,9 @@ impl Default for AgentRuntime {
 
 #[async_trait]
 impl Subsystem for AgentRuntime {
-    fn name(&self) -> &str { "aletheon-runtime" }
+    fn name(&self) -> &str {
+        "aletheon-runtime"
+    }
 
     async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
         self.initialized = true;
@@ -73,7 +78,9 @@ impl Subsystem for AgentRuntime {
         if self.initialized {
             SubsystemHealth::Healthy
         } else {
-            SubsystemHealth::Degraded { reason: "Not initialized".to_string() }
+            SubsystemHealth::Degraded {
+                reason: "Not initialized".to_string(),
+            }
         }
     }
 

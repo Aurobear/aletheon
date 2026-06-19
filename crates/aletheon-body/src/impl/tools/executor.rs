@@ -66,10 +66,7 @@ impl PathConflictDetector {
     /// Acquire exclusive locks for all `paths`. Blocks until all are held.
     ///
     /// Returns a vector of `OwnedSemaphorePermit`s that release on drop.
-    async fn acquire(
-        &self,
-        paths: &[PathBuf],
-    ) -> Vec<tokio::sync::OwnedSemaphorePermit> {
+    async fn acquire(&self, paths: &[PathBuf]) -> Vec<tokio::sync::OwnedSemaphorePermit> {
         let mut permits = Vec::with_capacity(paths.len());
         for path in paths {
             let sem = self
@@ -198,7 +195,8 @@ impl ToolCallExecutor {
                     if cancel.is_cancelled() {
                         return (call.index, cancelled_result());
                     }
-                    let result = dispatch_tool(tools, &call.tool_name, call.input.clone(), ctx).await;
+                    let result =
+                        dispatch_tool(tools, &call.tool_name, call.input.clone(), ctx).await;
                     (call.index, result)
                 }
             })
@@ -238,7 +236,8 @@ impl ToolCallExecutor {
                     if cancel.is_cancelled() {
                         return (call.index, cancelled_result());
                     }
-                    let result = dispatch_tool(tools, &call.tool_name, call.input.clone(), ctx).await;
+                    let result =
+                        dispatch_tool(tools, &call.tool_name, call.input.clone(), ctx).await;
                     (call.index, result)
                 }
             })
@@ -270,8 +269,7 @@ impl ToolCallExecutor {
                 });
                 continue;
             }
-            let result =
-                dispatch_tool(tools, &call.tool_name, call.input.clone(), ctx).await;
+            let result = dispatch_tool(tools, &call.tool_name, call.input.clone(), ctx).await;
             results[call.index] = Some(ExecutorResult {
                 index: call.index,
                 result,
@@ -458,7 +456,13 @@ mod tests {
         let executor = ToolCallExecutor::with_defaults(cancel);
         let counter = Arc::new(AtomicUsize::new(0));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let tools = make_tool_map(&["r0", "r1", "r2"], 100, counter, log, ConcurrencyClass::ReadOnly);
+        let tools = make_tool_map(
+            &["r0", "r1", "r2"],
+            100,
+            counter,
+            log,
+            ConcurrencyClass::ReadOnly,
+        );
         let ctx = mock_ctx();
 
         let calls: Vec<PendingToolCall> = ["r0", "r1", "r2"]
@@ -496,7 +500,13 @@ mod tests {
         let executor = ToolCallExecutor::with_defaults(cancel);
         let counter = Arc::new(AtomicUsize::new(0));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let tools = make_tool_map(&["a", "b", "c"], 0, counter, log, ConcurrencyClass::ReadOnly);
+        let tools = make_tool_map(
+            &["a", "b", "c"],
+            0,
+            counter,
+            log,
+            ConcurrencyClass::ReadOnly,
+        );
         let ctx = mock_ctx();
 
         // Deliberately provide calls in non-alphabetical order.
@@ -605,7 +615,13 @@ mod tests {
         let executor = ToolCallExecutor::with_defaults(cancel);
         let counter = Arc::new(AtomicUsize::new(0));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let tools = make_tool_map(&["w0", "w1", "w2"], 100, counter, log, ConcurrencyClass::ReadOnly);
+        let tools = make_tool_map(
+            &["w0", "w1", "w2"],
+            100,
+            counter,
+            log,
+            ConcurrencyClass::ReadOnly,
+        );
         let ctx = mock_ctx();
 
         let calls = vec![
@@ -657,7 +673,13 @@ mod tests {
         let executor = ToolCallExecutor::with_defaults(cancel);
         let counter = Arc::new(AtomicUsize::new(0));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let tools = make_tool_map(&["s0", "s1", "s2"], 100, counter, log, ConcurrencyClass::ReadOnly);
+        let tools = make_tool_map(
+            &["s0", "s1", "s2"],
+            100,
+            counter,
+            log,
+            ConcurrencyClass::ReadOnly,
+        );
         let ctx = mock_ctx();
 
         let calls: Vec<PendingToolCall> = ["s0", "s1", "s2"]
@@ -739,7 +761,13 @@ mod tests {
         let executor = ToolCallExecutor::with_defaults(cancel);
         let counter = Arc::new(AtomicUsize::new(0));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let tools = make_tool_map(&["ro", "wr", "se"], 50, counter, log, ConcurrencyClass::ReadOnly);
+        let tools = make_tool_map(
+            &["ro", "wr", "se"],
+            50,
+            counter,
+            log,
+            ConcurrencyClass::ReadOnly,
+        );
         let ctx = mock_ctx();
 
         let calls = vec![
@@ -818,7 +846,13 @@ mod tests {
         let executor = ToolCallExecutor::new(2, cancel);
         let counter = Arc::new(AtomicUsize::new(0));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let tools = make_tool_map(&["t0", "t1", "t2", "t3"], 100, counter, log, ConcurrencyClass::ReadOnly);
+        let tools = make_tool_map(
+            &["t0", "t1", "t2", "t3"],
+            100,
+            counter,
+            log,
+            ConcurrencyClass::ReadOnly,
+        );
         let ctx = mock_ctx();
 
         let calls: Vec<PendingToolCall> = ["t0", "t1", "t2", "t3"]

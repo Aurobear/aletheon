@@ -310,7 +310,11 @@ mod tests {
         let mut loader = SkillLoader::new(path.clone());
         assert_eq!(loader.load_all(), 0);
 
-        write_skill(&path, "new-skill.md", "# New Skill\nA new skill.\n\nDetails.\n");
+        write_skill(
+            &path,
+            "new-skill.md",
+            "# New Skill\nA new skill.\n\nDetails.\n",
+        );
         assert_eq!(loader.reload(), 1);
     }
 
@@ -329,9 +333,17 @@ mod tests {
     fn multiple_skills_loaded() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().to_path_buf();
-        write_skill(&path, "alpha.md", "# Alpha\nFirst skill.\n\nAlpha content.\n");
+        write_skill(
+            &path,
+            "alpha.md",
+            "# Alpha\nFirst skill.\n\nAlpha content.\n",
+        );
         write_skill(&path, "beta.md", "# Beta\nSecond skill.\n\nBeta content.\n");
-        write_skill(&path, "gamma.md", "# Gamma\nThird skill.\n\nGamma content.\n");
+        write_skill(
+            &path,
+            "gamma.md",
+            "# Gamma\nThird skill.\n\nGamma content.\n",
+        );
 
         let mut loader = SkillLoader::new(path);
         assert_eq!(loader.load_all(), 3);
@@ -376,11 +388,7 @@ mod tests {
     fn load_mixed_legacy_and_directory() {
         let dir = TempDir::new().unwrap();
         // Legacy file
-        std::fs::write(
-            dir.path().join("legacy.md"),
-            "# Legacy\nA legacy skill.\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("legacy.md"), "# Legacy\nA legacy skill.\n").unwrap();
         // Directory skill
         let skill_dir = dir.path().join("modern");
         std::fs::create_dir(&skill_dir).unwrap();

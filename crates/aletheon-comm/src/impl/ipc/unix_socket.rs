@@ -6,9 +6,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, RwLock};
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
-use aletheon_abi::ipc_types::{IpcBackend, IpcProbeError, AgentId, AgentMessage};
+use aletheon_abi::ipc_types::{AgentId, AgentMessage, IpcBackend, IpcProbeError};
 
 /// Default socket directory.
 const DEFAULT_SOCKET_DIR: &str = "/tmp/agent-ipc";
@@ -95,9 +95,8 @@ impl UnixSocketBackend {
             })?;
         }
 
-        let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
-            IpcProbeError::Other(format!("Failed to bind unix socket: {}", e))
-        })?;
+        let listener = UnixListener::bind(&self.socket_path)
+            .map_err(|e| IpcProbeError::Other(format!("Failed to bind unix socket: {}", e)))?;
 
         info!(path = %self.socket_path.display(), "Unix socket IPC listening");
 
@@ -144,7 +143,11 @@ impl UnixSocketBackend {
             let len = u32::from_be_bytes(len_buf) as usize;
 
             if len > MAX_MESSAGE_SIZE {
-                return Err(anyhow::anyhow!("Message too large: {} bytes (max {})", len, MAX_MESSAGE_SIZE));
+                return Err(anyhow::anyhow!(
+                    "Message too large: {} bytes (max {})",
+                    len,
+                    MAX_MESSAGE_SIZE
+                ));
             }
 
             // Read payload.
@@ -167,7 +170,10 @@ impl UnixSocketBackend {
             } else if let Some(sender) = senders.get(&msg.target_id) {
                 let _ = sender.send(msg).await;
             } else {
-                debug!(target = msg.target_id, "Target agent not found, dropping message");
+                debug!(
+                    target = msg.target_id,
+                    "Target agent not found, dropping message"
+                );
             }
         }
 
@@ -251,7 +257,7 @@ impl Drop for UnixSocketBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_abi::ipc_types::{MessageType, IpcPriority as Priority};
+    use aletheon_abi::ipc_types::{IpcPriority as Priority, MessageType};
 
     #[tokio::test]
     async fn test_register_and_send() {
@@ -260,25 +266,31 @@ mod tests {
         backend.init().await.unwrap();
 
         // Register agent 1.
-        let mut rx = backend.register_agent(1).await.expect("agent already registered");
+        let mut rx = backend
+            .register_agent(1)
+            .await
+            .expect("agent already registered");
 
         // Duplicate registration returns None.
         assert!(backend.register_agent(1).await.is_none());
 
         // Build a message targeting agent 1.
-        let msg = AgentMessage::new(2, 1, MessageType::Direct, Priority::Normal, b"hello".to_vec());
+        let msg = AgentMessage::new(
+            2,
+            1,
+            MessageType::Direct,
+            Priority::Normal,
+            b"hello".to_vec(),
+        );
 
         // Send via the socket.
         backend.send(&msg).await.expect("send failed");
 
         // Receive on agent 1's channel.
-        let received = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            rx.recv(),
-        )
-        .await
-        .expect("recv timed out")
-        .expect("channel closed");
+        let received = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("recv timed out")
+            .expect("channel closed");
 
         assert_eq!(received.sender_id, 2);
         assert_eq!(received.target_id, 1);
@@ -297,7 +309,13 @@ mod tests {
         let mut rx2 = backend.register_agent(2).await.unwrap();
 
         // Broadcast (target_id == 0) from agent 3.
-        let msg = AgentMessage::new(3, 0, MessageType::Event, Priority::Normal, b"broadcast".to_vec());
+        let msg = AgentMessage::new(
+            3,
+            0,
+            MessageType::Event,
+            Priority::Normal,
+            b"broadcast".to_vec(),
+        );
         backend.send(&msg).await.unwrap();
 
         let r1 = tokio::time::timeout(std::time::Duration::from_secs(2), rx1.recv())

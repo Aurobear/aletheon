@@ -16,30 +16,30 @@
 //! - **WorldModel** — environment state tracking via observations
 //! - **BrainCore** — wires all components, implements BrainCoreOps + Subsystem
 
+pub mod bridge;
 pub mod config;
 pub mod core;
-pub mod bridge;
 pub mod r#impl;
 
 // Re-export core components
-pub use core::{BrainCore, BrainCoreConfig};
-pub use core::reasoner::{Reasoner, ReasoningStrategy};
-pub use core::planner::Planner;
 pub use core::critic::Critic;
-pub use core::reflector::Reflector;
 pub use core::learner::Learner;
+pub use core::planner::Planner;
+pub use core::reasoner::{Reasoner, ReasoningStrategy};
+pub use core::reflector::Reflector;
 pub use core::world_model::WorldModel;
+pub use core::{BrainCore, BrainCoreConfig};
 
 // Re-export bridge components
-pub use bridge::llm::LlmBridge;
 pub use bridge::dual_model::{DualModelBridge, DualModelConfig, TaskComplexity};
 pub use bridge::inference::InferenceBridge;
 pub use bridge::learning::LearningBridge;
+pub use bridge::llm::LlmBridge;
 
 // Re-export impl components
-pub use r#impl::llm;
 pub use r#impl::inference;
 pub use r#impl::learning;
+pub use r#impl::llm;
 pub use r#impl::provider_registry;
 
 pub mod testing;

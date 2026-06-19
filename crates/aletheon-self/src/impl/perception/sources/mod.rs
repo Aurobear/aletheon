@@ -1,11 +1,11 @@
-pub mod proc_source;
+pub mod bottleneck_detector;
+pub mod ebpf_source;
 pub mod inotify_source;
 pub mod journald_source;
-pub mod ebpf_source;
-pub mod bottleneck_detector;
+pub mod proc_source;
 
-use async_trait::async_trait;
 use super::PerceptionEvent;
+use async_trait::async_trait;
 
 /// Trait for perception sources.
 #[async_trait]

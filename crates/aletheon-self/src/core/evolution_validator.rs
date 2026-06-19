@@ -112,12 +112,12 @@ impl EvolutionValidator {
         }
 
         // Rule 3: cannot adjust identity core values
-        if IDENTITY_CORE_TARGETS.iter().any(|&core| adjustment.target.starts_with(core)) {
+        if IDENTITY_CORE_TARGETS
+            .iter()
+            .any(|&core| adjustment.target.starts_with(core))
+        {
             return ValidationResult::Rejected {
-                reason: format!(
-                    "Cannot adjust identity core value '{}'",
-                    adjustment.target
-                ),
+                reason: format!("Cannot adjust identity core value '{}'", adjustment.target),
             };
         }
 
@@ -350,15 +350,20 @@ fn average_weight(weights: &[(String, f64)]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{SelfField, SelfFieldConfig};
     use crate::core::boundary::{BoundaryAction, BoundaryRule};
+    use crate::core::{SelfField, SelfFieldConfig};
     use aletheon_abi::self_field::RiskLevel;
 
     fn make_self_field() -> SelfField {
         SelfField::new(SelfFieldConfig::default())
     }
 
-    fn make_adjustment(target: &str, old: Option<f64>, new: Option<f64>, reason: &str) -> BehaviorAdjustment {
+    fn make_adjustment(
+        target: &str,
+        old: Option<f64>,
+        new: Option<f64>,
+        reason: &str,
+    ) -> BehaviorAdjustment {
         BehaviorAdjustment {
             target: target.to_string(),
             old_value: old,
@@ -382,7 +387,12 @@ mod tests {
     fn reject_low_confidence() {
         let validator = EvolutionValidator::new(0.3);
         let sf = make_self_field();
-        let adj = make_adjustment("care.efficiency.weight", Some(0.5), Some(0.7), "boost efficiency");
+        let adj = make_adjustment(
+            "care.efficiency.weight",
+            Some(0.5),
+            Some(0.7),
+            "boost efficiency",
+        );
         let result = validator.validate_adjustment(&adj, &sf);
         assert!(matches!(result, ValidationResult::Rejected { .. }));
     }
@@ -428,9 +438,16 @@ mod tests {
         let validator = EvolutionValidator::new(0.8);
         let sf = make_self_field();
         // Trying to set efficiency to 1.5, which is above max
-        let adj = make_adjustment("care.efficiency.weight", Some(0.5), Some(1.5), "boost too high");
+        let adj = make_adjustment(
+            "care.efficiency.weight",
+            Some(0.5),
+            Some(1.5),
+            "boost too high",
+        );
         let result = validator.validate_adjustment(&adj, &sf);
-        assert!(matches!(result, ValidationResult::Modified { adjusted } if adjusted.new_value == Some(1.0)));
+        assert!(
+            matches!(result, ValidationResult::Modified { adjusted } if adjusted.new_value == Some(1.0))
+        );
     }
 
     #[test]
@@ -440,14 +457,21 @@ mod tests {
         // Trying to set safety below 0.8 floor
         let adj = make_adjustment("care.safety.weight", Some(1.0), Some(0.5), "reduce safety");
         let result = validator.validate_adjustment(&adj, &sf);
-        assert!(matches!(result, ValidationResult::Modified { adjusted } if adjusted.new_value == Some(0.8)));
+        assert!(
+            matches!(result, ValidationResult::Modified { adjusted } if adjusted.new_value == Some(0.8))
+        );
     }
 
     #[test]
     fn approve_valid_care_adjustment() {
         let validator = EvolutionValidator::new(0.8);
         let sf = make_self_field();
-        let adj = make_adjustment("care.efficiency.weight", Some(0.5), Some(0.7), "boost efficiency");
+        let adj = make_adjustment(
+            "care.efficiency.weight",
+            Some(0.5),
+            Some(0.7),
+            "boost efficiency",
+        );
         let result = validator.validate_adjustment(&adj, &sf);
         assert!(matches!(result, ValidationResult::Approved));
     }
@@ -468,7 +492,12 @@ mod tests {
         let validator = EvolutionValidator::new(0.8);
         let mut sf = make_self_field();
 
-        let adj = make_adjustment("care.efficiency.weight", Some(0.5), Some(0.7), "boost efficiency");
+        let adj = make_adjustment(
+            "care.efficiency.weight",
+            Some(0.5),
+            Some(0.7),
+            "boost efficiency",
+        );
         let results = validator.apply_adjustments(&[adj], &mut sf);
 
         assert_eq!(results.len(), 1);
@@ -488,7 +517,9 @@ mod tests {
         let results = validator.apply_adjustments(&[adj], &mut sf);
 
         assert!(matches!(results[0], ValidationResult::Rejected { .. }));
-        assert!((sf.care().weight_of("efficiency").unwrap() - original_weight).abs() < f64::EPSILON);
+        assert!(
+            (sf.care().weight_of("efficiency").unwrap() - original_weight).abs() < f64::EPSILON
+        );
     }
 
     // --- Baseline and comparison tests ---

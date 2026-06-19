@@ -1,14 +1,14 @@
-use std::sync::Arc;
-use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use parking_lot::RwLock;
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, warn};
 
-use aletheon_abi::{AsyncEventHandler, Event, EventBus, EventHandler, EventType, SubscriptionId};
-use crate::r#impl::subscription::SubscriptionRegistry;
 use crate::r#impl::event_log::EventLog;
-use crate::r#impl::routing_policy::{RoutingPolicy, RouteAction};
+use crate::r#impl::routing_policy::{RouteAction, RoutingPolicy};
+use crate::r#impl::subscription::SubscriptionRegistry;
+use aletheon_abi::{AsyncEventHandler, Event, EventBus, EventHandler, EventType, SubscriptionId};
 
 pub struct KernelEventBus {
     subscriptions: SubscriptionRegistry,
@@ -89,18 +89,16 @@ impl EventBus for KernelEventBus {
         Ok(id)
     }
 
-    async fn request(
-        &self,
-        event: Box<dyn Event>,
-        timeout: Duration,
-    ) -> Result<Box<dyn Event>> {
+    async fn request(&self, event: Box<dyn Event>, timeout: Duration) -> Result<Box<dyn Event>> {
         // Phase 1: request-response not fully implemented.
         // For now, publish the event and return error after timeout.
         // Full implementation will use oneshot channels when response events are supported.
         warn!("request() not fully implemented in Phase 1; publishing event only");
         self.publish(event).await?;
         tokio::time::sleep(timeout).await;
-        Err(anyhow::anyhow!("Request timeout — no response received (Phase 1 limitation)"))
+        Err(anyhow::anyhow!(
+            "Request timeout — no response received (Phase 1 limitation)"
+        ))
     }
 
     async fn unsubscribe(&self, id: SubscriptionId) -> Result<()> {

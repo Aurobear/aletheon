@@ -21,12 +21,7 @@ impl Planner {
     }
 
     /// Generate a plan from an intent and reasoning chain.
-    pub fn generate_plan(
-        &self,
-        intent: &Intent,
-        reasoning: &str,
-        _ctx: &Context,
-    ) -> Plan {
+    pub fn generate_plan(&self, intent: &Intent, reasoning: &str, _ctx: &Context) -> Plan {
         let step_id = Uuid::new_v4();
         let action = self.intent_to_action(intent);
         let rollback = self.infer_rollback(intent);
@@ -139,7 +134,8 @@ impl Planner {
         let action = intent.action.to_lowercase();
         if action.contains("delete") || action.contains("rm") || action.contains("destroy") {
             RiskLevel::High
-        } else if action.contains("write") || action.contains("modify") || action.contains("deploy") {
+        } else if action.contains("write") || action.contains("modify") || action.contains("deploy")
+        {
             RiskLevel::Medium
         } else if action.contains("read") || action.contains("ls") || action.contains("status") {
             RiskLevel::Low
@@ -210,7 +206,10 @@ mod tests {
         let plan = planner.generate_plan(&intent, "reasoning", &make_ctx());
 
         assert!(plan.steps[0].rollback_action.is_some());
-        assert_eq!(plan.steps[0].rollback_action.as_ref().unwrap().name, "file.delete");
+        assert_eq!(
+            plan.steps[0].rollback_action.as_ref().unwrap().name,
+            "file.delete"
+        );
     }
 
     #[test]

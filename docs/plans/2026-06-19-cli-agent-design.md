@@ -1,8 +1,26 @@
 # Aletheon CLI Agent Design
 
 **Date:** 2026-06-19
-**Status:** Draft
+**Status:** Partially superseded — retained as the Phase 2–4 product blueprint.
 **Scope:** Complete CLI experience — interactive TUI, multi-provider LLM, permissions, context management, MCP, session persistence, skills
+
+> **⚠️ Status note (2026-06-19).** This document is the long-term **product blueprint**.
+> Parts of it have been superseded by hands-on findings (the system was actually run):
+> - **Phase 1 here ("can chat": a standalone `run` returning text) is SUPERSEDED.** The
+>   verified root cause is that the Engine→AletheonRuntime refactor is frozen mid-flight
+>   and no cognitive loop is wired to any entry point — so "can chat" does not make the
+>   agent usable for real work (it can't act). Phase 1 is redefined to "can act, safely"
+>   in **`2026-06-19-runtime-react-loop-wiring-design.md`**, implemented by
+>   **`2026-06-19-phase1-implementation-plan.md`**.
+> - **The new `aletheon-tui` crate (§4) is SUPERSEDED.** Per architecture decision,
+>   CLI/TUI stay inside `body` as its interface layer; no new crate. Later TUI work
+>   happens in `body/impl/ui/`.
+> - **New `aletheon-abi` LLM types (Phase 1 Task 5) are deferred.** Reuse brain's existing
+>   `LlmResponse`/`StreamChunk`/`ToolDefinition` to avoid a duplicate type layer.
+>
+> **Still authoritative (no equivalent elsewhere):** the §5 permission system
+> (`PermissionMode`/`PermissionRule`), §6 context-compaction layers, §7 tool enhancements,
+> §8 MCP integration, §9 session/hooks/skills — these are the Phase 2–4 roadmap.
 
 ---
 

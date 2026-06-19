@@ -2,20 +2,26 @@
 //!
 //! Applies mutation intents to a genome to produce RuntimeCandidates.
 
+use aletheon_abi::{Genome, MutationIntent, RuntimeCandidate};
 use anyhow::Result;
-use aletheon_abi::{Genome, RuntimeCandidate, MutationIntent};
 
 /// Generates candidate runtimes from genome mutations.
 pub struct CandidateGenerator;
 
 impl CandidateGenerator {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Generate a candidate runtime from a genome and mutation intent.
     ///
     /// Clones the genome, applies the mutation described in the intent,
     /// and produces a RuntimeCandidate with the changes recorded.
-    pub async fn generate(&self, genome: &Genome, intent: &MutationIntent) -> Result<RuntimeCandidate> {
+    pub async fn generate(
+        &self,
+        genome: &Genome,
+        intent: &MutationIntent,
+    ) -> Result<RuntimeCandidate> {
         let mut candidate_genome = genome.clone();
         let mut changes = Vec::new();
 
@@ -23,9 +29,13 @@ impl CandidateGenerator {
         match intent.target.as_str() {
             "care.priorities" => {
                 if let Some(topic) = intent.change.get("topic").and_then(|v| v.as_str()) {
-                    if let Some(delta) = intent.change.get("weight_delta").and_then(|v| v.as_f64()) {
+                    if let Some(delta) = intent.change.get("weight_delta").and_then(|v| v.as_f64())
+                    {
                         // Find and adjust the care priority weight
-                        if let Some(priority) = candidate_genome.care.priorities.iter_mut()
+                        if let Some(priority) = candidate_genome
+                            .care
+                            .priorities
+                            .iter_mut()
                             .find(|p| p.topic == topic)
                         {
                             let old_weight = priority.weight;
@@ -40,7 +50,7 @@ impl CandidateGenerator {
                                 crate::core::types::CarePriority {
                                     topic: topic.to_string(),
                                     weight: delta.clamp(0.0, 1.0),
-                                }
+                                },
                             );
                             changes.push(format!(
                                 "care.{}.weight: new = {} (reason: {})",

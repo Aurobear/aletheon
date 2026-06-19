@@ -20,14 +20,72 @@ pub enum ScrollDirection {
 /// Keyboard key
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Key {
-    A, B, C, D, E, F, G, H, I, J, K, L, M,
-    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
-    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
-    Enter, Space, Tab, Escape, Backspace, Delete,
-    Up, Down, Left, Right,
-    Home, End, PageUp, PageDown,
-    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
-    Ctrl, Alt, Shift, Super,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Num0,
+    Num1,
+    Num2,
+    Num3,
+    Num4,
+    Num5,
+    Num6,
+    Num7,
+    Num8,
+    Num9,
+    Enter,
+    Space,
+    Tab,
+    Escape,
+    Backspace,
+    Delete,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+    Ctrl,
+    Alt,
+    Shift,
+    Super,
 }
 
 /// RGB image
@@ -128,13 +186,19 @@ mod tests {
 
     #[test]
     fn test_to_base64_png() {
-        let img = Image { width: 2, height: 2, data: vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0] };
+        let img = Image {
+            width: 2,
+            height: 2,
+            data: vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0],
+        };
         let (media_type, b64) = img.to_base64_png().unwrap();
         assert_eq!(media_type, "image/png");
         assert!(!b64.is_empty());
         // Verify it's valid base64
         use base64::Engine;
-        let decoded = base64::engine::general_purpose::STANDARD.decode(&b64).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap();
         // PNG magic bytes
         assert_eq!(&decoded[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
     }
@@ -145,7 +209,12 @@ mod tests {
             role: "push-button".into(),
             name: "OK".into(),
             text: "OK".into(),
-            bounds: Bounds { x: 10, y: 20, width: 100, height: 30 },
+            bounds: Bounds {
+                x: 10,
+                y: 20,
+                width: 100,
+                height: 30,
+            },
             state: vec!["enabled".into()],
             actions: vec!["click".into()],
             children: vec![],

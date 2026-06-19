@@ -18,7 +18,8 @@ impl SlidingWindow {
     }
 
     fn evict(&mut self, now: Instant) {
-        self.timestamps.retain(|&t| now.duration_since(t) <= self.window);
+        self.timestamps
+            .retain(|&t| now.duration_since(t) <= self.window);
     }
 
     fn record_and_check(&mut self, now: Instant) -> bool {
@@ -42,7 +43,11 @@ pub enum FloodResult {
     /// Event accepted.
     Accept,
     /// Source is flooding — event should be dropped.
-    Flooded { source: String, count: u32, limit: u32 },
+    Flooded {
+        source: String,
+        count: u32,
+        limit: u32,
+    },
 }
 
 /// Detects and suppresses floods of events from any registered source.
@@ -68,10 +73,8 @@ impl EventFloodProtector {
 
     /// Register a source with custom limits (overrides defaults).
     pub fn set_source_limit(&mut self, source: &str, window: Duration, max_events: u32) {
-        self.per_source.insert(
-            source.to_string(),
-            SlidingWindow::new(window, max_events),
-        );
+        self.per_source
+            .insert(source.to_string(), SlidingWindow::new(window, max_events));
     }
 
     /// Record an event from `source` and return whether it was accepted.

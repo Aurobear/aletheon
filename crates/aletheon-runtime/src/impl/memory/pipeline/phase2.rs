@@ -112,10 +112,7 @@ impl Phase2Consolidator {
 
         for record in &to_process {
             if let Some(raw) = &record.raw_memory {
-                sections.push(format!(
-                    "## Session: {}\n\n{}\n",
-                    record.session_id, raw
-                ));
+                sections.push(format!("## Session: {}\n\n{}\n", record.session_id, raw));
             }
         }
 

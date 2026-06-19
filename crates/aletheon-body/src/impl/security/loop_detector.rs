@@ -1,9 +1,9 @@
-use std::collections::{HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 
-use aletheon_abi::tool::ToolResult;
-use super::risk_classifier::RiskClassifier;
 use super::circuit_breaker::LoopCircuitBreaker;
+use super::risk_classifier::RiskClassifier;
+use aletheon_abi::tool::ToolResult;
 
 #[derive(Debug, Clone)]
 pub struct LoopDetectorConfig {
@@ -25,10 +25,20 @@ impl Default for LoopDetectorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LoopVerdict {
     Allow,
-    Warn { reason: String },
-    Block { reason: String, suggestion: String },
-    Escalate { reason: String },
-    InterruptTurn { reason: String, consecutive_blocks: usize },
+    Warn {
+        reason: String,
+    },
+    Block {
+        reason: String,
+        suggestion: String,
+    },
+    Escalate {
+        reason: String,
+    },
+    InterruptTurn {
+        reason: String,
+        consecutive_blocks: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -77,11 +87,17 @@ impl LoopDetector {
     }
 
     pub fn on_new_turn(&mut self, turn_id: &str) {
-        self.per_turn.insert(turn_id.to_string(), TurnHistory::default());
+        self.per_turn
+            .insert(turn_id.to_string(), TurnHistory::default());
         self.circuit_breaker.on_new_turn(turn_id);
     }
 
-    pub fn pre_check(&mut self, tool_name: &str, args: &serde_json::Value, turn_id: &str) -> LoopVerdict {
+    pub fn pre_check(
+        &mut self,
+        tool_name: &str,
+        args: &serde_json::Value,
+        turn_id: &str,
+    ) -> LoopVerdict {
         self.metrics.total_checks += 1;
 
         let category = self.risk_classifier.classify(tool_name);
@@ -91,14 +107,21 @@ impl LoopDetector {
         let history = self.per_turn.entry(turn_id.to_string()).or_default();
 
         // 1. Same-call detection
-        let same_count = history.calls.iter().rev()
+        let same_count = history
+            .calls
+            .iter()
+            .rev()
             .take_while(|r| r.tool_name == tool_name && r.args_hash == args_hash)
             .count();
 
         if same_count >= thresholds.same_call_threshold {
             self.metrics.blocks += 1;
             let verdict = LoopVerdict::Block {
-                reason: format!("Same tool+args repeated {} times (threshold: {})", same_count + 1, thresholds.same_call_threshold),
+                reason: format!(
+                    "Same tool+args repeated {} times (threshold: {})",
+                    same_count + 1,
+                    thresholds.same_call_threshold
+                ),
                 suggestion: "Try a different approach or ask for help".into(),
             };
             self.circuit_breaker.record_block(turn_id);
@@ -106,25 +129,40 @@ impl LoopDetector {
         }
 
         // 2. Fail-streak detection
-        let fail_streak = history.calls.iter().rev()
+        let fail_streak = history
+            .calls
+            .iter()
+            .rev()
             .take_while(|r| r.is_error)
             .count();
 
         if fail_streak >= thresholds.fail_streak_threshold {
             self.metrics.escalations += 1;
             return LoopVerdict::Escalate {
-                reason: format!("Consecutive failures: {} (threshold: {})", fail_streak + 1, thresholds.fail_streak_threshold),
+                reason: format!(
+                    "Consecutive failures: {} (threshold: {})",
+                    fail_streak + 1,
+                    thresholds.fail_streak_threshold
+                ),
             };
         }
 
         // 3. Stagnation detection
         if history.calls.len() >= self.config.stagnation_window {
-            let recent: Vec<_> = history.calls.iter().rev().take(self.config.stagnation_window).collect();
+            let recent: Vec<_> = history
+                .calls
+                .iter()
+                .rev()
+                .take(self.config.stagnation_window)
+                .collect();
             let any_success = recent.iter().any(|r| !r.is_error);
             if !any_success {
                 self.metrics.warnings += 1;
                 return LoopVerdict::Warn {
-                    reason: format!("No successful calls in last {} attempts", self.config.stagnation_window),
+                    reason: format!(
+                        "No successful calls in last {} attempts",
+                        self.config.stagnation_window
+                    ),
                 };
             }
         }
@@ -139,7 +177,13 @@ impl LoopDetector {
         LoopVerdict::Allow
     }
 
-    pub fn post_check(&mut self, tool_name: &str, args: &serde_json::Value, result: &ToolResult, turn_id: &str) {
+    pub fn post_check(
+        &mut self,
+        tool_name: &str,
+        args: &serde_json::Value,
+        result: &ToolResult,
+        turn_id: &str,
+    ) {
         let history = self.per_turn.entry(turn_id.to_string()).or_default();
         history.calls.push_back(ToolCallRecord {
             tool_name: tool_name.to_string(),

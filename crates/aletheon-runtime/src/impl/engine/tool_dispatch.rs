@@ -11,8 +11,8 @@ use tracing::warn;
 
 use aletheon_abi::envelope::*;
 use aletheon_abi::ToolDefinition;
-use aletheon_comm::CommunicationBus;
 use aletheon_comm::envelope::Payload;
+use aletheon_comm::CommunicationBus;
 
 use super::cognitive_loop::Engine;
 use super::modules::{BodyRequest, BodyResponse, ToolDefinitionMsg};
@@ -36,17 +36,23 @@ impl Engine {
                     if let Payload::Json(val) = &resp_envelope.payload {
                         match serde_json::from_value::<BodyResponse>(val.clone()) {
                             Ok(BodyResponse::Definitions { tools }) => {
-                                return tools.into_iter().map(|t| ToolDefinition {
-                                    name: t.name,
-                                    description: t.description,
-                                    input_schema: t.input_schema,
-                                }).collect();
+                                return tools
+                                    .into_iter()
+                                    .map(|t| ToolDefinition {
+                                        name: t.name,
+                                        description: t.description,
+                                        input_schema: t.input_schema,
+                                    })
+                                    .collect();
                             }
                             Ok(BodyResponse::Error { message }) => {
                                 warn!(error = %message, "BodyModule returned error for Definitions");
                             }
                             Ok(other) => {
-                                warn!(?other, "Unexpected response from BodyModule for Definitions");
+                                warn!(
+                                    ?other,
+                                    "Unexpected response from BodyModule for Definitions"
+                                );
                             }
                             Err(e) => {
                                 warn!(error = %e, "Failed to deserialize BodyResponse");

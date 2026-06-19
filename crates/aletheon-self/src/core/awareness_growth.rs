@@ -185,9 +185,7 @@ mod tests {
     #[test]
     fn test_analyze_insufficient_history() {
         let analyzer = AwarenessGrowthAnalyzer::new();
-        let history: Vec<SelfAwareness> = (0..5)
-            .map(|_| make_awareness(vec![]))
-            .collect();
+        let history: Vec<SelfAwareness> = (0..5).map(|_| make_awareness(vec![])).collect();
         let stats = AwarenessExtensionCounts::default();
 
         let suggestions = analyzer.analyze(&history, &stats).unwrap();
@@ -197,9 +195,7 @@ mod tests {
     #[test]
     fn test_analyze_suggests_intent() {
         let analyzer = AwarenessGrowthAnalyzer::with_config(5, 0.3);
-        let history: Vec<SelfAwareness> = (0..10)
-            .map(|_| make_awareness(vec![]))
-            .collect();
+        let history: Vec<SelfAwareness> = (0..10).map(|_| make_awareness(vec![])).collect();
         let stats = AwarenessExtensionCounts {
             intent: 1, // Only 10% have intent
             self_state: 5,

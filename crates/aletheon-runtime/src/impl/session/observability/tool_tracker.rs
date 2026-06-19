@@ -72,7 +72,12 @@ impl ToolTracker {
             state.settled = true;
             state.is_error = is_error;
             state.elapsed_ms = Some(now - state.registered_at_epoch_ms);
-            debug!(tool_call_id, is_error, elapsed_ms = state.elapsed_ms, "Tool call settled");
+            debug!(
+                tool_call_id,
+                is_error,
+                elapsed_ms = state.elapsed_ms,
+                "Tool call settled"
+            );
             true
         } else {
             false

@@ -7,9 +7,7 @@
 //! Philosophical basis: Spinoza's idea ideae — the mind's awareness
 //! of its own ideas is not a second act, but inherent in every idea.
 
-use aletheon_abi::{
-    AwarenessExtension, AwarenessGrowthSuggestion, SelfAwareness, SelfState,
-};
+use aletheon_abi::{AwarenessExtension, AwarenessGrowthSuggestion, SelfAwareness, SelfState};
 
 /// System prompt for generating self-awareness.
 ///
@@ -101,7 +99,9 @@ impl AwarenessGenerator {
                 // High-confidence suggestions get added
                 match suggestion.extension_type.as_str() {
                     "intent" => {
-                        if !extensions.iter().any(|e| matches!(e, AwarenessExtension::Intent { .. }))
+                        if !extensions
+                            .iter()
+                            .any(|e| matches!(e, AwarenessExtension::Intent { .. }))
                         {
                             extensions.push(AwarenessExtension::Intent {
                                 reason: suggestion.reason.clone(),

@@ -69,10 +69,16 @@ mod tests {
 
     #[test]
     fn test_emergency_detection() {
-        assert!(BehaviorPathRouter::is_emergency(&make_intent("emergency_stop")));
+        assert!(BehaviorPathRouter::is_emergency(&make_intent(
+            "emergency_stop"
+        )));
         assert!(BehaviorPathRouter::is_emergency(&make_intent("abort")));
-        assert!(BehaviorPathRouter::is_emergency(&make_intent("kill_process")));
-        assert!(!BehaviorPathRouter::is_emergency(&make_intent("walk_forward")));
+        assert!(BehaviorPathRouter::is_emergency(&make_intent(
+            "kill_process"
+        )));
+        assert!(!BehaviorPathRouter::is_emergency(&make_intent(
+            "walk_forward"
+        )));
     }
 
     #[test]

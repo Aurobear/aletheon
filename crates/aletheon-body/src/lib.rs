@@ -1,5 +1,5 @@
-pub mod core;
 pub mod bridge;
+pub mod core;
 #[path = "impl/mod.rs"]
 pub mod r#impl;
 

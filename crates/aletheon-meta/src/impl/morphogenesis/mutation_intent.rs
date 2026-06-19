@@ -9,7 +9,9 @@ use aletheon_abi::MutationIntent;
 pub struct MutationIntentGenerator;
 
 impl MutationIntentGenerator {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Generate mutation intents based on recent experience and reflection.
     ///
@@ -56,7 +58,8 @@ impl MutationIntentGenerator {
                     "weight_delta": 0.02,
                     "action": "increase_weight"
                 }),
-                reason: "Successful patterns detected — reinforcing helpfulness priority".to_string(),
+                reason: "Successful patterns detected — reinforcing helpfulness priority"
+                    .to_string(),
                 reversible: true,
             });
         }

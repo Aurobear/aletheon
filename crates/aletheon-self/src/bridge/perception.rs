@@ -1,6 +1,6 @@
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-use std::time::Duration;
 
 use crate::r#impl::perception::event::{PerceptionEvent, Priority};
 use aletheon_abi::Message;
@@ -65,7 +65,12 @@ impl PerceptionBridge {
             Priority::Critical | Priority::High => {
                 let msg = event_to_message(&event);
                 debug!(summary = %event.summary(), "Injecting critical perception event");
-                if self.engine_tx.send(PerceptionInjection::Immediate(msg)).await.is_err() {
+                if self
+                    .engine_tx
+                    .send(PerceptionInjection::Immediate(msg))
+                    .await
+                    .is_err()
+                {
                     warn!("Engine receiver dropped, buffering event");
                     self.buffer.push(event);
                 }
@@ -85,22 +90,27 @@ impl PerceptionBridge {
         }
         let events: Vec<_> = self.buffer.drain(..).collect();
         debug!(count = events.len(), "Flushing buffered perception events");
-        let _ = self.engine_tx.send(PerceptionInjection::Batch(events)).await;
+        let _ = self
+            .engine_tx
+            .send(PerceptionInjection::Batch(events))
+            .await;
     }
 }
 
 fn event_to_message(event: &PerceptionEvent) -> Message {
     Message::system(format!(
         "[Perception Alert] source={:?}, priority={:?}, summary={}",
-        event.source, event.priority, event.summary()
+        event.source,
+        event.priority,
+        event.summary()
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_abi::ContentBlock;
     use crate::r#impl::perception::event::*;
+    use aletheon_abi::ContentBlock;
     use chrono::Utc;
 
     fn make_event(priority: Priority, summary_data: EventData) -> PerceptionEvent {
@@ -122,9 +132,12 @@ mod tests {
         let mut bridge = PerceptionBridge::new(event_rx, injection_tx);
 
         // Send a critical event
-        let event = make_event(Priority::Critical, EventData::Raw {
-            message: "disk full".to_string(),
-        });
+        let event = make_event(
+            Priority::Critical,
+            EventData::Raw {
+                message: "disk full".to_string(),
+            },
+        );
         event_tx.send(event).await.unwrap();
 
         // Handle one event
@@ -149,9 +162,12 @@ mod tests {
         let mut bridge = PerceptionBridge::new(event_rx, injection_tx);
 
         // Send a low-priority event
-        let event = make_event(Priority::Low, EventData::Raw {
-            message: "routine check".to_string(),
-        });
+        let event = make_event(
+            Priority::Low,
+            EventData::Raw {
+                message: "routine check".to_string(),
+            },
+        );
         event_tx.send(event).await.unwrap();
 
         // Handle one event
@@ -174,9 +190,12 @@ mod tests {
 
         // Manually add events to buffer
         for i in 0..3 {
-            bridge.buffer.push(make_event(Priority::Low, EventData::Raw {
-                message: format!("event {}", i),
-            }));
+            bridge.buffer.push(make_event(
+                Priority::Low,
+                EventData::Raw {
+                    message: format!("event {}", i),
+                },
+            ));
         }
 
         bridge.flush_buffer().await;
@@ -200,9 +219,12 @@ mod tests {
 
         // Send 5 low-priority events
         for i in 0..5 {
-            let event = make_event(Priority::Normal, EventData::Raw {
-                message: format!("event {}", i),
-            });
+            let event = make_event(
+                Priority::Normal,
+                EventData::Raw {
+                    message: format!("event {}", i),
+                },
+            );
             event_tx.send(event).await.unwrap();
         }
 

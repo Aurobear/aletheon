@@ -36,10 +36,7 @@ pub enum SessionEvent {
         after_messages: usize,
     },
     /// An error occurred.
-    Error {
-        component: String,
-        message: String,
-    },
+    Error { component: String, message: String },
 }
 
 /// Phase of a tool call lifecycle.
@@ -68,7 +65,11 @@ impl EventPublisher {
 
     /// Add a live subscriber with the given name and channel capacity.
     /// Returns the receiving end of the channel.
-    pub fn add_live_subscriber(&mut self, name: impl Into<String>, capacity: usize) -> mpsc::Receiver<SessionEvent> {
+    pub fn add_live_subscriber(
+        &mut self,
+        name: impl Into<String>,
+        capacity: usize,
+    ) -> mpsc::Receiver<SessionEvent> {
         let (tx, rx) = mpsc::channel(capacity);
         let name = name.into();
         debug!(subscriber = %name, capacity, "Added live subscriber");
@@ -99,7 +100,11 @@ impl EventPublisher {
         self.subscribers.retain(|_, tx| !tx.is_closed());
         let removed = before - self.subscribers.len();
         if removed > 0 {
-            debug!(removed, remaining = self.subscribers.len(), "Cleaned up subscribers");
+            debug!(
+                removed,
+                remaining = self.subscribers.len(),
+                "Cleaned up subscribers"
+            );
         }
     }
 

@@ -101,7 +101,9 @@ impl DaemonGuardian {
         let dump_dir = crash_dir.join(&ts);
         std::fs::create_dir_all(&dump_dir)?;
 
-        let location = info.location().map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
 
         let panic_message = if let Some(s) = info.payload().downcast_ref::<&str>() {
             s.to_string()
@@ -116,10 +118,16 @@ impl DaemonGuardian {
             "panic_message": panic_message,
             "location": location,
         });
-        std::fs::write(dump_dir.join("panic_info.json"), serde_json::to_string_pretty(&panic_info)?)?;
+        std::fs::write(
+            dump_dir.join("panic_info.json"),
+            serde_json::to_string_pretty(&panic_info)?,
+        )?;
 
         let state_snapshot = serde_json::json!({ "recovered": false });
-        std::fs::write(dump_dir.join("state_snapshot.json"), serde_json::to_string_pretty(&state_snapshot)?)?;
+        std::fs::write(
+            dump_dir.join("state_snapshot.json"),
+            serde_json::to_string_pretty(&state_snapshot)?,
+        )?;
 
         let version = env!("CARGO_PKG_VERSION").to_string();
         std::fs::write(dump_dir.join("version.txt"), &version)?;
@@ -134,7 +142,10 @@ impl DaemonGuardian {
 
     /// Returns a snapshot of the current [`SafeMode`] state.
     pub fn is_safe_mode(&self) -> bool {
-        self.safe_mode.lock().map(|sm| sm.is_active()).unwrap_or(false)
+        self.safe_mode
+            .lock()
+            .map(|sm| sm.is_active())
+            .unwrap_or(false)
     }
 
     /// Select the appropriate recovery protocol for the current crash count.
@@ -169,7 +180,11 @@ mod tests {
         });
         let dump_dir = guardian.crash_dir.join("test");
         std::fs::create_dir_all(&dump_dir).unwrap();
-        std::fs::write(dump_dir.join("panic_info.json"), serde_json::to_string_pretty(&panic_info).unwrap()).unwrap();
+        std::fs::write(
+            dump_dir.join("panic_info.json"),
+            serde_json::to_string_pretty(&panic_info).unwrap(),
+        )
+        .unwrap();
         std::fs::write(dump_dir.join("state_snapshot.json"), "{}").unwrap();
         std::fs::write(dump_dir.join("version.txt"), "0.1.0").unwrap();
 
@@ -184,19 +199,31 @@ mod tests {
         let guardian = DaemonGuardian::new(PanicPolicy::RestartWithState, tmp.path().to_path_buf());
 
         // 0 crashes -> policy default
-        assert_eq!(guardian.select_recovery_protocol(), PanicPolicy::RestartWithState);
+        assert_eq!(
+            guardian.select_recovery_protocol(),
+            PanicPolicy::RestartWithState
+        );
 
         // 1 crash -> RestartWithState
         guardian.crash_count.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(guardian.select_recovery_protocol(), PanicPolicy::RestartWithState);
+        assert_eq!(
+            guardian.select_recovery_protocol(),
+            PanicPolicy::RestartWithState
+        );
 
         // 4 total -> RestartFromCheckpoint
         guardian.crash_count.fetch_add(3, Ordering::SeqCst);
-        assert_eq!(guardian.select_recovery_protocol(), PanicPolicy::RestartFromCheckpoint);
+        assert_eq!(
+            guardian.select_recovery_protocol(),
+            PanicPolicy::RestartFromCheckpoint
+        );
 
         // 7 total -> EnterSafeMode
         guardian.crash_count.fetch_add(3, Ordering::SeqCst);
-        assert_eq!(guardian.select_recovery_protocol(), PanicPolicy::EnterSafeMode);
+        assert_eq!(
+            guardian.select_recovery_protocol(),
+            PanicPolicy::EnterSafeMode
+        );
     }
 
     #[test]

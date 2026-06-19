@@ -54,7 +54,8 @@ impl ToolRateLimiter {
         }
 
         // Per-tool per-turn cap.
-        let tool_count = self.per_tool_turn_counts
+        let tool_count = self
+            .per_tool_turn_counts
             .get(tool_name)
             .copied()
             .unwrap_or(0);

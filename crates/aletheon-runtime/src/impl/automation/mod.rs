@@ -47,9 +47,16 @@ pub struct Automation {
 /// What initiates an automation run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AutomationTrigger {
-    Cron { expression: String },
-    Webhook { events: Vec<String>, hmac_secret: String },
-    Api { endpoint: String },
+    Cron {
+        expression: String,
+    },
+    Webhook {
+        events: Vec<String>,
+        hmac_secret: String,
+    },
+    Api {
+        endpoint: String,
+    },
 }
 
 /// Where to send the agent's response.
@@ -171,7 +178,11 @@ impl AutomationScheduler {
     /// In a full system this would invoke the LLM; here we return the prompt
     /// as-is (or the script output) so the module is self-contained and
     /// testable without an LLM backend.
-    pub async fn execute_automation(&mut self, id: &str, agent_output: &str) -> Result<AutomationResult> {
+    pub async fn execute_automation(
+        &mut self,
+        id: &str,
+        agent_output: &str,
+    ) -> Result<AutomationResult> {
         let auto = self
             .automations
             .iter_mut()
@@ -312,7 +323,9 @@ mod tests {
         sched
             .add_automation(make_cron_auto("dup", "* * * * *", 10))
             .unwrap();
-        assert!(sched.add_automation(make_cron_auto("dup", "0 * * * *", 5)).is_err());
+        assert!(sched
+            .add_automation(make_cron_auto("dup", "0 * * * *", 5))
+            .is_err());
     }
 
     #[test]

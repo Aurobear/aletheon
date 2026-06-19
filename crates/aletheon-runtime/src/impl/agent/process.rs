@@ -3,22 +3,21 @@
 //! Has PID, state machine, energy budget, lifecycle management.
 //! Can spawn child processes. Consumes LlmPulse energy to think and act.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, RwLock};
-use aletheon_abi::agent::Pid;
-use aletheon_abi::envelope::Envelope;
-use aletheon_abi::{EventBus, EventType, Priority};
-use aletheon_abi::evolution::{
-    AgentStartedPayload, AgentStoppedPayload, AgentSpawnedPayload,
-    CognitivePulseEvent,
-};
-use aletheon_comm::ConcreteEvent;
 use super::budget::TokenBudget;
 use crate::r#impl::engine::cognitive_loop::{Engine, TurnResult};
+use aletheon_abi::agent::Pid;
+use aletheon_abi::envelope::Envelope;
+use aletheon_abi::evolution::{
+    AgentSpawnedPayload, AgentStartedPayload, AgentStoppedPayload, CognitivePulseEvent,
+};
+use aletheon_abi::{EventBus, EventType, Priority};
+use aletheon_comm::ConcreteEvent;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{mpsc, RwLock};
 
 /// Agent lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,7 +137,8 @@ impl AgentProcess {
                     pid: self.pid.as_u64(),
                     task: self.task.clone(),
                 }),
-            ))).await?;
+            )))
+            .await?;
         }
 
         tracing::info!("Agent {} started: {}", self.pid, self.task);
@@ -185,7 +185,11 @@ impl AgentProcess {
 
         let children = self.children.read().await;
         if children.len() >= self.config.max_children {
-            anyhow::bail!("Agent {} max children ({}) reached", self.pid, self.config.max_children);
+            anyhow::bail!(
+                "Agent {} max children ({}) reached",
+                self.pid,
+                self.config.max_children
+            );
         }
         drop(children);
 
@@ -196,13 +200,12 @@ impl AgentProcess {
             ..self.config.clone()
         };
 
-        let bus = self.bus.as_ref().ok_or_else(|| anyhow::anyhow!("No EventBus attached"))?.clone();
-        let mut child = AgentProcess::new(
-            Some(self.pid),
-            child_task,
-            bus.clone(),
-            child_config,
-        );
+        let bus = self
+            .bus
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No EventBus attached"))?
+            .clone();
+        let mut child = AgentProcess::new(Some(self.pid), child_task, bus.clone(), child_config);
         child.start().await?;
         let child_pid = child.pid;
 
@@ -216,7 +219,8 @@ impl AgentProcess {
                 parent: self.pid.as_u64(),
                 child: child_pid.as_u64(),
             }),
-        ))).await?;
+        )))
+        .await?;
 
         Ok(child_pid)
     }
@@ -233,7 +237,8 @@ impl AgentProcess {
                 Box::new(AgentStoppedPayload {
                     pid: self.pid.as_u64(),
                 }),
-            ))).await?;
+            )))
+            .await?;
         }
 
         tracing::info!("Agent {} terminated", self.pid);
@@ -242,11 +247,21 @@ impl AgentProcess {
 
     // -- Accessors (dev-side) ------------------------------------------------
 
-    pub fn pid(&self) -> Pid { self.pid }
-    pub fn state(&self) -> AgentState { self.state }
-    pub fn task(&self) -> &str { &self.task }
-    pub fn parent(&self) -> Option<Pid> { self.parent }
-    pub fn energy(&self) -> &TokenBudget { &self.energy }
+    pub fn pid(&self) -> Pid {
+        self.pid
+    }
+    pub fn state(&self) -> AgentState {
+        self.state
+    }
+    pub fn task(&self) -> &str {
+        &self.task
+    }
+    pub fn parent(&self) -> Option<Pid> {
+        self.parent
+    }
+    pub fn energy(&self) -> &TokenBudget {
+        &self.energy
+    }
 
     /// Attach an Engine to this agent.
     pub fn set_engine(&mut self, engine: Engine) {

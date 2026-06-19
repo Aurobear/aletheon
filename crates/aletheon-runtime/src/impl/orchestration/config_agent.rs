@@ -1,13 +1,13 @@
-use std::path::Path;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tracing::info;
 
-use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
+use super::agent::{Agent, Capability};
 use aletheon_abi::message::{ContentBlock, Message};
 use aletheon_body::r#impl::tools::Tool;
-use super::agent::{Agent, Capability};
+use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
 
 /// TOML agent configuration (loaded from `agents/<id>.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,7 +168,9 @@ impl Agent for ConfigAgent {
                 .content
                 .iter()
                 .filter_map(|c| match c {
-                    ContentBlock::ToolUse { id, name, input } => Some((id.as_str(), name.as_str(), input)),
+                    ContentBlock::ToolUse { id, name, input } => {
+                        Some((id.as_str(), name.as_str(), input))
+                    }
                     _ => None,
                 })
                 .collect();

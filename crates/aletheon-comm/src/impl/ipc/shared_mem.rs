@@ -23,21 +23,26 @@ impl SharedMemRegion {
     pub fn create(name: &str, size: usize) -> Result<Self, anyhow::Error> {
         // Use memfd_create to create an anonymous file in memory
         let fd = unsafe {
-            libc::memfd_create(
-                std::ffi::CString::new(name)?.as_ptr(),
-                libc::MFD_CLOEXEC,
-            )
+            libc::memfd_create(std::ffi::CString::new(name)?.as_ptr(), libc::MFD_CLOEXEC)
         };
 
         if fd < 0 {
-            return Err(anyhow::anyhow!("memfd_create failed: {}", std::io::Error::last_os_error()));
+            return Err(anyhow::anyhow!(
+                "memfd_create failed: {}",
+                std::io::Error::last_os_error()
+            ));
         }
 
         // Set size
         let ret = unsafe { libc::ftruncate(fd, size as i64) };
         if ret < 0 {
-            unsafe { libc::close(fd); }
-            return Err(anyhow::anyhow!("ftruncate failed: {}", std::io::Error::last_os_error()));
+            unsafe {
+                libc::close(fd);
+            }
+            return Err(anyhow::anyhow!(
+                "ftruncate failed: {}",
+                std::io::Error::last_os_error()
+            ));
         }
 
         // Map into memory
@@ -53,11 +58,21 @@ impl SharedMemRegion {
         };
 
         if base == libc::MAP_FAILED {
-            unsafe { libc::close(fd); }
-            return Err(anyhow::anyhow!("mmap failed: {}", std::io::Error::last_os_error()));
+            unsafe {
+                libc::close(fd);
+            }
+            return Err(anyhow::anyhow!(
+                "mmap failed: {}",
+                std::io::Error::last_os_error()
+            ));
         }
 
-        info!(name = name, size = size, fd = fd, "Shared memory region created");
+        info!(
+            name = name,
+            size = size,
+            fd = fd,
+            "Shared memory region created"
+        );
 
         Ok(Self {
             fd,
@@ -98,7 +113,8 @@ impl SharedMemRegion {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.add(8), bytes.len());
         }
 
-        self.write_pos.store(write_pos + total_len, Ordering::Release);
+        self.write_pos
+            .store(write_pos + total_len, Ordering::Release);
         Ok(())
     }
 
@@ -128,7 +144,8 @@ impl SharedMemRegion {
             std::ptr::copy_nonoverlapping(src, payload.as_mut_ptr(), len);
         }
 
-        self.read_pos.store(read_pos + 8 + len as u64, Ordering::Release);
+        self.read_pos
+            .store(read_pos + 8 + len as u64, Ordering::Release);
 
         AgentMessage::from_bytes(&payload)
     }
@@ -184,13 +201,17 @@ impl IpcBackend for SharedMemBackend {
     async fn send(&self, message: &AgentMessage) -> Result<(), IpcProbeError> {
         let guard = self.region.read().await;
         let region = guard.as_ref().ok_or(IpcProbeError::NotSupported)?;
-        region.write(message).map_err(|e| IpcProbeError::Other(e.to_string()))
+        region
+            .write(message)
+            .map_err(|e| IpcProbeError::Other(e.to_string()))
     }
 
     async fn recv(&self) -> Result<AgentMessage, IpcProbeError> {
         let guard = self.region.read().await;
         let region = guard.as_ref().ok_or(IpcProbeError::NotSupported)?;
-        region.read().ok_or_else(|| IpcProbeError::Other("no data available".into()))
+        region
+            .read()
+            .ok_or_else(|| IpcProbeError::Other("no data available".into()))
     }
 
     async fn try_recv(&self) -> Option<AgentMessage> {

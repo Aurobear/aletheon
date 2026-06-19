@@ -3,9 +3,9 @@
 //! These types were originally in the core crate, then moved to aletheon-runtime.
 //! Duplicated here to break the cyclic dependency (brain-core <-> runtime).
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use serde::{Deserialize, Serialize};
 
 /// Top-level application config (loaded from TOML).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,11 +59,21 @@ impl Default for AgentConfig {
     }
 }
 
-fn default_max_iterations() -> usize { 25 }
-fn default_max_tokens() -> usize { 100_000 }
-fn default_true() -> bool { true }
-fn default_compaction_keep_recent() -> usize { 10 }
-fn default_compaction_threshold() -> usize { 30 }
+fn default_max_iterations() -> usize {
+    25
+}
+fn default_max_tokens() -> usize {
+    100_000
+}
+fn default_true() -> bool {
+    true
+}
+fn default_compaction_keep_recent() -> usize {
+    10
+}
+fn default_compaction_threshold() -> usize {
+    30
+}
 
 /// Wire protocol between client and LLM server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -75,7 +85,9 @@ pub enum Transport {
 }
 
 impl Default for Transport {
-    fn default() -> Self { Self::Auto }
+    fn default() -> Self {
+        Self::Auto
+    }
 }
 
 /// Per-provider configuration.
@@ -105,7 +117,9 @@ pub struct SandboxConfig {
     pub bubblewrap_path: Option<String>,
 }
 
-fn default_sandbox_preference() -> String { "auto".to_string() }
+fn default_sandbox_preference() -> String {
+    "auto".to_string()
+}
 
 impl Default for SandboxConfig {
     fn default() -> Self {
@@ -131,7 +145,9 @@ pub struct McpServerConfig {
     pub url: Option<String>,
 }
 
-fn default_mcp_transport() -> String { "stdio".to_string() }
+fn default_mcp_transport() -> String {
+    "stdio".to_string()
+}
 
 impl Default for McpServerConfig {
     fn default() -> Self {
@@ -169,8 +185,12 @@ pub struct MemoryConfig {
     pub data_dir: String,
 }
 
-fn default_memory_backend() -> String { "sqlite".to_string() }
-fn default_memory_data_dir() -> String { "~/.aletheon/memory".to_string() }
+fn default_memory_backend() -> String {
+    "sqlite".to_string()
+}
+fn default_memory_data_dir() -> String {
+    "~/.aletheon/memory".to_string()
+}
 
 impl Default for MemoryConfig {
     fn default() -> Self {
@@ -190,8 +210,12 @@ pub struct DaemonConfig {
     pub log_level: String,
 }
 
-fn default_daemon_socket_path() -> String { "/run/aletheon/aletheon.sock".to_string() }
-fn default_daemon_log_level() -> String { "info".to_string() }
+fn default_daemon_socket_path() -> String {
+    "/run/aletheon/aletheon.sock".to_string()
+}
+fn default_daemon_log_level() -> String {
+    "info".to_string()
+}
 
 impl Default for DaemonConfig {
     fn default() -> Self {
@@ -242,7 +266,11 @@ impl AppConfig {
 
         // Providers: merge by name, append new ones
         for other_provider in other.providers {
-            if let Some(existing) = self.providers.iter_mut().find(|p| p.name == other_provider.name) {
+            if let Some(existing) = self
+                .providers
+                .iter_mut()
+                .find(|p| p.name == other_provider.name)
+            {
                 *existing = other_provider;
             } else {
                 self.providers.push(other_provider);

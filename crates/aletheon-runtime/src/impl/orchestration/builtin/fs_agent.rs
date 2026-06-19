@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
+use super::super::agent::{Agent, AgentConfig, Capability};
 use aletheon_abi::message::{ContentBlock, Message};
-use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
 use aletheon_body::r#impl::tools::file_read::FileReadTool;
 use aletheon_body::r#impl::tools::file_write::FileWriteTool;
 use aletheon_body::r#impl::tools::Tool;
-use super::super::agent::{Agent, AgentConfig, Capability};
+use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
 
 /// File system agent — handles file operations.
 pub struct FsAgent {
@@ -25,19 +25,19 @@ impl FsAgent {
             ),
         };
 
-        let tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(FileReadTool),
-            Box::new(FileWriteTool),
-        ];
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(FileReadTool), Box::new(FileWriteTool)];
 
-        let capabilities = vec![
-            Capability {
-                name: "file_operations".to_string(),
-                description: "Read and write files".to_string(),
-            },
-        ];
+        let capabilities = vec![Capability {
+            name: "file_operations".to_string(),
+            description: "Read and write files".to_string(),
+        }];
 
-        Self { config, llm, tools, capabilities }
+        Self {
+            config,
+            llm,
+            tools,
+            capabilities,
+        }
     }
 }
 

@@ -122,7 +122,12 @@ impl BottleneckDetector {
         self.event_id_counter
     }
 
-    fn make_event(&mut self, data: EventData, priority: Priority, category: EventCategory) -> PerceptionEvent {
+    fn make_event(
+        &mut self,
+        data: EventData,
+        priority: Priority,
+        category: EventCategory,
+    ) -> PerceptionEvent {
         PerceptionEvent {
             id: self.next_id(),
             timestamp: Utc::now(),
@@ -142,7 +147,8 @@ impl BottleneckDetector {
         let memory_percent = self.read_memory_percent().unwrap_or(0.0);
 
         // Disk from /proc/diskstats
-        let (disk_read_ops, disk_write_ops, disk_latency_us) = self.read_disk_stats().unwrap_or((0, 0, 0));
+        let (disk_read_ops, disk_write_ops, disk_latency_us) =
+            self.read_disk_stats().unwrap_or((0, 0, 0));
 
         // Network from /proc/net/dev
         let (net_rx_bytes, net_tx_bytes) = self.read_net_stats().unwrap_or((0, 0));
@@ -161,7 +167,10 @@ impl BottleneckDetector {
 
     fn read_cpu_percent(&self) -> Result<f64> {
         let stat = std::fs::read_to_string("/proc/stat")?;
-        let line = stat.lines().next().ok_or_else(|| anyhow::anyhow!("Empty /proc/stat"))?;
+        let line = stat
+            .lines()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Empty /proc/stat"))?;
         let parts: Vec<u64> = line
             .split_whitespace()
             .skip(1)
@@ -185,11 +194,15 @@ impl BottleneckDetector {
 
         for line in meminfo.lines() {
             if line.starts_with("MemTotal:") {
-                total = line.split_whitespace().nth(1)
+                total = line
+                    .split_whitespace()
+                    .nth(1)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
             } else if line.starts_with("MemAvailable:") {
-                available = line.split_whitespace().nth(1)
+                available = line
+                    .split_whitespace()
+                    .nth(1)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
             }
@@ -241,7 +254,9 @@ impl BottleneckDetector {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 10 {
                 let iface = parts[0].trim_end_matches(':');
-                if iface == "lo" { continue; }
+                if iface == "lo" {
+                    continue;
+                }
                 total_rx += parts[1].parse::<u64>().unwrap_or(0);
                 total_tx += parts[9].parse::<u64>().unwrap_or(0);
             }
@@ -266,7 +281,11 @@ impl BottleneckDetector {
 
             // Check if sustained (need at least 3 samples)
             if self.history.len() >= 3 {
-                let sustained = self.history.iter().rev().take(3)
+                let sustained = self
+                    .history
+                    .iter()
+                    .rev()
+                    .take(3)
                     .all(|m| m.cpu_percent > self.threshold.cpu_percent);
 
                 if sustained {
@@ -277,7 +296,9 @@ impl BottleneckDetector {
                         threshold: self.threshold.cpu_percent,
                         suggestion: UpgradeSuggestion::EbpfOptimization {
                             program: "sched_monitor".to_string(),
-                            description: "Install eBPF scheduler monitor to identify CPU-hungry processes".to_string(),
+                            description:
+                                "Install eBPF scheduler monitor to identify CPU-hungry processes"
+                                    .to_string(),
                         },
                         timestamp: current.timestamp,
                     });
@@ -315,8 +336,10 @@ impl BottleneckDetector {
                 threshold: self.threshold.disk_io_latency_us as f64,
                 suggestion: UpgradeSuggestion::KernelModule {
                     module: "io_scheduler".to_string(),
-                    reason: format!("Disk latency {}us exceeds threshold {}us",
-                        current.disk_latency_us, self.threshold.disk_io_latency_us),
+                    reason: format!(
+                        "Disk latency {}us exceeds threshold {}us",
+                        current.disk_latency_us, self.threshold.disk_io_latency_us
+                    ),
                 },
                 timestamp: current.timestamp,
             });

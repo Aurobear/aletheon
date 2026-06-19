@@ -4,9 +4,9 @@
 //! request identity, session state, permissions, and trace information
 //! from Intent Gateway through SelfField, BrainCore, and BodyRuntime.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::capability::CapabilitySet;

@@ -101,14 +101,18 @@ impl InProcessTransport {
         match &envelope.target {
             Target::Module(module) => {
                 if let Some(tx) = self.mailboxes.get(module) {
-                    tx.send(envelope).await.map_err(|_| anyhow::anyhow!("module mailbox closed"))?;
+                    tx.send(envelope)
+                        .await
+                        .map_err(|_| anyhow::anyhow!("module mailbox closed"))?;
                 } else {
                     tracing::warn!("no mailbox registered for module {:?}", module);
                 }
             }
             Target::Agent(pid) => {
                 if let Some(tx) = self.agent_mailboxes.get(pid) {
-                    tx.send(envelope).await.map_err(|_| anyhow::anyhow!("agent mailbox closed"))?;
+                    tx.send(envelope)
+                        .await
+                        .map_err(|_| anyhow::anyhow!("agent mailbox closed"))?;
                 } else {
                     tracing::warn!("no mailbox registered for agent pid {}", pid);
                 }
@@ -151,12 +155,11 @@ impl Transport for InProcessTransport {
 
         // Apply routing policy for Critical priority
         if envelope.priority == Priority::Critical {
-            match RoutingPolicy::evaluate(
-                &EventType::UserIntent,
-                &envelope.priority,
-            ) {
+            match RoutingPolicy::evaluate(&EventType::UserIntent, &envelope.priority) {
                 RouteAction::RequireSelfFieldReview => {
-                    tracing::warn!("Critical envelope requires SelfField review (Phase 1: delivering anyway)");
+                    tracing::warn!(
+                        "Critical envelope requires SelfField review (Phase 1: delivering anyway)"
+                    );
                 }
                 RouteAction::FastPath => {}
             }
@@ -229,10 +232,7 @@ impl Event for OwnedEnvelopeEventAdapter {
     }
 
     fn summary(&self) -> String {
-        format!(
-            "Envelope {} {} {}",
-            self.id, self.pattern, self.target
-        )
+        format!("Envelope {} {} {}", self.id, self.pattern, self.target)
     }
 
     fn to_json(&self) -> serde_json::Value {

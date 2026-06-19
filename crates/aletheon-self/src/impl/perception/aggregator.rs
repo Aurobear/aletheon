@@ -1,6 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 use super::event::*;
 
@@ -35,7 +35,8 @@ impl EventAggregator {
         let mut result = Vec::new();
 
         // Clean old hashes
-        self.seen_hashes.retain(|_, t| now.duration_since(*t) < self.dedup_window);
+        self.seen_hashes
+            .retain(|_, t| now.duration_since(*t) < self.dedup_window);
 
         for mut event in events {
             // Content hash dedup
@@ -46,7 +47,8 @@ impl EventAggregator {
             self.seen_hashes.insert(hash, now);
 
             // Rate limiting
-            let source_queue = self.source_counts
+            let source_queue = self
+                .source_counts
                 .entry(event.source)
                 .or_insert_with(VecDeque::new);
 

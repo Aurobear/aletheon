@@ -25,17 +25,15 @@ impl SandboxEnvironment {
             .map(|v| v.contains("WSL2") || v.contains("microsoft"))
             .unwrap_or(false);
 
-        let has_user_namespace = std::fs::read_to_string(
-            "/proc/sys/kernel/unprivileged_userns_clone",
-        )
-        .map(|v| v.trim() == "1")
-        .unwrap_or(false);
+        let has_user_namespace =
+            std::fs::read_to_string("/proc/sys/kernel/unprivileged_userns_clone")
+                .map(|v| v.trim() == "1")
+                .unwrap_or(false);
 
-        let has_seccomp =
-            std::path::Path::new("/proc/sys/kernel/seccomp").exists();
+        let has_seccomp = std::path::Path::new("/proc/sys/kernel/seccomp").exists();
 
-        let kernel_version = std::fs::read_to_string("/proc/version")
-            .unwrap_or_else(|_| "unknown".to_string());
+        let kernel_version =
+            std::fs::read_to_string("/proc/version").unwrap_or_else(|_| "unknown".to_string());
 
         Self {
             is_docker,

@@ -9,30 +9,32 @@
 //! - `bridge/` — Adapters connecting core to impl
 //! - `impl/` — Concrete implementations (KernelEventBus, EventLog, IPC)
 
-pub mod core;
 pub mod bridge;
+pub mod core;
 #[path = "impl/mod.rs"]
 pub mod r#impl;
 
 // Re-exports from core
-pub use crate::core::event::{ConcreteEvent, Event, EventType, Priority};
 pub use crate::core::bus::{EventBus, EventHandler, SubscriptionId};
+pub use crate::core::event::{ConcreteEvent, Event, EventType, Priority};
 
 // Re-exports from impl
-pub use crate::r#impl::kernel_bus::KernelEventBus;
+pub use crate::r#impl::communication_bus::{BusConfig, CommunicationBus};
 pub use crate::r#impl::event_log::{EventLog, LogEntry};
-pub use crate::r#impl::routing_policy::{RoutingPolicy, RouteAction};
-pub use crate::r#impl::subscription::SubscriptionRegistry;
-pub use crate::r#impl::ipc::{IpcManager, IpcBackendKind, Environment, PriorityQueue, JsonRpcAdapter};
-pub use crate::r#impl::communication_bus::{CommunicationBus, BusConfig};
 pub use crate::r#impl::in_process::InProcessTransport;
-pub use crate::r#impl::request_response::RequestResponseProtocol;
+pub use crate::r#impl::ipc::{
+    Environment, IpcBackendKind, IpcManager, JsonRpcAdapter, PriorityQueue,
+};
+pub use crate::r#impl::kernel_bus::KernelEventBus;
 pub use crate::r#impl::pubsub::PubSubProtocol;
+pub use crate::r#impl::request_response::RequestResponseProtocol;
+pub use crate::r#impl::routing_policy::{RouteAction, RoutingPolicy};
+pub use crate::r#impl::subscription::SubscriptionRegistry;
 
 // Re-export protocol types from aletheon-abi
 pub use aletheon_abi::envelope;
-pub use aletheon_abi::transport;
 pub use aletheon_abi::protocol;
+pub use aletheon_abi::transport;
 
 #[cfg(test)]
 mod integration_tests {
@@ -46,10 +48,15 @@ mod integration_tests {
         let count = Arc::new(AtomicU64::new(0));
         let count_clone = count.clone();
 
-        bus.subscribe(EventType::UserIntent, Box::new(move |_| {
-            count_clone.fetch_add(1, Ordering::SeqCst);
-            true
-        })).await.unwrap();
+        bus.subscribe(
+            EventType::UserIntent,
+            Box::new(move |_| {
+                count_clone.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+        )
+        .await
+        .unwrap();
 
         let event = ConcreteEvent::new(
             EventType::UserIntent,
@@ -67,10 +74,15 @@ mod integration_tests {
         let count = Arc::new(AtomicU64::new(0));
         let count_clone = count.clone();
 
-        bus.subscribe(EventType::UserIntent, Box::new(move |_| {
-            count_clone.fetch_add(1, Ordering::SeqCst);
-            true
-        })).await.unwrap();
+        bus.subscribe(
+            EventType::UserIntent,
+            Box::new(move |_| {
+                count_clone.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+        )
+        .await
+        .unwrap();
 
         let event = ConcreteEvent::new(
             EventType::ToolError,
@@ -89,10 +101,15 @@ mod integration_tests {
 
         for _ in 0..3 {
             let count_clone = count.clone();
-            bus.subscribe(EventType::UserIntent, Box::new(move |_| {
-                count_clone.fetch_add(1, Ordering::SeqCst);
-                true
-            })).await.unwrap();
+            bus.subscribe(
+                EventType::UserIntent,
+                Box::new(move |_| {
+                    count_clone.fetch_add(1, Ordering::SeqCst);
+                    true
+                }),
+            )
+            .await
+            .unwrap();
         }
 
         let event = ConcreteEvent::new(
@@ -111,10 +128,16 @@ mod integration_tests {
         let count = Arc::new(AtomicU64::new(0));
         let count_clone = count.clone();
 
-        let id = bus.subscribe(EventType::UserIntent, Box::new(move |_| {
-            count_clone.fetch_add(1, Ordering::SeqCst);
-            true
-        })).await.unwrap();
+        let id = bus
+            .subscribe(
+                EventType::UserIntent,
+                Box::new(move |_| {
+                    count_clone.fetch_add(1, Ordering::SeqCst);
+                    true
+                }),
+            )
+            .await
+            .unwrap();
 
         bus.unsubscribe(id).await.unwrap();
 
@@ -133,7 +156,9 @@ mod integration_tests {
         let bus = KernelEventBus::new(1000);
         assert!(!bus.has_subscribers(&EventType::UserIntent).await);
 
-        bus.subscribe(EventType::UserIntent, Box::new(|_| true)).await.unwrap();
+        bus.subscribe(EventType::UserIntent, Box::new(|_| true))
+            .await
+            .unwrap();
         assert!(bus.has_subscribers(&EventType::UserIntent).await);
         assert!(!bus.has_subscribers(&EventType::ToolError).await);
     }
@@ -164,16 +189,26 @@ mod integration_tests {
         let second = Arc::new(AtomicBool::new(false));
 
         let first_clone = first.clone();
-        bus.subscribe(EventType::UserIntent, Box::new(move |_| {
-            first_clone.store(true, Ordering::SeqCst);
-            false
-        })).await.unwrap();
+        bus.subscribe(
+            EventType::UserIntent,
+            Box::new(move |_| {
+                first_clone.store(true, Ordering::SeqCst);
+                false
+            }),
+        )
+        .await
+        .unwrap();
 
         let second_clone = second.clone();
-        bus.subscribe(EventType::UserIntent, Box::new(move |_| {
-            second_clone.store(true, Ordering::SeqCst);
-            true
-        })).await.unwrap();
+        bus.subscribe(
+            EventType::UserIntent,
+            Box::new(move |_| {
+                second_clone.store(true, Ordering::SeqCst);
+                true
+            }),
+        )
+        .await
+        .unwrap();
 
         let event = ConcreteEvent::new(
             EventType::UserIntent,

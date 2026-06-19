@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aletheon_abi::{AgentError, Registry, RegistrationId};
+use aletheon_abi::{AgentError, RegistrationId, Registry};
 
 use super::Tool;
 

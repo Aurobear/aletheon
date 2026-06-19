@@ -43,119 +43,169 @@ impl AgentFs {
         let mut nodes = HashMap::new();
 
         // Create directory structure
-        nodes.insert("/".to_string(), FsNode::Directory {
-            children: vec![
-                "context".to_string(),
-                "controls".to_string(),
-                "sensors".to_string(),
-                "logs".to_string(),
-                "agents".to_string(),
-            ],
-        });
+        nodes.insert(
+            "/".to_string(),
+            FsNode::Directory {
+                children: vec![
+                    "context".to_string(),
+                    "controls".to_string(),
+                    "sensors".to_string(),
+                    "logs".to_string(),
+                    "agents".to_string(),
+                ],
+            },
+        );
 
-        nodes.insert("/context".to_string(), FsNode::Directory {
-            children: vec![
-                "current.md".to_string(),
-                "memory.md".to_string(),
-                "tools.json".to_string(),
-            ],
-        });
+        nodes.insert(
+            "/context".to_string(),
+            FsNode::Directory {
+                children: vec![
+                    "current.md".to_string(),
+                    "memory.md".to_string(),
+                    "tools.json".to_string(),
+                ],
+            },
+        );
 
-        nodes.insert("/context/current.md".to_string(), FsNode::DynamicFile {
-            generator: "context_current".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/context/current.md".to_string(),
+            FsNode::DynamicFile {
+                generator: "context_current".to_string(),
+                writable: false,
+            },
+        );
 
-        nodes.insert("/context/memory.md".to_string(), FsNode::DynamicFile {
-            generator: "context_memory".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/context/memory.md".to_string(),
+            FsNode::DynamicFile {
+                generator: "context_memory".to_string(),
+                writable: false,
+            },
+        );
 
-        nodes.insert("/context/tools.json".to_string(), FsNode::DynamicFile {
-            generator: "context_tools".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/context/tools.json".to_string(),
+            FsNode::DynamicFile {
+                generator: "context_tools".to_string(),
+                writable: false,
+            },
+        );
 
-        nodes.insert("/controls".to_string(), FsNode::Directory {
-            children: vec![
-                "pause".to_string(),
-                "resume".to_string(),
-                "config.toml".to_string(),
-            ],
-        });
+        nodes.insert(
+            "/controls".to_string(),
+            FsNode::Directory {
+                children: vec![
+                    "pause".to_string(),
+                    "resume".to_string(),
+                    "config.toml".to_string(),
+                ],
+            },
+        );
 
-        nodes.insert("/controls/pause".to_string(), FsNode::File {
-            content: b"0".to_vec(),
-            writable: true,
-        });
+        nodes.insert(
+            "/controls/pause".to_string(),
+            FsNode::File {
+                content: b"0".to_vec(),
+                writable: true,
+            },
+        );
 
-        nodes.insert("/controls/resume".to_string(), FsNode::File {
-            content: b"0".to_vec(),
-            writable: true,
-        });
+        nodes.insert(
+            "/controls/resume".to_string(),
+            FsNode::File {
+                content: b"0".to_vec(),
+                writable: true,
+            },
+        );
 
-        nodes.insert("/sensors".to_string(), FsNode::Directory {
-            children: vec![
-                "cpu.json".to_string(),
-                "memory.json".to_string(),
-                "disk.json".to_string(),
-                "network.json".to_string(),
-            ],
-        });
+        nodes.insert(
+            "/sensors".to_string(),
+            FsNode::Directory {
+                children: vec![
+                    "cpu.json".to_string(),
+                    "memory.json".to_string(),
+                    "disk.json".to_string(),
+                    "network.json".to_string(),
+                ],
+            },
+        );
 
-        nodes.insert("/sensors/cpu.json".to_string(), FsNode::DynamicFile {
-            generator: "sensor_cpu".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/sensors/cpu.json".to_string(),
+            FsNode::DynamicFile {
+                generator: "sensor_cpu".to_string(),
+                writable: false,
+            },
+        );
 
-        nodes.insert("/sensors/memory.json".to_string(), FsNode::DynamicFile {
-            generator: "sensor_memory".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/sensors/memory.json".to_string(),
+            FsNode::DynamicFile {
+                generator: "sensor_memory".to_string(),
+                writable: false,
+            },
+        );
 
-        nodes.insert("/sensors/disk.json".to_string(), FsNode::DynamicFile {
-            generator: "sensor_disk".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/sensors/disk.json".to_string(),
+            FsNode::DynamicFile {
+                generator: "sensor_disk".to_string(),
+                writable: false,
+            },
+        );
 
-        nodes.insert("/sensors/network.json".to_string(), FsNode::DynamicFile {
-            generator: "sensor_network".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/sensors/network.json".to_string(),
+            FsNode::DynamicFile {
+                generator: "sensor_network".to_string(),
+                writable: false,
+            },
+        );
 
-        nodes.insert("/logs".to_string(), FsNode::Directory {
-            children: vec![
-                "agent.log".to_string(),
-                "audit.jsonl".to_string(),
-            ],
-        });
+        nodes.insert(
+            "/logs".to_string(),
+            FsNode::Directory {
+                children: vec!["agent.log".to_string(), "audit.jsonl".to_string()],
+            },
+        );
 
-        nodes.insert("/logs/agent.log".to_string(), FsNode::DynamicFile {
-            generator: "log_agent".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/logs/agent.log".to_string(),
+            FsNode::DynamicFile {
+                generator: "log_agent".to_string(),
+                writable: false,
+            },
+        );
 
-        nodes.insert("/logs/audit.jsonl".to_string(), FsNode::DynamicFile {
-            generator: "log_audit".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/logs/audit.jsonl".to_string(),
+            FsNode::DynamicFile {
+                generator: "log_audit".to_string(),
+                writable: false,
+            },
+        );
 
-        nodes.insert("/agents".to_string(), FsNode::Directory {
-            children: vec![
-                "main".to_string(),
-            ],
-        });
+        nodes.insert(
+            "/agents".to_string(),
+            FsNode::Directory {
+                children: vec!["main".to_string()],
+            },
+        );
 
-        nodes.insert("/agents/main".to_string(), FsNode::Directory {
-            children: vec![
-                "status.json".to_string(),
-            ],
-        });
+        nodes.insert(
+            "/agents/main".to_string(),
+            FsNode::Directory {
+                children: vec!["status.json".to_string()],
+            },
+        );
 
-        nodes.insert("/agents/main/status.json".to_string(), FsNode::DynamicFile {
-            generator: "agent_status_main".to_string(),
-            writable: false,
-        });
+        nodes.insert(
+            "/agents/main/status.json".to_string(),
+            FsNode::DynamicFile {
+                generator: "agent_status_main".to_string(),
+                writable: false,
+            },
+        );
 
         Self {
             mount_point,
@@ -169,12 +219,8 @@ impl AgentFs {
         let nodes = self.nodes.read().await;
         match nodes.get(path) {
             Some(FsNode::File { content, .. }) => Ok(content.clone()),
-            Some(FsNode::DynamicFile { generator, .. }) => {
-                self.generate_content(generator).await
-            }
-            Some(FsNode::Directory { children }) => {
-                Ok(children.join("\n").into_bytes())
-            }
+            Some(FsNode::DynamicFile { generator, .. }) => self.generate_content(generator).await,
+            Some(FsNode::Directory { children }) => Ok(children.join("\n").into_bytes()),
             None => anyhow::bail!("File not found: {}", path),
         }
     }
@@ -183,7 +229,10 @@ impl AgentFs {
     pub async fn write(&self, path: &str, data: &[u8]) -> Result<()> {
         let mut nodes = self.nodes.write().await;
         match nodes.get_mut(path) {
-            Some(FsNode::File { content, writable: true }) => {
+            Some(FsNode::File {
+                content,
+                writable: true,
+            }) => {
                 *content = data.to_vec();
 
                 // Handle control commands
@@ -197,10 +246,14 @@ impl AgentFs {
 
                 Ok(())
             }
-            Some(FsNode::File { writable: false, .. }) => {
+            Some(FsNode::File {
+                writable: false, ..
+            }) => {
                 anyhow::bail!("File is read-only: {}", path)
             }
-            Some(FsNode::DynamicFile { writable: false, .. }) => {
+            Some(FsNode::DynamicFile {
+                writable: false, ..
+            }) => {
                 anyhow::bail!("File is read-only: {}", path)
             }
             None => anyhow::bail!("File not found: {}", path),
@@ -226,8 +279,7 @@ impl AgentFs {
     async fn generate_content(&self, generator: &str) -> Result<Vec<u8>> {
         match generator {
             "sensor_cpu" => {
-                let load = std::fs::read_to_string("/proc/loadavg")
-                    .unwrap_or_default();
+                let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
                 let cpu_info = serde_json::json!({
                     "load_avg": load.trim(),
                     "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -235,21 +287,20 @@ impl AgentFs {
                 Ok(serde_json::to_string_pretty(&cpu_info)?.into_bytes())
             }
             "sensor_memory" => {
-                let meminfo = std::fs::read_to_string("/proc/meminfo")
-                    .unwrap_or_default();
+                let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
                 let mut mem = serde_json::json!({});
                 for line in meminfo.lines().take(5) {
                     let parts: Vec<&str> = line.split(':').collect();
                     if parts.len() == 2 {
-                        mem[parts[0].trim()] = serde_json::Value::String(parts[1].trim().to_string());
+                        mem[parts[0].trim()] =
+                            serde_json::Value::String(parts[1].trim().to_string());
                     }
                 }
                 mem["timestamp"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
                 Ok(serde_json::to_string_pretty(&mem)?.into_bytes())
             }
             "sensor_disk" => {
-                let diskstats = std::fs::read_to_string("/proc/diskstats")
-                    .unwrap_or_default();
+                let diskstats = std::fs::read_to_string("/proc/diskstats").unwrap_or_default();
                 let mut disks = vec![];
                 for line in diskstats.lines().take(10) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
@@ -268,8 +319,7 @@ impl AgentFs {
                 Ok(serde_json::to_string_pretty(&disk_info)?.into_bytes())
             }
             "sensor_network" => {
-                let net_dev = std::fs::read_to_string("/proc/net/dev")
-                    .unwrap_or_default();
+                let net_dev = std::fs::read_to_string("/proc/net/dev").unwrap_or_default();
                 let mut interfaces = vec![];
                 for line in net_dev.lines().skip(2) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
@@ -287,9 +337,7 @@ impl AgentFs {
                 });
                 Ok(serde_json::to_string_pretty(&net_info)?.into_bytes())
             }
-            "context_current" => {
-                Ok(b"# Current Context\n\nNo active conversation.\n".to_vec())
-            }
+            "context_current" => Ok(b"# Current Context\n\nNo active conversation.\n".to_vec()),
             "context_memory" => {
                 Ok(b"# Memory State\n\nL1: empty\nL2: 0 entries\nL3: 0 entries\n".to_vec())
             }
@@ -297,12 +345,8 @@ impl AgentFs {
                 let tools = serde_json::json!([]);
                 Ok(serde_json::to_string_pretty(&tools)?.into_bytes())
             }
-            "log_agent" => {
-                Ok(b"# Agent Log\n\nNo log entries.\n".to_vec())
-            }
-            "log_audit" => {
-                Ok(b"".to_vec())
-            }
+            "log_agent" => Ok(b"# Agent Log\n\nNo log entries.\n".to_vec()),
+            "log_audit" => Ok(b"".to_vec()),
             "agent_status_main" => {
                 let status = serde_json::json!({
                     "agent": "main",

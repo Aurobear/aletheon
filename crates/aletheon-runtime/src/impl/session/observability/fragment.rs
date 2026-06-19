@@ -20,7 +20,11 @@ impl FragmentAccumulator {
     pub fn push(&mut self, delta: impl Into<String>) {
         let delta = delta.into();
         self.total_bytes += delta.len();
-        debug!(len = delta.len(), total = self.total_bytes, "Fragment pushed");
+        debug!(
+            len = delta.len(),
+            total = self.total_bytes,
+            "Fragment pushed"
+        );
         self.fragments.push(delta);
     }
 

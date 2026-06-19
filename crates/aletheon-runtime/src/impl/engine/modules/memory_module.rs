@@ -9,11 +9,11 @@ use tokio::sync::Mutex;
 use tracing::{debug, error};
 
 use aletheon_abi::envelope::*;
-use aletheon_comm::CommunicationBus;
 use aletheon_comm::envelope::Payload;
+use aletheon_comm::CommunicationBus;
 
-use crate::r#impl::memory::CoreMemory;
 use crate::r#impl::memory::recall_memory::RecallMemory;
+use crate::r#impl::memory::CoreMemory;
 
 use super::{MemoryRequest, MemoryResponse, RecallEntry};
 
@@ -69,55 +69,46 @@ impl MemoryModule {
                 entry_type,
                 content,
                 metadata,
-            } => {
-                match &self.recall {
-                    Some(recall_arc) => {
-                        let recall = recall_arc.lock().await;
-                        match recall.store(
-                            &session_id,
-                            &entry_type,
-                            &content,
-                            metadata.as_deref(),
-                        ) {
-                            Ok(id) => MemoryResponse::RecallStored { id },
-                            Err(e) => MemoryResponse::Error {
-                                message: format!("Store failed: {}", e),
-                            },
-                        }
+            } => match &self.recall {
+                Some(recall_arc) => {
+                    let recall = recall_arc.lock().await;
+                    match recall.store(&session_id, &entry_type, &content, metadata.as_deref()) {
+                        Ok(id) => MemoryResponse::RecallStored { id },
+                        Err(e) => MemoryResponse::Error {
+                            message: format!("Store failed: {}", e),
+                        },
                     }
-                    None => MemoryResponse::Error {
-                        message: "RecallMemory not initialized".to_string(),
-                    },
                 }
-            }
-            MemoryRequest::SearchRecall { query, limit } => {
-                match &self.recall {
-                    Some(recall_arc) => {
-                        let recall = recall_arc.lock().await;
-                        match recall.search(&query, limit) {
-                            Ok(entries) => {
-                                let entries = entries
-                                    .into_iter()
-                                    .map(|e| RecallEntry {
-                                        id: e.id,
-                                        session_id: e.session_id,
-                                        entry_type: e.entry_type,
-                                        content: e.content,
-                                        metadata: e.metadata,
-                                    })
-                                    .collect();
-                                MemoryResponse::RecallSearchResults { entries }
-                            }
-                            Err(e) => MemoryResponse::Error {
-                                message: format!("Search failed: {}", e),
-                            },
+                None => MemoryResponse::Error {
+                    message: "RecallMemory not initialized".to_string(),
+                },
+            },
+            MemoryRequest::SearchRecall { query, limit } => match &self.recall {
+                Some(recall_arc) => {
+                    let recall = recall_arc.lock().await;
+                    match recall.search(&query, limit) {
+                        Ok(entries) => {
+                            let entries = entries
+                                .into_iter()
+                                .map(|e| RecallEntry {
+                                    id: e.id,
+                                    session_id: e.session_id,
+                                    entry_type: e.entry_type,
+                                    content: e.content,
+                                    metadata: e.metadata,
+                                })
+                                .collect();
+                            MemoryResponse::RecallSearchResults { entries }
                         }
+                        Err(e) => MemoryResponse::Error {
+                            message: format!("Search failed: {}", e),
+                        },
                     }
-                    None => MemoryResponse::Error {
-                        message: "RecallMemory not initialized".to_string(),
-                    },
                 }
-            }
+                None => MemoryResponse::Error {
+                    message: "RecallMemory not initialized".to_string(),
+                },
+            },
         }
     }
 }

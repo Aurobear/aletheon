@@ -12,13 +12,9 @@ fn percent_encode(input: &str) -> String {
     let mut out = String::with_capacity(input.len() * 3);
     for byte in input.bytes() {
         match byte {
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'_'
-            | b'.'
-            | b'~' => out.push(byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
             b' ' => out.push('+'),
             _ => {
                 out.push('%');
@@ -86,9 +82,7 @@ impl BearerTokenAuth {
     ///
     /// Returns `None` if the env var is not set or empty.
     pub fn token(&self) -> Option<String> {
-        std::env::var(&self.env_var)
-            .ok()
-            .filter(|v| !v.is_empty())
+        std::env::var(&self.env_var).ok().filter(|v| !v.is_empty())
     }
 
     /// Return the full `Authorization: Bearer <token>` header value.
@@ -179,8 +173,7 @@ impl TokenStore {
     pub fn open_default() -> Result<Self> {
         let path = Self::default_path()?;
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
         Self::new(path)
     }
@@ -203,11 +196,9 @@ impl TokenStore {
     /// Persist current state to disk.
     pub fn save(&self) -> Result<()> {
         if let Some(parent) = self.storage_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
-        let json = serde_json::to_string_pretty(&self.tokens)
-            .context("serializing token store")?;
+        let json = serde_json::to_string_pretty(&self.tokens).context("serializing token store")?;
         fs::write(&self.storage_path, json)
             .with_context(|| format!("writing token store {}", self.storage_path.display()))?;
         Ok(())
@@ -508,10 +499,7 @@ fn parse_token_response(raw: &serde_json::Value) -> Result<TokenEntry> {
     let expires_in = raw["expires_in"].as_u64().unwrap_or(3600);
     let expires_at = now_epoch_secs() + expires_in;
 
-    let token_type = raw["token_type"]
-        .as_str()
-        .unwrap_or("Bearer")
-        .to_string();
+    let token_type = raw["token_type"].as_str().unwrap_or("Bearer").to_string();
 
     let refresh_token = raw["refresh_token"].as_str().map(String::from);
 
@@ -546,10 +534,7 @@ mod tests {
 
         std::env::set_var("TEST_MCP_TOKEN_READ", "secret123");
         assert_eq!(auth.token().as_deref(), Some("secret123"));
-        assert_eq!(
-            auth.header_value().as_deref(),
-            Some("Bearer secret123")
-        );
+        assert_eq!(auth.header_value().as_deref(), Some("Bearer secret123"));
         std::env::remove_var("TEST_MCP_TOKEN_READ");
     }
 

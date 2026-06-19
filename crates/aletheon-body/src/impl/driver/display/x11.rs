@@ -21,8 +21,7 @@ impl DisplayDriver for X11DisplayDriver {
     fn screenshot(&self) -> Result<Image> {
         use x11rb::protocol::xproto::*;
 
-        let (conn, screen_num) =
-            x11rb::connect(None).context("Failed to connect to X11")?;
+        let (conn, screen_num) = x11rb::connect(None).context("Failed to connect to X11")?;
         let screen = &conn.setup().roots[screen_num];
         let root = screen.root;
         let width = screen.width_in_pixels as u32;
@@ -61,8 +60,7 @@ impl DisplayDriver for X11DisplayDriver {
     fn screenshot_region(&self, x: i32, y: i32, w: i32, h: i32) -> Result<Image> {
         use x11rb::protocol::xproto::*;
 
-        let (conn, screen_num) =
-            x11rb::connect(None).context("Failed to connect to X11")?;
+        let (conn, screen_num) = x11rb::connect(None).context("Failed to connect to X11")?;
         let screen = &conn.setup().roots[screen_num];
         let root = screen.root;
 

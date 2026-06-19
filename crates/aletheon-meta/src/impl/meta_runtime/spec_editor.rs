@@ -3,13 +3,15 @@
 //! Applies GenomePatch operations to a Genome: modify care weights,
 //! add/remove boundary rules, and other targeted mutations.
 
+use crate::core::types::{CarePriority, Genome, GenomePatch, PatchOperation};
 use anyhow::{bail, Result};
-use crate::core::types::{Genome, GenomePatch, PatchOperation, CarePriority};
 
 pub struct SpecEditor;
 
 impl SpecEditor {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Apply a patch to the genome.
     ///
@@ -50,14 +52,23 @@ impl SpecEditor {
         match &patch.operation {
             PatchOperation::Modify | PatchOperation::Replace => {
                 // Expect value to be {"topic": "...", "weight": 0.x}
-                let topic = patch.value.get("topic")
+                let topic = patch
+                    .value
+                    .get("topic")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("care.priorities patch requires 'topic' field"))?;
-                let weight = patch.value.get("weight")
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("care.priorities patch requires 'topic' field")
+                    })?;
+                let weight = patch
+                    .value
+                    .get("weight")
                     .and_then(|v| v.as_f64())
-                    .ok_or_else(|| anyhow::anyhow!("care.priorities patch requires 'weight' field"))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("care.priorities patch requires 'weight' field")
+                    })?;
 
-                if let Some(priority) = genome.care.priorities.iter_mut().find(|p| p.topic == topic) {
+                if let Some(priority) = genome.care.priorities.iter_mut().find(|p| p.topic == topic)
+                {
                     priority.weight = weight.clamp(0.0, 1.0);
                 } else {
                     // Add new priority if it doesn't exist
@@ -68,10 +79,14 @@ impl SpecEditor {
                 }
             }
             PatchOperation::Add => {
-                let topic = patch.value.get("topic")
+                let topic = patch
+                    .value
+                    .get("topic")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("care.priorities add requires 'topic' field"))?;
-                let weight = patch.value.get("weight")
+                let weight = patch
+                    .value
+                    .get("weight")
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.5);
 
@@ -84,7 +99,9 @@ impl SpecEditor {
                 }
             }
             PatchOperation::Remove => {
-                let topic = patch.value.as_str()
+                let topic = patch
+                    .value
+                    .as_str()
                     .or_else(|| patch.value.get("topic").and_then(|v| v.as_str()))
                     .ok_or_else(|| anyhow::anyhow!("care.priorities remove requires 'topic'"))?;
                 genome.care.priorities.retain(|p| p.topic != topic);
@@ -98,18 +115,26 @@ impl SpecEditor {
 
         match &patch.operation {
             PatchOperation::Add => {
-                let id = patch.value.get("id")
+                let id = patch
+                    .value
+                    .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("boundary.rules add requires 'id'"))?;
-                let condition = patch.value.get("condition")
+                let condition = patch
+                    .value
+                    .get("condition")
                     .and_then(|v| v.as_str())
                     .unwrap_or("true")
                     .to_string();
-                let action = patch.value.get("action")
+                let action = patch
+                    .value
+                    .get("action")
                     .and_then(|v| v.as_str())
                     .unwrap_or("allow")
                     .to_string();
-                let priority = patch.value.get("priority")
+                let priority = patch
+                    .value
+                    .get("priority")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(100) as u32;
 
@@ -124,13 +149,17 @@ impl SpecEditor {
                 }
             }
             PatchOperation::Remove => {
-                let id = patch.value.as_str()
+                let id = patch
+                    .value
+                    .as_str()
                     .or_else(|| patch.value.get("id").and_then(|v| v.as_str()))
                     .ok_or_else(|| anyhow::anyhow!("boundary.rules remove requires 'id'"))?;
                 genome.boundary.rules.retain(|r| r.id != id);
             }
             PatchOperation::Modify | PatchOperation::Replace => {
-                let id = patch.value.get("id")
+                let id = patch
+                    .value
+                    .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("boundary.rules modify requires 'id'"))?;
 

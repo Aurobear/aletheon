@@ -3,9 +3,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
+use aletheon_abi::message::{ContentBlock, ImageSource, Message, Role};
 use aletheon_body::r#impl::acix::grounding::{GroundingProvider, GroundingResult};
 use aletheon_body::r#impl::driver::types::Image;
-use aletheon_abi::message::{ContentBlock, ImageSource, Message, Role};
 
 use crate::r#impl::llm::provider::LlmProvider;
 
@@ -74,8 +74,8 @@ If you cannot find the element, return confidence 0.0 and coordinates 0,0.",
         // Parse JSON from response (handle possible markdown code fences)
         let json_str = extract_json(&text);
 
-        let parsed: serde_json::Value =
-            serde_json::from_str(json_str).context(format!("Failed to parse grounding JSON: {text}"))?;
+        let parsed: serde_json::Value = serde_json::from_str(json_str)
+            .context(format!("Failed to parse grounding JSON: {text}"))?;
 
         Ok(GroundingResult {
             x: parsed["x"].as_i64().unwrap_or(0) as i32,

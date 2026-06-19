@@ -158,10 +158,7 @@ impl AgentError {
     }
 
     /// Attach a source error for chaining.
-    pub fn with_source(
-        mut self,
-        source: impl std::error::Error + Send + Sync + 'static,
-    ) -> Self {
+    pub fn with_source(mut self, source: impl std::error::Error + Send + Sync + 'static) -> Self {
         self.source = Some(Box::new(source));
         self
     }
@@ -270,7 +267,11 @@ impl AgentError {
 
 impl std::fmt::Display for AgentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{:?}/{:?}] {}", self.severity, self.category, self.message)
+        write!(
+            f,
+            "[{:?}/{:?}] {}",
+            self.severity, self.category, self.message
+        )
     }
 }
 
@@ -332,7 +333,8 @@ impl BackoffStrategy {
                 let capped = delay.min(*max);
                 // Deterministic jitter based on attempt (no random in async context)
                 let jitter_offset = Duration::from_millis(
-                    (jitter.as_millis() as u64 * (attempt as u64 + 1)) % jitter.as_millis().max(1) as u64,
+                    (jitter.as_millis() as u64 * (attempt as u64 + 1))
+                        % jitter.as_millis().max(1) as u64,
                 );
                 capped + jitter_offset
             }
@@ -426,7 +428,10 @@ pub fn handle_tool_error(error: &AgentError, tool_name: &str, attempt: u32) -> T
                 message: error.message.clone(),
             },
         },
-        ErrorCategory::Llm { kind: LlmErrorKind::Timeout | LlmErrorKind::RateLimited, .. } => {
+        ErrorCategory::Llm {
+            kind: LlmErrorKind::Timeout | LlmErrorKind::RateLimited,
+            ..
+        } => {
             if attempt < 3 {
                 ToolErrorAction::Retry {
                     delay: llm_backoff().delay_for_attempt(attempt),
@@ -512,24 +517,28 @@ impl DegradationChain {
                     continue;
                 }
                 DegradationStrategy::AskUser => {
-                    return Err(last_error.unwrap_or_else(|| AgentError::new(
-                        ErrorSeverity::Unrecoverable,
-                        ErrorCategory::Config {
-                            kind: ConfigErrorKind::Invalid,
-                        },
-                        "All degradation strategies exhausted",
-                    )));
+                    return Err(last_error.unwrap_or_else(|| {
+                        AgentError::new(
+                            ErrorSeverity::Unrecoverable,
+                            ErrorCategory::Config {
+                                kind: ConfigErrorKind::Invalid,
+                            },
+                            "All degradation strategies exhausted",
+                        )
+                    }));
                 }
             }
         }
 
-        Err(last_error.unwrap_or_else(|| AgentError::new(
-            ErrorSeverity::Unrecoverable,
-            ErrorCategory::Config {
-                kind: ConfigErrorKind::Invalid,
-            },
-            "All degradation strategies exhausted",
-        )))
+        Err(last_error.unwrap_or_else(|| {
+            AgentError::new(
+                ErrorSeverity::Unrecoverable,
+                ErrorCategory::Config {
+                    kind: ConfigErrorKind::Invalid,
+                },
+                "All degradation strategies exhausted",
+            )
+        }))
     }
 }
 
@@ -720,24 +729,25 @@ mod tests {
         }]);
 
         let attempt = std::sync::atomic::AtomicU32::new(0);
-        let result = chain.execute(|| {
-            let prev = attempt.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            async move {
-                if prev < 1 {
-                    Err(AgentError::new(
-                        ErrorSeverity::Recoverable,
-                        ErrorCategory::Llm {
-                            provider: "test".to_string(),
-                            kind: LlmErrorKind::Timeout,
-                        },
-                        "timeout",
-                    ))
-                } else {
-                    Ok(42)
+        let result = chain
+            .execute(|| {
+                let prev = attempt.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    if prev < 1 {
+                        Err(AgentError::new(
+                            ErrorSeverity::Recoverable,
+                            ErrorCategory::Llm {
+                                provider: "test".to_string(),
+                                kind: LlmErrorKind::Timeout,
+                            },
+                            "timeout",
+                        ))
+                    } else {
+                        Ok(42)
+                    }
                 }
-            }
-        })
-        .await;
+            })
+            .await;
 
         assert_eq!(result.unwrap(), 42);
         assert_eq!(attempt.load(std::sync::atomic::Ordering::SeqCst), 2);

@@ -1,11 +1,11 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// A learned rule from the self-learning loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LearnRule {
     pub id: String,
-    pub rule_type: String,  // "warning", "avoid", "prefer"
+    pub rule_type: String, // "warning", "avoid", "prefer"
     pub tool_pattern: String,
     pub condition: String,
     pub action: String,
@@ -32,7 +32,9 @@ impl RuleStore {
     pub fn add(&mut self, rule: LearnRule) {
         if self.rules.len() >= self.max_rules {
             // Evict lowest confidence
-            if let Some(min_idx) = self.rules.iter()
+            if let Some(min_idx) = self
+                .rules
+                .iter()
                 .enumerate()
                 .min_by(|a, b| a.1.confidence.partial_cmp(&b.1.confidence).unwrap())
                 .map(|(i, _)| i)
@@ -49,7 +51,8 @@ impl RuleStore {
 
     /// Get rules matching a tool.
     pub fn get_for_tool(&self, tool_name: &str) -> Vec<&LearnRule> {
-        self.rules.iter()
+        self.rules
+            .iter()
             .filter(|r| {
                 if r.tool_pattern.ends_with('*') {
                     tool_name.starts_with(&r.tool_pattern[..r.tool_pattern.len() - 1])
@@ -70,7 +73,10 @@ impl RuleStore {
         for rule in &self.rules {
             result.push_str(&format!(
                 "- [{}] {} (confidence: {:.0}%): {}\n",
-                rule.rule_type, rule.tool_pattern, rule.confidence * 100.0, rule.action
+                rule.rule_type,
+                rule.tool_pattern,
+                rule.confidence * 100.0,
+                rule.action
             ));
         }
         result

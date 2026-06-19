@@ -131,10 +131,7 @@ mod tests {
         for _ in 0..4 {
             mgr.record("src");
         }
-        assert_eq!(
-            mgr.record("src"),
-            Some(BackpressureSignal::DropLowPriority)
-        );
+        assert_eq!(mgr.record("src"), Some(BackpressureSignal::DropLowPriority));
     }
 
     #[test]

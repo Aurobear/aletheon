@@ -30,10 +30,7 @@ impl ScriptRunner {
             cmd.env("PATH", path);
         }
 
-        let output = cmd
-            .output()
-            .await
-            .context("Failed to execute script")?;
+        let output = cmd.output().await.context("Failed to execute script")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

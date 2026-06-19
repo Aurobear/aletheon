@@ -3,18 +3,18 @@
 //! Supports loading/saving genomes from YAML files and computing diffs
 //! between two genomes.
 
+use crate::core::types::{ChangeType, Genome, GenomeChange, GenomeMeta};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
-use crate::core::types::{
-    Genome, GenomeChange, ChangeType, GenomeMeta,
-};
 
 /// Loads and saves genomes from YAML files.
 pub struct GenomeLoader;
 
 impl GenomeLoader {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Load genome from a YAML file.
     ///
@@ -59,8 +59,14 @@ impl GenomeLoader {
             },
             care: CareSpec {
                 priorities: vec![
-                    CarePriority { topic: "safety".to_string(), weight: 1.0 },
-                    CarePriority { topic: "helpfulness".to_string(), weight: 0.9 },
+                    CarePriority {
+                        topic: "safety".to_string(),
+                        weight: 1.0,
+                    },
+                    CarePriority {
+                        topic: "helpfulness".to_string(),
+                        weight: 0.9,
+                    },
                 ],
             },
             memory: MemorySpec {
@@ -68,10 +74,7 @@ impl GenomeLoader {
                 compaction_strategy: "lru".to_string(),
             },
             mutation: MutationSpec {
-                allowed_targets: vec![
-                    "care.priorities".to_string(),
-                    "boundary.rules".to_string(),
-                ],
+                allowed_targets: vec!["care.priorities".to_string(), "boundary.rules".to_string()],
                 require_sandbox: true,
                 require_self_field_approval: true,
             },
@@ -85,8 +88,8 @@ impl GenomeLoader {
 
     /// Save genome to a YAML file.
     pub fn save(&self, genome: &Genome, path: &Path) -> Result<()> {
-        let content = serde_yaml::to_string(genome)
-            .context("Failed to serialize genome to YAML")?;
+        let content =
+            serde_yaml::to_string(genome).context("Failed to serialize genome to YAML")?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
@@ -107,8 +110,8 @@ impl GenomeLoader {
 
     /// Save a GenomeMeta to YAML.
     pub fn save_meta(&self, meta: &GenomeMeta, path: &Path) -> Result<()> {
-        let content = serde_yaml::to_string(meta)
-            .context("Failed to serialize genome meta to YAML")?;
+        let content =
+            serde_yaml::to_string(meta).context("Failed to serialize genome meta to YAML")?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
@@ -125,10 +128,16 @@ impl GenomeLoader {
         let mut changes = Vec::new();
 
         // Compare care priorities
-        let old_care: HashMap<&str, f64> = old.care.priorities.iter()
+        let old_care: HashMap<&str, f64> = old
+            .care
+            .priorities
+            .iter()
             .map(|p| (p.topic.as_str(), p.weight))
             .collect();
-        let new_care: HashMap<&str, f64> = new.care.priorities.iter()
+        let new_care: HashMap<&str, f64> = new
+            .care
+            .priorities
+            .iter()
             .map(|p| (p.topic.as_str(), p.weight))
             .collect();
 
@@ -186,10 +195,16 @@ impl GenomeLoader {
         }
 
         // Compare boundary rules
-        let old_rules: HashMap<&str, &str> = old.boundary.rules.iter()
+        let old_rules: HashMap<&str, &str> = old
+            .boundary
+            .rules
+            .iter()
             .map(|r| (r.id.as_str(), r.action.as_str()))
             .collect();
-        let new_rules: HashMap<&str, &str> = new.boundary.rules.iter()
+        let new_rules: HashMap<&str, &str> = new
+            .boundary
+            .rules
+            .iter()
             .map(|r| (r.id.as_str(), r.action.as_str()))
             .collect();
 
@@ -227,10 +242,16 @@ impl GenomeLoader {
         }
 
         // Compare subsystem versions
-        let old_subs: HashMap<&str, &str> = old.topology.subsystems.iter()
+        let old_subs: HashMap<&str, &str> = old
+            .topology
+            .subsystems
+            .iter()
             .map(|s| (s.name.as_str(), s.version.as_str()))
             .collect();
-        let new_subs: HashMap<&str, &str> = new.topology.subsystems.iter()
+        let new_subs: HashMap<&str, &str> = new
+            .topology
+            .subsystems
+            .iter()
             .map(|s| (s.name.as_str(), s.version.as_str()))
             .collect();
 

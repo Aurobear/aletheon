@@ -177,7 +177,10 @@ impl EmergencyKillswitch {
                 KillswitchTrigger::InjectionDetected {
                     confidence_pct: (confidence * 100.0) as u8,
                 },
-                format!("Prompt injection detected with confidence {:.2}", confidence),
+                format!(
+                    "Prompt injection detected with confidence {:.2}",
+                    confidence
+                ),
             );
         }
     }
@@ -189,7 +192,11 @@ impl EmergencyKillswitch {
                 KillswitchTrigger::ResourceExhausted {
                     resource: resource.to_string(),
                 },
-                format!("Resource '{}' exhausted at {:.1}%", resource, usage_ratio * 100.0),
+                format!(
+                    "Resource '{}' exhausted at {:.1}%",
+                    resource,
+                    usage_ratio * 100.0
+                ),
             );
         }
     }
@@ -307,21 +314,22 @@ impl EmergencyKillswitch {
 
         // Wildcard matches
         match trigger {
-            KillswitchTrigger::ConsecutiveFailures { .. } => {
-                self.configs.get(&KillswitchTrigger::ConsecutiveFailures { count: 10 })
-            }
-            KillswitchTrigger::InjectionDetected { .. } => {
-                self.configs.get(&KillswitchTrigger::InjectionDetected { confidence_pct: 90 })
-            }
+            KillswitchTrigger::ConsecutiveFailures { .. } => self
+                .configs
+                .get(&KillswitchTrigger::ConsecutiveFailures { count: 10 }),
+            KillswitchTrigger::InjectionDetected { .. } => self
+                .configs
+                .get(&KillswitchTrigger::InjectionDetected { confidence_pct: 90 }),
             KillswitchTrigger::ResourceExhausted { .. } => {
                 self.configs.get(&KillswitchTrigger::ResourceExhausted {
                     resource: "any".to_string(),
                 })
             }
             KillswitchTrigger::SecurityPolicyViolation { .. } => {
-                self.configs.get(&KillswitchTrigger::SecurityPolicyViolation {
-                    violation: "any".to_string(),
-                })
+                self.configs
+                    .get(&KillswitchTrigger::SecurityPolicyViolation {
+                        violation: "any".to_string(),
+                    })
             }
             _ => None,
         }
@@ -432,21 +440,18 @@ mod tests {
         assert!(ks.activation_trigger().is_none());
 
         ks.user_activate();
-        assert_eq!(ks.activation_trigger(), Some(KillswitchTrigger::UserTriggered));
+        assert_eq!(
+            ks.activation_trigger(),
+            Some(KillswitchTrigger::UserTriggered)
+        );
     }
 
     #[test]
     fn test_double_activate_ignored() {
         let ks = EmergencyKillswitch::new();
-        assert!(ks.try_activate(
-            KillswitchTrigger::UserTriggered,
-            "first".to_string(),
-        ));
+        assert!(ks.try_activate(KillswitchTrigger::UserTriggered, "first".to_string(),));
         // Second activation should be ignored
-        assert!(!ks.try_activate(
-            KillswitchTrigger::UserTriggered,
-            "second".to_string(),
-        ));
+        assert!(!ks.try_activate(KillswitchTrigger::UserTriggered, "second".to_string(),));
     }
 
     #[test]

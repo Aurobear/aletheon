@@ -3,8 +3,8 @@
 //! Runs cargo test in the workspace and parses the output to produce
 //! a TestResult with pass/fail counts and failure details.
 
-use anyhow::{Context, Result};
 use aletheon_abi::{RuntimeCandidate, TestResult};
+use anyhow::{Context, Result};
 use std::process::Command;
 
 pub struct SandboxRunner {
@@ -55,7 +55,10 @@ impl SandboxRunner {
                 let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 match event_type {
                     "test" => {
-                        let name = event.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let name = event
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
                         let test_event = event.get("event").and_then(|v| v.as_str()).unwrap_or("");
                         match test_event {
                             "ok" => {
@@ -65,7 +68,8 @@ impl SandboxRunner {
                             "failed" => {
                                 tests_run += 1;
                                 tests_failed += 1;
-                                let stderr = event.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+                                let stderr =
+                                    event.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
                                 failures.push(format!("{}: {}", name, stderr.trim()));
                             }
                             "ignored" | "bench" => {
@@ -96,7 +100,12 @@ impl SandboxRunner {
                 let last_lines: Vec<&str> = stderr.lines().rev().take(10).collect();
                 failures.push(format!(
                     "cargo test failed (no JSON output). stderr tail: {}",
-                    last_lines.iter().rev().map(|s| *s).collect::<Vec<_>>().join("; ")
+                    last_lines
+                        .iter()
+                        .rev()
+                        .map(|s| *s)
+                        .collect::<Vec<_>>()
+                        .join("; ")
                 ));
             }
         }

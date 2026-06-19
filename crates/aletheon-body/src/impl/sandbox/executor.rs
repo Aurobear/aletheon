@@ -2,10 +2,10 @@ use anyhow::Result;
 use std::time::Duration;
 use tracing::{info, warn};
 
-use crate::r#impl::sandbox::{IsolationLevel, SandboxBackend, SandboxConfig, SandboxResult};
 use crate::r#impl::sandbox::bubblewrap::BubblewrapBackend;
 use crate::r#impl::sandbox::noop::NoopBackend;
 use crate::r#impl::sandbox::process::ProcessBackend;
+use crate::r#impl::sandbox::{IsolationLevel, SandboxBackend, SandboxConfig, SandboxResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxPreference {
@@ -57,7 +57,10 @@ impl SandboxExecutor {
             "SandboxExecutor initialized"
         );
 
-        Self { backends, preference }
+        Self {
+            backends,
+            preference,
+        }
     }
 
     /// Select the most appropriate backend based on the configured preference.

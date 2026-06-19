@@ -4,10 +4,10 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use aletheon_abi::envelope::*;
-use aletheon_brain::r#impl::learning::{OutcomeRecord, OutcomeContext};
 use aletheon_abi::tool::ToolResult;
-use aletheon_comm::CommunicationBus;
+use aletheon_brain::r#impl::learning::{OutcomeContext, OutcomeRecord};
 use aletheon_comm::envelope::Payload;
+use aletheon_comm::CommunicationBus;
 
 use super::cognitive_loop::Engine;
 use super::modules::{MemoryRequest, MemoryResponse};
@@ -62,13 +62,20 @@ impl Engine {
             });
             let label = if result.is_error { "ERROR" } else { "OK" };
             let content = format!("[{}] {}: {}", label, tool_name, record.result_summary);
-            if let Err(e) = rm.store(session_id, "learning_outcome", &content, Some(&metadata.to_string())) {
+            if let Err(e) = rm.store(
+                session_id,
+                "learning_outcome",
+                &content,
+                Some(&metadata.to_string()),
+            ) {
                 warn!(error = %e, "Failed to store learning outcome in recall memory");
             }
         }
 
         // Extract patterns from recent outcomes and update rule store
-        if let (Some(ref recorder), Some(ref extractor)) = (&self.outcome_recorder, &self.pattern_extractor) {
+        if let (Some(ref recorder), Some(ref extractor)) =
+            (&self.outcome_recorder, &self.pattern_extractor)
+        {
             if let Ok(recent_outcomes) = recorder.get_recent(100) {
                 let new_rules = extractor.extract(&recent_outcomes);
                 for rule in new_rules {
@@ -101,7 +108,10 @@ impl Engine {
                                 warn!(error = %message, "MemoryModule returned error for FormatForContext");
                             }
                             Ok(other) => {
-                                warn!(?other, "Unexpected response from MemoryModule for FormatForContext");
+                                warn!(
+                                    ?other,
+                                    "Unexpected response from MemoryModule for FormatForContext"
+                                );
                             }
                             Err(e) => {
                                 warn!(error = %e, "Failed to deserialize MemoryResponse");
@@ -152,7 +162,10 @@ impl Engine {
                                 warn!(error = %message, "MemoryModule returned error for StoreRecall");
                             }
                             Ok(other) => {
-                                warn!(?other, "Unexpected response from MemoryModule for StoreRecall");
+                                warn!(
+                                    ?other,
+                                    "Unexpected response from MemoryModule for StoreRecall"
+                                );
                             }
                             Err(e) => {
                                 warn!(error = %e, "Failed to deserialize MemoryResponse");

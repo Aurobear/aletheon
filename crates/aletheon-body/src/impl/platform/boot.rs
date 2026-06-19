@@ -3,11 +3,11 @@
 //! Manages boot phases, tracks service dependencies, and implements
 //! staged lazy loading for optimal startup performance.
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::{Duration, Instant};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -266,10 +266,7 @@ impl LazyLoadStage {
         Self {
             stage: 2,
             delay: Duration::from_millis(500),
-            components: vec![
-                "session_restore".to_string(),
-                "agent_registry".to_string(),
-            ],
+            components: vec!["session_restore".to_string(), "agent_registry".to_string()],
             on_demand: false,
         }
     }
@@ -279,10 +276,7 @@ impl LazyLoadStage {
         Self {
             stage: 3,
             delay: Duration::from_secs(2),
-            components: vec![
-                "llm_provider".to_string(),
-                "tool_system".to_string(),
-            ],
+            components: vec!["llm_provider".to_string(), "tool_system".to_string()],
             on_demand: false,
         }
     }
@@ -292,9 +286,7 @@ impl LazyLoadStage {
         Self {
             stage: 4,
             delay: Duration::from_secs(5),
-            components: vec![
-                "perception_sources".to_string(),
-            ],
+            components: vec!["perception_sources".to_string()],
             on_demand: false,
         }
     }
@@ -304,10 +296,7 @@ impl LazyLoadStage {
         Self {
             stage: 5,
             delay: Duration::ZERO,
-            components: vec![
-                "ebpf".to_string(),
-                "fuse".to_string(),
-            ],
+            components: vec!["ebpf".to_string(), "fuse".to_string()],
             on_demand: true,
         }
     }
@@ -457,7 +446,10 @@ impl BootMonitor {
     /// Record a boot event.
     pub async fn record_event(&self, event: BootEvent) {
         let mut timeline = self.timeline.write().await;
-        debug!("Boot event: [{}] {}: {}", event.phase as u8, event.component, event.message);
+        debug!(
+            "Boot event: [{}] {}: {}",
+            event.phase as u8, event.component, event.message
+        );
         timeline.push(event);
     }
 
@@ -490,23 +482,33 @@ impl BootMonitor {
 
     /// Start lazy loading for a specific stage.
     pub async fn start_lazy_stage(&self, stage_num: u8) -> Result<()> {
-        let stage = self.lazy_stages
+        let stage = self
+            .lazy_stages
             .iter()
             .find(|s| s.stage == stage_num)
             .ok_or_else(|| anyhow::anyhow!("Stage {} not found", stage_num))?;
 
         if stage.on_demand {
-            debug!("Stage {} is on-demand, skipping automatic loading", stage_num);
+            debug!(
+                "Stage {} is on-demand, skipping automatic loading",
+                stage_num
+            );
             return Ok(());
         }
 
-        info!("Starting lazy loading stage {}: {:?}", stage_num, stage.components);
+        info!(
+            "Starting lazy loading stage {}: {:?}",
+            stage_num, stage.components
+        );
 
         // Record stage start
         self.record_event(BootEvent::new(
             self.current_phase().await,
             "lazy_loader",
-            format!("Starting stage {} with components: {:?}", stage_num, stage.components),
+            format!(
+                "Starting stage {} with components: {:?}",
+                stage_num, stage.components
+            ),
         ))
         .await;
 
@@ -536,7 +538,8 @@ impl BootMonitor {
     /// Load an on-demand component.
     pub async fn load_on_demand(&self, component: &str) -> Result<()> {
         // Find which stage this component belongs to
-        let stage = self.lazy_stages
+        let stage = self
+            .lazy_stages
             .iter()
             .find(|s| s.components.contains(&component.to_string()));
 
@@ -567,7 +570,10 @@ impl BootMonitor {
                 anyhow::bail!("Component {} is not on-demand", component)
             }
             None => {
-                anyhow::bail!("Component {} not found in any lazy loading stage", component)
+                anyhow::bail!(
+                    "Component {} not found in any lazy loading stage",
+                    component
+                )
             }
         }
     }
@@ -579,7 +585,12 @@ impl BootMonitor {
 
     /// Get list of loaded components.
     pub async fn loaded_components(&self) -> Vec<String> {
-        self.loaded_components.read().await.iter().cloned().collect()
+        self.loaded_components
+            .read()
+            .await
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// Run boot diagnosis.
@@ -745,18 +756,22 @@ mod tests {
         let monitor = BootMonitor::new();
 
         // Record some events
-        monitor.record_event(BootEvent::new(
-            BootPhase::Initializing,
-            "test",
-            "Starting initialization",
-        )).await;
+        monitor
+            .record_event(BootEvent::new(
+                BootPhase::Initializing,
+                "test",
+                "Starting initialization",
+            ))
+            .await;
 
-        monitor.record_event(BootEvent::with_duration(
-            BootPhase::Initializing,
-            "test",
-            "Initialization complete",
-            Duration::from_millis(100),
-        )).await;
+        monitor
+            .record_event(BootEvent::with_duration(
+                BootPhase::Initializing,
+                "test",
+                "Initialization complete",
+                Duration::from_millis(100),
+            ))
+            .await;
 
         let timeline = monitor.timeline().await;
         assert_eq!(timeline.len(), 2);

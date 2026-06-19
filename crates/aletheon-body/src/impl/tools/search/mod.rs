@@ -206,9 +206,21 @@ mod tests {
     #[test]
     fn search_returns_relevant_results() {
         let entries = vec![
-            make_entry("bash_exec", "Execute a bash command and return stdout", ToolExposure::Direct),
-            make_entry("file_read", "Read a file from the filesystem", ToolExposure::Direct),
-            make_entry("ebpf_compile", "Compile an eBPF program", ToolExposure::Deferred),
+            make_entry(
+                "bash_exec",
+                "Execute a bash command and return stdout",
+                ToolExposure::Direct,
+            ),
+            make_entry(
+                "file_read",
+                "Read a file from the filesystem",
+                ToolExposure::Direct,
+            ),
+            make_entry(
+                "ebpf_compile",
+                "Compile an eBPF program",
+                ToolExposure::Deferred,
+            ),
         ];
         let catalog = BM25Catalog::build(entries);
 
@@ -234,7 +246,11 @@ mod tests {
     fn search_includes_deferred_tools() {
         let entries = vec![
             make_entry("direct_tool", "compile kernel module", ToolExposure::Direct),
-            make_entry("deferred_tool", "compile kernel module", ToolExposure::Deferred),
+            make_entry(
+                "deferred_tool",
+                "compile kernel module",
+                ToolExposure::Deferred,
+            ),
         ];
         let catalog = BM25Catalog::build(entries);
 
@@ -248,7 +264,11 @@ mod tests {
     #[test]
     fn search_excludes_direct_model_only() {
         let entries = vec![
-            make_entry("model_only", "special model tool", ToolExposure::DirectModelOnly),
+            make_entry(
+                "model_only",
+                "special model tool",
+                ToolExposure::DirectModelOnly,
+            ),
             make_entry("regular", "special model tool", ToolExposure::Direct),
         ];
         let catalog = BM25Catalog::build(entries);
@@ -285,7 +305,11 @@ mod tests {
         // A document with more matching terms should score higher.
         let entries = vec![
             make_entry("partial", "compile", ToolExposure::Direct),
-            make_entry("full_match", "compile kernel module build", ToolExposure::Direct),
+            make_entry(
+                "full_match",
+                "compile kernel module build",
+                ToolExposure::Direct,
+            ),
         ];
         let catalog = BM25Catalog::build(entries);
 

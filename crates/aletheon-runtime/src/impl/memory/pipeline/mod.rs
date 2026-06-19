@@ -97,7 +97,11 @@ impl MemoryPipeline {
 
     /// Create a pipeline with default configurations.
     pub fn with_defaults(memory_root: PathBuf) -> Self {
-        Self::new(memory_root, Phase1Config::default(), Phase2Config::default())
+        Self::new(
+            memory_root,
+            Phase1Config::default(),
+            Phase2Config::default(),
+        )
     }
 
     /// Get a reference to the state database.
@@ -265,7 +269,9 @@ mod tests {
         assert!(phase2_result.output_path.exists());
 
         // Verify the consolidated output.
-        let content = fs::read_to_string(&phase2_result.output_path).await.unwrap();
+        let content = fs::read_to_string(&phase2_result.output_path)
+            .await
+            .unwrap();
         assert!(content.contains("# Raw Memories"));
         assert!(content.contains("Session: sess-a"));
         assert!(content.contains("Session: sess-b"));

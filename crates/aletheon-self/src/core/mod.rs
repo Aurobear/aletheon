@@ -16,27 +16,27 @@ pub mod mutation;
 pub mod narrative;
 pub mod store;
 
-use aletheon_abi::{
-    Care, Conflict, Context, Identity, Intent, MutationIntent,
-    Resolution, Subsystem, SubsystemContext, SubsystemHealth, Verdict, Version,
-};
 use aletheon_abi::self_field::RiskLevel;
+use aletheon_abi::{
+    Care, Conflict, Context, Identity, Intent, MutationIntent, Resolution, Subsystem,
+    SubsystemContext, SubsystemHealth, Verdict, Version,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Duration;
 use tracing::info;
 
+use crate::bridge::hook::HookBridge;
+use crate::bridge::loop_detector::LoopBridge;
+use crate::bridge::policy::PolicyBridge;
 use crate::core::attention::AttentionLayer;
 use crate::core::boundary::{BoundaryLayer, BoundaryRule};
 use crate::core::care::CareLayer;
 use crate::core::conflict::ConflictLayer;
 use crate::core::continuity::ContinuityLayer;
-use crate::bridge::hook::HookBridge;
 use crate::core::identity::IdentityLayer;
-use crate::bridge::loop_detector::LoopBridge;
 use crate::core::mutation::MutationLayer;
 use crate::core::narrative::NarrativeLayer;
-use crate::bridge::policy::PolicyBridge;
 
 use crate::core::store::SelfFieldStore;
 
@@ -105,9 +105,9 @@ impl SelfField {
         // Record initial identity in continuity
         continuity.record(&config.agent_name, &config.agent_version, "initialized");
 
-        let store = config.db_path.and_then(|path| {
-            SelfFieldStore::new(path).ok()
-        });
+        let store = config
+            .db_path
+            .and_then(|path| SelfFieldStore::new(path).ok());
 
         Self {
             boundary,
@@ -159,13 +159,25 @@ impl SelfField {
     }
 
     /// Check for loops (called by Runtime during ReAct loop).
-    pub fn check_loops(&self, tool_name: &str, args: &serde_json::Value, turn_id: &str) -> Option<Verdict> {
+    pub fn check_loops(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+        turn_id: &str,
+    ) -> Option<Verdict> {
         self.loop_bridge.pre_check(tool_name, args, turn_id)
     }
 
     /// Record a completed tool call for loop detection.
-    pub fn record_tool_result(&self, tool_name: &str, args: &serde_json::Value, result: &aletheon_abi::tool::ToolResult, turn_id: &str) {
-        self.loop_bridge.post_check(tool_name, args, result, turn_id);
+    pub fn record_tool_result(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+        result: &aletheon_abi::tool::ToolResult,
+        turn_id: &str,
+    ) {
+        self.loop_bridge
+            .post_check(tool_name, args, result, turn_id);
     }
 
     /// Notify new turn for loop detection.
@@ -218,7 +230,8 @@ impl Subsystem for SelfField {
     async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
         info!("SelfField initializing");
         self.load_all()?;
-        self.narrative.narrate("init", "SelfField subsystem initialized");
+        self.narrative
+            .narrate("init", "SelfField subsystem initialized");
         self.initialized = true;
         Ok(())
     }
@@ -234,7 +247,8 @@ impl Subsystem for SelfField {
 
     async fn shutdown(&mut self) -> Result<()> {
         info!("SelfField shutting down");
-        self.narrative.narrate("shutdown", "SelfField subsystem shutting down");
+        self.narrative
+            .narrate("shutdown", "SelfField subsystem shutting down");
         self.save_all()?;
         self.initialized = false;
         Ok(())
@@ -250,7 +264,11 @@ impl aletheon_abi::SelfFieldOps for SelfField {
     /// Core review pipeline: Hook -> Policy -> Boundary -> Care -> Permissions -> Narrative -> Verdict.
     async fn review(&self, intent: &Intent, ctx: &Context) -> Result<Verdict> {
         // 1. Hook check (pre-tool hooks can block)
-        if let Some(verdict) = self.hook_bridge.fire_pre_tool(&intent.action, &intent.parameters.to_string()).await {
+        if let Some(verdict) = self
+            .hook_bridge
+            .fire_pre_tool(&intent.action, &intent.parameters.to_string())
+            .await
+        {
             self.narrative.record(
                 "hook_check",
                 &format!("Blocked by hook: {:?}", verdict),
@@ -361,8 +379,8 @@ impl aletheon_abi::SelfFieldOps for SelfField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_abi::{CapabilitySet, IntentSource, SelfFieldOps};
     use aletheon_abi::self_field::{ConflictSource, RiskLevel};
+    use aletheon_abi::{CapabilitySet, IntentSource, SelfFieldOps};
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -491,7 +509,9 @@ mod tests {
     async fn resolve_conflict_works() {
         let sf = SelfField::new(default_config());
         let conflict = Conflict {
-            source_a: ConflictSource::User { intent: "do X".to_string() },
+            source_a: ConflictSource::User {
+                intent: "do X".to_string(),
+            },
             source_b: ConflictSource::Brain {
                 proposal: "do Y".to_string(),
                 confidence: 0.5,
@@ -519,7 +539,10 @@ mod tests {
     async fn subsystem_lifecycle() {
         let mut sf = SelfField::new(default_config());
         assert_eq!(sf.name(), "self_field");
-        assert!(matches!(sf.health().await, SubsystemHealth::Degraded { .. }));
+        assert!(matches!(
+            sf.health().await,
+            SubsystemHealth::Degraded { .. }
+        ));
 
         let ctx = SubsystemContext {
             name: "self_field".to_string(),
@@ -530,6 +553,9 @@ mod tests {
         assert!(matches!(sf.health().await, SubsystemHealth::Healthy));
 
         sf.shutdown().await.unwrap();
-        assert!(matches!(sf.health().await, SubsystemHealth::Degraded { .. }));
+        assert!(matches!(
+            sf.health().await,
+            SubsystemHealth::Degraded { .. }
+        ));
     }
 }

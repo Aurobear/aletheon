@@ -35,23 +35,21 @@ impl TuiEvent {
             Event::Key(key) => Some(TuiEvent::Key(key)),
             Event::Paste(s) => Some(TuiEvent::Paste(s)),
             Event::Resize(_, _) => Some(TuiEvent::Resize),
-            crossterm::event::Event::Mouse(mouse) => {
-                match mouse.kind {
-                    crossterm::event::MouseEventKind::ScrollUp => {
-                        Some(TuiEvent::Key(crossterm::event::KeyEvent::new(
-                            crossterm::event::KeyCode::PageUp,
-                            crossterm::event::KeyModifiers::empty(),
-                        )))
-                    }
-                    crossterm::event::MouseEventKind::ScrollDown => {
-                        Some(TuiEvent::Key(crossterm::event::KeyEvent::new(
-                            crossterm::event::KeyCode::PageDown,
-                            crossterm::event::KeyModifiers::empty(),
-                        )))
-                    }
-                    _ => None,
+            crossterm::event::Event::Mouse(mouse) => match mouse.kind {
+                crossterm::event::MouseEventKind::ScrollUp => {
+                    Some(TuiEvent::Key(crossterm::event::KeyEvent::new(
+                        crossterm::event::KeyCode::PageUp,
+                        crossterm::event::KeyModifiers::empty(),
+                    )))
                 }
-            }
+                crossterm::event::MouseEventKind::ScrollDown => {
+                    Some(TuiEvent::Key(crossterm::event::KeyEvent::new(
+                        crossterm::event::KeyCode::PageDown,
+                        crossterm::event::KeyModifiers::empty(),
+                    )))
+                }
+                _ => None,
+            },
             _ => None,
         }
     }

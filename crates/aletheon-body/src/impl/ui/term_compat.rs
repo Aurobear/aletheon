@@ -27,18 +27,18 @@ impl Theme {
     pub fn dark(caps: &TermCaps) -> Self {
         if caps.true_color {
             Self {
-                accent: Color::Rgb(217, 119, 87),       // warm copper
+                accent: Color::Rgb(217, 119, 87), // warm copper
                 text: Color::Rgb(230, 230, 230),
                 text_muted: Color::Rgb(120, 120, 120),
                 background: Color::Rgb(18, 18, 24),
                 bg_panel: Color::Rgb(28, 28, 38),
-                bg_user: Color::Rgb(35, 35, 55),         // subtle blue tint
+                bg_user: Color::Rgb(35, 35, 55), // subtle blue tint
                 border: Color::Rgb(60, 60, 80),
                 border_active: Color::Rgb(217, 119, 87),
                 error: Color::Rgb(220, 80, 80),
                 warning: Color::Rgb(220, 180, 60),
                 success: Color::Rgb(80, 200, 120),
-                user_icon: Color::Rgb(100, 180, 255),    // light blue
+                user_icon: Color::Rgb(100, 180, 255), // light blue
                 assistant_icon: Color::Rgb(217, 119, 87), // accent
                 system_icon: Color::Rgb(120, 120, 120),
                 code_bg: Color::Rgb(22, 22, 32),
@@ -111,27 +111,47 @@ impl TermCaps {
 
     /// User role icon.
     pub fn icon_user(&self) -> &'static str {
-        if self.unicode { ">> " } else { ">> " }
+        if self.unicode {
+            ">> "
+        } else {
+            ">> "
+        }
     }
 
     /// Assistant role icon.
     pub fn icon_assistant(&self) -> &'static str {
-        if self.unicode { "## " } else { "## " }
+        if self.unicode {
+            "## "
+        } else {
+            "## "
+        }
     }
 
     /// System role icon.
     pub fn icon_system(&self) -> &'static str {
-        if self.unicode { "[i] " } else { "[i] " }
+        if self.unicode {
+            "[i] "
+        } else {
+            "[i] "
+        }
     }
 
     /// Connected indicator.
     pub fn icon_connected(&self) -> &'static str {
-        if self.unicode { "●" } else { "*" }
+        if self.unicode {
+            "●"
+        } else {
+            "*"
+        }
     }
 
     /// Disconnected indicator.
     pub fn icon_disconnected(&self) -> &'static str {
-        if self.unicode { "○" } else { "o" }
+        if self.unicode {
+            "○"
+        } else {
+            "o"
+        }
     }
 
     /// Spinner animation frames.
@@ -145,17 +165,29 @@ impl TermCaps {
 
     /// Vertical separator for code blocks and blockquotes.
     pub fn vline(&self) -> &'static str {
-        if self.unicode { "│" } else { "|" }
+        if self.unicode {
+            "│"
+        } else {
+            "|"
+        }
     }
 
     /// Bullet for list items.
     pub fn bullet(&self) -> &'static str {
-        if self.unicode { "•" } else { "*" }
+        if self.unicode {
+            "•"
+        } else {
+            "*"
+        }
     }
 
     /// Horizontal line separator.
     pub fn hline(&self) -> &'static str {
-        if self.unicode { "─" } else { "-" }
+        if self.unicode {
+            "─"
+        } else {
+            "-"
+        }
     }
 }
 
@@ -252,11 +284,23 @@ fn rgb_to_ansi(r: u8, g: u8, b: u8) -> Color {
     if max < 30 {
         Color::Black
     } else if r >= g && r >= b {
-        if max > 180 { Color::LightRed } else { Color::Red }
+        if max > 180 {
+            Color::LightRed
+        } else {
+            Color::Red
+        }
     } else if g >= r && g >= b {
-        if max > 180 { Color::LightGreen } else { Color::Green }
+        if max > 180 {
+            Color::LightGreen
+        } else {
+            Color::Green
+        }
     } else if b >= r && b >= g {
-        if max > 180 { Color::LightBlue } else { Color::Blue }
+        if max > 180 {
+            Color::LightBlue
+        } else {
+            Color::Blue
+        }
     } else if brightness > 180 {
         Color::White
     } else if brightness > 100 {

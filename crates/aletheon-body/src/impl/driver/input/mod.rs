@@ -1,5 +1,5 @@
-use anyhow::Result;
 use crate::r#impl::driver::types::{Key, MouseButton, ScrollDirection};
+use anyhow::Result;
 
 /// Input device driver trait
 pub trait InputDriver: Send + Sync {
@@ -30,7 +30,10 @@ impl MockInputDriver {
 
 impl InputDriver for MockInputDriver {
     fn click(&self, x: i32, y: i32, button: MouseButton) -> Result<()> {
-        self.log.lock().unwrap().push(format!("click({x},{y},{button:?})"));
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("click({x},{y},{button:?})"));
         Ok(())
     }
 
@@ -41,17 +44,26 @@ impl InputDriver for MockInputDriver {
 
     fn hotkey(&self, keys: &[Key]) -> Result<()> {
         let key_strs: Vec<String> = keys.iter().map(|k| format!("{k:?}")).collect();
-        self.log.lock().unwrap().push(format!("hotkey({})", key_strs.join("+")));
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("hotkey({})", key_strs.join("+")));
         Ok(())
     }
 
     fn scroll(&self, x: i32, y: i32, direction: ScrollDirection, amount: i32) -> Result<()> {
-        self.log.lock().unwrap().push(format!("scroll({x},{y},{direction:?},{amount})"));
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("scroll({x},{y},{direction:?},{amount})"));
         Ok(())
     }
 
     fn drag(&self, x1: i32, y1: i32, x2: i32, y2: i32) -> Result<()> {
-        self.log.lock().unwrap().push(format!("drag({x1},{y1},{x2},{y2})"));
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("drag({x1},{y1},{x2},{y2})"));
         Ok(())
     }
 }

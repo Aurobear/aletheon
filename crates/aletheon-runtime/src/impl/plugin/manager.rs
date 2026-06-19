@@ -5,10 +5,10 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use super::manifest::PluginManifest;
 use super::loader::PluginLoader;
+use super::manifest::PluginManifest;
 use super::runtime::PluginRuntime;
-use aletheon_abi::tool::{Tool, ToolContext, ToolResult, ToolResultMeta, PermissionLevel};
+use aletheon_abi::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 /// Plugin lifecycle state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +44,9 @@ impl PluginManager {
     /// Discover and load all plugins.
     pub async fn load_all(&self) -> Result<usize, anyhow::Error> {
         let manifests = self.loader.discover()?;
-        let load_order = self.loader.resolve_dependencies(&manifests)
+        let load_order = self
+            .loader
+            .resolve_dependencies(&manifests)
             .map_err(|e| anyhow::anyhow!(e))?;
 
         let mut loaded = 0;
@@ -64,11 +66,14 @@ impl PluginManager {
                     Ok(rt) => rt,
                     Err(e) => {
                         warn!(id = id.as_str(), error = %e, "Failed to create plugin runtime");
-                        plugins.insert(id.clone(), ManagedPlugin {
-                            manifest: manifest.clone(),
-                            state: PluginState::Error(e.to_string()),
-                            tools: Vec::new(),
-                        });
+                        plugins.insert(
+                            id.clone(),
+                            ManagedPlugin {
+                                manifest: manifest.clone(),
+                                state: PluginState::Error(e.to_string()),
+                                tools: Vec::new(),
+                            },
+                        );
                         continue;
                     }
                 };
@@ -76,11 +81,14 @@ impl PluginManager {
                 // Create plugin tools with real runtime
                 let tools = self.create_plugin_tools(manifest, runtime);
 
-                plugins.insert(id.clone(), ManagedPlugin {
-                    manifest: manifest.clone(),
-                    state: PluginState::Loaded,
-                    tools,
-                });
+                plugins.insert(
+                    id.clone(),
+                    ManagedPlugin {
+                        manifest: manifest.clone(),
+                        state: PluginState::Loaded,
+                        tools,
+                    },
+                );
 
                 loaded += 1;
             }
@@ -93,7 +101,8 @@ impl PluginManager {
     /// Get all active plugin tools.
     pub async fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
         let plugins = self.plugins.read().await;
-        plugins.values()
+        plugins
+            .values()
             .filter(|p| p.state == PluginState::Loaded || p.state == PluginState::Active)
             .flat_map(|p| p.tools.clone())
             .collect()
@@ -129,26 +138,35 @@ impl PluginManager {
             }
         }
         // Fallback: use the first search dir
-        self.loader.search_dirs()
+        self.loader
+            .search_dirs()
             .first()
             .cloned()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(&manifest.id)
     }
 
-    fn create_plugin_tools(&self, manifest: &PluginManifest, runtime: PluginRuntime) -> Vec<Arc<dyn Tool>> {
+    fn create_plugin_tools(
+        &self,
+        manifest: &PluginManifest,
+        runtime: PluginRuntime,
+    ) -> Vec<Arc<dyn Tool>> {
         let runtime = Arc::new(runtime);
 
-        manifest.tools.iter().map(|tool_def| {
-            Arc::new(PluginTool {
-                name: tool_def.name.clone(),
-                description: tool_def.description.clone(),
-                schema: tool_def.input_schema.clone(),
-                permission: parse_permission_level(&tool_def.permission_level),
-                runtime: Arc::clone(&runtime),
-                plugin_id: manifest.id.clone(),
-            }) as Arc<dyn Tool>
-        }).collect()
+        manifest
+            .tools
+            .iter()
+            .map(|tool_def| {
+                Arc::new(PluginTool {
+                    name: tool_def.name.clone(),
+                    description: tool_def.description.clone(),
+                    schema: tool_def.input_schema.clone(),
+                    permission: parse_permission_level(&tool_def.permission_level),
+                    runtime: Arc::clone(&runtime),
+                    plugin_id: manifest.id.clone(),
+                }) as Arc<dyn Tool>
+            })
+            .collect()
     }
 }
 
@@ -174,10 +192,18 @@ struct PluginTool {
 
 #[async_trait::async_trait]
 impl Tool for PluginTool {
-    fn name(&self) -> &str { &self.name }
-    fn description(&self) -> &str { &self.description }
-    fn input_schema(&self) -> serde_json::Value { self.schema.clone() }
-    fn permission_level(&self) -> PermissionLevel { self.permission }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn description(&self) -> &str {
+        &self.description
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        self.schema.clone()
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        self.permission
+    }
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(PluginTool {
             name: self.name.clone(),
@@ -197,8 +223,8 @@ impl Tool for PluginTool {
 
         match result {
             Ok(value) => {
-                let content = serde_json::to_string_pretty(&value)
-                    .unwrap_or_else(|_| value.to_string());
+                let content =
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
                 ToolResult {
                     content,
                     is_error: false,

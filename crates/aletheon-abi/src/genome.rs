@@ -35,12 +35,12 @@ pub struct SubsystemSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SubsystemType {
-    Policy,       // SelfField
-    Cognitive,    // BrainCore
-    Execution,    // BodyRuntime
-    Storage,      // Memory
+    Policy,         // SelfField
+    Cognitive,      // BrainCore
+    Execution,      // BodyRuntime
+    Storage,        // Memory
     Infrastructure, // EventBus
-    Evolution,    // MetaRuntime
+    Evolution,      // MetaRuntime
 }
 
 /// Identity specification.

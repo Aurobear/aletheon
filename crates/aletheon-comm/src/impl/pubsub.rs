@@ -30,7 +30,9 @@ impl Protocol for PubSubProtocol {
     async fn request(&self, envelope: Envelope) -> Result<Envelope> {
         // PubSub doesn't support request-response; delegate to transport
         self.transport.send(envelope).await?;
-        anyhow::bail!("PubSubProtocol does not support request-response; use RequestResponseProtocol instead")
+        anyhow::bail!(
+            "PubSubProtocol does not support request-response; use RequestResponseProtocol instead"
+        )
     }
 
     async fn publish(&self, envelope: Envelope) -> Result<()> {

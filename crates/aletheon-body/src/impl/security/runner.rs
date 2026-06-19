@@ -2,14 +2,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-use aletheon_abi::tool::{Tool, ToolContext, ToolResult, ToolResultMeta, PermissionLevel};
-use crate::r#impl::sandbox::{SandboxExecutor, SandboxConfig};
-use super::approval::{ApprovalGate, ApprovalRequest, ApprovalDecision, AutoDenyGate};
-use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
-use super::policy::{PolicyEngine, PolicyVerdict};
-use super::output_guardrail::OutputGuardrail;
+use super::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest, AutoDenyGate};
 use super::audit::{AuditLogger, AuditRecord};
+use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
+use super::output_guardrail::OutputGuardrail;
+use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
+use crate::r#impl::sandbox::{SandboxConfig, SandboxExecutor};
+use aletheon_abi::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 #[derive(Debug)]
 pub enum ToolError {
@@ -51,10 +51,7 @@ pub struct ToolRunnerWithGuard {
 }
 
 impl ToolRunnerWithGuard {
-    pub fn new(
-        sandbox: SandboxExecutor,
-        audit_logger: AuditLogger,
-    ) -> Self {
+    pub fn new(sandbox: SandboxExecutor, audit_logger: AuditLogger) -> Self {
         Self {
             sandbox,
             loop_detector: LoopDetector::new(LoopDetectorConfig::default()),
@@ -103,7 +100,16 @@ impl ToolRunnerWithGuard {
         let policy_verdict = self.policy_engine.check(tool_name, &input);
         match policy_verdict {
             PolicyVerdict::Deny { reason } => {
-                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "denied").await;
+                self.log_audit(
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "denied",
+                )
+                .await;
                 return Err(ToolError::PolicyDenied { reason });
             }
             PolicyVerdict::RequireApproval { reason } => {
@@ -128,7 +134,16 @@ impl ToolRunnerWithGuard {
                                 self.session_approvals.insert(tool_name.to_string());
                             }
                             ApprovalDecision::Deny => {
-                                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "approval_denied").await;
+                                self.log_audit(
+                                    tool_name,
+                                    &input,
+                                    tool.permission_level(),
+                                    turn_id,
+                                    None,
+                                    &start,
+                                    "approval_denied",
+                                )
+                                .await;
                                 return Err(ToolError::PolicyDenied {
                                     reason: format!("{}: denied by approval gate", reason),
                                 });
@@ -148,33 +163,66 @@ impl ToolRunnerWithGuard {
                 warn!(tool = tool_name, reason = %reason, "Loop detector warning");
             }
             LoopVerdict::Block { reason, suggestion } => {
-                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "loop_blocked").await;
+                self.log_audit(
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "loop_blocked",
+                )
+                .await;
                 return Err(ToolError::LoopBlocked {
                     reason: format!("{}. {}", reason, suggestion),
                 });
             }
             LoopVerdict::Escalate { reason } => {
-                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "escalated").await;
-                return Err(ToolError::EscalateToHuman { reason: reason.clone() });
+                self.log_audit(
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "escalated",
+                )
+                .await;
+                return Err(ToolError::EscalateToHuman {
+                    reason: reason.clone(),
+                });
             }
             LoopVerdict::InterruptTurn { reason, .. } => {
-                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "interrupted").await;
-                return Err(ToolError::InterruptTurn { reason: reason.clone() });
+                self.log_audit(
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "interrupted",
+                )
+                .await;
+                return Err(ToolError::InterruptTurn {
+                    reason: reason.clone(),
+                });
             }
         }
 
         // 3. Execute tool (with optional sandbox for L1+)
         let result = if tool.permission_level() >= PermissionLevel::L1 {
-            let cmd = input.get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
             let sandbox_config = SandboxConfig {
                 working_dir: ctx.working_dir.to_string_lossy().to_string(),
                 env_vars: std::collections::HashMap::new(),
             };
 
-            match self.sandbox.run(cmd, &sandbox_config, Duration::from_secs(30)).await {
+            match self
+                .sandbox
+                .run(cmd, &sandbox_config, Duration::from_secs(30))
+                .await
+            {
                 Ok(sandbox_result) => ToolResult {
                     content: format!("{}\n{}", sandbox_result.stdout, sandbox_result.stderr)
                         .trim()
@@ -209,18 +257,31 @@ impl ToolRunnerWithGuard {
                     if retry < self.output_guardrail.max_retries - 1 {
                         final_result = tool.execute(input.clone(), ctx).await;
                     } else {
-                        warn!(tool = tool_name, "Max retries exceeded for output validation");
+                        warn!(
+                            tool = tool_name,
+                            "Max retries exceeded for output validation"
+                        );
                     }
                 }
             }
         }
 
         // 5. Loop detector post-check
-        self.loop_detector.post_check(tool_name, &input, &final_result, turn_id);
+        self.loop_detector
+            .post_check(tool_name, &input, &final_result, turn_id);
 
         // 6. Audit log
         let verdict_str = format!("{:?}", loop_verdict);
-        self.log_audit(tool_name, &input, tool.permission_level(), turn_id, Some(&final_result), &start, &verdict_str).await;
+        self.log_audit(
+            tool_name,
+            &input,
+            tool.permission_level(),
+            turn_id,
+            Some(&final_result),
+            &start,
+            &verdict_str,
+        )
+        .await;
 
         Ok(final_result)
     }
@@ -279,9 +340,12 @@ impl ToolRunnerWithGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::approval::{AutoApproveGate, AutoDenyGate};
-    use aletheon_abi::tool::{Tool, ToolContext, ToolResult, ToolResultMeta, PermissionLevel, ToolExposure, ConcurrencyClass};
+    use super::*;
+    use aletheon_abi::tool::{
+        ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult,
+        ToolResultMeta,
+    };
     use async_trait::async_trait;
 
     /// A dummy L2 tool used to exercise the approval gate path.
@@ -290,10 +354,18 @@ mod tests {
 
     #[async_trait]
     impl Tool for DummyL2Tool {
-        fn name(&self) -> &str { "bash_exec" }
-        fn description(&self) -> &str { "Dummy L2 tool for testing" }
-        fn input_schema(&self) -> serde_json::Value { serde_json::json!({}) }
-        fn permission_level(&self) -> PermissionLevel { PermissionLevel::L2 }
+        fn name(&self) -> &str {
+            "bash_exec"
+        }
+        fn description(&self) -> &str {
+            "Dummy L2 tool for testing"
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::L2
+        }
         async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
             ToolResult {
                 content: "ok".into(),
@@ -301,15 +373,20 @@ mod tests {
                 metadata: ToolResultMeta::default(),
             }
         }
-        fn boxed_clone(&self) -> Box<dyn Tool> { Box::new(DummyL2Tool) }
-        fn exposure(&self) -> ToolExposure { ToolExposure::Direct }
-        fn concurrency_class(&self) -> ConcurrencyClass { ConcurrencyClass::SideEffect }
+        fn boxed_clone(&self) -> Box<dyn Tool> {
+            Box::new(DummyL2Tool)
+        }
+        fn exposure(&self) -> ToolExposure {
+            ToolExposure::Direct
+        }
+        fn concurrency_class(&self) -> ConcurrencyClass {
+            ConcurrencyClass::SideEffect
+        }
     }
 
     fn make_runner(gate: Arc<dyn ApprovalGate>) -> ToolRunnerWithGuard {
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        ToolRunnerWithGuard::with_default_sandbox(audit_logger)
-            .with_approval_gate(gate)
+        ToolRunnerWithGuard::with_default_sandbox(audit_logger).with_approval_gate(gate)
     }
 
     fn make_input_rm() -> serde_json::Value {
@@ -327,11 +404,17 @@ mod tests {
     async fn l2_denied_by_gate_is_blocked() {
         let mut runner = make_runner(Arc::new(AutoDenyGate));
         let tool = DummyL2Tool;
-        let result = runner.execute_tool(&tool, make_input_rm(), &make_ctx(), "t1").await;
+        let result = runner
+            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .await;
         assert!(result.is_err(), "AutoDenyGate should deny L2 tool");
         match result.unwrap_err() {
             ToolError::PolicyDenied { reason } => {
-                assert!(reason.contains("denied by approval gate"), "reason: {}", reason);
+                assert!(
+                    reason.contains("denied by approval gate"),
+                    "reason: {}",
+                    reason
+                );
             }
             other => panic!("Expected PolicyDenied, got: {:?}", other),
         }
@@ -341,8 +424,14 @@ mod tests {
     async fn l2_approved_by_gate_runs() {
         let mut runner = make_runner(Arc::new(AutoApproveGate));
         let tool = DummyL2Tool;
-        let result = runner.execute_tool(&tool, make_input_rm(), &make_ctx(), "t1").await;
-        assert!(result.is_ok(), "AutoApproveGate should allow L2 tool: {:?}", result.err());
+        let result = runner
+            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .await;
+        assert!(
+            result.is_ok(),
+            "AutoApproveGate should allow L2 tool: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap().content, "ok");
     }
 }

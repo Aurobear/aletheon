@@ -42,11 +42,18 @@ impl Learner {
                 .as_deref()
                 .unwrap_or("unknown error");
 
-            let pattern = format!("action:{} error:{}", action_name, self.error_prefix(error_summary));
+            let pattern = format!(
+                "action:{} error:{}",
+                action_name,
+                self.error_prefix(error_summary)
+            );
             let rule = LearnedRule {
                 id: uuid::Uuid::new_v4().to_string(),
                 pattern: pattern.clone(),
-                action: format!("Consider alternative to '{}' — failed with: {}", action_name, error_summary),
+                action: format!(
+                    "Consider alternative to '{}' — failed with: {}",
+                    action_name, error_summary
+                ),
                 confidence: 0.6,
                 examples: vec![format!("{}: {}", action_name, error_summary)],
             };
@@ -84,7 +91,10 @@ impl Learner {
                     action_name, experience.result.elapsed_ms
                 ),
                 confidence: 0.5,
-                examples: vec![format!("{} took {}ms", action_name, experience.result.elapsed_ms)],
+                examples: vec![format!(
+                    "{} took {}ms",
+                    action_name, experience.result.elapsed_ms
+                )],
             };
 
             self.upsert_rule(pattern, rule.clone());
@@ -158,7 +168,12 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
 
-    fn make_experience(action_name: &str, success: bool, error: Option<&str>, elapsed_ms: u64) -> Experience {
+    fn make_experience(
+        action_name: &str,
+        success: bool,
+        error: Option<&str>,
+        elapsed_ms: u64,
+    ) -> Experience {
         Experience {
             action: Action {
                 name: action_name.to_string(),
@@ -219,7 +234,9 @@ mod tests {
         learner.learn(&exp);
         learner.learn(&exp);
         assert_eq!(learner.count(), 1);
-        let rule = learner.get_by_pattern(&format!("action:{} error:timeout", "shell.execute")).unwrap();
+        let rule = learner
+            .get_by_pattern(&format!("action:{} error:timeout", "shell.execute"))
+            .unwrap();
         // Confidence should be averaged
         assert!(rule.confidence > 0.5);
     }

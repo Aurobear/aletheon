@@ -1,11 +1,11 @@
-use std::collections::BinaryHeap;
-use std::cmp::Ordering;
 use aletheon_abi::ipc_types::AgentMessage;
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 /// Wrapper for AgentMessage that orders by priority (lower priority value = higher precedence).
 struct PriorityEntry {
     message: AgentMessage,
-    sequence: u64,  // For FIFO within same priority
+    sequence: u64, // For FIFO within same priority
 }
 
 impl PartialEq for PriorityEntry {
@@ -28,7 +28,10 @@ impl Ord for PriorityEntry {
         // BinaryHeap is a max-heap, so we reverse to get min-heap behavior
         // For same priority, lower sequence = higher precedence (FIFO)
         // Both comparisons reversed for max-heap to behave as min-heap
-        other.message.priority.cmp(&self.message.priority)
+        other
+            .message
+            .priority
+            .cmp(&self.message.priority)
             .then(other.sequence.cmp(&self.sequence))
     }
 }
@@ -116,7 +119,7 @@ impl PriorityQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_abi::ipc_types::{MessageType, AgentId, IpcPriority};
+    use aletheon_abi::ipc_types::{AgentId, IpcPriority, MessageType};
 
     fn make_msg(sender: AgentId, priority: IpcPriority) -> AgentMessage {
         AgentMessage::new(sender, 0, MessageType::Event, priority, vec![0; 8])

@@ -21,7 +21,10 @@ pub enum Verdict {
     /// Deny the action.
     Deny { reason: String },
     /// Require user confirmation before proceeding.
-    RequireConfirmation { reason: String, risk_level: RiskLevel },
+    RequireConfirmation {
+        reason: String,
+        risk_level: RiskLevel,
+    },
     /// Must run in sandbox first.
     SandboxFirst { reason: String },
     /// Delay execution until condition is met.
@@ -112,10 +115,10 @@ pub enum Resolution {
 /// A mutation intent — how the agent wants to change itself.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MutationIntent {
-    pub target: String,       // What to change (e.g., "boundary_rules", "care_priorities")
+    pub target: String, // What to change (e.g., "boundary_rules", "care_priorities")
     pub change: serde_json::Value, // The proposed change
-    pub reason: String,       // Why
-    pub reversible: bool,     // Can this be undone?
+    pub reason: String, // Why
+    pub reversible: bool, // Can this be undone?
 }
 
 /// Self-awareness information format.
@@ -148,10 +151,7 @@ impl SelfAwareness {
     }
 
     /// Create awareness with extensions.
-    pub fn with_extensions(
-        action: impl Into<String>,
-        extensions: Vec<AwarenessExtension>,
-    ) -> Self {
+    pub fn with_extensions(action: impl Into<String>, extensions: Vec<AwarenessExtension>) -> Self {
         Self {
             core: AwarenessCore {
                 action: action.into(),

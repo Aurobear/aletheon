@@ -23,9 +23,12 @@ impl EntryType {
 impl std::str::FromStr for EntryType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (prefix, path) = s
-            .split_once(':')
-            .ok_or_else(|| format!("Entry '{}' missing type prefix (expected 'cmd:', 'native:', 'wasm:')", s))?;
+        let (prefix, path) = s.split_once(':').ok_or_else(|| {
+            format!(
+                "Entry '{}' missing type prefix (expected 'cmd:', 'native:', 'wasm:')",
+                s
+            )
+        })?;
         match prefix {
             "cmd" => Ok(Self::Cmd(path.to_string())),
             "native" => Ok(Self::Native(path.to_string())),
@@ -138,18 +141,12 @@ impl PluginManifest {
 
     /// Get the entry type prefix (e.g. "cmd", "native", "wasm").
     pub fn entry_type(&self) -> &str {
-        self.entry
-            .splitn(2, ':')
-            .next()
-            .unwrap_or("")
+        self.entry.splitn(2, ':').next().unwrap_or("")
     }
 
     /// Get the entry path portion (after the type prefix colon).
     pub fn entry_path(&self) -> &str {
-        self.entry
-            .splitn(2, ':')
-            .nth(1)
-            .unwrap_or("")
+        self.entry.splitn(2, ':').nth(1).unwrap_or("")
     }
 }
 
@@ -225,7 +222,10 @@ mod tests {
     #[test]
     fn test_parsed_entry() {
         let manifest = make_manifest("cmd:./run.sh");
-        assert_eq!(manifest.parsed_entry().unwrap(), EntryType::Cmd("./run.sh".into()));
+        assert_eq!(
+            manifest.parsed_entry().unwrap(),
+            EntryType::Cmd("./run.sh".into())
+        );
 
         let bad = make_manifest("bad");
         assert!(bad.parsed_entry().is_err());

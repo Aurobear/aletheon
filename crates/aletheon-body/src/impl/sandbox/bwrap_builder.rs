@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use tracing::debug;
 
-use crate::r#impl::sandbox::SandboxConfig;
 use crate::r#impl::sandbox::glob_scanner::GlobScanner;
-use crate::r#impl::sandbox::policy::{FsDefault, FilesystemPolicy};
+use crate::r#impl::sandbox::policy::{FilesystemPolicy, FsDefault};
+use crate::r#impl::sandbox::SandboxConfig;
 
 /// Advanced bubblewrap argument builder driven by a [`FilesystemPolicy`].
 ///
@@ -222,7 +222,7 @@ pub fn ancestor_dirs(path: &Path, root: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::sandbox::policy::{FsDefault, FilesystemPolicy, WritableRoot};
+    use crate::r#impl::sandbox::policy::{FilesystemPolicy, FsDefault, WritableRoot};
 
     fn default_config() -> SandboxConfig {
         SandboxConfig {
@@ -251,7 +251,10 @@ mod tests {
         let args = builder.build_args("echo hello", &default_config());
 
         let ro_pos = args.iter().position(|a| a == "--ro-bind");
-        assert!(ro_pos.is_some(), "Expected --ro-bind / / even in writable mode");
+        assert!(
+            ro_pos.is_some(),
+            "Expected --ro-bind / / even in writable mode"
+        );
         assert_eq!(args[ro_pos.unwrap() + 1], "/");
         assert_eq!(args[ro_pos.unwrap() + 2], "/");
     }
@@ -274,7 +277,9 @@ mod tests {
             .filter_map(|(i, a)| if a == "--bind" { Some(i) } else { None })
             .collect();
         assert!(
-            bind_positions.iter().any(|&i| args[i + 1] == "/tmp/work" && args[i + 2] == "/tmp/work"),
+            bind_positions
+                .iter()
+                .any(|&i| args[i + 1] == "/tmp/work" && args[i + 2] == "/tmp/work"),
             "Expected --bind /tmp/work /tmp/work in args: {:?}",
             args
         );
@@ -318,7 +323,10 @@ mod tests {
             .windows(3)
             .filter(|w| w[0] == "--ro-bind" && w[1] == "/dev/null")
             .count();
-        assert_eq!(mask_count, 0, "Expected 0 mask entries for non-matching glob");
+        assert_eq!(
+            mask_count, 0,
+            "Expected 0 mask entries for non-matching glob"
+        );
     }
 
     #[test]

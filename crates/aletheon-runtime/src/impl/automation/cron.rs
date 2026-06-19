@@ -144,12 +144,7 @@ impl CronParser {
         let start = Self::parse_number(parts[0].trim(), min, max)?;
         let end = Self::parse_number(parts[1].trim(), min, max)?;
         if start > end {
-            return Err(anyhow!(
-                "Range start {} > end {} in '{}'",
-                start,
-                end,
-                raw
-            ));
+            return Err(anyhow!("Range start {} > end {} in '{}'", start, end, raw));
         }
         Ok((start, end))
     }

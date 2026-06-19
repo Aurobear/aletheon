@@ -13,8 +13,8 @@ use tracing::{info, warn};
 
 use aletheon_abi::tool::{PermissionLevel, ToolExposure};
 use aletheon_abi::Registry;
-use aletheon_body::r#impl::tools::ToolRegistry;
 use aletheon_body::r#impl::tools::script_tool::ScriptTool;
+use aletheon_body::r#impl::tools::ToolRegistry;
 
 use super::manifest::{
     parse_exposure, parse_permission, HookManifest, HooksManifest, SkillManifest,
@@ -93,16 +93,27 @@ pub fn build_skill_plugin(
         _ => TriggerType::Manual,
     };
 
-    let tools = manifest.tools.unwrap_or_default().into_iter().map(|t| {
-        SkillToolDef {
+    let tools = manifest
+        .tools
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| SkillToolDef {
             name: t.name,
             description: t.description,
             script: t.script,
-            permission: t.permission.as_deref().map(parse_permission).unwrap_or(PermissionLevel::L1),
-            exposure: t.exposure.as_deref().map(parse_exposure).unwrap_or(ToolExposure::Direct),
+            permission: t
+                .permission
+                .as_deref()
+                .map(parse_permission)
+                .unwrap_or(PermissionLevel::L1),
+            exposure: t
+                .exposure
+                .as_deref()
+                .map(parse_exposure)
+                .unwrap_or(ToolExposure::Direct),
             input_schema: t.input_schema,
-        }
-    }).collect();
+        })
+        .collect();
 
     let hooks = extract_hooks(manifest.hooks);
 
@@ -179,7 +190,8 @@ fn read_references(dir: &PathBuf) -> Vec<ReferenceFile> {
             continue;
         }
         if let Ok(content) = std::fs::read_to_string(&path) {
-            let name = path.file_stem()
+            let name = path
+                .file_stem()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
             refs.push(ReferenceFile { name, content });
@@ -249,8 +261,8 @@ pub fn register_skill(
 
 #[cfg(test)]
 mod tests {
+    use super::super::manifest::{parse_skill_md, HookManifest, HooksManifest};
     use super::*;
-    use super::super::manifest::{parse_skill_md, HooksManifest, HookManifest};
 
     fn make_manifest(content: &str) -> (SkillManifest, String) {
         parse_skill_md(content).unwrap()
@@ -314,14 +326,46 @@ description: Minimal skill
     #[test]
     fn extract_hooks_all_points() {
         let hm = HooksManifest {
-            on_session_start: Some(vec![HookManifest { name: "s".into(), script: "s.sh".into(), priority: None }]),
-            on_session_end: Some(vec![HookManifest { name: "e".into(), script: "e.sh".into(), priority: None }]),
-            pre_turn: Some(vec![HookManifest { name: "pt".into(), script: "pt.sh".into(), priority: None }]),
-            post_turn: Some(vec![HookManifest { name: "pot".into(), script: "pot.sh".into(), priority: None }]),
-            pre_tool: Some(vec![HookManifest { name: "prt".into(), script: "prt.sh".into(), priority: None }]),
-            post_tool: Some(vec![HookManifest { name: "pot2".into(), script: "pot2.sh".into(), priority: None }]),
-            on_memory_store: Some(vec![HookManifest { name: "ms".into(), script: "ms.sh".into(), priority: None }]),
-            on_memory_recall: Some(vec![HookManifest { name: "mr".into(), script: "mr.sh".into(), priority: None }]),
+            on_session_start: Some(vec![HookManifest {
+                name: "s".into(),
+                script: "s.sh".into(),
+                priority: None,
+            }]),
+            on_session_end: Some(vec![HookManifest {
+                name: "e".into(),
+                script: "e.sh".into(),
+                priority: None,
+            }]),
+            pre_turn: Some(vec![HookManifest {
+                name: "pt".into(),
+                script: "pt.sh".into(),
+                priority: None,
+            }]),
+            post_turn: Some(vec![HookManifest {
+                name: "pot".into(),
+                script: "pot.sh".into(),
+                priority: None,
+            }]),
+            pre_tool: Some(vec![HookManifest {
+                name: "prt".into(),
+                script: "prt.sh".into(),
+                priority: None,
+            }]),
+            post_tool: Some(vec![HookManifest {
+                name: "pot2".into(),
+                script: "pot2.sh".into(),
+                priority: None,
+            }]),
+            on_memory_store: Some(vec![HookManifest {
+                name: "ms".into(),
+                script: "ms.sh".into(),
+                priority: None,
+            }]),
+            on_memory_recall: Some(vec![HookManifest {
+                name: "mr".into(),
+                script: "mr.sh".into(),
+                priority: None,
+            }]),
         };
         let hooks = extract_hooks(Some(hm));
         assert_eq!(hooks.len(), 8);

@@ -12,15 +12,29 @@ struct MockEventBus;
 
 #[async_trait]
 impl EventBus for MockEventBus {
-    async fn publish(&self, _event: Box<dyn Event>) -> Result<()> { Ok(()) }
-    async fn subscribe(&self, _event_type: EventType, _handler: EventHandler) -> Result<SubscriptionId> {
+    async fn publish(&self, _event: Box<dyn Event>) -> Result<()> {
+        Ok(())
+    }
+    async fn subscribe(
+        &self,
+        _event_type: EventType,
+        _handler: EventHandler,
+    ) -> Result<SubscriptionId> {
         Ok(SubscriptionId(1))
     }
-    async fn request(&self, _event: Box<dyn Event>, _timeout: std::time::Duration) -> Result<Box<dyn Event>> {
+    async fn request(
+        &self,
+        _event: Box<dyn Event>,
+        _timeout: std::time::Duration,
+    ) -> Result<Box<dyn Event>> {
         unimplemented!()
     }
-    async fn unsubscribe(&self, _id: SubscriptionId) -> Result<()> { Ok(()) }
-    async fn has_subscribers(&self, _event_type: &EventType) -> bool { false }
+    async fn unsubscribe(&self, _id: SubscriptionId) -> Result<()> {
+        Ok(())
+    }
+    async fn has_subscribers(&self, _event_type: &EventType) -> bool {
+        false
+    }
 }
 
 // ===== Mock BodyRuntime =====
@@ -29,11 +43,21 @@ struct MockBodyRuntime;
 
 #[async_trait]
 impl Subsystem for MockBodyRuntime {
-    fn name(&self) -> &str { "mock_body" }
-    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> { Ok(()) }
-    async fn health(&self) -> SubsystemHealth { SubsystemHealth::Healthy }
-    async fn shutdown(&mut self) -> Result<()> { Ok(()) }
-    fn version(&self) -> Version { Version::new(0, 1, 0) }
+    fn name(&self) -> &str {
+        "mock_body"
+    }
+    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
+        Ok(())
+    }
+    async fn health(&self) -> SubsystemHealth {
+        SubsystemHealth::Healthy
+    }
+    async fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn version(&self) -> Version {
+        Version::new(0, 1, 0)
+    }
 }
 
 #[async_trait]
@@ -48,8 +72,12 @@ impl BodyRuntime for MockBodyRuntime {
             side_effects: vec![],
         })
     }
-    fn capabilities(&self) -> &[Capability] { &[] }
-    async fn check(&self, _action: &Action, _ctx: &Context) -> Result<()> { Ok(()) }
+    fn capabilities(&self) -> &[Capability] {
+        &[]
+    }
+    async fn check(&self, _action: &Action, _ctx: &Context) -> Result<()> {
+        Ok(())
+    }
 }
 
 // ===== Mock Memory =====
@@ -58,23 +86,47 @@ struct MockMemory;
 
 #[async_trait]
 impl Subsystem for MockMemory {
-    fn name(&self) -> &str { "mock_memory" }
-    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> { Ok(()) }
-    async fn health(&self) -> SubsystemHealth { SubsystemHealth::Healthy }
-    async fn shutdown(&mut self) -> Result<()> { Ok(()) }
-    fn version(&self) -> Version { Version::new(0, 1, 0) }
+    fn name(&self) -> &str {
+        "mock_memory"
+    }
+    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
+        Ok(())
+    }
+    async fn health(&self) -> SubsystemHealth {
+        SubsystemHealth::Healthy
+    }
+    async fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn version(&self) -> Version {
+        Version::new(0, 1, 0)
+    }
 }
 
 #[async_trait]
 impl MemoryBackend for MockMemory {
     async fn store(&self, _entry: MemoryEntry) -> Result<MemoryHandle> {
-        Ok(MemoryHandle { id: uuid::Uuid::new_v4(), memory_type: MemoryType::Episodic })
+        Ok(MemoryHandle {
+            id: uuid::Uuid::new_v4(),
+            memory_type: MemoryType::Episodic,
+        })
     }
-    async fn recall(&self, _query: &MemoryQuery) -> Result<Vec<MemoryEntry>> { Ok(vec![]) }
-    async fn list(&self, _filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> { Ok(vec![]) }
-    async fn forget(&self, _handle: &MemoryHandle) -> Result<()> { Ok(()) }
+    async fn recall(&self, _query: &MemoryQuery) -> Result<Vec<MemoryEntry>> {
+        Ok(vec![])
+    }
+    async fn list(&self, _filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> {
+        Ok(vec![])
+    }
+    async fn forget(&self, _handle: &MemoryHandle) -> Result<()> {
+        Ok(())
+    }
     async fn compact(&self, _strategy: CompactStrategy) -> Result<CompactResult> {
-        Ok(CompactResult { entries_before: 0, entries_after: 0, entries_removed: 0, entries_merged: 0 })
+        Ok(CompactResult {
+            entries_before: 0,
+            entries_after: 0,
+            entries_removed: 0,
+            entries_merged: 0,
+        })
     }
     async fn stats(&self) -> Result<MemoryStats> {
         Ok(MemoryStats {
@@ -93,16 +145,28 @@ struct MockSelfField;
 
 #[async_trait]
 impl Subsystem for MockSelfField {
-    fn name(&self) -> &str { "mock_self_field" }
-    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> { Ok(()) }
-    async fn health(&self) -> SubsystemHealth { SubsystemHealth::Healthy }
-    async fn shutdown(&mut self) -> Result<()> { Ok(()) }
-    fn version(&self) -> Version { Version::new(0, 1, 0) }
+    fn name(&self) -> &str {
+        "mock_self_field"
+    }
+    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
+        Ok(())
+    }
+    async fn health(&self) -> SubsystemHealth {
+        SubsystemHealth::Healthy
+    }
+    async fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn version(&self) -> Version {
+        Version::new(0, 1, 0)
+    }
 }
 
 #[async_trait]
 impl SelfFieldOps for MockSelfField {
-    async fn review(&self, _intent: &Intent, _ctx: &Context) -> Result<Verdict> { Ok(Verdict::Allow) }
+    async fn review(&self, _intent: &Intent, _ctx: &Context) -> Result<Verdict> {
+        Ok(Verdict::Allow)
+    }
     async fn identity(&self) -> Result<Identity> {
         Ok(Identity {
             name: "mock".to_string(),
@@ -112,12 +176,20 @@ impl SelfFieldOps for MockSelfField {
             last_mutation: None,
         })
     }
-    async fn cares(&self) -> Result<Vec<Care>> { Ok(vec![]) }
-    async fn narrate(&self, _event: &str, _reason: &str) -> Result<()> { Ok(()) }
-    async fn resolve_conflict(&self, _conflict: &Conflict) -> Result<Resolution> {
-        Ok(Resolution::AcceptA { reason: "mock".to_string() })
+    async fn cares(&self) -> Result<Vec<Care>> {
+        Ok(vec![])
     }
-    async fn review_mutation(&self, _mutation: &MutationIntent) -> Result<Verdict> { Ok(Verdict::Allow) }
+    async fn narrate(&self, _event: &str, _reason: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn resolve_conflict(&self, _conflict: &Conflict) -> Result<Resolution> {
+        Ok(Resolution::AcceptA {
+            reason: "mock".to_string(),
+        })
+    }
+    async fn review_mutation(&self, _mutation: &MutationIntent) -> Result<Verdict> {
+        Ok(Verdict::Allow)
+    }
 }
 
 // ===== Mock BrainCore =====
@@ -126,11 +198,21 @@ struct MockBrainCore;
 
 #[async_trait]
 impl Subsystem for MockBrainCore {
-    fn name(&self) -> &str { "mock_brain_core" }
-    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> { Ok(()) }
-    async fn health(&self) -> SubsystemHealth { SubsystemHealth::Healthy }
-    async fn shutdown(&mut self) -> Result<()> { Ok(()) }
-    fn version(&self) -> Version { Version::new(0, 1, 0) }
+    fn name(&self) -> &str {
+        "mock_brain_core"
+    }
+    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
+        Ok(())
+    }
+    async fn health(&self) -> SubsystemHealth {
+        SubsystemHealth::Healthy
+    }
+    async fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn version(&self) -> Version {
+        Version::new(0, 1, 0)
+    }
 }
 
 #[async_trait]
@@ -153,9 +235,15 @@ impl BrainCoreOps for MockBrainCore {
             confidence: 1.0,
         })
     }
-    async fn critique(&self, _plan: &Plan) -> Result<Vec<Critique>> { Ok(vec![]) }
-    async fn learn(&self, _experience: &Experience) -> Result<Vec<LearnedRule>> { Ok(vec![]) }
-    async fn update_world(&self, _observation: &Observation) -> Result<()> { Ok(()) }
+    async fn critique(&self, _plan: &Plan) -> Result<Vec<Critique>> {
+        Ok(vec![])
+    }
+    async fn learn(&self, _experience: &Experience) -> Result<Vec<LearnedRule>> {
+        Ok(vec![])
+    }
+    async fn update_world(&self, _observation: &Observation) -> Result<()> {
+        Ok(())
+    }
 }
 
 // ===== Tests =====
@@ -183,8 +271,16 @@ async fn test_context_creation() {
 #[tokio::test]
 async fn test_capability_set() {
     let caps = CapabilitySet::new()
-        .with(Capability::new("shell.execute", PermissionLevel::SandboxWrite, "Run shell commands"))
-        .with(Capability::new("memory.write", PermissionLevel::ReadOnly, "Write memories"));
+        .with(Capability::new(
+            "shell.execute",
+            PermissionLevel::SandboxWrite,
+            "Run shell commands",
+        ))
+        .with(Capability::new(
+            "memory.write",
+            PermissionLevel::ReadOnly,
+            "Write memories",
+        ));
 
     assert!(caps.has("shell.execute", PermissionLevel::SandboxWrite));
     assert!(!caps.has("shell.execute", PermissionLevel::SystemChange));

@@ -4,9 +4,9 @@
 //! 1. Genome-level: checks safety weight, immutable rules, adjustment magnitude
 //! 2. ABI-level: evaluates RuntimeCandidate after sandbox testing
 
+use crate::core::types::{EvaluationResult, Genome, GenomeMeta};
+use aletheon_abi::{meta::Recommendation, Evaluation, RuntimeCandidate, TestResult};
 use anyhow::Result;
-use aletheon_abi::{RuntimeCandidate, TestResult, Evaluation, meta::Recommendation};
-use crate::core::types::{Genome, GenomeMeta, EvaluationResult};
 
 /// Safety threshold below which a candidate is rejected.
 const SAFETY_THRESHOLD: f64 = 0.8;
@@ -30,7 +30,10 @@ impl Evaluator {
     }
 
     pub fn with_config(safety_floor: f64, max_adjustment_per_step: f64) -> Self {
-        Self { safety_floor, max_adjustment_per_step }
+        Self {
+            safety_floor,
+            max_adjustment_per_step,
+        }
     }
 
     /// Evaluate a candidate genome against the current genome.
@@ -44,7 +47,10 @@ impl Evaluator {
         let mut passed = true;
 
         // Check 1: safety weight >= safety_floor
-        let safety_weight = candidate.care.priorities.iter()
+        let safety_weight = candidate
+            .care
+            .priorities
+            .iter()
             .find(|p| p.topic == "safety" || p.topic == "user_safety")
             .map(|p| p.weight)
             .unwrap_or(0.0);
@@ -58,7 +64,10 @@ impl Evaluator {
         }
 
         // Check 2: no immutable rules violated (priority >= 200 treated as immutable)
-        let candidate_rule_ids: Vec<&str> = candidate.boundary.rules.iter()
+        let candidate_rule_ids: Vec<&str> = candidate
+            .boundary
+            .rules
+            .iter()
             .map(|r| r.id.as_str())
             .collect();
 
@@ -73,10 +82,16 @@ impl Evaluator {
         }
 
         // Check 3: adjustment magnitude
-        let current_care: std::collections::HashMap<&str, f64> = current.care.priorities.iter()
+        let current_care: std::collections::HashMap<&str, f64> = current
+            .care
+            .priorities
+            .iter()
             .map(|p| (p.topic.as_str(), p.weight))
             .collect();
-        let candidate_care: std::collections::HashMap<&str, f64> = candidate.care.priorities.iter()
+        let candidate_care: std::collections::HashMap<&str, f64> = candidate
+            .care
+            .priorities
+            .iter()
             .map(|p| (p.topic.as_str(), p.weight))
             .collect();
 
@@ -99,12 +114,20 @@ impl Evaluator {
     /// Evaluate a candidate genome against a GenomeMeta with evolution config.
     ///
     /// Uses the evolution config's safety_floor and max_adjustment values.
-    pub fn evaluate_with_meta(&self, candidate: &Genome, current: &Genome, meta: &GenomeMeta) -> EvaluationResult {
+    pub fn evaluate_with_meta(
+        &self,
+        candidate: &Genome,
+        current: &Genome,
+        meta: &GenomeMeta,
+    ) -> EvaluationResult {
         let mut reasons = Vec::new();
         let mut passed = true;
 
         // Check safety floor from evolution config
-        let safety_weight = candidate.care.priorities.iter()
+        let safety_weight = candidate
+            .care
+            .priorities
+            .iter()
             .find(|p| p.topic == "safety" || p.topic == "user_safety")
             .map(|p| p.weight)
             .unwrap_or(0.0);
@@ -120,9 +143,15 @@ impl Evaluator {
         // Check immutable rules from care_ext
         for rule in &meta.care_ext.boundary_rules {
             if rule.immutable {
-                let current_match = current.boundary.rules.iter()
+                let current_match = current
+                    .boundary
+                    .rules
+                    .iter()
                     .find(|r| r.id == rule.pattern || r.condition.contains(&rule.pattern));
-                let candidate_match = candidate.boundary.rules.iter()
+                let candidate_match = candidate
+                    .boundary
+                    .rules
+                    .iter()
                     .find(|r| r.id == rule.pattern || r.condition.contains(&rule.pattern));
 
                 match (current_match, candidate_match) {
@@ -146,10 +175,16 @@ impl Evaluator {
         }
 
         // Check adjustment magnitude against evolution config
-        let current_care: std::collections::HashMap<&str, f64> = current.care.priorities.iter()
+        let current_care: std::collections::HashMap<&str, f64> = current
+            .care
+            .priorities
+            .iter()
             .map(|p| (p.topic.as_str(), p.weight))
             .collect();
-        let candidate_care: std::collections::HashMap<&str, f64> = candidate.care.priorities.iter()
+        let candidate_care: std::collections::HashMap<&str, f64> = candidate
+            .care
+            .priorities
+            .iter()
             .map(|p| (p.topic.as_str(), p.weight))
             .collect();
 
@@ -172,7 +207,11 @@ impl Evaluator {
     /// Evaluate an ABI RuntimeCandidate after sandbox testing.
     ///
     /// Used by the morphogenesis pipeline.
-    pub async fn evaluate(&self, candidate: &RuntimeCandidate, test: &TestResult) -> Result<Evaluation> {
+    pub async fn evaluate(
+        &self,
+        candidate: &RuntimeCandidate,
+        test: &TestResult,
+    ) -> Result<Evaluation> {
         let mut strengths = Vec::new();
         let mut weaknesses = Vec::new();
 

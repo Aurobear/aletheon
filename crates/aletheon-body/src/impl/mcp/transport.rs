@@ -121,10 +121,7 @@ fn truncate_to(mut s: String, max_len: usize) -> String {
     s
 }
 
-fn insert_with_numeric_suffix(
-    base: &str,
-    seen: &mut std::collections::HashSet<String>,
-) -> String {
+fn insert_with_numeric_suffix(base: &str, seen: &mut std::collections::HashSet<String>) -> String {
     if !seen.contains(base) {
         seen.insert(base.to_string());
         return base.to_string();
@@ -254,10 +251,7 @@ impl McpTransport {
     ///
     /// Opens an HTTP GET long-poll connection to `<base_url>/sse` and
     /// reads events. Requests are sent as HTTP POST to `<base_url>`.
-    pub async fn sse(
-        base_url: impl Into<String>,
-        auth: Option<BearerTokenAuth>,
-    ) -> Result<Self> {
+    pub async fn sse(base_url: impl Into<String>, auth: Option<BearerTokenAuth>) -> Result<Self> {
         let base_url = base_url.into();
         let client = reqwest::Client::new();
 
@@ -443,9 +437,7 @@ impl McpTransport {
         let response = req.send().await.context("HTTP POST failed")?;
         let status = response.status();
 
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             anyhow::bail!("Authentication failed: HTTP {}", status);
         }
 
@@ -529,14 +521,7 @@ pub async fn connect_with_fallback(
                 "clientInfo": { "name": "aletheon", "version": "0.1.0" }
             }
         });
-        match McpTransport::http_post(
-            client,
-            base_url.trim_end_matches('/'),
-            &auth,
-            &probe,
-        )
-        .await
-        {
+        match McpTransport::http_post(client, base_url.trim_end_matches('/'), &auth, &probe).await {
             Ok(_) => return Ok(transport),
             Err(e) if is_auth_error(&e) => return Err(e),
             Err(_) => {
@@ -661,7 +646,10 @@ mod tests {
             "params": {}
         });
         let notif = McpNotification::parse(&msg);
-        assert_eq!(notif, Some(McpNotification::Unknown("custom/event".to_string())));
+        assert_eq!(
+            notif,
+            Some(McpNotification::Unknown("custom/event".to_string()))
+        );
     }
 
     #[test]

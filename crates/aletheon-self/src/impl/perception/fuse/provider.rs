@@ -170,10 +170,7 @@ impl MockStateProvider {
     /// Pre-set an error response for a key.
     pub async fn set_error(&self, key: &str, msg: &str) {
         let mut responses = self.responses.write().await;
-        responses.insert(
-            key.to_string(),
-            Err(anyhow::anyhow!("{}", msg)),
-        );
+        responses.insert(key.to_string(), Err(anyhow::anyhow!("{}", msg)));
     }
 
     /// Get all recorded call keys (for assertions).
@@ -237,7 +234,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_provider_sensor() {
         let mock = MockStateProvider::new();
-        mock.set_response("sensor:cpu", b"{\"load\":\"0.5\"}".to_vec()).await;
+        mock.set_response("sensor:cpu", b"{\"load\":\"0.5\"}".to_vec())
+            .await;
 
         let data = mock.get_sensor_data("cpu").await.unwrap();
         assert_eq!(data, b"{\"load\":\"0.5\"}");
@@ -254,7 +252,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_provider_context() {
         let mock = MockStateProvider::new();
-        mock.set_response("context:current", b"hello context".to_vec()).await;
+        mock.set_response("context:current", b"hello context".to_vec())
+            .await;
 
         let data = mock.get_context("current").await.unwrap();
         assert_eq!(data, b"hello context");
@@ -264,7 +263,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_provider_log() {
         let mock = MockStateProvider::new();
-        mock.set_response("log:agent", b"log entries".to_vec()).await;
+        mock.set_response("log:agent", b"log entries".to_vec())
+            .await;
 
         let data = mock.get_log("agent").await.unwrap();
         assert_eq!(data, b"log entries");
@@ -273,7 +273,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_provider_agent_status() {
         let mock = MockStateProvider::new();
-        mock.set_response("agent:main", b"{\"state\":\"running\"}".to_vec()).await;
+        mock.set_response("agent:main", b"{\"state\":\"running\"}".to_vec())
+            .await;
 
         let data = mock.get_agent_status("main").await.unwrap();
         assert_eq!(data, b"{\"state\":\"running\"}");

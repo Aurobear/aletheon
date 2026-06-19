@@ -22,7 +22,7 @@ pub mod ocr;
 
 pub mod factory;
 
-pub mod proc;
 pub mod io;
+pub mod proc;
 
 pub use types::*;

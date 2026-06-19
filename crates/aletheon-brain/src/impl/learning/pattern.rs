@@ -10,7 +10,10 @@ pub struct PatternExtractor {
 
 impl PatternExtractor {
     pub fn new(min_occurrences: usize, success_threshold: f64) -> Self {
-        Self { min_occurrences, success_threshold }
+        Self {
+            min_occurrences,
+            success_threshold,
+        }
     }
 
     /// Analyze outcomes and extract patterns.
@@ -18,7 +21,8 @@ impl PatternExtractor {
         let mut rules = Vec::new();
 
         // Group by tool name
-        let mut by_tool: std::collections::HashMap<&str, Vec<&OutcomeRecord>> = std::collections::HashMap::new();
+        let mut by_tool: std::collections::HashMap<&str, Vec<&OutcomeRecord>> =
+            std::collections::HashMap::new();
         for outcome in outcomes {
             by_tool.entry(&outcome.tool_name).or_default().push(outcome);
         }
@@ -37,7 +41,8 @@ impl PatternExtractor {
 
             // If failure rate is high, create a warning rule
             if success_rate < self.success_threshold && failures >= self.min_occurrences {
-                let common_errors: Vec<String> = tool_outcomes.iter()
+                let common_errors: Vec<String> = tool_outcomes
+                    .iter()
                     .filter(|o| o.is_error)
                     .map(|o| o.result_summary.clone())
                     .collect();
@@ -87,7 +92,8 @@ impl PatternExtractor {
         }
 
         // Simple pattern: same error message prefix
-        let mut by_prefix: std::collections::HashMap<String, Vec<&OutcomeRecord>> = std::collections::HashMap::new();
+        let mut by_prefix: std::collections::HashMap<String, Vec<&OutcomeRecord>> =
+            std::collections::HashMap::new();
         for error in &errors {
             let prefix: String = error.result_summary.chars().take(50).collect();
             by_prefix.entry(prefix).or_default().push(error);

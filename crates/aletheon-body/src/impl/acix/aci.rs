@@ -1,12 +1,12 @@
-use anyhow::Result;
+use super::grounding::{GroundingProvider, GroundingResult};
 use crate::r#impl::driver::{
     a11y::A11yDriver,
-    display::{ClipboardDriver, DisplayDriver, WindowManager, WindowInfo},
+    display::{ClipboardDriver, DisplayDriver, WindowInfo, WindowManager},
     input::InputDriver,
     ocr::OcrDriver,
     types::*,
 };
-use super::grounding::{GroundingProvider, GroundingResult};
+use anyhow::Result;
 
 /// ACI — Agent-Computer Interface
 ///
@@ -31,7 +31,14 @@ impl Aci {
         window: Option<Box<dyn WindowManager>>,
         clipboard: Option<Box<dyn ClipboardDriver>>,
     ) -> Self {
-        Self { input, display, a11y, ocr, window, clipboard }
+        Self {
+            input,
+            display,
+            a11y,
+            ocr,
+            window,
+            clipboard,
+        }
     }
 
     /// Create a new ACI instance with no window manager or clipboard support.

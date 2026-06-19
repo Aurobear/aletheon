@@ -66,9 +66,12 @@ impl Protocol for RequestResponseProtocol {
         self.pending.insert(envelope.id, tx);
 
         // Send the request
-        self.transport.send(envelope.clone()).await.inspect_err(|_| {
-            self.pending.remove(&envelope.id);
-        })?;
+        self.transport
+            .send(envelope.clone())
+            .await
+            .inspect_err(|_| {
+                self.pending.remove(&envelope.id);
+            })?;
 
         // Wait for response with timeout
         match tokio::time::timeout(timeout, rx).await {

@@ -33,8 +33,12 @@ pub struct BasicLinuxAdapter;
 
 #[async_trait::async_trait]
 impl PlatformAdapter for BasicLinuxAdapter {
-    fn name(&self) -> &str { "basic_linux" }
-    fn is_available(&self) -> bool { true }
+    fn name(&self) -> &str {
+        "basic_linux"
+    }
+    fn is_available(&self) -> bool {
+        true
+    }
 
     fn capabilities(&self) -> PlatformCapabilities {
         PlatformCapabilities {
@@ -53,24 +57,28 @@ impl PlatformAdapter for BasicLinuxAdapter {
             .await?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.lines().skip(1).filter_map(|line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 4 {
-                Some(ServiceInfo {
-                    name: parts[0].to_string(),
-                    status: match parts[2] {
-                        "active" => ServiceStatus::Running,
-                        "inactive" => ServiceStatus::Stopped,
-                        "failed" => ServiceStatus::Failed,
-                        _ => ServiceStatus::Unknown,
-                    },
-                    description: parts[3..].join(" "),
-                    pid: None,
-                })
-            } else {
-                None
-            }
-        }).collect())
+        Ok(stdout
+            .lines()
+            .skip(1)
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 4 {
+                    Some(ServiceInfo {
+                        name: parts[0].to_string(),
+                        status: match parts[2] {
+                            "active" => ServiceStatus::Running,
+                            "inactive" => ServiceStatus::Stopped,
+                            "failed" => ServiceStatus::Failed,
+                            _ => ServiceStatus::Unknown,
+                        },
+                        description: parts[3..].join(" "),
+                        pid: None,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect())
     }
 
     async fn service_status(&self, name: &str) -> anyhow::Result<ServiceInfo> {
@@ -99,7 +107,11 @@ impl PlatformAdapter for BasicLinuxAdapter {
             .output()
             .await?;
         if !output.status.success() {
-            anyhow::bail!("Failed to start {}: {}", name, String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to start {}: {}",
+                name,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         Ok(())
     }
@@ -110,7 +122,11 @@ impl PlatformAdapter for BasicLinuxAdapter {
             .output()
             .await?;
         if !output.status.success() {
-            anyhow::bail!("Failed to stop {}: {}", name, String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to stop {}: {}",
+                name,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         Ok(())
     }
@@ -121,7 +137,11 @@ impl PlatformAdapter for BasicLinuxAdapter {
             .output()
             .await?;
         if !output.status.success() {
-            anyhow::bail!("Failed to restart {}: {}", name, String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to restart {}: {}",
+                name,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         Ok(())
     }
@@ -134,12 +154,18 @@ impl PlatformAdapter for BasicLinuxAdapter {
 
     async fn kernel_version(&self) -> anyhow::Result<String> {
         let version = tokio::fs::read_to_string("/proc/version").await?;
-        Ok(version.split_whitespace().nth(2).unwrap_or("unknown").to_string())
+        Ok(version
+            .split_whitespace()
+            .nth(2)
+            .unwrap_or("unknown")
+            .to_string())
     }
 
     async fn uptime(&self) -> anyhow::Result<u64> {
         let uptime = tokio::fs::read_to_string("/proc/uptime").await?;
-        let seconds: f64 = uptime.split_whitespace().next()
+        let seconds: f64 = uptime
+            .split_whitespace()
+            .next()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.0);
         Ok(seconds as u64)

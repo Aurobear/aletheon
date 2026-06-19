@@ -84,7 +84,11 @@ impl Message {
         }
     }
 
-    pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>, is_error: bool) -> Self {
+    pub fn tool_result(
+        tool_use_id: impl Into<String>,
+        content: impl Into<String>,
+        is_error: bool,
+    ) -> Self {
         Self {
             role: Role::User,
             content: vec![ContentBlock::ToolResult {
@@ -121,7 +125,10 @@ impl ContentBlock {
 
 /// Check if a message contains tool_use or tool_result blocks.
 pub fn is_tool_message(msg: &Message) -> bool {
-    msg.content
-        .iter()
-        .any(|c| matches!(c, ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. }))
+    msg.content.iter().any(|c| {
+        matches!(
+            c,
+            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. }
+        )
+    })
 }

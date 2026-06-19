@@ -37,7 +37,8 @@ impl TokenBudget {
         let current = self.remaining.load(Ordering::SeqCst);
         let actual = tokens.min(current);
         self.remaining.fetch_sub(actual, Ordering::SeqCst);
-        self.total_consumed.fetch_add(actual as u64, Ordering::Relaxed);
+        self.total_consumed
+            .fetch_add(actual as u64, Ordering::Relaxed);
         self.remaining.load(Ordering::SeqCst)
     }
 
@@ -68,7 +69,10 @@ impl fmt::Debug for TokenBudget {
         f.debug_struct("TokenBudget")
             .field("max_per_pulse", &self.max_per_pulse)
             .field("remaining", &self.remaining.load(Ordering::Relaxed))
-            .field("total_consumed", &self.total_consumed.load(Ordering::Relaxed))
+            .field(
+                "total_consumed",
+                &self.total_consumed.load(Ordering::Relaxed),
+            )
             .finish()
     }
 }

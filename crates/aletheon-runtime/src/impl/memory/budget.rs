@@ -2,7 +2,7 @@
 pub struct ContextBudget {
     max_tokens: usize,
     used_tokens: usize,
-    compact_threshold: f64,  // e.g. 0.7 = compact at 70%
+    compact_threshold: f64, // e.g. 0.7 = compact at 70%
 }
 
 impl ContextBudget {

@@ -1,9 +1,9 @@
+use crate::core::config::RuntimeConfig;
 use aletheon_abi::body::Action;
 use aletheon_abi::message::{ContentBlock, Message, Role};
 use aletheon_abi::self_field::{Intent, IntentSource};
 use aletheon_abi::ToolDefinition;
 use aletheon_brain::r#impl::llm::provider::{LlmProvider, StopReason};
-use crate::core::config::RuntimeConfig;
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -122,11 +122,15 @@ impl ReActLoop {
                 if is_error {
                     warn!(tool = name.as_str(), "tool returned error");
                 }
-                self.messages.push(Message::tool_result(id, &content, is_error));
+                self.messages
+                    .push(Message::tool_result(id, &content, is_error));
             }
         }
 
-        warn!(max = self.config.max_iterations, "ReActLoop hit max_iterations");
+        warn!(
+            max = self.config.max_iterations,
+            "ReActLoop hit max_iterations"
+        );
         Ok(self
             .messages
             .iter()
@@ -137,9 +141,7 @@ impl ReActLoop {
                     _ => None,
                 })
             })
-            .unwrap_or_else(|| {
-                format!("Max iterations ({}) reached", self.config.max_iterations)
-            }))
+            .unwrap_or_else(|| format!("Max iterations ({}) reached", self.config.max_iterations)))
     }
 }
 
@@ -147,8 +149,10 @@ impl ReActLoop {
 mod tests {
     use super::*;
     use aletheon_abi::message::{ContentBlock, Message};
-    use aletheon_brain::r#impl::llm::provider::{LlmProvider, LlmResponse, StopReason, Usage, LlmStream};
     use aletheon_abi::ToolDefinition;
+    use aletheon_brain::r#impl::llm::provider::{
+        LlmProvider, LlmResponse, LlmStream, StopReason, Usage,
+    };
     use async_trait::async_trait;
     use std::sync::Mutex;
 

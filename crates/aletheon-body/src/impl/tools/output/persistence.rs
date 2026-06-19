@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use anyhow::Result;
+use std::path::PathBuf;
 use tracing::debug;
 
 use super::config::OutputConfig;

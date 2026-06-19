@@ -38,8 +38,8 @@ impl HookRegistry {
             return Ok(0);
         }
         let mut count = 0;
-        for entry in std::fs::read_dir(dir)
-            .with_context(|| format!("reading hook dir {}", dir.display()))?
+        for entry in
+            std::fs::read_dir(dir).with_context(|| format!("reading hook dir {}", dir.display()))?
         {
             let entry = entry?;
             let path = entry.path();

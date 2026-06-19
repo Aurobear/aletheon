@@ -190,7 +190,10 @@ fn cycle1_identity_roundtrip() {
 
     let loaded_current = loaded.current();
     assert_eq!(loaded_current.name, "aletheon");
-    assert_eq!(loaded_current.description, "enhanced runtime with persistence");
+    assert_eq!(
+        loaded_current.description,
+        "enhanced runtime with persistence"
+    );
     assert_eq!(loaded_current.version, "0.2.0");
     assert!(loaded_current.last_mutation.is_some());
     assert_eq!(loaded.mutation_count(), 1);
@@ -238,10 +241,16 @@ fn cycle1_mutation_records_roundtrip() {
     let records = loaded.records();
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].target, "care_priorities");
-    assert_eq!(records[0].status, aletheon_self::core::mutation::MutationStatus::Approved);
+    assert_eq!(
+        records[0].status,
+        aletheon_self::core::mutation::MutationStatus::Approved
+    );
     assert!(records[0].reversible);
     assert_eq!(records[1].target, "name");
-    assert_eq!(records[1].status, aletheon_self::core::mutation::MutationStatus::Denied);
+    assert_eq!(
+        records[1].status,
+        aletheon_self::core::mutation::MutationStatus::Denied
+    );
     assert!(!records[1].reversible);
 }
 
@@ -295,7 +304,7 @@ fn full_e2e_two_cycles() {
     // -- Care: adjust efficiency weight --
     let care = CareLayer::new();
     care.adjust_weight("efficiency", 0.2); // 0.5 -> 0.7
-    care.adjust_weight("learning", 0.15);  // 0.3 -> 0.45
+    care.adjust_weight("learning", 0.15); // 0.3 -> 0.45
 
     // -- Boundary: add a rule (Deny, so we can relax it in cycle 2) --
     let mut boundary = BoundaryLayer::new();
@@ -372,14 +381,20 @@ fn full_e2e_two_cycles() {
         source: aletheon_abi::IntentSource::User,
         description: "deploy to production".to_string(),
     };
-    assert!(matches!(boundary2.check(&deploy_intent), Some(Verdict::Deny { .. })));
+    assert!(matches!(
+        boundary2.check(&deploy_intent),
+        Some(Verdict::Deny { .. })
+    ));
 
     assert_eq!(identity2.current().name, "aletheon");
     assert_eq!(identity2.current().version, "0.1.0");
 
     assert_eq!(mutation2.records().len(), 1);
     assert_eq!(mutation2.records()[0].target, "care_priorities");
-    assert_eq!(mutation2.records()[0].status, aletheon_self::core::mutation::MutationStatus::Approved);
+    assert_eq!(
+        mutation2.records()[0].status,
+        aletheon_self::core::mutation::MutationStatus::Approved
+    );
 
     assert_eq!(continuity2.len(), 2);
     assert_eq!(continuity2.all_records()[1].event, "cycle_1_complete");
@@ -397,7 +412,7 @@ fn full_e2e_two_cycles() {
 
     // -- Adjust care weights again --
     care2.adjust_weight("learning", 0.1); // 0.45 -> 0.55
-    care2.adjust_weight("safety", -0.1);  // 1.0 -> 0.9 (safety floor = 0.8)
+    care2.adjust_weight("safety", -0.1); // 1.0 -> 0.9 (safety floor = 0.8)
 
     // -- Relax the deploy boundary rule --
     assert!(boundary2.relax_rule("deploy.*"));
@@ -462,29 +477,36 @@ fn full_e2e_two_cycles() {
     // -- Narrative: should have cycle 1 + cycle 2 entries --
     assert_eq!(narrative3.len(), 4);
     let entries = narrative3.recent(10);
-    assert_eq!(entries[0].event, "task_started");       // cycle 1
-    assert_eq!(entries[1].event, "review");              // cycle 1
-    assert_eq!(entries[2].event, "cycle_2_start");      // cycle 2
-    assert_eq!(entries[3].event, "care_adjusted");      // cycle 2
+    assert_eq!(entries[0].event, "task_started"); // cycle 1
+    assert_eq!(entries[1].event, "review"); // cycle 1
+    assert_eq!(entries[2].event, "cycle_2_start"); // cycle 2
+    assert_eq!(entries[3].event, "care_adjusted"); // cycle 2
 
     // -- Attention: should have all 3 topics --
     assert_eq!(attention3.all_topics().len(), 3);
-    let topic_names: Vec<String> = attention3.all_topics().iter().map(|t| t.topic.clone()).collect();
+    let topic_names: Vec<String> = attention3
+        .all_topics()
+        .iter()
+        .map(|t| t.topic.clone())
+        .collect();
     assert!(topic_names.contains(&"code_review".to_string()));
     assert!(topic_names.contains(&"refactoring".to_string()));
     assert!(topic_names.contains(&"evolution_tracking".to_string()));
 
     // -- Care: accumulated adjustments --
-    assert!(approx_eq(care3.weight_of("efficiency").unwrap(), 0.7));  // unchanged from cycle 1
-    assert!(approx_eq(care3.weight_of("learning").unwrap(), 0.55));   // 0.45 + 0.1
-    assert!(approx_eq(care3.weight_of("safety").unwrap(), 0.9));      // 1.0 - 0.1
+    assert!(approx_eq(care3.weight_of("efficiency").unwrap(), 0.7)); // unchanged from cycle 1
+    assert!(approx_eq(care3.weight_of("learning").unwrap(), 0.55)); // 0.45 + 0.1
+    assert!(approx_eq(care3.weight_of("safety").unwrap(), 0.9)); // 1.0 - 0.1
     assert!(approx_eq(care3.weight_of("user_intent").unwrap(), 0.8)); // default, never touched
 
     // -- Boundary: 2 rules now --
     assert_eq!(boundary3.rule_count(), 2);
 
     // deploy rule should now be Sandbox (relaxed from Deny)
-    assert!(matches!(boundary3.check(&deploy_intent), Some(Verdict::SandboxFirst { .. })));
+    assert!(matches!(
+        boundary3.check(&deploy_intent),
+        Some(Verdict::SandboxFirst { .. })
+    ));
 
     // delete rule should require confirmation
     let delete_intent = aletheon_abi::Intent {
@@ -493,12 +515,18 @@ fn full_e2e_two_cycles() {
         source: aletheon_abi::IntentSource::User,
         description: "delete user data".to_string(),
     };
-    assert!(matches!(boundary3.check(&delete_intent), Some(Verdict::RequireConfirmation { .. })));
+    assert!(matches!(
+        boundary3.check(&delete_intent),
+        Some(Verdict::RequireConfirmation { .. })
+    ));
 
     // -- Identity: evolved --
     assert_eq!(identity3.current().name, "aletheon");
     assert_eq!(identity3.current().version, "0.2.0");
-    assert_eq!(identity3.current().description, "evolved persistent runtime");
+    assert_eq!(
+        identity3.current().description,
+        "evolved persistent runtime"
+    );
     assert_eq!(identity3.mutation_count(), 1);
     let history = identity3.history();
     assert_eq!(history[0].identity.version, "0.1.0");
@@ -507,9 +535,15 @@ fn full_e2e_two_cycles() {
     // -- Mutation: 2 records --
     assert_eq!(mutation3.records().len(), 2);
     assert_eq!(mutation3.records()[0].target, "care_priorities");
-    assert_eq!(mutation3.records()[0].status, aletheon_self::core::mutation::MutationStatus::Approved);
+    assert_eq!(
+        mutation3.records()[0].status,
+        aletheon_self::core::mutation::MutationStatus::Approved
+    );
     assert_eq!(mutation3.records()[1].target, "boundary_rules");
-    assert_eq!(mutation3.records()[1].status, aletheon_self::core::mutation::MutationStatus::Approved);
+    assert_eq!(
+        mutation3.records()[1].status,
+        aletheon_self::core::mutation::MutationStatus::Approved
+    );
 
     // -- Continuity: 3 records --
     assert_eq!(continuity3.len(), 3);

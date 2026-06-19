@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio::sync::Semaphore;
 use tokio::fs;
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -115,10 +115,7 @@ async fn extract_session(session_id: &str, session_dir: &Path) -> anyhow::Result
     let rollout_path = session_dir.join("rollout.json");
 
     if !rollout_path.exists() {
-        anyhow::bail!(
-            "Session rollout file not found: {}",
-            rollout_path.display()
-        );
+        anyhow::bail!("Session rollout file not found: {}", rollout_path.display());
     }
 
     let content = fs::read_to_string(&rollout_path).await?;
@@ -208,8 +205,14 @@ fn extract_text_content(msg: &serde_json::Value) -> Option<String> {
 /// Covers common patterns: API keys, tokens, passwords, private keys.
 fn redact_secrets(text: &str) -> String {
     let patterns: &[(&str, &str)] = &[
-        (r"(?i)(api[_-]?key|token|secret|password|passwd|auth)[=:]\s*\S+", "$1=[REDACTED]"),
-        (r"(?i)-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(RSA\s+)?PRIVATE\s+KEY-----", "[REDACTED_PRIVATE_KEY]"),
+        (
+            r"(?i)(api[_-]?key|token|secret|password|passwd|auth)[=:]\s*\S+",
+            "$1=[REDACTED]",
+        ),
+        (
+            r"(?i)-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(RSA\s+)?PRIVATE\s+KEY-----",
+            "[REDACTED_PRIVATE_KEY]",
+        ),
         (r"(?i)Bearer\s+[A-Za-z0-9\-._~+/]+=*", "Bearer [REDACTED]"),
         (r"ghp_[A-Za-z0-9]{36}", "[REDACTED_GITHUB_TOKEN]"),
         (r"sk-[A-Za-z0-9]{20,}", "[REDACTED_API_KEY]"),
@@ -229,7 +232,13 @@ fn generate_slug(session_id: &str) -> String {
     session_id
         .chars()
         .take(32)
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
@@ -348,10 +357,7 @@ mod tests {
         let session_dir = tmp.path().join("empty-session");
         fs::create_dir_all(&session_dir).await.unwrap();
 
-        let rollout = make_rollout_json(vec![
-            ("user", "hi"),
-            ("assistant", "ok"),
-        ]);
+        let rollout = make_rollout_json(vec![("user", "hi"), ("assistant", "ok")]);
         fs::write(session_dir.join("rollout.json"), rollout)
             .await
             .unwrap();

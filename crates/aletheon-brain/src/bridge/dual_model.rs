@@ -87,7 +87,9 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::r#impl::llm::{LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage};
+    use crate::r#impl::llm::{
+        LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage,
+    };
     use aletheon_abi::message::{ContentBlock, Message};
 
     /// Minimal stub provider for unit tests.

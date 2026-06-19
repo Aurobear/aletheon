@@ -356,12 +356,20 @@ mod tests {
             ..Default::default()
         });
 
-        assert!(governor.check_allow(&ResourceRequest::ConcurrentTool).is_ok());
-        assert!(governor.check_allow(&ResourceRequest::ConcurrentTool).is_ok());
-        assert!(governor.check_allow(&ResourceRequest::ConcurrentTool).is_err());
+        assert!(governor
+            .check_allow(&ResourceRequest::ConcurrentTool)
+            .is_ok());
+        assert!(governor
+            .check_allow(&ResourceRequest::ConcurrentTool)
+            .is_ok());
+        assert!(governor
+            .check_allow(&ResourceRequest::ConcurrentTool)
+            .is_err());
 
         governor.release_concurrent_tool();
-        assert!(governor.check_allow(&ResourceRequest::ConcurrentTool).is_ok());
+        assert!(governor
+            .check_allow(&ResourceRequest::ConcurrentTool)
+            .is_ok());
     }
 
     #[test]
@@ -371,8 +379,12 @@ mod tests {
             ..Default::default()
         });
 
-        assert!(governor.check_allow(&ResourceRequest::DiskWrite(50)).is_ok());
-        assert!(governor.check_allow(&ResourceRequest::DiskWrite(60)).is_err());
+        assert!(governor
+            .check_allow(&ResourceRequest::DiskWrite(50))
+            .is_ok());
+        assert!(governor
+            .check_allow(&ResourceRequest::DiskWrite(60))
+            .is_err());
     }
 
     #[test]
@@ -405,7 +417,10 @@ mod tests {
 
         // Use 70% of tokens
         governor.check_allow(&ResourceRequest::Tokens(70)).unwrap();
-        assert_eq!(governor.emergency_throttle(), ThrottleAction::ForceLocalOnly);
+        assert_eq!(
+            governor.emergency_throttle(),
+            ThrottleAction::ForceLocalOnly
+        );
     }
 
     #[test]

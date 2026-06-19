@@ -33,7 +33,7 @@ impl RecallMemory {
             CREATE INDEX IF NOT EXISTS idx_recall_session ON recall_memory(session_id);
             CREATE INDEX IF NOT EXISTS idx_recall_type ON recall_memory(entry_type);
             CREATE INDEX IF NOT EXISTS idx_recall_time ON recall_memory(timestamp);
-            "
+            ",
         )?;
 
         // FTS5 virtual table for full-text search with BM25 ranking
@@ -43,7 +43,7 @@ impl RecallMemory {
                 content=recall_memory,
                 content_rowid=id,
                 tokenize='porter unicode61'
-            );"
+            );",
         )?;
 
         // Triggers to keep FTS in sync with the main table
@@ -64,7 +64,13 @@ impl RecallMemory {
     }
 
     /// Store a memory entry.
-    pub fn store(&self, session_id: &str, entry_type: &str, content: &str, metadata: Option<&str>) -> anyhow::Result<i64> {
+    pub fn store(
+        &self,
+        session_id: &str,
+        entry_type: &str,
+        content: &str,
+        metadata: Option<&str>,
+    ) -> anyhow::Result<i64> {
         let now = Utc::now().to_rfc3339();
         self.db.execute(
             "INSERT INTO recall_memory (timestamp, session_id, entry_type, content, metadata) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -87,21 +93,23 @@ impl RecallMemory {
              INNER JOIN recall_memory_fts fts ON r.id = fts.rowid
              WHERE recall_memory_fts MATCH ?1
              ORDER BY rank
-             LIMIT ?2"
+             LIMIT ?2",
         )?;
 
-        let entries = stmt.query_map(rusqlite::params![fts_query, limit as i64], |row| {
-            Ok(MemoryEntry {
-                id: row.get(0)?,
-                timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
-                    .unwrap_or_default()
-                    .with_timezone(&chrono::Utc),
-                session_id: row.get(2)?,
-                entry_type: row.get(3)?,
-                content: row.get(4)?,
-                metadata: row.get(5)?,
-            })
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let entries = stmt
+            .query_map(rusqlite::params![fts_query, limit as i64], |row| {
+                Ok(MemoryEntry {
+                    id: row.get(0)?,
+                    timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Utc),
+                    session_id: row.get(2)?,
+                    entry_type: row.get(3)?,
+                    content: row.get(4)?,
+                    metadata: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Fallback to LIKE search if FTS returns no results
         // (e.g. query contains only stopwords)
@@ -119,22 +127,24 @@ impl RecallMemory {
              FROM recall_memory
              WHERE content LIKE ?1
              ORDER BY timestamp DESC
-             LIMIT ?2"
+             LIMIT ?2",
         )?;
 
         let pattern = format!("%{}%", query);
-        let entries = stmt.query_map(rusqlite::params![pattern, limit as i64], |row| {
-            Ok(MemoryEntry {
-                id: row.get(0)?,
-                timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
-                    .unwrap_or_default()
-                    .with_timezone(&chrono::Utc),
-                session_id: row.get(2)?,
-                entry_type: row.get(3)?,
-                content: row.get(4)?,
-                metadata: row.get(5)?,
-            })
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let entries = stmt
+            .query_map(rusqlite::params![pattern, limit as i64], |row| {
+                Ok(MemoryEntry {
+                    id: row.get(0)?,
+                    timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Utc),
+                    session_id: row.get(2)?,
+                    entry_type: row.get(3)?,
+                    content: row.get(4)?,
+                    metadata: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(entries)
     }
@@ -145,42 +155,44 @@ impl RecallMemory {
             "SELECT id, timestamp, session_id, entry_type, content, metadata
              FROM recall_memory
              ORDER BY timestamp DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
-        let entries = stmt.query_map([limit as i64], |row| {
-            Ok(MemoryEntry {
-                id: row.get(0)?,
-                timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
-                    .unwrap_or_default()
-                    .with_timezone(&chrono::Utc),
-                session_id: row.get(2)?,
-                entry_type: row.get(3)?,
-                content: row.get(4)?,
-                metadata: row.get(5)?,
-            })
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let entries = stmt
+            .query_map([limit as i64], |row| {
+                Ok(MemoryEntry {
+                    id: row.get(0)?,
+                    timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Utc),
+                    session_id: row.get(2)?,
+                    entry_type: row.get(3)?,
+                    content: row.get(4)?,
+                    metadata: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(entries)
     }
 
     /// Count total entries.
     pub fn count(&self) -> anyhow::Result<usize> {
-        let count: i64 = self.db.query_row(
-            "SELECT COUNT(*) FROM recall_memory", [], |row| row.get(0)
-        )?;
+        let count: i64 = self
+            .db
+            .query_row("SELECT COUNT(*) FROM recall_memory", [], |row| row.get(0))?;
         Ok(count as usize)
     }
 
     /// Rebuild the FTS index from existing data.
     /// Call this once after upgrading from the LIKE-based search.
     pub fn migrate_to_fts(&self) -> anyhow::Result<usize> {
-        let count: usize = self.db.query_row(
-            "SELECT COUNT(*) FROM recall_memory", [], |row| row.get(0)
-        )?;
+        let count: usize = self
+            .db
+            .query_row("SELECT COUNT(*) FROM recall_memory", [], |row| row.get(0))?;
         self.db.execute_batch(
             "INSERT INTO recall_memory_fts(rowid, content)
-             SELECT id, content FROM recall_memory"
+             SELECT id, content FROM recall_memory",
         )?;
         Ok(count)
     }
@@ -195,7 +207,8 @@ fn sanitize_fts_query(query: &str) -> String {
         .filter(|w| !w.is_empty())
         .map(|w| {
             // Remove FTS5 special characters and wrap in quotes
-            let clean: String = w.chars()
+            let clean: String = w
+                .chars()
                 .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
                 .collect();
             if clean.is_empty() {
@@ -230,8 +243,22 @@ mod tests {
     #[test]
     fn fts_search_finds_content() {
         let (recall, _tmp) = setup_recall();
-        recall.store("s1", "user", "The quick brown fox jumps over the lazy dog", None).unwrap();
-        recall.store("s1", "user", "I prefer using Rust for systems programming", None).unwrap();
+        recall
+            .store(
+                "s1",
+                "user",
+                "The quick brown fox jumps over the lazy dog",
+                None,
+            )
+            .unwrap();
+        recall
+            .store(
+                "s1",
+                "user",
+                "I prefer using Rust for systems programming",
+                None,
+            )
+            .unwrap();
 
         let results = recall.search("fox", 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -241,7 +268,9 @@ mod tests {
     #[test]
     fn fts_search_partial_match() {
         let (recall, _tmp) = setup_recall();
-        recall.store("s1", "user", "Configuration management is important", None).unwrap();
+        recall
+            .store("s1", "user", "Configuration management is important", None)
+            .unwrap();
 
         let results = recall.search("config", 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -250,9 +279,15 @@ mod tests {
     #[test]
     fn fts_search_multiple_results() {
         let (recall, _tmp) = setup_recall();
-        recall.store("s1", "user", "Rust is a systems language", None).unwrap();
-        recall.store("s1", "user", "I love Rust programming", None).unwrap();
-        recall.store("s1", "user", "Python is also nice", None).unwrap();
+        recall
+            .store("s1", "user", "Rust is a systems language", None)
+            .unwrap();
+        recall
+            .store("s1", "user", "I love Rust programming", None)
+            .unwrap();
+        recall
+            .store("s1", "user", "Python is also nice", None)
+            .unwrap();
 
         let results = recall.search("Rust", 10).unwrap();
         assert_eq!(results.len(), 2);
@@ -296,8 +331,12 @@ mod tests {
     #[test]
     fn migrate_to_fts_backfills() {
         let (recall, _tmp) = setup_recall();
-        recall.store("s1", "user", "alpha beta gamma", None).unwrap();
-        recall.store("s1", "user", "delta epsilon zeta", None).unwrap();
+        recall
+            .store("s1", "user", "alpha beta gamma", None)
+            .unwrap();
+        recall
+            .store("s1", "user", "delta epsilon zeta", None)
+            .unwrap();
 
         let count = recall.migrate_to_fts().unwrap();
         assert_eq!(count, 2);
@@ -307,7 +346,14 @@ mod tests {
     fn fts_ranking_prefers_relevant() {
         let (recall, _tmp) = setup_recall();
         recall.store("s1", "user", "Rust", None).unwrap();
-        recall.store("s1", "user", "I use Rust for everything, Rust is great, Rust Rust Rust", None).unwrap();
+        recall
+            .store(
+                "s1",
+                "user",
+                "I use Rust for everything, Rust is great, Rust Rust Rust",
+                None,
+            )
+            .unwrap();
 
         let results = recall.search("Rust", 10).unwrap();
         assert_eq!(results.len(), 2);

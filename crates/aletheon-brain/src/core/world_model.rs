@@ -58,10 +58,7 @@ impl WorldModel {
     /// Get observations from a specific source.
     pub fn from_source(&self, source: &str) -> Vec<Observation> {
         let obs = self.observations.read();
-        obs.iter()
-            .filter(|o| o.source == source)
-            .cloned()
-            .collect()
+        obs.iter().filter(|o| o.source == source).cloned().collect()
     }
 
     /// Number of observations currently stored.

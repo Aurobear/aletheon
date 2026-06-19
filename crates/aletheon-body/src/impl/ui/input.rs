@@ -369,11 +369,7 @@ impl<'a> InputWidget<'a> {
                         .unwrap_or_else(|| " ".to_string())
                         .as_str(),
                 )
-                .set_style(
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::White),
-                );
+                .set_style(Style::default().fg(Color::Black).bg(Color::White));
         }
     }
 }

@@ -3,14 +3,14 @@
 //! Reads identity, care, and boundary information from the SelfField
 //! and produces a Genome struct.
 
-use anyhow::Result;
 use aletheon_abi::{
-    SelfFieldOps, Version,
     genome::{
-        Topology, IdentitySpec, BoundarySpec, BoundaryRuleSpec,
-        CareSpec, CarePriority, MemorySpec, MutationSpec, LifecycleSpec,
+        BoundaryRuleSpec, BoundarySpec, CarePriority, CareSpec, IdentitySpec, LifecycleSpec,
+        MemorySpec, MutationSpec, Topology,
     },
+    SelfFieldOps, Version,
 };
+use anyhow::Result;
 
 use crate::core::types::Genome as MetaGenome;
 
@@ -39,9 +39,7 @@ impl SelfReader {
         let cares = self_field.cares().await?;
 
         Ok(MetaGenome {
-            topology: Topology {
-                subsystems: vec![],
-            },
+            topology: Topology { subsystems: vec![] },
             identity: IdentitySpec {
                 name: identity.name,
                 description: identity.description,
@@ -77,10 +75,7 @@ impl SelfReader {
                 compaction_strategy: "lru".to_string(),
             },
             mutation: MutationSpec {
-                allowed_targets: vec![
-                    "care.priorities".to_string(),
-                    "boundary.rules".to_string(),
-                ],
+                allowed_targets: vec!["care.priorities".to_string(), "boundary.rules".to_string()],
                 require_sandbox: true,
                 require_self_field_approval: true,
             },

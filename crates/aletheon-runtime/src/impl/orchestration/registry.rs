@@ -4,14 +4,14 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
-use aletheon_abi::agent::Pid;
-use aletheon_abi::evolution::CognitivePulseEvent;
-use aletheon_abi::EventBus;
-use aletheon_brain::r#impl::llm::LlmProvider;
-use aletheon_body::r#impl::tools::Tool;
 use super::agent::Agent;
 use super::config_agent::ConfigAgent;
 use crate::r#impl::agent::{AgentProcess, AgentProcessConfig};
+use aletheon_abi::agent::Pid;
+use aletheon_abi::evolution::CognitivePulseEvent;
+use aletheon_abi::EventBus;
+use aletheon_body::r#impl::tools::Tool;
+use aletheon_brain::r#impl::llm::LlmProvider;
 
 /// Registry of available agents and running processes.
 pub struct AgentRegistry {
@@ -170,9 +170,7 @@ impl AgentRegistry {
                     Ok(agent) => {
                         let id = agent.id().to_string();
                         info!(agent_id = %id, path = %path.display(), "Loaded agent from config");
-                        registry
-                            .register(Arc::new(RwLock::new(agent)))
-                            .await;
+                        registry.register(Arc::new(RwLock::new(agent))).await;
                     }
                     Err(e) => {
                         tracing::warn!(

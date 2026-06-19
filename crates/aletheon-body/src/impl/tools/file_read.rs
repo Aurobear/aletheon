@@ -41,7 +41,9 @@ impl Tool for FileReadTool {
         PermissionLevel::L0
     }
 
-    fn boxed_clone(&self) -> Box<dyn Tool> { Box::new(FileReadTool) }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(FileReadTool)
+    }
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let path = input["path"].as_str().unwrap_or("");

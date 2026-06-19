@@ -4,10 +4,6 @@ use anyhow::Result;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
-use aletheon_abi::{Message, ContentBlock, Role, ToolDefinition};
-use aletheon_abi::tool::Tool as ToolTrait;
-use aletheon_brain::r#impl::learning::{OutcomeRecorder, PatternExtractor, RuleStore};
-use aletheon_brain::r#impl::llm::LlmProvider;
 use crate::r#impl::memory::compressor::AdvancedCompressor;
 use crate::r#impl::memory::core_memory::CoreMemory;
 use crate::r#impl::memory::recall_memory::RecallMemory;
@@ -15,15 +11,19 @@ use crate::r#impl::orchestration::agent::Agent;
 use crate::r#impl::orchestration::delegate::DelegateTool;
 use crate::r#impl::orchestration::registry::AgentRegistry;
 use crate::r#impl::orchestration::selector::SelectorStrategy;
+use crate::r#impl::session::journal::{EventJournal, SessionEvent};
+use aletheon_abi::envelope::Envelope;
+use aletheon_abi::tool::Tool as ToolTrait;
+use aletheon_abi::tool::{ToolContext, ToolResult};
+use aletheon_abi::{ContentBlock, Message, Role, ToolDefinition};
+use aletheon_body::r#impl::tools::ToolRegistry;
+use aletheon_brain::r#impl::learning::{OutcomeRecorder, PatternExtractor, RuleStore};
+use aletheon_brain::r#impl::llm::LlmProvider;
+use aletheon_comm::CommunicationBus;
 use aletheon_self::bridge::perception::PerceptionInjection;
 use aletheon_self::r#impl::hook::dispatcher::HookDispatcher;
 use aletheon_self::r#impl::hook::types::{HandlerResult as HookResult, HookContext, HookEventName};
-use aletheon_self::r#impl::security::runner::{ToolRunnerWithGuard, ToolError};
-use crate::r#impl::session::journal::{EventJournal, SessionEvent};
-use aletheon_abi::tool::{ToolContext, ToolResult};
-use aletheon_body::r#impl::tools::ToolRegistry;
-use aletheon_abi::envelope::Envelope;
-use aletheon_comm::CommunicationBus;
+use aletheon_self::r#impl::security::runner::{ToolError, ToolRunnerWithGuard};
 
 use super::config::EngineConfig;
 
@@ -58,7 +58,10 @@ impl TurnResult {
 
     /// Returns true if the turn finished without errors.
     pub fn is_ok(&self) -> bool {
-        matches!(self, TurnResult::Complete(_) | TurnResult::NeedTool { .. } | TurnResult::NeedReflection)
+        matches!(
+            self,
+            TurnResult::Complete(_) | TurnResult::NeedTool { .. } | TurnResult::NeedReflection
+        )
     }
 }
 
@@ -108,10 +111,8 @@ impl Engine {
         recall_memory: Arc<Mutex<RecallMemory>>,
         tool_runner: Option<ToolRunnerWithGuard>,
     ) -> Self {
-        let compressor = AdvancedCompressor::new(
-            config.tail_token_budget,
-            config.target_summary_chars,
-        );
+        let compressor =
+            AdvancedCompressor::new(config.tail_token_budget, config.target_summary_chars);
         // Initialize learning components if enabled
         let (outcome_recorder, pattern_extractor) = if config.learning_enabled {
             let db_path = working_dir.join(".learning_outcomes.db");
@@ -225,7 +226,10 @@ impl Engine {
                         }
                         Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
                         Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
-                            warn!(skipped = n, "Perception subscription lagged, skipping messages");
+                            warn!(
+                                skipped = n,
+                                "Perception subscription lagged, skipping messages"
+                            );
                             continue;
                         }
                         Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
@@ -250,13 +254,17 @@ impl Engine {
                 match injection {
                     PerceptionInjection::Immediate(msg) => {
                         // Insert before the last user message
-                        let insert_pos = self.messages.iter().rposition(|m| m.role == Role::User)
+                        let insert_pos = self
+                            .messages
+                            .iter()
+                            .rposition(|m| m.role == Role::User)
                             .unwrap_or(self.messages.len());
                         self.messages.insert(insert_pos, msg);
                     }
                     PerceptionInjection::Batch(events) => {
                         if !events.is_empty() {
-                            let summary: Vec<String> = events.iter()
+                            let summary: Vec<String> = events
+                                .iter()
                                 .map(|e| format!("- {}", e.summary()))
                                 .collect();
                             let msg = Message::system(format!(
@@ -264,7 +272,10 @@ impl Engine {
                                 events.len(),
                                 summary.join("\n")
                             ));
-                            let insert_pos = self.messages.iter().rposition(|m| m.role == Role::User)
+                            let insert_pos = self
+                                .messages
+                                .iter()
+                                .rposition(|m| m.role == Role::User)
                                 .unwrap_or(self.messages.len());
                             self.messages.insert(insert_pos, msg);
                         }
@@ -285,7 +296,10 @@ impl Engine {
                         "[Perception Alert] source={}, priority={}, summary={}",
                         event_msg.source, event_msg.priority, event_msg.summary,
                     ));
-                    let insert_pos = self.messages.iter().rposition(|m| m.role == Role::User)
+                    let insert_pos = self
+                        .messages
+                        .iter()
+                        .rposition(|m| m.role == Role::User)
                         .unwrap_or(self.messages.len());
                     self.messages.insert(insert_pos, msg);
                 }
@@ -301,10 +315,9 @@ impl Engine {
     /// Returns an error if no AgentRegistry has been configured
     /// (call `with_agent_registry` first).
     pub async fn register_agent(&self, agent: Arc<RwLock<dyn Agent>>) -> Result<()> {
-        let registry = self
-            .agent_registry
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("AgentRegistry not configured; call with_agent_registry() first"))?;
+        let registry = self.agent_registry.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("AgentRegistry not configured; call with_agent_registry() first")
+        })?;
         registry.register(agent).await;
         Ok(())
     }
@@ -326,11 +339,15 @@ impl Engine {
         // Inject core memory into system prompt context (bus-aware)
         let core_memory_content = self.get_core_memory_context().await;
         if !core_memory_content.is_empty() {
-            debug!(len = core_memory_content.len(), "Core memory injected into context");
+            debug!(
+                len = core_memory_content.len(),
+                "Core memory injected into context"
+            );
         }
 
         // Store user message in recall memory (bus-aware)
-        self.store_recall(&self.config.session_id, "user", user_input, None).await;
+        self.store_recall(&self.config.session_id, "user", user_input, None)
+            .await;
 
         // Add user message
         self.messages.push(Message::user(user_input));
@@ -371,9 +388,16 @@ impl Engine {
 
             // Fire PreLLMCall hooks
             if let Some(ref hd) = self.hook_dispatcher {
-                let ctx = HookContext { tool: None, args: None, risk: None, message: None };
+                let ctx = HookContext {
+                    tool: None,
+                    args: None,
+                    risk: None,
+                    message: None,
+                };
                 match hd.fire(HookEventName::PreLLMCall, &ctx).await {
-                    HookResult::Block(reason) => return Err(anyhow::anyhow!("Blocked by hook: {}", reason)),
+                    HookResult::Block(reason) => {
+                        return Err(anyhow::anyhow!("Blocked by hook: {}", reason))
+                    }
                     HookResult::InjectContext(text) => {
                         debug!(len = text.len(), "Hook injected context");
                         self.messages.push(Message::system(text));
@@ -386,7 +410,10 @@ impl Engine {
             if self.config.learning_enabled {
                 let rules_context = self.rule_store.format_for_context();
                 if !rules_context.is_empty() {
-                    debug!(len = rules_context.len(), "Injecting learned rules into context");
+                    debug!(
+                        len = rules_context.len(),
+                        "Injecting learned rules into context"
+                    );
                     self.messages.push(Message::system(rules_context));
                 }
             }
@@ -414,7 +441,8 @@ impl Engine {
                 self.messages.push(Message::assistant(&final_text));
 
                 // Store assistant response in recall memory (bus-aware)
-                self.store_recall(&self.config.session_id, "assistant", &final_text, None).await;
+                self.store_recall(&self.config.session_id, "assistant", &final_text, None)
+                    .await;
 
                 // Record assistant message in journal
                 if let Some(j) = &self.journal {
@@ -426,7 +454,12 @@ impl Engine {
 
                 // Clean up temp system prompt
                 if injected_temp_system {
-                    if self.messages.first().map(|m| m.role == Role::System).unwrap_or(false) {
+                    if self
+                        .messages
+                        .first()
+                        .map(|m| m.role == Role::System)
+                        .unwrap_or(false)
+                    {
                         self.messages.remove(0);
                     }
                     self.temp_system_prompt = None;
@@ -486,16 +519,17 @@ impl Engine {
                 // Route delegate_task through DelegateTool when agent_registry is configured
                 let result = if tool_name == "delegate_task" {
                     if let Some(ref registry) = self.agent_registry {
-                        let delegate = DelegateTool::new(
-                            Arc::clone(registry),
-                            Default::default(),
+                        let delegate = DelegateTool::new(Arc::clone(registry), Default::default());
+                        info!(
+                            tool = tool_name.as_str(),
+                            "Executing delegate_task via DelegateTool"
                         );
-                        info!(tool = tool_name.as_str(), "Executing delegate_task via DelegateTool");
                         delegate.execute(tool_input.clone(), &ctx).await
                     } else {
                         // No registry configured -- fall through to normal tool execution
                         ToolResult {
-                            content: "delegate_task unavailable: no AgentRegistry configured".to_string(),
+                            content: "delegate_task unavailable: no AgentRegistry configured"
+                                .to_string(),
                             is_error: true,
                             metadata: Default::default(),
                         }
@@ -503,18 +537,22 @@ impl Engine {
                 } else if let Some(ref mut runner) = self.tool_runner {
                     match self.tools.get(tool_name) {
                         Some(tool) => {
-                            info!(tool = tool_name.as_str(), "Executing tool via guarded runner");
-                            match runner.execute_tool(
-                                tool.as_ref(),
-                                tool_input.clone(),
-                                &ctx,
-                                &turn_id,
-                            ).await {
+                            info!(
+                                tool = tool_name.as_str(),
+                                "Executing tool via guarded runner"
+                            );
+                            match runner
+                                .execute_tool(tool.as_ref(), tool_input.clone(), &ctx, &turn_id)
+                                .await
+                            {
                                 Ok(r) => r,
                                 Err(ToolError::PolicyDenied { reason }) => {
                                     warn!(tool = tool_name.as_str(), reason = %reason, "Tool denied by policy");
                                     ToolResult {
-                                        content: format!("Tool '{}' denied by policy: {}", tool_name, reason),
+                                        content: format!(
+                                            "Tool '{}' denied by policy: {}",
+                                            tool_name, reason
+                                        ),
                                         is_error: true,
                                         metadata: Default::default(),
                                     }
@@ -522,7 +560,10 @@ impl Engine {
                                 Err(ToolError::LoopBlocked { reason }) => {
                                     warn!(tool = tool_name.as_str(), reason = %reason, "Tool blocked by loop detector");
                                     ToolResult {
-                                        content: format!("Tool '{}' blocked (repetitive pattern detected): {}", tool_name, reason),
+                                        content: format!(
+                                            "Tool '{}' blocked (repetitive pattern detected): {}",
+                                            tool_name, reason
+                                        ),
                                         is_error: true,
                                         metadata: Default::default(),
                                     }
@@ -530,7 +571,10 @@ impl Engine {
                                 Err(ToolError::EscalateToHuman { reason }) => {
                                     warn!(tool = tool_name.as_str(), reason = %reason, "Tool requires human escalation");
                                     ToolResult {
-                                        content: format!("Tool '{}' requires human input: {}", tool_name, reason),
+                                        content: format!(
+                                            "Tool '{}' requires human input: {}",
+                                            tool_name, reason
+                                        ),
                                         is_error: true,
                                         metadata: Default::default(),
                                     }
@@ -603,16 +647,18 @@ impl Engine {
                         tool_input,
                         &result,
                         iteration,
-                    ).await;
+                    )
+                    .await;
                 }
 
                 // Emit ToolObservationEvent via CommunicationBus (or legacy EventBus fallback)
                 if let Some(ref bus) = self.bus {
                     use aletheon_abi::evolution::ToolObservationPayload;
-                    use aletheon_comm::core::event::ConcreteEvent;
                     use aletheon_abi::{EventType, Priority};
+                    use aletheon_comm::core::event::ConcreteEvent;
 
-                    let turn_uuid = uuid::Uuid::parse_str(&turn_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+                    let turn_uuid =
+                        uuid::Uuid::parse_str(&turn_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
                     let payload = ToolObservationPayload {
                         turn_id: turn_uuid,
                         tool_name: tool_name.to_string(),
@@ -622,7 +668,11 @@ impl Engine {
                             "is_error": result.is_error,
                         }),
                         duration_ms: elapsed_ms,
-                        error: if result.is_error { Some(result.content.clone()) } else { None },
+                        error: if result.is_error {
+                            Some(result.content.clone())
+                        } else {
+                            None
+                        },
                         rules_applied: Vec::new(), // Will be populated by BrainCore after reflection
                     };
 
@@ -662,7 +712,12 @@ impl Engine {
                 }
                 // Clean up temp system prompt
                 if injected_temp_system {
-                    if self.messages.first().map(|m| m.role == Role::System).unwrap_or(false) {
+                    if self
+                        .messages
+                        .first()
+                        .map(|m| m.role == Role::System)
+                        .unwrap_or(false)
+                    {
                         self.messages.remove(0);
                     }
                     self.temp_system_prompt = None;
@@ -673,10 +728,11 @@ impl Engine {
             // Advanced context compaction with token-budget tail protection
             if self.config.compaction_enabled {
                 let old_count = self.messages.len();
-                if self.compressor.maybe_compact(
-                    &mut self.messages,
-                    &*self.llm,
-                ).await? {
+                if self
+                    .compressor
+                    .maybe_compact(&mut self.messages, &*self.llm)
+                    .await?
+                {
                     if let Some(j) = &self.journal {
                         j.append(SessionEvent::Compacted {
                             before_count: old_count,
@@ -696,7 +752,12 @@ impl Engine {
 
         // Clean up temp system prompt
         if injected_temp_system {
-            if self.messages.first().map(|m| m.role == Role::System).unwrap_or(false) {
+            if self
+                .messages
+                .first()
+                .map(|m| m.role == Role::System)
+                .unwrap_or(false)
+            {
                 self.messages.remove(0);
             }
             self.temp_system_prompt = None;
@@ -717,12 +778,11 @@ impl Engine {
     /// # Arguments
     /// * `user_input` - the user's message text
     /// * `budget` - available token budget for this turn (reserved for Phase 2+)
-    pub async fn run_turn_with_budget(
-        &mut self,
-        user_input: &str,
-        budget: u32,
-    ) -> TurnResult {
-        debug!(budget, "run_turn_with_budget called (Phase 1: delegating to run_turn)");
+    pub async fn run_turn_with_budget(&mut self, user_input: &str, budget: u32) -> TurnResult {
+        debug!(
+            budget,
+            "run_turn_with_budget called (Phase 1: delegating to run_turn)"
+        );
         match self.run_turn(user_input).await {
             Ok(text) => TurnResult::Complete(text),
             Err(e) => TurnResult::Error(e.to_string()),

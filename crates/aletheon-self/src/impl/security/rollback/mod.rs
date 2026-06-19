@@ -78,23 +78,34 @@ impl RollbackExecutor {
     /// Select the best available backend.
     pub fn select_backend(&self) -> Option<&dyn RollbackBackend> {
         match self.preference {
-            RollbackPreference::Auto | RollbackPreference::BestEffort => {
-                self.backends.iter().find(|b| b.is_available()).map(|b| b.as_ref())
-            }
-            RollbackPreference::Require => {
-                self.backends.iter().find(|b| b.is_available()
-                    && matches!(b.tier(), RollbackTier::AtomicSnapshot | RollbackTier::FileBackup))
-                    .map(|b| b.as_ref())
-            }
-            RollbackPreference::Forbid => {
-                self.backends.iter().find(|b| b.name() == "audit_only").map(|b| b.as_ref())
-            }
+            RollbackPreference::Auto | RollbackPreference::BestEffort => self
+                .backends
+                .iter()
+                .find(|b| b.is_available())
+                .map(|b| b.as_ref()),
+            RollbackPreference::Require => self
+                .backends
+                .iter()
+                .find(|b| {
+                    b.is_available()
+                        && matches!(
+                            b.tier(),
+                            RollbackTier::AtomicSnapshot | RollbackTier::FileBackup
+                        )
+                })
+                .map(|b| b.as_ref()),
+            RollbackPreference::Forbid => self
+                .backends
+                .iter()
+                .find(|b| b.name() == "audit_only")
+                .map(|b| b.as_ref()),
         }
     }
 
     /// Create a snapshot using the best available backend.
     pub async fn snapshot(&mut self, context: &RollbackContext) -> Result<SnapshotId> {
-        let backend = self.select_backend()
+        let backend = self
+            .select_backend()
             .ok_or_else(|| anyhow::anyhow!("No rollback backend available"))?;
 
         let snapshot_id = backend.create_snapshot(context).await?;
@@ -111,7 +122,10 @@ impl RollbackExecutor {
     /// Rollback to a specific snapshot.
     pub async fn rollback(&self, snapshot_id: &SnapshotId) -> Result<RollbackResult> {
         // Find the backend that matches the snapshot's tier
-        let backend = self.backends.iter().find(|b| b.tier() == snapshot_id.tier && b.is_available());
+        let backend = self
+            .backends
+            .iter()
+            .find(|b| b.tier() == snapshot_id.tier && b.is_available());
 
         match backend {
             Some(b) => b.rollback(snapshot_id).await,
@@ -153,9 +167,15 @@ pub struct AuditOnlyBackend;
 
 #[async_trait]
 impl RollbackBackend for AuditOnlyBackend {
-    fn name(&self) -> &str { "audit_only" }
-    fn tier(&self) -> RollbackTier { RollbackTier::AuditOnly }
-    fn is_available(&self) -> bool { true }
+    fn name(&self) -> &str {
+        "audit_only"
+    }
+    fn tier(&self) -> RollbackTier {
+        RollbackTier::AuditOnly
+    }
+    fn is_available(&self) -> bool {
+        true
+    }
 
     async fn create_snapshot(&self, context: &RollbackContext) -> Result<SnapshotId> {
         let id = SnapshotId::new(RollbackTier::AuditOnly);
@@ -175,7 +195,8 @@ impl RollbackBackend for AuditOnlyBackend {
             snapshot_id: snapshot_id.clone(),
             restored_paths: vec![],
             message: "Audit-only tier cannot perform automatic rollback. \
-                      Check audit logs for operation details and rollback manually.".to_string(),
+                      Check audit logs for operation details and rollback manually."
+                .to_string(),
         })
     }
 
@@ -215,9 +236,15 @@ impl FileBackupBackend {
 
 #[async_trait]
 impl RollbackBackend for FileBackupBackend {
-    fn name(&self) -> &str { "file_backup" }
-    fn tier(&self) -> RollbackTier { RollbackTier::FileBackup }
-    fn is_available(&self) -> bool { true }
+    fn name(&self) -> &str {
+        "file_backup"
+    }
+    fn tier(&self) -> RollbackTier {
+        RollbackTier::FileBackup
+    }
+    fn is_available(&self) -> bool {
+        true
+    }
 
     async fn create_snapshot(&self, context: &RollbackContext) -> Result<SnapshotId> {
         let id = SnapshotId::new(RollbackTier::FileBackup);
@@ -241,7 +268,11 @@ impl RollbackBackend for FileBackupBackend {
                 match output {
                     Ok(o) if o.status.success() => {}
                     Ok(o) => {
-                        tracing::warn!("cp failed for {}: {}", path, String::from_utf8_lossy(&o.stderr));
+                        tracing::warn!(
+                            "cp failed for {}: {}",
+                            path,
+                            String::from_utf8_lossy(&o.stderr)
+                        );
                     }
                     Err(e) => {
                         tracing::warn!("cp command failed for {}: {}", path, e);
@@ -341,7 +372,10 @@ impl RollbackBackend for FileBackupBackend {
                 snapshots.push(SnapshotId {
                     id,
                     tier: RollbackTier::FileBackup,
-                    created_at: entry.metadata().await?.modified()
+                    created_at: entry
+                        .metadata()
+                        .await?
+                        .modified()
                         .map(|t| chrono::DateTime::from(t))
                         .unwrap_or_else(|_| Utc::now()),
                 });
@@ -408,9 +442,15 @@ impl BtrfsRollbackBackend {
 #[cfg(feature = "rollback-btrfs")]
 #[async_trait]
 impl RollbackBackend for BtrfsRollbackBackend {
-    fn name(&self) -> &str { "btrfs" }
-    fn tier(&self) -> RollbackTier { RollbackTier::AtomicSnapshot }
-    fn is_available(&self) -> bool { true }
+    fn name(&self) -> &str {
+        "btrfs"
+    }
+    fn tier(&self) -> RollbackTier {
+        RollbackTier::AtomicSnapshot
+    }
+    fn is_available(&self) -> bool {
+        true
+    }
 
     async fn create_snapshot(&self, context: &RollbackContext) -> Result<SnapshotId> {
         let id = SnapshotId::new(RollbackTier::AtomicSnapshot);
@@ -467,7 +507,12 @@ impl RollbackBackend for BtrfsRollbackBackend {
             }
 
             let output = tokio::process::Command::new("btrfs")
-                .args(["subvolume", "snapshot", &source.to_string_lossy(), &dest.to_string_lossy()])
+                .args([
+                    "subvolume",
+                    "snapshot",
+                    &source.to_string_lossy(),
+                    &dest.to_string_lossy(),
+                ])
                 .output()
                 .await?;
 
@@ -496,7 +541,10 @@ impl RollbackBackend for BtrfsRollbackBackend {
                 snapshots.push(SnapshotId {
                     id: entry.file_name().to_string_lossy().to_string(),
                     tier: RollbackTier::AtomicSnapshot,
-                    created_at: entry.metadata().await?.modified()
+                    created_at: entry
+                        .metadata()
+                        .await?
+                        .modified()
                         .map(|t| chrono::DateTime::from(t))
                         .unwrap_or_else(|_| Utc::now()),
                 });
@@ -542,7 +590,13 @@ impl RollbackBackend for BtrfsRollbackBackend {
 /// Capture current systemd service states.
 async fn capture_service_states() -> String {
     let output = tokio::process::Command::new("systemctl")
-        .args(["list-units", "--type=service", "--state=running", "--no-pager", "--plain"])
+        .args([
+            "list-units",
+            "--type=service",
+            "--state=running",
+            "--no-pager",
+            "--plain",
+        ])
         .output()
         .await;
 

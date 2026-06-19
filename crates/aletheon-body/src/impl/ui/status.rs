@@ -77,9 +77,14 @@ impl<'a> Widget for StatusBarWidget<'a> {
             // Pad to center
             let total_w = area.width as usize;
             let left_pad = total_w.saturating_sub(elapsed_text.len()) / 2;
-            let pad = " ".repeat(left_pad.saturating_sub(spans.iter().map(|s: &Span| s.width()).sum::<usize>()));
+            let pad = " ".repeat(
+                left_pad.saturating_sub(spans.iter().map(|s: &Span| s.width()).sum::<usize>()),
+            );
             spans.push(Span::raw(pad));
-            spans.push(Span::styled(elapsed_text, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                elapsed_text,
+                Style::default().fg(Color::DarkGray),
+            ));
         }
 
         // Right: token count if available
@@ -89,7 +94,10 @@ impl<'a> Widget for StatusBarWidget<'a> {
             let used: usize = spans.iter().map(|s: &Span| s.width()).sum();
             let right_pad = (area.width as usize).saturating_sub(used + token_text.len() + 1);
             spans.push(Span::raw(" ".repeat(right_pad)));
-            spans.push(Span::styled(token_text, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                token_text,
+                Style::default().fg(Color::DarkGray),
+            ));
         }
 
         let line = Line::from(spans);

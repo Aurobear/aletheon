@@ -39,7 +39,9 @@ impl Tool for BashExecTool {
         PermissionLevel::L1
     }
 
-    fn boxed_clone(&self) -> Box<dyn Tool> { Box::new(BashExecTool) }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(BashExecTool)
+    }
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let command = input["command"].as_str().unwrap_or("");
@@ -74,7 +76,9 @@ impl Tool for BashExecTool {
                     });
 
                 let content = processed.to_context_content().to_string();
-                let truncated = processed.was_truncated() || captured.stdout_truncated || captured.stderr_truncated;
+                let truncated = processed.was_truncated()
+                    || captured.stdout_truncated
+                    || captured.stderr_truncated;
 
                 ToolResult {
                     content,

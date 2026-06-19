@@ -1,7 +1,7 @@
 //! Accessibility driver trait and mock implementation.
 
+use crate::r#impl::driver::types::{Bounds, Element, UiTree};
 use anyhow::Result;
-use crate::r#impl::driver::types::{Element, UiTree, Bounds};
 
 /// Accessibility driver trait — provides structured UI tree access.
 pub trait A11yDriver: Send + Sync {
@@ -27,7 +27,12 @@ impl MockA11yDriver {
                     role: "frame".into(),
                     name: "Mock Window".into(),
                     text: String::new(),
-                    bounds: Bounds { x: 0, y: 0, width: 1920, height: 1080 },
+                    bounds: Bounds {
+                        x: 0,
+                        y: 0,
+                        width: 1920,
+                        height: 1080,
+                    },
                     state: vec!["showing".into()],
                     actions: vec![],
                     children: vec![
@@ -35,7 +40,12 @@ impl MockA11yDriver {
                             role: "push-button".into(),
                             name: "OK".into(),
                             text: "OK".into(),
-                            bounds: Bounds { x: 100, y: 200, width: 80, height: 30 },
+                            bounds: Bounds {
+                                x: 100,
+                                y: 200,
+                                width: 80,
+                                height: 30,
+                            },
                             state: vec!["enabled".into()],
                             actions: vec!["click".into()],
                             children: vec![],
@@ -44,8 +54,16 @@ impl MockA11yDriver {
                             role: "text-input".into(),
                             name: "Search".into(),
                             text: String::new(),
-                            bounds: Bounds { x: 100, y: 100, width: 300, height: 40 },
-                            state: vec!["enabled", "focused"].into_iter().map(String::from).collect(),
+                            bounds: Bounds {
+                                x: 100,
+                                y: 100,
+                                width: 300,
+                                height: 40,
+                            },
+                            state: vec!["enabled", "focused"]
+                                .into_iter()
+                                .map(String::from)
+                                .collect(),
                             actions: vec!["focus".into(), "type".into()],
                             children: vec![],
                         },

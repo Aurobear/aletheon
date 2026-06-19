@@ -165,9 +165,7 @@ fn messages_to_ollama(messages: &[Message]) -> Vec<ChatMessage> {
             // Extract tool result from ToolResult blocks
             let tool_result_text = m.content.iter().find_map(|c| match c {
                 ContentBlock::ToolResult {
-                    content,
-                    is_error,
-                    ..
+                    content, is_error, ..
                 } => {
                     if *is_error {
                         Some(format!("[ERROR] {}", content))
@@ -229,10 +227,7 @@ impl LlmProvider for OllamaProvider {
             stream: false,
         };
 
-        let url = format!(
-            "{}/api/chat",
-            self.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
 
         let response = self
             .client
@@ -305,10 +300,7 @@ impl LlmProvider for OllamaProvider {
             stream: true,
         };
 
-        let url = format!(
-            "{}/api/chat",
-            self.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
 
         let response = self
             .client
@@ -359,10 +351,7 @@ impl LlmProvider for OllamaProvider {
                                         // We need to emit Done after this, so stash the usage
                                         // and return the completed chunk. On the next poll
                                         // we'll emit Done. For simplicity, emit usage + done.
-                                        return Some((
-                                            Ok(completed),
-                                            state,
-                                        ));
+                                        return Some((Ok(completed), state));
                                     }
 
                                     return Some((
@@ -379,7 +368,9 @@ impl LlmProvider for OllamaProvider {
                                     if let Some(text) = msg.content {
                                         if !text.is_empty() {
                                             return Some((
-                                                Ok(super::provider::StreamChunk::TextDelta { text }),
+                                                Ok(super::provider::StreamChunk::TextDelta {
+                                                    text,
+                                                }),
                                                 state,
                                             ));
                                         }

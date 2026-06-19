@@ -24,22 +24,26 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use aletheon_abi::{ContentBlock, Message, Role};
+use aletheon_body::r#impl::security::approval::{ApprovalGate, TerminalApprovalGate};
+use aletheon_body::r#impl::security::audit::AuditLogger;
+use aletheon_body::r#impl::security::runner::ToolRunnerWithGuard;
+use aletheon_body::r#impl::tools::{ToolContext, ToolRegistry};
 use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_brain::r#impl::llm::StopReason;
 use aletheon_brain::r#impl::provider_registry::ProviderRegistry;
-use aletheon_body::r#impl::tools::{ToolContext, ToolRegistry};
-use aletheon_body::r#impl::security::runner::ToolRunnerWithGuard;
-use aletheon_body::r#impl::security::approval::{TerminalApprovalGate, ApprovalGate};
-use aletheon_body::r#impl::security::audit::AuditLogger;
 
 /// Minimal KEY=VALUE .env loader (no shell expansion). Mirrors the daemon's loader so
 /// exec resolves provider API keys the same way the daemon does. Does not override
 /// already-set process env vars.
 fn load_dotenv(path: &std::path::Path) {
-    let Ok(content) = std::fs::read_to_string(path) else { return };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
     for line in content.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         if let Some((k, v)) = line.split_once('=') {
             let (k, v) = (k.trim(), v.trim());
             if std::env::var(k).is_err() {
@@ -129,9 +133,10 @@ async fn run(args: Args) -> Result<ExecResult> {
         load_dotenv(&std::path::Path::new(&home).join(".aletheon").join(".env"));
     }
 
-    let working_dir = args.working_dir.canonicalize().unwrap_or_else(|_| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
-    });
+    let working_dir = args
+        .working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
 
     // Load config
     let app_config = if let Some(ref path) = args.config {
@@ -153,10 +158,8 @@ async fn run(args: Args) -> Result<ExecResult> {
     // Guarded runner with terminal approval for risky (L2+) tools.
     let audit_path = working_dir.join(".aletheon-audit.jsonl");
     let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
-    let mut runner = ToolRunnerWithGuard::with_default_sandbox(
-        AuditLogger::new(audit_path)?,
-    )
-    .with_approval_gate(approval);
+    let mut runner = ToolRunnerWithGuard::with_default_sandbox(AuditLogger::new(audit_path)?)
+        .with_approval_gate(approval);
     let turn_id = uuid::Uuid::new_v4().to_string();
     runner.on_new_turn(&turn_id);
 
@@ -173,10 +176,8 @@ async fn run(args: Args) -> Result<ExecResult> {
     );
 
     // Initialize conversation
-    let mut messages: Vec<Message> = vec![
-        Message::system(&system_prompt),
-        Message::user(&args.prompt),
-    ];
+    let mut messages: Vec<Message> =
+        vec![Message::system(&system_prompt), Message::user(&args.prompt)];
 
     // Tool execution context
     let tool_ctx = ToolContext {
@@ -320,12 +321,7 @@ mod tests {
 
     #[test]
     fn test_args_defaults() {
-        let args = Args::try_parse_from([
-            "aletheon-exec",
-            "--prompt",
-            "test",
-        ])
-        .unwrap();
+        let args = Args::try_parse_from(["aletheon-exec", "--prompt", "test"]).unwrap();
 
         assert_eq!(args.max_turns, 20);
         assert_eq!(args.sandbox, "auto");
@@ -340,14 +336,8 @@ mod tests {
 
     #[test]
     fn test_args_json_output() {
-        let args = Args::try_parse_from([
-            "aletheon-exec",
-            "--prompt",
-            "test",
-            "--output",
-            "json",
-        ])
-        .unwrap();
+        let args = Args::try_parse_from(["aletheon-exec", "--prompt", "test", "--output", "json"])
+            .unwrap();
 
         assert_eq!(args.output, "json");
     }

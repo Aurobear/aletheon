@@ -1,5 +1,5 @@
-use aletheon_abi::self_field::{RiskLevel, Verdict};
 use crate::r#impl::security::{LoopDetector, LoopDetectorConfig, LoopVerdict};
+use aletheon_abi::self_field::{RiskLevel, Verdict};
 use aletheon_abi::tool::ToolResult;
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -46,14 +46,15 @@ impl LoopBridge {
 
     /// Post-check: record a completed tool call.
     pub fn post_check(&self, tool_name: &str, args: &Value, result: &ToolResult, turn_id: &str) {
-        self.detector.lock().post_check(tool_name, args, result, turn_id);
+        self.detector
+            .lock()
+            .post_check(tool_name, args, result, turn_id);
     }
 
     /// End a turn.
     pub fn end_turn(&self, turn_id: &str) {
         self.detector.lock().end_turn(turn_id);
     }
-
 }
 
 impl Default for LoopBridge {

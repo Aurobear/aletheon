@@ -1,5 +1,6 @@
 //! Sandbox execution layer.
 
+pub mod backend;
 pub mod bubblewrap;
 pub mod bwrap_builder;
 pub mod container;
@@ -9,7 +10,6 @@ pub mod glob_scanner;
 pub mod noop;
 pub mod policy;
 pub mod process;
-pub mod backend;
 
 // Re-export key types for convenience (inlined from backend.rs)
 pub use aletheon_abi::sandbox::{

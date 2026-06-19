@@ -1,7 +1,7 @@
+use aletheon_abi::{Event, EventHandler, EventType, SubscriptionId};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use parking_lot::RwLock;
-use aletheon_abi::{Event, EventType, EventHandler, SubscriptionId};
 
 pub struct Subscription {
     pub id: SubscriptionId,
@@ -24,8 +24,16 @@ impl SubscriptionRegistry {
 
     pub fn subscribe(&self, event_type: EventType, handler: EventHandler) -> SubscriptionId {
         let id = SubscriptionId(self.next_id.fetch_add(1, Ordering::SeqCst));
-        let sub = Subscription { id, event_type: event_type.clone(), handler };
-        self.subscriptions.write().entry(event_type).or_default().push(sub);
+        let sub = Subscription {
+            id,
+            event_type: event_type.clone(),
+            handler,
+        };
+        self.subscriptions
+            .write()
+            .entry(event_type)
+            .or_default()
+            .push(sub);
         id
     }
 
@@ -54,7 +62,10 @@ impl SubscriptionRegistry {
     }
 
     pub fn has_subscribers(&self, event_type: &EventType) -> bool {
-        self.subscriptions.read().get(event_type).is_some_and(|v| !v.is_empty())
+        self.subscriptions
+            .read()
+            .get(event_type)
+            .is_some_and(|v| !v.is_empty())
     }
 }
 
@@ -67,10 +78,10 @@ impl Default for SubscriptionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_abi::Priority;
+    use std::any::Any;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
-    use std::any::Any;
-    use aletheon_abi::Priority;
 
     #[test]
     fn test_subscribe_returns_incrementing_ids() {
@@ -107,10 +118,18 @@ mod tests {
     struct TestEvent;
 
     impl Event for TestEvent {
-        fn event_type(&self) -> EventType { EventType::UserIntent }
-        fn priority(&self) -> Priority { Priority::Normal }
-        fn source(&self) -> &str { "test" }
-        fn payload(&self) -> &dyn Any { &() }
+        fn event_type(&self) -> EventType {
+            EventType::UserIntent
+        }
+        fn priority(&self) -> Priority {
+            Priority::Normal
+        }
+        fn source(&self) -> &str {
+            "test"
+        }
+        fn payload(&self) -> &dyn Any {
+            &()
+        }
     }
 
     #[test]
@@ -118,10 +137,13 @@ mod tests {
         let registry = SubscriptionRegistry::new();
         let called = Arc::new(AtomicBool::new(false));
         let called_clone = called.clone();
-        registry.subscribe(EventType::UserIntent, Box::new(move |_| {
-            called_clone.store(true, Ordering::SeqCst);
-            true
-        }));
+        registry.subscribe(
+            EventType::UserIntent,
+            Box::new(move |_| {
+                called_clone.store(true, Ordering::SeqCst);
+                true
+            }),
+        );
 
         registry.dispatch(&TestEvent);
         assert!(called.load(Ordering::SeqCst));
@@ -134,16 +156,22 @@ mod tests {
         let second_called = Arc::new(AtomicBool::new(false));
 
         let first_clone = first_called.clone();
-        registry.subscribe(EventType::UserIntent, Box::new(move |_| {
-            first_clone.store(true, Ordering::SeqCst);
-            false // stop propagation
-        }));
+        registry.subscribe(
+            EventType::UserIntent,
+            Box::new(move |_| {
+                first_clone.store(true, Ordering::SeqCst);
+                false // stop propagation
+            }),
+        );
 
         let second_clone = second_called.clone();
-        registry.subscribe(EventType::UserIntent, Box::new(move |_| {
-            second_clone.store(true, Ordering::SeqCst);
-            true
-        }));
+        registry.subscribe(
+            EventType::UserIntent,
+            Box::new(move |_| {
+                second_clone.store(true, Ordering::SeqCst);
+                true
+            }),
+        );
 
         registry.dispatch(&TestEvent);
         assert!(first_called.load(Ordering::SeqCst));

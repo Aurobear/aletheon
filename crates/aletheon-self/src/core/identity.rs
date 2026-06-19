@@ -24,7 +24,11 @@ pub struct IdentityLayer {
 }
 
 impl IdentityLayer {
-    pub fn new(name: impl Into<String>, description: impl Into<String>, version: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Self {
         let identity = Identity {
             name: name.into(),
             description: description.into(),

@@ -33,7 +33,7 @@ impl Default for EbpfConfig {
             enable_sched: true,
             enable_net: true,
             enable_block: true,
-            enable_syscall: false, // noisy, off by default
+            enable_syscall: false,                 // noisy, off by default
             block_latency_threshold_ns: 1_000_000, // 1ms
         }
     }
@@ -65,7 +65,12 @@ impl EbpfSource {
         self.event_id_counter
     }
 
-    fn make_event(&mut self, data: EventData, priority: Priority, category: EventCategory) -> PerceptionEvent {
+    fn make_event(
+        &mut self,
+        data: EventData,
+        priority: Priority,
+        category: EventCategory,
+    ) -> PerceptionEvent {
         PerceptionEvent {
             id: self.next_id(),
             timestamp: Utc::now(),
@@ -111,11 +116,12 @@ impl EbpfSource {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 10 {
                     let iface = parts[0].trim_end_matches(':');
-                    if iface == "lo" { continue; }
-                    if let (Ok(rx_bytes), Ok(tx_bytes)) = (
-                        parts[1].parse::<u64>(),
-                        parts[9].parse::<u64>(),
-                    ) {
+                    if iface == "lo" {
+                        continue;
+                    }
+                    if let (Ok(rx_bytes), Ok(tx_bytes)) =
+                        (parts[1].parse::<u64>(), parts[9].parse::<u64>())
+                    {
                         events.push(self.make_event(
                             EventData::System {
                                 metric: format!("net_{}_rx_bytes", iface),

@@ -8,8 +8,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::genome::Genome;
-use crate::subsystem::Subsystem;
 use crate::self_field::MutationIntent;
+use crate::subsystem::Subsystem;
 
 /// A candidate runtime generated from a genome mutation.
 #[derive(Debug, Clone)]
@@ -75,11 +75,8 @@ pub trait MetaRuntimeOps: Subsystem {
     async fn sandbox_test(&self, candidate: &RuntimeCandidate) -> Result<TestResult>;
 
     /// Evaluate a candidate after testing.
-    async fn evaluate(
-        &self,
-        candidate: &RuntimeCandidate,
-        test: &TestResult,
-    ) -> Result<Evaluation>;
+    async fn evaluate(&self, candidate: &RuntimeCandidate, test: &TestResult)
+        -> Result<Evaluation>;
 
     /// Migrate to a new runtime (requires SelfField approval).
     async fn migrate(&self, candidate: &RuntimeCandidate) -> Result<MigrationResult>;

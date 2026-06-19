@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 /// Status of a session's Phase 1 processing.
@@ -156,7 +156,9 @@ impl StateDatabase {
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
 
-        record.stage1_status = Stage1Status::Failed { reason: reason.clone() };
+        record.stage1_status = Stage1Status::Failed {
+            reason: reason.clone(),
+        };
         warn!(session_id, reason, "Session marked as failed");
         Ok(())
     }
@@ -221,11 +223,7 @@ impl StateDatabase {
                 Ok(())
             }
             Some(other) => {
-                anyhow::bail!(
-                    "Phase 2 lock is held by '{}', not '{}'",
-                    other,
-                    claim_id
-                )
+                anyhow::bail!("Phase 2 lock is held by '{}', not '{}'", other, claim_id)
             }
             None => anyhow::bail!("No Phase 2 lock is currently held"),
         }
@@ -273,11 +271,7 @@ mod tests {
     #[test]
     fn test_upsert_and_get() {
         let mut db = StateDatabase::new();
-        let record = SessionRecord::new(
-            "s1".into(),
-            PathBuf::from("/tmp/s1"),
-            ts(100),
-        );
+        let record = SessionRecord::new("s1".into(), PathBuf::from("/tmp/s1"), ts(100));
         db.upsert_session(record);
 
         assert_eq!(db.session_count(), 1);
@@ -475,13 +469,7 @@ mod tests {
             db.upsert_session(r);
         }
 
-        assert_eq!(
-            db.sessions_by_status(&Stage1Status::Pending).len(),
-            2
-        );
-        assert_eq!(
-            db.sessions_by_status(&Stage1Status::Succeeded).len(),
-            1
-        );
+        assert_eq!(db.sessions_by_status(&Stage1Status::Pending).len(), 2);
+        assert_eq!(db.sessions_by_status(&Stage1Status::Succeeded).len(), 1);
     }
 }

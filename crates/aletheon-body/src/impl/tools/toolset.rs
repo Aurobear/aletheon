@@ -27,7 +27,9 @@ impl fmt::Display for ToolsetError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ToolsetError::UnknownToolset(name) => write!(f, "unknown toolset: {name}"),
-            ToolsetError::CycleDetected(name) => write!(f, "include cycle detected at toolset: {name}"),
+            ToolsetError::CycleDetected(name) => {
+                write!(f, "include cycle detected at toolset: {name}")
+            }
         }
     }
 }
@@ -138,39 +140,28 @@ impl ToolsetRegistry {
         // perception: kernel/ebpf observability (includes core)
         reg.register(Toolset {
             name: "perception".to_string(),
-            tools: vec![
-                "ebpf_compile".to_string(),
-                "module_load".to_string(),
-            ],
+            tools: vec!["ebpf_compile".to_string(), "module_load".to_string()],
             includes: vec!["core".to_string()],
         });
 
         // memory: memory subsystem tools
         reg.register(Toolset {
             name: "memory".to_string(),
-            tools: vec![
-                "memory_read".to_string(),
-                "memory_write".to_string(),
-            ],
+            tools: vec!["memory_read".to_string(), "memory_write".to_string()],
             includes: vec![],
         });
 
         // network: network tooling (includes core)
         reg.register(Toolset {
             name: "network".to_string(),
-            tools: vec![
-                "network_diag".to_string(),
-            ],
+            tools: vec!["network_diag".to_string()],
             includes: vec!["core".to_string()],
         });
 
         // full: everything (includes all other toolsets)
         reg.register(Toolset {
             name: "full".to_string(),
-            tools: vec![
-                "module_build".to_string(),
-                "kernel_build".to_string(),
-            ],
+            tools: vec!["module_build".to_string(), "kernel_build".to_string()],
             includes: vec![
                 "system".to_string(),
                 "perception".to_string(),
@@ -236,11 +227,7 @@ mod tests {
     fn resolve_with_includes() {
         let mut reg = ToolsetRegistry::new();
         reg.register(ts("core", &["file_read", "system_status"], &[]));
-        reg.register(ts(
-            "system",
-            &["bash_exec", "file_write"],
-            &["core"],
-        ));
+        reg.register(ts("system", &["bash_exec", "file_write"], &["core"]));
 
         let resolved = reg.resolve("system").unwrap();
         assert!(resolved.contains("file_read"));

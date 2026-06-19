@@ -14,7 +14,9 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 use tracing::warn;
 
-use aletheon_abi::tool::{PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult, ToolResultMeta};
+use aletheon_abi::tool::{
+    PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult, ToolResultMeta,
+};
 
 /// A tool backed by an external executable script.
 #[derive(Debug, Clone)]
@@ -199,23 +201,34 @@ mod tests {
     fn script_tool_with_schema() {
         let schema = json!({"type": "object", "properties": {"x": {"type": "string"}}});
         let tool = ScriptTool::new(
-            "t".into(), "d".into(), PathBuf::from("/tmp/t.sh"), PermissionLevel::L1,
-        ).with_schema(schema.clone());
+            "t".into(),
+            "d".into(),
+            PathBuf::from("/tmp/t.sh"),
+            PermissionLevel::L1,
+        )
+        .with_schema(schema.clone());
         assert_eq!(tool.input_schema(), schema);
     }
 
     #[test]
     fn script_tool_with_exposure() {
         let tool = ScriptTool::new(
-            "t".into(), "d".into(), PathBuf::from("/tmp/t.sh"), PermissionLevel::L1,
-        ).with_exposure(ToolExposure::Deferred);
+            "t".into(),
+            "d".into(),
+            PathBuf::from("/tmp/t.sh"),
+            PermissionLevel::L1,
+        )
+        .with_exposure(ToolExposure::Deferred);
         assert_eq!(tool.exposure(), ToolExposure::Deferred);
     }
 
     #[tokio::test]
     async fn script_tool_execute_missing_script() {
         let tool = ScriptTool::new(
-            "t".into(), "d".into(), PathBuf::from("/nonexistent/script.sh"), PermissionLevel::L1,
+            "t".into(),
+            "d".into(),
+            PathBuf::from("/nonexistent/script.sh"),
+            PermissionLevel::L1,
         );
         let ctx = ToolContext {
             working_dir: PathBuf::from("/tmp"),
@@ -238,7 +251,10 @@ mod tests {
         }
 
         let tool = ScriptTool::new(
-            "hello".into(), "says hello".into(), script_path, PermissionLevel::L0,
+            "hello".into(),
+            "says hello".into(),
+            script_path,
+            PermissionLevel::L0,
         );
         let ctx = ToolContext {
             working_dir: dir.path().to_path_buf(),
@@ -261,7 +277,10 @@ mod tests {
         }
 
         let tool = ScriptTool::new(
-            "fail".into(), "fails".into(), script_path, PermissionLevel::L1,
+            "fail".into(),
+            "fails".into(),
+            script_path,
+            PermissionLevel::L1,
         );
         let ctx = ToolContext {
             working_dir: dir.path().to_path_buf(),
@@ -275,7 +294,11 @@ mod tests {
     async fn script_tool_execute_json_output() {
         let dir = TempDir::new().unwrap();
         let script_path = dir.path().join("json.sh");
-        std::fs::write(&script_path, "#!/bin/bash\necho '{\"content\": \"structured\"}'").unwrap();
+        std::fs::write(
+            &script_path,
+            "#!/bin/bash\necho '{\"content\": \"structured\"}'",
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -283,7 +306,10 @@ mod tests {
         }
 
         let tool = ScriptTool::new(
-            "json_out".into(), "outputs json".into(), script_path, PermissionLevel::L0,
+            "json_out".into(),
+            "outputs json".into(),
+            script_path,
+            PermissionLevel::L0,
         );
         let ctx = ToolContext {
             working_dir: dir.path().to_path_buf(),
@@ -297,7 +323,10 @@ mod tests {
     #[test]
     fn script_tool_boxed_clone() {
         let tool = ScriptTool::new(
-            "t".into(), "d".into(), PathBuf::from("/tmp/t.sh"), PermissionLevel::L1,
+            "t".into(),
+            "d".into(),
+            PathBuf::from("/tmp/t.sh"),
+            PermissionLevel::L1,
         );
         let cloned = tool.boxed_clone();
         assert_eq!(cloned.name(), "t");

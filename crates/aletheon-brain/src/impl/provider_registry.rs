@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::config::{AppConfig, ProviderConfig, Transport};
 use super::llm::anthropic::AnthropicProvider;
 use super::llm::openai_provider::OpenAiProvider;
 use super::llm::LlmProvider;
+use crate::config::{AppConfig, ProviderConfig, Transport};
 
 /// Resolved transport after auto-detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,19 +50,21 @@ impl ProviderRegistry {
             }
         }
 
-        let default_provider = config.agent.default_provider.clone()
-            .unwrap_or_else(|| {
-                config.providers.first()
-                    .map(|p| p.name.clone())
-                    .unwrap_or_default()
-            });
+        let default_provider = config.agent.default_provider.clone().unwrap_or_else(|| {
+            config
+                .providers
+                .first()
+                .map(|p| p.name.clone())
+                .unwrap_or_default()
+        });
 
-        let default_model = config.agent.default_model.clone()
-            .unwrap_or_else(|| {
-                config.providers.first()
-                    .and_then(|p| p.models.first().cloned())
-                    .unwrap_or_default()
-            });
+        let default_model = config.agent.default_model.clone().unwrap_or_else(|| {
+            config
+                .providers
+                .first()
+                .and_then(|p| p.models.first().cloned())
+                .unwrap_or_default()
+        });
 
         Ok(Self {
             providers,
@@ -84,15 +86,21 @@ impl ProviderRegistry {
 
         if spec.is_empty() {
             // Use defaults
-            let provider = self.providers.get(&self.default_provider)
-                .ok_or_else(|| anyhow::anyhow!("Default provider '{}' not found", self.default_provider))?
+            let provider = self
+                .providers
+                .get(&self.default_provider)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Default provider '{}' not found", self.default_provider)
+                })?
                 .clone();
             return Ok((provider, self.default_model.clone()));
         }
 
         // Try "provider/model" format
         if let Some((provider_name, model)) = spec.split_once('/') {
-            let provider = self.providers.get(provider_name)
+            let provider = self
+                .providers
+                .get(provider_name)
                 .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?
                 .clone();
             return Ok((provider, model.to_string()));
@@ -100,14 +108,20 @@ impl ProviderRegistry {
 
         // Try alias
         if let Some((provider_name, model)) = self.aliases.get(spec) {
-            let provider = self.providers.get(provider_name)
-                .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found (alias '{}')", provider_name, spec))?
+            let provider = self
+                .providers
+                .get(provider_name)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Provider '{}' not found (alias '{}')", provider_name, spec)
+                })?
                 .clone();
             return Ok((provider, model.clone()));
         }
 
         // Try as model name with default provider
-        let provider = self.providers.get(&self.default_provider)
+        let provider = self
+            .providers
+            .get(&self.default_provider)
             .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", self.default_provider))?
             .clone();
         Ok((provider, spec.to_string()))
@@ -127,10 +141,7 @@ impl ProviderRegistry {
                 Box::new(OpenAiProvider::new(&api_key, model, &config.base_url))
             }
             ResolvedTransport::Anthropic => {
-                Box::new(
-                    AnthropicProvider::new(&api_key, model)
-                        .with_base_url(&config.base_url),
-                )
+                Box::new(AnthropicProvider::new(&api_key, model).with_base_url(&config.base_url))
             }
         }
     }
@@ -202,15 +213,30 @@ local = "ollama/qwen3:8b"
 
     #[test]
     fn test_detect_transport_anthropic() {
-        assert_eq!(detect_transport("https://api.example.com/anthropic"), ResolvedTransport::Anthropic);
-        assert_eq!(detect_transport("https://token-plan-sgp.xiaomimimo.com/anthropic"), ResolvedTransport::Anthropic);
+        assert_eq!(
+            detect_transport("https://api.example.com/anthropic"),
+            ResolvedTransport::Anthropic
+        );
+        assert_eq!(
+            detect_transport("https://token-plan-sgp.xiaomimimo.com/anthropic"),
+            ResolvedTransport::Anthropic
+        );
     }
 
     #[test]
     fn test_detect_transport_openai() {
-        assert_eq!(detect_transport("https://api.deepseek.com"), ResolvedTransport::OpenAi);
-        assert_eq!(detect_transport("http://localhost:11434"), ResolvedTransport::OpenAi);
-        assert_eq!(detect_transport("https://api.openai.com"), ResolvedTransport::OpenAi);
+        assert_eq!(
+            detect_transport("https://api.deepseek.com"),
+            ResolvedTransport::OpenAi
+        );
+        assert_eq!(
+            detect_transport("http://localhost:11434"),
+            ResolvedTransport::OpenAi
+        );
+        assert_eq!(
+            detect_transport("https://api.openai.com"),
+            ResolvedTransport::OpenAi
+        );
     }
 
     #[test]
@@ -218,7 +244,9 @@ local = "ollama/qwen3:8b"
         let config = make_config();
         let registry = ProviderRegistry::from_config(&config).unwrap();
 
-        let (provider, model) = registry.resolve("anthropic/claude-sonnet-4-20250514").unwrap();
+        let (provider, model) = registry
+            .resolve("anthropic/claude-sonnet-4-20250514")
+            .unwrap();
         assert_eq!(provider.name, "anthropic");
         assert_eq!(model, "claude-sonnet-4-20250514");
     }

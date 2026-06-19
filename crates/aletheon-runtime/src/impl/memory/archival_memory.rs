@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::vector_store::{VectorStore, Embedder};
+use super::vector_store::{Embedder, VectorStore};
 
 /// Entry in Archival Memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,14 +18,23 @@ pub struct ArchivalEntry {
 #[async_trait]
 pub trait ArchivalMemory: Send + Sync {
     /// Insert a new entry with optional scope tag in metadata.
-    async fn insert(&mut self, content: &str, metadata: serde_json::Value) -> anyhow::Result<String>;
+    async fn insert(
+        &mut self,
+        content: &str,
+        metadata: serde_json::Value,
+    ) -> anyhow::Result<String>;
 
     /// Search by semantic similarity.
     async fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<ArchivalEntry>>;
 
     /// Search by semantic similarity within a specific scope.
     /// Scope is matched against `metadata["scope"]`.
-    async fn search_in_scope(&self, query: &str, limit: usize, scope: &str) -> anyhow::Result<Vec<ArchivalEntry>>;
+    async fn search_in_scope(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &str,
+    ) -> anyhow::Result<Vec<ArchivalEntry>>;
 
     /// Get entry by ID.
     async fn get(&self, id: &str) -> anyhow::Result<Option<ArchivalEntry>>;
@@ -60,7 +69,11 @@ impl Default for InMemoryArchival {
 
 #[async_trait]
 impl ArchivalMemory for InMemoryArchival {
-    async fn insert(&mut self, content: &str, metadata: serde_json::Value) -> anyhow::Result<String> {
+    async fn insert(
+        &mut self,
+        content: &str,
+        metadata: serde_json::Value,
+    ) -> anyhow::Result<String> {
         self.next_id += 1;
         let id = format!("arch_{}", self.next_id);
         self.entries.push(ArchivalEntry {
@@ -76,7 +89,8 @@ impl ArchivalMemory for InMemoryArchival {
     async fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<ArchivalEntry>> {
         // Simple keyword search for stub; vector search in Phase 3
         let query_lower = query.to_lowercase();
-        let mut results: Vec<&ArchivalEntry> = self.entries
+        let mut results: Vec<&ArchivalEntry> = self
+            .entries
             .iter()
             .filter(|e| e.content.to_lowercase().contains(&query_lower))
             .collect();
@@ -94,9 +108,15 @@ impl ArchivalMemory for InMemoryArchival {
         Ok(self.entries.len() < len_before)
     }
 
-    async fn search_in_scope(&self, query: &str, limit: usize, scope: &str) -> anyhow::Result<Vec<ArchivalEntry>> {
+    async fn search_in_scope(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &str,
+    ) -> anyhow::Result<Vec<ArchivalEntry>> {
         let query_lower = query.to_lowercase();
-        let mut results: Vec<&ArchivalEntry> = self.entries
+        let mut results: Vec<&ArchivalEntry> = self
+            .entries
             .iter()
             .filter(|e| {
                 e.content.to_lowercase().contains(&query_lower)
@@ -130,7 +150,11 @@ impl VectorArchival {
 
 #[async_trait]
 impl ArchivalMemory for VectorArchival {
-    async fn insert(&mut self, content: &str, metadata: serde_json::Value) -> anyhow::Result<String> {
+    async fn insert(
+        &mut self,
+        content: &str,
+        metadata: serde_json::Value,
+    ) -> anyhow::Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
         let embedding = self.embedder.embed(content).await?;
         self.store.upsert(&id, &embedding, metadata).await?;
@@ -145,10 +169,7 @@ impl ArchivalMemory for VectorArchival {
             .into_iter()
             .map(|s| ArchivalEntry {
                 id: s.id,
-                content: s.metadata["content"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string(),
+                content: s.metadata["content"].as_str().unwrap_or("").to_string(),
                 embedding: None,
                 metadata: s.metadata,
                 created_at: chrono::Utc::now(),
@@ -156,7 +177,12 @@ impl ArchivalMemory for VectorArchival {
             .collect())
     }
 
-    async fn search_in_scope(&self, query: &str, limit: usize, scope: &str) -> anyhow::Result<Vec<ArchivalEntry>> {
+    async fn search_in_scope(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &str,
+    ) -> anyhow::Result<Vec<ArchivalEntry>> {
         let embedding = self.embedder.embed(query).await?;
         let scored = self.store.search(&embedding, limit * 2, None).await?;
 
@@ -172,10 +198,7 @@ impl ArchivalMemory for VectorArchival {
             .take(limit)
             .map(|s| ArchivalEntry {
                 id: s.id,
-                content: s.metadata["content"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string(),
+                content: s.metadata["content"].as_str().unwrap_or("").to_string(),
                 embedding: None,
                 metadata: s.metadata,
                 created_at: chrono::Utc::now(),

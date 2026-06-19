@@ -117,7 +117,8 @@ impl ConflictDetector {
             }
             None
         } else {
-            self.service_claims.insert(service.to_string(), agent.clone());
+            self.service_claims
+                .insert(service.to_string(), agent.clone());
             None
         }
     }
@@ -142,7 +143,8 @@ impl ConflictDetector {
             }
             None
         } else {
-            self.resource_claims.insert(resource.to_string(), agent.clone());
+            self.resource_claims
+                .insert(resource.to_string(), agent.clone());
             None
         }
     }
@@ -185,8 +187,7 @@ impl ConflictDetector {
         // detects conflicts at claim time.
 
         // Verify all claimed agents actually exist
-        let known_ids: std::collections::HashSet<&AgentId> =
-            agents.iter().map(|a| &a.id).collect();
+        let known_ids: std::collections::HashSet<&AgentId> = agents.iter().map(|a| &a.id).collect();
 
         for (path, agent_id) in &self.file_claims {
             if !known_ids.contains(agent_id) {
@@ -235,8 +236,8 @@ impl Default for ConflictDetector {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{AgentId, AgentInfo, AgentKind, Endpoint};
     use super::*;
-    use super::super::{AgentId, AgentKind, Endpoint, AgentInfo};
     use std::path::PathBuf;
 
     fn make_agents(n: usize) -> Vec<AgentInfo> {
@@ -310,9 +311,7 @@ mod tests {
         let agent_b = AgentId::new();
 
         detector.claim_service(&agent_a, "database");
-        let report = detector
-            .claim_service(&agent_b, "database")
-            .unwrap();
+        let report = detector.claim_service(&agent_b, "database").unwrap();
 
         assert_eq!(report.conflict_type, ConflictType::ServiceConflict);
         assert_eq!(report.resolution, ConflictResolution::DelegateToOwner);

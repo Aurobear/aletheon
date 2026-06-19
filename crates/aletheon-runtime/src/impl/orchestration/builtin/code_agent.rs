@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 
+use super::super::agent::{Agent, AgentConfig, Capability};
 use aletheon_abi::message::{ContentBlock, Message};
-use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
+use aletheon_body::r#impl::tools::bash_exec::BashExecTool;
 use aletheon_body::r#impl::tools::file_read::FileReadTool;
 use aletheon_body::r#impl::tools::file_write::FileWriteTool;
-use aletheon_body::r#impl::tools::bash_exec::BashExecTool;
 use aletheon_body::r#impl::tools::Tool;
-use super::super::agent::{Agent, AgentConfig, Capability};
+use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
 
 /// Code agent — handles code generation and editing.
 pub struct CodeAgent {
@@ -43,7 +43,12 @@ impl CodeAgent {
             },
         ];
 
-        Self { config, llm, tools, capabilities }
+        Self {
+            config,
+            llm,
+            tools,
+            capabilities,
+        }
     }
 }
 

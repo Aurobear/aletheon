@@ -178,17 +178,17 @@ impl VectorStore for QdrantVectorStore {
 
     async fn delete(&self, id: &str) -> Result<()> {
         use qdrant_client::prelude::*;
-        use qdrant_client::qdrant::{points_selector::PointsSelectorOneOf, PointId, PointsSelector};
+        use qdrant_client::qdrant::{
+            points_selector::PointsSelectorOneOf, PointId, PointsSelector,
+        };
 
         self.client
             .delete_points(
                 &self.collection,
                 &PointsSelector {
-                    points_selector_one_of: Some(PointsSelectorOneOf::Points(
-                        PointIdsList {
-                            ids: vec![PointId::from(id.to_string())],
-                        },
-                    )),
+                    points_selector_one_of: Some(PointsSelectorOneOf::Points(PointIdsList {
+                        ids: vec![PointId::from(id.to_string())],
+                    })),
                 },
                 None,
             )
@@ -199,10 +199,7 @@ impl VectorStore for QdrantVectorStore {
 
     async fn count(&self) -> Result<usize> {
         let info = self.client.collection_info(&self.collection).await?;
-        Ok(info
-            .result
-            .and_then(|i| i.points_count)
-            .unwrap_or(0) as usize)
+        Ok(info.result.and_then(|i| i.points_count).unwrap_or(0) as usize)
     }
 }
 

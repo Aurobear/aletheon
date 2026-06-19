@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
-use aletheon_abi::message::{ContentBlock, Message};
-use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
-use aletheon_body::r#impl::tools::system_status::SystemStatusTool;
-use aletheon_body::r#impl::tools::process_list::ProcessListTool;
-use aletheon_body::r#impl::tools::Tool;
 use super::super::agent::{Agent, AgentConfig, Capability};
+use aletheon_abi::message::{ContentBlock, Message};
+use aletheon_body::r#impl::tools::process_list::ProcessListTool;
+use aletheon_body::r#impl::tools::system_status::SystemStatusTool;
+use aletheon_body::r#impl::tools::Tool;
+use aletheon_brain::r#impl::llm::{LlmProvider, ToolDefinition};
 
 /// Network agent — handles network operations and monitoring.
 pub struct NetAgent {
@@ -26,10 +26,7 @@ impl NetAgent {
             ),
         };
 
-        let tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(SystemStatusTool),
-            Box::new(ProcessListTool),
-        ];
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(SystemStatusTool), Box::new(ProcessListTool)];
 
         let capabilities = vec![
             Capability {
@@ -42,7 +39,12 @@ impl NetAgent {
             },
         ];
 
-        Self { config, llm, tools, capabilities }
+        Self {
+            config,
+            llm,
+            tools,
+            capabilities,
+        }
     }
 }
 

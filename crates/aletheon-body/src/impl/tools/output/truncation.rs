@@ -65,7 +65,9 @@ fn truncate_by_bytes(content: &str, max_bytes: usize, original_bytes: usize) -> 
     }
     let truncated = format!(
         "{}\n[... truncated at {}/{} bytes ...]",
-        &content[..end], end, original_bytes
+        &content[..end],
+        end,
+        original_bytes
     );
     TruncatedContent {
         content: truncated,

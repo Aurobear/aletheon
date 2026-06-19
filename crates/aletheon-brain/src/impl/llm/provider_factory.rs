@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::config::{ProviderConfig, Transport};
 use super::anthropic::AnthropicProvider;
 use super::ollama::OllamaProvider;
 use super::openai_provider::OpenAiProvider;
 use super::provider::LlmProvider;
+use crate::config::{ProviderConfig, Transport};
 
 /// Auto-detect provider kind from base_url when transport is `Auto`.
 ///
@@ -39,8 +39,7 @@ pub fn create_provider(config: &ProviderConfig, model: &str) -> Result<Arc<dyn L
 
     match &config.transport {
         Transport::Anthropic => {
-            let provider = AnthropicProvider::new(&api_key, model)
-                .with_base_url(&config.base_url);
+            let provider = AnthropicProvider::new(&api_key, model).with_base_url(&config.base_url);
             Ok(Arc::new(provider))
         }
         Transport::Openai => {
@@ -51,13 +50,12 @@ pub fn create_provider(config: &ProviderConfig, model: &str) -> Result<Arc<dyn L
             let kind = detect_provider_kind(&config.base_url);
             match kind {
                 "anthropic" => {
-                    let provider = AnthropicProvider::new(&api_key, model)
-                        .with_base_url(&config.base_url);
+                    let provider =
+                        AnthropicProvider::new(&api_key, model).with_base_url(&config.base_url);
                     Ok(Arc::new(provider))
                 }
                 "ollama" => {
-                    let provider = OllamaProvider::new(model)
-                        .with_base_url(&config.base_url);
+                    let provider = OllamaProvider::new(model).with_base_url(&config.base_url);
                     Ok(Arc::new(provider))
                 }
                 _ => {
@@ -81,8 +79,7 @@ pub fn create_provider_by_kind(
 
     match kind {
         "anthropic" => {
-            let provider = AnthropicProvider::new(&api_key, model)
-                .with_base_url(&config.base_url);
+            let provider = AnthropicProvider::new(&api_key, model).with_base_url(&config.base_url);
             Ok(Arc::new(provider))
         }
         "openai" => {
@@ -90,8 +87,7 @@ pub fn create_provider_by_kind(
             Ok(Arc::new(provider))
         }
         "ollama" => {
-            let provider = OllamaProvider::new(model)
-                .with_base_url(&config.base_url);
+            let provider = OllamaProvider::new(model).with_base_url(&config.base_url);
             Ok(Arc::new(provider))
         }
         _ => anyhow::bail!(
@@ -106,10 +102,7 @@ fn resolve_api_key(config: &ProviderConfig) -> String {
     if !config.api_key.is_empty() {
         return config.api_key.clone();
     }
-    let env_name = format!(
-        "{}_API_KEY",
-        config.name.to_uppercase().replace('-', "_")
-    );
+    let env_name = format!("{}_API_KEY", config.name.to_uppercase().replace('-', "_"));
     std::env::var(&env_name).unwrap_or_default()
 }
 
@@ -127,26 +120,14 @@ mod tests {
 
     #[test]
     fn test_detect_provider_kind_ollama() {
-        assert_eq!(
-            detect_provider_kind("http://localhost:11434"),
-            "ollama"
-        );
-        assert_eq!(
-            detect_provider_kind("http://127.0.0.1:11434"),
-            "ollama"
-        );
+        assert_eq!(detect_provider_kind("http://localhost:11434"), "ollama");
+        assert_eq!(detect_provider_kind("http://127.0.0.1:11434"), "ollama");
     }
 
     #[test]
     fn test_detect_provider_kind_openai_default() {
-        assert_eq!(
-            detect_provider_kind("https://api.openai.com"),
-            "openai"
-        );
-        assert_eq!(
-            detect_provider_kind("https://api.deepseek.com"),
-            "openai"
-        );
+        assert_eq!(detect_provider_kind("https://api.openai.com"), "openai");
+        assert_eq!(detect_provider_kind("https://api.deepseek.com"), "openai");
     }
 
     #[test]

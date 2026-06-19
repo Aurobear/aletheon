@@ -301,7 +301,11 @@ mod tests {
     async fn execute_script_hook_block() {
         let dir = TempDir::new().unwrap();
         let script = dir.path().join("block.sh");
-        std::fs::write(&script, "#!/bin/bash\necho '{\"action\":\"block\",\"reason\":\"not allowed\"}'").unwrap();
+        std::fs::write(
+            &script,
+            "#!/bin/bash\necho '{\"action\":\"block\",\"reason\":\"not allowed\"}'",
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -430,7 +434,10 @@ mod tests {
         // Should return Continue (not hang for 3600s).
         assert!(matches!(result, HookResult::Continue));
         // Should complete in roughly 30s, with some tolerance.
-        assert!(elapsed < std::time::Duration::from_secs(60),
-            "Expected timeout ~30s, but took {:?}", elapsed);
+        assert!(
+            elapsed < std::time::Duration::from_secs(60),
+            "Expected timeout ~30s, but took {:?}",
+            elapsed
+        );
     }
 }

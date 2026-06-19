@@ -1,5 +1,5 @@
-use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_abi::message::{ContentBlock, Message, Role};
+use aletheon_brain::r#impl::llm::LlmProvider;
 use tracing::info;
 
 /// Manages context compaction by summarizing old messages.
@@ -13,8 +13,16 @@ pub struct CompactionManager {
 }
 
 impl CompactionManager {
-    pub fn new(keep_recent: usize, summarize_threshold: usize, target_summary_chars: usize) -> Self {
-        Self { keep_recent, summarize_threshold, target_summary_chars }
+    pub fn new(
+        keep_recent: usize,
+        summarize_threshold: usize,
+        target_summary_chars: usize,
+    ) -> Self {
+        Self {
+            keep_recent,
+            summarize_threshold,
+            target_summary_chars,
+        }
     }
 
     /// Check if compaction is needed and perform it.
@@ -60,7 +68,11 @@ impl CompactionManager {
         Ok(true)
     }
 
-    async fn summarize(&self, messages: &[Message], llm: &dyn LlmProvider) -> anyhow::Result<String> {
+    async fn summarize(
+        &self,
+        messages: &[Message],
+        llm: &dyn LlmProvider,
+    ) -> anyhow::Result<String> {
         // Format messages into a single text block for summarization
         let conversation: String = messages
             .iter()
@@ -78,9 +90,7 @@ impl CompactionManager {
                         ContentBlock::ToolUse { name, input, .. } => {
                             format!("[Tool Call: {}({})]", name, input)
                         }
-                        ContentBlock::ToolResult {
-                            content, ..
-                        } => {
+                        ContentBlock::ToolResult { content, .. } => {
                             format!("[Tool Result: {}]", content)
                         }
                         _ => String::new(),

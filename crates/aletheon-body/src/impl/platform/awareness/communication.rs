@@ -156,11 +156,7 @@ mod tests {
 
     #[test]
     fn test_json_rpc_request_with_id() {
-        let req = JsonRpcRequest::with_id(
-            "agent.ping",
-            serde_json::json!({}),
-            42,
-        );
+        let req = JsonRpcRequest::with_id("agent.ping", serde_json::json!({}), 42);
         assert_eq!(req.id, Some(42));
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("42"));
@@ -168,10 +164,7 @@ mod tests {
 
     #[test]
     fn test_json_rpc_response_success() {
-        let resp = JsonRpcResponse::success(
-            serde_json::json!({"status": "ok"}),
-            Some(1),
-        );
+        let resp = JsonRpcResponse::success(serde_json::json!({"status": "ok"}), Some(1));
         assert!(resp.is_success());
         assert_eq!(resp.id, Some(1));
         assert!(resp.error.is_none());
@@ -179,11 +172,7 @@ mod tests {
 
     #[test]
     fn test_json_rpc_response_error() {
-        let resp = JsonRpcResponse::error(
-            -32600,
-            "Invalid Request",
-            Some(2),
-        );
+        let resp = JsonRpcResponse::error(-32600, "Invalid Request", Some(2));
         assert!(!resp.is_success());
         assert!(resp.result.is_none());
         let err = resp.error.as_ref().unwrap();
@@ -193,10 +182,7 @@ mod tests {
 
     #[test]
     fn test_json_rpc_response_roundtrip() {
-        let resp = JsonRpcResponse::success(
-            serde_json::json!({"agents": []}),
-            Some(99),
-        );
+        let resp = JsonRpcResponse::success(serde_json::json!({"agents": []}), Some(99));
         let json = serde_json::to_string(&resp).unwrap();
         let deserialized: JsonRpcResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, Some(99));

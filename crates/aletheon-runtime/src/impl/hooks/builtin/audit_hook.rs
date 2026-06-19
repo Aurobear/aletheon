@@ -7,8 +7,8 @@
 
 use tracing::info;
 
-use aletheon_abi::hook::HookPoint;
 use crate::r#impl::hooks::registry::{HookRegistry, RegisteredHook};
+use aletheon_abi::hook::HookPoint;
 
 /// Register the audit hook in the hook registry.
 pub fn register_audit_hook(registry: &mut HookRegistry) {
@@ -22,12 +22,7 @@ pub fn register_audit_hook(registry: &mut HookRegistry) {
 }
 
 /// Log a tool call result. Called from handler.rs after PostTool hooks.
-pub fn log_tool_call(
-    tool_name: &str,
-    is_error: bool,
-    execution_time_ms: u64,
-    content_len: usize,
-) {
+pub fn log_tool_call(tool_name: &str, is_error: bool, execution_time_ms: u64, content_len: usize) {
     info!(
         tool = %tool_name,
         error = is_error,

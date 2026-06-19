@@ -1,12 +1,12 @@
-use anyhow::Result;
-use aletheon_abi::context::Context;
-use aletheon_abi::self_field::{Intent, Verdict};
-use aletheon_abi::body::{Action, ActionResult};
-use aletheon_abi::brain::Plan;
-use aletheon_abi::runtime::StepResult;
+use crate::core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 use crate::core::config::RuntimeConfig;
 use crate::core::react_loop::ReActLoop;
-use crate::core::behavior_paths::{BehaviorPathRouter, BehaviorPath};
+use aletheon_abi::body::{Action, ActionResult};
+use aletheon_abi::brain::Plan;
+use aletheon_abi::context::Context;
+use aletheon_abi::runtime::StepResult;
+use aletheon_abi::self_field::{Intent, Verdict};
+use anyhow::Result;
 use tracing::{debug, warn};
 
 /// Top-level Aletheon runtime — decomposes Engine::run_turn() into 6 layers
@@ -28,10 +28,7 @@ pub struct AletheonRuntime {
 impl AletheonRuntime {
     pub fn new(config: RuntimeConfig) -> Self {
         let react_loop = ReActLoop::new(config.clone());
-        Self {
-            config,
-            react_loop,
-        }
+        Self { config, react_loop }
     }
 
     /// Process a user input through the full Aletheon pipeline.
@@ -96,7 +93,10 @@ impl AletheonRuntime {
                 let mut _steps_completed = 0;
                 for step in &plan.steps {
                     if !self.react_loop.should_continue() {
-                        warn!("Max iterations ({}) reached", self.react_loop.max_iterations());
+                        warn!(
+                            "Max iterations ({}) reached",
+                            self.react_loop.max_iterations()
+                        );
                         break;
                     }
 
@@ -192,7 +192,9 @@ impl AletheonRuntime {
         if let Verdict::Deny { reason } = verdict {
             return Ok(format!("Denied by SelfField: {}", reason));
         }
-        self.react_loop.run(input, llm, tool_defs, execute_tool).await
+        self.react_loop
+            .run(input, llm, tool_defs, execute_tool)
+            .await
     }
 
     /// Get config

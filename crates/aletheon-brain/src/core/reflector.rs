@@ -52,8 +52,10 @@ impl Reflector {
                 what_failed.push(format!("Error: {}", error));
             }
 
-            what_to_improve.push("Add error handling and retry logic for failed steps.".to_string());
-            what_to_improve.push("Consider adding rollback actions for partial completion.".to_string());
+            what_to_improve
+                .push("Add error handling and retry logic for failed steps.".to_string());
+            what_to_improve
+                .push("Consider adding rollback actions for partial completion.".to_string());
         }
 
         // Analyze performance
@@ -66,7 +68,8 @@ impl Reflector {
 
         // Analyze output
         if execution.output.is_empty() {
-            what_to_improve.push("Execution produced no output — verify expected outcomes.".to_string());
+            what_to_improve
+                .push("Execution produced no output — verify expected outcomes.".to_string());
         }
 
         // Compute confidence
@@ -192,7 +195,11 @@ mod tests {
             steps_completed: completed,
             steps_total: total,
             output: "some output".to_string(),
-            error: if success { None } else { Some("test error".to_string()) },
+            error: if success {
+                None
+            } else {
+                Some("test error".to_string())
+            },
             elapsed_ms: 100,
         }
     }
@@ -229,7 +236,10 @@ mod tests {
         let mut exec = make_execution(true, 1, 1);
         exec.elapsed_ms = 45_000;
         let result = reflector.reflect(&exec);
-        assert!(result.what_to_improve.iter().any(|i| i.contains("optimizing")));
+        assert!(result
+            .what_to_improve
+            .iter()
+            .any(|i| i.contains("optimizing")));
     }
 
     #[test]
@@ -238,7 +248,10 @@ mod tests {
         let mut exec = make_execution(true, 1, 1);
         exec.output = String::new();
         let result = reflector.reflect(&exec);
-        assert!(result.what_to_improve.iter().any(|i| i.contains("no output")));
+        assert!(result
+            .what_to_improve
+            .iter()
+            .any(|i| i.contains("no output")));
     }
 
     #[test]
@@ -364,13 +377,17 @@ mod tests {
             "task a",
             ReflectionTrigger::Manual,
             true,
-            vec![], vec![], vec![],
+            vec![],
+            vec![],
+            vec![],
         );
         let e2 = reflector.reflect_conversation(
             "task b",
             ReflectionTrigger::Manual,
             false,
-            vec![], vec![], vec![],
+            vec![],
+            vec![],
+            vec![],
         );
         assert_ne!(e1.id, e2.id);
     }
@@ -382,7 +399,9 @@ mod tests {
             "noop",
             ReflectionTrigger::TaskComplete,
             true,
-            vec![], vec![], vec![],
+            vec![],
+            vec![],
+            vec![],
         );
         assert!(entry.what_worked.is_empty());
         assert!(entry.what_failed.is_empty());

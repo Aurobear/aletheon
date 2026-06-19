@@ -1,6 +1,6 @@
-use aletheon_abi::self_field::Verdict;
 use crate::r#impl::hook::dispatcher::HookDispatcher;
 use crate::r#impl::hook::types::{HandlerResult, HookContext, HookEventName};
+use aletheon_abi::self_field::Verdict;
 
 /// Bridges HookDispatcher into SelfField.
 pub struct HookBridge {

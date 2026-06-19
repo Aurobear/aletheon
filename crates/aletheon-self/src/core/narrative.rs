@@ -79,7 +79,11 @@ impl NarrativeLayer {
     /// Get the N most recent entries (newest last).
     pub fn recent(&self, n: usize) -> Vec<NarrativeEntry> {
         let buffer = self.buffer.read();
-        let skip = if n >= buffer.len() { 0 } else { buffer.len() - n };
+        let skip = if n >= buffer.len() {
+            0
+        } else {
+            buffer.len() - n
+        };
         buffer.iter().skip(skip).cloned().collect()
     }
 
@@ -182,7 +186,14 @@ mod tests {
     #[test]
     fn record_and_retrieve() {
         let layer = NarrativeLayer::new(100);
-        layer.record("boundary_check", "deny: rm", Some("rm -rf /"), &Verdict::Deny { reason: "bad".to_string() });
+        layer.record(
+            "boundary_check",
+            "deny: rm",
+            Some("rm -rf /"),
+            &Verdict::Deny {
+                reason: "bad".to_string(),
+            },
+        );
 
         let entries = layer.recent(10);
         assert_eq!(entries.len(), 1);

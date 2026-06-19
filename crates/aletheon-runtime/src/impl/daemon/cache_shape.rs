@@ -145,9 +145,12 @@ mod tests {
         let s1 = CacheShape::compute("prompt A", &["tool"]);
         let s2 = CacheShape::compute("prompt B", &["tool"]);
         let comp = s2.compare(&s1);
-        assert_eq!(comp, CacheComparison::Miss {
-            reasons: vec![CacheMissReason::SystemChanged],
-        });
+        assert_eq!(
+            comp,
+            CacheComparison::Miss {
+                reasons: vec![CacheMissReason::SystemChanged],
+            }
+        );
     }
 
     #[test]
@@ -155,9 +158,12 @@ mod tests {
         let s1 = CacheShape::compute("sys", &["a"]);
         let s2 = CacheShape::compute("sys", &["a", "b"]);
         let comp = s2.compare(&s1);
-        assert_eq!(comp, CacheComparison::Miss {
-            reasons: vec![CacheMissReason::ToolsChanged],
-        });
+        assert_eq!(
+            comp,
+            CacheComparison::Miss {
+                reasons: vec![CacheMissReason::ToolsChanged],
+            }
+        );
     }
 
     #[test]
@@ -166,9 +172,12 @@ mod tests {
         let mut s2 = CacheShape::compute("sys", &["a"]);
         s2.increment_rewrite();
         let comp = s2.compare(&s1);
-        assert_eq!(comp, CacheComparison::Miss {
-            reasons: vec![CacheMissReason::Compacted],
-        });
+        assert_eq!(
+            comp,
+            CacheComparison::Miss {
+                reasons: vec![CacheMissReason::Compacted],
+            }
+        );
     }
 
     #[test]

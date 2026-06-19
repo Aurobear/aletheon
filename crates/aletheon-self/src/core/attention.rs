@@ -64,9 +64,15 @@ impl AttentionLayer {
     /// Get the current highest-priority focus topic, after applying decay.
     pub fn current_focus(&self) -> Option<FocusTopic> {
         self.decay();
-        self.focus.read().iter().max_by(|a, b| {
-            a.priority.partial_cmp(&b.priority).unwrap_or(std::cmp::Ordering::Equal)
-        }).cloned()
+        self.focus
+            .read()
+            .iter()
+            .max_by(|a, b| {
+                a.priority
+                    .partial_cmp(&b.priority)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .cloned()
     }
 
     /// Get all active focus topics (after decay).

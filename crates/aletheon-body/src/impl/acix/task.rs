@@ -1,9 +1,9 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::r#impl::driver::types::{Key, ScrollDirection};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use crate::r#impl::driver::types::{Key, ScrollDirection};
 
 use super::aci::Aci;
 
@@ -21,12 +21,24 @@ pub enum TaskStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TaskAction {
     /// ACI actions
-    Click { x: i32, y: i32 },
-    Type { text: String },
-    Hotkey { keys: Vec<String> },
+    Click {
+        x: i32,
+        y: i32,
+    },
+    Type {
+        text: String,
+    },
+    Hotkey {
+        keys: Vec<String>,
+    },
     Screenshot,
     Observe,
-    Scroll { x: i32, y: i32, direction: ScrollDirection, amount: i32 },
+    Scroll {
+        x: i32,
+        y: i32,
+        direction: ScrollDirection,
+        amount: i32,
+    },
     /// Compound action
     Composite(Vec<TaskAction>),
     /// Wait (ms)
@@ -92,9 +104,8 @@ impl TaskGraph {
             }
         }
 
-        let mut queue: std::collections::VecDeque<usize> = (0..n)
-            .filter(|&i| in_degree[i] == 0)
-            .collect();
+        let mut queue: std::collections::VecDeque<usize> =
+            (0..n).filter(|&i| in_degree[i] == 0).collect();
 
         let mut order = Vec::new();
         while let Some(id) = queue.pop_front() {
@@ -116,9 +127,14 @@ impl TaskGraph {
 
     /// Get ready nodes (all dependencies completed)
     pub fn ready_nodes(&self) -> Vec<&TaskNode> {
-        self.nodes.iter()
+        self.nodes
+            .iter()
             .filter(|n| n.status == TaskStatus::Pending)
-            .filter(|n| n.dependencies.iter().all(|&dep| self.nodes[dep].status == TaskStatus::Completed))
+            .filter(|n| {
+                n.dependencies
+                    .iter()
+                    .all(|&dep| self.nodes[dep].status == TaskStatus::Completed)
+            })
             .collect()
     }
 
@@ -138,12 +154,16 @@ impl TaskGraph {
 
     /// Whether all tasks are complete
     pub fn is_complete(&self) -> bool {
-        self.nodes.iter().all(|n| matches!(n.status, TaskStatus::Completed | TaskStatus::Skipped))
+        self.nodes
+            .iter()
+            .all(|n| matches!(n.status, TaskStatus::Completed | TaskStatus::Skipped))
     }
 
     /// Whether any task has failed
     pub fn has_failures(&self) -> bool {
-        self.nodes.iter().any(|n| matches!(n.status, TaskStatus::Failed(_)))
+        self.nodes
+            .iter()
+            .any(|n| matches!(n.status, TaskStatus::Failed(_)))
     }
 }
 
@@ -225,8 +245,9 @@ impl TaskManager {
         // Strip markdown code fences if present
         let cleaned = strip_code_fences(&text);
 
-        let result: DecompositionResult = serde_json::from_str(cleaned.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to parse LLM decomposition JSON: {e}\nRaw response: {text}"))?;
+        let result: DecompositionResult = serde_json::from_str(cleaned.as_ref()).map_err(|e| {
+            anyhow::anyhow!("Failed to parse LLM decomposition JSON: {e}\nRaw response: {text}")
+        })?;
 
         let mut graph = TaskGraph::new(goal);
 
@@ -246,7 +267,11 @@ impl TaskManager {
                 "hotkey" => {
                     let keys = node.params["keys"]
                         .as_array()
-                        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     TaskAction::Hotkey { keys }
                 }
@@ -260,7 +285,12 @@ impl TaskManager {
                         _ => ScrollDirection::Down,
                     };
                     let amount = node.params["amount"].as_i64().unwrap_or(3) as i32;
-                    TaskAction::Scroll { x, y, direction, amount }
+                    TaskAction::Scroll {
+                        x,
+                        y,
+                        direction,
+                        amount,
+                    }
                 }
                 "wait" => {
                     let ms = node.params["ms"].as_u64().unwrap_or(1000);
@@ -281,11 +311,15 @@ impl TaskManager {
         error: &str,
         decomposer: &dyn TaskDecomposer,
     ) -> anyhow::Result<TaskGraph> {
-        let completed: Vec<String> = graph.nodes.iter()
+        let completed: Vec<String> = graph
+            .nodes
+            .iter()
             .filter(|n| n.status == TaskStatus::Completed)
             .map(|n| n.description.clone())
             .collect();
-        let failed_desc = graph.nodes.get(failed_id)
+        let failed_desc = graph
+            .nodes
+            .get(failed_id)
             .map(|n| n.description.clone())
             .unwrap_or_default();
 
@@ -437,16 +471,19 @@ impl TaskWorker {
                     Ok(format!("Observed: {obs:?}"))
                 }
                 TaskAction::Hotkey { keys } => {
-                    let parsed: Vec<Key> = keys.iter()
-                        .filter_map(|k| parse_key(k))
-                        .collect();
+                    let parsed: Vec<Key> = keys.iter().filter_map(|k| parse_key(k)).collect();
                     if parsed.len() != keys.len() {
                         anyhow::bail!("Failed to parse some hotkey names: {:?}", keys);
                     }
                     self.aci.hotkey(&parsed)?;
                     Ok(format!("Hotkey: {}", keys.join("+")))
                 }
-                TaskAction::Scroll { x, y, direction, amount } => {
+                TaskAction::Scroll {
+                    x,
+                    y,
+                    direction,
+                    amount,
+                } => {
                     self.aci.scroll(*x, *y, *direction, *amount)?;
                     Ok(format!("Scroll {direction:?} at ({x}, {y}) x{amount}"))
                 }
@@ -499,9 +536,7 @@ impl TaskWorker {
 mod tests {
     use super::*;
     use crate::r#impl::driver::{
-        a11y::MockA11yDriver,
-        display::{MockDisplayDriver},
-        input::MockInputDriver,
+        a11y::MockA11yDriver, display::MockDisplayDriver, input::MockInputDriver,
     };
 
     fn mock_aci() -> Aci {
@@ -518,7 +553,13 @@ mod tests {
         let mut graph = TaskGraph::new("test");
         graph.add_node("A", TaskAction::Screenshot, vec![]);
         graph.add_node("B", TaskAction::Click { x: 100, y: 200 }, vec![0]);
-        graph.add_node("C", TaskAction::Type { text: "hello".into() }, vec![1]);
+        graph.add_node(
+            "C",
+            TaskAction::Type {
+                text: "hello".into(),
+            },
+            vec![1],
+        );
 
         let order = graph.topological_sort().unwrap();
         assert_eq!(order, vec![0, 1, 2]);
@@ -599,7 +640,12 @@ mod tests {
         let json = serde_json::to_string(&action).unwrap();
         let back: TaskAction = serde_json::from_str(&json).unwrap();
         match back {
-            TaskAction::Scroll { x, y, direction, amount } => {
+            TaskAction::Scroll {
+                x,
+                y,
+                direction,
+                amount,
+            } => {
                 assert_eq!(x, 100);
                 assert_eq!(y, 200);
                 assert_eq!(direction, ScrollDirection::Down);
@@ -627,7 +673,9 @@ mod tests {
     #[tokio::test]
     async fn test_decompose_with_llm() {
         let decomposer = MockDecomposer;
-        let graph = TaskManager::decompose_with_llm("Test task", &decomposer).await.unwrap();
+        let graph = TaskManager::decompose_with_llm("Test task", &decomposer)
+            .await
+            .unwrap();
 
         assert_eq!(graph.nodes.len(), 3);
         assert_eq!(graph.nodes[0].description, "Click button");
@@ -647,7 +695,9 @@ mod tests {
             }
         }
 
-        let graph = TaskManager::decompose_with_llm("test", &FencedDecomposer).await.unwrap();
+        let graph = TaskManager::decompose_with_llm("test", &FencedDecomposer)
+            .await
+            .unwrap();
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.nodes[0].action, TaskAction::Screenshot);
     }
@@ -677,51 +727,84 @@ mod tests {
 
         // Test each action type
         let node = TaskNode {
-            id: 0, description: "test".into(),
+            id: 0,
+            description: "test".into(),
             action: TaskAction::Click { x: 10, y: 20 },
-            dependencies: vec![], status: TaskStatus::Pending,
+            dependencies: vec![],
+            status: TaskStatus::Pending,
         };
-        assert!(worker.execute_node(&node).await.unwrap().contains("Clicked"));
+        assert!(worker
+            .execute_node(&node)
+            .await
+            .unwrap()
+            .contains("Clicked"));
 
         let node = TaskNode {
-            id: 0, description: "test".into(),
+            id: 0,
+            description: "test".into(),
             action: TaskAction::Type { text: "hi".into() },
-            dependencies: vec![], status: TaskStatus::Pending,
+            dependencies: vec![],
+            status: TaskStatus::Pending,
         };
         assert!(worker.execute_node(&node).await.unwrap().contains("Typed"));
 
         let node = TaskNode {
-            id: 0, description: "test".into(),
+            id: 0,
+            description: "test".into(),
             action: TaskAction::Screenshot,
-            dependencies: vec![], status: TaskStatus::Pending,
+            dependencies: vec![],
+            status: TaskStatus::Pending,
         };
-        assert!(worker.execute_node(&node).await.unwrap().contains("Screenshot"));
+        assert!(worker
+            .execute_node(&node)
+            .await
+            .unwrap()
+            .contains("Screenshot"));
 
         let node = TaskNode {
-            id: 0, description: "test".into(),
+            id: 0,
+            description: "test".into(),
             action: TaskAction::Observe,
-            dependencies: vec![], status: TaskStatus::Pending,
+            dependencies: vec![],
+            status: TaskStatus::Pending,
         };
-        assert!(worker.execute_node(&node).await.unwrap().contains("Observed"));
+        assert!(worker
+            .execute_node(&node)
+            .await
+            .unwrap()
+            .contains("Observed"));
 
         let node = TaskNode {
-            id: 0, description: "test".into(),
-            action: TaskAction::Hotkey { keys: vec!["ctrl".into(), "c".into()] },
-            dependencies: vec![], status: TaskStatus::Pending,
+            id: 0,
+            description: "test".into(),
+            action: TaskAction::Hotkey {
+                keys: vec!["ctrl".into(), "c".into()],
+            },
+            dependencies: vec![],
+            status: TaskStatus::Pending,
         };
         assert!(worker.execute_node(&node).await.unwrap().contains("Hotkey"));
 
         let node = TaskNode {
-            id: 0, description: "test".into(),
-            action: TaskAction::Scroll { x: 0, y: 0, direction: ScrollDirection::Down, amount: 3 },
-            dependencies: vec![], status: TaskStatus::Pending,
+            id: 0,
+            description: "test".into(),
+            action: TaskAction::Scroll {
+                x: 0,
+                y: 0,
+                direction: ScrollDirection::Down,
+                amount: 3,
+            },
+            dependencies: vec![],
+            status: TaskStatus::Pending,
         };
         assert!(worker.execute_node(&node).await.unwrap().contains("Scroll"));
 
         let node = TaskNode {
-            id: 0, description: "test".into(),
+            id: 0,
+            description: "test".into(),
             action: TaskAction::Wait(10),
-            dependencies: vec![], status: TaskStatus::Pending,
+            dependencies: vec![],
+            status: TaskStatus::Pending,
         };
         assert!(worker.execute_node(&node).await.unwrap().contains("Waited"));
     }
@@ -732,12 +815,16 @@ mod tests {
         let worker = TaskWorker::new(aci);
 
         let node = TaskNode {
-            id: 0, description: "test".into(),
+            id: 0,
+            description: "test".into(),
             action: TaskAction::Composite(vec![
                 TaskAction::Click { x: 10, y: 20 },
-                TaskAction::Type { text: "hello".into() },
+                TaskAction::Type {
+                    text: "hello".into(),
+                },
             ]),
-            dependencies: vec![], status: TaskStatus::Pending,
+            dependencies: vec![],
+            status: TaskStatus::Pending,
         };
         let result = worker.execute_node(&node).await.unwrap();
         assert_eq!(result, "Composite executed");

@@ -2,14 +2,14 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
-use aletheon_abi::ipc_types::{IpcBackend, IpcPreference, IpcProbeError, AgentId, AgentMessage};
+use aletheon_abi::ipc_types::{AgentId, AgentMessage, IpcBackend, IpcPreference, IpcProbeError};
 
-use super::priority_queue::PriorityQueue;
-use super::unix_socket::UnixSocketBackend;
 use super::io_uring::IoUringBackend;
+use super::priority_queue::PriorityQueue;
 use super::shared_mem::SharedMemBackend;
+use super::unix_socket::UnixSocketBackend;
 
 // ---------------------------------------------------------------------------
 // Backend kind discriminator (runtime tag for the active selection).
@@ -48,17 +48,20 @@ impl Environment {
             .map(|v| v.contains("WSL") || v.contains("microsoft"))
             .unwrap_or(false);
 
-        let kernel_version = std::fs::read_to_string("/proc/version")
-            .unwrap_or_else(|_| "unknown".to_string());
+        let kernel_version =
+            std::fs::read_to_string("/proc/version").unwrap_or_else(|_| "unknown".to_string());
 
-        let version_str = kernel_version
-            .split_whitespace()
-            .nth(2)
-            .unwrap_or("0.0.0");
+        let version_str = kernel_version.split_whitespace().nth(2).unwrap_or("0.0.0");
 
         let parts: Vec<&str> = version_str.split('.').collect();
-        let major = parts.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-        let minor = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+        let major = parts
+            .first()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
+        let minor = parts
+            .get(1)
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
         let has_io_uring = major > 5 || (major == 5 && minor >= 10);
 
         Self {

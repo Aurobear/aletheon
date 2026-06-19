@@ -12,9 +12,11 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use aletheon_abi::evolution::*;
+use aletheon_brain::r#impl::event_handlers::{
+    EvolutionEvent, ObserverConfig, ToolObservationHandler,
+};
 use aletheon_brain::r#impl::llm::provider::{LlmProvider, StopReason};
 use aletheon_brain::r#impl::llm::scheduler::LlmScheduler;
-use aletheon_brain::r#impl::event_handlers::{ToolObservationHandler, ObserverConfig, EvolutionEvent};
 use aletheon_brain::testing::mock_llm::MockLlmProvider;
 use aletheon_self::core::mutation::MutationLayer;
 use aletheon_self::r#impl::mutation::MutationApprover;
@@ -80,9 +82,14 @@ async fn test_reflection_emitted_after_tool_observation() -> Result<()> {
 
     // Should have at least a Reflection event
     assert!(
-        events.iter().any(|e| matches!(e, EvolutionEvent::Reflection(_))),
+        events
+            .iter()
+            .any(|e| matches!(e, EvolutionEvent::Reflection(_))),
         "Expected a Reflection event, got: {:?}",
-        events.iter().map(|e| std::mem::discriminant(e)).collect::<Vec<_>>(),
+        events
+            .iter()
+            .map(|e| std::mem::discriminant(e))
+            .collect::<Vec<_>>(),
     );
 
     // Verify the reflection content
@@ -217,7 +224,10 @@ async fn test_mutation_approver_validates_intents() -> Result<()> {
         current_rules_snapshot: vec![],
     };
     let empty_approved = approver.handle(&unknown_trigger)?;
-    assert!(empty_approved.is_empty(), "Unknown trigger should produce no intents");
+    assert!(
+        empty_approved.is_empty(),
+        "Unknown trigger should produce no intents"
+    );
 
     Ok(())
 }

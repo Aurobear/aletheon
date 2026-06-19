@@ -11,9 +11,9 @@ use anyhow::Result;
 use aletheon_abi::evolution::{LlmPurpose, ProviderHealth};
 use aletheon_abi::message::Message;
 
-use crate::config::{ProviderConfig, Transport};
 use super::provider::{LlmProvider, LlmResponse, ToolDefinition};
 use super::provider_factory::create_provider_by_kind;
+use crate::config::{ProviderConfig, Transport};
 
 /// Routing rule: maps a purpose to a provider name.
 #[derive(Debug, Clone)]
@@ -28,7 +28,7 @@ pub struct SchedulerProviderConfig {
     pub name: String,
     pub base_url: String,
     pub api_key: String,
-    pub kind: String,  // "anthropic" | "openai" | "ollama"
+    pub kind: String, // "anthropic" | "openai" | "ollama"
     pub model: String,
 }
 
@@ -42,7 +42,7 @@ pub struct SchedulerConfig {
 /// Centralized LLM scheduler with purpose-based routing.
 pub struct LlmScheduler {
     providers: HashMap<String, Arc<dyn LlmProvider>>,
-    routing: HashMap<LlmPurpose, String>,  // purpose -> provider_name
+    routing: HashMap<LlmPurpose, String>, // purpose -> provider_name
     default_provider: String,
 }
 
@@ -86,7 +86,9 @@ impl LlmScheduler {
             routing.insert(rule.purpose.clone(), rule.provider_name.clone());
         }
 
-        let default_provider = config.providers.first()
+        let default_provider = config
+            .providers
+            .first()
             .map(|p| p.name.clone())
             .unwrap_or_default();
 
@@ -118,7 +120,9 @@ impl LlmScheduler {
         tools: &[ToolDefinition],
     ) -> Result<LlmResponse> {
         let provider_name = self.resolve_provider(purpose);
-        let provider = self.providers.get(provider_name)
+        let provider = self
+            .providers
+            .get(provider_name)
             .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?;
         provider.complete(messages, tools).await
     }
@@ -127,7 +131,10 @@ impl LlmScheduler {
     pub fn executor_provider(&self) -> &Arc<dyn LlmProvider> {
         let name = self.resolve_provider(&LlmPurpose::Execute);
         self.providers.get(name).unwrap_or_else(|| {
-            self.providers.values().next().expect("No LLM providers configured")
+            self.providers
+                .values()
+                .next()
+                .expect("No LLM providers configured")
         })
     }
 
@@ -135,7 +142,10 @@ impl LlmScheduler {
     pub fn reflector_provider(&self) -> &Arc<dyn LlmProvider> {
         let name = self.resolve_provider(&LlmPurpose::Reflect);
         self.providers.get(name).unwrap_or_else(|| {
-            self.providers.values().next().expect("No LLM providers configured")
+            self.providers
+                .values()
+                .next()
+                .expect("No LLM providers configured")
         })
     }
 
@@ -158,10 +168,7 @@ fn resolve_api_key(api_key: &str, provider_name: &str) -> String {
     if !api_key.is_empty() {
         return api_key.to_string();
     }
-    let env_name = format!(
-        "{}_API_KEY",
-        provider_name.to_uppercase().replace('-', "_")
-    );
+    let env_name = format!("{}_API_KEY", provider_name.to_uppercase().replace('-', "_"));
     std::env::var(&env_name).unwrap_or_default()
 }
 
@@ -184,21 +191,17 @@ mod tests {
     #[test]
     fn test_scheduler_config_construction() {
         let config = SchedulerConfig {
-            providers: vec![
-                SchedulerProviderConfig {
-                    name: "executor".to_string(),
-                    base_url: "https://api.openai.com".to_string(),
-                    api_key: "sk-test".to_string(),
-                    kind: "openai".to_string(),
-                    model: "gpt-4o".to_string(),
-                },
-            ],
-            routing: vec![
-                RoutingRule {
-                    purpose: LlmPurpose::Execute,
-                    provider_name: "executor".to_string(),
-                },
-            ],
+            providers: vec![SchedulerProviderConfig {
+                name: "executor".to_string(),
+                base_url: "https://api.openai.com".to_string(),
+                api_key: "sk-test".to_string(),
+                kind: "openai".to_string(),
+                model: "gpt-4o".to_string(),
+            }],
+            routing: vec![RoutingRule {
+                purpose: LlmPurpose::Execute,
+                provider_name: "executor".to_string(),
+            }],
         };
         assert_eq!(config.providers.len(), 1);
         assert_eq!(config.routing.len(), 1);

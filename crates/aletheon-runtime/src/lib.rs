@@ -1,20 +1,22 @@
-pub mod core;
 pub mod bridge;
+pub mod core;
 pub mod r#impl;
 
 // Re-export from core for backward compatibility
-pub use core::config::{RuntimeConfig, AppConfig, AgentConfig, ProviderConfig, Transport,
-    SandboxConfig, McpServerConfig, PluginsConfig, MemoryConfig, DaemonConfig};
-pub use core::orchestrator::AletheonRuntime;
 pub use core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
+pub use core::config::{
+    AgentConfig, AppConfig, DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig,
+    ProviderConfig, RuntimeConfig, SandboxConfig, Transport,
+};
+pub use core::orchestrator::AletheonRuntime;
 pub use core::react_loop::ReActLoop;
 
 // Re-export from impl for backward compatibility
 pub use r#impl::agent::AgentRuntime;
-pub use r#impl::orchestration as orchestration;
-pub use r#impl::automation as automation;
-pub use r#impl::session as session;
-pub use r#impl::plugin as plugin;
+pub use r#impl::automation;
+pub use r#impl::orchestration;
+pub use r#impl::plugin;
+pub use r#impl::session;
 
 // Re-export provider registry from brain-core
 pub use aletheon_brain::r#impl::provider_registry::ProviderRegistry;

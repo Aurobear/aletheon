@@ -10,8 +10,8 @@ use tracing::{debug, error};
 
 use aletheon_abi::envelope::*;
 use aletheon_abi::SelfFieldOps;
-use aletheon_comm::CommunicationBus;
 use aletheon_comm::envelope::Payload;
+use aletheon_comm::CommunicationBus;
 
 use aletheon_self::core::SelfField;
 
@@ -61,10 +61,7 @@ impl SelfFieldModule {
             SelfFieldRequest::Review { intent, ctx } => {
                 // Deserialize the context from the request instead of using a default
                 let ctx: aletheon_abi::Context = serde_json::from_value(ctx).unwrap_or_else(|_| {
-                    aletheon_abi::Context::new(
-                        "bus-request",
-                        std::path::PathBuf::from("."),
-                    )
+                    aletheon_abi::Context::new("bus-request", std::path::PathBuf::from("."))
                 });
                 match sf.review(&intent, &ctx).await {
                     Ok(verdict) => SelfFieldResponse::Verdict { verdict },

@@ -37,7 +37,9 @@ impl Tool for FileWriteTool {
         PermissionLevel::L1
     }
 
-    fn boxed_clone(&self) -> Box<dyn Tool> { Box::new(FileWriteTool) }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(FileWriteTool)
+    }
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let path = input["path"].as_str().unwrap_or("");

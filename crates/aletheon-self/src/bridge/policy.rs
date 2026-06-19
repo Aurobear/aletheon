@@ -1,5 +1,5 @@
-use aletheon_abi::self_field::{Verdict, RiskLevel};
 use crate::r#impl::security::{PolicyEngine, PolicyVerdict};
+use aletheon_abi::self_field::{RiskLevel, Verdict};
 use serde_json::Value;
 
 /// Bridges PolicyEngine into SelfField's Verdict system

@@ -15,8 +15,12 @@ pub struct CoreMemoryAppendTool {
 
 #[async_trait]
 impl Tool for CoreMemoryAppendTool {
-    fn name(&self) -> &str { "core_memory_append" }
-    fn description(&self) -> &str { "Append content to a Core Memory block" }
+    fn name(&self) -> &str {
+        "core_memory_append"
+    }
+    fn description(&self) -> &str {
+        "Append content to a Core Memory block"
+    }
     fn input_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -27,9 +31,13 @@ impl Tool for CoreMemoryAppendTool {
             "required": ["label", "content"]
         })
     }
-    fn permission_level(&self) -> PermissionLevel { PermissionLevel::L0 }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L0
+    }
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(CoreMemoryAppendTool { memory: self.memory.clone() })
+        Box::new(CoreMemoryAppendTool {
+            memory: self.memory.clone(),
+        })
     }
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let label = input["label"].as_str().unwrap_or("");
@@ -40,12 +48,18 @@ impl Tool for CoreMemoryAppendTool {
             Ok(_) => ToolResult {
                 content: format!("Appended to '{}'", label),
                 is_error: false,
-                metadata: ToolResultMeta { execution_time_ms: start.elapsed().as_millis() as u64, truncated: false },
+                metadata: ToolResultMeta {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    truncated: false,
+                },
             },
             Err(e) => ToolResult {
                 content: format!("Error: {}", e),
                 is_error: true,
-                metadata: ToolResultMeta { execution_time_ms: start.elapsed().as_millis() as u64, truncated: false },
+                metadata: ToolResultMeta {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    truncated: false,
+                },
             },
         }
     }
@@ -58,8 +72,12 @@ pub struct CoreMemoryReplaceTool {
 
 #[async_trait]
 impl Tool for CoreMemoryReplaceTool {
-    fn name(&self) -> &str { "core_memory_replace" }
-    fn description(&self) -> &str { "Replace content in a Core Memory block" }
+    fn name(&self) -> &str {
+        "core_memory_replace"
+    }
+    fn description(&self) -> &str {
+        "Replace content in a Core Memory block"
+    }
     fn input_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -71,9 +89,13 @@ impl Tool for CoreMemoryReplaceTool {
             "required": ["label", "old", "new"]
         })
     }
-    fn permission_level(&self) -> PermissionLevel { PermissionLevel::L0 }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L0
+    }
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(CoreMemoryReplaceTool { memory: self.memory.clone() })
+        Box::new(CoreMemoryReplaceTool {
+            memory: self.memory.clone(),
+        })
     }
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let label = input["label"].as_str().unwrap_or("");
@@ -85,12 +107,18 @@ impl Tool for CoreMemoryReplaceTool {
             Ok(_) => ToolResult {
                 content: format!("Replaced in '{}'", label),
                 is_error: false,
-                metadata: ToolResultMeta { execution_time_ms: start.elapsed().as_millis() as u64, truncated: false },
+                metadata: ToolResultMeta {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    truncated: false,
+                },
             },
             Err(e) => ToolResult {
                 content: format!("Error: {}", e),
                 is_error: true,
-                metadata: ToolResultMeta { execution_time_ms: start.elapsed().as_millis() as u64, truncated: false },
+                metadata: ToolResultMeta {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    truncated: false,
+                },
             },
         }
     }
@@ -103,8 +131,12 @@ pub struct MemorySearchTool {
 
 #[async_trait]
 impl Tool for MemorySearchTool {
-    fn name(&self) -> &str { "memory_search" }
-    fn description(&self) -> &str { "Search conversation history and memory" }
+    fn name(&self) -> &str {
+        "memory_search"
+    }
+    fn description(&self) -> &str {
+        "Search conversation history and memory"
+    }
     fn input_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -115,9 +147,13 @@ impl Tool for MemorySearchTool {
             "required": ["query"]
         })
     }
-    fn permission_level(&self) -> PermissionLevel { PermissionLevel::L0 }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L0
+    }
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(MemorySearchTool { recall: self.recall.clone() })
+        Box::new(MemorySearchTool {
+            recall: self.recall.clone(),
+        })
     }
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let query = input["query"].as_str().unwrap_or("");
@@ -130,24 +166,44 @@ impl Tool for MemorySearchTool {
                     ToolResult {
                         content: "No results found.".to_string(),
                         is_error: false,
-                        metadata: ToolResultMeta { execution_time_ms: start.elapsed().as_millis() as u64, truncated: false },
+                        metadata: ToolResultMeta {
+                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            truncated: false,
+                        },
                     }
                 } else {
-                    let lines: Vec<String> = entries.iter().map(|e| {
-                        format!("[{}] {}: {}", e.timestamp.format("%Y-%m-%d %H:%M"), e.entry_type,
-                            if e.content.len() > 200 { format!("{}...", &e.content[..200]) } else { e.content.clone() })
-                    }).collect();
+                    let lines: Vec<String> = entries
+                        .iter()
+                        .map(|e| {
+                            format!(
+                                "[{}] {}: {}",
+                                e.timestamp.format("%Y-%m-%d %H:%M"),
+                                e.entry_type,
+                                if e.content.len() > 200 {
+                                    format!("{}...", &e.content[..200])
+                                } else {
+                                    e.content.clone()
+                                }
+                            )
+                        })
+                        .collect();
                     ToolResult {
                         content: lines.join("\n"),
                         is_error: false,
-                        metadata: ToolResultMeta { execution_time_ms: start.elapsed().as_millis() as u64, truncated: entries.len() >= limit },
+                        metadata: ToolResultMeta {
+                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            truncated: entries.len() >= limit,
+                        },
                     }
                 }
             }
             Err(e) => ToolResult {
                 content: format!("Search error: {}", e),
                 is_error: true,
-                metadata: ToolResultMeta { execution_time_ms: start.elapsed().as_millis() as u64, truncated: false },
+                metadata: ToolResultMeta {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    truncated: false,
+                },
             },
         }
     }

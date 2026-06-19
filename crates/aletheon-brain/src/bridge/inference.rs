@@ -1,4 +1,4 @@
-use crate::r#impl::inference::{InferenceRouter, InferenceConfig, ProviderConfig};
+use crate::r#impl::inference::{InferenceConfig, InferenceRouter, ProviderConfig};
 
 /// Bridges InferenceRouter into BrainCore.
 ///

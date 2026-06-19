@@ -1,9 +1,11 @@
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-use crate::r#impl::sandbox::{SandboxBackend, IsolationLevel, SandboxCapabilities, SandboxConfig, SandboxResult};
+use crate::r#impl::sandbox::{
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
+};
 
 /// No-op sandbox backend — executes commands directly with no isolation.
 /// Always available. Used as last-resort fallback.
@@ -38,8 +40,16 @@ impl SandboxBackend for NoopBackend {
         }
     }
 
-    async fn execute(&self, cmd: &str, config: &SandboxConfig, _timeout: Duration) -> Result<SandboxResult> {
-        warn!(command = cmd, "Executing command WITHOUT sandbox (noop backend)");
+    async fn execute(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        _timeout: Duration,
+    ) -> Result<SandboxResult> {
+        warn!(
+            command = cmd,
+            "Executing command WITHOUT sandbox (noop backend)"
+        );
 
         let start = Instant::now();
 

@@ -12,11 +12,7 @@ impl PrefixBuilder {
     /// Build the prefix from its components.
     /// Order is deterministic: base -> skills -> core memory.
     /// Same inputs always produce the same bytes.
-    pub fn build(
-        config_prompt: &str,
-        skills: &[LoadedSkill],
-        core_memory: &CoreMemory,
-    ) -> String {
+    pub fn build(config_prompt: &str, skills: &[LoadedSkill], core_memory: &CoreMemory) -> String {
         let mut prefix = String::with_capacity(4096);
 
         // 1. Base system prompt (most stable text — stays as cache prefix)

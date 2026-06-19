@@ -1,5 +1,5 @@
-use anyhow::Result;
 use crate::r#impl::driver::types::Image;
+use anyhow::Result;
 
 /// Display driver trait
 pub trait DisplayDriver: Send + Sync {
@@ -80,8 +80,8 @@ pub mod x11;
 #[cfg(feature = "display")]
 pub use x11::X11DisplayDriver;
 
-pub mod window;
 pub mod clipboard;
+pub mod window;
 
 #[cfg(feature = "display")]
 pub mod clipboard_x11;
@@ -92,8 +92,8 @@ pub use clipboard_x11::X11ClipboardDriver;
 #[cfg(feature = "display")]
 pub mod window_x11;
 
-pub use window::{WindowManager, WindowInfo, MockWindowManager};
 pub use clipboard::{ClipboardDriver, MockClipboardDriver};
+pub use window::{MockWindowManager, WindowInfo, WindowManager};
 
 #[cfg(feature = "display")]
 pub use window_x11::EwmhWindowManager;

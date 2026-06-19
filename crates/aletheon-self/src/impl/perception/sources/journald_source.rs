@@ -11,7 +11,7 @@ pub struct JournaldSource {
     tx: mpsc::Sender<PerceptionEvent>,
     #[allow(dead_code)]
     event_id_counter: u64,
-    min_priority: u8,  // 0=emerg .. 7=debug, lower = more important
+    min_priority: u8, // 0=emerg .. 7=debug, lower = more important
 }
 
 impl JournaldSource {
@@ -73,33 +73,32 @@ impl JournaldSource {
                         .as_str()
                         .unwrap_or("unknown")
                         .to_string();
-                    let message = entry["MESSAGE"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string();
+                    let message = entry["MESSAGE"].as_str().unwrap_or("").to_string();
 
                     if message.is_empty() {
                         continue;
                     }
 
                     id += 1;
-                    let _ = tx.send(PerceptionEvent {
-                        id,
-                        timestamp: Utc::now(),
-                        source: EventSource::Journald,
-                        category: EventCategory::Service,
-                        priority: match priority {
-                            0..=2 => Priority::Critical,
-                            3..=4 => Priority::High,
-                            5 => Priority::Normal,
-                            _ => Priority::Low,
-                        },
-                        data: EventData::JournalEntry {
-                            unit,
-                            message,
-                            priority,
-                        },
-                    }).await;
+                    let _ = tx
+                        .send(PerceptionEvent {
+                            id,
+                            timestamp: Utc::now(),
+                            source: EventSource::Journald,
+                            category: EventCategory::Service,
+                            priority: match priority {
+                                0..=2 => Priority::Critical,
+                                3..=4 => Priority::High,
+                                5 => Priority::Normal,
+                                _ => Priority::Low,
+                            },
+                            data: EventData::JournalEntry {
+                                unit,
+                                message,
+                                priority,
+                            },
+                        })
+                        .await;
                 }
             }
 

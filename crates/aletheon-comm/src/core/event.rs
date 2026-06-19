@@ -5,7 +5,7 @@
 
 pub use aletheon_abi::{Event, EventType, Priority};
 
-use std::any:: Any;
+use std::any::Any;
 
 /// A concrete event implementation for direct use.
 pub struct ConcreteEvent {
@@ -22,15 +22,28 @@ impl ConcreteEvent {
         source: String,
         payload: Box<dyn Any + Send + Sync>,
     ) -> Self {
-        Self { event_type, priority, source, payload }
+        Self {
+            event_type,
+            priority,
+            source,
+            payload,
+        }
     }
 }
 
 impl Event for ConcreteEvent {
-    fn event_type(&self) -> EventType { self.event_type.clone() }
-    fn priority(&self) -> Priority { self.priority }
-    fn source(&self) -> &str { &self.source }
-    fn payload(&self) -> &dyn Any { &*self.payload }
+    fn event_type(&self) -> EventType {
+        self.event_type.clone()
+    }
+    fn priority(&self) -> Priority {
+        self.priority
+    }
+    fn source(&self) -> &str {
+        &self.source
+    }
+    fn payload(&self) -> &dyn Any {
+        &*self.payload
+    }
 
     fn to_json(&self) -> serde_json::Value {
         self.payload

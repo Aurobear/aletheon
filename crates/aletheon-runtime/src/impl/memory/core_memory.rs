@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use aletheon_abi::ReflectionEntry;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A single memory block in Core Memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,7 +21,11 @@ impl MemoryBlock {
         }
     }
 
-    pub fn read_only(label: impl Into<String>, value: impl Into<String>, char_limit: usize) -> Self {
+    pub fn read_only(
+        label: impl Into<String>,
+        value: impl Into<String>,
+        char_limit: usize,
+    ) -> Self {
         Self {
             label: label.into(),
             value: value.into(),
@@ -51,31 +55,28 @@ impl CoreMemory {
     /// Initialize with default blocks.
     pub fn with_defaults() -> Self {
         let mut memory = Self::new();
-        memory.blocks.insert("persona".to_string(), MemoryBlock::read_only(
-            "persona",
-            "You are a helpful system assistant running as a daemon on Arch Linux.",
-            2000,
-        ));
-        memory.blocks.insert("system_state".to_string(), MemoryBlock::new(
-            "system_state",
-            "",
-            2000,
-        ));
-        memory.blocks.insert("user_prefs".to_string(), MemoryBlock::new(
-            "user_prefs",
-            "",
-            1000,
-        ));
-        memory.blocks.insert("human".to_string(), MemoryBlock::new(
-            "human",
-            "",
-            2000,
-        ));
-        memory.blocks.insert("learned".to_string(), MemoryBlock::new(
-            "learned",
-            "",
-            3000,
-        ));
+        memory.blocks.insert(
+            "persona".to_string(),
+            MemoryBlock::read_only(
+                "persona",
+                "You are a helpful system assistant running as a daemon on Arch Linux.",
+                2000,
+            ),
+        );
+        memory.blocks.insert(
+            "system_state".to_string(),
+            MemoryBlock::new("system_state", "", 2000),
+        );
+        memory.blocks.insert(
+            "user_prefs".to_string(),
+            MemoryBlock::new("user_prefs", "", 1000),
+        );
+        memory
+            .blocks
+            .insert("human".to_string(), MemoryBlock::new("human", "", 2000));
+        memory
+            .blocks
+            .insert("learned".to_string(), MemoryBlock::new("learned", "", 3000));
         memory
     }
 
@@ -105,7 +106,9 @@ impl CoreMemory {
 
     /// Append content to a block (Letta: core_memory_append).
     pub fn append(&mut self, label: &str, content: &str) -> anyhow::Result<()> {
-        let block = self.blocks.get_mut(label)
+        let block = self
+            .blocks
+            .get_mut(label)
             .ok_or_else(|| anyhow::anyhow!("Block '{}' not found", label))?;
 
         if block.read_only {
@@ -121,7 +124,9 @@ impl CoreMemory {
         if new_value.len() > block.char_limit {
             anyhow::bail!(
                 "Block '{}' would exceed limit ({}/{} chars)",
-                label, new_value.len(), block.char_limit
+                label,
+                new_value.len(),
+                block.char_limit
             );
         }
 
@@ -131,7 +136,9 @@ impl CoreMemory {
 
     /// Replace content in a block (Letta: core_memory_replace).
     pub fn replace(&mut self, label: &str, old: &str, new: &str) -> anyhow::Result<()> {
-        let block = self.blocks.get_mut(label)
+        let block = self
+            .blocks
+            .get_mut(label)
             .ok_or_else(|| anyhow::anyhow!("Block '{}' not found", label))?;
 
         if block.read_only {
@@ -148,7 +155,9 @@ impl CoreMemory {
 
     /// Replace entire block content (Letta: core_memory_rethink).
     pub fn rethink(&mut self, label: &str, new_content: &str) -> anyhow::Result<()> {
-        let block = self.blocks.get_mut(label)
+        let block = self
+            .blocks
+            .get_mut(label)
             .ok_or_else(|| anyhow::anyhow!("Block '{}' not found", label))?;
 
         if block.read_only {
@@ -158,7 +167,8 @@ impl CoreMemory {
         if new_content.len() > block.char_limit {
             anyhow::bail!(
                 "New content exceeds limit ({}/{} chars)",
-                new_content.len(), block.char_limit
+                new_content.len(),
+                block.char_limit
             );
         }
 
@@ -366,7 +376,10 @@ mod tests {
         let reflections = vec![
             make_reflection(vec![], vec!["first lesson"]),
             make_reflection(vec![], vec!["second lesson"]),
-            make_reflection(vec![], vec!["third very long lesson that should push out the oldest"]),
+            make_reflection(
+                vec![],
+                vec!["third very long lesson that should push out the oldest"],
+            ),
         ];
 
         mem.auto_populate_learned(&reflections);
@@ -414,7 +427,8 @@ mod tests {
     #[test]
     fn inject_includes_extra_blocks() {
         let mut mem = CoreMemory::with_defaults();
-        mem.add_block(MemoryBlock::new("custom", "custom data", 500)).unwrap();
+        mem.add_block(MemoryBlock::new("custom", "custom data", 500))
+            .unwrap();
 
         let prompt = mem.inject_into_prompt();
         assert!(prompt.contains("[custom]"));

@@ -9,8 +9,8 @@ use tokio::sync::Mutex;
 use tracing::{debug, error};
 
 use aletheon_abi::envelope::*;
-use aletheon_comm::CommunicationBus;
 use aletheon_comm::envelope::Payload;
+use aletheon_comm::CommunicationBus;
 
 use aletheon_body::r#impl::tools::ToolRegistry;
 

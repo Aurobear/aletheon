@@ -6,21 +6,21 @@
 //! Each backend has its own SQLite file (no lock contention).
 //! `MemoryRouter` dispatches by `MemoryType`.
 
-pub mod schema;
-pub mod episodic;
-pub mod semantic;
-pub mod procedural;
-pub mod self_memory;
-pub mod router;
 pub mod activation;
 pub mod decay;
+pub mod episodic;
+pub mod procedural;
+pub mod router;
+pub mod schema;
+pub mod self_memory;
+pub mod semantic;
 
 // Re-export primary types
 pub use episodic::EpisodicMemory;
-pub use semantic::SemanticMemory;
 pub use procedural::ProceduralMemory;
-pub use self_memory::SelfMemory;
 pub use router::MemoryRouter;
+pub use self_memory::SelfMemory;
+pub use semantic::SemanticMemory;
 
 #[cfg(test)]
 pub mod testing;

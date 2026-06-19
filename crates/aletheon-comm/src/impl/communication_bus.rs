@@ -104,13 +104,24 @@ impl CommunicationBus {
     // -- Module-level API --
 
     /// Register a module mailbox for point-to-point delivery.
-    pub fn register_module(&self, module: ModuleId, buffer: Option<usize>) -> mpsc::Receiver<Envelope> {
-        self.in_process.register_module(module, buffer.unwrap_or(64))
+    pub fn register_module(
+        &self,
+        module: ModuleId,
+        buffer: Option<usize>,
+    ) -> mpsc::Receiver<Envelope> {
+        self.in_process
+            .register_module(module, buffer.unwrap_or(64))
     }
 
     /// Register an agent mailbox for point-to-point delivery.
-    pub async fn register_agent(&self, pid: u64, buffer: Option<usize>) -> mpsc::Receiver<Envelope> {
-        self.in_process.register_agent(pid, buffer.unwrap_or(64)).await
+    pub async fn register_agent(
+        &self,
+        pid: u64,
+        buffer: Option<usize>,
+    ) -> mpsc::Receiver<Envelope> {
+        self.in_process
+            .register_agent(pid, buffer.unwrap_or(64))
+            .await
     }
 
     /// Unregister an agent mailbox.
@@ -119,8 +130,13 @@ impl CommunicationBus {
     }
 
     /// Subscribe to a topic for pub-sub delivery.
-    pub fn subscribe_topic(&self, topic: &str, buffer: Option<usize>) -> broadcast::Receiver<Envelope> {
-        self.in_process.subscribe_topic(topic, buffer.unwrap_or(256))
+    pub fn subscribe_topic(
+        &self,
+        topic: &str,
+        buffer: Option<usize>,
+    ) -> broadcast::Receiver<Envelope> {
+        self.in_process
+            .subscribe_topic(topic, buffer.unwrap_or(256))
     }
 
     /// Send a request and wait for a correlated response.

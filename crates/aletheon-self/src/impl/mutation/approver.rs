@@ -3,11 +3,11 @@
 //! Uses simple heuristics to generate mutation intents from evolution context,
 //! then validates each against boundary rules and identity continuity.
 
-use std::sync::Arc;
-use anyhow::Result;
+use crate::core::mutation::MutationLayer;
 use aletheon_abi::evolution::EvolutionTriggeredPayload;
 use aletheon_abi::self_field::{MutationIntent, Verdict};
-use crate::core::mutation::MutationLayer;
+use anyhow::Result;
+use std::sync::Arc;
 
 /// Validates evolution triggers and generates approved mutation intents.
 pub struct MutationApprover {
@@ -44,7 +44,8 @@ impl MutationApprover {
                 _ => {
                     tracing::info!(
                         "MutationIntent rejected by SelfField: target={}, reason={}",
-                        intent.target, intent.reason
+                        intent.target,
+                        intent.reason
                     );
                 }
             }
@@ -89,10 +90,7 @@ impl MutationApprover {
                 });
             }
             other => {
-                tracing::debug!(
-                    "No heuristic rule for trigger reason '{}', skipping",
-                    other
-                );
+                tracing::debug!("No heuristic rule for trigger reason '{}', skipping", other);
             }
         }
 

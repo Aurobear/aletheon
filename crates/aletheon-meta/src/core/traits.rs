@@ -2,22 +2,22 @@
 //!
 //! Wires together: SelfReader → CandidateGenerator → SandboxRunner → Evaluator → MigrationManager → RollbackManager
 
-use async_trait::async_trait;
+use aletheon_abi::{
+    Evaluation, Genome, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate,
+    Subsystem, SubsystemContext, SubsystemHealth, TestResult, Version,
+};
 use anyhow::Result;
+use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use aletheon_abi::{
-    MetaRuntimeOps, RuntimeCandidate, TestResult, Evaluation, MigrationResult,
-    Genome, MutationIntent, Subsystem, SubsystemHealth, SubsystemContext, Version,
-};
 
-use crate::r#impl::meta_runtime::self_reader::SelfReader;
-use crate::r#impl::morphogenesis::candidate::CandidateGenerator;
-use crate::r#impl::meta_runtime::sandbox_runner::SandboxRunner;
+use crate::r#impl::genome::loader::GenomeLoader;
 use crate::r#impl::meta_runtime::evaluator::Evaluator;
 use crate::r#impl::meta_runtime::migration::MigrationManager;
 use crate::r#impl::meta_runtime::rollback::RollbackManager;
-use crate::r#impl::genome::loader::GenomeLoader;
+use crate::r#impl::meta_runtime::sandbox_runner::SandboxRunner;
+use crate::r#impl::meta_runtime::self_reader::SelfReader;
+use crate::r#impl::morphogenesis::candidate::CandidateGenerator;
 
 /// Concrete MetaRuntime implementation.
 ///
@@ -77,10 +77,18 @@ impl DefaultMetaRuntime {
 // Subsystem trait required by MetaRuntimeOps
 #[async_trait]
 impl Subsystem for DefaultMetaRuntime {
-    fn name(&self) -> &str { "meta-runtime" }
-    fn version(&self) -> Version { self.version.clone() }
-    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> { Ok(()) }
-    async fn shutdown(&mut self) -> Result<()> { Ok(()) }
+    fn name(&self) -> &str {
+        "meta-runtime"
+    }
+    fn version(&self) -> Version {
+        self.version.clone()
+    }
+    async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
+        Ok(())
+    }
+    async fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
     async fn health(&self) -> SubsystemHealth {
         SubsystemHealth::Healthy
     }
@@ -137,7 +145,11 @@ impl MetaRuntimeOps for DefaultMetaRuntime {
     }
 
     /// Evaluate a candidate after testing.
-    async fn evaluate(&self, candidate: &RuntimeCandidate, test: &TestResult) -> Result<Evaluation> {
+    async fn evaluate(
+        &self,
+        candidate: &RuntimeCandidate,
+        test: &TestResult,
+    ) -> Result<Evaluation> {
         self.evaluator.evaluate(candidate, test).await
     }
 

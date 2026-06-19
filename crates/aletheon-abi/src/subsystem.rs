@@ -18,7 +18,11 @@ pub struct Version {
 
 impl Version {
     pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
-        Self { major, minor, patch }
+        Self {
+            major,
+            minor,
+            patch,
+        }
     }
 
     /// Check if two versions are ABI-compatible (same major).

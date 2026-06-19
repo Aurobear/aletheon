@@ -33,12 +33,7 @@ impl ContinuityLayer {
     }
 
     /// Record a lineage event.
-    pub fn record(
-        &self,
-        identity_name: &str,
-        identity_version: &str,
-        event: &str,
-    ) {
+    pub fn record(&self, identity_name: &str, identity_version: &str, event: &str) {
         let entry = LineageRecord {
             identity_name: identity_name.to_string(),
             identity_version: identity_version.to_string(),
@@ -87,7 +82,7 @@ impl ContinuityLayer {
                 identity_version TEXT NOT NULL,
                 recorded_at TEXT NOT NULL,
                 event TEXT NOT NULL
-            );"
+            );",
         )?;
         conn.execute("DELETE FROM continuity_records", [])?;
         let records = self.records.read();
@@ -107,7 +102,10 @@ impl ContinuityLayer {
     }
 
     /// Load lineage records from the SQLite store.
-    pub fn load_from_store(&mut self, store: &crate::core::store::SelfFieldStore) -> anyhow::Result<()> {
+    pub fn load_from_store(
+        &mut self,
+        store: &crate::core::store::SelfFieldStore,
+    ) -> anyhow::Result<()> {
         let conn = store.conn();
         let table_exists: bool = conn
             .query_row(

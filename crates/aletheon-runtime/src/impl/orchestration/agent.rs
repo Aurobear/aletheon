@@ -72,9 +72,7 @@ pub trait Agent: Send + Sync {
 
     /// Short description for routing purposes.
     fn description(&self) -> String {
-        self.system_prompt()
-            .unwrap_or(self.name())
-            .to_string()
+        self.system_prompt().unwrap_or(self.name()).to_string()
     }
 }
 

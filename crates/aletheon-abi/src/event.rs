@@ -3,12 +3,12 @@
 //! Events are the primary communication mechanism between Aletheon subsystems.
 //! All cross-subsystem messages flow through the EventBus as typed events.
 
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 
 /// Event type identifier — like IRQ numbers.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -76,11 +76,11 @@ pub enum EventType {
 /// Event priority — like IRQ priority levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 pub enum Priority {
-    Critical = 0,   // Emergency stop, security events
-    High = 1,       // User intent, conflict detection
+    Critical = 0, // Emergency stop, security events
+    High = 1,     // User intent, conflict detection
     #[default]
-    Normal = 2,     // Regular tasks
-    Low = 3,        // Background learning, health checks
+    Normal = 2, // Regular tasks
+    Low = 3,      // Background learning, health checks
     Background = 4, // Maintenance tasks
 }
 
@@ -131,9 +131,8 @@ pub type EventHandler = Box<dyn Fn(&dyn Event) -> bool + Send + Sync>;
 /// Receives the event as a serialized JSON value and returns whether to
 /// continue processing (true) or stop propagation (false). Use this when
 /// the handler needs to perform async I/O (e.g., memory writes, LLM calls).
-pub type AsyncEventHandler = Box<
-    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync,
->;
+pub type AsyncEventHandler =
+    Box<dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
 
 /// Maximum time to wait for a request-response cycle.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

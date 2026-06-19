@@ -30,12 +30,7 @@ impl Reasoner {
     }
 
     /// Think about an intent using the default strategy.
-    pub fn think(
-        &self,
-        intent: &Intent,
-        ctx: &Context,
-        world_state: &str,
-    ) -> String {
+    pub fn think(&self, intent: &Intent, ctx: &Context, world_state: &str) -> String {
         self.think_with_strategy(intent, ctx, world_state, &self.default_strategy)
     }
 
@@ -73,10 +68,7 @@ impl Reasoner {
         steps.push(format!(
             "Step 1 — Understand: The intent is '{}' (action: '{}'). \
              Source: {:?}. Parameters: {}.",
-            intent.description,
-            intent.action,
-            intent.source,
-            intent.parameters
+            intent.description, intent.action, intent.source, intent.parameters
         ));
 
         // Step 2: Assess current state
@@ -122,7 +114,7 @@ impl Reasoner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_abi::{IntentSource, Context};
+    use aletheon_abi::{Context, IntentSource};
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -183,6 +175,9 @@ mod tests {
         let mut reasoner = Reasoner::new(ReasoningStrategy::Direct);
         assert_eq!(*reasoner.default_strategy(), ReasoningStrategy::Direct);
         reasoner.set_default_strategy(ReasoningStrategy::ChainOfThought);
-        assert_eq!(*reasoner.default_strategy(), ReasoningStrategy::ChainOfThought);
+        assert_eq!(
+            *reasoner.default_strategy(),
+            ReasoningStrategy::ChainOfThought
+        );
     }
 }

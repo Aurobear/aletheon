@@ -43,7 +43,10 @@ async fn test_point_to_point_request_response() {
         Duration::from_secs(5),
     );
 
-    let response = bus.request(request).await.expect("request should get a response");
+    let response = bus
+        .request(request)
+        .await
+        .expect("request should get a response");
 
     // Verify the response payload
     if let Payload::Json(json) = &response.payload {
@@ -151,7 +154,10 @@ async fn test_concurrent_request_response() {
             let request_id = request.id;
             let response = bus.request(request).await.expect("request should succeed");
             if let Payload::Json(json) = &response.payload {
-                assert_eq!(json["id"], request_id, "response correlation_id should match request id");
+                assert_eq!(
+                    json["id"], request_id,
+                    "response correlation_id should match request id"
+                );
             }
         }));
     }

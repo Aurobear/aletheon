@@ -76,10 +76,7 @@ impl ControlsValidator {
         match std::str::from_utf8(data) {
             Ok(s) if s == "0" || s == "1" => ControlVerdict::Allow,
             Ok(s) => ControlVerdict::Deny {
-                reason: format!(
-                    "Toggle control must be '0' or '1', got: '{}'",
-                    s
-                ),
+                reason: format!("Toggle control must be '0' or '1', got: '{}'", s),
             },
             Err(_) => ControlVerdict::Deny {
                 reason: "Toggle control data must be valid UTF-8".to_string(),

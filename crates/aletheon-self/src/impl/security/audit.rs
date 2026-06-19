@@ -1,12 +1,12 @@
-use std::path::PathBuf;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tokio::sync::mpsc;
-use tracing::{info, error};
+use tracing::{error, info};
 
-use aletheon_abi::tool::PermissionLevel;
 use super::risk_classifier::RiskCategory;
+use aletheon_abi::tool::PermissionLevel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditRecord {
@@ -70,7 +70,9 @@ impl AuditLogger {
     }
 
     pub async fn log(&self, record: AuditRecord) -> Result<()> {
-        self.tx.send(record).await
+        self.tx
+            .send(record)
+            .await
             .map_err(|e| anyhow::anyhow!("Audit logger channel closed: {}", e))
     }
 

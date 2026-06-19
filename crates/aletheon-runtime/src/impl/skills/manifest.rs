@@ -5,8 +5,8 @@
 //! Parses the `---` delimited YAML header from SKILL.md files into
 //! typed manifest structures.
 
-use serde::{Deserialize, Serialize};
 use aletheon_abi::tool::PermissionLevel;
+use serde::{Deserialize, Serialize};
 
 /// Raw YAML frontmatter from SKILL.md.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,12 +62,15 @@ pub fn parse_skill_md(content: &str) -> anyhow::Result<(SkillManifest, String)> 
 
     // Must start with ---
     if !trimmed.starts_with("---") {
-        return Err(anyhow::anyhow!("SKILL.md must start with '---' frontmatter"));
+        return Err(anyhow::anyhow!(
+            "SKILL.md must start with '---' frontmatter"
+        ));
     }
 
     // Find the closing ---
     let after_first = &trimmed[3..];
-    let end_pos = after_first.find("\n---")
+    let end_pos = after_first
+        .find("\n---")
         .or_else(|| after_first.find("\r\n---"))
         .ok_or_else(|| anyhow::anyhow!("Missing closing '---' in SKILL.md frontmatter"))?;
 
@@ -187,10 +190,22 @@ No tools or hooks.
 
     #[test]
     fn parse_exposure_levels() {
-        assert_eq!(parse_exposure("direct"), aletheon_abi::tool::ToolExposure::Direct);
-        assert_eq!(parse_exposure("deferred"), aletheon_abi::tool::ToolExposure::Deferred);
-        assert_eq!(parse_exposure("hidden"), aletheon_abi::tool::ToolExposure::Hidden);
-        assert_eq!(parse_exposure("unknown"), aletheon_abi::tool::ToolExposure::Direct);
+        assert_eq!(
+            parse_exposure("direct"),
+            aletheon_abi::tool::ToolExposure::Direct
+        );
+        assert_eq!(
+            parse_exposure("deferred"),
+            aletheon_abi::tool::ToolExposure::Deferred
+        );
+        assert_eq!(
+            parse_exposure("hidden"),
+            aletheon_abi::tool::ToolExposure::Hidden
+        );
+        assert_eq!(
+            parse_exposure("unknown"),
+            aletheon_abi::tool::ToolExposure::Direct
+        );
     }
 
     #[test]

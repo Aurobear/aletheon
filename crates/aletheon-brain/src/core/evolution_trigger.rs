@@ -4,7 +4,9 @@
 //! periodic intervals, and confidence drops. When triggered, delegates
 //! to `ExperienceSummarizer` to produce an `EvolutionLogEntry`.
 
-use aletheon_abi::brain::{EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+use aletheon_abi::brain::{
+    EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger,
+};
 use chrono::{DateTime, Duration, Utc};
 
 /// Configuration for the evolution trigger.
@@ -34,13 +36,9 @@ impl Default for EvolutionTriggerConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvolutionDecision {
     /// Evolution should run now.
-    TriggerNow {
-        reason: String,
-    },
+    TriggerNow { reason: String },
     /// Not yet — check again at the given time.
-    NotYet {
-        next_check: DateTime<Utc>,
-    },
+    NotYet { next_check: DateTime<Utc> },
     /// An evolution cycle is already running.
     AlreadyRunning,
 }
@@ -96,9 +94,12 @@ impl EvolutionTrigger {
         }
 
         // Not yet — compute next check time
-        let next_check = self.last_evolution
+        let next_check = self
+            .last_evolution
             .map(|t| t + Duration::hours(self.config.periodic_interval_hours as i64))
-            .unwrap_or_else(|| Utc::now() + Duration::hours(self.config.periodic_interval_hours as i64));
+            .unwrap_or_else(|| {
+                Utc::now() + Duration::hours(self.config.periodic_interval_hours as i64)
+            });
 
         EvolutionDecision::NotYet { next_check }
     }
@@ -133,10 +134,7 @@ impl EvolutionTrigger {
 
     // --- Private helpers ---
 
-    fn check_consecutive_failures(
-        &self,
-        reflections: &[ReflectionEntry],
-    ) -> Option<String> {
+    fn check_consecutive_failures(&self, reflections: &[ReflectionEntry]) -> Option<String> {
         if reflections.is_empty() {
             return None;
         }
@@ -144,8 +142,8 @@ impl EvolutionTrigger {
         let mut consecutive = 0u32;
         // reflections are assumed most-recent-first
         for r in reflections {
-            let is_failure = r.outcome == ReflectionOutcome::Failure
-                || r.trigger == ReflectionTrigger::Impasse;
+            let is_failure =
+                r.outcome == ReflectionOutcome::Failure || r.trigger == ReflectionTrigger::Impasse;
             if is_failure {
                 consecutive += 1;
             } else {
@@ -231,7 +229,11 @@ impl Default for EvolutionTrigger {
 mod tests {
     use super::*;
 
-    fn make_entry(outcome: ReflectionOutcome, trigger: ReflectionTrigger, confidence: f64) -> ReflectionEntry {
+    fn make_entry(
+        outcome: ReflectionOutcome,
+        trigger: ReflectionTrigger,
+        confidence: f64,
+    ) -> ReflectionEntry {
         ReflectionEntry {
             id: format!("ref-{}", uuid::Uuid::new_v4()),
             timestamp: Utc::now(),
@@ -251,7 +253,11 @@ mod tests {
     }
 
     fn success_entry(confidence: f64) -> ReflectionEntry {
-        make_entry(ReflectionOutcome::Success, ReflectionTrigger::TaskComplete, confidence)
+        make_entry(
+            ReflectionOutcome::Success,
+            ReflectionTrigger::TaskComplete,
+            confidence,
+        )
     }
 
     // --- check_should_evolve tests ---
@@ -283,11 +289,7 @@ mod tests {
         // Set last evolution to the past so periodic doesn't fire first
         trigger.set_last_evolution(Utc::now());
 
-        let reflections = vec![
-            failure_entry(),
-            failure_entry(),
-            failure_entry(),
-        ];
+        let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
 
         let decision = trigger.check_should_evolve(&reflections);
         match decision {
@@ -303,11 +305,7 @@ mod tests {
         let mut trigger = EvolutionTrigger::default();
         trigger.set_last_evolution(Utc::now());
 
-        let reflections = vec![
-            failure_entry(),
-            failure_entry(),
-            success_entry(0.9),
-        ];
+        let reflections = vec![failure_entry(), failure_entry(), success_entry(0.9)];
 
         let decision = trigger.check_should_evolve(&reflections);
         // Should not trigger on consecutive failures (only 2 consecutive at start)
@@ -347,9 +345,9 @@ mod tests {
 
         // Older batch (high confidence) then recent batch (low confidence)
         let reflections = vec![
-            success_entry(0.2),  // recent (index 0 = most recent)
+            success_entry(0.2), // recent (index 0 = most recent)
             success_entry(0.3),
-            success_entry(0.9),  // older
+            success_entry(0.9), // older
             success_entry(0.85),
         ];
 
@@ -368,11 +366,7 @@ mod tests {
         trigger.set_last_evolution(Utc::now());
 
         // Only 3 entries — not enough for two batches
-        let reflections = vec![
-            success_entry(0.1),
-            success_entry(0.9),
-            success_entry(0.9),
-        ];
+        let reflections = vec![success_entry(0.1), success_entry(0.9), success_entry(0.9)];
 
         let decision = trigger.check_should_evolve(&reflections);
         // No consecutive failures, no confidence drop (insufficient data), no periodic
@@ -385,11 +379,7 @@ mod tests {
         // Recently evolved, so periodic won't fire
         trigger.set_last_evolution(Utc::now());
 
-        let reflections = vec![
-            failure_entry(),
-            failure_entry(),
-            failure_entry(),
-        ];
+        let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
 
         let decision = trigger.check_should_evolve(&reflections);
         match decision {
@@ -407,11 +397,7 @@ mod tests {
     fn evolution_cycle_produces_entry_with_consecutive_failures() {
         let mut trigger = EvolutionTrigger::default();
 
-        let reflections = vec![
-            failure_entry(),
-            failure_entry(),
-            failure_entry(),
-        ];
+        let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
 
         let entry = trigger.run_evolution_cycle(&reflections);
         assert!(entry.is_some());
@@ -451,11 +437,7 @@ mod tests {
         let mut trigger = EvolutionTrigger::default();
         assert!(trigger.last_evolution.is_none());
 
-        let reflections = vec![
-            failure_entry(),
-            failure_entry(),
-            failure_entry(),
-        ];
+        let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
 
         trigger.run_evolution_cycle(&reflections);
         assert!(trigger.last_evolution.is_some());
@@ -503,8 +485,12 @@ mod tests {
 
     #[test]
     fn evolution_decision_eq() {
-        let d1 = EvolutionDecision::TriggerNow { reason: "test".to_string() };
-        let d2 = EvolutionDecision::TriggerNow { reason: "test".to_string() };
+        let d1 = EvolutionDecision::TriggerNow {
+            reason: "test".to_string(),
+        };
+        let d2 = EvolutionDecision::TriggerNow {
+            reason: "test".to_string(),
+        };
         assert_eq!(d1, d2);
 
         let d3 = EvolutionDecision::AlreadyRunning;
@@ -514,8 +500,12 @@ mod tests {
 
     #[test]
     fn evolution_decision_not_eq() {
-        let d1 = EvolutionDecision::TriggerNow { reason: "a".to_string() };
-        let d2 = EvolutionDecision::TriggerNow { reason: "b".to_string() };
+        let d1 = EvolutionDecision::TriggerNow {
+            reason: "a".to_string(),
+        };
+        let d2 = EvolutionDecision::TriggerNow {
+            reason: "b".to_string(),
+        };
         assert_ne!(d1, d2);
     }
 }

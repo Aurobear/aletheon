@@ -40,7 +40,10 @@ impl AgentDiscovery {
         let dir = &self.socket_dir;
 
         if !dir.exists() {
-            info!("Socket directory {} does not exist, no agents discovered", dir.display());
+            info!(
+                "Socket directory {} does not exist, no agents discovered",
+                dir.display()
+            );
             return Ok(Vec::new());
         }
 
@@ -70,10 +73,7 @@ impl AgentDiscovery {
             let id = match AgentId::parse(stem) {
                 Ok(id) => id,
                 Err(_) => {
-                    debug!(
-                        "Skipping socket with non-UUID name: {}",
-                        path.display()
-                    );
+                    debug!("Skipping socket with non-UUID name: {}", path.display());
                     continue;
                 }
             };
@@ -171,7 +171,9 @@ mod tests {
         // Create a regular file with a UUID name and .sock extension
         let uuid_name = format!("{}.sock", uuid::Uuid::new_v4());
         let fake_sock = dir.path().join(&uuid_name);
-        tokio::fs::write(&fake_sock, b"not a real socket").await.unwrap();
+        tokio::fs::write(&fake_sock, b"not a real socket")
+            .await
+            .unwrap();
 
         let discovery = AgentDiscovery::with_dir(dir.path());
         let agents = discovery.scan().await.unwrap();

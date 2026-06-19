@@ -1,5 +1,5 @@
-use std::path::Path;
 use anyhow::Result;
+use std::path::Path;
 use tracing::{info, warn};
 
 use super::types::*;
@@ -14,7 +14,9 @@ impl HookConfig {
         let mut hooks = Vec::new();
 
         // Layer 1: System hooks
-        hooks.extend(load_hooks_from_dir(Path::new(aletheon_abi::paths::HOOKS_SYSTEM_DIR))?);
+        hooks.extend(load_hooks_from_dir(Path::new(
+            aletheon_abi::paths::HOOKS_SYSTEM_DIR,
+        ))?);
 
         // Layer 2: User hooks
         hooks.extend(load_hooks_from_dir(&aletheon_abi::paths::user_hooks_dir())?);

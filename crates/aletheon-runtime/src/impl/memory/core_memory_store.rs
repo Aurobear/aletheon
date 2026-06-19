@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use super::core_memory::{CoreMemory, MemoryBlock};
+use rusqlite::Connection;
 
 /// SQLite-backed persistence for CoreMemory blocks.
 pub struct CoreMemoryStore {
@@ -38,9 +38,9 @@ impl CoreMemoryStore {
 
     /// Load CoreMemory from SQLite. Returns None if no blocks stored yet.
     pub fn load(&self) -> anyhow::Result<Option<CoreMemory>> {
-        let mut stmt = self.db.prepare(
-            "SELECT label, content, char_limit, read_only FROM core_memory_blocks",
-        )?;
+        let mut stmt = self
+            .db
+            .prepare("SELECT label, content, char_limit, read_only FROM core_memory_blocks")?;
 
         let blocks: Vec<(String, String, usize, bool)> = stmt
             .query_map([], |row| {

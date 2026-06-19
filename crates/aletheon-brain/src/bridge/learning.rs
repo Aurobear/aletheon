@@ -1,7 +1,9 @@
-use anyhow::Result;
-use crate::r#impl::learning::{OutcomeRecorder, PatternExtractor, RuleStore, OutcomeRecord, OutcomeContext, LearnRule};
+use crate::r#impl::learning::{
+    LearnRule, OutcomeContext, OutcomeRecord, OutcomeRecorder, PatternExtractor, RuleStore,
+};
 use aletheon_abi::body::{Action, ActionResult};
-use aletheon_abi::brain::{LearnedRule, Experience};
+use aletheon_abi::brain::{Experience, LearnedRule};
+use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -22,7 +24,12 @@ impl LearningBridge {
     }
 
     /// Record a tool execution outcome
-    pub fn record_outcome(&self, action: &Action, result: &ActionResult, session_id: &str) -> Result<()> {
+    pub fn record_outcome(
+        &self,
+        action: &Action,
+        result: &ActionResult,
+        session_id: &str,
+    ) -> Result<()> {
         let outcome = OutcomeRecord {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session_id.to_string(),

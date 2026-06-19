@@ -1,15 +1,15 @@
 use anyhow::Result;
 use tracing::{debug, info, warn};
 
-use aletheon_abi::{Message, ContentBlock, Role};
-use aletheon_abi::tool::{ToolResult, Tool as ToolTrait};
-use aletheon_brain::r#impl::llm::{StreamChunk, Usage, StopReason};
+use aletheon_abi::tool::{Tool as ToolTrait, ToolResult};
+use aletheon_abi::{ContentBlock, Message, Role};
+use aletheon_brain::r#impl::llm::{StopReason, StreamChunk, Usage};
 use futures::StreamExt;
 
 use crate::r#impl::session::journal::SessionEvent;
+use aletheon_abi::tool::ToolContext;
 use aletheon_self::r#impl::hook::types::{HandlerResult as HookResult, HookContext, HookEventName};
 use aletheon_self::r#impl::security::runner::ToolError;
-use aletheon_abi::tool::ToolContext;
 
 use super::cognitive_loop::Engine;
 
@@ -29,11 +29,15 @@ impl Engine {
         // Inject core memory into system prompt context (bus-aware)
         let core_memory_content = self.get_core_memory_context().await;
         if !core_memory_content.is_empty() {
-            debug!(len = core_memory_content.len(), "Core memory injected into context");
+            debug!(
+                len = core_memory_content.len(),
+                "Core memory injected into context"
+            );
         }
 
         // Store user message in recall memory (bus-aware)
-        self.store_recall(&self.config.session_id, "user", user_input, None).await;
+        self.store_recall(&self.config.session_id, "user", user_input, None)
+            .await;
 
         // Add user message
         self.messages.push(Message::user(user_input));
@@ -74,9 +78,16 @@ impl Engine {
 
             // Fire PreLLMCall hooks
             if let Some(ref hd) = self.hook_dispatcher {
-                let ctx = HookContext { tool: None, args: None, risk: None, message: None };
+                let ctx = HookContext {
+                    tool: None,
+                    args: None,
+                    risk: None,
+                    message: None,
+                };
                 match hd.fire(HookEventName::PreLLMCall, &ctx).await {
-                    HookResult::Block(reason) => return Err(anyhow::anyhow!("Blocked by hook: {}", reason)),
+                    HookResult::Block(reason) => {
+                        return Err(anyhow::anyhow!("Blocked by hook: {}", reason))
+                    }
                     HookResult::InjectContext(text) => {
                         debug!(len = text.len(), "Hook injected context");
                         self.messages.push(Message::system(text));
@@ -89,7 +100,10 @@ impl Engine {
             if self.config.learning_enabled {
                 let rules_context = self.rule_store.format_for_context();
                 if !rules_context.is_empty() {
-                    debug!(len = rules_context.len(), "Injecting learned rules into context");
+                    debug!(
+                        len = rules_context.len(),
+                        "Injecting learned rules into context"
+                    );
                     self.messages.push(Message::system(rules_context));
                 }
             }
@@ -105,7 +119,8 @@ impl Engine {
             let mut _stop_reason = StopReason::EndTurn;
 
             // Track tool calls by id for assembly
-            let mut tool_inputs: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+            let mut tool_inputs: std::collections::HashMap<String, (String, String)> =
+                std::collections::HashMap::new();
 
             while let Some(chunk_result) = stream.next().await {
                 let chunk = chunk_result?;
@@ -126,8 +141,14 @@ impl Engine {
                             tool_calls.push((id, name, input));
                         }
                     }
-                    StreamChunk::Usage { input_tokens, output_tokens } => {
-                        _usage = Usage { input_tokens, output_tokens };
+                    StreamChunk::Usage {
+                        input_tokens,
+                        output_tokens,
+                    } => {
+                        _usage = Usage {
+                            input_tokens,
+                            output_tokens,
+                        };
                     }
                     StreamChunk::Done { stop_reason: sr } => {
                         _stop_reason = sr;
@@ -137,7 +158,9 @@ impl Engine {
 
             // Assemble content blocks from collected chunks
             if !text_buffer.is_empty() {
-                content_blocks.push(ContentBlock::Text { text: text_buffer.clone() });
+                content_blocks.push(ContentBlock::Text {
+                    text: text_buffer.clone(),
+                });
             }
             for (id, name, input) in &tool_calls {
                 content_blocks.push(ContentBlock::ToolUse {
@@ -153,7 +176,8 @@ impl Engine {
                 self.messages.push(Message::assistant(&final_text));
 
                 // Store assistant response in recall memory (bus-aware)
-                self.store_recall(&self.config.session_id, "assistant", &final_text, None).await;
+                self.store_recall(&self.config.session_id, "assistant", &final_text, None)
+                    .await;
 
                 // Record assistant message in journal
                 if let Some(j) = &self.journal {
@@ -165,7 +189,12 @@ impl Engine {
 
                 // Clean up temp system prompt
                 if injected_temp_system {
-                    if self.messages.first().map(|m| m.role == Role::System).unwrap_or(false) {
+                    if self
+                        .messages
+                        .first()
+                        .map(|m| m.role == Role::System)
+                        .unwrap_or(false)
+                    {
                         self.messages.remove(0);
                     }
                     self.temp_system_prompt = None;
@@ -229,11 +258,15 @@ impl Engine {
                             std::sync::Arc::clone(registry),
                             Default::default(),
                         );
-                        info!(tool = tool_name.as_str(), "Executing delegate_task via DelegateTool");
+                        info!(
+                            tool = tool_name.as_str(),
+                            "Executing delegate_task via DelegateTool"
+                        );
                         delegate.execute(tool_input.clone(), &ctx).await
                     } else {
                         ToolResult {
-                            content: "delegate_task unavailable: no AgentRegistry configured".to_string(),
+                            content: "delegate_task unavailable: no AgentRegistry configured"
+                                .to_string(),
                             is_error: true,
                             metadata: Default::default(),
                         }
@@ -241,18 +274,22 @@ impl Engine {
                 } else if let Some(ref mut runner) = self.tool_runner {
                     match self.tools.get(tool_name) {
                         Some(tool) => {
-                            info!(tool = tool_name.as_str(), "Executing tool via guarded runner");
-                            match runner.execute_tool(
-                                tool.as_ref(),
-                                tool_input.clone(),
-                                &ctx,
-                                &turn_id,
-                            ).await {
+                            info!(
+                                tool = tool_name.as_str(),
+                                "Executing tool via guarded runner"
+                            );
+                            match runner
+                                .execute_tool(tool.as_ref(), tool_input.clone(), &ctx, &turn_id)
+                                .await
+                            {
                                 Ok(r) => r,
                                 Err(ToolError::PolicyDenied { reason }) => {
                                     warn!(tool = tool_name.as_str(), reason = %reason, "Tool denied by policy");
                                     ToolResult {
-                                        content: format!("Tool '{}' denied by policy: {}", tool_name, reason),
+                                        content: format!(
+                                            "Tool '{}' denied by policy: {}",
+                                            tool_name, reason
+                                        ),
                                         is_error: true,
                                         metadata: Default::default(),
                                     }
@@ -260,7 +297,10 @@ impl Engine {
                                 Err(ToolError::LoopBlocked { reason }) => {
                                     warn!(tool = tool_name.as_str(), reason = %reason, "Tool blocked by loop detector");
                                     ToolResult {
-                                        content: format!("Tool '{}' blocked (repetitive pattern detected): {}", tool_name, reason),
+                                        content: format!(
+                                            "Tool '{}' blocked (repetitive pattern detected): {}",
+                                            tool_name, reason
+                                        ),
                                         is_error: true,
                                         metadata: Default::default(),
                                     }
@@ -268,7 +308,10 @@ impl Engine {
                                 Err(ToolError::EscalateToHuman { reason }) => {
                                     warn!(tool = tool_name.as_str(), reason = %reason, "Tool requires human escalation");
                                     ToolResult {
-                                        content: format!("Tool '{}' requires human input: {}", tool_name, reason),
+                                        content: format!(
+                                            "Tool '{}' requires human input: {}",
+                                            tool_name, reason
+                                        ),
                                         is_error: true,
                                         metadata: Default::default(),
                                     }
@@ -340,7 +383,8 @@ impl Engine {
                         tool_input,
                         &result,
                         iteration,
-                    ).await;
+                    )
+                    .await;
                 }
 
                 // Add tool result as user message
@@ -361,7 +405,12 @@ impl Engine {
                     runner.end_turn(&turn_id);
                 }
                 if injected_temp_system {
-                    if self.messages.first().map(|m| m.role == Role::System).unwrap_or(false) {
+                    if self
+                        .messages
+                        .first()
+                        .map(|m| m.role == Role::System)
+                        .unwrap_or(false)
+                    {
                         self.messages.remove(0);
                     }
                     self.temp_system_prompt = None;
@@ -372,10 +421,11 @@ impl Engine {
             // Advanced context compaction with token-budget tail protection
             if self.config.compaction_enabled {
                 let old_count = self.messages.len();
-                if self.compressor.maybe_compact(
-                    &mut self.messages,
-                    &*self.llm,
-                ).await? {
+                if self
+                    .compressor
+                    .maybe_compact(&mut self.messages, &*self.llm)
+                    .await?
+                {
                     if let Some(j) = &self.journal {
                         j.append(SessionEvent::Compacted {
                             before_count: old_count,
@@ -395,7 +445,12 @@ impl Engine {
 
         // Clean up temp system prompt
         if injected_temp_system {
-            if self.messages.first().map(|m| m.role == Role::System).unwrap_or(false) {
+            if self
+                .messages
+                .first()
+                .map(|m| m.role == Role::System)
+                .unwrap_or(false)
+            {
                 self.messages.remove(0);
             }
             self.temp_system_prompt = None;

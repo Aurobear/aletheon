@@ -85,10 +85,7 @@ impl Default for RollbackConfig {
             preference: RollbackPreference::Auto,
             max_snapshot_age_hours: 168, // 7 days
             max_snapshots: 50,
-            protected_paths: vec![
-                "/etc".to_string(),
-                "/var/lib".to_string(),
-            ],
+            protected_paths: vec!["/etc".to_string(), "/var/lib".to_string()],
         }
     }
 }

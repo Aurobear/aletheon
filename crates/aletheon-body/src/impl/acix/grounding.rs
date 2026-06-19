@@ -1,5 +1,5 @@
-use anyhow::Result;
 use crate::r#impl::driver::types::{Bounds, Image};
+use anyhow::Result;
 use async_trait::async_trait;
 
 /// Result of a visual grounding operation.

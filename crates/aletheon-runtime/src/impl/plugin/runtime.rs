@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use anyhow::Result;
 use serde_json::Value;
+use std::path::PathBuf;
 use tracing::{debug, warn};
 
 /// Plugin runtime types.
@@ -43,15 +43,9 @@ impl PluginRuntime {
                     work_dir: plugin_dir.clone(),
                 })
             }
-            Some("native") => {
-                Err(anyhow::anyhow!("Native (.so) plugins not yet implemented"))
-            }
-            Some("wasm") => {
-                Err(anyhow::anyhow!("WASM plugins not yet implemented"))
-            }
-            Some("agent") => {
-                Err(anyhow::anyhow!("Agent plugins not yet implemented"))
-            }
+            Some("native") => Err(anyhow::anyhow!("Native (.so) plugins not yet implemented")),
+            Some("wasm") => Err(anyhow::anyhow!("WASM plugins not yet implemented")),
+            Some("agent") => Err(anyhow::anyhow!("Agent plugins not yet implemented")),
             _ => Err(anyhow::anyhow!("Unknown plugin entry type: {}", entry)),
         }
     }
@@ -85,9 +79,8 @@ impl PluginRuntime {
 
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    let result: Value = serde_json::from_str(&stdout).unwrap_or_else(|_| {
-                        serde_json::json!({ "output": stdout.to_string() })
-                    });
+                    let result: Value = serde_json::from_str(&stdout)
+                        .unwrap_or_else(|_| serde_json::json!({ "output": stdout.to_string() }));
                     Ok(result)
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);

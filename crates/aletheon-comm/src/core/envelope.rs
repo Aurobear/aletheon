@@ -17,8 +17,7 @@ impl<E: Event> EventEnvelopeExt for E {
     fn into_envelope(self, source: Endpoint, target: Target, pattern: Pattern) -> Envelope {
         let priority = self.priority();
         let json = self.to_json();
-        Envelope::new(source, target, pattern, Payload::Json(json))
-            .with_priority(priority)
+        Envelope::new(source, target, pattern, Payload::Json(json)).with_priority(priority)
     }
 }
 
@@ -38,10 +37,6 @@ pub fn json_response(request: &Envelope, value: serde_json::Value) -> Envelope {
 }
 
 /// Create a topic publish envelope with JSON payload.
-pub fn json_publish(
-    source: Endpoint,
-    topic: &str,
-    value: serde_json::Value,
-) -> Envelope {
+pub fn json_publish(source: Endpoint, topic: &str, value: serde_json::Value) -> Envelope {
     Envelope::publish(source, topic, Payload::Json(value))
 }

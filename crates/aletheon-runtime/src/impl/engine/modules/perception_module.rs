@@ -11,8 +11,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use aletheon_abi::envelope::*;
-use aletheon_comm::CommunicationBus;
 use aletheon_comm::envelope::Payload;
+use aletheon_comm::CommunicationBus;
 
 use aletheon_self::r#impl::perception::event::{PerceptionEvent, Priority as EventPriority};
 
@@ -63,7 +63,10 @@ impl PerceptionModule {
         let mut event_rx = Some(self.event_rx);
         let mut buffer = std::mem::take(&mut self.buffer);
         let buffer_max = self.buffer_max;
-        info!("PerceptionModule: started, publishing to topic '{}'", PERCEPTION_TOPIC);
+        info!(
+            "PerceptionModule: started, publishing to topic '{}'",
+            PERCEPTION_TOPIC
+        );
 
         loop {
             tokio::select! {
@@ -99,10 +102,14 @@ impl PerceptionModule {
 
         info!("PerceptionModule: shut down");
     }
-
 }
 
-async fn handle_event(bus: &CommunicationBus, buffer: &mut Vec<PerceptionEvent>, buffer_max: usize, event: PerceptionEvent) {
+async fn handle_event(
+    bus: &CommunicationBus,
+    buffer: &mut Vec<PerceptionEvent>,
+    buffer_max: usize,
+    event: PerceptionEvent,
+) {
     match event.priority {
         EventPriority::Critical | EventPriority::High => {
             debug!(

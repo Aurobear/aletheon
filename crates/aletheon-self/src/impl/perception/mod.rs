@@ -4,12 +4,12 @@
 //! journald, eBPF), event aggregation with dedup and rate limiting,
 //! and a FUSE virtual filesystem.
 
-pub mod event;
 pub mod aggregator;
-pub mod sources;
-pub mod manager;
-pub mod fuse;
 pub mod bridge;
+pub mod event;
+pub mod fuse;
+pub mod manager;
+pub mod sources;
 
 // Re-export key types at module root
-pub use event::{PerceptionEvent, EventSource, EventCategory, Priority, EventData};
+pub use event::{EventCategory, EventData, EventSource, PerceptionEvent, Priority};

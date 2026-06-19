@@ -17,7 +17,11 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    pub fn new(api_key: impl Into<String>, model: impl Into<String>, base_url: impl Into<String>) -> Self {
+    pub fn new(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        base_url: impl Into<String>,
+    ) -> Self {
         Self {
             client: Client::new(),
             api_key: api_key.into(),
@@ -156,25 +160,28 @@ struct StreamFunctionCall {
 /// Convert content blocks to OpenAI vision-format content parts.
 /// Skips `ToolResult`, `ToolUse`, and `System` blocks (not valid in user content arrays).
 fn content_blocks_to_openai_parts(blocks: &[ContentBlock]) -> Vec<serde_json::Value> {
-    blocks.iter().filter_map(|c| match c {
-        ContentBlock::Text { text } => Some(serde_json::json!({
-            "type": "text",
-            "text": text,
-        })),
-        ContentBlock::Image { source } => {
-            let url = match source {
-                ImageSource::Base64 { media_type, data } => {
-                    format!("data:{};base64,{}", media_type, data)
-                }
-                ImageSource::Url { url } => url.clone(),
-            };
-            Some(serde_json::json!({
-                "type": "image_url",
-                "image_url": { "url": url },
-            }))
-        }
-        _ => None,
-    }).collect()
+    blocks
+        .iter()
+        .filter_map(|c| match c {
+            ContentBlock::Text { text } => Some(serde_json::json!({
+                "type": "text",
+                "text": text,
+            })),
+            ContentBlock::Image { source } => {
+                let url = match source {
+                    ImageSource::Base64 { media_type, data } => {
+                        format!("data:{};base64,{}", media_type, data)
+                    }
+                    ImageSource::Url { url } => url.clone(),
+                };
+                Some(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": { "url": url },
+                }))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
@@ -184,7 +191,9 @@ fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
         match msg.role {
             Role::System => {
                 // System message
-                let text = msg.content.iter()
+                let text = msg
+                    .content
+                    .iter()
                     .filter_map(|c| match c {
                         ContentBlock::Text { text } => Some(text.as_str()),
                         _ => None,
@@ -200,7 +209,12 @@ fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
             }
             Role::User => {
                 // Check if this is a tool result
-                if let Some(ContentBlock::ToolResult { tool_use_id, content, is_error }) = msg.content.first() {
+                if let Some(ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                }) = msg.content.first()
+                {
                     let text = if *is_error {
                         format!("[ERROR] {}", content)
                     } else {
@@ -214,7 +228,9 @@ fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
                     });
                 } else {
                     // Check if we need multimodal content (images present or multiple blocks)
-                    let has_images = msg.content.iter()
+                    let has_images = msg
+                        .content
+                        .iter()
                         .any(|c| matches!(c, ContentBlock::Image { .. }));
                     let block_count = msg.content.len();
 
@@ -251,7 +267,9 @@ fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
             }
             Role::Assistant => {
                 // Check for tool_use blocks
-                let tool_calls: Vec<ToolCall> = msg.content.iter()
+                let tool_calls: Vec<ToolCall> = msg
+                    .content
+                    .iter()
                     .filter_map(|c| match c {
                         ContentBlock::ToolUse { id, name, input } => Some(ToolCall {
                             id: id.clone(),
@@ -265,7 +283,9 @@ fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
                     })
                     .collect();
 
-                let text = msg.content.iter()
+                let text = msg
+                    .content
+                    .iter()
                     .filter_map(|c| match c {
                         ContentBlock::Text { text } => Some(text.as_str()),
                         _ => None,
@@ -275,8 +295,16 @@ fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
 
                 result.push(ChatMessage {
                     role: "assistant".to_string(),
-                    content: if text.is_empty() { serde_json::Value::Null } else { serde_json::json!(text) },
-                    tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                    content: if text.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::json!(text)
+                    },
+                    tool_calls: if tool_calls.is_empty() {
+                        None
+                    } else {
+                        Some(tool_calls)
+                    },
                     tool_call_id: None,
                 });
             }
@@ -287,19 +315,26 @@ fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
 }
 
 fn tools_to_chat(tools: &[ToolDefinition]) -> Vec<ChatTool> {
-    tools.iter().map(|t| ChatTool {
-        tool_type: "function".to_string(),
-        function: FunctionDef {
-            name: t.name.clone(),
-            description: t.description.clone(),
-            parameters: t.input_schema.clone(),
-        },
-    }).collect()
+    tools
+        .iter()
+        .map(|t| ChatTool {
+            tool_type: "function".to_string(),
+            function: FunctionDef {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                parameters: t.input_schema.clone(),
+            },
+        })
+        .collect()
 }
 
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
-    async fn complete(&self, messages: &[Message], tools: &[ToolDefinition]) -> anyhow::Result<LlmResponse> {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmResponse> {
         let request = ChatRequest {
             model: self.model.clone(),
             messages: messages_to_chat(messages),
@@ -308,7 +343,10 @@ impl LlmProvider for OpenAiProvider {
             stream: None,
         };
 
-        let url = format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        );
 
         let response = self
             .client
@@ -327,7 +365,10 @@ impl LlmProvider for OpenAiProvider {
 
         let api_resp: ChatResponse = response.json().await?;
 
-        let choice = api_resp.choices.into_iter().next()
+        let choice = api_resp
+            .choices
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow::anyhow!("No choices in response"))?;
 
         let mut content = Vec::new();
@@ -342,8 +383,8 @@ impl LlmProvider for OpenAiProvider {
         // Tool calls
         if let Some(tool_calls) = choice.message.tool_calls {
             for tc in tool_calls {
-                let input: serde_json::Value = serde_json::from_str(&tc.function.arguments)
-                    .unwrap_or(serde_json::Value::Null);
+                let input: serde_json::Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
                 content.push(ContentBlock::ToolUse {
                     id: tc.id,
                     name: tc.function.name,
@@ -360,7 +401,9 @@ impl LlmProvider for OpenAiProvider {
         };
 
         let (cache_hit, cache_miss, usage) = if let Some(u) = api_resp.usage {
-            let hit = u.prompt_tokens_details.as_ref()
+            let hit = u
+                .prompt_tokens_details
+                .as_ref()
                 .and_then(|d| d.cached_tokens)
                 .unwrap_or(0);
             let miss = u.prompt_tokens.saturating_sub(hit);
@@ -385,7 +428,11 @@ impl LlmProvider for OpenAiProvider {
         })
     }
 
-    async fn complete_stream(&self, messages: &[Message], tools: &[ToolDefinition]) -> anyhow::Result<LlmStream> {
+    async fn complete_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmStream> {
         let request = ChatRequest {
             model: self.model.clone(),
             messages: messages_to_chat(messages),
@@ -394,7 +441,10 @@ impl LlmProvider for OpenAiProvider {
             stream: Some(true),
         };
 
-        let url = format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        );
 
         let response = self
             .client
@@ -414,7 +464,11 @@ impl LlmProvider for OpenAiProvider {
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));
 
         let stream = futures::stream::unfold(
-            (Box::pin(byte_stream), String::new(), ToolCallState::default()),
+            (
+                Box::pin(byte_stream),
+                String::new(),
+                ToolCallState::default(),
+            ),
             |(mut byte_stream, mut buffer, mut tool_state)| async move {
                 use futures::StreamExt;
 
@@ -432,7 +486,10 @@ impl LlmProvider for OpenAiProvider {
                             let data = data.trim();
                             if data == "[DONE]" {
                                 let stop_reason = tool_state.final_stop_reason();
-                                return Some((Ok(StreamChunk::Done { stop_reason }), (byte_stream, buffer, tool_state)));
+                                return Some((
+                                    Ok(StreamChunk::Done { stop_reason }),
+                                    (byte_stream, buffer, tool_state),
+                                ));
                             }
 
                             match serde_json::from_str::<StreamResponse>(data) {
@@ -456,7 +513,9 @@ impl LlmProvider for OpenAiProvider {
                                         if let Some(text) = &choice.delta.content {
                                             if !text.is_empty() {
                                                 return Some((
-                                                    Ok(StreamChunk::TextDelta { text: text.clone() }),
+                                                    Ok(StreamChunk::TextDelta {
+                                                        text: text.clone(),
+                                                    }),
                                                     (byte_stream, buffer, tool_state),
                                                 ));
                                             }
@@ -470,7 +529,11 @@ impl LlmProvider for OpenAiProvider {
                                                 // New tool call started
                                                 if let Some(id) = &tc.id {
                                                     if let Some(name) = &tc.function.name {
-                                                        tool_state.start_call(idx, id.clone(), name.clone());
+                                                        tool_state.start_call(
+                                                            idx,
+                                                            id.clone(),
+                                                            name.clone(),
+                                                        );
                                                         return Some((
                                                             Ok(StreamChunk::ToolUseStart {
                                                                 id: id.clone(),
@@ -511,7 +574,10 @@ impl LlmProvider for OpenAiProvider {
                                 buffer.push_str(&text);
                             }
                             Some(Err(e)) => {
-                                return Some((Err(anyhow::anyhow!("Stream read error: {}", e)), (byte_stream, buffer, tool_state)));
+                                return Some((
+                                    Err(anyhow::anyhow!("Stream read error: {}", e)),
+                                    (byte_stream, buffer, tool_state),
+                                ));
                             }
                             None => {
                                 // Stream ended
@@ -520,10 +586,16 @@ impl LlmProvider for OpenAiProvider {
                                 }
                                 // Emit any completed tool calls
                                 if let Some(completed) = tool_state.take_completed() {
-                                    return Some((Ok(completed), (byte_stream, buffer, tool_state)));
+                                    return Some((
+                                        Ok(completed),
+                                        (byte_stream, buffer, tool_state),
+                                    ));
                                 }
                                 let stop_reason = tool_state.final_stop_reason();
-                                return Some((Ok(StreamChunk::Done { stop_reason }), (byte_stream, buffer, tool_state)));
+                                return Some((
+                                    Ok(StreamChunk::Done { stop_reason }),
+                                    (byte_stream, buffer, tool_state),
+                                ));
                             }
                         }
                     }
@@ -559,11 +631,14 @@ struct ActiveToolCall {
 
 impl ToolCallState {
     fn start_call(&mut self, index: usize, id: String, name: String) {
-        self.calls.insert(index, ActiveToolCall {
-            id,
-            name,
-            arguments: String::new(),
-        });
+        self.calls.insert(
+            index,
+            ActiveToolCall {
+                id,
+                name,
+                arguments: String::new(),
+            },
+        );
     }
 
     fn append_args(&mut self, index: usize, delta: String) {
@@ -648,7 +723,10 @@ mod tests {
         let arr = chat[0].content.as_array().expect("expected array content");
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["type"], "image_url");
-        assert_eq!(arr[0]["image_url"]["url"], "data:image/png;base64,iVBORw0KGgo=");
+        assert_eq!(
+            arr[0]["image_url"]["url"],
+            "data:image/png;base64,iVBORw0KGgo="
+        );
     }
 
     #[test]
@@ -671,7 +749,9 @@ mod tests {
         let messages = vec![Message {
             role: Role::User,
             content: vec![
-                ContentBlock::Text { text: "What's in this image?".to_string() },
+                ContentBlock::Text {
+                    text: "What's in this image?".to_string(),
+                },
                 ContentBlock::Image {
                     source: ImageSource::Base64 {
                         media_type: "image/jpeg".to_string(),
@@ -687,7 +767,10 @@ mod tests {
         assert_eq!(arr[0]["type"], "text");
         assert_eq!(arr[0]["text"], "What's in this image?");
         assert_eq!(arr[1]["type"], "image_url");
-        assert_eq!(arr[1]["image_url"]["url"], "data:image/jpeg;base64,/9j/4AAQ");
+        assert_eq!(
+            arr[1]["image_url"]["url"],
+            "data:image/jpeg;base64,/9j/4AAQ"
+        );
     }
 
     #[test]
@@ -695,12 +778,19 @@ mod tests {
         let messages = vec![Message {
             role: Role::User,
             content: vec![
-                ContentBlock::Text { text: "first".to_string() },
-                ContentBlock::Text { text: "second".to_string() },
+                ContentBlock::Text {
+                    text: "first".to_string(),
+                },
+                ContentBlock::Text {
+                    text: "second".to_string(),
+                },
             ],
         }];
         let chat = messages_to_chat(&messages);
-        let arr = chat[0].content.as_array().expect("expected array for multi-text");
+        let arr = chat[0]
+            .content
+            .as_array()
+            .expect("expected array for multi-text");
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0]["text"], "first");
         assert_eq!(arr[1]["text"], "second");

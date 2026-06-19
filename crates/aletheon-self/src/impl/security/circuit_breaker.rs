@@ -1,5 +1,5 @@
-use std::collections::{HashMap, VecDeque};
 use super::loop_detector::LoopVerdict;
+use std::collections::{HashMap, VecDeque};
 
 const CONSECUTIVE_BLOCK_THRESHOLD: usize = 3;
 const WINDOW_SIZE: usize = 50;
@@ -17,15 +17,20 @@ struct TurnBreakerState {
 
 impl LoopCircuitBreaker {
     pub fn new() -> Self {
-        Self { per_turn: HashMap::new() }
+        Self {
+            per_turn: HashMap::new(),
+        }
     }
 
     pub fn on_new_turn(&mut self, turn_id: &str) {
-        self.per_turn.insert(turn_id.to_string(), TurnBreakerState {
-            consecutive_blocks: 0,
-            recent_blocks: VecDeque::new(),
-            interrupted: false,
-        });
+        self.per_turn.insert(
+            turn_id.to_string(),
+            TurnBreakerState {
+                consecutive_blocks: 0,
+                recent_blocks: VecDeque::new(),
+                interrupted: false,
+            },
+        );
     }
 
     pub fn record_block(&mut self, turn_id: &str) {
@@ -49,7 +54,10 @@ impl LoopCircuitBreaker {
 
         if state.consecutive_blocks >= CONSECUTIVE_BLOCK_THRESHOLD {
             return Some(LoopVerdict::InterruptTurn {
-                reason: format!("Consecutive blocks: {} (threshold: {})", state.consecutive_blocks, CONSECUTIVE_BLOCK_THRESHOLD),
+                reason: format!(
+                    "Consecutive blocks: {} (threshold: {})",
+                    state.consecutive_blocks, CONSECUTIVE_BLOCK_THRESHOLD
+                ),
                 consecutive_blocks: state.consecutive_blocks,
             });
         }
@@ -57,7 +65,10 @@ impl LoopCircuitBreaker {
         let window_blocks = state.recent_blocks.iter().filter(|&&b| b).count();
         if window_blocks >= WINDOW_BLOCK_THRESHOLD {
             return Some(LoopVerdict::InterruptTurn {
-                reason: format!("Blocks in window: {} (threshold: {})", window_blocks, WINDOW_BLOCK_THRESHOLD),
+                reason: format!(
+                    "Blocks in window: {} (threshold: {})",
+                    window_blocks, WINDOW_BLOCK_THRESHOLD
+                ),
                 consecutive_blocks: state.consecutive_blocks,
             });
         }

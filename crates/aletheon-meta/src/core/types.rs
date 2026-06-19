@@ -3,14 +3,13 @@
 //! Re-exports ABI Genome types and adds evaluator/morphogenesis-specific types
 //! that the ABI doesn't define yet.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // Re-export ABI Genome types for convenience
 pub use aletheon_abi::genome::{
-    Genome, Topology, SubsystemSpec, SubsystemType,
-    IdentitySpec, BoundarySpec, BoundaryRuleSpec,
-    CareSpec, CarePriority, MemorySpec, MutationSpec, LifecycleSpec,
+    BoundaryRuleSpec, BoundarySpec, CarePriority, CareSpec, Genome, IdentitySpec, LifecycleSpec,
+    MemorySpec, MutationSpec, SubsystemSpec, SubsystemType, Topology,
 };
 
 /// Extended genome metadata — version tracking, lineage, and evolution parameters.

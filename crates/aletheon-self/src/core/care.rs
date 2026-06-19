@@ -36,9 +36,17 @@ impl CareLayer {
                 care: Care {
                     topic: "safety".to_string(),
                     weight: 1.0,
-                    description: "Physical and digital safety of the agent and its environment".to_string(),
+                    description: "Physical and digital safety of the agent and its environment"
+                        .to_string(),
                 },
-                keywords: vec!["safety".to_string(), "danger".to_string(), "risk".to_string(), "harm".to_string(), "damage".to_string(), "destroy".to_string()],
+                keywords: vec![
+                    "safety".to_string(),
+                    "danger".to_string(),
+                    "risk".to_string(),
+                    "harm".to_string(),
+                    "damage".to_string(),
+                    "destroy".to_string(),
+                ],
             },
             CareEntry {
                 care: Care {
@@ -46,7 +54,12 @@ impl CareLayer {
                     weight: 0.8,
                     description: "Fulfilling the user's actual intent accurately".to_string(),
                 },
-                keywords: vec!["user".to_string(), "request".to_string(), "intent".to_string(), "goal".to_string()],
+                keywords: vec![
+                    "user".to_string(),
+                    "request".to_string(),
+                    "intent".to_string(),
+                    "goal".to_string(),
+                ],
             },
             CareEntry {
                 care: Care {
@@ -54,7 +67,12 @@ impl CareLayer {
                     weight: 0.5,
                     description: "Completing tasks with minimal resource usage".to_string(),
                 },
-                keywords: vec!["efficiency".to_string(), "fast".to_string(), "optimize".to_string(), "resource".to_string()],
+                keywords: vec![
+                    "efficiency".to_string(),
+                    "fast".to_string(),
+                    "optimize".to_string(),
+                    "resource".to_string(),
+                ],
             },
             CareEntry {
                 care: Care {
@@ -62,7 +80,12 @@ impl CareLayer {
                     weight: 0.3,
                     description: "Acquiring new knowledge and improving over time".to_string(),
                 },
-                keywords: vec!["learn".to_string(), "study".to_string(), "improve".to_string(), "adapt".to_string()],
+                keywords: vec![
+                    "learn".to_string(),
+                    "study".to_string(),
+                    "improve".to_string(),
+                    "adapt".to_string(),
+                ],
             },
         ]
     }
@@ -102,7 +125,11 @@ impl CareLayer {
             if entry.keywords.is_empty() {
                 continue;
             }
-            let matches = entry.keywords.iter().filter(|kw| desc_lower.contains(kw.as_str())).count();
+            let matches = entry
+                .keywords
+                .iter()
+                .filter(|kw| desc_lower.contains(kw.as_str()))
+                .count();
             let ratio = matches as f64 / entry.keywords.len() as f64;
             score += entry.care.weight * ratio;
         }
@@ -112,7 +139,11 @@ impl CareLayer {
 
     /// Get the weight of a specific care topic. Returns None if not found.
     pub fn weight_of(&self, topic: &str) -> Option<f64> {
-        self.cares.read().iter().find(|c| c.care.topic == topic).map(|c| c.care.weight)
+        self.cares
+            .read()
+            .iter()
+            .find(|c| c.care.topic == topic)
+            .map(|c| c.care.weight)
     }
 
     /// Adjust the weight of a care by a delta value.
@@ -163,9 +194,8 @@ impl CareLayer {
     /// Load cares from the SQLite store, replacing current state.
     pub fn load_from_store(&mut self, store: &crate::core::store::SelfFieldStore) -> Result<()> {
         let conn = store.conn();
-        let mut stmt = conn.prepare(
-            "SELECT topic, weight, description, keywords FROM care_entries",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT topic, weight, description, keywords FROM care_entries")?;
 
         let loaded: Vec<CareEntry> = stmt
             .query_map([], |row| {

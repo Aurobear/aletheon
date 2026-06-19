@@ -39,12 +39,7 @@ fn make_pulse(available_tokens: u32) -> CognitivePulseEvent {
 async fn test_agent_process_lifecycle() {
     let bus = make_bus();
     let config = AgentProcessConfig::default();
-    let agent = AgentProcess::new(
-        None,
-        "test-task".to_string(),
-        bus,
-        config,
-    );
+    let agent = AgentProcess::new(None, "test-task".to_string(), bus, config);
 
     // Initial state is Idle
     assert_eq!(agent.state(), AgentState::Idle);
@@ -77,7 +72,10 @@ async fn test_agent_process_lifecycle() {
     // start() — state stays Idle (as per implementation) and publishes event
     agent.start().await.unwrap();
     assert_eq!(agent.state(), AgentState::Idle);
-    assert!(started.load(Ordering::SeqCst), "AgentStarted event should have fired");
+    assert!(
+        started.load(Ordering::SeqCst),
+        "AgentStarted event should have fired"
+    );
 
     // terminate() — state becomes Terminated
     let stopped = Arc::new(AtomicBool::new(false));
@@ -95,7 +93,10 @@ async fn test_agent_process_lifecycle() {
 
     agent.terminate().await.unwrap();
     assert_eq!(agent.state(), AgentState::Terminated);
-    assert!(stopped.load(Ordering::SeqCst), "AgentStopped event should have fired");
+    assert!(
+        stopped.load(Ordering::SeqCst),
+        "AgentStopped event should have fired"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -106,17 +107,16 @@ async fn test_agent_process_lifecycle() {
 async fn test_pulse_drives_agent() {
     let bus = make_bus();
     let config = AgentProcessConfig::default();
-    let mut agent = AgentProcess::new(
-        None,
-        "pulse-test".to_string(),
-        bus,
-        config,
-    );
+    let mut agent = AgentProcess::new(None, "pulse-test".to_string(), bus, config);
 
     // Agent starts in Idle — on_pulse should be a no-op (returns Ok, stays Idle)
     let pulse = make_pulse(5_000);
     agent.on_pulse(&pulse).await.unwrap();
-    assert_eq!(agent.state(), AgentState::Idle, "Idle agent should not change state on pulse");
+    assert_eq!(
+        agent.state(),
+        AgentState::Idle,
+        "Idle agent should not change state on pulse"
+    );
 
     // After terminate, on_pulse should also be a no-op
     agent.terminate().await.unwrap();
@@ -137,12 +137,7 @@ async fn test_spawn_child_agent() {
     let bus = make_bus();
     let config = AgentProcessConfig::default();
     let parent_pid;
-    let agent = AgentProcess::new(
-        None,
-        "parent-task".to_string(),
-        bus.clone(),
-        config,
-    );
+    let agent = AgentProcess::new(None, "parent-task".to_string(), bus.clone(), config);
     parent_pid = agent.pid();
 
     // Subscribe to AgentSpawned to verify the event
@@ -162,10 +157,16 @@ async fn test_spawn_child_agent() {
     let child_pid = agent.spawn_child("child-task".to_string()).await.unwrap();
 
     // Child PID is valid and different from parent
-    assert_ne!(child_pid, parent_pid, "Child PID must differ from parent PID");
+    assert_ne!(
+        child_pid, parent_pid,
+        "Child PID must differ from parent PID"
+    );
 
     // AgentSpawned event was published
-    assert!(spawned.load(Ordering::SeqCst), "AgentSpawned event should have fired");
+    assert!(
+        spawned.load(Ordering::SeqCst),
+        "AgentSpawned event should have fired"
+    );
 
     // Cannot exceed max_children (default 4) — spawn 4 more to hit the limit
     for _ in 0..3 {
@@ -187,13 +188,11 @@ async fn test_spawn_child_blocked_when_disabled() {
         can_spawn: false,
         ..AgentProcessConfig::default()
     };
-    let agent = AgentProcess::new(
-        None,
-        "no-spawn-task".to_string(),
-        bus,
-        config,
-    );
+    let agent = AgentProcess::new(None, "no-spawn-task".to_string(), bus, config);
 
     let result = agent.spawn_child("child-task".to_string()).await;
-    assert!(result.is_err(), "spawn_child should fail when can_spawn is false");
+    assert!(
+        result.is_err(),
+        "spawn_child should fail when can_spawn is false"
+    );
 }

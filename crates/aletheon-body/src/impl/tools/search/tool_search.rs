@@ -95,8 +95,8 @@ impl Tool for ToolSearchTool {
 mod tests {
     use super::super::{tokenize_and_stem, CatalogEntry};
     use super::*;
-    use aletheon_abi::tool::ToolExposure;
     use aletheon_abi::tool::Tool;
+    use aletheon_abi::tool::ToolExposure;
 
     fn build_test_catalog() -> BM25Catalog {
         let entries = vec![

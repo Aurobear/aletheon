@@ -1,14 +1,11 @@
 use std::sync::Arc;
 
-use anyhow::Result;
 use crate::r#impl::acix::{Aci, GroundingProvider, MockGroundingProvider};
 use crate::r#impl::driver::{
-    a11y::MockA11yDriver,
-    display::MockDisplayDriver,
-    input::MockInputDriver,
-    ocr::MockOcrDriver,
-    factory::DriverFactory,
+    a11y::MockA11yDriver, display::MockDisplayDriver, factory::DriverFactory,
+    input::MockInputDriver, ocr::MockOcrDriver,
 };
+use anyhow::Result;
 
 /// Computer operation command handler.
 pub struct ComputerCommands {
@@ -19,17 +16,15 @@ pub struct ComputerCommands {
 impl ComputerCommands {
     /// Create a new instance using real drivers when available, with mock fallback.
     pub fn new() -> Self {
-        let input = DriverFactory::try_input()
-            .unwrap_or_else(|| Box::new(MockInputDriver::new()));
+        let input = DriverFactory::try_input().unwrap_or_else(|| Box::new(MockInputDriver::new()));
         let display = DriverFactory::try_display()
             .unwrap_or_else(|| Box::new(MockDisplayDriver::new(1920, 1080)));
-        let a11y = DriverFactory::try_a11y()
-            .unwrap_or_else(|| Box::new(MockA11yDriver::new()));
+        let a11y = DriverFactory::try_a11y().unwrap_or_else(|| Box::new(MockA11yDriver::new()));
         #[cfg(feature = "ocr-tesseract")]
-        let ocr = DriverFactory::try_ocr()
-            .or_else(|| Some(Box::new(MockOcrDriver)));
+        let ocr = DriverFactory::try_ocr().or_else(|| Some(Box::new(MockOcrDriver)));
         #[cfg(not(feature = "ocr-tesseract"))]
-        let ocr: Option<Box<dyn crate::r#impl::driver::ocr::OcrDriver>> = Some(Box::new(MockOcrDriver));
+        let ocr: Option<Box<dyn crate::r#impl::driver::ocr::OcrDriver>> =
+            Some(Box::new(MockOcrDriver));
         let window = DriverFactory::try_window();
         let clipboard = DriverFactory::try_clipboard();
 

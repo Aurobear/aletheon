@@ -3,20 +3,17 @@ use serde_json::json;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use aletheon_body::r#impl::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use super::registry::AgentRegistry;
 use super::budget::IterationBudget;
+use super::registry::AgentRegistry;
+use aletheon_body::r#impl::tools::{
+    PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
+};
 
 /// Maximum delegation depth (no grandchild agents).
 const MAX_DELEGATE_DEPTH: usize = 1;
 
 /// Tools that sub-agents cannot use (blocked at construction).
-const _DELEGATE_BLOCKED_TOOLS: &[&str] = &[
-    "delegate_task",
-    "clarify",
-    "memory",
-    "send_message",
-];
+const _DELEGATE_BLOCKED_TOOLS: &[&str] = &["delegate_task", "clarify", "memory", "send_message"];
 
 /// Configuration for delegation.
 #[derive(Debug, Clone)]
@@ -186,8 +183,8 @@ impl Tool for DelegateTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::RwLock;
     use crate::r#impl::orchestration::agent::{Agent, AgentConfig, Capability};
+    use tokio::sync::RwLock;
 
     /// Minimal mock agent for testing.
     struct MockAgent {
@@ -267,8 +264,7 @@ mod tests {
     #[tokio::test]
     async fn test_delegate_depth_limit() {
         let registry = Arc::new(AgentRegistry::new());
-        let tool = DelegateTool::new(registry, DelegationConfig::default())
-            .child(); // depth=1, which equals max_depth=1
+        let tool = DelegateTool::new(registry, DelegationConfig::default()).child(); // depth=1, which equals max_depth=1
 
         let input = json!({
             "agent_id": "any",

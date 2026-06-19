@@ -3,13 +3,15 @@
 //! Converts a Genome into a RuntimeCandidate that can be tested
 //! and potentially adopted by the morphogenesis pipeline.
 
-use anyhow::Result;
 use aletheon_abi::{Genome, RuntimeCandidate};
+use anyhow::Result;
 
 pub struct RuntimeBuilder;
 
 impl RuntimeBuilder {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Build a RuntimeCandidate from a genome.
     ///

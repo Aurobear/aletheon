@@ -191,7 +191,10 @@ impl UnixSocketTransport {
                     }
                 }
                 _ => {
-                    debug!("Unhandled target type in UnixSocketTransport: {:?}", envelope.target);
+                    debug!(
+                        "Unhandled target type in UnixSocketTransport: {:?}",
+                        envelope.target
+                    );
                 }
             }
         }
@@ -200,10 +203,7 @@ impl UnixSocketTransport {
     }
 
     /// Serialize and send an envelope to a connected stream with length-prefix framing.
-    async fn write_envelope(
-        stream: &mut UnixStream,
-        envelope: &Envelope,
-    ) -> Result<()> {
+    async fn write_envelope(stream: &mut UnixStream, envelope: &Envelope) -> Result<()> {
         use tokio::io::AsyncWriteExt;
 
         let bytes = serde_json::to_vec(envelope)

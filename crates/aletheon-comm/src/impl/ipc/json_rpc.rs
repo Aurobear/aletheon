@@ -1,11 +1,11 @@
 use std::path::Path;
 
 use anyhow::Result;
+use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 use tracing::{error, info};
-use serde_json::Value;
 
 /// Adapter that bridges JSON-RPC (line-delimited JSON) to the IPC layer.
 /// This replaces agentd's UnixServer while keeping CLI compatibility.
@@ -15,7 +15,9 @@ pub struct JsonRpcAdapter {
 }
 
 impl JsonRpcAdapter {
-    pub fn new(socket_path: impl Into<String>) -> (Self, mpsc::Receiver<(Value, mpsc::Sender<Value>)>) {
+    pub fn new(
+        socket_path: impl Into<String>,
+    ) -> (Self, mpsc::Receiver<(Value, mpsc::Sender<Value>)>) {
         let (tx, rx) = mpsc::channel(64);
         (
             Self {

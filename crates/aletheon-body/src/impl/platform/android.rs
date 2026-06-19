@@ -34,7 +34,9 @@ impl AndroidPlatformAdapter {
 
 #[async_trait]
 impl PlatformAdapter for AndroidPlatformAdapter {
-    fn name(&self) -> &str { "android" }
+    fn name(&self) -> &str {
+        "android"
+    }
 
     fn is_available(&self) -> bool {
         Self::is_android()
@@ -146,12 +148,18 @@ impl PlatformAdapter for AndroidPlatformAdapter {
 
     async fn kernel_version(&self) -> Result<String> {
         let version = tokio::fs::read_to_string("/proc/version").await?;
-        Ok(version.split_whitespace().nth(2).unwrap_or("unknown").to_string())
+        Ok(version
+            .split_whitespace()
+            .nth(2)
+            .unwrap_or("unknown")
+            .to_string())
     }
 
     async fn uptime(&self) -> Result<u64> {
         let uptime = tokio::fs::read_to_string("/proc/uptime").await?;
-        let seconds: f64 = uptime.split_whitespace().next()
+        let seconds: f64 = uptime
+            .split_whitespace()
+            .next()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.0);
         Ok(seconds as u64)

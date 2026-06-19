@@ -15,9 +15,15 @@ pub enum StreamChunk {
     /// Tool use input delta (partial JSON)
     ToolUseDelta { id: String, delta: String },
     /// Tool use complete
-    ToolUseComplete { id: String, input: serde_json::Value },
+    ToolUseComplete {
+        id: String,
+        input: serde_json::Value,
+    },
     /// Usage update
-    Usage { input_tokens: u32, output_tokens: u32 },
+    Usage {
+        input_tokens: u32,
+        output_tokens: u32,
+    },
     /// Stream complete
     Done { stop_reason: StopReason },
 }
@@ -29,10 +35,18 @@ pub type LlmStream = Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Se
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     /// Send messages and get a response with optional tool calls.
-    async fn complete(&self, messages: &[Message], tools: &[ToolDefinition]) -> anyhow::Result<LlmResponse>;
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmResponse>;
 
     /// Stream a response. Default implementation falls back to `complete()`.
-    async fn complete_stream(&self, messages: &[Message], tools: &[ToolDefinition]) -> anyhow::Result<LlmStream>;
+    async fn complete_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmStream>;
 
     /// Provider name (e.g., "anthropic", "llama-cpp").
     fn name(&self) -> &str;

@@ -77,11 +77,7 @@ impl FilesystemPolicy {
             default: FsDefault::ReadOnly,
             writable_roots: vec![WritableRoot::new(work_dir)],
             protected_metadata: vec![".git".into(), ".agents".into()],
-            unreadable_globs: vec![
-                "**/*.env".into(),
-                "**/*.key".into(),
-                "**/*.pem".into(),
-            ],
+            unreadable_globs: vec!["**/*.env".into(), "**/*.key".into(), "**/*.pem".into()],
         }
     }
 

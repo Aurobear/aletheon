@@ -345,10 +345,7 @@ impl ExecPolicyEngine {
         }
 
         // --- 5. Default: unknown commands ask for approval ---
-        PolicyDecision::default_ask(format!(
-            "Unknown command '{}'; approval required",
-            program
-        ))
+        PolicyDecision::default_ask(format!("Unknown command '{}'; approval required", program))
     }
 
     /// Add a user-approved allow prefix at runtime ("learning").

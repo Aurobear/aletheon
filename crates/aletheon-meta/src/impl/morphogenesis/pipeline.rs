@@ -4,8 +4,8 @@
 //!
 //! Orchestrates the MetaRuntimeOps trait methods in sequence.
 
+use aletheon_abi::{Evaluation, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate};
 use anyhow::Result;
-use aletheon_abi::{MetaRuntimeOps, RuntimeCandidate, Evaluation, MigrationResult, MutationIntent};
 
 /// Orchestrates the full morphogenesis pipeline.
 pub struct MorphogenesisPipeline<M: MetaRuntimeOps> {
@@ -22,28 +22,45 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
     /// Takes a pre-generated MutationIntent, produces a candidate, tests it,
     /// evaluates the test results, and migrates if the evaluation recommends adoption.
     pub async fn run(&self, intent: &MutationIntent) -> Result<PipelineResult> {
-        tracing::info!("Starting morphogenesis pipeline for target: {}", intent.target);
+        tracing::info!(
+            "Starting morphogenesis pipeline for target: {}",
+            intent.target
+        );
 
         // Step 1: Generate candidate from intent
         let candidate = self.meta_runtime.generate_candidate(intent).await?;
-        tracing::info!("Generated candidate {} with {} change(s)", candidate.id, candidate.changes.len());
+        tracing::info!(
+            "Generated candidate {} with {} change(s)",
+            candidate.id,
+            candidate.changes.len()
+        );
 
         // Step 2: Sandbox test
         let test_result = self.meta_runtime.sandbox_test(&candidate).await?;
         tracing::info!(
             "Sandbox test: {} passed, {} failed ({}ms)",
-            test_result.tests_passed, test_result.tests_failed, test_result.elapsed_ms
+            test_result.tests_passed,
+            test_result.tests_failed,
+            test_result.elapsed_ms
         );
 
         // Step 3: Evaluate
         let evaluation = self.meta_runtime.evaluate(&candidate, &test_result).await?;
-        tracing::info!("Evaluation score: {:.2}, recommendation: {:?}", evaluation.score, evaluation.recommendation);
+        tracing::info!(
+            "Evaluation score: {:.2}, recommendation: {:?}",
+            evaluation.score,
+            evaluation.recommendation
+        );
 
         // Step 4: Migrate if recommended
         let migration = match &evaluation.recommendation {
             aletheon_abi::meta::Recommendation::Adopt => {
                 let result = self.meta_runtime.migrate(&candidate).await?;
-                tracing::info!("Migration successful: {} -> {}", result.from_version, result.to_version);
+                tracing::info!(
+                    "Migration successful: {} -> {}",
+                    result.from_version,
+                    result.to_version
+                );
                 Some(result)
             }
             aletheon_abi::meta::Recommendation::PartialAdopt { changes } => {
@@ -52,7 +69,10 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
                 Some(result)
             }
             _ => {
-                tracing::info!("Skipping migration — recommendation: {:?}", evaluation.recommendation);
+                tracing::info!(
+                    "Skipping migration — recommendation: {:?}",
+                    evaluation.recommendation
+                );
                 None
             }
         };

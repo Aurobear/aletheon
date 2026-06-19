@@ -2,9 +2,9 @@
 //!
 //! These events flow through the EventBus to decouple BrainCore, SelfField, and MetaRuntime.
 
+use crate::self_field::MutationIntent;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::self_field::MutationIntent;
 
 /// Assessment of a tool execution outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]

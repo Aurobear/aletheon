@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use aletheon_abi::{EventType, Priority};
+use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
@@ -67,14 +67,26 @@ mod tests {
     }
 
     impl aletheon_abi::Event for TestEvent {
-        fn event_type(&self) -> EventType { self.event_type.clone() }
-        fn priority(&self) -> Priority { self.priority }
-        fn source(&self) -> &str { &self.source }
-        fn payload(&self) -> &dyn Any { &() }
+        fn event_type(&self) -> EventType {
+            self.event_type.clone()
+        }
+        fn priority(&self) -> Priority {
+            self.priority
+        }
+        fn source(&self) -> &str {
+            &self.source
+        }
+        fn payload(&self) -> &dyn Any {
+            &()
+        }
     }
 
     fn make_event(event_type: EventType, source: &str) -> TestEvent {
-        TestEvent { event_type, priority: Priority::Normal, source: source.to_string() }
+        TestEvent {
+            event_type,
+            priority: Priority::Normal,
+            source: source.to_string(),
+        }
     }
 
     #[test]

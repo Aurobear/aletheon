@@ -87,9 +87,7 @@ impl WatchdogTimer {
 
     /// Returns `true` if **all** layers are alive.
     pub fn all_alive(&self) -> bool {
-        self.l1_systemd.is_alive()
-            && self.l2_runtime.is_alive()
-            && self.l3_reasoning.is_alive()
+        self.l1_systemd.is_alive() && self.l2_runtime.is_alive() && self.l3_reasoning.is_alive()
     }
 
     /// Returns the names of layers that have timed out.

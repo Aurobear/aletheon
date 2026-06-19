@@ -184,9 +184,8 @@ impl MemoryBackend for SemanticMemory {
                 let rows = stmt.query_map(params![text], row_to_entry)?;
                 entries = rows.collect::<std::result::Result<Vec<_>, _>>()?;
             } else {
-                let mut sql = String::from(
-                    "SELECT * FROM aletheon_memory WHERE memory_type = 'semantic'",
-                );
+                let mut sql =
+                    String::from("SELECT * FROM aletheon_memory WHERE memory_type = 'semantic'");
                 let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
                 let mut param_idx = 1;
 
@@ -231,9 +230,8 @@ impl MemoryBackend for SemanticMemory {
 
     async fn list(&self, filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> {
         self.with_conn(|conn| {
-            let mut sql = String::from(
-                "SELECT * FROM aletheon_memory WHERE memory_type = 'semantic'",
-            );
+            let mut sql =
+                String::from("SELECT * FROM aletheon_memory WHERE memory_type = 'semantic'");
             let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
             let mut param_idx = 1;
 

@@ -112,7 +112,14 @@ impl Envelope {
 
     /// Create a Request envelope.
     pub fn request(source: Endpoint, target: Target, payload: Payload, timeout: Duration) -> Self {
-        Self::new(source, target, Pattern::Request { timeout_ms: timeout.as_millis() as u64 }, payload)
+        Self::new(
+            source,
+            target,
+            Pattern::Request {
+                timeout_ms: timeout.as_millis() as u64,
+            },
+            payload,
+        )
     }
 
     /// Create a Response envelope correlated to a request.
@@ -132,7 +139,12 @@ impl Envelope {
 
     /// Create a Publish envelope for topic broadcast.
     pub fn publish(source: Endpoint, topic: &str, payload: Payload) -> Self {
-        Self::new(source, Target::Topic(topic.to_string()), Pattern::Publish, payload)
+        Self::new(
+            source,
+            Target::Topic(topic.to_string()),
+            Pattern::Publish,
+            payload,
+        )
     }
 
     /// Create a FireAndForget envelope.

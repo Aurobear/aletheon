@@ -1,10 +1,10 @@
-pub mod router;
 pub mod classifier;
 pub mod provider_config;
+pub mod router;
 
-pub use router::InferenceRouter;
 pub use classifier::IntentClassifier;
 pub use provider_config::{ProviderConfig, ProviderType};
+pub use router::InferenceRouter;
 
 use serde::{Deserialize, Serialize};
 

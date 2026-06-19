@@ -142,7 +142,12 @@ impl AgentKernel {
             }
         };
 
-        let mut fork = AgentFork::new(parent_pid, directive, parent_remaining, self.bus.event_bus().clone());
+        let mut fork = AgentFork::new(
+            parent_pid,
+            directive,
+            parent_remaining,
+            self.bus.event_bus().clone(),
+        );
         let child_pid = fork.pid;
 
         // Register agent inbox on the communication bus and store the receiver.
@@ -355,12 +360,8 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_returns_unique_pid() {
         let kernel = make_kernel();
-        let pid1 = kernel
-            .spawn("t1".into(), make_config("a1"), None)
-            .await;
-        let pid2 = kernel
-            .spawn("t2".into(), make_config("a2"), None)
-            .await;
+        let pid1 = kernel.spawn("t1".into(), make_config("a1"), None).await;
+        let pid2 = kernel.spawn("t2".into(), make_config("a2"), None).await;
         assert_ne!(pid1, pid2);
         assert_eq!(kernel.process_count().await, 2);
     }
@@ -368,9 +369,7 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_tracks_parent_child() {
         let kernel = make_kernel();
-        let parent = kernel
-            .spawn("parent".into(), make_config("p"), None)
-            .await;
+        let parent = kernel.spawn("parent".into(), make_config("p"), None).await;
         let child = kernel
             .spawn("child".into(), make_config("c"), Some(parent))
             .await;
@@ -381,9 +380,7 @@ mod tests {
     #[tokio::test]
     async fn test_kill_process() {
         let kernel = make_kernel();
-        let pid = kernel
-            .spawn("t".into(), make_config("a"), None)
-            .await;
+        let pid = kernel.spawn("t".into(), make_config("a"), None).await;
         assert_eq!(kernel.process_count().await, 1);
         kernel.kill(pid).await.expect("kill should succeed");
         assert_eq!(kernel.process_count().await, 0);
@@ -409,9 +406,7 @@ mod tests {
     #[tokio::test]
     async fn test_fork_creates_child() {
         let kernel = make_kernel();
-        let parent = kernel
-            .spawn("parent".into(), make_config("p"), None)
-            .await;
+        let parent = kernel.spawn("parent".into(), make_config("p"), None).await;
         let directive = ForkDirective::default();
         let child = kernel
             .fork(parent, directive)
@@ -434,9 +429,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_to_spawned_process_succeeds() {
         let kernel = make_kernel();
-        let pid = kernel
-            .spawn("t".into(), make_config("a"), None)
-            .await;
+        let pid = kernel.spawn("t".into(), make_config("a"), None).await;
         let sender = Pid::new();
         let envelope = make_envelope(sender, pid, "work");
         // The inbox is wired via CommunicationBus, so sending should succeed.
@@ -447,14 +440,9 @@ mod tests {
     async fn test_total_count() {
         let kernel = make_kernel();
         assert_eq!(kernel.total_count().await, 0);
-        let p = kernel
-            .spawn("t".into(), make_config("a"), None)
-            .await;
+        let p = kernel.spawn("t".into(), make_config("a"), None).await;
         assert_eq!(kernel.total_count().await, 1);
-        kernel
-            .fork(p, ForkDirective::default())
-            .await
-            .unwrap();
+        kernel.fork(p, ForkDirective::default()).await.unwrap();
         assert_eq!(kernel.total_count().await, 2);
     }
 }

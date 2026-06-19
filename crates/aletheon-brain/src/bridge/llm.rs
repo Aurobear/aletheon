@@ -1,6 +1,6 @@
-use anyhow::Result;
 use crate::r#impl::llm::{LlmProvider, LlmResponse, LlmStream, ToolDefinition};
-use aletheon_abi::{Message, Role, ContentBlock};
+use aletheon_abi::{ContentBlock, Message, Role};
+use anyhow::Result;
 use std::sync::Arc;
 
 /// Wraps LlmProvider for use by BrainCore.
@@ -45,7 +45,9 @@ impl LlmBridge {
     pub fn system_message(text: &str) -> Message {
         Message {
             role: Role::System,
-            content: vec![ContentBlock::Text { text: text.to_string() }],
+            content: vec![ContentBlock::Text {
+                text: text.to_string(),
+            }],
         }
     }
 

@@ -214,7 +214,11 @@ fn tools_to_api(tools: &[ToolDefinition]) -> Vec<ApiTool> {
 
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
-    async fn complete(&self, messages: &[Message], tools: &[ToolDefinition]) -> anyhow::Result<LlmResponse> {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmResponse> {
         let request = ApiRequest {
             model: self.model.clone(),
             max_tokens: 4096,
@@ -286,7 +290,11 @@ impl LlmProvider for AnthropicProvider {
         })
     }
 
-    async fn complete_stream(&self, messages: &[Message], tools: &[ToolDefinition]) -> anyhow::Result<LlmStream> {
+    async fn complete_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmStream> {
         let request = ApiRequest {
             model: self.model.clone(),
             max_tokens: 4096,
@@ -348,7 +356,8 @@ impl LlmProvider for AnthropicProvider {
                             "message_start" => {
                                 match serde_json::from_str::<StreamMessageStart>(&data) {
                                     Ok(msg_start) => {
-                                        state.usage.input_tokens = msg_start.message.usage.input_tokens;
+                                        state.usage.input_tokens =
+                                            msg_start.message.usage.input_tokens;
                                     }
                                     Err(e) => {
                                         tracing::warn!(error = %e, "Failed to parse message_start");
@@ -363,8 +372,14 @@ impl LlmProvider for AnthropicProvider {
                                                 // Text block started, will receive deltas
                                             }
                                             "tool_use" => {
-                                                let id = block_start.content_block.id.unwrap_or_default();
-                                                let name = block_start.content_block.name.unwrap_or_default();
+                                                let id = block_start
+                                                    .content_block
+                                                    .id
+                                                    .unwrap_or_default();
+                                                let name = block_start
+                                                    .content_block
+                                                    .name
+                                                    .unwrap_or_default();
                                                 state.tool_state.start_block(
                                                     block_start.index,
                                                     id.clone(),
@@ -390,40 +405,42 @@ impl LlmProvider for AnthropicProvider {
                             }
                             "content_block_delta" => {
                                 match serde_json::from_str::<StreamContentBlockDelta>(&data) {
-                                    Ok(delta) => {
-                                        match delta.delta.delta_type.as_str() {
-                                            "text_delta" => {
-                                                if let Some(text) = delta.delta.text {
-                                                    if !text.is_empty() {
-                                                        return Some((
-                                                            Ok(StreamChunk::TextDelta { text }),
-                                                            state,
-                                                        ));
-                                                    }
+                                    Ok(delta) => match delta.delta.delta_type.as_str() {
+                                        "text_delta" => {
+                                            if let Some(text) = delta.delta.text {
+                                                if !text.is_empty() {
+                                                    return Some((
+                                                        Ok(StreamChunk::TextDelta { text }),
+                                                        state,
+                                                    ));
                                                 }
-                                            }
-                                            "input_json_delta" => {
-                                                if let Some(json_str) = delta.delta.partial_json {
-                                                    state.tool_state.append_json(delta.index, json_str.clone());
-                                                    if let Some(block) = state.tool_state.get_block(delta.index) {
-                                                        return Some((
-                                                            Ok(StreamChunk::ToolUseDelta {
-                                                                id: block.id.clone(),
-                                                                delta: json_str,
-                                                            }),
-                                                            state,
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                            _ => {
-                                                tracing::debug!(
-                                                    delta_type = %delta.delta.delta_type,
-                                                    "Skipping content block delta type"
-                                                );
                                             }
                                         }
-                                    }
+                                        "input_json_delta" => {
+                                            if let Some(json_str) = delta.delta.partial_json {
+                                                state
+                                                    .tool_state
+                                                    .append_json(delta.index, json_str.clone());
+                                                if let Some(block) =
+                                                    state.tool_state.get_block(delta.index)
+                                                {
+                                                    return Some((
+                                                        Ok(StreamChunk::ToolUseDelta {
+                                                            id: block.id.clone(),
+                                                            delta: json_str,
+                                                        }),
+                                                        state,
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            tracing::debug!(
+                                                delta_type = %delta.delta.delta_type,
+                                                "Skipping content block delta type"
+                                            );
+                                        }
+                                    },
                                     Err(e) => {
                                         tracing::warn!(error = %e, "Failed to parse content_block_delta");
                                     }
@@ -519,7 +536,8 @@ impl LlmProvider for AnthropicProvider {
 
 /// State for the Anthropic SSE stream parser.
 struct AnthropicStreamState {
-    byte_stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<u8>, reqwest::Error>> + Send>>,
+    byte_stream:
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<u8>, reqwest::Error>> + Send>>,
     buffer: String,
     tool_state: AnthropicToolState,
     usage: Usage,
@@ -541,11 +559,14 @@ struct ActiveToolBlock {
 
 impl AnthropicToolState {
     fn start_block(&mut self, index: usize, id: String, name: String) {
-        self.blocks.insert(index, ActiveToolBlock {
-            id,
-            name,
-            json_buffer: String::new(),
-        });
+        self.blocks.insert(
+            index,
+            ActiveToolBlock {
+                id,
+                name,
+                json_buffer: String::new(),
+            },
+        );
     }
 
     fn append_json(&mut self, index: usize, delta: String) {

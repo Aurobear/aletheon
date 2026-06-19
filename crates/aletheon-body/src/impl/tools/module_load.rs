@@ -102,9 +102,7 @@ impl Tool for ModuleLoadTool {
                         if result.status.success() {
                             // Verify with lsmod
                             let module_name = extract_module_name(ko_path);
-                            let lsmod_check = tokio::process::Command::new("lsmod")
-                                .output()
-                                .await;
+                            let lsmod_check = tokio::process::Command::new("lsmod").output().await;
 
                             let loaded = lsmod_check
                                 .map(|o| String::from_utf8_lossy(&o.stdout).contains(&module_name))
@@ -266,7 +264,9 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
         };
-        let result = tool.execute(json!({"ko_path": "/nonexistent.ko"}), &ctx).await;
+        let result = tool
+            .execute(json!({"ko_path": "/nonexistent.ko"}), &ctx)
+            .await;
         assert!(result.is_error);
     }
 }

@@ -330,12 +330,21 @@ mod tests {
             "max_results": 10
         });
 
-        let result = tool.execute(input, &ToolContext {
-            working_dir: tmp.path().to_path_buf(),
-            session_id: "test".to_string(),
-        }).await;
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                },
+            )
+            .await;
 
-        assert!(!result.is_error, "Expected success, got: {}", result.content);
+        assert!(
+            !result.is_error,
+            "Expected success, got: {}",
+            result.content
+        );
         assert!(
             result.content.contains("hello_world"),
             "Expected match, got: {}",
@@ -355,12 +364,21 @@ mod tests {
             "path": tmp.path().to_str().unwrap()
         });
 
-        let result = tool.execute(input, &ToolContext {
-            working_dir: tmp.path().to_path_buf(),
-            session_id: "test".to_string(),
-        }).await;
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                },
+            )
+            .await;
 
-        assert!(!result.is_error, "Expected no-error for empty results: {}", result.content);
+        assert!(
+            !result.is_error,
+            "Expected no-error for empty results: {}",
+            result.content
+        );
         assert!(result.content.contains("No matches"));
     }
 
@@ -370,10 +388,15 @@ mod tests {
         let input = json!({});
         let tmp = tempfile::tempdir().unwrap();
 
-        let result = tool.execute(input, &ToolContext {
-            working_dir: tmp.path().to_path_buf(),
-            session_id: "test".to_string(),
-        }).await;
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                },
+            )
+            .await;
 
         assert!(result.is_error);
         assert!(result.content.contains("required"));

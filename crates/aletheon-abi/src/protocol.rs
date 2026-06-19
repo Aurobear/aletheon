@@ -1,7 +1,7 @@
 // crates/aletheon-abi/src/protocol.rs
 
-use async_trait::async_trait;
 use crate::envelope::Envelope;
+use async_trait::async_trait;
 
 /// Protocol trait — communication pattern abstraction.
 /// Different patterns (request-response, pub-sub, stream) implement this.

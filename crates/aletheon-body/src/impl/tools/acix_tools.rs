@@ -9,11 +9,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
-use aletheon_abi::Registry;
+use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use crate::r#impl::acix::Aci;
 use crate::r#impl::acix::GroundingProvider;
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use crate::r#impl::driver::types::{Key, ScrollDirection};
+use aletheon_abi::Registry;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -72,14 +72,21 @@ impl Tool for ScreenshotTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(ScreenshotTool { aci: Arc::clone(&self.aci) })
+        Box::new(ScreenshotTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let start = std::time::Instant::now();
         match self.aci.screenshot() {
             Ok(img) => ok(
-                format!("{}x{} ({} bytes RGB)", img.width, img.height, img.data.len()),
+                format!(
+                    "{}x{} ({} bytes RGB)",
+                    img.width,
+                    img.height,
+                    img.data.len()
+                ),
                 start.elapsed().as_millis() as u64,
             ),
             Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
@@ -118,7 +125,9 @@ impl Tool for TreeTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(TreeTool { aci: Arc::clone(&self.aci) })
+        Box::new(TreeTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
@@ -140,8 +149,13 @@ fn format_element(elem: &crate::r#impl::driver::types::Element, depth: usize) ->
     let indent = "  ".repeat(depth);
     let mut out = format!(
         "{}[{}] {:?} bounds=({},{}+{}x{})\n",
-        indent, elem.role, elem.name,
-        elem.bounds.x, elem.bounds.y, elem.bounds.width, elem.bounds.height,
+        indent,
+        elem.role,
+        elem.name,
+        elem.bounds.x,
+        elem.bounds.y,
+        elem.bounds.width,
+        elem.bounds.height,
     );
     for child in &elem.children {
         out += &format_element(child, depth + 1);
@@ -184,7 +198,9 @@ impl Tool for ClickTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(ClickTool { aci: Arc::clone(&self.aci) })
+        Box::new(ClickTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
@@ -192,7 +208,10 @@ impl Tool for ClickTool {
         let x = input["x"].as_i64().unwrap_or(0) as i32;
         let y = input["y"].as_i64().unwrap_or(0) as i32;
         match self.aci.click(x, y) {
-            Ok(()) => ok(format!("Clicked at ({}, {})", x, y), start.elapsed().as_millis() as u64),
+            Ok(()) => ok(
+                format!("Clicked at ({}, {})", x, y),
+                start.elapsed().as_millis() as u64,
+            ),
             Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
         }
     }
@@ -232,14 +251,19 @@ impl Tool for TypeTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(TypeTool { aci: Arc::clone(&self.aci) })
+        Box::new(TypeTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let start = std::time::Instant::now();
         let text = input["text"].as_str().unwrap_or("");
         match self.aci.type_text(text) {
-            Ok(()) => ok(format!("Typed: {:?}", text), start.elapsed().as_millis() as u64),
+            Ok(()) => ok(
+                format!("Typed: {:?}", text),
+                start.elapsed().as_millis() as u64,
+            ),
             Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
         }
     }
@@ -282,7 +306,9 @@ impl Tool for FindTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(FindTool { aci: Arc::clone(&self.aci) })
+        Box::new(FindTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
@@ -291,14 +317,22 @@ impl Tool for FindTool {
         match self.aci.find_element(desc) {
             Ok(elems) => {
                 if elems.is_empty() {
-                    ok("No elements found.".to_string(), start.elapsed().as_millis() as u64)
+                    ok(
+                        "No elements found.".to_string(),
+                        start.elapsed().as_millis() as u64,
+                    )
                 } else {
                     let mut out = format!("Found {} element(s):\n", elems.len());
                     for (i, e) in elems.iter().enumerate() {
                         out += &format!(
                             "  [{}] role={} name={:?} bounds=({},{}+{}x{})\n",
-                            i, e.role, e.name,
-                            e.bounds.x, e.bounds.y, e.bounds.width, e.bounds.height,
+                            i,
+                            e.role,
+                            e.name,
+                            e.bounds.x,
+                            e.bounds.y,
+                            e.bounds.width,
+                            e.bounds.height,
                         );
                     }
                     ok(out, start.elapsed().as_millis() as u64)
@@ -340,7 +374,9 @@ impl Tool for ObserveTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(ObserveTool { aci: Arc::clone(&self.aci) })
+        Box::new(ObserveTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
@@ -360,7 +396,12 @@ impl Tool for ObserveTool {
                         format!("[OCR] text: {}\nwords: {}", ocr.text, words.join(", "))
                     }
                     crate::r#impl::driver::types::Observation::ScreenshotOnly(img) => {
-                        format!("[Screenshot] {}x{} ({} bytes)", img.width, img.height, img.data.len())
+                        format!(
+                            "[Screenshot] {}x{} ({} bytes)",
+                            img.width,
+                            img.height,
+                            img.data.len()
+                        )
                     }
                 };
                 ok(text, start.elapsed().as_millis() as u64)
@@ -407,7 +448,9 @@ impl Tool for DragTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(DragTool { aci: Arc::clone(&self.aci) })
+        Box::new(DragTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
@@ -436,18 +479,41 @@ pub struct HotkeyTool {
 
 fn parse_key(s: &str) -> Option<Key> {
     match s.to_lowercase().as_str() {
-        "a" => Some(Key::A), "b" => Some(Key::B), "c" => Some(Key::C),
-        "d" => Some(Key::D), "e" => Some(Key::E), "f" => Some(Key::F),
-        "g" => Some(Key::G), "h" => Some(Key::H), "i" => Some(Key::I),
-        "j" => Some(Key::J), "k" => Some(Key::K), "l" => Some(Key::L),
-        "m" => Some(Key::M), "n" => Some(Key::N), "o" => Some(Key::O),
-        "p" => Some(Key::P), "q" => Some(Key::Q), "r" => Some(Key::R),
-        "s" => Some(Key::S), "t" => Some(Key::T), "u" => Some(Key::U),
-        "v" => Some(Key::V), "w" => Some(Key::W), "x" => Some(Key::X),
-        "y" => Some(Key::Y), "z" => Some(Key::Z),
-        "0" => Some(Key::Num0), "1" => Some(Key::Num1), "2" => Some(Key::Num2),
-        "3" => Some(Key::Num3), "4" => Some(Key::Num4), "5" => Some(Key::Num5),
-        "6" => Some(Key::Num6), "7" => Some(Key::Num7), "8" => Some(Key::Num8),
+        "a" => Some(Key::A),
+        "b" => Some(Key::B),
+        "c" => Some(Key::C),
+        "d" => Some(Key::D),
+        "e" => Some(Key::E),
+        "f" => Some(Key::F),
+        "g" => Some(Key::G),
+        "h" => Some(Key::H),
+        "i" => Some(Key::I),
+        "j" => Some(Key::J),
+        "k" => Some(Key::K),
+        "l" => Some(Key::L),
+        "m" => Some(Key::M),
+        "n" => Some(Key::N),
+        "o" => Some(Key::O),
+        "p" => Some(Key::P),
+        "q" => Some(Key::Q),
+        "r" => Some(Key::R),
+        "s" => Some(Key::S),
+        "t" => Some(Key::T),
+        "u" => Some(Key::U),
+        "v" => Some(Key::V),
+        "w" => Some(Key::W),
+        "x" => Some(Key::X),
+        "y" => Some(Key::Y),
+        "z" => Some(Key::Z),
+        "0" => Some(Key::Num0),
+        "1" => Some(Key::Num1),
+        "2" => Some(Key::Num2),
+        "3" => Some(Key::Num3),
+        "4" => Some(Key::Num4),
+        "5" => Some(Key::Num5),
+        "6" => Some(Key::Num6),
+        "7" => Some(Key::Num7),
+        "8" => Some(Key::Num8),
         "9" => Some(Key::Num9),
         "enter" | "return" => Some(Key::Enter),
         "space" => Some(Key::Space),
@@ -455,15 +521,26 @@ fn parse_key(s: &str) -> Option<Key> {
         "escape" | "esc" => Some(Key::Escape),
         "backspace" => Some(Key::Backspace),
         "delete" | "del" => Some(Key::Delete),
-        "up" => Some(Key::Up), "down" => Some(Key::Down),
-        "left" => Some(Key::Left), "right" => Some(Key::Right),
-        "home" => Some(Key::Home), "end" => Some(Key::End),
+        "up" => Some(Key::Up),
+        "down" => Some(Key::Down),
+        "left" => Some(Key::Left),
+        "right" => Some(Key::Right),
+        "home" => Some(Key::Home),
+        "end" => Some(Key::End),
         "pageup" | "page_up" => Some(Key::PageUp),
         "pagedown" | "page_down" => Some(Key::PageDown),
-        "f1" => Some(Key::F1), "f2" => Some(Key::F2), "f3" => Some(Key::F3),
-        "f4" => Some(Key::F4), "f5" => Some(Key::F5), "f6" => Some(Key::F6),
-        "f7" => Some(Key::F7), "f8" => Some(Key::F8), "f9" => Some(Key::F9),
-        "f10" => Some(Key::F10), "f11" => Some(Key::F11), "f12" => Some(Key::F12),
+        "f1" => Some(Key::F1),
+        "f2" => Some(Key::F2),
+        "f3" => Some(Key::F3),
+        "f4" => Some(Key::F4),
+        "f5" => Some(Key::F5),
+        "f6" => Some(Key::F6),
+        "f7" => Some(Key::F7),
+        "f8" => Some(Key::F8),
+        "f9" => Some(Key::F9),
+        "f10" => Some(Key::F10),
+        "f11" => Some(Key::F11),
+        "f12" => Some(Key::F12),
         "ctrl" | "control" => Some(Key::Ctrl),
         "alt" => Some(Key::Alt),
         "shift" => Some(Key::Shift),
@@ -502,24 +579,32 @@ impl Tool for HotkeyTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(HotkeyTool { aci: Arc::clone(&self.aci) })
+        Box::new(HotkeyTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let start = std::time::Instant::now();
         let keys_input: Vec<String> = input["keys"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let mut parsed = Vec::new();
         for k in &keys_input {
             match parse_key(k) {
                 Some(key) => parsed.push(key),
-                None => return err(
-                    format!("Unknown key: {:?}", k),
-                    start.elapsed().as_millis() as u64,
-                ),
+                None => {
+                    return err(
+                        format!("Unknown key: {:?}", k),
+                        start.elapsed().as_millis() as u64,
+                    )
+                }
             }
         }
 
@@ -588,7 +673,9 @@ impl Tool for ScrollTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(ScrollTool { aci: Arc::clone(&self.aci) })
+        Box::new(ScrollTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
@@ -600,10 +687,12 @@ impl Tool for ScrollTool {
 
         let direction = match parse_scroll_direction(dir_str) {
             Some(d) => d,
-            None => return err(
-                format!("Unknown scroll direction: {:?}", dir_str),
-                start.elapsed().as_millis() as u64,
-            ),
+            None => {
+                return err(
+                    format!("Unknown scroll direction: {:?}", dir_str),
+                    start.elapsed().as_millis() as u64,
+                )
+            }
         };
 
         match self.aci.scroll(x, y, direction, amount) {
@@ -651,7 +740,9 @@ impl Tool for RightClickTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(RightClickTool { aci: Arc::clone(&self.aci) })
+        Box::new(RightClickTool {
+            aci: Arc::clone(&self.aci),
+        })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
@@ -757,7 +848,9 @@ impl Tool for AcixGroundTool {
 pub fn default_aci() -> Arc<Aci> {
     Arc::new(Aci::new_basic(
         Box::new(crate::r#impl::driver::input::MockInputDriver::new()),
-        Box::new(crate::r#impl::driver::display::MockDisplayDriver::new(1920, 1080)),
+        Box::new(crate::r#impl::driver::display::MockDisplayDriver::new(
+            1920, 1080,
+        )),
         Box::new(crate::r#impl::driver::a11y::MockA11yDriver::new()),
         Some(Box::new(crate::r#impl::driver::ocr::MockOcrDriver)),
     ))
@@ -765,15 +858,33 @@ pub fn default_aci() -> Arc<Aci> {
 
 /// Register all ACIX tools into the given `ToolRegistry` using a caller-provided `Aci`.
 pub fn register_acix_tools_with(registry: &mut super::ToolRegistry, aci: Arc<Aci>) {
-    let _ = registry.register(Arc::new(ScreenshotTool { aci: Arc::clone(&aci) }));
-    let _ = registry.register(Arc::new(TreeTool { aci: Arc::clone(&aci) }));
-    let _ = registry.register(Arc::new(ClickTool { aci: Arc::clone(&aci) }));
-    let _ = registry.register(Arc::new(TypeTool { aci: Arc::clone(&aci) }));
-    let _ = registry.register(Arc::new(FindTool { aci: Arc::clone(&aci) }));
-    let _ = registry.register(Arc::new(ObserveTool { aci: Arc::clone(&aci) }));
-    let _ = registry.register(Arc::new(DragTool { aci: Arc::clone(&aci) }));
-    let _ = registry.register(Arc::new(HotkeyTool { aci: Arc::clone(&aci) }));
-    let _ = registry.register(Arc::new(ScrollTool { aci: Arc::clone(&aci) }));
+    let _ = registry.register(Arc::new(ScreenshotTool {
+        aci: Arc::clone(&aci),
+    }));
+    let _ = registry.register(Arc::new(TreeTool {
+        aci: Arc::clone(&aci),
+    }));
+    let _ = registry.register(Arc::new(ClickTool {
+        aci: Arc::clone(&aci),
+    }));
+    let _ = registry.register(Arc::new(TypeTool {
+        aci: Arc::clone(&aci),
+    }));
+    let _ = registry.register(Arc::new(FindTool {
+        aci: Arc::clone(&aci),
+    }));
+    let _ = registry.register(Arc::new(ObserveTool {
+        aci: Arc::clone(&aci),
+    }));
+    let _ = registry.register(Arc::new(DragTool {
+        aci: Arc::clone(&aci),
+    }));
+    let _ = registry.register(Arc::new(HotkeyTool {
+        aci: Arc::clone(&aci),
+    }));
+    let _ = registry.register(Arc::new(ScrollTool {
+        aci: Arc::clone(&aci),
+    }));
     let _ = registry.register(Arc::new(RightClickTool { aci }));
 }
 

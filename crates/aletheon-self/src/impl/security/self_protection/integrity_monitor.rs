@@ -29,8 +29,8 @@ fn epoch_millis() -> u64 {
 /// Uses a simple FNV-1a variant for portability (no external deps).
 /// Returns a 16-character hex string.
 pub fn compute_file_hash(path: &PathBuf) -> Result<String> {
-    let contents = std::fs::read(path)
-        .with_context(|| format!("Failed to read file: {}", path.display()))?;
+    let contents =
+        std::fs::read(path).with_context(|| format!("Failed to read file: {}", path.display()))?;
 
     // FNV-1a parameters
     let mut hash: u64 = 0xcbf29ce484222325; // FNV offset basis

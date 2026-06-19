@@ -69,7 +69,12 @@ impl ChatMessage {
 
                 // Word-wrap the content
                 let plain_line = Line::from(Span::styled(content.to_string(), text_style));
-                let wrapped = word_wrap_line_with_prefix(&plain_line, content_width, &border_prefix, border_style);
+                let wrapped = word_wrap_line_with_prefix(
+                    &plain_line,
+                    content_width,
+                    &border_prefix,
+                    border_style,
+                );
                 for line in wrapped {
                     result.push(line);
                 }
@@ -262,7 +267,11 @@ fn is_cjk(ch: char) -> bool {
 
 /// Measure the display width of a character (CJK = 2, others = 1).
 fn char_display_width(ch: char) -> usize {
-    if is_cjk(ch) { 2 } else { 1 }
+    if is_cjk(ch) {
+        2
+    } else {
+        1
+    }
 }
 
 /// Word-wrap a single `Line` with a repeating border prefix on every output line.
@@ -289,7 +298,10 @@ fn word_wrap_line_with_prefix(
     let mut chars: Vec<StyledChar> = Vec::new();
     for span in &line.spans {
         for ch in span.content.chars() {
-            chars.push(StyledChar { ch, style: span.style });
+            chars.push(StyledChar {
+                ch,
+                style: span.style,
+            });
         }
     }
 
@@ -566,7 +578,9 @@ mod tests {
 
     #[test]
     fn test_word_wrap_long_line() {
-        let line = Line::from("hello world this is a very long line that should be wrapped at word boundaries");
+        let line = Line::from(
+            "hello world this is a very long line that should be wrapped at word boundaries",
+        );
         let result = word_wrap_line(&line, 20);
         assert!(result.len() > 1);
         // Each line should fit within 20 columns

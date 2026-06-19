@@ -203,8 +203,7 @@ fn is_valid_transition(from: AgentStatus, to: AgentStatus) -> bool {
             | (Degraded, Crashed)
             // From Stopping
             | (Stopping, Stopped)
-            | (Stopping, Crashed)
-            // Stopped and Crashed are terminal — no transitions out
+            | (Stopping, Crashed) // Stopped and Crashed are terminal — no transitions out
     )
 }
 

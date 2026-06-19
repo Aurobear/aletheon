@@ -212,20 +212,46 @@ impl MemoryPipeline {
 // ---------------------------------------------------------------------------
 
 /// Extract facts from conversation messages using pattern matching.
-fn extract_facts_from_messages(messages: &[super::recall_memory::MemoryEntry]) -> Vec<ExtractedFact> {
+fn extract_facts_from_messages(
+    messages: &[super::recall_memory::MemoryEntry],
+) -> Vec<ExtractedFact> {
     use regex::Regex;
 
     // Preference patterns (case-insensitive).
     let preference_patterns: Vec<(Regex, &str)> = vec![
         (Regex::new(r"(?i)I prefer\s+(.{5,60})").unwrap(), "prefers"),
-        (Regex::new(r"(?i)I(?:'m| am) used to\s+(.{5,60})").unwrap(), "is used to"),
-        (Regex::new(r"(?i)always\s+(do|use|run|check|start)\s+(.{5,60})").unwrap(), "always does"),
-        (Regex::new(r"(?i)don'?t\s+(ever\s+)?(.{5,60})").unwrap(), "doesn't want"),
-        (Regex::new(r"(?i)I (?:like|love|enjoy)\s+(.{5,60})").unwrap(), "likes"),
-        (Regex::new(r"(?i)I (?:hate|dislike|can't stand)\s+(.{5,60})").unwrap(), "dislikes"),
-        (Regex::new(r"(?i)my (?:name is|name's)\s+(.{2,40})").unwrap(), "is named"),
-        (Regex::new(r"(?i)I work (?:on|with)\s+(.{5,60})").unwrap(), "works with"),
-        (Regex::new(r"(?i)I(?:'m| am) (?:a|an)\s+(.{5,40})").unwrap(), "is a"),
+        (
+            Regex::new(r"(?i)I(?:'m| am) used to\s+(.{5,60})").unwrap(),
+            "is used to",
+        ),
+        (
+            Regex::new(r"(?i)always\s+(do|use|run|check|start)\s+(.{5,60})").unwrap(),
+            "always does",
+        ),
+        (
+            Regex::new(r"(?i)don'?t\s+(ever\s+)?(.{5,60})").unwrap(),
+            "doesn't want",
+        ),
+        (
+            Regex::new(r"(?i)I (?:like|love|enjoy)\s+(.{5,60})").unwrap(),
+            "likes",
+        ),
+        (
+            Regex::new(r"(?i)I (?:hate|dislike|can't stand)\s+(.{5,60})").unwrap(),
+            "dislikes",
+        ),
+        (
+            Regex::new(r"(?i)my (?:name is|name's)\s+(.{2,40})").unwrap(),
+            "is named",
+        ),
+        (
+            Regex::new(r"(?i)I work (?:on|with)\s+(.{5,60})").unwrap(),
+            "works with",
+        ),
+        (
+            Regex::new(r"(?i)I(?:'m| am) (?:a|an)\s+(.{5,40})").unwrap(),
+            "is a",
+        ),
     ];
 
     // System observation patterns.
@@ -287,7 +313,11 @@ mod tests {
     use super::*;
     use aletheon_abi::{ReflectionOutcome, ReflectionTrigger};
 
-    fn make_reflection(what_worked: Vec<&str>, learned: Vec<&str>, confidence: f64) -> ReflectionEntry {
+    fn make_reflection(
+        what_worked: Vec<&str>,
+        learned: Vec<&str>,
+        confidence: f64,
+    ) -> ReflectionEntry {
         ReflectionEntry {
             id: "test-1".to_string(),
             timestamp: Utc::now(),
@@ -328,11 +358,17 @@ mod tests {
         assert_eq!(facts.len(), 3);
 
         // 2 what_worked at 0.9 confidence -> UserPreference
-        let user_facts: Vec<_> = facts.iter().filter(|f| f.category == FactCategory::UserPreference).collect();
+        let user_facts: Vec<_> = facts
+            .iter()
+            .filter(|f| f.category == FactCategory::UserPreference)
+            .collect();
         assert_eq!(user_facts.len(), 2);
 
         // 1 learned -> LearnedKnowledge
-        let learned_facts: Vec<_> = facts.iter().filter(|f| f.category == FactCategory::LearnedKnowledge).collect();
+        let learned_facts: Vec<_> = facts
+            .iter()
+            .filter(|f| f.category == FactCategory::LearnedKnowledge)
+            .collect();
         assert_eq!(learned_facts.len(), 1);
         assert!(learned_facts[0].content.contains("borrow checker"));
     }
@@ -445,7 +481,10 @@ mod tests {
         assert!(!facts.is_empty());
 
         // Should contain preferences
-        let prefs: Vec<_> = facts.iter().filter(|f| f.category == FactCategory::UserPreference).collect();
+        let prefs: Vec<_> = facts
+            .iter()
+            .filter(|f| f.category == FactCategory::UserPreference)
+            .collect();
         assert!(!prefs.is_empty());
 
         // Check specific extractions
@@ -460,20 +499,24 @@ mod tests {
     fn extract_facts_ignores_assistant_messages_for_preferences() {
         use super::super::recall_memory::MemoryEntry;
 
-        let messages = vec![
-            MemoryEntry {
-                id: 1,
-                timestamp: Utc::now(),
-                session_id: "s1".to_string(),
-                entry_type: "assistant".to_string(),
-                content: "I prefer using Python for data analysis".to_string(),
-                metadata: None,
-            },
-        ];
+        let messages = vec![MemoryEntry {
+            id: 1,
+            timestamp: Utc::now(),
+            session_id: "s1".to_string(),
+            entry_type: "assistant".to_string(),
+            content: "I prefer using Python for data analysis".to_string(),
+            metadata: None,
+        }];
 
         let facts = extract_facts_from_messages(&messages);
-        let prefs: Vec<_> = facts.iter().filter(|f| f.category == FactCategory::UserPreference).collect();
-        assert!(prefs.is_empty(), "Assistant messages should not yield user preferences");
+        let prefs: Vec<_> = facts
+            .iter()
+            .filter(|f| f.category == FactCategory::UserPreference)
+            .collect();
+        assert!(
+            prefs.is_empty(),
+            "Assistant messages should not yield user preferences"
+        );
     }
 
     #[test]
@@ -503,7 +546,11 @@ mod tests {
         // Deduplication should collapse duplicates
         let unique_contents: Vec<_> = facts.iter().map(|f| &f.content).collect();
         let deduped: std::collections::HashSet<_> = unique_contents.iter().collect();
-        assert_eq!(unique_contents.len(), deduped.len(), "Facts should be deduplicated");
+        assert_eq!(
+            unique_contents.len(),
+            deduped.len(),
+            "Facts should be deduplicated"
+        );
     }
 
     // Helper: create a dummy RecallMemory using a temp directory.

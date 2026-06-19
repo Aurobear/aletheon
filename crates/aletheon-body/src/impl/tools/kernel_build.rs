@@ -113,16 +113,20 @@ impl KernelBuildTool {
             .as_str()
             .unwrap_or("https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git");
 
-        let branch = input["branch"]
-            .as_str()
-            .unwrap_or("master");
+        let branch = input["branch"].as_str().unwrap_or("master");
 
-        info!("Cloning kernel source from {} (branch: {})", repo_url, branch);
+        info!(
+            "Cloning kernel source from {} (branch: {})",
+            repo_url, branch
+        );
 
         // Check if directory already exists
         if std::path::Path::new(source_dir).exists() {
             return ToolResult {
-                content: format!("Directory already exists: {}. Remove it first or use a different source_dir.", source_dir),
+                content: format!(
+                    "Directory already exists: {}. Remove it first or use a different source_dir.",
+                    source_dir
+                ),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: start.elapsed().as_millis() as u64,
@@ -133,11 +137,7 @@ impl KernelBuildTool {
 
         let output = tokio::process::Command::new("git")
             .args([
-                "clone",
-                "--depth", "1",
-                "--branch", branch,
-                repo_url,
-                source_dir,
+                "clone", "--depth", "1", "--branch", branch, repo_url, source_dir,
             ])
             .output()
             .await;
@@ -261,7 +261,8 @@ impl KernelBuildTool {
 
         let output = tokio::process::Command::new("make")
             .args([
-                "-C", source_dir,
+                "-C",
+                source_dir,
                 &format!("-j{}", jobs),
                 "bzImage",
                 "modules",
@@ -298,7 +299,14 @@ impl KernelBuildTool {
                 } else {
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     // Truncate output for readability
-                    let stderr_tail: String = stderr.chars().rev().take(2000).collect::<Vec<_>>().into_iter().rev().collect();
+                    let stderr_tail: String = stderr
+                        .chars()
+                        .rev()
+                        .take(2000)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
                     ToolResult {
                         content: format!(
                             "Kernel build failed.\n\
@@ -394,13 +402,14 @@ impl KernelBuildTool {
         }
 
         // Step 3: update-grub (if available)
-        let grub_result = tokio::process::Command::new("update-grub")
-            .output()
-            .await;
+        let grub_result = tokio::process::Command::new("update-grub").output().await;
 
         let grub_msg = match grub_result {
             Ok(r) if r.status.success() => "GRUB updated successfully.".to_string(),
-            Ok(r) => format!("update-grub warning: {}", String::from_utf8_lossy(&r.stderr)),
+            Ok(r) => format!(
+                "update-grub warning: {}",
+                String::from_utf8_lossy(&r.stderr)
+            ),
             Err(_) => "update-grub not found (may need manual bootloader update)".to_string(),
         };
 
@@ -432,7 +441,12 @@ fn get_running_kernel_version() -> String {
 fn num_cpus() -> String {
     std::fs::read_to_string("/proc/cpuinfo")
         .ok()
-        .map(|c| c.lines().filter(|l| l.starts_with("processor")).count().to_string())
+        .map(|c| {
+            c.lines()
+                .filter(|l| l.starts_with("processor"))
+                .count()
+                .to_string()
+        })
         .unwrap_or_else(|| "1".to_string())
 }
 
@@ -488,7 +502,9 @@ mod tests {
             session_id: "test".to_string(),
         };
         // /tmp exists, so clone should fail
-        let result = tool.execute(json!({"action": "clone", "source_dir": "/tmp"}), &ctx).await;
+        let result = tool
+            .execute(json!({"action": "clone", "source_dir": "/tmp"}), &ctx)
+            .await;
         assert!(result.is_error);
     }
 }

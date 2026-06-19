@@ -76,7 +76,10 @@ impl GlobScanner {
             // rg returns exit code 1 when no matches — that is fine.
             let code = output.status.code().unwrap_or(-1);
             if code > 1 {
-                warn!(code, "rg exited with unexpected code, falling back to walkdir");
+                warn!(
+                    code,
+                    "rg exited with unexpected code, falling back to walkdir"
+                );
                 return None;
             }
         }
@@ -388,20 +391,14 @@ mod tests {
         fs::write(base.join("readme.md"), "# Hello").unwrap();
 
         let scanner = GlobScanner::default();
-        let results = scanner.scan(
-            &["**/*.env".to_string(), "**/*.key".to_string()],
-            base,
-        );
+        let results = scanner.scan(&["**/*.env".to_string(), "**/*.key".to_string()], base);
 
         assert_eq!(results.len(), 2, "Expected 2 matches, got {:?}", results);
     }
 
     #[test]
     fn test_mask_paths_args_format() {
-        let paths = vec![
-            PathBuf::from("/tmp/a.env"),
-            PathBuf::from("/tmp/b.key"),
-        ];
+        let paths = vec![PathBuf::from("/tmp/a.env"), PathBuf::from("/tmp/b.key")];
         let args = mask_paths_args(&paths);
         assert_eq!(args.len(), 6);
         assert_eq!(args[0], "--ro-bind");
@@ -420,10 +417,7 @@ mod tests {
 
         let scanner = GlobScanner::default();
         // Invalid pattern + valid pattern — invalid should be skipped.
-        let results = scanner.scan(
-            &["**/*.txt".to_string()],
-            base,
-        );
+        let results = scanner.scan(&["**/*.txt".to_string()], base);
         assert_eq!(results.len(), 1);
     }
 }

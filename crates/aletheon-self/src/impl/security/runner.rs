@@ -1,13 +1,13 @@
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-use aletheon_abi::tool::{Tool, ToolContext, ToolResult, ToolResultMeta, PermissionLevel};
-use aletheon_body::r#impl::sandbox::{SandboxExecutor, SandboxConfig};
-use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
-use super::policy::{PolicyEngine, PolicyVerdict};
-use super::output_guardrail::OutputGuardrail;
 use super::audit::{AuditLogger, AuditRecord};
+use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
+use super::output_guardrail::OutputGuardrail;
+use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
+use aletheon_abi::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use aletheon_body::r#impl::sandbox::{SandboxConfig, SandboxExecutor};
 
 #[derive(Debug)]
 pub enum ToolError {
@@ -44,10 +44,7 @@ pub struct ToolRunnerWithGuard {
 }
 
 impl ToolRunnerWithGuard {
-    pub fn new(
-        sandbox: SandboxExecutor,
-        audit_logger: AuditLogger,
-    ) -> Self {
+    pub fn new(sandbox: SandboxExecutor, audit_logger: AuditLogger) -> Self {
         Self {
             sandbox,
             loop_detector: LoopDetector::new(LoopDetectorConfig::default()),
@@ -88,15 +85,36 @@ impl ToolRunnerWithGuard {
         let policy_verdict = self.policy_engine.check(tool_name, &input);
         match policy_verdict {
             PolicyVerdict::Deny { reason } => {
-                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "denied").await;
+                self.log_audit(
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "denied",
+                )
+                .await;
                 return Err(ToolError::PolicyDenied { reason });
             }
             PolicyVerdict::RequireApproval { reason } => {
                 // In automated mode, deny L2+ that require approval
                 if tool.permission_level() >= PermissionLevel::L2 {
-                    self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "requires_approval").await;
+                    self.log_audit(
+                        tool_name,
+                        &input,
+                        tool.permission_level(),
+                        turn_id,
+                        None,
+                        &start,
+                        "requires_approval",
+                    )
+                    .await;
                     return Err(ToolError::PolicyDenied {
-                        reason: format!("{}: {}", reason, "L2+ requires approval in automated mode"),
+                        reason: format!(
+                            "{}: {}",
+                            reason, "L2+ requires approval in automated mode"
+                        ),
                     });
                 }
             }
@@ -111,33 +129,66 @@ impl ToolRunnerWithGuard {
                 warn!(tool = tool_name, reason = %reason, "Loop detector warning");
             }
             LoopVerdict::Block { reason, suggestion } => {
-                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "loop_blocked").await;
+                self.log_audit(
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "loop_blocked",
+                )
+                .await;
                 return Err(ToolError::LoopBlocked {
                     reason: format!("{}. {}", reason, suggestion),
                 });
             }
             LoopVerdict::Escalate { reason } => {
-                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "escalated").await;
-                return Err(ToolError::EscalateToHuman { reason: reason.clone() });
+                self.log_audit(
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "escalated",
+                )
+                .await;
+                return Err(ToolError::EscalateToHuman {
+                    reason: reason.clone(),
+                });
             }
             LoopVerdict::InterruptTurn { reason, .. } => {
-                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "interrupted").await;
-                return Err(ToolError::InterruptTurn { reason: reason.clone() });
+                self.log_audit(
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "interrupted",
+                )
+                .await;
+                return Err(ToolError::InterruptTurn {
+                    reason: reason.clone(),
+                });
             }
         }
 
         // 3. Execute tool (with optional sandbox for L1+)
         let result = if tool.permission_level() >= PermissionLevel::L1 {
-            let cmd = input.get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
             let sandbox_config = SandboxConfig {
                 working_dir: ctx.working_dir.to_string_lossy().to_string(),
                 env_vars: std::collections::HashMap::new(),
             };
 
-            match self.sandbox.run(cmd, &sandbox_config, Duration::from_secs(30)).await {
+            match self
+                .sandbox
+                .run(cmd, &sandbox_config, Duration::from_secs(30))
+                .await
+            {
                 Ok(sandbox_result) => ToolResult {
                     content: format!("{}\n{}", sandbox_result.stdout, sandbox_result.stderr)
                         .trim()
@@ -172,18 +223,31 @@ impl ToolRunnerWithGuard {
                     if retry < self.output_guardrail.max_retries - 1 {
                         final_result = tool.execute(input.clone(), ctx).await;
                     } else {
-                        warn!(tool = tool_name, "Max retries exceeded for output validation");
+                        warn!(
+                            tool = tool_name,
+                            "Max retries exceeded for output validation"
+                        );
                     }
                 }
             }
         }
 
         // 5. Loop detector post-check
-        self.loop_detector.post_check(tool_name, &input, &final_result, turn_id);
+        self.loop_detector
+            .post_check(tool_name, &input, &final_result, turn_id);
 
         // 6. Audit log
         let verdict_str = format!("{:?}", loop_verdict);
-        self.log_audit(tool_name, &input, tool.permission_level(), turn_id, Some(&final_result), &start, &verdict_str).await;
+        self.log_audit(
+            tool_name,
+            &input,
+            tool.permission_level(),
+            turn_id,
+            Some(&final_result),
+            &start,
+            &verdict_str,
+        )
+        .await;
 
         Ok(final_result)
     }

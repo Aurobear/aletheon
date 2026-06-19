@@ -136,7 +136,9 @@ fn find_aletheond() -> Result<std::path::PathBuf> {
     if path.exists() {
         return Ok(path);
     }
-    Err(anyhow::anyhow!("Cannot find aletheond binary. Install it or add to PATH"))
+    Err(anyhow::anyhow!(
+        "Cannot find aletheond binary. Install it or add to PATH"
+    ))
 }
 
 /// Handle daemon subcommands.
@@ -159,7 +161,8 @@ async fn handle_daemon_action(action: DaemonAction) -> Result<()> {
                 // Start daemon in foreground
                 println!("Starting daemon (Ctrl+C to stop)...");
                 let status = std::process::Command::new(exe)
-                    .arg("--socket").arg(DEFAULT_SOCKET)
+                    .arg("--socket")
+                    .arg(DEFAULT_SOCKET)
                     .status()?;
                 std::process::exit(status.code().unwrap_or(1));
             }
@@ -273,17 +276,36 @@ fn format_reflections(entries: &serde_json::Value) -> String {
     let mut lines = Vec::new();
     lines.push(format!("=== Reflections ({}) ===\n", arr.len()));
     for (i, entry) in arr.iter().enumerate() {
-        let task = entry.get("task_summary").and_then(|v| v.as_str()).unwrap_or("");
-        let outcome = entry.get("outcome").and_then(|v| {
-            if let Some(s) = v.as_str() { Some(s.to_string()) }
-            else { serde_json::to_string(v).ok() }
-        }).unwrap_or_else(|| "unknown".to_string());
-        let confidence = entry.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let timestamp = entry.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+        let task = entry
+            .get("task_summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let outcome = entry
+            .get("outcome")
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    Some(s.to_string())
+                } else {
+                    serde_json::to_string(v).ok()
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        let confidence = entry
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let timestamp = entry
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         lines.push(format!(
             "[{}] #{} {} ({}) conf={:.0}%",
-            timestamp, i + 1, task, outcome, confidence * 100.0
+            timestamp,
+            i + 1,
+            task,
+            outcome,
+            confidence * 100.0
         ));
 
         if let Some(arr) = entry.get("learned").and_then(|v| v.as_array()) {
@@ -332,7 +354,9 @@ fn format_evolution(evo: &serde_json::Value) -> String {
         let mut lines = Vec::new();
         lines.push(format!("=== Evolution History ({}) ===\n", arr.len()));
         for entry in arr {
-            lines.push(serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{:?}", entry)));
+            lines.push(
+                serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{:?}", entry)),
+            );
             lines.push(String::new());
         }
         return lines.join("\n");
@@ -342,17 +366,41 @@ fn format_evolution(evo: &serde_json::Value) -> String {
 
 /// Format status response for display.
 fn format_status(status: &serde_json::Value) -> String {
-    let session_id = status.get("session_id").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let turn_count = status.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let reflection_count = status.get("reflection_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let evolution_count = status.get("evolution_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let boundary_rules = status.get("boundary_rules").and_then(|v| v.as_u64()).unwrap_or(0);
-    let boundary_immutable = status.get("boundary_immutable").and_then(|v| v.as_u64()).unwrap_or(0);
-    let attention_focus = status.get("attention_focus").and_then(|v| v.as_str()).unwrap_or("");
+    let session_id = status
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let turn_count = status
+        .get("turn_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let reflection_count = status
+        .get("reflection_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let evolution_count = status
+        .get("evolution_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let boundary_rules = status
+        .get("boundary_rules")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let boundary_immutable = status
+        .get("boundary_immutable")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let attention_focus = status
+        .get("attention_focus")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     let mut lines = Vec::new();
     lines.push("=== Aletheon Status ===".to_string());
-    lines.push(format!("Session: {}", &session_id[..8.min(session_id.len())]));
+    lines.push(format!(
+        "Session: {}",
+        &session_id[..8.min(session_id.len())]
+    ));
     lines.push(format!("Turns: {}", turn_count));
     lines.push(format!("Reflections: {}", reflection_count));
     lines.push(format!("Evolutions: {}", evolution_count));
@@ -368,9 +416,16 @@ fn format_status(status: &serde_json::Value) -> String {
     }
 
     lines.push(String::new());
-    lines.push(format!("Boundary Rules: {} (immutable: {})", boundary_rules, boundary_immutable));
+    lines.push(format!(
+        "Boundary Rules: {} (immutable: {})",
+        boundary_rules, boundary_immutable
+    ));
 
-    let focus_display = if attention_focus.is_empty() { "none" } else { attention_focus };
+    let focus_display = if attention_focus.is_empty() {
+        "none"
+    } else {
+        attention_focus
+    };
     lines.push(format!("Attention Focus: {}", focus_display));
 
     lines.join("\n")

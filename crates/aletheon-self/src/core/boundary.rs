@@ -3,8 +3,8 @@
 //! Like SELinux type enforcement: rules are evaluated in order,
 //! first match wins. Uses glob patterns for action matching.
 
-use aletheon_abi::{Intent, IntentSource, Verdict};
 use aletheon_abi::self_field::RiskLevel;
+use aletheon_abi::{Intent, IntentSource, Verdict};
 use anyhow::Result;
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
@@ -44,9 +44,7 @@ pub struct BoundaryLayer {
 
 impl BoundaryLayer {
     pub fn new() -> Self {
-        Self {
-            rules: Vec::new(),
-        }
+        Self { rules: Vec::new() }
     }
 
     /// Add a rule. Rules are evaluated in insertion order (first match wins).
@@ -214,8 +212,8 @@ impl BoundaryLayer {
                     serde_json::from_str(&action_json).unwrap_or(BoundaryAction::Deny);
                 let risk_level: RiskLevel =
                     serde_json::from_str(&risk_json).unwrap_or(RiskLevel::Medium);
-                let source_filter: Option<IntentSource> = source_json
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                let source_filter: Option<IntentSource> =
+                    source_json.and_then(|s| serde_json::from_str(&s).ok());
 
                 Ok(BoundaryRule {
                     action_pattern: row.get(0)?,

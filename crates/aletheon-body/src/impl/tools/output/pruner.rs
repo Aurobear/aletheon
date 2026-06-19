@@ -39,7 +39,8 @@ fn deduplicate_tool_results(messages: &mut [Message]) {
         if let Some(msg) = messages.get_mut(msg_idx) {
             if let Some(block) = msg.content.get_mut(block_idx) {
                 *block = ContentBlock::Text {
-                    text: "[Duplicate tool output \u{2014} same content as a more recent call]".to_string(),
+                    text: "[Duplicate tool output \u{2014} same content as a more recent call]"
+                        .to_string(),
                 };
             }
         }
@@ -83,10 +84,7 @@ fn truncate_tool_call_args(messages: &mut [Message]) {
                             if s.len() > 200 {
                                 let original_len = s.len();
                                 s.truncate(200);
-                                s.push_str(&format!(
-                                    "... [truncated from {} chars]",
-                                    original_len
-                                ));
+                                s.push_str(&format!("... [truncated from {} chars]", original_len));
                             }
                         }
                     }

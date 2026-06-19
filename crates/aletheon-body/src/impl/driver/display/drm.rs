@@ -1,8 +1,8 @@
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use anyhow::{Result, Context};
 use super::DisplayDriver;
 use crate::r#impl::driver::types::Image;
+use anyhow::{Context, Result};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 
 /// Framebuffer screenshot driver for headless systems.
 ///
@@ -22,8 +22,7 @@ impl FramebufferDriver {
         };
 
         // Verify we can open it
-        let _file = File::open(&path)
-            .context("Failed to open framebuffer device")?;
+        let _file = File::open(&path).context("Failed to open framebuffer device")?;
 
         Ok(Self { device_path: path })
     }
@@ -32,14 +31,13 @@ impl FramebufferDriver {
         let size_path = "/sys/class/graphics/fb0/virtual_size";
         let bpp_path = "/sys/class/graphics/fb0/bits_per_pixel";
 
-        let size_str = std::fs::read_to_string(size_path)
-            .context("Failed to read fb0 virtual_size")?;
+        let size_str =
+            std::fs::read_to_string(size_path).context("Failed to read fb0 virtual_size")?;
         let parts: Vec<&str> = size_str.trim().split(',').collect();
         let width: u32 = parts[0].parse().context("Invalid width in virtual_size")?;
         let height: u32 = parts[1].parse().context("Invalid height in virtual_size")?;
 
-        let bpp_str = std::fs::read_to_string(bpp_path)
-            .unwrap_or_else(|_| "32".to_string());
+        let bpp_str = std::fs::read_to_string(bpp_path).unwrap_or_else(|_| "32".to_string());
         let bpp: u32 = bpp_str.trim().parse().unwrap_or(32);
 
         Ok((width, height, bpp))
@@ -50,8 +48,7 @@ impl DisplayDriver for FramebufferDriver {
     fn screenshot(&self) -> Result<Image> {
         let (width, height, bpp) = self.get_resolution()?;
 
-        let mut file = File::open(&self.device_path)
-            .context("Failed to open framebuffer")?;
+        let mut file = File::open(&self.device_path).context("Failed to open framebuffer")?;
 
         let bytes_per_pixel = (bpp / 8) as usize;
         let total_bytes = (width * height) as usize * bytes_per_pixel;
@@ -70,7 +67,11 @@ impl DisplayDriver for FramebufferDriver {
             }
         }
 
-        Ok(Image { width, height, data: rgb })
+        Ok(Image {
+            width,
+            height,
+            data: rgb,
+        })
     }
 
     fn screenshot_region(&self, x: i32, y: i32, w: i32, h: i32) -> Result<Image> {
@@ -105,7 +106,11 @@ impl DisplayDriver for FramebufferDriver {
             }
         }
 
-        Ok(Image { width: w, height: h, data: rgb })
+        Ok(Image {
+            width: w,
+            height: h,
+            data: rgb,
+        })
     }
 }
 

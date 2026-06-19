@@ -10,25 +10,23 @@ use tokio::sync::{mpsc, Mutex};
 
 use aletheon_abi::envelope::*;
 use aletheon_abi::self_field::{Intent, IntentSource};
-use aletheon_comm::CommunicationBus;
 use aletheon_comm::envelope::Payload;
+use aletheon_comm::CommunicationBus;
 
-use aletheon_runtime::r#impl::engine::modules::{
-    BodyRequest, BodyResponse,
-    MemoryRequest, MemoryResponse,
-    PerceptionEventMsg,
-    SelfFieldRequest, SelfFieldResponse,
-};
-use aletheon_runtime::r#impl::engine::modules::memory_module::MemoryModule;
 use aletheon_runtime::r#impl::engine::modules::body_module::BodyModule;
-use aletheon_runtime::r#impl::engine::modules::self_field_module::SelfFieldModule;
+use aletheon_runtime::r#impl::engine::modules::memory_module::MemoryModule;
 use aletheon_runtime::r#impl::engine::modules::perception_module::PerceptionModule;
+use aletheon_runtime::r#impl::engine::modules::self_field_module::SelfFieldModule;
+use aletheon_runtime::r#impl::engine::modules::{
+    BodyRequest, BodyResponse, MemoryRequest, MemoryResponse, PerceptionEventMsg, SelfFieldRequest,
+    SelfFieldResponse,
+};
 
-use aletheon_runtime::CoreMemory;
 use aletheon_body::r#impl::tools::ToolRegistry;
+use aletheon_runtime::CoreMemory;
 use aletheon_self::core::{SelfField, SelfFieldConfig};
 use aletheon_self::r#impl::perception::event::{
-    PerceptionEvent, EventSource, EventCategory, Priority as EventPriority, EventData,
+    EventCategory, EventData, EventSource, PerceptionEvent, Priority as EventPriority,
 };
 
 // ---------------------------------------------------------------------------
@@ -47,11 +45,15 @@ fn make_envelope_request(target_module: ModuleId, payload_json: serde_json::Valu
 fn core_memory_with_blocks() -> CoreMemory {
     let mut core = CoreMemory::new();
     let persona = aletheon_runtime::r#impl::memory::core_memory::MemoryBlock::new(
-        "persona", "I am a test agent", 1024,
+        "persona",
+        "I am a test agent",
+        1024,
     );
     core.set_block(persona);
     let context = aletheon_runtime::r#impl::memory::core_memory::MemoryBlock::new(
-        "context", "Running integration tests", 1024,
+        "context",
+        "Running integration tests",
+        1024,
     );
     core.set_block(context);
     core
@@ -89,10 +91,22 @@ async fn test_memory_module_format_for_context() {
 
     match response {
         MemoryResponse::ContextFormatted { text } => {
-            assert!(text.contains("[persona]"), "context should contain persona section header");
-            assert!(text.contains("test agent"), "context should contain persona value");
-            assert!(text.contains("[context]"), "context should contain the extra context block");
-            assert!(text.contains("Running integration tests"), "context should contain context value");
+            assert!(
+                text.contains("[persona]"),
+                "context should contain persona section header"
+            );
+            assert!(
+                text.contains("test agent"),
+                "context should contain persona value"
+            );
+            assert!(
+                text.contains("[context]"),
+                "context should contain the extra context block"
+            );
+            assert!(
+                text.contains("Running integration tests"),
+                "context should contain context value"
+            );
         }
         other => panic!("expected ContextFormatted, got: {:?}", other),
     }
@@ -128,11 +142,17 @@ async fn test_body_module_definitions() {
 
     match response {
         BodyResponse::Definitions { tools } => {
-            assert!(!tools.is_empty(), "should have at least one tool definition");
+            assert!(
+                !tools.is_empty(),
+                "should have at least one tool definition"
+            );
             // Verify the first tool has a name and description.
             let first = &tools[0];
             assert!(!first.name.is_empty(), "tool name should not be empty");
-            assert!(!first.description.is_empty(), "tool description should not be empty");
+            assert!(
+                !first.description.is_empty(),
+                "tool description should not be empty"
+            );
         }
         other => panic!("expected Definitions, got: {:?}", other),
     }
@@ -283,7 +303,7 @@ async fn test_perception_module_publishes_to_topic() {
     let (event_tx, event_rx) = mpsc::channel::<PerceptionEvent>(16);
 
     let module = PerceptionModule::new(event_rx)
-        .with_buffer_max(1)  // flush immediately so we don't wait
+        .with_buffer_max(1) // flush immediately so we don't wait
         .with_flush_interval(Duration::from_millis(100));
 
     let bus_clone = bus.clone();
@@ -310,7 +330,10 @@ async fn test_perception_module_publishes_to_topic() {
 
     // Wait for the topic message.
     let received = tokio::time::timeout(Duration::from_secs(2), topic_rx.recv()).await;
-    assert!(received.is_ok(), "should receive a topic message within timeout");
+    assert!(
+        received.is_ok(),
+        "should receive a topic message within timeout"
+    );
 
     let envelope = received.unwrap().expect("should get an envelope");
 
@@ -321,9 +344,18 @@ async fn test_perception_module_publishes_to_topic() {
     };
 
     assert!(msg.source.contains("Proc"), "source should contain Proc");
-    assert!(msg.priority.contains("Critical"), "priority should contain Critical");
-    assert!(msg.summary.contains("High CPU"), "summary should mention High CPU");
-    assert!(msg.summary.contains("test-proc"), "summary should mention test-proc");
+    assert!(
+        msg.priority.contains("Critical"),
+        "priority should contain Critical"
+    );
+    assert!(
+        msg.summary.contains("High CPU"),
+        "summary should mention High CPU"
+    );
+    assert!(
+        msg.summary.contains("test-proc"),
+        "summary should mention test-proc"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -374,5 +406,8 @@ async fn test_perception_module_buffered_events_flushed() {
             received_count += 1;
         }
     }
-    assert_eq!(received_count, 2, "should receive both events via buffer flush");
+    assert_eq!(
+        received_count, 2,
+        "should receive both events via buffer flush"
+    );
 }

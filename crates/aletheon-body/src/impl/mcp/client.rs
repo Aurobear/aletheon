@@ -151,10 +151,8 @@ impl McpConnectionManager {
                     .await
                     {
                         Ok(client) => {
-                            self.clients.insert(
-                                server_config.name.clone(),
-                                Arc::new(Mutex::new(client)),
-                            );
+                            self.clients
+                                .insert(server_config.name.clone(), Arc::new(Mutex::new(client)));
                         }
                         Err(e) => {
                             tracing::warn!(

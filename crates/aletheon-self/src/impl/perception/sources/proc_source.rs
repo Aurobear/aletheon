@@ -28,7 +28,12 @@ impl ProcSource {
         self.event_id_counter
     }
 
-    fn make_event(&mut self, data: EventData, priority: Priority, category: EventCategory) -> PerceptionEvent {
+    fn make_event(
+        &mut self,
+        data: EventData,
+        priority: Priority,
+        category: EventCategory,
+    ) -> PerceptionEvent {
         PerceptionEvent {
             id: self.next_id(),
             timestamp: Utc::now(),
@@ -69,8 +74,16 @@ impl PerceptionSource for ProcSource {
                         // Only emit if load is significant (1-min > 2.0)
                         if l1 > 2.0 {
                             events.push(self.make_event(
-                                EventData::LoadAvg { load1: l1, load5: l5, load15: l15 },
-                                if l1 > 8.0 { Priority::Critical } else { Priority::Normal },
+                                EventData::LoadAvg {
+                                    load1: l1,
+                                    load5: l5,
+                                    load15: l15,
+                                },
+                                if l1 > 8.0 {
+                                    Priority::Critical
+                                } else {
+                                    Priority::Normal
+                                },
                                 EventCategory::System,
                             ));
                         }
@@ -86,11 +99,17 @@ impl PerceptionSource for ProcSource {
             let mut available_kb = 0u64;
             for line in meminfo.lines() {
                 if line.starts_with("MemTotal:") {
-                    total_kb = line.split_whitespace().nth(1)
-                        .and_then(|s| s.parse().ok()).unwrap_or(0);
+                    total_kb = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                 } else if line.starts_with("MemAvailable:") {
-                    available_kb = line.split_whitespace().nth(1)
-                        .and_then(|s| s.parse().ok()).unwrap_or(0);
+                    available_kb = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                 }
             }
             if total_kb > 0 {
@@ -101,8 +120,15 @@ impl PerceptionSource for ProcSource {
                 let new_mem = (total_mb, available_mb);
                 if self.last_mem != Some(new_mem) && usage_pct > 0.85 {
                     events.push(self.make_event(
-                        EventData::MemoryPressure { available_mb, total_mb },
-                        if usage_pct > 0.95 { Priority::Critical } else { Priority::High },
+                        EventData::MemoryPressure {
+                            available_mb,
+                            total_mb,
+                        },
+                        if usage_pct > 0.95 {
+                            Priority::Critical
+                        } else {
+                            Priority::High
+                        },
                         EventCategory::System,
                     ));
                 }

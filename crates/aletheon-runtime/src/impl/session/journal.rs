@@ -170,8 +170,7 @@ impl EventJournal {
             .unwrap_or(None);
 
         // Get events after last checkpoint
-        let mut stmt =
-            db.prepare("SELECT event_json FROM events WHERE id > ?1 ORDER BY id ASC")?;
+        let mut stmt = db.prepare("SELECT event_json FROM events WHERE id > ?1 ORDER BY id ASC")?;
 
         let events: Vec<SessionEvent> = stmt
             .query_map(rusqlite::params![last_checkpoint.unwrap_or(0)], |row| {

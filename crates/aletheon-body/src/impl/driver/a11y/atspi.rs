@@ -103,27 +103,34 @@ fn build_element_tree<'a>(
     accessible: &'a AccessibleProxy<'a>,
 ) -> Pin<Box<dyn Future<Output = Result<Element>> + Send + 'a>> {
     Box::pin(async move {
-    let role = accessible.get_role_name().await.unwrap_or_default();
-    let name = accessible.name().await.unwrap_or_default();
+        let role = accessible.get_role_name().await.unwrap_or_default();
+        let name = accessible.name().await.unwrap_or_default();
 
-    // Get text content via the Text interface (if available).
-    let text = match accessible.proxies().await {
-        Ok(proxies) => match proxies.text().await {
-            Ok(tp) => tp.get_text(0, 4096).await.unwrap_or_default(),
+        // Get text content via the Text interface (if available).
+        let text = match accessible.proxies().await {
+            Ok(proxies) => match proxies.text().await {
+                Ok(tp) => tp.get_text(0, 4096).await.unwrap_or_default(),
+                Err(_) => String::new(),
+            },
             Err(_) => String::new(),
-        },
-        Err(_) => String::new(),
-    };
+        };
 
-    // Get bounding box via the Component interface (if available).
-    let bounds = match accessible.proxies().await {
-        Ok(proxies) => match proxies.component().await {
-            Ok(cp) => match cp.get_extents(CoordType::Screen).await {
-                Ok((x, y, w, h)) => Bounds {
-                    x,
-                    y,
-                    width: w,
-                    height: h,
+        // Get bounding box via the Component interface (if available).
+        let bounds = match accessible.proxies().await {
+            Ok(proxies) => match proxies.component().await {
+                Ok(cp) => match cp.get_extents(CoordType::Screen).await {
+                    Ok((x, y, w, h)) => Bounds {
+                        x,
+                        y,
+                        width: w,
+                        height: h,
+                    },
+                    Err(_) => Bounds {
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    },
                 },
                 Err(_) => Bounds {
                     x: 0,
@@ -138,68 +145,61 @@ fn build_element_tree<'a>(
                 width: 0,
                 height: 0,
             },
-        },
-        Err(_) => Bounds {
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
-        },
-    };
+        };
 
-    // Get states.
-    let state = match accessible.get_state().await {
-        Ok(state_set) => format_state_set(state_set),
-        Err(_) => Vec::new(),
-    };
-
-    // Get actions via the Action interface (if available).
-    let actions = match accessible.proxies().await {
-        Ok(proxies) => match proxies.action().await {
-            Ok(ap) => {
-                let n = ap.n_actions().await.unwrap_or(0);
-                let mut names = Vec::new();
-                for i in 0..n {
-                    if let Ok(name) = ap.get_name(i).await {
-                        names.push(name);
-                    }
-                }
-                names
-            }
+        // Get states.
+        let state = match accessible.get_state().await {
+            Ok(state_set) => format_state_set(state_set),
             Err(_) => Vec::new(),
-        },
-        Err(_) => Vec::new(),
-    };
+        };
 
-    // Recurse into children.
-    let child_refs = accessible.get_children().await.unwrap_or_default();
-    let mut children = Vec::new();
-    for child_ref in &child_refs {
-        if child_ref.is_null() {
-            continue;
-        }
-        match child_ref.as_accessible_proxy(conn).await {
-            Ok(child_proxy) => match build_element_tree(conn, &child_proxy).await {
-                Ok(elem) => children.push(elem),
-                Err(e) => {
-                    tracing::debug!("Skipping child: {e}");
+        // Get actions via the Action interface (if available).
+        let actions = match accessible.proxies().await {
+            Ok(proxies) => match proxies.action().await {
+                Ok(ap) => {
+                    let n = ap.n_actions().await.unwrap_or(0);
+                    let mut names = Vec::new();
+                    for i in 0..n {
+                        if let Ok(name) = ap.get_name(i).await {
+                            names.push(name);
+                        }
+                    }
+                    names
                 }
+                Err(_) => Vec::new(),
             },
-            Err(e) => {
-                tracing::debug!("Failed to build child proxy: {e}");
+            Err(_) => Vec::new(),
+        };
+
+        // Recurse into children.
+        let child_refs = accessible.get_children().await.unwrap_or_default();
+        let mut children = Vec::new();
+        for child_ref in &child_refs {
+            if child_ref.is_null() {
+                continue;
+            }
+            match child_ref.as_accessible_proxy(conn).await {
+                Ok(child_proxy) => match build_element_tree(conn, &child_proxy).await {
+                    Ok(elem) => children.push(elem),
+                    Err(e) => {
+                        tracing::debug!("Skipping child: {e}");
+                    }
+                },
+                Err(e) => {
+                    tracing::debug!("Failed to build child proxy: {e}");
+                }
             }
         }
-    }
 
-    Ok(Element {
-        role,
-        name,
-        text,
-        bounds,
-        state,
-        actions,
-        children,
-    })
+        Ok(Element {
+            role,
+            name,
+            text,
+            bounds,
+            state,
+            actions,
+            children,
+        })
     }) // end Box::pin
 }
 

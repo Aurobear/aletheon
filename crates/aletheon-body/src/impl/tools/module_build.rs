@@ -68,7 +68,11 @@ impl Tool for ModuleBuildTool {
         let kernel_version = match input["kernel_version"].as_str() {
             Some(v) => v.to_string(),
             None => {
-                match tokio::process::Command::new("uname").arg("-r").output().await {
+                match tokio::process::Command::new("uname")
+                    .arg("-r")
+                    .output()
+                    .await
+                {
                     Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
                     Err(e) => {
                         return ToolResult {
@@ -113,15 +117,14 @@ impl Tool for ModuleBuildTool {
             };
         }
 
-        info!("Building kernel module in {} for kernel {}", source_dir, kernel_version);
+        info!(
+            "Building kernel module in {} for kernel {}",
+            source_dir, kernel_version
+        );
 
         // Run: make -C /lib/modules/{kver}/build M={source_dir} modules
         let output = tokio::process::Command::new("make")
-            .args([
-                "-C", &headers_path,
-                &format!("M={}", source_dir),
-                "modules",
-            ])
+            .args(["-C", &headers_path, &format!("M={}", source_dir), "modules"])
             .output()
             .await;
 
@@ -218,7 +221,9 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
         };
-        let result = tool.execute(json!({"source_dir": "/nonexistent"}), &ctx).await;
+        let result = tool
+            .execute(json!({"source_dir": "/nonexistent"}), &ctx)
+            .await;
         assert!(result.is_error);
     }
 }

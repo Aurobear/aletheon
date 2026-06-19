@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
@@ -223,14 +223,8 @@ impl SandboxBackend for ContainerBackend {
         if self.network_mode == NetworkMode::None {
             limitations.push("No network access (--network none)".into());
         }
-        limitations.push(format!(
-            "Requires {} runtime",
-            self.runtime.binary()
-        ));
-        limitations.push(format!(
-            "Default image: {}",
-            self.default_image
-        ));
+        limitations.push(format!("Requires {} runtime", self.runtime.binary()));
+        limitations.push(format!("Default image: {}", self.default_image));
 
         SandboxCapabilities {
             filesystem_isolation: true,
@@ -432,9 +426,7 @@ mod tests {
     fn test_build_run_args_with_env_vars() {
         let backend = test_backend();
         let mut config = default_config();
-        config
-            .env_vars
-            .insert("FOO".to_string(), "bar".to_string());
+        config.env_vars.insert("FOO".to_string(), "bar".to_string());
         config
             .env_vars
             .insert("BAZ".to_string(), "qux=1".to_string());

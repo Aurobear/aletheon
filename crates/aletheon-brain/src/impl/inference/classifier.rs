@@ -17,12 +17,24 @@ impl IntentClassifier {
     pub fn new() -> Self {
         Self {
             simple_keywords: vec![
-                "read".into(), "show".into(), "list".into(), "check".into(),
-                "status".into(), "echo".into(), "cat".into(), "ls".into(),
+                "read".into(),
+                "show".into(),
+                "list".into(),
+                "check".into(),
+                "status".into(),
+                "echo".into(),
+                "cat".into(),
+                "ls".into(),
             ],
             complex_keywords: vec![
-                "analyze".into(), "debug".into(), "refactor".into(), "optimize".into(),
-                "design".into(), "architect".into(), "migrate".into(), "deploy".into(),
+                "analyze".into(),
+                "debug".into(),
+                "refactor".into(),
+                "optimize".into(),
+                "design".into(),
+                "architect".into(),
+                "migrate".into(),
+                "deploy".into(),
             ],
             token_threshold: 500,
         }
@@ -34,12 +46,16 @@ impl IntentClassifier {
         let word_count = message.split_whitespace().count();
 
         // Check for simple patterns
-        let simple_score = self.simple_keywords.iter()
+        let simple_score = self
+            .simple_keywords
+            .iter()
             .filter(|k| lower.contains(k.as_str()))
             .count();
 
         // Check for complex patterns
-        let complex_score = self.complex_keywords.iter()
+        let complex_score = self
+            .complex_keywords
+            .iter()
             .filter(|k| lower.contains(k.as_str()))
             .count();
 
@@ -61,21 +77,37 @@ mod tests {
     #[test]
     fn test_simple_classification() {
         let classifier = IntentClassifier::new();
-        assert_eq!(classifier.classify("read file /etc/hostname"), Complexity::Simple);
-        assert_eq!(classifier.classify("show system status"), Complexity::Simple);
+        assert_eq!(
+            classifier.classify("read file /etc/hostname"),
+            Complexity::Simple
+        );
+        assert_eq!(
+            classifier.classify("show system status"),
+            Complexity::Simple
+        );
         assert_eq!(classifier.classify("list processes"), Complexity::Simple);
     }
 
     #[test]
     fn test_complex_classification() {
         let classifier = IntentClassifier::new();
-        assert_eq!(classifier.classify("analyze the performance bottleneck and optimize the database queries"), Complexity::Complex);
-        assert_eq!(classifier.classify("debug the failing test and refactor the authentication module"), Complexity::Complex);
+        assert_eq!(
+            classifier
+                .classify("analyze the performance bottleneck and optimize the database queries"),
+            Complexity::Complex
+        );
+        assert_eq!(
+            classifier.classify("debug the failing test and refactor the authentication module"),
+            Complexity::Complex
+        );
     }
 
     #[test]
     fn test_medium_classification() {
         let classifier = IntentClassifier::new();
-        assert_eq!(classifier.classify("fetch the user data from the API"), Complexity::Medium);
+        assert_eq!(
+            classifier.classify("fetch the user data from the API"),
+            Complexity::Medium
+        );
     }
 }

@@ -3,9 +3,9 @@
 //! Tracks previous genome versions in memory and restores from the
 //! lineage when rollback is requested.
 
+use aletheon_abi::Genome;
 use anyhow::{bail, Result};
 use std::sync::Mutex;
-use aletheon_abi::Genome;
 
 /// A snapshot of a genome version for rollback.
 #[derive(Debug, Clone)]

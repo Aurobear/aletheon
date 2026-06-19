@@ -1,7 +1,7 @@
 // crates/aletheon-abi/src/transport.rs
 
-use async_trait::async_trait;
 use crate::envelope::{Envelope, Target};
+use async_trait::async_trait;
 
 /// Transport backend type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use std::sync::Mutex;
 use tracing::debug;
 
-use aletheon_abi::ipc_types::{IpcBackend, IpcProbeError, AgentMessage};
+use aletheon_abi::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
 
 /// Real io_uring IPC backend.
 ///
@@ -48,9 +48,7 @@ impl IoUringBackend {
             .ok()
             .and_then(|v| {
                 // Extract "X.Y.Z" from "Linux version X.Y.Z-..."
-                v.split_whitespace()
-                    .nth(2)
-                    .map(|s| s.to_string())
+                v.split_whitespace().nth(2).map(|s| s.to_string())
             })
             .unwrap_or_else(|| "unknown".to_string())
     }
@@ -79,9 +77,8 @@ impl IoUringBackend {
     fn init_ring(&mut self) -> Result<(), IpcProbeError> {
         use io_uring::IoUring;
 
-        let ring = IoUring::new(256).map_err(|e| {
-            IpcProbeError::Other(format!("io_uring setup failed: {}", e))
-        })?;
+        let ring = IoUring::new(256)
+            .map_err(|e| IpcProbeError::Other(format!("io_uring setup failed: {}", e)))?;
 
         // Create eventfd for async notification
         let eventfd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK) };
@@ -90,7 +87,10 @@ impl IoUringBackend {
         }
 
         self.ring = Some(Mutex::new(IoUringRing { ring, eventfd }));
-        info!("io_uring backend initialized (kernel {})", self.kernel_version);
+        info!(
+            "io_uring backend initialized (kernel {})",
+            self.kernel_version
+        );
         Ok(())
     }
 
@@ -127,9 +127,9 @@ impl IpcBackend for IoUringBackend {
         if let Some(ref ring_mutex) = self.ring {
             use io_uring::{opcode, types};
 
-            let mut ring_data = ring_mutex.lock().map_err(|e| {
-                IpcProbeError::Other(format!("Ring lock poisoned: {}", e))
-            })?;
+            let mut ring_data = ring_mutex
+                .lock()
+                .map_err(|e| IpcProbeError::Other(format!("Ring lock poisoned: {}", e)))?;
 
             let buf = data.as_ptr();
             let len = data.len();
@@ -141,14 +141,15 @@ impl IpcBackend for IoUringBackend {
                 let sqe = opcode::Write::new(fd, buf, len as u32)
                     .build()
                     .user_data(0x42);
-                ring_guard.push(&sqe).map_err(|e| {
-                    IpcProbeError::Other(format!("SQE push failed: {}", e))
-                })?;
+                ring_guard
+                    .push(&sqe)
+                    .map_err(|e| IpcProbeError::Other(format!("SQE push failed: {}", e)))?;
             }
 
-            ring_data.ring.submit_and_wait(1).map_err(|e| {
-                IpcProbeError::Other(format!("io_uring submit failed: {}", e))
-            })?;
+            ring_data
+                .ring
+                .submit_and_wait(1)
+                .map_err(|e| IpcProbeError::Other(format!("io_uring submit failed: {}", e)))?;
 
             debug!("io_uring send: {} bytes", data.len());
             return Ok(());
@@ -165,9 +166,9 @@ impl IpcBackend for IoUringBackend {
         if let Some(ref ring_mutex) = self.ring {
             use io_uring::{opcode, types};
 
-            let mut ring_data = ring_mutex.lock().map_err(|e| {
-                IpcProbeError::Other(format!("Ring lock poisoned: {}", e))
-            })?;
+            let mut ring_data = ring_mutex
+                .lock()
+                .map_err(|e| IpcProbeError::Other(format!("Ring lock poisoned: {}", e)))?;
 
             let mut buf = vec![0u8; 65536];
             let buf_ptr = buf.as_mut_ptr();
@@ -179,14 +180,15 @@ impl IpcBackend for IoUringBackend {
                 let sqe = opcode::Read::new(fd, buf_ptr, buf.len() as u32)
                     .build()
                     .user_data(0x43);
-                ring_guard.push(&sqe).map_err(|e| {
-                    IpcProbeError::Other(format!("SQE push failed: {}", e))
-                })?;
+                ring_guard
+                    .push(&sqe)
+                    .map_err(|e| IpcProbeError::Other(format!("SQE push failed: {}", e)))?;
             }
 
-            ring_data.ring.submit_and_wait(1).map_err(|e| {
-                IpcProbeError::Other(format!("io_uring submit failed: {}", e))
-            })?;
+            ring_data
+                .ring
+                .submit_and_wait(1)
+                .map_err(|e| IpcProbeError::Other(format!("io_uring submit failed: {}", e)))?;
 
             // Process completion
             let mut cq = ring_data.ring.completion();

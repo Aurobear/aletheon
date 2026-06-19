@@ -4,13 +4,13 @@
 //! 1. ABI-level: migrate to a RuntimeCandidate (used by morphogenesis pipeline)
 //! 2. Genome-level: apply care weight and boundary rule changes to a Genome
 
+use crate::core::types::{ChangeType, Genome, GenomeChange};
+use crate::r#impl::genome::loader::GenomeLoader;
+use crate::r#impl::meta_runtime::lineage::LineageTracker;
+use aletheon_abi::{MigrationResult, RuntimeCandidate};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use aletheon_abi::{RuntimeCandidate, MigrationResult};
-use crate::core::types::{Genome, GenomeChange, ChangeType};
-use crate::r#impl::genome::loader::GenomeLoader;
-use crate::r#impl::meta_runtime::lineage::LineageTracker;
 
 /// Manages migration from one genome/runtime version to another.
 ///
@@ -61,7 +61,8 @@ impl MigrationManager {
 
         // Compute new version: bump patch for each change
         let patch = changes.len() as u32;
-        let parts: Vec<u32> = from_version.split('.')
+        let parts: Vec<u32> = from_version
+            .split('.')
             .filter_map(|s| s.parse::<u32>().ok())
             .collect();
         let (major, minor, old_patch) = if parts.len() >= 3 {
@@ -125,8 +126,13 @@ impl MigrationManager {
 
         let message = format!(
             "Migration successful: {} care weight changes, {} boundary rule changes. {}",
-            care_changes_applied, boundary_changes_applied,
-            if saved { "Genome saved to disk." } else { "No genome path configured." }
+            care_changes_applied,
+            boundary_changes_applied,
+            if saved {
+                "Genome saved to disk."
+            } else {
+                "No genome path configured."
+            }
         );
 
         Ok(MigrationResult {

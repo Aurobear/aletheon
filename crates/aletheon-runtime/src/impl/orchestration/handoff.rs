@@ -1,10 +1,10 @@
 use anyhow::Result;
 use tracing::{info, warn};
 
-use aletheon_abi::message::Message;
 use super::agent::{Agent, AgentResponse, AgentResponseStatus};
-use super::registry::AgentRegistry;
 use super::budget::IterationBudget;
+use super::registry::AgentRegistry;
+use aletheon_abi::message::Message;
 
 /// Handoff configuration.
 pub struct HandoffConfig {
@@ -52,12 +52,9 @@ impl HandoffStrategy {
     }
 
     /// Execute a task with handoff support.
-    pub async fn execute(
-        &self,
-        initial_agent_id: &str,
-        message: &str,
-    ) -> Result<AgentResponse> {
-        let _budget = IterationBudget::new(self.config.max_iterations_per_agent * self.config.max_handoffs);
+    pub async fn execute(&self, initial_agent_id: &str, message: &str) -> Result<AgentResponse> {
+        let _budget =
+            IterationBudget::new(self.config.max_iterations_per_agent * self.config.max_handoffs);
         let mut current_agent_id = initial_agent_id.to_string();
         let mut current_message = message.to_string();
         let mut handoff_count = 0;
@@ -67,14 +64,20 @@ impl HandoffStrategy {
             if handoff_count >= self.config.max_handoffs {
                 warn!(count = handoff_count, "Max handoffs reached");
                 return Ok(AgentResponse {
-                    content: format!("Max handoffs ({}) reached. Last agent: {}", self.config.max_handoffs, current_agent_id),
+                    content: format!(
+                        "Max handoffs ({}) reached. Last agent: {}",
+                        self.config.max_handoffs, current_agent_id
+                    ),
                     tool_calls_made: 0,
                     iterations_used: total_iterations,
                     status: AgentResponseStatus::MaxIterationsReached,
                 });
             }
 
-            let agent = self.registry.get(&current_agent_id).await
+            let agent = self
+                .registry
+                .get(&current_agent_id)
+                .await
                 .ok_or_else(|| anyhow::anyhow!("Agent '{}' not found", current_agent_id))?;
 
             info!(agent_id = %current_agent_id, handoff = handoff_count, "Executing with agent");
@@ -119,7 +122,12 @@ fn parse_handoff_request(content: &str) -> Option<HandoffRequest> {
     if let Some(start) = content.find("[HANDOFF:") {
         if let Some(end) = content[start..].find(']') {
             let target = content[start + 9..start + end].trim().to_string();
-            let reason = content[start + end + 1..].lines().next().unwrap_or("").trim().to_string();
+            let reason = content[start + end + 1..]
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             return Some(HandoffRequest {
                 target_agent: target,
                 reason,

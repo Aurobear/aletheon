@@ -192,13 +192,18 @@ mod tests {
         let response = rt.block_on(McpEmbedded::handle_request(&request, &registry));
 
         assert_eq!(response["result"]["protocolVersion"], "2024-11-05");
-        assert_eq!(response["result"]["serverInfo"]["name"], "aletheon-embedded-mcp");
+        assert_eq!(
+            response["result"]["serverInfo"]["name"],
+            "aletheon-embedded-mcp"
+        );
     }
 
     #[test]
     fn handle_tools_list_returns_registry_tools() {
         let mut reg = ToolRegistry::new();
-        reg.register(Arc::new(aletheon_body::r#impl::tools::bash_exec::BashExecTool));
+        reg.register(Arc::new(
+            aletheon_body::r#impl::tools::bash_exec::BashExecTool,
+        ));
         let registry = Arc::new(reg);
 
         let request = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}});

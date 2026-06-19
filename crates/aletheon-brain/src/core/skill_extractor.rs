@@ -83,8 +83,12 @@ impl SkillExtractor {
 
     /// Save a skill as a markdown file in the given skills directory.
     pub fn save_skill(&self, skill: &ExtractedSkill, skills_dir: &Path) -> Result<PathBuf> {
-        std::fs::create_dir_all(skills_dir)
-            .with_context(|| format!("Failed to create skills directory: {}", skills_dir.display()))?;
+        std::fs::create_dir_all(skills_dir).with_context(|| {
+            format!(
+                "Failed to create skills directory: {}",
+                skills_dir.display()
+            )
+        })?;
 
         let slug = slugify(&skill.name);
         let filename = format!("{}.md", slug);
@@ -106,9 +110,7 @@ impl SkillExtractor {
         for r in reflections {
             for item in &r.what_worked {
                 let key = normalize_text(item);
-                let entry = worked_counts
-                    .entry(key)
-                    .or_insert_with(|| (0, Vec::new()));
+                let entry = worked_counts.entry(key).or_insert_with(|| (0, Vec::new()));
                 entry.0 += 1;
                 if !entry.1.contains(&r.id) {
                     entry.1.push(r.id.clone());
@@ -494,7 +496,10 @@ mod tests {
 
     #[test]
     fn normalize_text_collapses_whitespace() {
-        assert_eq!(normalize_text("  Use   Batch  Processing  "), "use batch processing");
+        assert_eq!(
+            normalize_text("  Use   Batch  Processing  "),
+            "use batch processing"
+        );
     }
 
     #[test]

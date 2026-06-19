@@ -3,11 +3,11 @@
 //! Takes approved MutationIntents from SelfField and runs them through
 //! candidate generation -> sandbox testing -> evaluation -> migration.
 
-use anyhow::Result;
+use crate::r#impl::morphogenesis::pipeline::MorphogenesisPipeline;
 use aletheon_abi::evolution::EvolutionResultPayload;
 use aletheon_abi::self_field::MutationIntent;
 use aletheon_abi::MetaRuntimeOps;
-use crate::r#impl::morphogenesis::pipeline::MorphogenesisPipeline;
+use anyhow::Result;
 
 /// Executes mutation intents through the Morphogenesis Pipeline.
 pub struct MutationExecutor<M: MetaRuntimeOps> {

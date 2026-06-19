@@ -76,7 +76,10 @@ mod tests {
     #[test]
     fn test_parse_clear() {
         let result = parse_command("/clear").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Clear)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Clear)
+        ));
     }
 
     #[test]
@@ -117,73 +120,109 @@ mod tests {
     #[test]
     fn test_parse_reflect() {
         let result = parse_command("/reflect").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Reflect)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Reflect)
+        ));
     }
 
     #[test]
     fn test_parse_reflect_alias() {
         let result = parse_command("/r").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Reflect)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Reflect)
+        ));
     }
 
     #[test]
     fn test_parse_reflect_now() {
         let result = parse_command("/reflect_now").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::ReflectNow)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::ReflectNow)
+        ));
     }
 
     #[test]
     fn test_parse_reflect_now_alias() {
         let result = parse_command("/rn").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::ReflectNow)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::ReflectNow)
+        ));
     }
 
     #[test]
     fn test_parse_evolution() {
         let result = parse_command("/evolution").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Evolution)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Evolution)
+        ));
     }
 
     #[test]
     fn test_parse_evolution_alias() {
         let result = parse_command("/evo").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Evolution)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Evolution)
+        ));
     }
 
     #[test]
     fn test_parse_genome() {
         let result = parse_command("/genome").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Genome)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Genome)
+        ));
     }
 
     #[test]
     fn test_parse_genome_alias() {
         let result = parse_command("/gene").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Genome)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Genome)
+        ));
     }
 
     #[test]
     fn test_parse_status() {
         let result = parse_command("/status").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Status)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Status)
+        ));
     }
 
     #[test]
     fn test_parse_status_alias() {
         let result = parse_command("/st").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Status)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Status)
+        ));
     }
 
     #[test]
     fn test_parse_sessions() {
         let result = parse_command("/sessions").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Sessions)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Sessions)
+        ));
     }
 
     #[test]
     fn test_parse_sessions_alias() {
         let result = parse_command("/sess").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Sessions)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Sessions)
+        ));
     }
 
     #[test]
@@ -200,12 +239,18 @@ mod tests {
     #[test]
     fn test_parse_compact() {
         let result = parse_command("/compact").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Compact)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Compact)
+        ));
     }
 
     #[test]
     fn test_parse_compact_alias() {
         let result = parse_command("/cmp").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Compact)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Compact)
+        ));
     }
 }

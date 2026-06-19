@@ -2,8 +2,8 @@
 //!
 //! Sandbox trait and types.
 
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -79,5 +79,10 @@ pub trait SandboxBackend: Send + Sync {
     fn capabilities(&self) -> SandboxCapabilities;
 
     /// Execute a shell command under this sandbox with the given config and timeout.
-    async fn execute(&self, cmd: &str, config: &SandboxConfig, timeout: Duration) -> Result<SandboxResult>;
+    async fn execute(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+    ) -> Result<SandboxResult>;
 }

@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
-use super::node::{Node, NodeKind, NodeStatus, OnExhausted};
-use super::edge::Edge;
-use super::state::GraphState;
 use super::super::registry::AgentRegistry;
+use super::edge::Edge;
+use super::node::{Node, NodeKind, NodeStatus, OnExhausted};
+use super::state::GraphState;
 
 /// Join strategy for parallel fan-out.
 #[derive(Debug, Clone)]
@@ -50,7 +50,8 @@ impl DiGraph {
     /// Get nodes that have no incoming edges (except entry).
     pub fn get_roots(&self) -> Vec<&str> {
         let has_incoming: HashSet<&str> = self.edges.iter().map(|e| e.to.as_str()).collect();
-        self.nodes.keys()
+        self.nodes
+            .keys()
             .filter(|id| !has_incoming.contains(id.as_str()) || **id == self.entry_node)
             .map(|s| s.as_str())
             .collect()
@@ -76,7 +77,8 @@ impl DiGraph {
             *in_degree.entry(edge.to.as_str()).or_insert(0) += 1;
         }
 
-        let mut queue: VecDeque<&str> = in_degree.iter()
+        let mut queue: VecDeque<&str> = in_degree
+            .iter()
             .filter(|(_, &deg)| deg == 0)
             .map(|(&id, _)| id)
             .collect();
@@ -131,7 +133,10 @@ impl DiGraph {
             });
 
             if !can_execute && !incoming.is_empty() {
-                debug!(node = node_id.as_str(), "Skipping node (dependencies not met)");
+                debug!(
+                    node = node_id.as_str(),
+                    "Skipping node (dependencies not met)"
+                );
                 node_statuses.insert(node_id.clone(), NodeStatus::Skipped);
                 state.record(node_id, "skipped");
                 continue;
@@ -158,7 +163,8 @@ impl DiGraph {
                     } else {
                         match node.retry_policy.on_exhausted {
                             OnExhausted::FailGraph => {
-                                node_statuses.insert(node_id.clone(), NodeStatus::Failed(e.clone()));
+                                node_statuses
+                                    .insert(node_id.clone(), NodeStatus::Failed(e.clone()));
                                 state.record(node_id, "failed");
                                 return Err(format!("Node '{}' failed: {}", node_id, e));
                             }
@@ -168,9 +174,13 @@ impl DiGraph {
                                 warn!(node = node_id.as_str(), error = %e, "Node failed, skipping");
                             }
                             OnExhausted::Escalate => {
-                                node_statuses.insert(node_id.clone(), NodeStatus::Failed(e.clone()));
+                                node_statuses
+                                    .insert(node_id.clone(), NodeStatus::Failed(e.clone()));
                                 state.record(node_id, "escalated");
-                                return Err(format!("Node '{}' needs human intervention: {}", node_id, e));
+                                return Err(format!(
+                                    "Node '{}' needs human intervention: {}",
+                                    node_id, e
+                                ));
                             }
                         }
                     }
@@ -189,7 +199,9 @@ impl DiGraph {
     ) -> Result<(), String> {
         match &node.kind {
             NodeKind::Agent { agent_id } => {
-                let agent = registry.get(agent_id).await
+                let agent = registry
+                    .get(agent_id)
+                    .await
                     .ok_or_else(|| format!("Agent '{}' not found", agent_id))?;
 
                 let agent = agent.write().await;
@@ -198,15 +210,19 @@ impl DiGraph {
                     node.id, state.data
                 ));
 
-                let response = agent.on_message(msg).await
-                    .map_err(|e| e.to_string())?;
+                let response = agent.on_message(msg).await.map_err(|e| e.to_string())?;
 
-                state.set(&format!("{}_result", node.id), serde_json::json!(response.content));
+                state.set(
+                    &format!("{}_result", node.id),
+                    serde_json::json!(response.content),
+                );
                 Ok(())
             }
             NodeKind::Branch { condition } => {
                 // Evaluate condition and set result in state
-                let result = state.data.get(condition)
+                let result = state
+                    .data
+                    .get(condition)
                     .map(|v| v.clone())
                     .unwrap_or(serde_json::Value::Null);
                 state.set(&format!("{}_branch", node.id), result);
@@ -214,13 +230,20 @@ impl DiGraph {
             }
             NodeKind::HumanApproval { prompt } => {
                 // In automated mode, auto-approve
-                warn!(node = node.id.as_str(), prompt = prompt.as_str(), "Auto-approving (human approval not implemented)");
+                warn!(
+                    node = node.id.as_str(),
+                    prompt = prompt.as_str(),
+                    "Auto-approving (human approval not implemented)"
+                );
                 state.set(&format!("{}_approved", node.id), serde_json::json!(true));
                 Ok(())
             }
             NodeKind::SubGraph { graph_id } => {
                 // Sub-graph execution not implemented yet
-                warn!(graph_id = graph_id.as_str(), "Sub-graph execution not implemented");
+                warn!(
+                    graph_id = graph_id.as_str(),
+                    "Sub-graph execution not implemented"
+                );
                 Ok(())
             }
         }
@@ -242,8 +265,9 @@ impl DiGraph {
             );
 
             tokio::time::sleep(std::time::Duration::from_millis(
-                node.retry_policy.backoff_ms * (attempt as u64 + 1)
-            )).await;
+                node.retry_policy.backoff_ms * (attempt as u64 + 1),
+            ))
+            .await;
 
             if self.execute_node(node, registry, state).await.is_ok() {
                 return true;
@@ -255,9 +279,9 @@ impl DiGraph {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::node::{Node, NodeKind, RetryPolicy};
     use super::super::edge::ConditionExpr;
+    use super::super::node::{Node, NodeKind, RetryPolicy};
+    use super::*;
 
     fn make_node(id: &str, kind: NodeKind) -> Node {
         Node {
@@ -272,13 +296,40 @@ mod tests {
     #[test]
     fn test_topological_sort() {
         let mut graph = DiGraph::new("test", "a");
-        graph.add_node(make_node("a", NodeKind::Branch { condition: "x".into() }));
-        graph.add_node(make_node("b", NodeKind::Branch { condition: "y".into() }));
-        graph.add_node(make_node("c", NodeKind::Branch { condition: "z".into() }));
+        graph.add_node(make_node(
+            "a",
+            NodeKind::Branch {
+                condition: "x".into(),
+            },
+        ));
+        graph.add_node(make_node(
+            "b",
+            NodeKind::Branch {
+                condition: "y".into(),
+            },
+        ));
+        graph.add_node(make_node(
+            "c",
+            NodeKind::Branch {
+                condition: "z".into(),
+            },
+        ));
 
-        graph.add_edge(Edge { from: "a".into(), to: "b".into(), condition: ConditionExpr::Always });
-        graph.add_edge(Edge { from: "a".into(), to: "c".into(), condition: ConditionExpr::Always });
-        graph.add_edge(Edge { from: "b".into(), to: "c".into(), condition: ConditionExpr::Always });
+        graph.add_edge(Edge {
+            from: "a".into(),
+            to: "b".into(),
+            condition: ConditionExpr::Always,
+        });
+        graph.add_edge(Edge {
+            from: "a".into(),
+            to: "c".into(),
+            condition: ConditionExpr::Always,
+        });
+        graph.add_edge(Edge {
+            from: "b".into(),
+            to: "c".into(),
+            condition: ConditionExpr::Always,
+        });
 
         let order = graph.topological_sort().unwrap();
         assert_eq!(order, vec!["a", "b", "c"]);
@@ -287,11 +338,29 @@ mod tests {
     #[test]
     fn test_cycle_detection() {
         let mut graph = DiGraph::new("test", "a");
-        graph.add_node(make_node("a", NodeKind::Branch { condition: "x".into() }));
-        graph.add_node(make_node("b", NodeKind::Branch { condition: "y".into() }));
+        graph.add_node(make_node(
+            "a",
+            NodeKind::Branch {
+                condition: "x".into(),
+            },
+        ));
+        graph.add_node(make_node(
+            "b",
+            NodeKind::Branch {
+                condition: "y".into(),
+            },
+        ));
 
-        graph.add_edge(Edge { from: "a".into(), to: "b".into(), condition: ConditionExpr::Always });
-        graph.add_edge(Edge { from: "b".into(), to: "a".into(), condition: ConditionExpr::Always });
+        graph.add_edge(Edge {
+            from: "a".into(),
+            to: "b".into(),
+            condition: ConditionExpr::Always,
+        });
+        graph.add_edge(Edge {
+            from: "b".into(),
+            to: "a".into(),
+            condition: ConditionExpr::Always,
+        });
 
         assert!(graph.topological_sort().is_err());
     }
@@ -299,12 +368,35 @@ mod tests {
     #[test]
     fn test_outgoing_edges() {
         let mut graph = DiGraph::new("test", "a");
-        graph.add_node(make_node("a", NodeKind::Branch { condition: "x".into() }));
-        graph.add_node(make_node("b", NodeKind::Branch { condition: "y".into() }));
-        graph.add_node(make_node("c", NodeKind::Branch { condition: "z".into() }));
+        graph.add_node(make_node(
+            "a",
+            NodeKind::Branch {
+                condition: "x".into(),
+            },
+        ));
+        graph.add_node(make_node(
+            "b",
+            NodeKind::Branch {
+                condition: "y".into(),
+            },
+        ));
+        graph.add_node(make_node(
+            "c",
+            NodeKind::Branch {
+                condition: "z".into(),
+            },
+        ));
 
-        graph.add_edge(Edge { from: "a".into(), to: "b".into(), condition: ConditionExpr::Always });
-        graph.add_edge(Edge { from: "a".into(), to: "c".into(), condition: ConditionExpr::Always });
+        graph.add_edge(Edge {
+            from: "a".into(),
+            to: "b".into(),
+            condition: ConditionExpr::Always,
+        });
+        graph.add_edge(Edge {
+            from: "a".into(),
+            to: "c".into(),
+            condition: ConditionExpr::Always,
+        });
 
         let outgoing = graph.outgoing("a");
         assert_eq!(outgoing.len(), 2);

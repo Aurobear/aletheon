@@ -1,9 +1,9 @@
 //! Code graph tool — AST-based code structure analysis using tree-sitter.
 
+use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::{json, Value};
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct CodeGraphTool;
 
@@ -138,13 +138,9 @@ fn walk_rust_files(root: &str) -> Vec<std::path::PathBuf> {
     let skip = ["target", ".git", "node_modules", ".cargo"];
     walkdir::WalkDir::new(root)
         .into_iter()
-        .filter_entry(|e| {
-            !skip.iter().any(|s| e.file_name().to_string_lossy() == *s)
-        })
+        .filter_entry(|e| !skip.iter().any(|s| e.file_name().to_string_lossy() == *s))
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path().extension().map(|ext| ext == "rs").unwrap_or(false)
-        })
+        .filter(|e| e.path().extension().map(|ext| ext == "rs").unwrap_or(false))
         .map(|e| e.into_path())
         .collect()
 }
@@ -244,13 +240,7 @@ fn find_callers(symbol: &str, root: &str) -> Result<Vec<SymbolHit>, String> {
             None => continue,
         };
         let path_str = path.display().to_string();
-        collect_callers(
-            &tree.root_node(),
-            &source,
-            symbol,
-            &path_str,
-            &mut hits,
-        );
+        collect_callers(&tree.root_node(), &source, symbol, &path_str, &mut hits);
     }
     Ok(hits)
 }
@@ -265,9 +255,7 @@ fn collect_callers(
 ) {
     if node.kind() == "call_expression" {
         if let Some(func_node) = node.child_by_field_name("function") {
-            let text = func_node
-                .utf8_text(source.as_bytes())
-                .unwrap_or("");
+            let text = func_node.utf8_text(source.as_bytes()).unwrap_or("");
             // Direct call: symbol(...) or path::symbol(...)
             let simple_name = text.rsplit("::").next().unwrap_or(text);
             if simple_name == symbol {
@@ -305,13 +293,7 @@ fn find_refs(symbol: &str, root: &str) -> Result<Vec<SymbolHit>, String> {
             None => continue,
         };
         let path_str = path.display().to_string();
-        collect_refs(
-            &tree.root_node(),
-            &source,
-            symbol,
-            &path_str,
-            &mut hits,
-        );
+        collect_refs(&tree.root_node(), &source, symbol, &path_str, &mut hits);
     }
     Ok(hits)
 }

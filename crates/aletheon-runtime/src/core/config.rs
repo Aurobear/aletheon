@@ -1,5 +1,5 @@
-use std::path::Path;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // RuntimeConfig — retained for orchestrator / react_loop backward compat
@@ -80,11 +80,21 @@ impl Default for AgentConfig {
     }
 }
 
-fn default_max_iterations() -> usize { 25 }
-fn default_max_tokens() -> usize { 100_000 }
-fn default_true() -> bool { true }
-fn default_compaction_keep_recent() -> usize { 10 }
-fn default_compaction_threshold() -> usize { 30 }
+fn default_max_iterations() -> usize {
+    25
+}
+fn default_max_tokens() -> usize {
+    100_000
+}
+fn default_true() -> bool {
+    true
+}
+fn default_compaction_keep_recent() -> usize {
+    10
+}
+fn default_compaction_threshold() -> usize {
+    30
+}
 
 /// Wire protocol between client and LLM server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -131,7 +141,9 @@ pub struct SandboxConfig {
     pub bubblewrap_path: Option<String>,
 }
 
-fn default_sandbox_preference() -> String { "auto".to_string() }
+fn default_sandbox_preference() -> String {
+    "auto".to_string()
+}
 
 impl Default for SandboxConfig {
     fn default() -> Self {
@@ -157,7 +169,9 @@ pub struct McpServerConfig {
     pub url: Option<String>,
 }
 
-fn default_mcp_transport() -> String { "stdio".to_string() }
+fn default_mcp_transport() -> String {
+    "stdio".to_string()
+}
 
 impl Default for McpServerConfig {
     fn default() -> Self {
@@ -195,8 +209,12 @@ pub struct MemoryConfig {
     pub data_dir: String,
 }
 
-fn default_memory_backend() -> String { "sqlite".to_string() }
-fn default_memory_data_dir() -> String { "~/.aletheon/memory".to_string() }
+fn default_memory_backend() -> String {
+    "sqlite".to_string()
+}
+fn default_memory_data_dir() -> String {
+    "~/.aletheon/memory".to_string()
+}
 
 impl Default for MemoryConfig {
     fn default() -> Self {
@@ -216,8 +234,12 @@ pub struct DaemonConfig {
     pub log_level: String,
 }
 
-fn default_daemon_socket_path() -> String { "/run/aletheon/aletheon.sock".to_string() }
-fn default_daemon_log_level() -> String { "info".to_string() }
+fn default_daemon_socket_path() -> String {
+    "/run/aletheon/aletheon.sock".to_string()
+}
+fn default_daemon_log_level() -> String {
+    "info".to_string()
+}
 
 impl Default for DaemonConfig {
     fn default() -> Self {
@@ -272,7 +294,11 @@ impl AppConfig {
 
         // Providers: merge by name, append new ones
         for other_provider in other.providers {
-            if let Some(existing) = self.providers.iter_mut().find(|p| p.name == other_provider.name) {
+            if let Some(existing) = self
+                .providers
+                .iter_mut()
+                .find(|p| p.name == other_provider.name)
+            {
                 *existing = other_provider;
             } else {
                 self.providers.push(other_provider);
@@ -401,7 +427,10 @@ transport = "anthropic"
 sonnet = "anthropic/claude-sonnet-4-20250514"
 "#;
         let config: AppConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.model_aliases["sonnet"], "anthropic/claude-sonnet-4-20250514");
+        assert_eq!(
+            config.model_aliases["sonnet"],
+            "anthropic/claude-sonnet-4-20250514"
+        );
     }
 
     #[test]
@@ -455,7 +484,10 @@ log_level = "debug"
 "#;
         let config: AppConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.sandbox.preference, "require");
-        assert_eq!(config.sandbox.bubblewrap_path.as_deref(), Some("/usr/bin/bwrap"));
+        assert_eq!(
+            config.sandbox.bubblewrap_path.as_deref(),
+            Some("/usr/bin/bwrap")
+        );
         assert_eq!(config.mcp_servers.len(), 2);
         assert_eq!(config.mcp_servers[0].name, "filesystem");
         assert_eq!(config.mcp_servers[1].transport, "http");
@@ -474,7 +506,10 @@ log_level = "debug"
         base.merge(other);
 
         assert_eq!(base.agent.default_provider.as_deref(), Some("anthropic"));
-        assert_eq!(base.agent.default_model.as_deref(), Some("claude-sonnet-4-20250514"));
+        assert_eq!(
+            base.agent.default_model.as_deref(),
+            Some("claude-sonnet-4-20250514")
+        );
     }
 
     #[test]
@@ -516,11 +551,16 @@ log_level = "debug"
     #[test]
     fn test_merge_model_aliases() {
         let mut base = AppConfig::default();
-        base.model_aliases.insert("fast".to_string(), "gpt-3.5-turbo".to_string());
+        base.model_aliases
+            .insert("fast".to_string(), "gpt-3.5-turbo".to_string());
 
         let mut other = AppConfig::default();
-        other.model_aliases.insert("fast".to_string(), "gpt-4o-mini".to_string());
-        other.model_aliases.insert("smart".to_string(), "gpt-4o".to_string());
+        other
+            .model_aliases
+            .insert("fast".to_string(), "gpt-4o-mini".to_string());
+        other
+            .model_aliases
+            .insert("smart".to_string(), "gpt-4o".to_string());
 
         base.merge(other);
 
@@ -607,7 +647,10 @@ preference = "require"
         std::fs::write(aletheon_dir.join("config.toml"), project_config).unwrap();
 
         let config = AppConfig::load_layered(Some(project_dir));
-        assert_eq!(config.agent.default_provider.as_deref(), Some("project-provider"));
+        assert_eq!(
+            config.agent.default_provider.as_deref(),
+            Some("project-provider")
+        );
         assert_eq!(config.sandbox.preference, "require");
     }
 

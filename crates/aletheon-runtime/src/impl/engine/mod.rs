@@ -7,13 +7,13 @@
 //! - memory_integration.rs: Memory read/write, learning outcome recording
 //! - streaming.rs: LLM streaming, chunk handling
 
-pub mod config;
 pub mod cognitive_loop;
-pub mod tool_dispatch;
+pub mod config;
 pub mod memory_integration;
-pub mod streaming;
 pub mod modules;
+pub mod streaming;
+pub mod tool_dispatch;
 
 // Re-export key types
-pub use config::EngineConfig;
 pub use cognitive_loop::{Engine, TurnResult};
+pub use config::EngineConfig;

@@ -96,7 +96,11 @@ mod tests {
     fn bounded_0_to_1() {
         let entry = ActivationEntry::new(1.0, 100, now());
         let score = compute_activation(&entry, now());
-        assert!(score >= 0.0 && score <= 1.0, "score out of range: {}", score);
+        assert!(
+            score >= 0.0 && score <= 1.0,
+            "score out of range: {}",
+            score
+        );
     }
 
     #[test]

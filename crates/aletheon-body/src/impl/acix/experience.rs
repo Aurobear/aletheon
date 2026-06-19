@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use anyhow::Result;
 use aletheon_abi::{ContentBlock, Message, Role};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Embedding provider trait
@@ -32,7 +32,7 @@ pub enum ExperienceLevel {
 /// 动作记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionRecord {
-    pub action_type: String,  // "click", "type", "screenshot"
+    pub action_type: String, // "click", "type", "screenshot"
     pub params: serde_json::Value,
     pub result: String,
     pub success: bool,
@@ -78,7 +78,9 @@ impl ExperienceMemory {
 
     /// 按相似度检索 (余弦相似度)
     pub fn recall(&self, query_embedding: &[f32], top_k: usize) -> Vec<&Experience> {
-        let mut scored: Vec<(f32, &Experience)> = self.experiences.iter()
+        let mut scored: Vec<(f32, &Experience)> = self
+            .experiences
+            .iter()
             .map(|exp| (cosine_similarity(query_embedding, &exp.embedding), exp))
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -88,16 +90,30 @@ impl ExperienceMemory {
     /// 按关键词检索
     pub fn search(&self, query: &str, top_k: usize) -> Vec<&Experience> {
         let query_lower = query.to_lowercase();
-        let mut results: Vec<(usize, &Experience)> = self.experiences.iter()
+        let mut results: Vec<(usize, &Experience)> = self
+            .experiences
+            .iter()
             .map(|exp| {
-                let score = exp.task_description.to_lowercase().matches(&query_lower).count()
-                    + exp.plan.iter().filter(|p| p.to_lowercase().contains(&query_lower)).count();
+                let score = exp
+                    .task_description
+                    .to_lowercase()
+                    .matches(&query_lower)
+                    .count()
+                    + exp
+                        .plan
+                        .iter()
+                        .filter(|p| p.to_lowercase().contains(&query_lower))
+                        .count();
                 (score, exp)
             })
             .filter(|(score, _)| *score > 0)
             .collect();
         results.sort_by(|a, b| b.0.cmp(&a.0));
-        results.into_iter().take(top_k).map(|(_, exp)| exp).collect()
+        results
+            .into_iter()
+            .take(top_k)
+            .map(|(_, exp)| exp)
+            .collect()
     }
 
     /// 注入经验到 context
@@ -163,7 +179,10 @@ impl ExperienceMemory {
     pub fn load_from_file(path: &Path, max_size: usize) -> Result<Self> {
         let json = std::fs::read_to_string(path)?;
         let experiences: Vec<Experience> = serde_json::from_str(&json)?;
-        Ok(Self { experiences, max_size })
+        Ok(Self {
+            experiences,
+            max_size,
+        })
     }
 }
 
@@ -269,7 +288,8 @@ mod tests {
         mem.store(make_experience("write document", vec![0.0, 1.0, 0.0], true));
 
         let mut context: Vec<Message> = Vec::new();
-        mem.inject_context("open browser", &mut context, Some(&embedder)).unwrap();
+        mem.inject_context("open browser", &mut context, Some(&embedder))
+            .unwrap();
 
         assert_eq!(context.len(), 1);
         assert_eq!(context[0].role, Role::System);
@@ -298,7 +318,8 @@ mod tests {
         mem.store(make_experience("open browser", vec![1.0, 0.0], true));
 
         let mut context: Vec<Message> = Vec::new();
-        mem.inject_context("completely unrelated query xyz", &mut context, None).unwrap();
+        mem.inject_context("completely unrelated query xyz", &mut context, None)
+            .unwrap();
 
         // no context injected when search yields nothing
         assert_eq!(context.len(), 0);

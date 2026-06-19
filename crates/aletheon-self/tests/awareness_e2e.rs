@@ -6,9 +6,7 @@
 //! 3. AwarenessGrowthAnalyzer produces suggestions
 //! 4. Suggestions are fed back to BrainCore
 
-use aletheon_abi::{
-    AwarenessExtension, AwarenessExtensionCounts, SelfAwareness, SelfState,
-};
+use aletheon_abi::{AwarenessExtension, AwarenessExtensionCounts, SelfAwareness, SelfState};
 use aletheon_self::core::awareness_growth::AwarenessGrowthAnalyzer;
 
 #[test]
@@ -70,7 +68,9 @@ fn test_growth_suggestion_flow() {
     let suggestions = analyzer.analyze(&history, &stats).unwrap();
 
     // Should suggest significance and self_state
-    assert!(suggestions.iter().any(|s| s.extension_type == "significance"));
+    assert!(suggestions
+        .iter()
+        .any(|s| s.extension_type == "significance"));
     assert!(suggestions.iter().any(|s| s.extension_type == "self_state"));
 }
 

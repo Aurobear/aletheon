@@ -16,7 +16,9 @@ pub const PROTECTED_METADATA_NAMES: &[&str] = &[".git", ".ssh", ".codex", ".agen
 // ── Access Mode ─────────────────────────────────────────────────────────────
 
 /// Permission level for a path. Higher priority wins on conflict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum AccessMode {
     /// Read-only (priority 1).
     Read = 1,
@@ -48,28 +50,20 @@ impl PathPattern {
     pub fn matches(&self, relative: &Path) -> bool {
         match self {
             Self::Exact(pattern) => relative == pattern,
-            Self::Directory(dir) => {
-                relative == dir || relative.starts_with(dir)
-            }
-            Self::Extension(ext) => {
-                relative
-                    .extension()
-                    .map(|e| e == ext.as_str())
-                    .unwrap_or(false)
-            }
-            Self::Prefix(prefix) => {
-                relative
-                    .file_name()
-                    .map(|f| f.to_string_lossy().starts_with(prefix.as_str()))
-                    .unwrap_or(false)
-            }
-            Self::TopLevelComponent(comp) => {
-                relative
-                    .components()
-                    .next()
-                    .map(|c| c.as_os_str() == comp.as_str())
-                    .unwrap_or(false)
-            }
+            Self::Directory(dir) => relative == dir || relative.starts_with(dir),
+            Self::Extension(ext) => relative
+                .extension()
+                .map(|e| e == ext.as_str())
+                .unwrap_or(false),
+            Self::Prefix(prefix) => relative
+                .file_name()
+                .map(|f| f.to_string_lossy().starts_with(prefix.as_str()))
+                .unwrap_or(false),
+            Self::TopLevelComponent(comp) => relative
+                .components()
+                .next()
+                .map(|c| c.as_os_str() == comp.as_str())
+                .unwrap_or(false),
         }
     }
 }
@@ -226,14 +220,7 @@ impl WritableRoot {
 
     /// Generate default read-only sub-paths based on what exists under root.
     pub fn generate_default_read_only_subpaths(&mut self) {
-        let candidates = vec![
-            ".git",
-            ".svn",
-            ".hg",
-            ".ssh",
-            ".agents",
-            ".codex",
-        ];
+        let candidates = vec![".git", ".svn", ".hg", ".ssh", ".agents", ".codex"];
 
         self.read_only_subpaths.clear();
         for name in candidates {
@@ -476,15 +463,9 @@ pub enum PathAccessError {
         suggestion: String,
     },
     /// Path is a system-level read-only location.
-    SystemReadOnly {
-        path: PathBuf,
-        suggestion: String,
-    },
+    SystemReadOnly { path: PathBuf, suggestion: String },
     /// Path is read-only by policy.
-    ReadOnly {
-        path: PathBuf,
-        suggestion: String,
-    },
+    ReadOnly { path: PathBuf, suggestion: String },
     /// Path contains a protected metadata name.
     ProtectedMetadata {
         path: PathBuf,
@@ -660,14 +641,20 @@ mod tests {
 
         // Protected metadata
         let result = PathAccessGuard::check_write(&root.root.join(".git").join("config"), &root);
-        assert!(matches!(result, Err(PathAccessError::ProtectedMetadata { .. })));
+        assert!(matches!(
+            result,
+            Err(PathAccessError::ProtectedMetadata { .. })
+        ));
     }
 
     #[test]
     fn test_forbidden_agent_metadata_write() {
         assert!(PathAccessGuard::forbidden_agent_metadata_write(Path::new("src/main.rs")).is_ok());
         assert!(PathAccessGuard::forbidden_agent_metadata_write(Path::new(".git/config")).is_err());
-        assert!(PathAccessGuard::forbidden_agent_metadata_write(Path::new("project/.ssh/id_rsa")).is_err());
+        assert!(
+            PathAccessGuard::forbidden_agent_metadata_write(Path::new("project/.ssh/id_rsa"))
+                .is_err()
+        );
     }
 
     #[test]

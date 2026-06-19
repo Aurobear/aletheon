@@ -1,10 +1,10 @@
+use super::InputDriver;
+use crate::r#impl::driver::types::{Key, MouseButton, ScrollDirection};
+use anyhow::{Context, Result};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::sync::Mutex;
-use anyhow::{Result, Context};
-use crate::r#impl::driver::types::{Key, MouseButton, ScrollDirection};
-use super::InputDriver;
 
 // uinput ioctl constants
 const UI_SET_EVBIT: u64 = 0x40045564;
@@ -107,17 +107,25 @@ impl UinputDriver {
 
         // Enable keys
         for key_code in Self::all_key_codes() {
-            unsafe { libc::ioctl(fd, UI_SET_KEYBIT, key_code as libc::c_uint); }
+            unsafe {
+                libc::ioctl(fd, UI_SET_KEYBIT, key_code as libc::c_uint);
+            }
         }
 
         // Enable relative axes
         for rel in [REL_X, REL_Y, REL_WHEEL] {
-            unsafe { libc::ioctl(fd, UI_SET_RELBIT, rel as libc::c_uint); }
+            unsafe {
+                libc::ioctl(fd, UI_SET_RELBIT, rel as libc::c_uint);
+            }
         }
 
         // Enable and configure absolute axes (for touch/absolute positioning)
-        unsafe { libc::ioctl(fd, UI_SET_ABSBIT, ABS_X as libc::c_uint); }
-        unsafe { libc::ioctl(fd, UI_SET_ABSBIT, ABS_Y as libc::c_uint); }
+        unsafe {
+            libc::ioctl(fd, UI_SET_ABSBIT, ABS_X as libc::c_uint);
+        }
+        unsafe {
+            libc::ioctl(fd, UI_SET_ABSBIT, ABS_Y as libc::c_uint);
+        }
 
         for axis in [ABS_X, ABS_Y] {
             let abs_setup = UinputAbsSetup {
@@ -132,7 +140,9 @@ impl UinputDriver {
                     resolution: 0,
                 },
             };
-            unsafe { libc::ioctl(fd, UI_ABS_SETUP, &abs_setup); }
+            unsafe {
+                libc::ioctl(fd, UI_ABS_SETUP, &abs_setup);
+            }
         }
 
         // Setup device
@@ -156,7 +166,9 @@ impl UinputDriver {
             libc::ioctl(fd, UI_DEV_CREATE, &setup);
         }
 
-        Ok(Self { file: Mutex::new(file) })
+        Ok(Self {
+            file: Mutex::new(file),
+        })
     }
 
     fn all_key_codes() -> Vec<u16> {
@@ -175,60 +187,139 @@ impl UinputDriver {
 
     fn key_to_code(key: Key) -> u16 {
         match key {
-            Key::A => 30, Key::B => 48, Key::C => 46, Key::D => 32,
-            Key::E => 18, Key::F => 33, Key::G => 34, Key::H => 35,
-            Key::I => 23, Key::J => 36, Key::K => 37, Key::L => 38,
-            Key::M => 50, Key::N => 49, Key::O => 24, Key::P => 25,
-            Key::Q => 16, Key::R => 19, Key::S => 31, Key::T => 20,
-            Key::U => 22, Key::V => 47, Key::W => 17, Key::X => 45,
-            Key::Y => 21, Key::Z => 44,
-            Key::Num0 => 11, Key::Num1 => 2, Key::Num2 => 3, Key::Num3 => 4,
-            Key::Num4 => 5, Key::Num5 => 6, Key::Num6 => 7, Key::Num7 => 8,
-            Key::Num8 => 9, Key::Num9 => 10,
-            Key::Enter => 28, Key::Space => 57, Key::Tab => 15,
-            Key::Escape => 1, Key::Backspace => 14, Key::Delete => 111,
-            Key::Up => 103, Key::Down => 108, Key::Left => 105, Key::Right => 106,
-            Key::Home => 102, Key::End => 107, Key::PageUp => 104, Key::PageDown => 109,
-            Key::F1 => 59, Key::F2 => 60, Key::F3 => 61, Key::F4 => 62,
-            Key::F5 => 63, Key::F6 => 64, Key::F7 => 65, Key::F8 => 66,
-            Key::F9 => 67, Key::F10 => 68, Key::F11 => 87, Key::F12 => 88,
-            Key::Ctrl => 29, Key::Alt => 56, Key::Shift => 42, Key::Super => 125,
+            Key::A => 30,
+            Key::B => 48,
+            Key::C => 46,
+            Key::D => 32,
+            Key::E => 18,
+            Key::F => 33,
+            Key::G => 34,
+            Key::H => 35,
+            Key::I => 23,
+            Key::J => 36,
+            Key::K => 37,
+            Key::L => 38,
+            Key::M => 50,
+            Key::N => 49,
+            Key::O => 24,
+            Key::P => 25,
+            Key::Q => 16,
+            Key::R => 19,
+            Key::S => 31,
+            Key::T => 20,
+            Key::U => 22,
+            Key::V => 47,
+            Key::W => 17,
+            Key::X => 45,
+            Key::Y => 21,
+            Key::Z => 44,
+            Key::Num0 => 11,
+            Key::Num1 => 2,
+            Key::Num2 => 3,
+            Key::Num3 => 4,
+            Key::Num4 => 5,
+            Key::Num5 => 6,
+            Key::Num6 => 7,
+            Key::Num7 => 8,
+            Key::Num8 => 9,
+            Key::Num9 => 10,
+            Key::Enter => 28,
+            Key::Space => 57,
+            Key::Tab => 15,
+            Key::Escape => 1,
+            Key::Backspace => 14,
+            Key::Delete => 111,
+            Key::Up => 103,
+            Key::Down => 108,
+            Key::Left => 105,
+            Key::Right => 106,
+            Key::Home => 102,
+            Key::End => 107,
+            Key::PageUp => 104,
+            Key::PageDown => 109,
+            Key::F1 => 59,
+            Key::F2 => 60,
+            Key::F3 => 61,
+            Key::F4 => 62,
+            Key::F5 => 63,
+            Key::F6 => 64,
+            Key::F7 => 65,
+            Key::F8 => 66,
+            Key::F9 => 67,
+            Key::F10 => 68,
+            Key::F11 => 87,
+            Key::F12 => 88,
+            Key::Ctrl => 29,
+            Key::Alt => 56,
+            Key::Shift => 42,
+            Key::Super => 125,
         }
     }
 
     fn char_to_keycode(c: char) -> Option<(Key, bool)> {
         match c {
-            'a' => Some((Key::A, false)), 'b' => Some((Key::B, false)),
-            'c' => Some((Key::C, false)), 'd' => Some((Key::D, false)),
-            'e' => Some((Key::E, false)), 'f' => Some((Key::F, false)),
-            'g' => Some((Key::G, false)), 'h' => Some((Key::H, false)),
-            'i' => Some((Key::I, false)), 'j' => Some((Key::J, false)),
-            'k' => Some((Key::K, false)), 'l' => Some((Key::L, false)),
-            'm' => Some((Key::M, false)), 'n' => Some((Key::N, false)),
-            'o' => Some((Key::O, false)), 'p' => Some((Key::P, false)),
-            'q' => Some((Key::Q, false)), 'r' => Some((Key::R, false)),
-            's' => Some((Key::S, false)), 't' => Some((Key::T, false)),
-            'u' => Some((Key::U, false)), 'v' => Some((Key::V, false)),
-            'w' => Some((Key::W, false)), 'x' => Some((Key::X, false)),
-            'y' => Some((Key::Y, false)), 'z' => Some((Key::Z, false)),
-            'A' => Some((Key::A, true)), 'B' => Some((Key::B, true)),
-            'C' => Some((Key::C, true)), 'D' => Some((Key::D, true)),
-            'E' => Some((Key::E, true)), 'F' => Some((Key::F, true)),
-            'G' => Some((Key::G, true)), 'H' => Some((Key::H, true)),
-            'I' => Some((Key::I, true)), 'J' => Some((Key::J, true)),
-            'K' => Some((Key::K, true)), 'L' => Some((Key::L, true)),
-            'M' => Some((Key::M, true)), 'N' => Some((Key::N, true)),
-            'O' => Some((Key::O, true)), 'P' => Some((Key::P, true)),
-            'Q' => Some((Key::Q, true)), 'R' => Some((Key::R, true)),
-            'S' => Some((Key::S, true)), 'T' => Some((Key::T, true)),
-            'U' => Some((Key::U, true)), 'V' => Some((Key::V, true)),
-            'W' => Some((Key::W, true)), 'X' => Some((Key::X, true)),
-            'Y' => Some((Key::Y, true)), 'Z' => Some((Key::Z, true)),
-            '0' => Some((Key::Num0, false)), '1' => Some((Key::Num1, false)),
-            '2' => Some((Key::Num2, false)), '3' => Some((Key::Num3, false)),
-            '4' => Some((Key::Num4, false)), '5' => Some((Key::Num5, false)),
-            '6' => Some((Key::Num6, false)), '7' => Some((Key::Num7, false)),
-            '8' => Some((Key::Num8, false)), '9' => Some((Key::Num9, false)),
+            'a' => Some((Key::A, false)),
+            'b' => Some((Key::B, false)),
+            'c' => Some((Key::C, false)),
+            'd' => Some((Key::D, false)),
+            'e' => Some((Key::E, false)),
+            'f' => Some((Key::F, false)),
+            'g' => Some((Key::G, false)),
+            'h' => Some((Key::H, false)),
+            'i' => Some((Key::I, false)),
+            'j' => Some((Key::J, false)),
+            'k' => Some((Key::K, false)),
+            'l' => Some((Key::L, false)),
+            'm' => Some((Key::M, false)),
+            'n' => Some((Key::N, false)),
+            'o' => Some((Key::O, false)),
+            'p' => Some((Key::P, false)),
+            'q' => Some((Key::Q, false)),
+            'r' => Some((Key::R, false)),
+            's' => Some((Key::S, false)),
+            't' => Some((Key::T, false)),
+            'u' => Some((Key::U, false)),
+            'v' => Some((Key::V, false)),
+            'w' => Some((Key::W, false)),
+            'x' => Some((Key::X, false)),
+            'y' => Some((Key::Y, false)),
+            'z' => Some((Key::Z, false)),
+            'A' => Some((Key::A, true)),
+            'B' => Some((Key::B, true)),
+            'C' => Some((Key::C, true)),
+            'D' => Some((Key::D, true)),
+            'E' => Some((Key::E, true)),
+            'F' => Some((Key::F, true)),
+            'G' => Some((Key::G, true)),
+            'H' => Some((Key::H, true)),
+            'I' => Some((Key::I, true)),
+            'J' => Some((Key::J, true)),
+            'K' => Some((Key::K, true)),
+            'L' => Some((Key::L, true)),
+            'M' => Some((Key::M, true)),
+            'N' => Some((Key::N, true)),
+            'O' => Some((Key::O, true)),
+            'P' => Some((Key::P, true)),
+            'Q' => Some((Key::Q, true)),
+            'R' => Some((Key::R, true)),
+            'S' => Some((Key::S, true)),
+            'T' => Some((Key::T, true)),
+            'U' => Some((Key::U, true)),
+            'V' => Some((Key::V, true)),
+            'W' => Some((Key::W, true)),
+            'X' => Some((Key::X, true)),
+            'Y' => Some((Key::Y, true)),
+            'Z' => Some((Key::Z, true)),
+            '0' => Some((Key::Num0, false)),
+            '1' => Some((Key::Num1, false)),
+            '2' => Some((Key::Num2, false)),
+            '3' => Some((Key::Num3, false)),
+            '4' => Some((Key::Num4, false)),
+            '5' => Some((Key::Num5, false)),
+            '6' => Some((Key::Num6, false)),
+            '7' => Some((Key::Num7, false)),
+            '8' => Some((Key::Num8, false)),
+            '9' => Some((Key::Num9, false)),
             ' ' => Some((Key::Space, false)),
             '\n' => Some((Key::Enter, false)),
             '\t' => Some((Key::Tab, false)),
@@ -251,7 +342,8 @@ impl UinputDriver {
             )
         };
         let mut file = self.file.lock().unwrap();
-        file.write_all(bytes).context("Failed to write input event")?;
+        file.write_all(bytes)
+            .context("Failed to write input event")?;
         Ok(())
     }
 }

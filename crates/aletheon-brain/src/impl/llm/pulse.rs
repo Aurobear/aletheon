@@ -43,11 +43,7 @@ pub struct LlmPulse {
 }
 
 impl LlmPulse {
-    pub fn new(
-        scheduler: Arc<LlmScheduler>,
-        bus: Arc<dyn EventBus>,
-        config: PulseConfig,
-    ) -> Self {
+    pub fn new(scheduler: Arc<LlmScheduler>, bus: Arc<dyn EventBus>, config: PulseConfig) -> Self {
         Self {
             scheduler,
             bus,

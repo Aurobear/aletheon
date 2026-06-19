@@ -1,9 +1,11 @@
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
-use crate::r#impl::sandbox::{SandboxBackend, IsolationLevel, SandboxCapabilities, SandboxConfig, SandboxResult};
+use crate::r#impl::sandbox::{
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
+};
 
 /// Bubblewrap-based sandbox backend — full namespace isolation.
 /// Requires: bwrap binary, user namespace support.
@@ -24,7 +26,9 @@ impl BubblewrapBackend {
             Ok(output) => {
                 let version = String::from_utf8_lossy(&output.stdout);
                 info!(version = version.trim(), path = %path_str, "Bubblewrap detected");
-                Some(Self { bwrap_path: path_str })
+                Some(Self {
+                    bwrap_path: path_str,
+                })
             }
             Err(e) => {
                 warn!(error = %e, "Failed to run bwrap --version");
@@ -38,7 +42,7 @@ impl BubblewrapBackend {
             "--die-with-parent".into(),
             "--unshare-pid".into(),
             "--unshare-ipc".into(),
-            "--unshare-net".into(),  // Default: no network
+            "--unshare-net".into(), // Default: no network
         ];
 
         // Bind entire root read-only — handles usr-merge symlinks correctly
@@ -105,7 +109,12 @@ impl SandboxBackend for BubblewrapBackend {
         }
     }
 
-    async fn execute(&self, cmd: &str, config: &SandboxConfig, timeout: Duration) -> Result<SandboxResult> {
+    async fn execute(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+    ) -> Result<SandboxResult> {
         info!(command = cmd, "Executing command in bubblewrap sandbox");
 
         let args = self.build_args(cmd, config);
@@ -117,7 +126,8 @@ impl SandboxBackend for BubblewrapBackend {
                 .current_dir(&config.working_dir)
                 .output()
                 .await
-        }).await;
+        })
+        .await;
 
         let elapsed = start.elapsed();
 

@@ -40,11 +40,7 @@ pub trait EventBus: Send + Sync {
     ///
     /// Like Linux ioctl — synchronous call that blocks until the handler
     /// produces a response or timeout is reached.
-    async fn request(
-        &self,
-        event: Box<dyn Event>,
-        timeout: Duration,
-    ) -> Result<Box<dyn Event>>;
+    async fn request(&self, event: Box<dyn Event>, timeout: Duration) -> Result<Box<dyn Event>>;
 
     /// Unsubscribe a previously registered handler.
     async fn unsubscribe(&self, id: SubscriptionId) -> Result<()>;

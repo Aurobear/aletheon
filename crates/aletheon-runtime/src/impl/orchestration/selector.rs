@@ -1,10 +1,10 @@
 use anyhow::Result;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use aletheon_brain::r#impl::llm::LlmProvider;
-use aletheon_abi::message::{ContentBlock, Message};
 use super::agent::AgentResponse;
 use super::registry::AgentRegistry;
+use aletheon_abi::message::{ContentBlock, Message};
+use aletheon_brain::r#impl::llm::LlmProvider;
 
 /// Selector configuration.
 pub struct SelectorConfig {
@@ -90,9 +90,7 @@ impl SelectorStrategy {
             Ok(selected)
         } else {
             // Try fuzzy match
-            let fuzzy = agent_ids
-                .iter()
-                .find(|id| selected.contains(id.as_str()));
+            let fuzzy = agent_ids.iter().find(|id| selected.contains(id.as_str()));
             if let Some(id) = fuzzy {
                 info!(agent_id = %id, "Selector fuzzy-matched agent");
                 Ok(id.clone())

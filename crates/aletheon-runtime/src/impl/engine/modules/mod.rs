@@ -4,13 +4,13 @@
 //! - Requests: `#[serde(tag = "op")]`
 //! - Responses: `#[serde(tag = "result")]`
 
-pub mod memory_module;
 pub mod body_module;
-pub mod self_field_module;
+pub mod memory_module;
 pub mod perception_module;
+pub mod self_field_module;
 
+use aletheon_abi::self_field::{Care, Identity, Intent, Verdict};
 use serde::{Deserialize, Serialize};
-use aletheon_abi::self_field::{Intent, Verdict, Identity, Care};
 
 // ---------------------------------------------------------------------------
 // Memory
@@ -106,7 +106,10 @@ pub struct ToolDefinitionMsg {
 #[serde(tag = "op")]
 pub enum SelfFieldRequest {
     /// Review an intent through the policy pipeline.
-    Review { intent: Intent, ctx: serde_json::Value },
+    Review {
+        intent: Intent,
+        ctx: serde_json::Value,
+    },
     /// Record a narrative entry.
     Narrate { event: String, reason: String },
     /// Get current identity.

@@ -236,9 +236,7 @@ async fn apply_patch_native(patch: &str, base_dir: &std::path::Path) -> Result<S
 
         match fp.patch_type {
             PatchOp::Create => {
-                let content = fp
-                    .added_lines
-                    .join("\n");
+                let content = fp.added_lines.join("\n");
                 if let Some(parent) = full_path.parent() {
                     fs::create_dir_all(parent)
                         .await
@@ -247,7 +245,11 @@ async fn apply_patch_native(patch: &str, base_dir: &std::path::Path) -> Result<S
                 fs::write(&full_path, &content)
                     .await
                     .map_err(|e| format!("Write failed for {}: {}", fp.filename, e))?;
-                reports.push(format!("Created: {} ({} lines)", fp.filename, fp.added_lines.len()));
+                reports.push(format!(
+                    "Created: {} ({} lines)",
+                    fp.filename,
+                    fp.added_lines.len()
+                ));
             }
             PatchOp::Delete => {
                 if full_path.exists() {
@@ -327,13 +329,24 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<FilePatch>, String> {
                 .ok_or_else(|| format!("Expected +++ but got: {}", lines[i]))?;
             i += 1;
 
-            let old_path = old_name.split('\t').next().unwrap_or("").trim_start_matches("a/");
-            let new_path = new_name.split('\t').next().unwrap_or("").trim_start_matches("b/");
+            let old_path = old_name
+                .split('\t')
+                .next()
+                .unwrap_or("")
+                .trim_start_matches("a/");
+            let new_path = new_name
+                .split('\t')
+                .next()
+                .unwrap_or("")
+                .trim_start_matches("b/");
 
             if old_path == "/dev/null" && new_path != "/dev/null" {
                 // Create new file - skip @@ hunk headers, collect + lines
                 let mut added_lines = Vec::new();
-                while i < lines.len() && !lines[i].starts_with("--- ") && !lines[i].starts_with("diff ") {
+                while i < lines.len()
+                    && !lines[i].starts_with("--- ")
+                    && !lines[i].starts_with("diff ")
+                {
                     if lines[i].starts_with("@@ ") {
                         // Skip hunk header
                         i += 1;
@@ -371,7 +384,10 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<FilePatch>, String> {
             } else if old_path != "/dev/null" && new_path != "/dev/null" {
                 // Modify existing file
                 let mut hunks = Vec::new();
-                while i < lines.len() && !lines[i].starts_with("--- ") && !lines[i].starts_with("diff ") {
+                while i < lines.len()
+                    && !lines[i].starts_with("--- ")
+                    && !lines[i].starts_with("diff ")
+                {
                     if let Some(hunk_header) = lines[i].strip_prefix("@@ ") {
                         let hunk = parse_hunk_header(hunk_header, &lines, &mut i)?;
                         hunks.push(hunk);
@@ -410,9 +426,13 @@ fn parse_hunk_header(header: &str, lines: &[&str], idx: &mut usize) -> Result<Hu
     let parse_range = |s: &str| -> Result<(usize, usize), String> {
         let s = s.trim_start_matches('-').trim_start_matches('+');
         let parts: Vec<&str> = s.split(',').collect();
-        let start: usize = parts[0].parse().map_err(|_| format!("Invalid line number: {}", parts[0]))?;
+        let start: usize = parts[0]
+            .parse()
+            .map_err(|_| format!("Invalid line number: {}", parts[0]))?;
         let count: usize = if parts.len() > 1 {
-            parts[1].parse().map_err(|_| format!("Invalid count: {}", parts[1]))?
+            parts[1]
+                .parse()
+                .map_err(|_| format!("Invalid count: {}", parts[1]))?
         } else {
             1
         };
@@ -591,7 +611,9 @@ mod tests {
         let result = tool.execute(input, &ctx).await;
 
         assert!(!result.is_error, "Expected success: {}", result.content);
-        let created = fs::read_to_string(tmp.path().join("new_file.txt")).await.unwrap();
+        let created = fs::read_to_string(tmp.path().join("new_file.txt"))
+            .await
+            .unwrap();
         assert_eq!(created, "line one\nline two\nline three\n");
     }
 

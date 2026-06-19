@@ -141,11 +141,7 @@ impl ScopedCoreMemory {
 
     /// Add a scoped memory block. The block is inserted into the underlying
     /// `CoreMemory` and its scope is registered.
-    pub fn add_block(
-        &mut self,
-        block: MemoryBlock,
-        scope: MemoryScope,
-    ) -> anyhow::Result<()> {
+    pub fn add_block(&mut self, block: MemoryBlock, scope: MemoryScope) -> anyhow::Result<()> {
         let label = block.label.clone();
         self.inner.add_block(block)?;
         self.scopes.insert(label, scope);
@@ -158,7 +154,9 @@ impl ScopedCoreMemory {
         if !scope.can_read(agent_id, is_parent) {
             anyhow::bail!(
                 "Agent '{}' does not have read access to block '{}' (scope: {:?})",
-                agent_id, label, scope
+                agent_id,
+                label,
+                scope
             );
         }
         self.inner
@@ -204,7 +202,9 @@ impl ScopedCoreMemory {
         } else {
             anyhow::bail!(
                 "Agent '{}' does not have write access to block '{}' (scope: {:?})",
-                agent_id, label, scope
+                agent_id,
+                label,
+                scope
             );
         }
     }
@@ -235,7 +235,9 @@ impl ScopedCoreMemory {
         } else {
             anyhow::bail!(
                 "Agent '{}' does not have write access to block '{}' (scope: {:?})",
-                agent_id, label, scope
+                agent_id,
+                label,
+                scope
             );
         }
     }
@@ -263,7 +265,9 @@ impl ScopedCoreMemory {
         } else {
             anyhow::bail!(
                 "Agent '{}' does not have write access to block '{}' (scope: {:?})",
-                agent_id, label, scope
+                agent_id,
+                label,
+                scope
             );
         }
     }
@@ -589,10 +593,12 @@ mod tests {
     fn test_scoped_core_memory_write_global_parent_only() {
         let core = CoreMemory::new();
         let mut scoped = ScopedCoreMemory::new(core);
-        scoped.add_block(
-            MemoryBlock::new("shared", "initial", 1000),
-            MemoryScope::Global,
-        ).unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("shared", "initial", 1000),
+                MemoryScope::Global,
+            )
+            .unwrap();
 
         // Parent can write
         let outcome = scoped.append("shared", "data", "parent", true).unwrap();
@@ -606,17 +612,23 @@ mod tests {
     fn test_scoped_core_memory_session_child_write_pending() {
         let core = CoreMemory::new();
         let mut scoped = ScopedCoreMemory::new(core);
-        scoped.add_block(
-            MemoryBlock::new("session_info", "", 1000),
-            MemoryScope::Session,
-        ).unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("session_info", "", 1000),
+                MemoryScope::Session,
+            )
+            .unwrap();
 
         // Parent writes directly
-        let outcome = scoped.append("session_info", "from-parent", "parent", true).unwrap();
+        let outcome = scoped
+            .append("session_info", "from-parent", "parent", true)
+            .unwrap();
         assert_eq!(outcome, WriteOutcome::Applied);
 
         // Child write is queued
-        let outcome = scoped.append("session_info", "from-child", "child-1", false).unwrap();
+        let outcome = scoped
+            .append("session_info", "from-child", "child-1", false)
+            .unwrap();
         assert_eq!(outcome, WriteOutcome::PendingApproval);
 
         // Pending writes are tracked
@@ -630,14 +642,20 @@ mod tests {
     fn test_scoped_core_memory_approve_and_reject_writes() {
         let core = CoreMemory::new();
         let mut scoped = ScopedCoreMemory::new(core);
-        scoped.add_block(
-            MemoryBlock::new("task_info", "", 1000),
-            MemoryScope::Session,
-        ).unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("task_info", "", 1000),
+                MemoryScope::Session,
+            )
+            .unwrap();
 
         // Queue two child writes
-        scoped.append("task_info", "step-1", "child-a", false).unwrap();
-        scoped.append("task_info", "step-2", "child-b", false).unwrap();
+        scoped
+            .append("task_info", "step-1", "child-a", false)
+            .unwrap();
+        scoped
+            .append("task_info", "step-2", "child-b", false)
+            .unwrap();
 
         // Drain returns both and clears the queue
         let pending = scoped.drain_pending_writes();
@@ -645,8 +663,12 @@ mod tests {
         assert_eq!(scoped.drain_pending_writes().len(), 0);
 
         // Re-queue for approve/reject test
-        scoped.append("task_info", "step-1", "child-a", false).unwrap();
-        scoped.append("task_info", "step-2", "child-b", false).unwrap();
+        scoped
+            .append("task_info", "step-1", "child-a", false)
+            .unwrap();
+        scoped
+            .append("task_info", "step-2", "child-b", false)
+            .unwrap();
 
         // Reject first, approve second
         assert!(scoped.reject_write(0));
@@ -660,22 +682,30 @@ mod tests {
     fn test_scoped_core_memory_visible_blocks() {
         let core = CoreMemory::new();
         let mut scoped = ScopedCoreMemory::new(core);
-        scoped.add_block(
-            MemoryBlock::new("global_info", "g", 100),
-            MemoryScope::Global,
-        ).unwrap();
-        scoped.add_block(
-            MemoryBlock::new("session_info", "s", 100),
-            MemoryScope::Session,
-        ).unwrap();
-        scoped.add_block(
-            MemoryBlock::new("agent_1_info", "a1", 100),
-            MemoryScope::Agent("agent-1".to_string()),
-        ).unwrap();
-        scoped.add_block(
-            MemoryBlock::new("agent_2_info", "a2", 100),
-            MemoryScope::Agent("agent-2".to_string()),
-        ).unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("global_info", "g", 100),
+                MemoryScope::Global,
+            )
+            .unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("session_info", "s", 100),
+                MemoryScope::Session,
+            )
+            .unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("agent_1_info", "a1", 100),
+                MemoryScope::Agent("agent-1".to_string()),
+            )
+            .unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("agent_2_info", "a2", 100),
+                MemoryScope::Agent("agent-2".to_string()),
+            )
+            .unwrap();
 
         // Parent sees global + session only (Agent-scoped blocks are private)
         let parent_blocks = scoped.visible_blocks("parent", true);
@@ -696,10 +726,12 @@ mod tests {
     fn test_agent_scope_isolation_between_children() {
         let core = CoreMemory::new();
         let mut scoped = ScopedCoreMemory::new(core);
-        scoped.add_block(
-            MemoryBlock::new("notes", "", 500),
-            MemoryScope::Agent("agent-A".to_string()),
-        ).unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("notes", "", 500),
+                MemoryScope::Agent("agent-A".to_string()),
+            )
+            .unwrap();
 
         // agent-A can read/write
         assert!(scoped.get("notes", "agent-A", false).is_ok());
@@ -708,7 +740,9 @@ mod tests {
 
         // agent-B cannot read or write
         assert!(scoped.get("notes", "agent-B", false).is_err());
-        assert!(scoped.append("notes", "intrusion", "agent-B", false).is_err());
+        assert!(scoped
+            .append("notes", "intrusion", "agent-B", false)
+            .is_err());
     }
 
     // -- Scratchpad tests --
@@ -752,8 +786,14 @@ mod tests {
 
     #[test]
     fn test_scope_metadata_helper() {
-        assert_eq!(scope_metadata(&MemoryScope::Global), r#"{"scope":"global"}"#);
-        assert_eq!(scope_metadata(&MemoryScope::Session), r#"{"scope":"session"}"#);
+        assert_eq!(
+            scope_metadata(&MemoryScope::Global),
+            r#"{"scope":"global"}"#
+        );
+        assert_eq!(
+            scope_metadata(&MemoryScope::Session),
+            r#"{"scope":"session"}"#
+        );
         assert_eq!(
             scope_metadata(&MemoryScope::Agent("x".into())),
             r#"{"scope":"agent:x"}"#
@@ -791,10 +831,14 @@ mod tests {
         let session = ScopedRecallFilter::filter_by_scope(entries.clone(), &ScopeFilter::Session);
         assert_eq!(session.len(), 1);
 
-        let a1 = ScopedRecallFilter::filter_by_scope(entries.clone(), &ScopeFilter::Agent("agent-1".into()));
+        let a1 = ScopedRecallFilter::filter_by_scope(
+            entries.clone(),
+            &ScopeFilter::Agent("agent-1".into()),
+        );
         assert_eq!(a1.len(), 1);
 
-        let a2 = ScopedRecallFilter::filter_by_scope(entries, &ScopeFilter::Agent("agent-2".into()));
+        let a2 =
+            ScopedRecallFilter::filter_by_scope(entries, &ScopeFilter::Agent("agent-2".into()));
         assert_eq!(a2.len(), 1);
     }
 
@@ -804,23 +848,37 @@ mod tests {
     fn test_scoped_replace_and_rethink() {
         let core = CoreMemory::new();
         let mut scoped = ScopedCoreMemory::new(core);
-        scoped.add_block(
-            MemoryBlock::new("notes", "hello world", 500),
-            MemoryScope::Agent("owner".to_string()),
-        ).unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("notes", "hello world", 500),
+                MemoryScope::Agent("owner".to_string()),
+            )
+            .unwrap();
 
         // Replace works for owner
-        let outcome = scoped.replace("notes", "hello", "goodbye", "owner", false).unwrap();
+        let outcome = scoped
+            .replace("notes", "hello", "goodbye", "owner", false)
+            .unwrap();
         assert_eq!(outcome, WriteOutcome::Applied);
-        assert_eq!(scoped.get("notes", "owner", false).unwrap(), "goodbye world");
+        assert_eq!(
+            scoped.get("notes", "owner", false).unwrap(),
+            "goodbye world"
+        );
 
         // Rethink works for owner
-        let outcome = scoped.rethink("notes", "completely new", "owner", false).unwrap();
+        let outcome = scoped
+            .rethink("notes", "completely new", "owner", false)
+            .unwrap();
         assert_eq!(outcome, WriteOutcome::Applied);
-        assert_eq!(scoped.get("notes", "owner", false).unwrap(), "completely new");
+        assert_eq!(
+            scoped.get("notes", "owner", false).unwrap(),
+            "completely new"
+        );
 
         // Other agent cannot replace
-        assert!(scoped.replace("notes", "new", "intrusion", "other", false).is_err());
+        assert!(scoped
+            .replace("notes", "new", "intrusion", "other", false)
+            .is_err());
     }
 
     // -- Session scope: child replace queues as pending --
@@ -829,13 +887,17 @@ mod tests {
     fn test_session_child_replace_pending() {
         let core = CoreMemory::new();
         let mut scoped = ScopedCoreMemory::new(core);
-        scoped.add_block(
-            MemoryBlock::new("shared", "alpha beta", 500),
-            MemoryScope::Session,
-        ).unwrap();
+        scoped
+            .add_block(
+                MemoryBlock::new("shared", "alpha beta", 500),
+                MemoryScope::Session,
+            )
+            .unwrap();
 
         // Child replace is pending
-        let outcome = scoped.replace("shared", "alpha", "gamma", "child-x", false).unwrap();
+        let outcome = scoped
+            .replace("shared", "alpha", "gamma", "child-x", false)
+            .unwrap();
         assert_eq!(outcome, WriteOutcome::PendingApproval);
         let pending = scoped.drain_pending_writes();
         assert_eq!(pending.len(), 1);

@@ -56,7 +56,9 @@ impl InotifySource {
                         let mut entries = entries;
                         while let Ok(Some(entry)) = entries.next_entry().await {
                             if let Ok(metadata) = entry.metadata().await {
-                                let modified = metadata.modified().ok()
+                                let modified = metadata
+                                    .modified()
+                                    .ok()
                                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                                     .map(|d| d.as_secs())
                                     .unwrap_or(0);
@@ -65,23 +67,27 @@ impl InotifySource {
                                 let prev = last_modified.insert(path_str.clone(), modified);
 
                                 if prev.is_none() {
-                                    let _ = tx.send(PerceptionEvent {
-                                        id: start_id + last_modified.len() as u64,
-                                        timestamp: Utc::now(),
-                                        source: EventSource::Inotify,
-                                        category: EventCategory::File,
-                                        priority: Priority::Low,
-                                        data: EventData::FileCreated { path: path_str },
-                                    }).await;
+                                    let _ = tx
+                                        .send(PerceptionEvent {
+                                            id: start_id + last_modified.len() as u64,
+                                            timestamp: Utc::now(),
+                                            source: EventSource::Inotify,
+                                            category: EventCategory::File,
+                                            priority: Priority::Low,
+                                            data: EventData::FileCreated { path: path_str },
+                                        })
+                                        .await;
                                 } else if prev != Some(modified) {
-                                    let _ = tx.send(PerceptionEvent {
-                                        id: start_id + last_modified.len() as u64 + 1000,
-                                        timestamp: Utc::now(),
-                                        source: EventSource::Inotify,
-                                        category: EventCategory::File,
-                                        priority: Priority::Low,
-                                        data: EventData::FileModified { path: path_str },
-                                    }).await;
+                                    let _ = tx
+                                        .send(PerceptionEvent {
+                                            id: start_id + last_modified.len() as u64 + 1000,
+                                            timestamp: Utc::now(),
+                                            source: EventSource::Inotify,
+                                            category: EventCategory::File,
+                                            priority: Priority::Low,
+                                            data: EventData::FileModified { path: path_str },
+                                        })
+                                        .await;
                                 }
                             }
                         }

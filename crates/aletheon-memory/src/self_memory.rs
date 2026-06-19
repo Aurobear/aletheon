@@ -222,9 +222,7 @@ impl MemoryBackend for SelfMemory {
 
     async fn list(&self, filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> {
         self.with_conn(|conn| {
-            let mut sql = String::from(
-                "SELECT * FROM aletheon_memory WHERE memory_type = 'self'",
-            );
+            let mut sql = String::from("SELECT * FROM aletheon_memory WHERE memory_type = 'self'");
             let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
             let mut param_idx = 1;
 
@@ -275,10 +273,7 @@ impl MemoryBackend for SelfMemory {
                 );
             }
 
-            conn.execute(
-                "DELETE FROM self_entries WHERE memory_id = ?1",
-                params![id],
-            )?;
+            conn.execute("DELETE FROM self_entries WHERE memory_id = ?1", params![id])?;
             conn.execute("DELETE FROM aletheon_memory WHERE id = ?1", params![id])?;
             Ok(())
         })

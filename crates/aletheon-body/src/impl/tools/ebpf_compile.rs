@@ -84,13 +84,9 @@ impl Tool for EbpfCompileTool {
         let output_path = input["output_path"]
             .as_str()
             .map(String::from)
-            .unwrap_or_else(|| {
-                source.with_extension("o").to_string_lossy().to_string()
-            });
+            .unwrap_or_else(|| source.with_extension("o").to_string_lossy().to_string());
 
-        let target_arch = input["target_arch"]
-            .as_str()
-            .unwrap_or("bpf");
+        let target_arch = input["target_arch"].as_str().unwrap_or("bpf");
 
         // Check clang is available
         let clang_check = tokio::process::Command::new("which")
@@ -101,7 +97,8 @@ impl Tool for EbpfCompileTool {
         match clang_check {
             Ok(output) if !output.status.success() => {
                 return ToolResult {
-                    content: "clang not found. Install clang and llvm to compile eBPF programs.".to_string(),
+                    content: "clang not found. Install clang and llvm to compile eBPF programs."
+                        .to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: start.elapsed().as_millis() as u64,
@@ -127,11 +124,14 @@ impl Tool for EbpfCompileTool {
 
         let output = tokio::process::Command::new("clang")
             .args([
-                "-target", target_arch,
+                "-target",
+                target_arch,
                 "-O2",
                 "-g",
-                "-c", source_path,
-                "-o", &output_path,
+                "-c",
+                source_path,
+                "-o",
+                &output_path,
             ])
             .output()
             .await;
@@ -151,7 +151,9 @@ impl Tool for EbpfCompileTool {
                              BPF magic: {}",
                             output_path,
                             target_arch,
-                            std::fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0),
+                            std::fs::metadata(&output_path)
+                                .map(|m| m.len())
+                                .unwrap_or(0),
                             verification
                         ),
                         is_error: false,
@@ -236,7 +238,9 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
         };
-        let result = tool.execute(json!({"source_path": "/nonexistent.c"}), &ctx).await;
+        let result = tool
+            .execute(json!({"source_path": "/nonexistent.c"}), &ctx)
+            .await;
         assert!(result.is_error);
         assert!(result.content.contains("not found"));
     }

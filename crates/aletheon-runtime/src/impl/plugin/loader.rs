@@ -1,7 +1,7 @@
+use super::manifest::PluginManifest;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use tracing::{info, warn};
-use super::manifest::PluginManifest;
 
 /// Plugin loader — discovers and loads plugins from directories.
 pub struct PluginLoader {

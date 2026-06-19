@@ -3,8 +3,8 @@
 //! Tracks mutation requests (changes to the agent's own configuration).
 //! Irreversible mutations to core identity fields are auto-denied.
 
-use aletheon_abi::{MutationIntent, Verdict};
 use aletheon_abi::self_field::RiskLevel;
+use aletheon_abi::{MutationIntent, Verdict};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,12 @@ pub struct MutationRecord {
 }
 
 /// Fields that are considered core identity — irreversible changes to these are auto-denied.
-const CORE_IDENTITY_FIELDS: &[&str] = &["name", "identity.name", "core_values", "fundamental_purpose"];
+const CORE_IDENTITY_FIELDS: &[&str] = &[
+    "name",
+    "identity.name",
+    "core_values",
+    "fundamental_purpose",
+];
 
 /// MutationLayer — tracks and reviews mutation requests.
 pub struct MutationLayer {
@@ -79,7 +84,10 @@ impl MutationLayer {
             };
             self.records.write().push(record);
             return Verdict::RequireConfirmation {
-                reason: format!("Non-reversible mutation to '{}' requires confirmation", mutation.target),
+                reason: format!(
+                    "Non-reversible mutation to '{}' requires confirmation",
+                    mutation.target
+                ),
                 risk_level: RiskLevel::High,
             };
         }
@@ -100,7 +108,9 @@ impl MutationLayer {
 
     /// Check if a target field is a core identity field.
     fn is_core_identity(&self, target: &str) -> bool {
-        CORE_IDENTITY_FIELDS.iter().any(|f| target == *f || target.starts_with(&format!("{}.", f)))
+        CORE_IDENTITY_FIELDS
+            .iter()
+            .any(|f| target == *f || target.starts_with(&format!("{}.", f)))
     }
 
     /// Get all mutation records.
@@ -111,7 +121,10 @@ impl MutationLayer {
     /// Approve a pending mutation by target name. Returns true if found and approved.
     pub fn approve(&self, target: &str) -> bool {
         let mut records = self.records.write();
-        if let Some(record) = records.iter_mut().find(|r| r.target == target && r.status == MutationStatus::Pending) {
+        if let Some(record) = records
+            .iter_mut()
+            .find(|r| r.target == target && r.status == MutationStatus::Pending)
+        {
             record.status = MutationStatus::Approved;
             record.reviewed_at = Some(Utc::now());
             true
@@ -123,7 +136,10 @@ impl MutationLayer {
     /// Deny a pending mutation by target name.
     pub fn deny(&self, target: &str, reason: &str) -> bool {
         let mut records = self.records.write();
-        if let Some(record) = records.iter_mut().find(|r| r.target == target && r.status == MutationStatus::Pending) {
+        if let Some(record) = records
+            .iter_mut()
+            .find(|r| r.target == target && r.status == MutationStatus::Pending)
+        {
             record.status = MutationStatus::Denied;
             record.reviewed_at = Some(Utc::now());
             record.denial_reason = Some(reason.to_string());
@@ -145,7 +161,7 @@ impl MutationLayer {
                 status TEXT NOT NULL,
                 reviewed_at TEXT,
                 denial_reason TEXT
-            );"
+            );",
         )?;
         conn.execute("DELETE FROM mutation_records", [])?;
         let records = self.records.read();
@@ -168,7 +184,10 @@ impl MutationLayer {
     }
 
     /// Load mutation records from the SQLite store.
-    pub fn load_from_store(&mut self, store: &crate::core::store::SelfFieldStore) -> anyhow::Result<()> {
+    pub fn load_from_store(
+        &mut self,
+        store: &crate::core::store::SelfFieldStore,
+    ) -> anyhow::Result<()> {
         let conn = store.conn();
         // Table may not exist yet on first load
         let table_exists: bool = conn
@@ -198,9 +217,12 @@ impl MutationLayer {
         })?;
         let mut loaded = Vec::new();
         for row in rows {
-            let (target, change_str, reason, reversible, status_str, reviewed_at, denial_reason) = row?;
-            let change: serde_json::Value = serde_json::from_str(&change_str).unwrap_or(serde_json::Value::Null);
-            let status: MutationStatus = serde_json::from_str(&status_str).unwrap_or(MutationStatus::Pending);
+            let (target, change_str, reason, reversible, status_str, reviewed_at, denial_reason) =
+                row?;
+            let change: serde_json::Value =
+                serde_json::from_str(&change_str).unwrap_or(serde_json::Value::Null);
+            let status: MutationStatus =
+                serde_json::from_str(&status_str).unwrap_or(MutationStatus::Pending);
             let reviewed_at_parsed = reviewed_at
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&chrono::Utc));

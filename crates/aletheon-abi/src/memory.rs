@@ -93,7 +93,10 @@ pub enum CompactStrategy {
     /// Merge similar memories (dedup).
     MergeSimilar { similarity_threshold: f64 },
     /// Age-based: remove memories older than duration with low access count.
-    AgeBased { max_age: chrono::Duration, min_access_count: u64 },
+    AgeBased {
+        max_age: chrono::Duration,
+        min_access_count: u64,
+    },
 }
 
 /// Result of a compaction operation.

@@ -4,9 +4,9 @@ use tracing::{debug, info, warn};
 
 use super::aggregator::EventAggregator;
 use super::event::*;
-use super::sources::proc_source::ProcSource;
 use super::sources::inotify_source::InotifySource;
 use super::sources::journald_source::JournaldSource;
+use super::sources::proc_source::ProcSource;
 use super::sources::PerceptionSource;
 
 /// Unified perception manager — polls all sources and emits aggregated events.

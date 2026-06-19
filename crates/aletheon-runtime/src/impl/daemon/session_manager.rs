@@ -25,11 +25,7 @@ pub struct SessionManager {
 impl SessionManager {
     /// Create a new SessionManager.  If a journal already exists for
     /// `session_id` the history is recovered automatically.
-    pub async fn new(
-        data_dir: &Path,
-        session_id: String,
-        max_tokens: usize,
-    ) -> Result<Self> {
+    pub async fn new(data_dir: &Path, session_id: String, max_tokens: usize) -> Result<Self> {
         // Try to recover existing messages from journal
         let messages = match Self::recover(data_dir, &session_id).await {
             Some(msgs) if !msgs.is_empty() => {
@@ -178,16 +174,15 @@ impl SessionManager {
         ];
 
         let summary_text = match llm.complete(&summarize_messages, &[]).await {
-            Ok(resp) => {
-                resp.content
-                    .iter()
-                    .filter_map(|b| match b {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("")
-            }
+            Ok(resp) => resp
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(""),
             Err(e) => {
                 warn!(error = %e, "LLM summarization failed, using truncation fallback");
                 summary_parts

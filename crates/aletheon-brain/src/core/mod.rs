@@ -6,16 +6,17 @@
 //! BrainCore has NO self — it's a pure computation engine.
 //! "Should I?" is SelfField's job. "How do I?" is BrainCore's job.
 
-pub mod reasoner;
-pub mod planner;
-pub mod critic;
-pub mod reflector;
-pub mod learner;
-pub mod world_model;
-pub mod evolution_trigger;
-pub mod skill_extractor;
 pub mod awareness;
+pub mod critic;
+pub mod evolution_trigger;
+pub mod learner;
+pub mod planner;
+pub mod reasoner;
+pub mod reflector;
+pub mod skill_extractor;
+pub mod world_model;
 
+use aletheon_abi::message::ContentBlock;
 use aletheon_abi::{
     brain::{
         BehaviorAdjustment, BrainCoreOps, Critique, EvolutionLogEntry, ExecutionResult, Experience,
@@ -23,13 +24,13 @@ use aletheon_abi::{
     },
     context::Context,
     self_field::{AwarenessGrowthSuggestion, Intent},
-    Subsystem, SubsystemContext, SubsystemHealth, Version, SelfAwareness,
+    SelfAwareness, Subsystem, SubsystemContext, SubsystemHealth, Version,
 };
 use anyhow::Result;
-use aletheon_abi::message::ContentBlock;
 use async_trait::async_trait;
 use tracing::info;
 
+use self::awareness::{AwarenessContext, AwarenessGenerator};
 use self::critic::Critic;
 use self::learner::Learner;
 use self::planner::Planner;
@@ -37,10 +38,9 @@ use self::reasoner::{Reasoner, ReasoningStrategy};
 use self::reflector::Reflector;
 use self::skill_extractor::SkillExtractor;
 use self::world_model::WorldModel;
-use self::awareness::{AwarenessContext, AwarenessGenerator};
+use crate::bridge::dual_model::{DualModelBridge, TaskComplexity};
 use crate::bridge::learning::LearningBridge;
 use crate::bridge::llm::LlmBridge;
-use crate::bridge::dual_model::{DualModelBridge, TaskComplexity};
 
 /// ExperienceSummarizer — analyzes accumulated reflections and produces evolution log entries.
 ///
@@ -142,8 +142,8 @@ impl ExperienceSummarizer {
         }
 
         // --- Pattern 4: Low confidence trend ---
-        let avg_confidence: f64 = reflections.iter().map(|r| r.confidence).sum::<f64>()
-            / reflections.len() as f64;
+        let avg_confidence: f64 =
+            reflections.iter().map(|r| r.confidence).sum::<f64>() / reflections.len() as f64;
         if avg_confidence < 0.4 && reflections.len() >= 3 {
             patterns.push(format!(
                 "Low average confidence: {:.2} across {} reflections",
@@ -313,21 +313,14 @@ impl BrainCore {
     ///
     /// Call this after think() to produce awareness for the
     /// reasoning that just happened.
-    pub fn generate_awareness(
-        &self,
-        action: &str,
-        context: &AwarenessContext,
-    ) -> SelfAwareness {
+    pub fn generate_awareness(&self, action: &str, context: &AwarenessContext) -> SelfAwareness {
         self.awareness_generator.generate_enriched(action, context)
     }
 
     /// Update awareness growth suggestions.
     ///
     /// Called when AwarenessGrowthAnalyzer produces new suggestions.
-    pub fn update_awareness_suggestions(
-        &mut self,
-        suggestions: Vec<AwarenessGrowthSuggestion>,
-    ) {
+    pub fn update_awareness_suggestions(&mut self, suggestions: Vec<AwarenessGrowthSuggestion>) {
         self.awareness_generator.update_suggestions(suggestions);
     }
 }
@@ -377,8 +370,7 @@ impl BrainCoreOps for BrainCore {
         let complexity = Self::estimate_complexity(intent);
 
         // Two-pass flow: planner analyzes, then executor produces the plan.
-        let use_two_pass =
-            self.dual_model.is_some() && complexity == TaskComplexity::Complex;
+        let use_two_pass = self.dual_model.is_some() && complexity == TaskComplexity::Complex;
 
         if use_two_pass {
             let dm = self.dual_model.as_ref().unwrap();
@@ -545,7 +537,10 @@ impl BrainCoreOps for BrainCore {
             let new_rules = learning.extract_and_update()?;
 
             // Convert to aletheon LearnedRule format
-            let learned = new_rules.iter().map(LearningBridge::to_learned_rule).collect();
+            let learned = new_rules
+                .iter()
+                .map(LearningBridge::to_learned_rule)
+                .collect();
 
             Ok(learned)
         } else {
@@ -612,7 +607,9 @@ mod tests {
         let plan = bc.think(&make_intent(), &make_ctx()).await.unwrap();
         let critiques = bc.critique(&plan).await.unwrap();
         // A simple plan should have minimal critiques
-        assert!(critiques.iter().all(|c| c.severity <= aletheon_abi::brain::CriticismSeverity::Info));
+        assert!(critiques
+            .iter()
+            .all(|c| c.severity <= aletheon_abi::brain::CriticismSeverity::Info));
     }
 
     #[tokio::test]
@@ -673,7 +670,10 @@ mod tests {
     async fn subsystem_lifecycle() {
         let mut bc = BrainCore::new(make_config());
         assert_eq!(bc.name(), "brain_core");
-        assert!(matches!(bc.health().await, SubsystemHealth::Degraded { .. }));
+        assert!(matches!(
+            bc.health().await,
+            SubsystemHealth::Degraded { .. }
+        ));
 
         let ctx = SubsystemContext {
             name: "brain_core".to_string(),
@@ -684,7 +684,10 @@ mod tests {
         assert!(matches!(bc.health().await, SubsystemHealth::Healthy));
 
         bc.shutdown().await.unwrap();
-        assert!(matches!(bc.health().await, SubsystemHealth::Degraded { .. }));
+        assert!(matches!(
+            bc.health().await,
+            SubsystemHealth::Degraded { .. }
+        ));
         assert_eq!(bc.world_model().count(), 0);
     }
 
@@ -701,7 +704,9 @@ mod tests {
         // 2. Critique
         let critiques = bc.critique(&plan).await.unwrap();
         // Should be clean for a simple plan
-        assert!(critiques.iter().all(|c| c.severity <= aletheon_abi::brain::CriticismSeverity::Warning));
+        assert!(critiques
+            .iter()
+            .all(|c| c.severity <= aletheon_abi::brain::CriticismSeverity::Warning));
 
         // 3. Simulate execution
         let execution = ExecutionResult {
@@ -868,7 +873,9 @@ mod tests {
     // --- Dual-model tests ---
 
     use crate::bridge::dual_model::{DualModelBridge, DualModelConfig, TaskComplexity};
-    use crate::r#impl::llm::{LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage};
+    use crate::r#impl::llm::{
+        LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage,
+    };
     use aletheon_abi::message::Message;
     use std::sync::Arc;
 
@@ -913,8 +920,12 @@ mod tests {
     }
 
     fn make_dual_brain_core() -> BrainCore {
-        let planner = LlmBridge::new(Arc::new(StubProvider { tag: "planner".into() }));
-        let executor = LlmBridge::new(Arc::new(StubProvider { tag: "executor".into() }));
+        let planner = LlmBridge::new(Arc::new(StubProvider {
+            tag: "planner".into(),
+        }));
+        let executor = LlmBridge::new(Arc::new(StubProvider {
+            tag: "executor".into(),
+        }));
         let dm = DualModelBridge::new(planner, executor, DualModelConfig::default());
         BrainCore::new(make_config()).with_dual_model(dm)
     }
@@ -946,7 +957,10 @@ mod tests {
     #[test]
     fn estimate_complexity_simple() {
         let intent = make_intent(); // short description
-        assert_eq!(BrainCore::estimate_complexity(&intent), TaskComplexity::Simple);
+        assert_eq!(
+            BrainCore::estimate_complexity(&intent),
+            TaskComplexity::Simple
+        );
     }
 
     #[test]
@@ -957,7 +971,10 @@ mod tests {
             source: IntentSource::User,
             description: "y".repeat(600),
         };
-        assert_eq!(BrainCore::estimate_complexity(&intent), TaskComplexity::Complex);
+        assert_eq!(
+            BrainCore::estimate_complexity(&intent),
+            TaskComplexity::Complex
+        );
     }
 
     #[test]
@@ -968,7 +985,10 @@ mod tests {
             source: IntentSource::User,
             description: "z".repeat(200),
         };
-        assert_eq!(BrainCore::estimate_complexity(&intent), TaskComplexity::Medium);
+        assert_eq!(
+            BrainCore::estimate_complexity(&intent),
+            TaskComplexity::Medium
+        );
     }
 
     #[tokio::test]

@@ -31,7 +31,9 @@ impl LinuxPlatformAdapter {
 
 #[async_trait]
 impl PlatformAdapter for LinuxPlatformAdapter {
-    fn name(&self) -> &str { "linux_dbus" }
+    fn name(&self) -> &str {
+        "linux_dbus"
+    }
 
     fn is_available(&self) -> bool {
         Self::is_available_static()
@@ -54,24 +56,28 @@ impl PlatformAdapter for LinuxPlatformAdapter {
             .await?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.lines().skip(1).filter_map(|line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 4 {
-                Some(ServiceInfo {
-                    name: parts[0].to_string(),
-                    status: match parts[2] {
-                        "active" => ServiceStatus::Running,
-                        "inactive" => ServiceStatus::Stopped,
-                        "failed" => ServiceStatus::Failed,
-                        _ => ServiceStatus::Unknown,
-                    },
-                    description: parts[3..].join(" "),
-                    pid: None,
-                })
-            } else {
-                None
-            }
-        }).collect())
+        Ok(stdout
+            .lines()
+            .skip(1)
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 4 {
+                    Some(ServiceInfo {
+                        name: parts[0].to_string(),
+                        status: match parts[2] {
+                            "active" => ServiceStatus::Running,
+                            "inactive" => ServiceStatus::Stopped,
+                            "failed" => ServiceStatus::Failed,
+                            _ => ServiceStatus::Unknown,
+                        },
+                        description: parts[3..].join(" "),
+                        pid: None,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect())
     }
 
     async fn service_status(&self, name: &str) -> Result<ServiceInfo> {
@@ -100,7 +106,11 @@ impl PlatformAdapter for LinuxPlatformAdapter {
             .output()
             .await?;
         if !output.status.success() {
-            anyhow::bail!("Failed to start {}: {}", name, String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to start {}: {}",
+                name,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         Ok(())
     }
@@ -111,7 +121,11 @@ impl PlatformAdapter for LinuxPlatformAdapter {
             .output()
             .await?;
         if !output.status.success() {
-            anyhow::bail!("Failed to stop {}: {}", name, String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to stop {}: {}",
+                name,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         Ok(())
     }
@@ -122,7 +136,11 @@ impl PlatformAdapter for LinuxPlatformAdapter {
             .output()
             .await?;
         if !output.status.success() {
-            anyhow::bail!("Failed to restart {}: {}", name, String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to restart {}: {}",
+                name,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         Ok(())
     }
@@ -135,12 +153,18 @@ impl PlatformAdapter for LinuxPlatformAdapter {
 
     async fn kernel_version(&self) -> Result<String> {
         let version = tokio::fs::read_to_string("/proc/version").await?;
-        Ok(version.split_whitespace().nth(2).unwrap_or("unknown").to_string())
+        Ok(version
+            .split_whitespace()
+            .nth(2)
+            .unwrap_or("unknown")
+            .to_string())
     }
 
     async fn uptime(&self) -> Result<u64> {
         let uptime = tokio::fs::read_to_string("/proc/uptime").await?;
-        let seconds: f64 = uptime.split_whitespace().next()
+        let seconds: f64 = uptime
+            .split_whitespace()
+            .next()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.0);
         Ok(seconds as u64)

@@ -19,7 +19,12 @@ pub fn render_markdown(text: &str, width: u16, caps: &TermCaps) -> Vec<Line<'sta
     render_markdown_with_theme(text, width, caps, &theme)
 }
 
-fn render_markdown_with_theme(text: &str, width: u16, caps: &TermCaps, theme: &Theme) -> Vec<Line<'static>> {
+fn render_markdown_with_theme(
+    text: &str,
+    width: u16,
+    caps: &TermCaps,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -149,10 +154,8 @@ fn render_markdown_with_theme(text: &str, width: u16, caps: &TermCaps, theme: &T
                         // Add underline for H1
                         if level == HeadingLevel::H1 {
                             let hline = caps.hline().repeat(wrap_width.min(40));
-                            lines.push(Line::from(Span::styled(
-                                hline,
-                                Style::default().fg(accent),
-                            )));
+                            lines
+                                .push(Line::from(Span::styled(hline, Style::default().fg(accent))));
                         }
                         lines.push(Line::from(""));
                     }
@@ -175,10 +178,7 @@ fn render_markdown_with_theme(text: &str, width: u16, caps: &TermCaps, theme: &T
                         if !lang.is_empty() {
                             top_spans.push(Span::styled(format!("{} ", lang), accent_style));
                         }
-                        top_spans.push(Span::styled(
-                            caps.hline().repeat(dash_count),
-                            accent_style,
-                        ));
+                        top_spans.push(Span::styled(caps.hline().repeat(dash_count), accent_style));
                         top_spans.push(Span::raw(" "));
                         lines.push(Line::from(top_spans));
 
@@ -190,7 +190,10 @@ fn render_markdown_with_theme(text: &str, width: u16, caps: &TermCaps, theme: &T
                             let mut spans = vec![
                                 Span::raw("  "),
                                 Span::styled(format!("{} ", caps.vline()), gutter),
-                                Span::styled(format!("{:>width$} ", num_str, width = line_num_width), gutter),
+                                Span::styled(
+                                    format!("{:>width$} ", num_str, width = line_num_width),
+                                    gutter,
+                                ),
                                 Span::styled(format!("{} ", caps.vline()), gutter),
                             ];
                             spans.extend(line.spans.clone());
@@ -256,10 +259,7 @@ fn render_markdown_with_theme(text: &str, width: u16, caps: &TermCaps, theme: &T
                         let cell_spans: Vec<Span<'static>> = current_spans.drain(..).collect();
                         table_row.push(cell_spans);
                     }
-                    TagEnd::Emphasis
-                    | TagEnd::Strong
-                    | TagEnd::Strikethrough
-                    | TagEnd::Link => {
+                    TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link => {
                         style_stack.pop();
                     }
                     _ => {}
@@ -327,10 +327,9 @@ fn render_markdown_with_theme(text: &str, width: u16, caps: &TermCaps, theme: &T
     flush_spans(&mut current_spans, &mut lines);
 
     // Remove trailing empty lines
-    while lines
-        .last()
-        .map_or(false, |l| l.spans.is_empty() || l.spans.iter().all(|s| s.content.is_empty()))
-    {
+    while lines.last().map_or(false, |l| {
+        l.spans.is_empty() || l.spans.iter().all(|s| s.content.is_empty())
+    }) {
         lines.pop();
     }
 
