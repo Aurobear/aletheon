@@ -10,6 +10,7 @@ pub mod glob_scanner;
 pub mod noop;
 pub mod policy;
 pub mod process;
+pub mod profile;
 
 // Re-export key types for convenience (inlined from backend.rs)
 pub use aletheon_abi::sandbox::{
@@ -24,3 +25,4 @@ pub use glob_scanner::GlobScanner;
 pub use noop::NoopBackend;
 pub use policy::{FilesystemPolicy, FsDefault, WritableRoot};
 pub use process::ProcessBackend;
+pub use profile::SandboxProfile;
