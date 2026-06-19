@@ -31,6 +31,7 @@ use ratatui::{
 };
 use tokio::net::UnixStream;
 
+use self::approval_dialog::{ApprovalDialog, DialogDecision};
 use self::chat::{ChatWidget, Role as ChatRole};
 use self::command::{parse_command, BuiltinCommand, CommandType};
 use self::skill::SkillLoader;
@@ -255,6 +256,46 @@ async fn run_app(
 }
 
 async fn handle_key(app: &mut App, key: KeyEvent) {
+    // If approval dialog is active, route key to dialog
+    if app.pending_approval.is_some() {
+        if let KeyCode::Char(c) = key.code {
+            if let Some(decision) = ApprovalDialog::key_to_decision(c) {
+                let dialog = app.pending_approval.take().unwrap();
+                let decision_str = match decision {
+                    DialogDecision::Approve => "approve",
+                    DialogDecision::ApproveForSession => "approve_for_session",
+                    DialogDecision::Deny => "deny",
+                };
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "method": "approval_response",
+                    "params": {
+                        "approval_id": dialog.approval_id,
+                        "decision": decision_str,
+                    }
+                });
+                use tokio::io::AsyncWriteExt;
+                let payload = serde_json::to_string(&resp).unwrap_or_default();
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat.add_message(
+                    ChatRole::System,
+                    format!("Approval: {} ({})", decision_str, dialog.action_summary),
+                );
+                return;
+            }
+        }
+        // Any other key while dialog is open: ignore (except Ctrl+C to dismiss)
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            app.pending_approval = None;
+            app.chat
+                .add_message(ChatRole::System, "Approval cancelled (deny)".to_string());
+        }
+        return;
+    }
+
     // Ctrl+C: first press clears input, second press quits
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         if app.input_buf.is_empty() {
@@ -633,6 +674,43 @@ fn try_read_response(app: &mut App) {
                 if let Some(msg) =
                     serde_json::from_str::<serde_json::Value>(app.response_buf.trim()).ok()
                 {
+                    // Detect out-of-band approval_request notification
+                    // (has "method" but no "result" and no "id")
+                    if msg.get("method").and_then(|v| v.as_str()) == Some("approval_request")
+                        && msg.get("result").is_none()
+                        && msg.get("id").is_none()
+                    {
+                        if let Some(params) = msg.get("params") {
+                            let approval_id = params
+                                .get("approval_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let tool = params
+                                .get("tool")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let action_summary = params
+                                .get("action_summary")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let risk_level = params
+                                .get("risk_level")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            app.pending_approval = Some(ApprovalDialog::new(
+                                approval_id,
+                                tool,
+                                action_summary,
+                                risk_level,
+                            ));
+                        }
+                        app.response_buf.clear();
+                        break;
+                    }
                     process_response(app, msg);
                     break;
                 }
@@ -1176,6 +1254,48 @@ async fn simple_line_mode(
                 Ok(n) => {
                     let chunk = String::from_utf8_lossy(&read_buf[..n]);
                     if let Ok(msg) = serde_json::from_str::<serde_json::Value>(chunk.trim()) {
+                        // Handle out-of-band approval_request notification
+                        if msg.get("method").and_then(|v| v.as_str()) == Some("approval_request")
+                            && msg.get("result").is_none()
+                            && msg.get("id").is_none()
+                        {
+                            let params = &msg["params"];
+                            let tool = params["tool"].as_str().unwrap_or("?");
+                            let action_summary =
+                                params["action_summary"].as_str().unwrap_or("");
+                            let risk_level = params["risk_level"].as_str().unwrap_or("");
+                            let approval_id =
+                                params["approval_id"].as_str().unwrap_or("");
+                            println!(
+                                "\n⚠  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
+                                risk_level, tool, action_summary,
+                            );
+                            io::stdout().flush()?;
+                            let mut line = String::new();
+                            let decision = match stdin.read_line(&mut line) {
+                                Ok(0) | Err(_) => "deny",
+                                Ok(_) => match line.trim().to_lowercase().as_str() {
+                                    "y" | "yes" => "approve",
+                                    "a" | "always" => "approve_for_session",
+                                    _ => "deny",
+                                },
+                            };
+                            let resp = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "id": null,
+                                "method": "approval_response",
+                                "params": {
+                                    "approval_id": approval_id,
+                                    "decision": decision,
+                                }
+                            });
+                            let payload = serde_json::to_string(&resp)?;
+                            stream
+                                .write_all(format!("{}\n", payload).as_bytes())
+                                .await?;
+                            stream.flush().await?;
+                            continue; // go back to wait for the actual response
+                        }
                         if let Some(text) = msg["result"]["response"].as_str() {
                             println!("\n{}\n", text);
                         } else if !msg["result"]["reflections"].is_null() {

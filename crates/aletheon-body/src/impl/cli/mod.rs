@@ -247,21 +247,65 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
     writer.write_all(req_str.as_bytes()).await?;
     writer.write_all(b"\n").await?;
 
-    let mut response = String::new();
-    reader.read_line(&mut response).await?;
-    let resp: serde_json::Value = serde_json::from_str(&response)?;
-    if let Some(text) = resp["result"]["response"].as_str() {
-        println!("{}", text);
-    } else if !resp["result"]["reflections"].is_null() {
-        println!("{}", format_reflections(&resp["result"]["reflections"]));
-    } else if !resp["result"]["genome"].is_null() {
-        println!("{}", format_genome(&resp["result"]["genome"]));
-    } else if !resp["result"]["evolution"].is_null() {
-        println!("{}", format_evolution(&resp["result"]["evolution"]));
-    } else if let Some(status) = resp["result"]["status"].as_object() {
-        println!("{}", format_status(&resp["result"]["status"]));
-    } else if let Some(err) = resp["error"]["message"].as_str() {
-        eprintln!("Error: {}", err);
+    loop {
+        let mut response = String::new();
+        reader.read_line(&mut response).await?;
+        let resp: serde_json::Value = serde_json::from_str(&response)?;
+
+        // Handle out-of-band approval_request notification
+        if resp.get("method").and_then(|v| v.as_str()) == Some("approval_request")
+            && resp.get("result").is_none()
+            && resp.get("id").is_none()
+        {
+            let params = &resp["params"];
+            let tool = params["tool"].as_str().unwrap_or("?");
+            let action_summary = params["action_summary"].as_str().unwrap_or("");
+            let risk_level = params["risk_level"].as_str().unwrap_or("");
+            let approval_id = params["approval_id"].as_str().unwrap_or("");
+            eprintln!(
+                "\n\u{26a0}  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
+                risk_level, tool, action_summary,
+            );
+            let mut line = String::new();
+            let stdin = io::stdin();
+            let decision = match stdin.read_line(&mut line) {
+                Ok(0) | Err(_) => "deny",
+                Ok(_) => match line.trim().to_lowercase().as_str() {
+                    "y" | "yes" => "approve",
+                    "a" | "always" => "approve_for_session",
+                    _ => "deny",
+                },
+            };
+            let approval_resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": null,
+                "method": "approval_response",
+                "params": {
+                    "approval_id": approval_id,
+                    "decision": decision,
+                }
+            });
+            let resp_str = serde_json::to_string(&approval_resp)?;
+            writer.write_all(resp_str.as_bytes()).await?;
+            writer.write_all(b"\n").await?;
+            continue; // wait for the actual response
+        }
+
+        // Final response
+        if let Some(text) = resp["result"]["response"].as_str() {
+            println!("{}", text);
+        } else if !resp["result"]["reflections"].is_null() {
+            println!("{}", format_reflections(&resp["result"]["reflections"]));
+        } else if !resp["result"]["genome"].is_null() {
+            println!("{}", format_genome(&resp["result"]["genome"]));
+        } else if !resp["result"]["evolution"].is_null() {
+            println!("{}", format_evolution(&resp["result"]["evolution"]));
+        } else if let Some(status) = resp["result"]["status"].as_object() {
+            println!("{}", format_status(&resp["result"]["status"]));
+        } else if let Some(err) = resp["error"]["message"].as_str() {
+            eprintln!("Error: {}", err);
+        }
+        break;
     }
     Ok(())
 }
