@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
+
 use super::session_manager::SessionManager;
 use crate::core::config::RuntimeConfig;
 use crate::core::orchestrator::AletheonRuntime;
@@ -41,8 +43,12 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{info, warn};
 
 use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
+use crate::core::checkpoint::CheckpointStore;
+use crate::core::storm_breaker::StormBreaker;
 use crate::r#impl::hooks::builtin::audit_hook;
 use crate::r#impl::hooks::registry::HookRegistry;
+use crate::r#impl::memory::fact_store::FactStore;
+use crate::r#impl::skill_router::SkillRouter;
 use crate::r#impl::skills::loader::SkillLoader;
 use crate::r#impl::skills::plugin::register_skill;
 
@@ -107,6 +113,14 @@ pub struct RequestHandler {
     /// Channel to send out-of-band JSON-RPC notifications to the connected client.
     /// Used to push `approval_request` notifications during a chat turn.
     notify_tx: Option<mpsc::Sender<String>>,
+    /// SQLite-backed fact store with trust scoring and FTS5 search.
+    fact_store: Arc<Mutex<FactStore>>,
+    /// Loop detector: tracks consecutive tool failures/successes.
+    storm_breaker: Arc<Mutex<StormBreaker>>,
+    /// Per-session checkpoint store for file-edit rewind.
+    checkpoint_store: Arc<Mutex<CheckpointStore>>,
+    /// Keyword-based skill router for prompt-to-skill matching.
+    skill_router: Arc<Mutex<SkillRouter>>,
 }
 
 impl RequestHandler {
@@ -332,6 +346,37 @@ impl RequestHandler {
 
         info!("CommunicationBus created with SelfField, Memory, and Body module handlers");
 
+        // ── FactStore ─────────────────────────────────────────────────────────
+        let aletheon_dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".aletheon");
+        std::fs::create_dir_all(&aletheon_dir)?;
+        let fact_store = FactStore::open(&aletheon_dir.join("fact_store.db"))
+            .context("opening fact store")?;
+        let fact_store = Arc::new(Mutex::new(fact_store));
+
+        // ── StormBreaker ──────────────────────────────────────────────────────
+        let storm_breaker = Arc::new(Mutex::new(StormBreaker::new(3)));
+
+        // ── CheckpointStore ────────────────────────────────────────────────────
+        let session_dir = aletheon_dir.join("sessions").join(&session_id);
+        std::fs::create_dir_all(&session_dir)?;
+        let checkpoint_store = CheckpointStore::new(&session_dir);
+        let checkpoint_store = Arc::new(Mutex::new(checkpoint_store));
+
+        // ── SkillRouter ───────────────────────────────────────────────────────
+        let mut skill_router = SkillRouter::new();
+        let skills_dirs = vec![
+            aletheon_dir.join("skills"),
+            PathBuf::from(".aletheon/skills"),
+        ];
+        for dir in &skills_dirs {
+            if dir.exists() {
+                let _ = skill_router.load_from_dir(dir);
+            }
+        }
+        let skill_router = Arc::new(Mutex::new(skill_router));
+
         let handler = Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
@@ -357,6 +402,10 @@ impl RequestHandler {
             approval_rx: Arc::new(Mutex::new(approval_rx)),
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
             notify_tx: None,
+            fact_store,
+            storm_breaker,
+            checkpoint_store,
+            skill_router,
         };
 
         // Fire OnSessionStart hook
@@ -582,6 +631,61 @@ impl RequestHandler {
                     }
                 }
 
+                // --- Fact recall from FactStore ---
+                {
+                    let fs = self.fact_store.lock().await;
+                    let keywords: Vec<String> = message.split_whitespace()
+                        .filter(|w| w.len() > 3)
+                        .map(|w| w.to_lowercase())
+                        .collect();
+                    let query = keywords.join(" ");
+                    if query.len() >= 8 {
+                        if let Ok(facts) = fs.search_facts(&query, None, 0.15, 4) {
+                            if !facts.is_empty() {
+                                let mut recall_block = String::from("\n[Recalled memories]\n");
+                                for fact in &facts {
+                                    recall_block.push_str(&format!("- {} (trust: {:.2})\n", fact.content, fact.trust_score));
+                                    let _ = fs.record_feedback(fact.fact_id, true);
+                                }
+                                // Entity graph boost
+                                let entities = FactStore::extract_entities(message);
+                                for entity in entities.iter().take(3) {
+                                    if let Ok(eid) = fs.resolve_entity(entity) {
+                                        if let Ok(related) = fs.get_entity_facts(eid) {
+                                            for rf in related.iter().take(1) {
+                                                if !facts.iter().any(|f| f.fact_id == rf.fact_id) {
+                                                    recall_block.push_str(&format!("- {} (entity: {})\n", rf.content, entity));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                info!(count = facts.len(), "Fact recall injected");
+                                effective_message.push_str(&recall_block);
+                            }
+                        }
+                    }
+                }
+
+                // --- Skill suggestion via SkillRouter ---
+                {
+                    let sr = self.skill_router.lock().await;
+                    let suggestions = sr.suggest(message, 0.6, 1);
+                    if let Some(suggestion) = suggestions.first() {
+                        info!(skill = %suggestion.name, confidence = suggestion.confidence, "Skill suggested");
+                        effective_message.push_str(&format!(
+                            "\n[Suggested skill] /{} (confidence: {:.2}) — {}\n",
+                            suggestion.name, suggestion.confidence, suggestion.description
+                        ));
+                    }
+                }
+
+                // --- Periodic stale fact decay ---
+                {
+                    let fs = self.fact_store.lock().await;
+                    let _ = fs.decay_stale();
+                }
+
                 effective_message.push_str(message);
 
                 // --- PreTurn hooks ---
@@ -659,6 +763,8 @@ impl RequestHandler {
                 let runner = self.tool_runner.clone();
                 let tools_arc = self.tools.clone();
                 let hook_registry_arc = self.hook_registry.clone();
+                let storm_breaker_arc = self.storm_breaker.clone();
+                let memory_queue_arc = self.memory_queue.clone();
                 let working_dir = std::env::current_dir().unwrap_or_default();
                 let session_id = self.session_manager.lock().await.session_id.clone();
                 let turn_count = self.session_manager.lock().await.turn_count();
@@ -667,6 +773,8 @@ impl RequestHandler {
                     let runner = runner.clone();
                     let tools_arc = tools_arc.clone();
                     let hook_registry_arc = hook_registry_arc.clone();
+                    let storm_breaker_arc = storm_breaker_arc.clone();
+                    let memory_queue_arc = memory_queue_arc.clone();
                     let name = name.to_string();
                     let input = input.clone();
                     let working_dir = working_dir.clone();
@@ -728,6 +836,15 @@ impl RequestHandler {
                             }
                             None => (format!("Unknown tool: {}", name), true),
                         };
+
+                        // --- StormBreaker: track consecutive failures ---
+                        {
+                            let mut sb = storm_breaker_arc.lock().await;
+                            if let Some(directive) = sb.record(&name, is_error, &content) {
+                                let mut mq = memory_queue_arc.lock().await;
+                                mq.push(format!("\n[Storm Breaker] {}\n", directive));
+                            }
+                        }
 
                         // --- PostTool hook ---
                         {
@@ -1006,6 +1123,29 @@ impl RequestHandler {
                         metadata: HashMap::new(),
                     };
                     hr.execute(&ctx).await;
+                }
+                // Distill session facts into FactStore
+                {
+                    let fs = self.fact_store.lock().await;
+                    let sm = self.session_manager.lock().await;
+                    let recent: Vec<_> = sm.history().iter().rev().take(10).collect();
+                    for msg in &recent {
+                        if matches!(msg.role, aletheon_abi::Role::User) {
+                            for block in &msg.content {
+                                if let aletheon_abi::ContentBlock::Text { text } = block {
+                                    if text.len() > 20 {
+                                        let lower = text.to_lowercase();
+                                        if lower.contains("prefer") || lower.contains("always")
+                                            || lower.contains("never") || lower.contains("remember")
+                                        {
+                                            let _ = fs.add_fact(text, "session", "", "", 0.6, "episodic", 14);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let _ = fs.decay_stale();
                 }
                 let mut state = self.state.lock().await;
                 state.pending_input = None;
