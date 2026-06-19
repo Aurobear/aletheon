@@ -28,6 +28,26 @@ use aletheon_brain::r#impl::llm::LlmProvider;
 use aletheon_brain::r#impl::llm::StopReason;
 use aletheon_brain::r#impl::provider_registry::ProviderRegistry;
 use aletheon_body::r#impl::tools::{ToolContext, ToolRegistry};
+use aletheon_body::r#impl::security::runner::ToolRunnerWithGuard;
+use aletheon_body::r#impl::security::approval::{TerminalApprovalGate, ApprovalGate};
+use aletheon_body::r#impl::security::audit::AuditLogger;
+
+/// Minimal KEY=VALUE .env loader (no shell expansion). Mirrors the daemon's loader so
+/// exec resolves provider API keys the same way the daemon does. Does not override
+/// already-set process env vars.
+fn load_dotenv(path: &std::path::Path) {
+    let Ok(content) = std::fs::read_to_string(path) else { return };
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        if let Some((k, v)) = line.split_once('=') {
+            let (k, v) = (k.trim(), v.trim());
+            if std::env::var(k).is_err() {
+                std::env::set_var(k, v);
+            }
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "aletheon-exec", about = "Non-interactive agent execution")]
@@ -104,6 +124,11 @@ async fn main() {
 }
 
 async fn run(args: Args) -> Result<ExecResult> {
+    // Load ~/.aletheon/.env so provider API keys resolve (the daemon does this too).
+    if let Some(home) = std::env::var_os("HOME") {
+        load_dotenv(&std::path::Path::new(&home).join(".aletheon").join(".env"));
+    }
+
     let working_dir = args.working_dir.canonicalize().unwrap_or_else(|_| {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
     });
@@ -124,6 +149,16 @@ async fn run(args: Args) -> Result<ExecResult> {
 
     // Create tool registry with default tools
     let tool_registry = ToolRegistry::default();
+
+    // Guarded runner with terminal approval for risky (L2+) tools.
+    let audit_path = working_dir.join(".aletheon-audit.jsonl");
+    let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
+    let mut runner = ToolRunnerWithGuard::with_default_sandbox(
+        AuditLogger::new(audit_path)?,
+    )
+    .with_approval_gate(approval);
+    let turn_id = uuid::Uuid::new_v4().to_string();
+    runner.on_new_turn(&turn_id);
 
     // Build tool definitions for LLM
     let tool_defs = tool_registry.definitions();
@@ -201,9 +236,11 @@ async fn run(args: Args) -> Result<ExecResult> {
                     if let ContentBlock::ToolUse { id, name, input } = block {
                         info!(tool = %name, "Executing tool");
                         let tool_result = if let Some(tool) = tool_registry.get(name) {
-                            let result = tool.execute(input.clone(), &tool_ctx).await;
+                            let result = runner
+                                .run(tool.as_ref(), input.clone(), &tool_ctx, &turn_id)
+                                .await;
                             if result.is_error {
-                                warn!(tool = %name, error = %result.content, "Tool failed");
+                                warn!(tool = %name, error = %result.content, "Tool failed/denied");
                             } else {
                                 info!(tool = %name, "Tool succeeded");
                             }
