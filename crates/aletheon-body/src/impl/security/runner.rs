@@ -10,6 +10,7 @@ use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
 use crate::r#impl::sandbox::{SandboxConfig, SandboxExecutor};
 use aletheon_abi::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use aletheon_abi::{PermissionBehavior, PermissionContext};
 
 #[derive(Debug)]
 pub enum ToolError {
@@ -48,6 +49,8 @@ pub struct ToolRunnerWithGuard {
     approval_gate: Arc<dyn ApprovalGate>,
     /// Tool names approved for the rest of the session (via ApproveForSession).
     session_approvals: std::collections::HashSet<String>,
+    /// Permission context for mode/rule-based pre-approval.
+    permission_ctx: PermissionContext,
 }
 
 impl ToolRunnerWithGuard {
@@ -61,6 +64,7 @@ impl ToolRunnerWithGuard {
             risk_classifier: RiskClassifier::with_defaults(),
             approval_gate: Arc::new(AutoDenyGate),
             session_approvals: std::collections::HashSet::new(),
+            permission_ctx: PermissionContext::default(),
         }
     }
 
@@ -73,6 +77,12 @@ impl ToolRunnerWithGuard {
     /// Set the approval gate used for actions that require approval.
     pub fn with_approval_gate(mut self, gate: Arc<dyn ApprovalGate>) -> Self {
         self.approval_gate = gate;
+        self
+    }
+
+    /// Set the permission context for mode/rule-based pre-approval.
+    pub fn with_permission_context(mut self, ctx: PermissionContext) -> Self {
+        self.permission_ctx = ctx;
         self
     }
 
@@ -114,39 +124,67 @@ impl ToolRunnerWithGuard {
             }
             PolicyVerdict::RequireApproval { reason } => {
                 if tool.permission_level() >= PermissionLevel::L2 {
-                    if self.session_approvals.contains(tool_name) {
-                        // Previously approved-for-session; allow.
-                    } else {
-                        let summary = input
-                            .get("command")
-                            .and_then(|v| v.as_str())
-                            .map(|c| format!("{}: {}", tool_name, c))
-                            .unwrap_or_else(|| format!("{}: {}", tool_name, input));
-                        let req = ApprovalRequest {
-                            tool: tool_name.to_string(),
-                            action_summary: summary,
-                            risk_level: format!("{:?}", tool.permission_level()),
-                            detail: Some(input.to_string()),
-                        };
-                        match self.approval_gate.request(&req).await {
-                            ApprovalDecision::Approve => {}
-                            ApprovalDecision::ApproveForSession => {
-                                self.session_approvals.insert(tool_name.to_string());
-                            }
-                            ApprovalDecision::Deny => {
-                                self.log_audit(
-                                    tool_name,
-                                    &input,
-                                    tool.permission_level(),
-                                    turn_id,
-                                    None,
-                                    &start,
-                                    "approval_denied",
-                                )
-                                .await;
-                                return Err(ToolError::PolicyDenied {
-                                    reason: format!("{}: denied by approval gate", reason),
-                                });
+                    let summary = input
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .map(|c| format!("{}: {}", tool_name, c))
+                        .unwrap_or_else(|| format!("{}: {}", tool_name, input));
+
+                    // Consult PermissionContext before the approval gate.
+                    match self.permission_ctx.resolve(tool_name, &summary, true) {
+                        PermissionBehavior::Allow => {
+                            // Rule/mode pre-approves; skip approval gate.
+                        }
+                        PermissionBehavior::Deny => {
+                            self.log_audit(
+                                tool_name,
+                                &input,
+                                tool.permission_level(),
+                                turn_id,
+                                None,
+                                &start,
+                                "rule_denied",
+                            )
+                            .await;
+                            return Err(ToolError::PolicyDenied {
+                                reason: format!("{}: denied by permission rule/mode", reason),
+                            });
+                        }
+                        PermissionBehavior::Ask => {
+                            // Fall through to existing approval-gate flow.
+                            if self.session_approvals.contains(tool_name) {
+                                // Previously approved-for-session; allow.
+                            } else {
+                                let req = ApprovalRequest {
+                                    tool: tool_name.to_string(),
+                                    action_summary: summary,
+                                    risk_level: format!("{:?}", tool.permission_level()),
+                                    detail: Some(input.to_string()),
+                                };
+                                match self.approval_gate.request(&req).await {
+                                    ApprovalDecision::Approve => {}
+                                    ApprovalDecision::ApproveForSession => {
+                                        self.session_approvals.insert(tool_name.to_string());
+                                    }
+                                    ApprovalDecision::Deny => {
+                                        self.log_audit(
+                                            tool_name,
+                                            &input,
+                                            tool.permission_level(),
+                                            turn_id,
+                                            None,
+                                            &start,
+                                            "approval_denied",
+                                        )
+                                        .await;
+                                        return Err(ToolError::PolicyDenied {
+                                            reason: format!(
+                                                "{}: denied by approval gate",
+                                                reason
+                                            ),
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
@@ -346,6 +384,7 @@ mod tests {
         ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult,
         ToolResultMeta,
     };
+    use aletheon_abi::{PermissionContext, PermissionMode};
     use async_trait::async_trait;
 
     /// A dummy L2 tool used to exercise the approval gate path.
@@ -433,5 +472,56 @@ mod tests {
             result.err()
         );
         assert_eq!(result.unwrap().content, "ok");
+    }
+
+    #[tokio::test]
+    async fn bypass_all_approves_l2() {
+        // BypassAll mode should allow L2 tool without any approval gate prompt.
+        let ctx = PermissionContext {
+            mode: PermissionMode::BypassAll,
+            ..Default::default()
+        };
+        let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
+            .with_approval_gate(Arc::new(AutoDenyGate))
+            .with_permission_context(ctx);
+        let tool = DummyL2Tool;
+        let result = runner
+            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .await;
+        assert!(
+            result.is_ok(),
+            "BypassAll mode should allow L2 tool even with AutoDenyGate: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap().content, "ok");
+    }
+
+    #[tokio::test]
+    async fn plan_mode_denies_dangerous() {
+        // Plan mode should deny L2 (dangerous) tool, audit as "rule_denied".
+        let ctx = PermissionContext {
+            mode: PermissionMode::Plan,
+            ..Default::default()
+        };
+        let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
+            .with_approval_gate(Arc::new(AutoApproveGate))
+            .with_permission_context(ctx);
+        let tool = DummyL2Tool;
+        let result = runner
+            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .await;
+        assert!(result.is_err(), "Plan mode should deny L2 tool");
+        match result.unwrap_err() {
+            ToolError::PolicyDenied { reason } => {
+                assert!(
+                    reason.contains("denied by permission rule/mode"),
+                    "reason: {}",
+                    reason
+                );
+            }
+            other => panic!("Expected PolicyDenied, got: {:?}", other),
+        }
     }
 }
