@@ -1,5 +1,7 @@
 pub mod behavior_paths;
 pub mod config;
+pub mod controller;
+pub mod event_sink;
 pub mod orchestrator;
 pub mod react_loop;
 

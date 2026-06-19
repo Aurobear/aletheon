@@ -40,6 +40,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "toml",
  "uuid",
 ]
 
@@ -216,6 +217,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-test",
+ "tokio-util",
  "toml",
  "tracing",
  "urlencoding",

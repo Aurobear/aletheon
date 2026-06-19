@@ -36,6 +36,9 @@ pub mod tool;
 pub mod error;
 pub mod permission;
 
+// Independent execution policy engine
+pub mod execpolicy;
+
 // Kernel-style foundations
 pub mod observable;
 pub mod registry;

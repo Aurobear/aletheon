@@ -9,6 +9,7 @@ use super::output_guardrail::OutputGuardrail;
 use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
 use crate::r#impl::sandbox::{SandboxConfig, SandboxExecutor};
+use aletheon_abi::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
 use aletheon_abi::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use aletheon_abi::{PermissionBehavior, PermissionContext};
 
@@ -51,6 +52,8 @@ pub struct ToolRunnerWithGuard {
     session_approvals: std::collections::HashSet<String>,
     /// Permission context for mode/rule-based pre-approval.
     permission_ctx: PermissionContext,
+    /// Independent execpolicy engine. When set, takes precedence over the inline PolicyEngine.
+    exec_policy: Option<ExecPolicy>,
 }
 
 impl ToolRunnerWithGuard {
@@ -65,6 +68,7 @@ impl ToolRunnerWithGuard {
             approval_gate: Arc::new(AutoDenyGate),
             session_approvals: std::collections::HashSet::new(),
             permission_ctx: PermissionContext::default(),
+            exec_policy: None,
         }
     }
 
@@ -84,6 +88,51 @@ impl ToolRunnerWithGuard {
     pub fn with_permission_context(mut self, ctx: PermissionContext) -> Self {
         self.permission_ctx = ctx;
         self
+    }
+
+    /// Set the independent execpolicy engine. When set, this takes precedence
+    /// over the inline PolicyEngine for policy decisions.
+    pub fn with_policy(mut self, policy: ExecPolicy) -> Self {
+        self.exec_policy = Some(policy);
+        self
+    }
+
+    /// Check policy using execpolicy if available, otherwise fall back to inline PolicyEngine.
+    fn check_policy(&self, tool_name: &str, input: &serde_json::Value) -> PolicyVerdict {
+        if let Some(ref policy) = self.exec_policy {
+            let cmd = Self::build_command_vec(tool_name, input);
+            let eval = policy.check(&cmd, aletheon_abi::execpolicy::default_heuristics);
+            match eval.decision {
+                ExecDecision::Allow => PolicyVerdict::Allow,
+                ExecDecision::Forbidden => PolicyVerdict::Deny {
+                    reason: format!(
+                        "Policy forbids: {}",
+                        eval.matched_rules.join(", ")
+                    ),
+                },
+                ExecDecision::Prompt => PolicyVerdict::RequireApproval {
+                    reason: format!(
+                        "Policy requires approval: {}",
+                        eval.matched_rules.join(", ")
+                    ),
+                },
+            }
+        } else {
+            self.policy_engine.check(tool_name, input)
+        }
+    }
+
+    /// Build a command vector from tool name and input for execpolicy evaluation.
+    /// For bash_exec, appends the entire command string as a single token (no splitting)
+    /// so that shell syntax (quotes, pipes, redirects) is preserved for policy matching.
+    fn build_command_vec(tool_name: &str, input: &serde_json::Value) -> Vec<String> {
+        let mut cmd = vec![tool_name.to_string()];
+        if tool_name == "bash_exec" {
+            if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
+                cmd.push(command.to_string());
+            }
+        }
+        cmd
     }
 
     pub fn on_new_turn(&mut self, turn_id: &str) {
@@ -107,7 +156,7 @@ impl ToolRunnerWithGuard {
         let start = Instant::now();
 
         // 1. Policy check
-        let policy_verdict = self.policy_engine.check(tool_name, &input);
+        let policy_verdict = self.check_policy(tool_name, &input);
         match policy_verdict {
             PolicyVerdict::Deny { reason } => {
                 self.log_audit(
@@ -377,6 +426,7 @@ impl ToolRunnerWithGuard {
 mod tests {
     use super::super::approval::{AutoApproveGate, AutoDenyGate};
     use super::*;
+    use aletheon_abi::execpolicy::{Decision as ExecDecision, PrefixRule as ExecPrefixRule};
     use aletheon_abi::tool::{
         ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult,
         ToolResultMeta,
@@ -520,5 +570,87 @@ mod tests {
             }
             other => panic!("Expected PolicyDenied, got: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn runner_uses_execpolicy_for_deny() {
+        // Build an execpolicy that forbids "bash_exec" entirely.
+        let mut policy = ExecPolicy::new();
+        policy.add_rule(ExecPrefixRule::new("bash_exec", ExecDecision::Forbidden));
+
+        let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
+            .with_policy(policy);
+
+        let tool = DummyL2Tool;
+        let result = runner
+            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .await;
+        assert!(result.is_err(), "execpolicy should deny bash_exec");
+        match result.unwrap_err() {
+            ToolError::PolicyDenied { reason } => {
+                assert!(
+                    reason.contains("Policy forbids"),
+                    "reason: {}",
+                    reason
+                );
+            }
+            other => panic!("Expected PolicyDenied, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn runner_execpolicy_prompt_triggers_approval() {
+        // Build an execpolicy that prompts for "bash_exec".
+        let mut policy = ExecPolicy::new();
+        policy.add_rule(ExecPrefixRule::new("bash_exec", ExecDecision::Prompt));
+
+        let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
+            .with_approval_gate(Arc::new(AutoApproveGate))
+            .with_policy(policy);
+
+        let tool = DummyL2Tool;
+        let result = runner
+            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .await;
+        assert!(
+            result.is_ok(),
+            "execpolicy Prompt + AutoApproveGate should allow: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_no_execpolicy_falls_back_to_policy_engine() {
+        // Without with_policy(), the inline PolicyEngine is used.
+        let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
+            .with_approval_gate(Arc::new(AutoApproveGate));
+
+        let tool = DummyL2Tool;
+        let result = runner
+            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .await;
+        assert!(
+            result.is_ok(),
+            "Inline PolicyEngine + AutoApproveGate should allow bash_exec: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn build_command_vec_extracts_bash_command() {
+        let input = serde_json::json!({ "command": "rm -rf /tmp/test" });
+        let cmd = ToolRunnerWithGuard::build_command_vec("bash_exec", &input);
+        // Command string is kept as a single token to preserve shell syntax.
+        assert_eq!(cmd, vec!["bash_exec", "rm -rf /tmp/test"]);
+    }
+
+    #[test]
+    fn build_command_vec_non_bash_tool() {
+        let input = serde_json::json!({ "path": "/tmp/file.txt" });
+        let cmd = ToolRunnerWithGuard::build_command_vec("file_read", &input);
+        assert_eq!(cmd, vec!["file_read"]);
     }
 }

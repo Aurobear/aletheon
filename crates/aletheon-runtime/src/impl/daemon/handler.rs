@@ -462,11 +462,16 @@ impl RequestHandler {
         let _ = sf.narrate(event, reason).await;
     }
 
-    /// Drain all queued memory updates into a `<memory-update>` XML block.
-    /// Returns empty string if the queue is empty.
-    /// This keeps the system prompt prefix stable while still delivering
-    /// mid-session memory changes to the LLM on every user turn.
-    async fn drain_memory_queue(&self) -> String {
+    /// Compose the user message with mid-session injections from the memory queue.
+    ///
+    /// Drains all pending memory updates and prepends them as a `<memory-update>`
+    /// XML block before the raw user input.  This is the same pattern as
+    /// `ReActLoop::compose_user_message()` and `Controller::compose_user_message()`
+    /// — changes ride the user message tail so the system prompt prefix stays
+    /// byte-stable for provider cache hits.
+    ///
+    /// Returns empty string if the queue is empty (no injections needed).
+    async fn compose_memory_block(&self) -> String {
         let mut queue = self.memory_queue.lock().await;
         if queue.is_empty() {
             return String::new();
@@ -474,14 +479,8 @@ impl RequestHandler {
         let updates: Vec<String> = queue.drain(..).collect();
         drop(queue);
 
-        let mut xml = String::with_capacity(512);
-        xml.push_str("<memory-update>\n");
-        for update in &updates {
-            xml.push_str(update);
-            xml.push('\n');
-        }
-        xml.push_str("</memory-update>");
-        xml
+        let items: Vec<String> = updates.iter().map(|m| format!("- {}", m)).collect();
+        format!("<memory-update>\n{}\n</memory-update>", items.join("\n"))
     }
 
     pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value {
@@ -534,12 +533,14 @@ impl RequestHandler {
 
                 // Build effective user message with memory updates and SandboxFirst note.
                 // Both go into the user turn to preserve cache-stable system prompt.
-                let memory_update = self.drain_memory_queue().await;
+                // Memory updates are composed via compose_memory_block() — the same
+                // pattern as ReActLoop::compose_user_message() / Controller::compose_user_message().
+                let memory_block = self.compose_memory_block().await;
                 let mut effective_message = String::new();
 
                 // Memory updates first (if any)
-                if !memory_update.is_empty() {
-                    effective_message.push_str(&memory_update);
+                if !memory_block.is_empty() {
+                    effective_message.push_str(&memory_block);
                     effective_message.push_str("\n\n");
                 }
 

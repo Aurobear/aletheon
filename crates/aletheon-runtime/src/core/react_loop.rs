@@ -1,5 +1,9 @@
 use crate::core::config::RuntimeConfig;
 use crate::r#impl::memory::compressor::AdvancedCompressor;
+
+/// Marker injected into user messages when plan mode is active.
+/// Shared between `ReActLoop` and `Controller` to keep them in sync.
+pub const PLAN_MODE_MARKER: &str = "[PLAN MODE ACTIVE]";
 use aletheon_abi::body::Action;
 use aletheon_abi::message::{ContentBlock, Message, Role};
 use aletheon_abi::self_field::{Intent, IntentSource};
@@ -15,6 +19,12 @@ pub struct ReActLoop {
     iteration: usize,
     messages: Vec<Message>,
     compressor: AdvancedCompressor,
+    /// Immutable system prompt — never changes after construction.
+    system_prompt: String,
+    /// Plan mode flag — injected into user message, NOT system prompt.
+    plan_mode: bool,
+    /// Pending memory updates — drained into user message each turn.
+    pending_memory: Vec<String>,
 }
 
 impl ReActLoop {
@@ -26,6 +36,9 @@ impl ReActLoop {
             iteration: 0,
             messages: Vec::new(),
             compressor,
+            system_prompt: String::new(),
+            plan_mode: false,
+            pending_memory: Vec::new(),
         }
     }
 
@@ -39,10 +52,15 @@ impl ReActLoop {
         self.iteration
     }
 
-    /// Reset iteration counter for a new turn
+    /// Reset iteration counter for a new turn.
+    /// Clears mutable state (messages, pending_memory) but preserves
+    /// plan_mode and system_prompt (user choice / immutable).
     pub fn reset(&mut self) {
         self.iteration = 0;
         self.messages.clear();
+        self.pending_memory.clear();
+        // Note: plan_mode persists across resets (user choice)
+        // Note: system_prompt never resets (immutable after construction)
     }
 
     /// Seed the message buffer with pre-existing messages (e.g., from session restore).
@@ -83,6 +101,49 @@ impl ReActLoop {
     /// Max iterations
     pub fn max_iterations(&self) -> usize {
         self.config.max_iterations
+    }
+
+    /// Set the system prompt (called once at construction or re-initialization).
+    pub fn set_system_prompt(&mut self, prompt: String) {
+        self.system_prompt = prompt;
+    }
+
+    /// Get the immutable system prompt.
+    pub fn system_prompt(&self) -> &str {
+        &self.system_prompt
+    }
+
+    /// Enable/disable plan mode. Injected into user message, NOT system prompt.
+    pub fn set_plan_mode(&mut self, enabled: bool) {
+        self.plan_mode = enabled;
+    }
+
+    /// Queue a memory update for the next user message.
+    pub fn queue_memory_update(&mut self, update: String) {
+        self.pending_memory.push(update);
+    }
+
+    /// Compose user message with mid-session injections.
+    /// Changes go here, NOT into system prompt, to preserve cache stability.
+    pub fn compose_user_message(&self, input: &str) -> String {
+        let mut parts = Vec::new();
+
+        if self.plan_mode {
+            parts.push(PLAN_MODE_MARKER.to_string());
+        }
+
+        if !self.pending_memory.is_empty() {
+            let updates = self
+                .pending_memory
+                .iter()
+                .map(|m| format!("- {}", m))
+                .collect::<Vec<_>>()
+                .join("\n");
+            parts.push(format!("<memory-update>\n{}\n</memory-update>", updates));
+        }
+
+        parts.push(input.to_string());
+        parts.join("\n\n")
     }
 
     /// Run the interleaved ReAct loop: call the LLM with tools, execute any
@@ -570,5 +631,100 @@ mod tests {
             3,
             "LLM called 3 times: seed, error, success"
         );
+    }
+
+    // --- Task 1.1: compose_user_message tests ---
+
+    #[test]
+    fn compose_user_message_plain_input() {
+        let cfg = RuntimeConfig::default();
+        let lp = ReActLoop::new(cfg);
+        let composed = lp.compose_user_message("hello");
+        assert_eq!(composed, "hello");
+    }
+
+    #[test]
+    fn compose_user_message_with_plan_mode() {
+        let cfg = RuntimeConfig::default();
+        let mut lp = ReActLoop::new(cfg);
+        lp.set_plan_mode(true);
+        let composed = lp.compose_user_message("hello");
+        assert!(composed.contains("[PLAN MODE ACTIVE]"));
+        assert!(composed.contains("hello"));
+    }
+
+    #[test]
+    fn compose_user_message_with_memory_updates() {
+        let cfg = RuntimeConfig::default();
+        let mut lp = ReActLoop::new(cfg);
+        lp.queue_memory_update("user prefers dark mode".to_string());
+        let composed = lp.compose_user_message("hello");
+        assert!(composed.contains("<memory-update>"));
+        assert!(composed.contains("user prefers dark mode"));
+    }
+
+    #[test]
+    fn compose_user_message_plan_and_memory() {
+        let cfg = RuntimeConfig::default();
+        let mut lp = ReActLoop::new(cfg);
+        lp.set_plan_mode(true);
+        lp.queue_memory_update("fact 1".to_string());
+        let composed = lp.compose_user_message("do something");
+        assert!(composed.contains("[PLAN MODE ACTIVE]"));
+        assert!(composed.contains("<memory-update>"));
+        assert!(composed.contains("do something"));
+    }
+
+    #[test]
+    fn system_prompt_immutable_after_construction() {
+        let cfg = RuntimeConfig::default();
+        let mut lp = ReActLoop::new(cfg);
+        let p1 = lp.system_prompt().to_string();
+        lp.set_plan_mode(true);
+        lp.queue_memory_update("new fact".to_string());
+        let p2 = lp.system_prompt().to_string();
+        assert_eq!(p1, p2, "system prompt must not change");
+    }
+
+    #[test]
+    fn reset_clears_pending_memory_but_not_plan_mode() {
+        let cfg = RuntimeConfig::default();
+        let mut lp = ReActLoop::new(cfg);
+        lp.set_plan_mode(true);
+        lp.queue_memory_update("fact".to_string());
+
+        lp.reset();
+
+        // plan_mode persists across resets
+        let composed = lp.compose_user_message("hi");
+        assert!(
+            composed.contains("[PLAN MODE ACTIVE]"),
+            "plan_mode should persist after reset"
+        );
+        // pending_memory was cleared
+        assert!(
+            !composed.contains("<memory-update>"),
+            "pending_memory should be cleared after reset"
+        );
+    }
+
+    #[test]
+    fn set_system_prompt_works() {
+        let cfg = RuntimeConfig::default();
+        let mut lp = ReActLoop::new(cfg);
+        assert_eq!(lp.system_prompt(), "");
+        lp.set_system_prompt("You are helpful.".to_string());
+        assert_eq!(lp.system_prompt(), "You are helpful.");
+    }
+
+    #[test]
+    fn compose_multiple_memory_updates() {
+        let cfg = RuntimeConfig::default();
+        let mut lp = ReActLoop::new(cfg);
+        lp.queue_memory_update("fact a".to_string());
+        lp.queue_memory_update("fact b".to_string());
+        let composed = lp.compose_user_message("hello");
+        assert!(composed.contains("- fact a"));
+        assert!(composed.contains("- fact b"));
     }
 }
