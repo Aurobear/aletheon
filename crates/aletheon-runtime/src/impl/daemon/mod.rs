@@ -31,6 +31,8 @@ pub struct DaemonConfig {
     pub data_dir: String,
     pub system_prompt: String,
     pub sandbox_preference: String,
+    /// MCP server definitions loaded from config (passed through to McpManager at handler init).
+    pub mcp_servers: Vec<aletheon_body::r#impl::mcp::config::McpServerConfig>,
 }
 
 /// Load .env file (simple KEY=VALUE parser, no shell expansion).
@@ -119,6 +121,31 @@ pub async fn run(
             .unwrap_or_else(|_| "You are a helpful system assistant.".to_string()),
         sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
             .unwrap_or_else(|_| "auto".to_string()),
+        mcp_servers: app_config
+            .mcp_servers
+            .iter()
+            .map(|s| aletheon_body::r#impl::mcp::config::McpServerConfig {
+                name: s.name.clone(),
+                transport: match s.transport.as_str() {
+                    "stdio" => aletheon_body::r#impl::mcp::config::McpTransportConfig::Stdio {
+                        command: s.command.clone().unwrap_or_default(),
+                        args: Vec::new(),
+                    },
+                    "http" => aletheon_body::r#impl::mcp::config::McpTransportConfig::StreamableHttp {
+                        url: s.url.clone().unwrap_or_default(),
+                    },
+                    "sse" => aletheon_body::r#impl::mcp::config::McpTransportConfig::Sse {
+                        url: s.url.clone().unwrap_or_default(),
+                    },
+                    _ => aletheon_body::r#impl::mcp::config::McpTransportConfig::Stdio {
+                        command: s.command.clone().unwrap_or_default(),
+                        args: Vec::new(),
+                    },
+                },
+                trust: aletheon_body::r#impl::mcp::config::McpTrustLevel::LocalTrusted,
+                enabled: true,
+            })
+            .collect(),
     };
 
     // Ensure data directory exists

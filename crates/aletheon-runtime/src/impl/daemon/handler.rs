@@ -165,6 +165,31 @@ impl RequestHandler {
             recall: recall_memory.clone(),
         }));
 
+        // Connect configured MCP servers and register their tools alongside built-ins.
+        {
+            let mcp_config = aletheon_body::r#impl::mcp::config::McpConfig {
+                servers: config.mcp_servers.clone(),
+                ..Default::default()
+            };
+            let mut mcp = aletheon_body::r#impl::mcp::manager::McpManager::new(mcp_config);
+            if let Err(e) = mcp.connect_all().await {
+                tracing::warn!(error = %e, "MCP connect_all failed; continuing without MCP tools");
+            }
+            let mcp_count = mcp.connected_count();
+            if mcp_count > 0 {
+                info!(servers = mcp_count, "MCP servers connected");
+            }
+            for wrapper in mcp.tool_wrappers() {
+                let name = wrapper.name().to_string();
+                use aletheon_abi::Registry;
+                if let Err(e) = tools.register(Arc::from(wrapper)) {
+                    tracing::warn!(tool = %name, error = %e, "skip MCP tool (name clash?)");
+                } else {
+                    info!(tool = %name, "Registered MCP tool");
+                }
+            }
+        }
+
         // Create security components
         let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
         let sandbox = SandboxExecutor::new(sandbox_pref);
