@@ -1,8 +1,10 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
 use aletheon_abi::tool::{Tool, ToolContext, ToolResult, ToolResultMeta, PermissionLevel};
 use crate::r#impl::sandbox::{SandboxExecutor, SandboxConfig};
+use super::approval::{ApprovalGate, ApprovalRequest, ApprovalDecision, AutoDenyGate};
 use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use super::policy::{PolicyEngine, PolicyVerdict};
 use super::output_guardrail::OutputGuardrail;
@@ -41,6 +43,11 @@ pub struct ToolRunnerWithGuard {
     output_guardrail: OutputGuardrail,
     audit_logger: AuditLogger,
     risk_classifier: RiskClassifier,
+    /// Approval gate consulted before executing tools that require approval.
+    /// Defaults to AutoDenyGate (conservative: preserves prior "deny L2+" behavior).
+    approval_gate: Arc<dyn ApprovalGate>,
+    /// Tool names approved for the rest of the session (via ApproveForSession).
+    session_approvals: std::collections::HashSet<String>,
 }
 
 impl ToolRunnerWithGuard {
@@ -55,6 +62,8 @@ impl ToolRunnerWithGuard {
             policy_engine: PolicyEngine::with_defaults(),
             audit_logger,
             risk_classifier: RiskClassifier::with_defaults(),
+            approval_gate: Arc::new(AutoDenyGate),
+            session_approvals: std::collections::HashSet::new(),
         }
     }
 
@@ -62,6 +71,12 @@ impl ToolRunnerWithGuard {
     pub fn with_default_sandbox(audit_logger: AuditLogger) -> Self {
         use crate::r#impl::sandbox::SandboxPreference;
         Self::new(SandboxExecutor::new(SandboxPreference::Auto), audit_logger)
+    }
+
+    /// Set the approval gate used for actions that require approval.
+    pub fn with_approval_gate(mut self, gate: Arc<dyn ApprovalGate>) -> Self {
+        self.approval_gate = gate;
+        self
     }
 
     pub fn on_new_turn(&mut self, turn_id: &str) {
@@ -92,12 +107,34 @@ impl ToolRunnerWithGuard {
                 return Err(ToolError::PolicyDenied { reason });
             }
             PolicyVerdict::RequireApproval { reason } => {
-                // In automated mode, deny L2+ that require approval
                 if tool.permission_level() >= PermissionLevel::L2 {
-                    self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "requires_approval").await;
-                    return Err(ToolError::PolicyDenied {
-                        reason: format!("{}: {}", reason, "L2+ requires approval in automated mode"),
-                    });
+                    if self.session_approvals.contains(tool_name) {
+                        // Previously approved-for-session; allow.
+                    } else {
+                        let summary = input
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .map(|c| format!("{}: {}", tool_name, c))
+                            .unwrap_or_else(|| format!("{}: {}", tool_name, input));
+                        let req = ApprovalRequest {
+                            tool: tool_name.to_string(),
+                            action_summary: summary,
+                            risk_level: format!("{:?}", tool.permission_level()),
+                            detail: Some(input.to_string()),
+                        };
+                        match self.approval_gate.request(&req).await {
+                            ApprovalDecision::Approve => {}
+                            ApprovalDecision::ApproveForSession => {
+                                self.session_approvals.insert(tool_name.to_string());
+                            }
+                            ApprovalDecision::Deny => {
+                                self.log_audit(tool_name, &input, tool.permission_level(), turn_id, None, &start, "approval_denied").await;
+                                return Err(ToolError::PolicyDenied {
+                                    reason: format!("{}: denied by approval gate", reason),
+                                });
+                            }
+                        }
+                    }
                 }
             }
             PolicyVerdict::Allow => {}
@@ -237,5 +274,75 @@ impl ToolRunnerWithGuard {
 
     pub fn metrics(&self) -> &super::loop_detector::LoopDetectorMetrics {
         &self.loop_detector.metrics
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::approval::{AutoApproveGate, AutoDenyGate};
+    use aletheon_abi::tool::{Tool, ToolContext, ToolResult, ToolResultMeta, PermissionLevel, ToolExposure, ConcurrencyClass};
+    use async_trait::async_trait;
+
+    /// A dummy L2 tool used to exercise the approval gate path.
+    /// Named "bash_exec" so the policy engine's `rm -rf *` rule triggers RequireApproval.
+    struct DummyL2Tool;
+
+    #[async_trait]
+    impl Tool for DummyL2Tool {
+        fn name(&self) -> &str { "bash_exec" }
+        fn description(&self) -> &str { "Dummy L2 tool for testing" }
+        fn input_schema(&self) -> serde_json::Value { serde_json::json!({}) }
+        fn permission_level(&self) -> PermissionLevel { PermissionLevel::L2 }
+        async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            ToolResult {
+                content: "ok".into(),
+                is_error: false,
+                metadata: ToolResultMeta::default(),
+            }
+        }
+        fn boxed_clone(&self) -> Box<dyn Tool> { Box::new(DummyL2Tool) }
+        fn exposure(&self) -> ToolExposure { ToolExposure::Direct }
+        fn concurrency_class(&self) -> ConcurrencyClass { ConcurrencyClass::SideEffect }
+    }
+
+    fn make_runner(gate: Arc<dyn ApprovalGate>) -> ToolRunnerWithGuard {
+        let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
+        ToolRunnerWithGuard::with_default_sandbox(audit_logger)
+            .with_approval_gate(gate)
+    }
+
+    fn make_input_rm() -> serde_json::Value {
+        serde_json::json!({ "command": "rm -rf /tmp/test" })
+    }
+
+    fn make_ctx() -> ToolContext {
+        ToolContext {
+            working_dir: std::path::PathBuf::from("/tmp"),
+            session_id: "test-session".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn l2_denied_by_gate_is_blocked() {
+        let mut runner = make_runner(Arc::new(AutoDenyGate));
+        let tool = DummyL2Tool;
+        let result = runner.execute_tool(&tool, make_input_rm(), &make_ctx(), "t1").await;
+        assert!(result.is_err(), "AutoDenyGate should deny L2 tool");
+        match result.unwrap_err() {
+            ToolError::PolicyDenied { reason } => {
+                assert!(reason.contains("denied by approval gate"), "reason: {}", reason);
+            }
+            other => panic!("Expected PolicyDenied, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn l2_approved_by_gate_runs() {
+        let mut runner = make_runner(Arc::new(AutoApproveGate));
+        let tool = DummyL2Tool;
+        let result = runner.execute_tool(&tool, make_input_rm(), &make_ctx(), "t1").await;
+        assert!(result.is_ok(), "AutoApproveGate should allow L2 tool: {:?}", result.err());
+        assert_eq!(result.unwrap().content, "ok");
     }
 }
