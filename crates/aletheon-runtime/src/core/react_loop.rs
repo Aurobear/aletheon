@@ -19,10 +19,8 @@ pub struct ReActLoop {
 
 impl ReActLoop {
     pub fn new(config: RuntimeConfig) -> Self {
-        let compressor = AdvancedCompressor::new(
-            config.tail_token_budget,
-            config.target_summary_chars,
-        );
+        let compressor =
+            AdvancedCompressor::new(config.tail_token_budget, config.target_summary_chars);
         Self {
             config,
             iteration: 0,
@@ -156,10 +154,7 @@ impl ReActLoop {
 
             // A2: proactive compaction after pushing tool results
             if self.config.compaction_enabled {
-                let _ = self
-                    .compressor
-                    .maybe_compact(&mut self.messages, llm)
-                    .await;
+                let _ = self.compressor.maybe_compact(&mut self.messages, llm).await;
             }
         }
 
@@ -570,6 +565,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(out, "recovered");
-        assert_eq!(*llm.calls.lock().unwrap(), 3, "LLM called 3 times: seed, error, success");
+        assert_eq!(
+            *llm.calls.lock().unwrap(),
+            3,
+            "LLM called 3 times: seed, error, success"
+        );
     }
 }

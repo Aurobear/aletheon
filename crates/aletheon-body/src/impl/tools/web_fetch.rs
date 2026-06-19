@@ -84,7 +84,9 @@ impl Tool for WebFetchTool {
             "POST" => {
                 let mut req = client.post(&url);
                 if let Some(ref b) = body {
-                    req = req.header("content-type", "application/json").body(b.clone());
+                    req = req
+                        .header("content-type", "application/json")
+                        .body(b.clone());
                 }
                 req
             }

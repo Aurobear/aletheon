@@ -84,7 +84,12 @@ impl Tool for GrepTool {
             .await
             .or_else(|| {
                 // Block on grep fallback
-                futures::executor::block_on(try_grep(&pattern, &path, max_results, &ctx.working_dir))
+                futures::executor::block_on(try_grep(
+                    &pattern,
+                    &path,
+                    max_results,
+                    &ctx.working_dir,
+                ))
             });
 
         let elapsed = start.elapsed().as_millis() as u64;

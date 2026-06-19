@@ -172,7 +172,10 @@ mod tests {
         // Build many large messages to exceed threshold
         let mut messages = vec![Message::user("start")];
         for i in 0..10 {
-            messages.push(Message::assistant(&format!("response {}", "x".repeat(5000))));
+            messages.push(Message::assistant(&format!(
+                "response {}",
+                "x".repeat(5000)
+            )));
             messages.push(Message::tool_result(
                 &format!("tool_{}", i),
                 &"y".repeat(5000),
@@ -183,10 +186,7 @@ mod tests {
         let before = messages.len();
         let result = compressor.maybe_compact(&mut messages, &llm).await;
         assert!(result.is_ok(), "maybe_compact failed: {:?}", result.err());
-        assert!(
-            result.unwrap(),
-            "compaction should have been performed"
-        );
+        assert!(result.unwrap(), "compaction should have been performed");
         assert!(
             messages.len() < before,
             "messages should be fewer after compaction: {} -> {}",

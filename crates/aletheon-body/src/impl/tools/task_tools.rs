@@ -191,10 +191,7 @@ impl Tool for TaskCreateTool {
             }
         };
 
-        let description = input["description"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let description = input["description"].as_str().unwrap_or("").to_string();
 
         let task = self.store.lock().create(subject, description);
 
@@ -525,10 +522,7 @@ mod tests {
         let tool = TaskCreateTool::new(Arc::clone(&store));
 
         let result = tool
-            .execute(
-                json!({"subject": "Test", "description": "desc"}),
-                &ctx(),
-            )
+            .execute(json!({"subject": "Test", "description": "desc"}), &ctx())
             .await;
 
         assert!(!result.is_error);
@@ -587,9 +581,7 @@ mod tests {
     async fn task_get_tool_not_found() {
         let store = new_shared_task_store();
         let tool = TaskGetTool::new(Arc::clone(&store));
-        let result = tool
-            .execute(json!({"id": "nonexistent"}), &ctx())
-            .await;
+        let result = tool.execute(json!({"id": "nonexistent"}), &ctx()).await;
 
         assert!(result.is_error);
         assert!(result.content.contains("not found"));
@@ -611,9 +603,7 @@ mod tests {
     async fn task_create_tool_missing_subject() {
         let store = new_shared_task_store();
         let tool = TaskCreateTool::new(Arc::clone(&store));
-        let result = tool
-            .execute(json!({"description": "desc"}), &ctx())
-            .await;
+        let result = tool.execute(json!({"description": "desc"}), &ctx()).await;
 
         assert!(result.is_error);
     }

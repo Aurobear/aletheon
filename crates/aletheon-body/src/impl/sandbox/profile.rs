@@ -52,7 +52,9 @@ impl SandboxProfile {
 
     /// Check whether `path` is in the deny list.
     fn is_denied(&self, path: &Path) -> bool {
-        self.deny_paths.iter().any(|denied| path.starts_with(denied))
+        self.deny_paths
+            .iter()
+            .any(|denied| path.starts_with(denied))
     }
 }
 

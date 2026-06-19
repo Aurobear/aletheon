@@ -115,7 +115,11 @@ impl Tool for GlobTool {
 
         if matches.is_empty() {
             ToolResult {
-                content: format!("No files matching '{}' found in {}", pattern, root.display()),
+                content: format!(
+                    "No files matching '{}' found in {}",
+                    pattern,
+                    root.display()
+                ),
                 is_error: false,
                 metadata: ToolResultMeta {
                     execution_time_ms: start.elapsed().as_millis() as u64,
