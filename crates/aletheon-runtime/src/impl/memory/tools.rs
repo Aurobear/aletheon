@@ -180,7 +180,8 @@ impl Tool for MemorySearchTool {
                                 e.timestamp.format("%Y-%m-%d %H:%M"),
                                 e.entry_type,
                                 if e.content.len() > 200 {
-                                    format!("{}...", &e.content[..200])
+                                    let end = e.content.char_indices().nth(200).map(|(i, _)| i).unwrap_or(e.content.len());
+                                    format!("{}...", &e.content[..end])
                                 } else {
                                     e.content.clone()
                                 }

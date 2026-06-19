@@ -1136,7 +1136,8 @@ impl RequestHandler {
 
                 // Enhanced reflection: analyze question and response quality
                 let task_summary = if message.len() > 100 {
-                    format!("{}...", &message[..100])
+                    let end = message.char_indices().nth(100).map(|(i, _)| i).unwrap_or(message.len());
+                    format!("{}...", &message[..end])
                 } else {
                     message.to_string()
                 };

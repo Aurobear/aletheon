@@ -189,7 +189,8 @@ impl SessionManager {
                     .iter()
                     .map(|s| {
                         if s.len() > 200 {
-                            format!("{}...", &s[..200])
+                            let end = s.char_indices().nth(200).map(|(i, _)| i).unwrap_or(s.len());
+                            format!("{}...", &s[..end])
                         } else {
                             s.clone()
                         }

@@ -30,7 +30,8 @@ impl Engine {
             tool_name: tool_name.to_string(),
             args: tool_input.clone(),
             result_summary: if result.content.len() > 500 {
-                format!("{}...", &result.content[..500])
+                let end = result.content.char_indices().nth(500).map(|(i, _)| i).unwrap_or(result.content.len());
+                format!("{}...", &result.content[..end])
             } else {
                 result.content.clone()
             },
