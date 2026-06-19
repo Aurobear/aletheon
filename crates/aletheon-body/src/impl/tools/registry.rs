@@ -124,6 +124,40 @@ impl Default for ToolRegistry {
             .register(Arc::new(super::apply_patch::ApplyPatchTool))
             .expect("duplicate built-in tool");
         registry
+            .register(Arc::new(super::glob::GlobTool))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::grep::GrepTool))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::web_fetch::WebFetchTool))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::web_search::WebSearchTool))
+            .expect("duplicate built-in tool");
+        // Task tools share a single TaskStore.
+        let task_store = super::task_tools::new_shared_task_store();
+        registry
+            .register(Arc::new(super::task_tools::TaskCreateTool::new(
+                task_store.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::task_tools::TaskUpdateTool::new(
+                task_store.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::task_tools::TaskListTool::new(
+                task_store.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::task_tools::TaskGetTool::new(
+                task_store.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
     }
 }
 
@@ -196,6 +230,29 @@ mod tests {
         assert_eq!(removed.name(), "my_tool");
         assert_eq!(reg.len(), 0);
         assert!(!reg.contains("my_tool"));
+    }
+
+    #[test]
+    fn default_registry_contains_expected_tools() {
+        let reg = ToolRegistry::default();
+        let names: Vec<&str> = reg.names();
+        let expected = [
+            "glob",
+            "grep",
+            "web_fetch",
+            "web_search",
+            "task_create",
+            "task_update",
+            "task_list",
+            "task_get",
+        ];
+        for name in expected {
+            assert!(
+                names.contains(&name),
+                "expected tool '{}' not found in registry",
+                name
+            );
+        }
     }
 
     #[test]
