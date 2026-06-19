@@ -120,7 +120,7 @@ pub async fn run(
                 .to_string()
         }),
         system_prompt: std::env::var("AGENT_SYSTEM_PROMPT")
-            .unwrap_or_else(|_| "You are a helpful system assistant.".to_string()),
+            .unwrap_or_else(|_| app_config.agent.system_prompt.clone()),
         sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
             .unwrap_or_else(|_| "auto".to_string()),
         mcp_servers: app_config

@@ -43,6 +43,8 @@ pub struct AgentConfig {
     pub compaction_keep_recent: usize,
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: usize,
+    #[serde(default = "default_system_prompt")]
+    pub system_prompt: String,
 }
 
 impl Default for AgentConfig {
@@ -55,6 +57,7 @@ impl Default for AgentConfig {
             compaction_enabled: true,
             compaction_keep_recent: default_compaction_keep_recent(),
             compaction_threshold: default_compaction_threshold(),
+            system_prompt: default_system_prompt(),
         }
     }
 }
@@ -73,6 +76,10 @@ fn default_compaction_keep_recent() -> usize {
 }
 fn default_compaction_threshold() -> usize {
     30
+}
+
+fn default_system_prompt() -> String {
+    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user.".to_string()
 }
 
 /// Wire protocol between client and LLM server.

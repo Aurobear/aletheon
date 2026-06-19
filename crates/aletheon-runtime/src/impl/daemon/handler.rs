@@ -47,6 +47,7 @@ use crate::core::checkpoint::CheckpointStore;
 use crate::core::storm_breaker::StormBreaker;
 use crate::r#impl::hooks::builtin::audit_hook;
 use crate::r#impl::hooks::registry::HookRegistry;
+use crate::r#impl::memory::auto_memory::AutoMemory;
 use crate::r#impl::memory::fact_store::FactStore;
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::core::config::HooksConfig;
@@ -130,6 +131,9 @@ pub struct RequestHandler {
     /// Per-session "always approve" cache: tool_name -> approved.
     /// Populated when user responds with "always" to an approval request.
     session_approvals: Arc<Mutex<HashMap<String, bool>>>,
+    /// Automatic memory extraction — uses a cheap LLM to extract and store
+    /// important facts from each conversation turn.
+    auto_memory: Arc<Mutex<AutoMemory>>,
 }
 
 impl RequestHandler {
@@ -398,6 +402,24 @@ impl RequestHandler {
         // ── HooksConfig ───────────────────────────────────────────────────────
         let hooks_config = config.hooks.clone();
 
+        // ── AutoMemory ──────────────────────────────────────────────────────
+        // Use a cheap model for memory extraction. Try "deepseek_flash" alias first,
+        // fall back to the default model if not configured.
+        let cheap_llm: Arc<dyn LlmProvider> = Arc::from(
+            registry
+                .resolve_and_create("deepseek_flash")
+                .or_else(|_| registry.resolve_and_create(""))
+                .unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "Failed to create cheap LLM for AutoMemory, using default");
+                    registry.resolve_and_create("").expect("no LLM available")
+                }),
+        );
+        let auto_memory = Arc::new(Mutex::new(AutoMemory::new(
+            cheap_llm,
+            core_memory.clone(),
+        )));
+        info!("AutoMemory initialized with cheap extraction model");
+
         let handler = Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
@@ -430,6 +452,7 @@ impl RequestHandler {
             agent_loader,
             hooks_config,
             session_approvals: Arc::new(Mutex::new(HashMap::new())),
+            auto_memory,
         };
 
         // Fire OnSessionStart hook
@@ -1103,6 +1126,18 @@ impl RequestHandler {
                         metadata: HashMap::new(),
                     };
                     hr.execute(&ctx).await;
+                }
+
+                // --- Auto-memory extraction ---
+                // Runs after PostTurn hooks, before compaction.
+                // Uses a cheap LLM to extract facts from the turn.
+                {
+                    let mut am = self.auto_memory.lock().await;
+                    if let Ok(facts) = am.analyze_and_store(&message, &text).await {
+                        if !facts.is_empty() {
+                            info!(count = facts.len(), "Auto-memory: stored facts");
+                        }
+                    }
                 }
 
                 // Push assistant response and compact if needed

@@ -1,4 +1,5 @@
 pub mod archival_memory;
+pub mod auto_memory;
 pub mod budget;
 pub mod compaction;
 pub mod compressor;
@@ -13,6 +14,7 @@ pub mod tools;
 pub mod vector_store;
 
 pub use archival_memory::{ArchivalEntry, ArchivalMemory, InMemoryArchival, VectorArchival};
+pub use auto_memory::AutoMemory;
 pub use compaction::CompactionManager;
 pub use fact_store::{
     ConsolidationLogRow, EntityNeighbor, EpisodeRow, FactRow, FactStore, FeedbackResult,
