@@ -130,7 +130,7 @@ impl SkillLoader {
                             plugins.push(plugin);
                         }
                         Err(e) => {
-                            warn!(error = %e, path = %path.display(), "Failed to parse skill directory");
+                            debug!(error = %e, path = %path.display(), "Skipping skill directory (no valid frontmatter)");
                         }
                     }
                 }
@@ -415,6 +415,21 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut loader = SkillLoader::new(dir.path().to_path_buf());
         loader.load_all();
+        assert!(loader.plugins().is_empty());
+    }
+
+    #[test]
+    fn frontmatterless_skill_dir_skipped_without_error() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("no-frontmatter");
+        std::fs::create_dir(&skill_dir).unwrap();
+        // SKILL.md without --- frontmatter should be silently skipped
+        std::fs::write(skill_dir.join("SKILL.md"), "# Not a valid skill\nJust some text.\n").unwrap();
+
+        let mut loader = SkillLoader::new(dir.path().to_path_buf());
+        let count = loader.load_all_enhanced();
+        // Should not error, just skip
+        assert_eq!(count, 0);
         assert!(loader.plugins().is_empty());
     }
 }
