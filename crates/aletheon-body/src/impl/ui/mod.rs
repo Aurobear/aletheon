@@ -1,3 +1,4 @@
+pub mod approval_dialog;
 pub mod chat;
 pub mod command;
 #[cfg(all(feature = "input", feature = "display", feature = "a11y"))]
@@ -120,6 +121,8 @@ struct App {
     scroll_offset: u16,
     /// First render flag.
     first_render: bool,
+    /// Pending approval dialog (shown as modal overlay).
+    pending_approval: Option<approval_dialog::ApprovalDialog>,
 }
 
 impl App {
@@ -150,6 +153,7 @@ impl App {
             pending_submit: None,
             scroll_offset: 0,
             first_render: true,
+            pending_approval: None,
         }
     }
 
@@ -903,6 +907,7 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> any
     let has_cjk = app.has_cjk;
     let first_render = app.first_render;
     let status_ref = &app.status;
+    let pending_approval_ref = &app.pending_approval;
 
     terminal.draw(|f| {
         let size = f.area();
@@ -937,6 +942,11 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> any
 
         // ── Status bar ──
         f.render_widget(status_ref.render_widget(), chunks[3]);
+
+        // ── Approval dialog (overlay) ──
+        if let Some(ref dialog) = pending_approval_ref {
+            dialog.render(f, size);
+        }
     })?;
 
     app.first_render = false;
