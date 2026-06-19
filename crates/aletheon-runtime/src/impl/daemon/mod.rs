@@ -131,9 +131,11 @@ pub async fn run(
                         command: s.command.clone().unwrap_or_default(),
                         args: Vec::new(),
                     },
-                    "http" => aletheon_body::r#impl::mcp::config::McpTransportConfig::StreamableHttp {
-                        url: s.url.clone().unwrap_or_default(),
-                    },
+                    "http" => {
+                        aletheon_body::r#impl::mcp::config::McpTransportConfig::StreamableHttp {
+                            url: s.url.clone().unwrap_or_default(),
+                        }
+                    }
                     "sse" => aletheon_body::r#impl::mcp::config::McpTransportConfig::Sse {
                         url: s.url.clone().unwrap_or_default(),
                     },

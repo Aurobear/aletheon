@@ -570,8 +570,10 @@ impl RequestHandler {
                             })
                             .collect();
                     drop(loader);
-                    let matched =
-                        crate::r#impl::skills::keyword_matcher::match_skills(message, &skill_keywords);
+                    let matched = crate::r#impl::skills::keyword_matcher::match_skills(
+                        message,
+                        &skill_keywords,
+                    );
                     for body in matched {
                         effective_message.push_str("\n<activated-skill>\n");
                         effective_message.push_str(&body);
@@ -718,7 +720,9 @@ impl RequestHandler {
                         let (content, is_error) = match tool {
                             Some(t) => {
                                 let mut r = runner.lock().await;
-                                let res = r.run(t.as_ref(), input.clone(), &exec_ctx, "chat-turn").await;
+                                let res = r
+                                    .run(t.as_ref(), input.clone(), &exec_ctx, "chat-turn")
+                                    .await;
                                 (res.content, res.is_error)
                             }
                             None => (format!("Unknown tool: {}", name), true),
@@ -1459,7 +1463,13 @@ impl RequestHandler {
                                 }
                                 None => {
                                     // No recoverable journal — create fresh session with this id
-                                    match SessionManager::new(&self.data_dir, recent_id.clone(), 100_000).await {
+                                    match SessionManager::new(
+                                        &self.data_dir,
+                                        recent_id.clone(),
+                                        100_000,
+                                    )
+                                    .await
+                                    {
                                         Ok(new_sm) => {
                                             *self.session_manager.lock().await = new_sm;
                                             info!(session_id = %recent_id, "Loaded recent session (no journal, fresh)");
@@ -1484,7 +1494,8 @@ impl RequestHandler {
                         Ok(None) => {
                             // No sessions exist at all — create a new one
                             let new_id = uuid::Uuid::new_v4().to_string();
-                            match SessionManager::new(&self.data_dir, new_id.clone(), 100_000).await {
+                            match SessionManager::new(&self.data_dir, new_id.clone(), 100_000).await
+                            {
                                 Ok(new_sm) => {
                                     if let Ok(store) = SessionStore::new(&self.data_dir) {
                                         let _ = store.create_session(&new_id);

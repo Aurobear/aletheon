@@ -424,7 +424,11 @@ mod tests {
         let skill_dir = dir.path().join("no-frontmatter");
         std::fs::create_dir(&skill_dir).unwrap();
         // SKILL.md without --- frontmatter should be silently skipped
-        std::fs::write(skill_dir.join("SKILL.md"), "# Not a valid skill\nJust some text.\n").unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "# Not a valid skill\nJust some text.\n",
+        )
+        .unwrap();
 
         let mut loader = SkillLoader::new(dir.path().to_path_buf());
         let count = loader.load_all_enhanced();

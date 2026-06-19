@@ -50,10 +50,7 @@ impl SessionStore {
             .db
             .prepare("SELECT session_id FROM sessions ORDER BY last_active DESC LIMIT 1")?;
         let mut rows = stmt.query([])?;
-        Ok(rows
-            .next()?
-            .map(|r| r.get::<_, String>(0))
-            .transpose()?)
+        Ok(rows.next()?.map(|r| r.get::<_, String>(0)).transpose()?)
     }
 
     pub fn list_sessions(&self) -> Result<Vec<String>> {
