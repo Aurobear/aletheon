@@ -332,7 +332,7 @@ impl RequestHandler {
 
         info!("CommunicationBus created with SelfField, Memory, and Body module handlers");
 
-        Ok(Self {
+        let handler = Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
                 pending_input: None,
@@ -357,7 +357,25 @@ impl RequestHandler {
             approval_rx: Arc::new(Mutex::new(approval_rx)),
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
             notify_tx: None,
-        })
+        };
+
+        // Fire OnSessionStart hook
+        {
+            let hr = handler.hook_registry.lock().await;
+            let ctx = HookContext {
+                point: HookPoint::OnSessionStart,
+                session_id: session_id.clone(),
+                turn_count: 0,
+                tool_name: None,
+                tool_input: None,
+                tool_result: None,
+                message: None,
+                metadata: HashMap::new(),
+            };
+            hr.execute(&ctx).await;
+        }
+
+        Ok(handler)
     }
 
     /// Review an intent through SelfField via CommunicationBus.
@@ -585,6 +603,21 @@ impl RequestHandler {
                     let session_id = self.session_manager.lock().await.session_id.clone();
                     let rm = self.recall_memory.lock().await;
                     let _ = rm.store(&session_id, "user_message", message, None);
+                    // Fire OnMemoryStore hook
+                    {
+                        let hr = self.hook_registry.lock().await;
+                        let ctx = HookContext {
+                            point: HookPoint::OnMemoryStore,
+                            session_id: session_id.clone(),
+                            turn_count: self.session_manager.lock().await.turn_count(),
+                            tool_name: None,
+                            tool_input: None,
+                            tool_result: None,
+                            message: Some(message.to_string()),
+                            metadata: HashMap::new(),
+                        };
+                        hr.execute(&ctx).await;
+                    }
                 }
 
                 // --- Interleaved ReAct loop with tools ---
@@ -597,33 +630,96 @@ impl RequestHandler {
                 // Prepare execute_tool closure that runs tools through the guarded runner.
                 let runner = self.tool_runner.clone();
                 let tools_arc = self.tools.clone();
+                let hook_registry_arc = self.hook_registry.clone();
                 let working_dir = std::env::current_dir().unwrap_or_default();
                 let session_id = self.session_manager.lock().await.session_id.clone();
+                let turn_count = self.session_manager.lock().await.turn_count();
 
                 let execute_tool = move |_id: &str, name: &str, input: &serde_json::Value| {
                     let runner = runner.clone();
                     let tools_arc = tools_arc.clone();
+                    let hook_registry_arc = hook_registry_arc.clone();
                     let name = name.to_string();
                     let input = input.clone();
                     let working_dir = working_dir.clone();
                     let session_id = session_id.clone();
+                    let turn_count = turn_count;
                     async move {
+                        // --- PreTool hook ---
+                        {
+                            let hr = hook_registry_arc.lock().await;
+                            let ctx = HookContext {
+                                point: HookPoint::PreTool,
+                                session_id: session_id.clone(),
+                                turn_count,
+                                tool_name: Some(name.clone()),
+                                tool_input: Some(input.clone()),
+                                tool_result: None,
+                                message: None,
+                                metadata: HashMap::new(),
+                            };
+                            match hr.execute(&ctx).await {
+                                HookResult::Block { reason } => {
+                                    return (format!("Blocked by hook: {}", reason), true);
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // --- OnMemoryRecall hook (when memory_search tool is invoked) ---
+                        if name == "memory_search" {
+                            let hr = hook_registry_arc.lock().await;
+                            let ctx = HookContext {
+                                point: HookPoint::OnMemoryRecall,
+                                session_id: session_id.clone(),
+                                turn_count,
+                                tool_name: Some(name.clone()),
+                                tool_input: Some(input.clone()),
+                                tool_result: None,
+                                message: None,
+                                metadata: HashMap::new(),
+                            };
+                            hr.execute(&ctx).await;
+                        }
+
                         let tool = {
                             let reg = tools_arc.lock().await;
                             reg.get(&name).cloned()
                         };
                         let exec_ctx = aletheon_abi::tool::ToolContext {
                             working_dir,
-                            session_id,
+                            session_id: session_id.clone(),
                         };
-                        match tool {
+                        let (content, is_error) = match tool {
                             Some(t) => {
                                 let mut r = runner.lock().await;
-                                let res = r.run(t.as_ref(), input, &exec_ctx, "chat-turn").await;
+                                let res = r.run(t.as_ref(), input.clone(), &exec_ctx, "chat-turn").await;
                                 (res.content, res.is_error)
                             }
                             None => (format!("Unknown tool: {}", name), true),
+                        };
+
+                        // --- PostTool hook ---
+                        {
+                            let hr = hook_registry_arc.lock().await;
+                            let ctx = HookContext {
+                                point: HookPoint::PostTool,
+                                session_id,
+                                turn_count,
+                                tool_name: Some(name),
+                                tool_input: None,
+                                tool_result: Some(aletheon_abi::hook::HookToolResult {
+                                    content: content.clone(),
+                                    is_error,
+                                    execution_time_ms: 0,
+                                }),
+                                message: None,
+                                metadata: HashMap::new(),
+                            };
+                            hr.execute(&ctx).await;
                         }
+
+                        (content, is_error)
                     }
                 };
 
@@ -743,6 +839,21 @@ impl RequestHandler {
                     let session_id = self.session_manager.lock().await.session_id.clone();
                     let rm = self.recall_memory.lock().await;
                     let _ = rm.store(&session_id, "assistant_message", &text, None);
+                    // Fire OnMemoryStore hook
+                    {
+                        let hr = self.hook_registry.lock().await;
+                        let ctx = HookContext {
+                            point: HookPoint::OnMemoryStore,
+                            session_id: session_id.clone(),
+                            turn_count: turn,
+                            tool_name: None,
+                            tool_input: None,
+                            tool_result: None,
+                            message: None,
+                            metadata: HashMap::new(),
+                        };
+                        hr.execute(&ctx).await;
+                    }
                 }
 
                 // Enhanced reflection: analyze question and response quality
@@ -847,6 +958,25 @@ impl RequestHandler {
                 })
             }
             "clear" => {
+                // Fire OnSessionEnd hook before clearing
+                {
+                    let (session_id, turn_count) = {
+                        let sm = self.session_manager.lock().await;
+                        (sm.session_id.clone(), sm.turn_count())
+                    };
+                    let hr = self.hook_registry.lock().await;
+                    let ctx = HookContext {
+                        point: HookPoint::OnSessionEnd,
+                        session_id,
+                        turn_count,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_result: None,
+                        message: None,
+                        metadata: HashMap::new(),
+                    };
+                    hr.execute(&ctx).await;
+                }
                 let mut state = self.state.lock().await;
                 state.pending_input = None;
                 json!({
