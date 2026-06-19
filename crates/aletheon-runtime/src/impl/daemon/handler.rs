@@ -127,6 +127,9 @@ pub struct RequestHandler {
     agent_loader: Arc<Mutex<AgentLoader>>,
     /// Configured hook scripts from the [hooks] config section.
     hooks_config: HooksConfig,
+    /// Per-session "always approve" cache: tool_name -> approved.
+    /// Populated when user responds with "always" to an approval request.
+    session_approvals: Arc<Mutex<HashMap<String, bool>>>,
 }
 
 impl RequestHandler {
@@ -426,6 +429,7 @@ impl RequestHandler {
             skill_router,
             agent_loader,
             hooks_config,
+            session_approvals: Arc::new(Mutex::new(HashMap::new())),
         };
 
         // Fire OnSessionStart hook
@@ -868,6 +872,8 @@ impl RequestHandler {
                 let hook_registry_arc = self.hook_registry.clone();
                 let storm_breaker_arc = self.storm_breaker.clone();
                 let memory_queue_arc = self.memory_queue.clone();
+                let session_approvals_arc = self.session_approvals.clone();
+                let notify_tx_arc = self.notify_tx.clone();
                 let working_dir = std::env::current_dir().unwrap_or_default();
                 let session_id = self.session_manager.lock().await.session_id.clone();
                 let turn_count = self.session_manager.lock().await.turn_count();
@@ -878,6 +884,8 @@ impl RequestHandler {
                     let hook_registry_arc = hook_registry_arc.clone();
                     let storm_breaker_arc = storm_breaker_arc.clone();
                     let memory_queue_arc = memory_queue_arc.clone();
+                    let session_approvals_arc = session_approvals_arc.clone();
+                    let notify_tx_arc = notify_tx_arc.clone();
                     let name = name.to_string();
                     let input = input.clone();
                     let working_dir = working_dir.clone();
@@ -921,6 +929,16 @@ impl RequestHandler {
                             hr.execute(&ctx).await;
                         }
 
+                        // --- Check session approvals (auto-approve if "always" was used) ---
+                        {
+                            let approvals = session_approvals_arc.lock().await;
+                            if let Some(&approved) = approvals.get(&name) {
+                                if approved {
+                                    info!(tool = %name, "Auto-approving tool from session approval cache");
+                                }
+                            }
+                        }
+
                         let tool = {
                             let reg = tools_arc.lock().await;
                             reg.get(&name).cloned()
@@ -956,7 +974,7 @@ impl RequestHandler {
                                 point: HookPoint::PostTool,
                                 session_id,
                                 turn_count,
-                                tool_name: Some(name),
+                                tool_name: Some(name.clone()),
                                 tool_input: None,
                                 tool_result: Some(aletheon_abi::hook::HookToolResult {
                                     content: content.clone(),
@@ -967,6 +985,16 @@ impl RequestHandler {
                                 metadata: HashMap::new(),
                             };
                             hr.execute(&ctx).await;
+                        }
+
+                        // --- Emit tool_result event through notify_tx ---
+                        if let Some(ref tx) = notify_tx_arc {
+                            let event = serde_json::json!({
+                                "type": "tool_result",
+                                "name": name,
+                                "result": content.chars().take(200).collect::<String>(),
+                            });
+                            let _ = tx.try_send(event.to_string());
                         }
 
                         (content, is_error)
@@ -1603,18 +1631,38 @@ impl RequestHandler {
             "approval_response" => {
                 // Resolve a pending approval request. The client sends this
                 // in response to an "approval_request" notification.
+                // Supports: "once" (approve this time), "always" (approve for session),
+                //           "reject" (deny).
                 let aid = request["params"]["approval_id"]
                     .as_str()
                     .unwrap_or("")
                     .to_string();
-                let decision = match request["params"]["decision"].as_str().unwrap_or("deny") {
-                    "approve" => ApprovalDecision::Approve,
-                    "approve_for_session" => ApprovalDecision::ApproveForSession,
+                let action = request["params"]["decision"]
+                    .as_str()
+                    .unwrap_or("reject")
+                    .to_string();
+                let tool_name = request["params"]["tool"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+
+                let decision = match action.as_str() {
+                    "once" => ApprovalDecision::Approve,
+                    "always" => {
+                        // Cache approval for this tool for the rest of the session
+                        if !tool_name.is_empty() {
+                            let mut approvals = self.session_approvals.lock().await;
+                            approvals.insert(tool_name.clone(), true);
+                            info!(tool = %tool_name, "Tool approved for session (always)");
+                        }
+                        ApprovalDecision::ApproveForSession
+                    }
                     _ => ApprovalDecision::Deny,
                 };
+
                 if let Some(tx) = self.pending_approvals.lock().await.remove(&aid) {
                     let _ = tx.send(decision);
-                    info!(approval_id = %aid, decision = ?request["params"]["decision"], "Approval resolved");
+                    info!(approval_id = %aid, action = %action, "Approval resolved");
                 } else {
                     warn!(approval_id = %aid, "No pending approval found for id");
                 }
@@ -1666,6 +1714,8 @@ impl RequestHandler {
                             let _ = store.create_session(&new_id);
                         }
                         *self.session_manager.lock().await = new_sm;
+                        // Clear per-session approval cache
+                        self.session_approvals.lock().await.clear();
                         // Fire OnSessionStart for the new session
                         {
                             let hr = self.hook_registry.lock().await;

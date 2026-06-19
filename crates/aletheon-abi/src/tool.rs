@@ -51,6 +51,12 @@ pub enum ToolExposure {
     Hidden,
 }
 
+impl Default for ToolExposure {
+    fn default() -> Self {
+        ToolExposure::Direct
+    }
+}
+
 impl ToolExposure {
     pub fn is_visible_to_model(&self) -> bool {
         matches!(self, Self::Direct | Self::DirectModelOnly)
@@ -151,4 +157,46 @@ pub trait Previewer: Tool {
     /// Preview the file change this tool would make.
     /// Returns None if the tool can't preview (e.g., bash).
     fn preview(&self, args: &serde_json::Value) -> Option<FileSnap>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposure_default_is_direct() {
+        assert_eq!(ToolExposure::default(), ToolExposure::Direct);
+    }
+
+    #[test]
+    fn filter_hidden_tools() {
+        let exposures = vec![
+            ToolExposure::Direct,
+            ToolExposure::Hidden,
+            ToolExposure::Deferred,
+            ToolExposure::Hidden,
+        ];
+        let visible: Vec<_> = exposures
+            .iter()
+            .filter(|e| **e != ToolExposure::Hidden)
+            .collect();
+        assert_eq!(visible.len(), 2);
+        assert_eq!(*visible[0], ToolExposure::Direct);
+        assert_eq!(*visible[1], ToolExposure::Deferred);
+    }
+
+    #[test]
+    fn keep_direct_tools() {
+        let exposures = vec![
+            ToolExposure::Direct,
+            ToolExposure::Deferred,
+            ToolExposure::Direct,
+            ToolExposure::Hidden,
+        ];
+        let direct: Vec<_> = exposures
+            .iter()
+            .filter(|e| **e == ToolExposure::Direct)
+            .collect();
+        assert_eq!(direct.len(), 2);
+    }
 }

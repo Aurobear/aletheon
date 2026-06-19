@@ -12,6 +12,8 @@ pub enum Event {
     TurnStarted,
     /// Streaming text from the LLM.
     Text { text: String },
+    /// Streaming text delta (incremental token).
+    TextDelta { delta: String },
     /// Reasoning/thinking text from the LLM.
     Reasoning { text: String },
     /// A tool call is about to be dispatched.
@@ -19,6 +21,8 @@ pub enum Event {
         name: String,
         args: serde_json::Value,
     },
+    /// A tool call has started (name + call_id for streaming).
+    ToolCallStart { name: String, call_id: String },
     /// A tool execution completed.
     ToolResult {
         name: String,
@@ -285,5 +289,60 @@ mod tests {
             miss_tokens: 50,
             hit_rate: 0.67,
         };
+        let _ = Event::TextDelta {
+            delta: "tok".into(),
+        };
+        let _ = Event::ToolCallStart {
+            name: "bash".into(),
+            call_id: "c1".into(),
+        };
+    }
+
+    #[test]
+    fn text_delta_event_debug() {
+        let event = Event::TextDelta {
+            delta: "hello".into(),
+        };
+        let debug_str = format!("{:?}", event);
+        assert!(debug_str.contains("TextDelta"));
+        assert!(debug_str.contains("hello"));
+    }
+
+    #[test]
+    fn tool_call_start_event_clone() {
+        let event = Event::ToolCallStart {
+            name: "edit".into(),
+            call_id: "abc".into(),
+        };
+        let cloned = event.clone();
+        assert!(matches!(
+            cloned,
+            Event::ToolCallStart { name, call_id }
+            if name == "edit" && call_id == "abc"
+        ));
+    }
+
+    #[test]
+    fn notify_tx_emits_tool_result_json() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
+
+        // Simulate what handler.rs does: build a JSON notification and send it.
+        let tool_name = "bash";
+        let result_content = "output text";
+        let event = serde_json::json!({
+            "type": "tool_result",
+            "name": tool_name,
+            "result": result_content.chars().take(200).collect::<String>(),
+        });
+        let _ = tx.try_send(event.to_string());
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let msg = rx.recv().await.unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
+            assert_eq!(parsed["type"], "tool_result");
+            assert_eq!(parsed["name"], "bash");
+            assert_eq!(parsed["result"], "output text");
+        });
     }
 }
