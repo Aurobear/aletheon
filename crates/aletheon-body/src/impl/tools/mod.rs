@@ -10,6 +10,7 @@ pub mod executor;
 pub mod exposure;
 pub mod file_read;
 pub mod file_search;
+pub mod glob;
 pub mod file_write;
 pub mod kernel_build;
 pub mod module_build;
@@ -20,6 +21,7 @@ pub mod registry;
 pub mod script_tool;
 pub mod search;
 pub mod system_status;
+pub mod task_tools;
 pub mod toolset;
 
 // Re-export types from aletheon-abi (the canonical definitions)

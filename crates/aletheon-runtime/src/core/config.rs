@@ -11,6 +11,9 @@ pub struct RuntimeConfig {
     pub session_id: String,
     pub learning_enabled: bool,
     pub compaction_enabled: bool,
+    pub tail_token_budget: usize,
+    pub target_summary_chars: usize,
+    pub context_window_tokens: usize,
 }
 
 impl Default for RuntimeConfig {
@@ -20,6 +23,9 @@ impl Default for RuntimeConfig {
             session_id: uuid::Uuid::new_v4().to_string(),
             learning_enabled: true,
             compaction_enabled: true,
+            tail_token_budget: 16_000,
+            target_summary_chars: 2_000,
+            context_window_tokens: 128_000,
         }
     }
 }
@@ -660,5 +666,14 @@ preference = "require"
         let config = AppConfig::load_layered(Some(tmp.path()));
         // Should still be defaults since no .aletheon/config.toml exists
         assert_eq!(config.agent.max_iterations, 25);
+    }
+
+    #[test]
+    fn config_has_compaction_defaults() {
+        let config = RuntimeConfig::default();
+        assert_eq!(config.tail_token_budget, 16_000);
+        assert_eq!(config.target_summary_chars, 2_000);
+        assert_eq!(config.context_window_tokens, 128_000);
+        assert!(config.compaction_enabled);
     }
 }

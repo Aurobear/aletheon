@@ -15,6 +15,7 @@ fn test_config() -> RuntimeConfig {
         session_id: "test".to_string(),
         learning_enabled: false,
         compaction_enabled: false,
+        ..RuntimeConfig::default()
     }
 }
 

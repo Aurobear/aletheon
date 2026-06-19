@@ -218,6 +218,7 @@ mod tests {
             session_id: "t".into(),
             learning_enabled: false,
             compaction_enabled: false,
+            ..RuntimeConfig::default()
         };
         let mut lp = ReActLoop::new(cfg);
         let llm = ScriptedLlm {
