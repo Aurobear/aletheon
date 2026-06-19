@@ -100,3 +100,55 @@ pub trait Tool: Send + Sync {
         ConcurrencyClass::SideEffect
     }
 }
+
+/// A snapshot of a file before it was modified.
+#[derive(Debug, Clone)]
+pub struct FileSnap {
+    pub path: std::path::PathBuf,
+    /// File content at capture time. `None` means the file did not exist.
+    pub content: Option<String>,
+}
+
+impl FileSnap {
+    /// Capture the current state of a file.
+    pub fn capture(path: &std::path::Path) -> std::io::Result<Self> {
+        let content = if path.exists() {
+            Some(std::fs::read_to_string(path)?)
+        } else {
+            None
+        };
+        Ok(Self {
+            path: path.to_path_buf(),
+            content,
+        })
+    }
+
+    /// Restore this snapshot to disk.
+    pub fn restore(&self) -> std::io::Result<()> {
+        match &self.content {
+            Some(content) => {
+                if let Some(parent) = self.path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&self.path, content)?;
+            }
+            None => {
+                if self.path.exists() {
+                    std::fs::remove_file(&self.path)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Tools that can preview their change without touching disk.
+///
+/// Used by the checkpoint system to capture file state before edits.
+/// Only edit/write tools implement this. Bash does not.
+#[async_trait]
+pub trait Previewer: Tool {
+    /// Preview the file change this tool would make.
+    /// Returns None if the tool can't preview (e.g., bash).
+    fn preview(&self, args: &serde_json::Value) -> Option<FileSnap>;
+}

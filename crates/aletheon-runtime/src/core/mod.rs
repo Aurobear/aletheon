@@ -1,9 +1,11 @@
 pub mod behavior_paths;
+pub mod checkpoint;
 pub mod config;
 pub mod controller;
 pub mod event_sink;
 pub mod orchestrator;
 pub mod react_loop;
+pub mod storm_breaker;
 
 pub use behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use config::{

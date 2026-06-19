@@ -1,5 +1,6 @@
 use crate::core::config::RuntimeConfig;
 use crate::r#impl::memory::compressor::AdvancedCompressor;
+use aletheon_abi::tool::ConcurrencyClass;
 
 /// Marker injected into user messages when plan mode is active.
 /// Shared between `ReActLoop` and `Controller` to keep them in sync.
@@ -8,6 +9,84 @@ use aletheon_abi::body::Action;
 use aletheon_abi::message::{ContentBlock, Message, Role};
 use aletheon_abi::self_field::{Intent, IntentSource};
 use aletheon_abi::ToolDefinition;
+
+/// Maximum number of tools to execute in a single parallel batch.
+const MAX_PARALLEL_TOOLS: usize = 8;
+
+/// A batch of tool calls classified for parallel or serial execution.
+pub enum ToolBatch {
+    /// Read-only tools safe to execute concurrently.
+    Parallel(Vec<(String, String, serde_json::Value)>),
+    /// Side-effect tools that must be executed sequentially.
+    Serial(Vec<(String, String, serde_json::Value)>),
+}
+
+/// Classify a tool by name into its concurrency class.
+fn classify_tool(tool_name: &str) -> ConcurrencyClass {
+    match tool_name {
+        "read_file" | "glob" | "grep" | "file_read" | "system_status"
+        | "process_list" | "memory_search" | "ls" | "web_fetch" | "web_search" => {
+            ConcurrencyClass::ReadOnly
+        }
+        _ => ConcurrencyClass::SideEffect,
+    }
+}
+
+/// Partition a list of tool calls into parallel and serial batches.
+///
+/// Contiguous read-only tools are grouped into a single `Parallel` batch
+/// (up to `MAX_PARALLEL_TOOLS`). Each side-effect tool gets its own `Serial`
+/// batch. A switch from read-only to side-effect (or vice versa) flushes the
+/// current batch.
+pub fn partition_tool_calls(
+    calls: &[(String, String, serde_json::Value)],
+) -> Vec<ToolBatch> {
+    if calls.is_empty() {
+        return Vec::new();
+    }
+
+    let mut batches: Vec<ToolBatch> = Vec::new();
+    let mut current_readonly: Vec<(String, String, serde_json::Value)> = Vec::new();
+    let mut current_serial: Vec<(String, String, serde_json::Value)> = Vec::new();
+
+    let flush_readonly = |batches: &mut Vec<ToolBatch>,
+                          buf: &mut Vec<(String, String, serde_json::Value)>| {
+        if !buf.is_empty() {
+            batches.push(ToolBatch::Parallel(std::mem::take(buf)));
+        }
+    };
+
+    let flush_serial = |batches: &mut Vec<ToolBatch>,
+                        buf: &mut Vec<(String, String, serde_json::Value)>| {
+        if !buf.is_empty() {
+            batches.push(ToolBatch::Serial(std::mem::take(buf)));
+        }
+    };
+
+    for call in calls {
+        let class = classify_tool(&call.1);
+        match class {
+            ConcurrencyClass::ReadOnly => {
+                flush_serial(&mut batches, &mut current_serial);
+                current_readonly.push(call.clone());
+                if current_readonly.len() >= MAX_PARALLEL_TOOLS {
+                    flush_readonly(&mut batches, &mut current_readonly);
+                }
+            }
+            _ => {
+                flush_readonly(&mut batches, &mut current_readonly);
+                current_serial.push(call.clone());
+                // Each side-effect tool gets its own serial batch.
+                flush_serial(&mut batches, &mut current_serial);
+            }
+        }
+    }
+
+    flush_readonly(&mut batches, &mut current_readonly);
+    flush_serial(&mut batches, &mut current_serial);
+
+    batches
+}
 use aletheon_brain::r#impl::llm::provider::{LlmProvider, StopReason};
 use std::future::Future;
 use tracing::{debug, warn};
@@ -726,5 +805,71 @@ mod tests {
         let composed = lp.compose_user_message("hello");
         assert!(composed.contains("- fact a"));
         assert!(composed.contains("- fact b"));
+    }
+
+    // --- Task 3: partition_tool_calls tests ---
+
+    #[test]
+    fn partition_read_only_batch() {
+        let calls = vec![
+            ("id1".into(), "read_file".into(), serde_json::json!({})),
+            ("id2".into(), "glob".into(), serde_json::json!({})),
+            ("id3".into(), "grep".into(), serde_json::json!({})),
+        ];
+        let batches = partition_tool_calls(&calls);
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            ToolBatch::Parallel(v) => assert_eq!(v.len(), 3),
+            _ => panic!("expected Parallel batch"),
+        }
+    }
+
+    #[test]
+    fn partition_writer_serial() {
+        let calls = vec![
+            ("id1".into(), "write_file".into(), serde_json::json!({})),
+            ("id2".into(), "bash".into(), serde_json::json!({})),
+        ];
+        let batches = partition_tool_calls(&calls);
+        assert_eq!(batches.len(), 2);
+        for batch in &batches {
+            match batch {
+                ToolBatch::Serial(v) => assert_eq!(v.len(), 1),
+                _ => panic!("expected Serial batch"),
+            }
+        }
+    }
+
+    #[test]
+    fn partition_mixed() {
+        // read, read, write, read → Parallel(2), Serial(1), Parallel(1)
+        let calls = vec![
+            ("id1".into(), "read_file".into(), serde_json::json!({})),
+            ("id2".into(), "grep".into(), serde_json::json!({})),
+            ("id3".into(), "write_file".into(), serde_json::json!({})),
+            ("id4".into(), "ls".into(), serde_json::json!({})),
+        ];
+        let batches = partition_tool_calls(&calls);
+        assert_eq!(batches.len(), 3);
+
+        match &batches[0] {
+            ToolBatch::Parallel(v) => assert_eq!(v.len(), 2),
+            _ => panic!("expected Parallel batch with 2 items"),
+        }
+        match &batches[1] {
+            ToolBatch::Serial(v) => assert_eq!(v.len(), 1),
+            _ => panic!("expected Serial batch with 1 item"),
+        }
+        match &batches[2] {
+            ToolBatch::Parallel(v) => assert_eq!(v.len(), 1),
+            _ => panic!("expected Parallel batch with 1 item"),
+        }
+    }
+
+    #[test]
+    fn partition_empty() {
+        let calls: Vec<(String, String, serde_json::Value)> = vec![];
+        let batches = partition_tool_calls(&calls);
+        assert!(batches.is_empty());
     }
 }
