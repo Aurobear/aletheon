@@ -17,6 +17,7 @@ pub enum BuiltinCommand {
     Sessions,
     Resume { id: String },
     Compact,
+    Model,
 }
 
 /// Parsed command type.
@@ -56,6 +57,7 @@ pub fn parse_command(input: &str) -> Option<CommandType> {
             id: args.to_string(),
         })),
         "compact" | "cmp" => Some(CommandType::Builtin(BuiltinCommand::Compact)),
+        "model" | "m" => Some(CommandType::Builtin(BuiltinCommand::Model)),
         _ => Some(CommandType::Skill {
             name: name.to_string(),
             args: args.to_string(),
@@ -252,5 +254,17 @@ mod tests {
             result,
             CommandType::Builtin(BuiltinCommand::Compact)
         ));
+    }
+
+    #[test]
+    fn test_parse_model() {
+        let result = parse_command("/model").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Model)));
+    }
+
+    #[test]
+    fn test_parse_model_alias() {
+        let result = parse_command("/m").unwrap();
+        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Model)));
     }
 }

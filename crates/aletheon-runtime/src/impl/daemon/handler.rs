@@ -2103,6 +2103,30 @@ impl RequestHandler {
                     }),
                 }
             }
+            "model_list" => {
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "models": [
+                            {"name": "default", "description": "Default model from config"},
+                            {"name": "sonnet", "description": "Claude Sonnet"},
+                            {"name": "opus", "description": "Claude Opus"},
+                            {"name": "haiku", "description": "Claude Haiku"}
+                        ],
+                        "current": "default"
+                    }
+                })
+            }
+            "model_switch" => {
+                let model = request["params"]["model"].as_str().unwrap_or("");
+                info!(model = %model, "Model switch requested");
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "status": "ok", "model": model }
+                })
+            }
             _ => json!({
                 "jsonrpc": "2.0",
                 "id": id,
