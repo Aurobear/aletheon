@@ -78,11 +78,10 @@ assert_contains() {
     local test_name="$3"
     if echo "$response" | grep -qi "$expected"; then
         pass "$test_name"
-        return 0
     else
         fail "$test_name: expected '$expected' in response"
-        return 1
     fi
+    return 0
 }
 
 # Assert response does NOT contain string
@@ -92,11 +91,10 @@ assert_not_contains() {
     local test_name="$3"
     if echo "$response" | grep -qi "$unexpected"; then
         fail "$test_name: unexpected '$unexpected' found in response"
-        return 1
     else
         pass "$test_name"
-        return 0
     fi
+    return 0
 }
 
 # Assert file exists and contains expected content
@@ -106,11 +104,10 @@ assert_file_content() {
     local test_name="$3"
     if [[ -f "$file" ]] && grep -q "$expected" "$file"; then
         pass "$test_name"
-        return 0
     else
         fail "$test_name: file '$file' missing or doesn't contain '$expected'"
-        return 1
     fi
+    return 0
 }
 
 # Assert file exists
@@ -119,11 +116,10 @@ assert_file_exists() {
     local test_name="$2"
     if [[ -f "$file" ]]; then
         pass "$test_name"
-        return 0
     else
         fail "$test_name: file '$file' does not exist"
-        return 1
     fi
+    return 0
 }
 
 # ─── Daemon Lifecycle ─────────────────────────────────────────────────
