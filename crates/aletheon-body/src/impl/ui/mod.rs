@@ -501,6 +501,9 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
+                app.streaming = true;
+                app.response_buf.clear();
+                app.status.waiting = true;
                 app.chat
                     .add_message(ChatRole::System, "查询状态中...".to_string());
                 return;
@@ -514,6 +517,9 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
+                app.streaming = true;
+                app.response_buf.clear();
+                app.status.waiting = true;
                 app.chat
                     .add_message(ChatRole::System, "查询反思记录中...".to_string());
                 return;
@@ -527,6 +533,9 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
+                app.streaming = true;
+                app.response_buf.clear();
+                app.status.waiting = true;
                 app.chat
                     .add_message(ChatRole::System, "执行即时反思中...".to_string());
                 return;
@@ -540,6 +549,9 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
+                app.streaming = true;
+                app.response_buf.clear();
+                app.status.waiting = true;
                 app.chat
                     .add_message(ChatRole::System, "查询演化历史中...".to_string());
                 return;
@@ -553,6 +565,9 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
+                app.streaming = true;
+                app.response_buf.clear();
+                app.status.waiting = true;
                 app.chat
                     .add_message(ChatRole::System, "查询基因组中...".to_string());
                 return;
@@ -566,6 +581,9 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
+                app.streaming = true;
+                app.response_buf.clear();
+                app.status.waiting = true;
                 app.chat
                     .add_message(ChatRole::System, "查询会话列表中...".to_string());
                 return;
@@ -585,6 +603,9 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
+                app.streaming = true;
+                app.response_buf.clear();
+                app.status.waiting = true;
                 app.chat
                     .add_message(ChatRole::System, format!("恢复会话 {}...", id));
                 return;
@@ -598,6 +619,9 @@ async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
+                app.streaming = true;
+                app.response_buf.clear();
+                app.status.waiting = true;
                 app.chat
                     .add_message(ChatRole::System, "压缩上下文中...".to_string());
                 return;
