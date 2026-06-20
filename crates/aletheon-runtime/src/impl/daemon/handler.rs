@@ -155,6 +155,8 @@ pub struct RequestHandler {
     debug_perf: Arc<PerfCounter>,
     /// Cancellation token for the current chat turn.
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    /// EventBus for cross-subsystem event routing (DaseinEventBridge, etc.).
+    event_bus: Option<Arc<dyn aletheon_abi::EventBus>>,
 }
 
 /// Convert an `Event` to a JSONL string for the notify channel.
@@ -239,6 +241,7 @@ impl RequestHandler {
         registry: &ProviderRegistry,
         model_routing: crate::core::config::ModelRoutingConfig,
         _perception_rx: mpsc::Receiver<PerceptionInjection>,
+        event_bus: Option<Arc<dyn aletheon_abi::EventBus>>,
     ) -> anyhow::Result<Self> {
         let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create("")?);
         info!(provider = llm.name(), "LLM provider initialized");
@@ -402,6 +405,12 @@ impl RequestHandler {
             ..Default::default()
         };
         let self_field = Arc::new(Mutex::new(SelfField::new(self_field_config)));
+
+        // Wire DaseinEventBridge to EventBus if available
+        if let Some(ref eb) = event_bus {
+            let sf = self_field.lock().await;
+            sf.wire_dasein_event_bridge(&**eb).await?;
+        }
 
         // Initialize skill loader from the default skills directory
         let skills_dir = aletheon_abi::paths::skills_dir();
@@ -576,6 +585,7 @@ impl RequestHandler {
             debug_handler,
             debug_perf,
             cancel_token: Arc::new(Mutex::new(None)),
+            event_bus,
         };
 
         // Fire OnSessionStart hook
@@ -679,6 +689,15 @@ impl RequestHandler {
         // Fallback: direct lock
         let sf = self.self_field.lock().await;
         let _ = sf.narrate(event, reason).await;
+    }
+
+    /// Post-turn coordination: update Dasein mood from turn output.
+    async fn coordinate(&self, turn: &usize, turn_text: &str) {
+        let sf = self.self_field.lock().await;
+        if let Some(ref dasein) = sf.dasein() {
+            let _mood = dasein.quick_mood_update(turn_text);
+            tracing::info!(turn = turn, "Dasein mood updated via coordinator");
+        }
     }
 
     /// Compose the user message with mid-session injections from the memory queue.
@@ -1219,6 +1238,16 @@ impl RequestHandler {
                 let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(64);
                 let event_sink = ChannelEventSink::new(event_tx);
 
+                // Inject Dasein context into user input (Task 17)
+                let effective_message = {
+                    let sf = self.self_field.lock().await;
+                    if let Some(ctx) = sf.dasein_prompt_injection() {
+                        format!("{}\n\n---\n\n{}", ctx, effective_message)
+                    } else {
+                        effective_message
+                    }
+                };
+
                 let config = self.state.lock().await.runtime.config().clone();
                 let llm_clone = llm.clone();
                 let tool_defs_clone = tool_defs.clone();
@@ -1323,6 +1352,9 @@ impl RequestHandler {
                     completed_normally: false,
                 }));
                 info!(len = text.len(), "ReAct loop completed");
+
+                // Coordinate: quick mood update after the turn (Task 23)
+                self.coordinate(&turn_count, &text).await;
 
                 // Record turn in perf counter (token counts come from usage events
                 // which are not captured here; use 0 as placeholder).
