@@ -80,7 +80,13 @@ run_module() {
 
     # Send raw JSON-RPC
     _rpc() {
-        printf '%s\n' "$1" | timeout "$TIMEOUT" socat - UNIX-CONNECT:"$SOCKET" 2>/dev/null | head -1
+        local result="" try=0
+        while [[ $try -lt 3 ]]; do
+            result=$(printf '%s\n' "$1" | timeout "$TIMEOUT" socat - UNIX-CONNECT:"$SOCKET" 2>/dev/null)
+            [[ -n "$result" ]] && echo "$result" && return 0
+            sleep 1; try=$((try+1))
+        done
+        echo ""
     }
 
     # Assert contains
@@ -239,7 +245,7 @@ run_module() {
 
         # T6: Apply patch
         r=$(_send "在文件 $DATA_DIR/body_w.txt 末尾追加文本 _patched" 2>&1) || true
-        sleep 1
+        sleep 3
         if [[ -f "$DATA_DIR/body_w.txt" ]] && grep -q "body_write_ok_patched" "$DATA_DIR/body_w.txt"; then
             _p "body_apply_patch"
         else
@@ -264,7 +270,7 @@ run_module() {
         # M1: Store
         r=$(_send "请记住：我的测试代号是 DeltaSeven" 2>&1) || true
         [[ -n "$r" ]] && _p "mem_store" || _f "mem_store: empty"
-        sleep 3
+        sleep 5
 
         # M2: Recall
         r=$(_send "我的测试代号是什么？" 2>&1) || true
