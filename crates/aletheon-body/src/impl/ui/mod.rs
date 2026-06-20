@@ -1646,6 +1646,18 @@ fn process_response(app: &mut App, msg: serde_json::Value) {
             // /model response
             let formatted = format_models(result);
             app.chat.update_last_message(formatted);
+        } else if let Some(hooks) = result.get("hooks") {
+            // /hooks response
+            let formatted = format_hooks(hooks);
+            app.chat.update_last_message(formatted);
+        } else if let Some(tools) = result.get("tools") {
+            // tools/list response
+            let formatted = format_tools_list(tools);
+            app.chat.update_last_message(formatted);
+        } else if let Some(agents) = result.get("agents") {
+            // /agents response
+            let formatted = format_agents(agents);
+            app.chat.update_last_message(formatted);
         } else if let Some(msg_text) = result.get("message").and_then(|v| v.as_str()) {
             // Generic message response (e.g. /resume, /compact)
             app.chat.update_last_message(msg_text.to_string());
@@ -1893,6 +1905,58 @@ fn format_status(status: &serde_json::Value) -> String {
     };
     lines.push(format!("Attention Focus: {}", focus_display));
 
+    lines.join("\n")
+}
+
+fn format_hooks(hooks: &serde_json::Value) -> String {
+    let empty = vec![];
+    let arr = hooks.as_array().unwrap_or(&empty);
+    if arr.is_empty() {
+        return "No hooks registered.".to_string();
+    }
+    let mut lines = Vec::new();
+    lines.push(format!("=== Hooks ({}) ===\n", arr.len()));
+    for h in arr {
+        let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let point = h.get("point").and_then(|v| v.as_str()).unwrap_or("?");
+        let source = h.get("source").and_then(|v| v.as_str()).unwrap_or("?");
+        let priority = h.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
+        lines.push(format!("  {} [{}] (priority: {}, source: {})", name, point, priority, source));
+    }
+    lines.join("\n")
+}
+
+fn format_tools_list(tools: &serde_json::Value) -> String {
+    let empty = vec![];
+    let arr = tools.as_array().unwrap_or(&empty);
+    if arr.is_empty() {
+        return "No tools registered.".to_string();
+    }
+    let mut lines = Vec::new();
+    lines.push(format!("=== Tools ({}) ===\n", arr.len()));
+    for t in arr {
+        let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let desc = t.get("description").and_then(|v| v.as_str()).unwrap_or("");
+        let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };
+        lines.push(format!("  {} — {}", name, short_desc));
+    }
+    lines.join("\n")
+}
+
+fn format_agents(agents: &serde_json::Value) -> String {
+    let empty = vec![];
+    let arr = agents.as_array().unwrap_or(&empty);
+    if arr.is_empty() {
+        return "No sub-agents running.".to_string();
+    }
+    let mut lines = Vec::new();
+    lines.push(format!("=== Sub-Agents ({}) ===\n", arr.len()));
+    for a in arr {
+        let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+        let task = a.get("task").and_then(|v| v.as_str()).unwrap_or("?");
+        let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+        lines.push(format!("  {} [{}] — {}", id, status, task));
+    }
     lines.join("\n")
 }
 
