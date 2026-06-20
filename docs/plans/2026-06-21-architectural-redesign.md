@@ -36,10 +36,9 @@
 
 | 旧名 | 新名 | 职责 |
 |---|---|---|
-| `aletheon-abi` | `base` | 接口定义 + 通信协议 + 通用模块（错误、日志、配置、同步） |
+| `aletheon-abi` + `aletheon-comm` | `base` | 完整基础层：接口定义 + 通信协议 + 消息路由 + 传输实现 + 子系统注册 + 事件总线 + 通用模块（错误、日志、配置、同步） |
 | `aletheon-body` | `corpus` | 核心执行体（精简后：沙盒、MCP、感知、平台适配） |
 | `aletheon-brain` | `cognit` | 认知计算引擎（推理、规划、反思、学习） |
-| `aletheon-comm` | `comm` | 总线路由层（消息路由、传输实现、子系统注册） |
 | `aletheon-memory` | `memory` | 记忆系统（SQLite 后端、向量存储、压缩） |
 | `aletheon-self` | `dasein` | 自我层（SelfField 策略引擎、DaseinModule） |
 | `aletheon-runtime` | `runtime` | 内核调度（ReActLoop、会话管理、编排） |
@@ -52,28 +51,27 @@
 | `aletheon-cli` | `cli` | CLI/TUI 客户端 |
 | `aletheon-exec` | `exec` | 独立执行二进制 |
 
+**注意**：`aletheon-comm` 被合并进 `base`，不再作为独立 crate。
+
 ### 2.2 目录结构
 
 ```
 aletheon/
 ├── crates/
-│   ├── base/               ← 原 aletheon-abi，扩展为完整"头文件层"
+│   ├── base/               ← 原 aletheon-abi + aletheon-comm，完整基础层
 │   │   ├── src/
 │   │   │   ├── subsystem/  ← 子系统 trait 定义
 │   │   │   ├── types/      ← 共享类型
-│   │   │   ├── protocol/   ← 通信协议定义
+│   │   │   ├── protocol/   ← 通信协议定义（Envelope, Protocol, Transport）
+│   │   │   ├── router/     ← 消息路由实现
+│   │   │   ├── transport/  ← 传输实现（Unix socket、共享内存、io_uring）
+│   │   │   ├── registry/   ← 子系统注册/发现/生命周期
+│   │   │   ├── bus/        ← 事件总线实现
 │   │   │   ├── error/      ← 错误类型、Result、错误码
 │   │   │   ├── log/        ← 日志宏、追踪接口
 │   │   │   ├── config/     ← 配置解析、验证、热加载
 │   │   │   ├── sync/       ← 锁原语、异步原语、通道
 │   │   │   └── dasein/     ← DaseinModule ABI 类型
-│   │
-│   ├── comm/               ← 收窄为总线路由层
-│   │   ├── src/
-│   │   │   ├── router/     ← 消息路由
-│   │   │   ├── transport/  ← 传输实现（Unix socket、共享内存、io_uring）
-│   │   │   ├── registry/   ← 子系统注册/发现/生命周期
-│   │   │   └── bus/        ← 事件总线实现
 │   │
 │   ├── corpus/             ← 精简后的核心执行体
 │   │   ├── src/
@@ -125,26 +123,25 @@ aletheon/
 ## 3. 依赖关系图
 
 ```
-base  (无内部依赖——叶子 crate)
+base  (无内部依赖——叶子 crate，包含 abi + comm)
     ^
     |
-    +--- comm           (base)
     +--- memory          (base)
     +--- security        (base)
     +--- tools           (base)
     +--- drivers         (base)
     +--- interact        (base)
     |
-    +--- corpus          (base, comm, memory, security, tools)
+    +--- corpus          (base, memory, security, tools)
     |       ^
     |       |
-    +--- cognit          (base, comm, corpus[features: drivers,interact])
+    +--- cognit          (base, corpus[features: drivers,interact])
     |       ^
     |       |
-    +--- dasein          (base, corpus, cognit, comm, memory)
+    +--- dasein          (base, corpus, cognit, memory)
     |       ^
     |       |
-    +--- runtime         (base, cognit, corpus, comm, memory, dasein, metacog)
+    +--- runtime         (base, cognit, corpus, memory, dasein, metacog)
     |
     +--- metacog         (base)
 
@@ -156,7 +153,7 @@ exec       (base, runtime, corpus, cognit)
 ### 关键改进
 
 - **base 是唯一叶子**：所有 crate 只依赖 base，不互相依赖
-- **comm 不再被 corpus/cognit 直接依赖**：通过 base 的抽象接口通信
+- **base 合并了 comm**：通信基础设施（路由、传输、注册、事件总线）统一在 base 中
 - **security 独立**：corpus 和 dasein 共用同一个 security crate
 - **drivers 独立**：cognit 不再编译时依赖硬件驱动，通过 feature flag 按需启用
 - **tools 独立**：corpus 只调用 tools 的接口，不关心具体工具实现
@@ -392,8 +389,7 @@ pub mod codes {
 
 | 层级 | 测试类型 | 覆盖范围 |
 |---|---|---|
-| **base** | 单元测试 | 错误类型序列化、协议编解码、配置解析 |
-| **comm** | 集成测试 | 消息路由、传输层、子系统注册 |
+| **base** | 单元测试 + 集成测试 | 错误类型序列化、协议编解码、配置解析、消息路由、传输层、子系统注册 |
 | **tools** | 单元测试 | 每个工具独立测试，mock 依赖 |
 | **security** | 单元测试 + 属性测试 | 策略引擎、循环检测、断路器状态机 |
 | **corpus** | 集成测试 | 沙盒执行、MCP 客户端、感知源 |
@@ -441,20 +437,22 @@ impl Subsystem for MockSubsystem { ... }
 **风险**：低——纯重命名，不影响功能
 **验证**：`cargo test --workspace` 全部通过
 
-### 阶段 2：重构 base（2 周）
+### 阶段 2：合并 comm 到 base（2 周）
 
-**目标**：将 base 扩展为完整的"头文件层"
+**目标**：将 aletheon-comm 的功能合并到 base，形成完整基础层
 
 | 步骤 | 操作 | 验证 |
 |---|---|---|
-| 2.1 | 从 comm 移入协议定义（Envelope, Protocol, Transport） | `cargo check` 通过 |
-| 2.2 | 从各 crate 移入通用错误类型 | `cargo check` 通过 |
-| 2.3 | 从各 crate 移入配置系统 | `cargo check` 通过 |
-| 2.4 | 从各 crate 移入可观测性接口 | `cargo check` 通过 |
-| 2.5 | 从各 crate 移入同步原语 | `cargo check` 通过 |
-| 2.6 | 添加子系统 trait 定义 | `cargo check` 通过 |
+| 2.1 | 将 comm 的源码移入 base/src/ | `cargo check` 通过 |
+| 2.2 | 更新 base/Cargo.toml 的依赖 | `cargo check` 通过 |
+| 2.3 | 更新所有引用 comm 的 crate | `cargo check` 通过 |
+| 2.4 | 删除 comm crate | `cargo check` 通过 |
+| 2.5 | 从各 crate 移入通用错误类型到 base | `cargo check` 通过 |
+| 2.6 | 从各 crate 移入配置系统到 base | `cargo check` 通过 |
+| 2.7 | 从各 crate 移入可观测性接口到 base | `cargo check` 通过 |
+| 2.8 | 从各 crate 移入同步原语到 base | `cargo check` 通过 |
 
-**风险**：中——涉及大量代码移动
+**风险**：中——涉及大量代码移动和依赖更新
 **验证**：`cargo test --workspace` 全部通过
 
 ### 阶段 3：拆分 corpus（2 周）
@@ -473,9 +471,9 @@ impl Subsystem for MockSubsystem { ... }
 **风险**：高——最大的结构变化
 **验证**：`cargo test --workspace` 全部通过
 
-### 阶段 4：重设计 comm（1 周）
+### 阶段 4：完善通信架构（1 周）
 
-**目标**：将 comm 收窄为总线路由层
+**目标**：在 base 中实现统一的通信架构
 
 | 步骤 | 操作 | 验证 |
 |---|---|---|
@@ -494,9 +492,9 @@ impl Subsystem for MockSubsystem { ... }
 
 ```
 Week 1:     阶段 1（重命名）
-Week 2-3:   阶段 2（重构 base）
+Week 2-3:   阶段 2（合并 comm 到 base）
 Week 4-5:   阶段 3（拆分 corpus）
-Week 6:     阶段 4（重设计 comm）
+Week 6:     阶段 4（完善通信架构）
 Week 7:     集成测试 + 文档更新
 ```
 
