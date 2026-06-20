@@ -47,6 +47,11 @@ impl HookRegistry {
         entry.sort_by_key(|h| h.priority);
     }
 
+    /// List all registered hooks.
+    pub fn list(&self) -> Vec<&RegisteredHook> {
+        self.hooks.values().flat_map(|v| v.iter()).collect()
+    }
+
     /// Unregister all hooks with the given name. Returns `true` if at least one was removed.
     pub fn unregister(&mut self, name: &str) -> bool {
         let mut removed = false;

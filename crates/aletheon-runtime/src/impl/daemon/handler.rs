@@ -2273,6 +2273,39 @@ impl RequestHandler {
                     "result": { "agents": agents }
                 })
             }
+            "hooks_list" => {
+                let hr = self.hook_registry.lock().await;
+                let hooks: Vec<serde_json::Value> = hr.list().iter().map(|h| {
+                    serde_json::json!({
+                        "name": h.name,
+                        "source": h.source,
+                        "point": format!("{:?}", h.point),
+                        "priority": h.priority,
+                        "script_path": h.script_path,
+                    })
+                }).collect();
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "hooks": hooks }
+                })
+            }
+            "tools/list" => {
+                let tools_arc = self.tools.clone();
+                let reg = tools_arc.lock().await;
+                let tools: Vec<serde_json::Value> = reg.definitions().iter().map(|d| {
+                    serde_json::json!({
+                        "name": d.name,
+                        "description": d.description,
+                        "input_schema": d.input_schema,
+                    })
+                }).collect();
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "tools": tools }
+                })
+            }
             _ => json!({
                 "jsonrpc": "2.0",
                 "id": id,
