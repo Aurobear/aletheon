@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use super::care_structure::*;
 use super::temporality::*;
@@ -43,6 +44,7 @@ impl SorgeLoop {
         self_model: Arc<MutableSelfModel>,
         care: Arc<CareStructure>,
         negativity: Arc<NegativityEngine>,
+        shared_mood: Arc<RwLock<Stimmung>>,
     ) -> Option<tokio::task::JoinHandle<()>> {
         let mut rx_guard = self.event_rx.lock().unwrap();
         let event_rx = rx_guard.take()?;
@@ -50,6 +52,7 @@ impl SorgeLoop {
 
         self.running.store(true, Ordering::Relaxed);
         let running = self.running.clone();
+        let shared_mood = shared_mood.clone();
         let mut event_rx = event_rx;
 
         let handle = tokio::spawn(async move {
@@ -118,6 +121,7 @@ impl SorgeLoop {
                 );
                 if new_mood != mood {
                     mood = new_mood;
+                    *shared_mood.write() = mood.clone();
                 }
 
                 // 4. Check negativity
@@ -145,9 +149,10 @@ impl SorgeLoop {
                     }
                 }
 
-                // 5. Passive synthesis (every 10 ticks)
+                // 5. Passive synthesis + protention update (every 10 ticks)
                 if tick_count % 10 == 0 {
-                    temporality.passive_synthesize();
+                    let patterns = temporality.passive_synthesize();
+                    temporality.update_protentions_from_patterns(&patterns);
                 }
 
                 // 6. Adapt care rhythm

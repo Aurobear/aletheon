@@ -42,7 +42,7 @@ pub struct RetentionField {
     moments: RwLock<VecDeque<RentionalMoment>>,
     depth: usize,
     /// Base decay rate. Modified by mood: anxious -> faster, calm -> slower.
-    base_decay_rate: f64,
+    base_decay_rate: RwLock<f64>,
 }
 
 impl RetentionField {
@@ -50,7 +50,7 @@ impl RetentionField {
         Self {
             moments: RwLock::new(VecDeque::with_capacity(depth)),
             depth,
-            base_decay_rate,
+            base_decay_rate: RwLock::new(base_decay_rate),
         }
     }
 
@@ -112,14 +112,12 @@ impl RetentionField {
     /// Adjust decay rate based on mood.
     fn effective_decay_rate(&self) -> f64 {
         // Base rate is applied. Mood adjustment happens at the TemporalStream level.
-        self.base_decay_rate
+        *self.base_decay_rate.read()
     }
 
     /// Update the base decay rate (called by TemporalStream when mood changes).
-    pub fn set_decay_rate(&self, _rate: f64) {
-        // We need to store this differently since base_decay_rate is not behind RwLock.
-        // For now, this is handled at the TemporalStream level.
-        // TODO: make decay_rate adjustable
+    pub fn set_decay_rate(&self, rate: f64) {
+        *self.base_decay_rate.write() = rate.clamp(0.1, 1.0);
     }
 }
 
@@ -333,7 +331,7 @@ pub struct HabitEntry {
 
 impl PassiveSynthesizer {
     /// Run passive synthesis — called every N ticks.
-    pub fn synthesize(&mut self, recent: &[RentionalMoment]) {
+    pub fn synthesize(&mut self, recent: &[RentionalMoment]) -> Vec<TemporalPattern> {
         self.sediment_count += 1;
 
         // Detect associations: if two concepts appear close together, link them
@@ -369,6 +367,31 @@ impl PassiveSynthesizer {
 
         // Prune weak associations
         self.associations.retain(|(_, _, strength)| *strength > 0.05);
+
+        // Derive temporal patterns from accumulated state
+        let mut patterns = Vec::new();
+
+        // Repetition: habits with frequency >= 3
+        for habit in &self.habits {
+            if habit.frequency >= 3 {
+                patterns.push(TemporalPattern::Repetition {
+                    what: habit.pattern.clone(),
+                    interval: habit.frequency as u64,
+                });
+            }
+        }
+
+        // Trend: strong associations (strength > 0.5) indicate a directional flow
+        for (a, b, strength) in &self.associations {
+            if *strength > 0.5 {
+                patterns.push(TemporalPattern::Trend {
+                    direction: format!("{} -> {}", a, b),
+                    toward: b.clone(),
+                });
+            }
+        }
+
+        patterns
     }
 }
 
@@ -417,10 +440,16 @@ impl TemporalStream {
     }
 
     /// Run passive synthesis (called periodically).
-    pub fn passive_synthesize(&self) {
+    /// Returns detected temporal patterns.
+    pub fn passive_synthesize(&self) -> Vec<TemporalPattern> {
         let vivid = self.retention.vivid_moments(0.3);
         let mut synth = self.synthesizer.write();
-        synth.synthesize(&vivid);
+        synth.synthesize(&vivid)
+    }
+
+    /// Feed detected patterns into the protention field to close the prediction loop.
+    pub fn update_protentions_from_patterns(&self, patterns: &[TemporalPattern]) {
+        self.protention.write().update_from_patterns(patterns);
     }
 
     /// Get current temporal position.
@@ -629,7 +658,7 @@ mod tests {
             },
         ];
 
-        synth.synthesize(&moments);
+        let patterns = synth.synthesize(&moments);
 
         assert_eq!(synth.associations.len(), 1);
         assert_eq!(synth.associations[0].0, "code");

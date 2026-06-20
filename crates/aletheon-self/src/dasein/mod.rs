@@ -39,7 +39,7 @@ pub use event_bridge::DaseinEventBridge;
 /// - Care: the unified structure of projection + thrownness + fallenness
 pub struct DaseinModule {
     // Core state
-    mood: RwLock<Stimmung>,
+    mood: Arc<RwLock<Stimmung>>,
     temporality: Arc<TemporalStream>,
     world: Arc<Bewandtnisganzheit>,
     self_model: Arc<MutableSelfModel>,
@@ -63,7 +63,7 @@ impl DaseinModule {
         let negativity = Arc::new(NegativityEngine::default());
 
         let module = Self {
-            mood: RwLock::new(Stimmung::Gelassenheit),
+            mood: Arc::new(RwLock::new(Stimmung::Gelassenheit)),
             temporality,
             world,
             self_model,
@@ -84,6 +84,7 @@ impl DaseinModule {
             self.self_model.clone(),
             self.care.clone(),
             self.negativity.clone(),
+            self.mood.clone(),
         )
     }
 
