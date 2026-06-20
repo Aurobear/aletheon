@@ -376,11 +376,13 @@ impl LlmProvider for OpenAiProvider {
 
         let mut content = Vec::new();
 
-        // Text content — prefer `content`, fall back to `reasoning_content`
-        // (some reasoning models like GLM-5.2 put output in reasoning_content)
-        let text = choice.message.content.filter(|s| !s.is_empty())
-            .or(choice.message.reasoning_content.filter(|s| !s.is_empty()));
-        if let Some(text) = text {
+        // Reasoning content — preserve as Thinking block
+        if let Some(thinking) = choice.message.reasoning_content.filter(|s| !s.is_empty()) {
+            content.push(ContentBlock::Thinking { text: thinking, signature: None });
+        }
+
+        // Text content
+        if let Some(text) = choice.message.content.filter(|s| !s.is_empty()) {
             content.push(ContentBlock::Text { text });
         }
 
