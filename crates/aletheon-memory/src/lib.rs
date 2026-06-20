@@ -7,6 +7,7 @@
 //! `MemoryRouter` dispatches by `MemoryType`.
 
 pub mod activation;
+pub mod consolidation;
 pub mod decay;
 pub mod episodic;
 pub mod procedural;

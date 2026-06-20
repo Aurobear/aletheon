@@ -36,6 +36,9 @@ use aletheon_comm::envelope::Payload;
 use aletheon_comm::CommunicationBus;
 use aletheon_memory::episodic::EpisodicMemory;
 use aletheon_meta::r#impl::meta_runtime::self_reader::SelfReader;
+use aletheon_meta::{DefaultMetaRuntime, MorphogenesisPipeline};
+use crate::core::evolution_coordinator::EvolutionConfig;
+use aletheon_abi::Version;
 use aletheon_self::r#impl::perception::bridge::PerceptionInjection;
 use aletheon_self::{SelfField, SelfFieldConfig};
 use serde_json::json;
@@ -137,6 +140,8 @@ pub struct RequestHandler {
     /// Per-session "always approve" cache: tool_name -> approved.
     /// Populated when user responds with "always" to an approval request.
     session_approvals: Arc<Mutex<HashMap<String, bool>>>,
+    /// Morphogenesis pipeline for post-turn evolution.
+    pipeline: Arc<MorphogenesisPipeline<DefaultMetaRuntime>>,
     /// Automatic memory extraction — uses a cheap LLM to extract and store
     /// important facts from each conversation turn.
     auto_memory: Arc<Mutex<AutoMemory>>,
@@ -323,7 +328,20 @@ impl RequestHandler {
                 .await;
         }
 
-        let runtime = AletheonRuntime::new(runtime_config);
+        let mut runtime = AletheonRuntime::new(runtime_config);
+
+        // Wire EvolutionCoordinator for post-turn self-evolution
+        let evo_config = EvolutionConfig {
+            trigger_every_n_turns: 10,
+            trigger_on_failure: true,
+            window_size: 20,
+            lineage_dir: data_dir.join("lineage"),
+        };
+        runtime = runtime.with_evolution(evo_config)?;
+
+        // Create morphogenesis pipeline for evolution coordinator
+        let meta_runtime = DefaultMetaRuntime::new(Version::new(0, 1, 0));
+        let pipeline = Arc::new(MorphogenesisPipeline::new(meta_runtime));
 
         // Create reflector and episodic memory for post-chat reflection
         let reflector = Reflector::new();
@@ -513,6 +531,7 @@ impl RequestHandler {
             agent_loader,
             hooks_config,
             session_approvals: Arc::new(Mutex::new(HashMap::new())),
+            pipeline,
             auto_memory,
             debug_handler,
             debug_perf,
@@ -1239,7 +1258,7 @@ impl RequestHandler {
                     }
                 }
 
-                let (text, _metrics) = text.unwrap_or_else(|e| (format!("error: {e}"), TurnMetrics {
+                let (text, metrics) = text.unwrap_or_else(|e| (format!("error: {e}"), TurnMetrics {
                     tool_calls_made: 0,
                     tool_errors: 0,
                     elapsed_ms: 0,
@@ -1419,6 +1438,24 @@ impl RequestHandler {
                                 }
                             }
                         }
+                    }
+                }
+
+                // EvolutionCoordinator: post-turn evolution (accumulates reflections, triggers every N turns)
+                {
+                    let success = metrics.completed_normally && !text.starts_with("error:");
+                    let mut state = self.state.lock().await;
+                    if let Err(e) = state.runtime.post_evolution(
+                        &task_summary,
+                        &text,
+                        success,
+                        metrics.tool_calls_made,
+                        metrics.tool_errors,
+                        metrics.elapsed_ms,
+                        metrics.iterations,
+                        &*self.pipeline,
+                    ).await {
+                        warn!(error = %e, "post_evolution failed");
                     }
                 }
 

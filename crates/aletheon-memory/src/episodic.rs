@@ -32,7 +32,7 @@ impl EpisodicMemory {
         }
     }
 
-    fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
+    pub(crate) fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
         let guard = self.conn.lock().unwrap();
         let conn = guard
             .as_ref()
@@ -129,6 +129,115 @@ impl EpisodicMemory {
                 .collect::<std::result::Result<Vec<_>, _>>()?;
 
             Ok(entries)
+        })
+    }
+
+    /// Recall reflections with their base-table access count and importance.
+    ///
+    /// Returns (ReflectionEntry, access_count, importance) tuples, ordered
+    /// by most recent first. Used by consolidation to evaluate promotion.
+    pub fn recall_reflections_with_access(&self, limit: usize) -> Result<Vec<(ReflectionEntry, u64, f64)>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT r.*, m.access_count, m.importance
+                 FROM reflection_events r
+                 INNER JOIN aletheon_memory m ON m.id = r.memory_id
+                 ORDER BY r.created_at DESC LIMIT ?1",
+            )?;
+
+            let entries = stmt
+                .query_map(params![limit as i64], |row| {
+                    let id: String = row.get("id")?;
+                    let created_at: String = row.get("created_at")?;
+                    let trigger_str: String = row.get("trigger_type")?;
+                    let outcome_str: String = row.get("outcome")?;
+                    let what_worked_str: String = row.get("what_worked")?;
+                    let what_failed_str: String = row.get("what_failed")?;
+                    let learned_str: String = row.get("learned")?;
+                    let behavior_changes_str: String = row.get("behavior_changes")?;
+                    let confidence: f64 = row.get("confidence")?;
+                    let task_summary: String = row.get("task_summary")?;
+                    let access_count: i64 = row.get("access_count")?;
+                    let importance: f64 = row.get("importance")?;
+
+                    let trigger = match trigger_str.as_str() {
+                        "impasse" => ReflectionTrigger::Impasse,
+                        "manual" => ReflectionTrigger::Manual,
+                        _ => ReflectionTrigger::TaskComplete,
+                    };
+
+                    let outcome = match outcome_str.as_str() {
+                        "partial" => aletheon_abi::ReflectionOutcome::Partial,
+                        "failure" => aletheon_abi::ReflectionOutcome::Failure,
+                        _ => aletheon_abi::ReflectionOutcome::Success,
+                    };
+
+                    Ok((
+                        ReflectionEntry {
+                            id,
+                            timestamp: created_at.parse().unwrap_or_else(|_| Utc::now()),
+                            trigger,
+                            task_summary,
+                            outcome,
+                            what_worked: serde_json::from_str(&what_worked_str).unwrap_or_default(),
+                            what_failed: serde_json::from_str(&what_failed_str).unwrap_or_default(),
+                            learned: serde_json::from_str(&learned_str).unwrap_or_default(),
+                            behavior_changes: serde_json::from_str(&behavior_changes_str)
+                                .unwrap_or_default(),
+                            confidence,
+                        },
+                        access_count as u64,
+                        importance,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            Ok(entries)
+        })
+    }
+
+    /// Lower the importance of a base aletheon_memory entry by memory_id.
+    ///
+    /// Used by consolidation to soft-archive promoted episodic entries.
+    pub fn lower_importance(&self, memory_id: &str, new_importance: f64) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE aletheon_memory SET importance = ?1 WHERE id = ?2",
+                params![new_importance, memory_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Get the current importance of a base aletheon_memory entry by id.
+    pub fn get_importance(&self, memory_id: &str) -> Result<f64> {
+        self.with_conn(|conn| {
+            let importance: f64 = conn.query_row(
+                "SELECT importance FROM aletheon_memory WHERE id = ?1",
+                params![memory_id],
+                |r| r.get(0),
+            )?;
+            Ok(importance)
+        })
+    }
+
+    /// Look up the memory_id in aletheon_memory for given reflection event ids.
+    ///
+    /// Returns a Vec of memory_ids in the same order as the input ids.
+    pub fn get_reflection_memory_ids(&self, reflection_ids: Vec<&str>) -> Result<Vec<String>> {
+        self.with_conn(|conn| {
+            let mut memory_ids = Vec::new();
+            for rid in reflection_ids {
+                let memory_id: String = conn
+                    .query_row(
+                        "SELECT memory_id FROM reflection_events WHERE id = ?1",
+                        params![rid],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or_default();
+                memory_ids.push(memory_id);
+            }
+            Ok(memory_ids)
         })
     }
 
