@@ -9,6 +9,8 @@
 use crate::core::config::GenomeConfig;
 use aletheon_abi::brain::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
 use aletheon_abi::meta::MetaRuntimeOps;
+use aletheon_abi::self_field::SelfAwareness;
+use aletheon_brain::core::awareness_signal::{signals_to_awareness, AwarenessSignal};
 use aletheon_brain::core::reflector::Reflector;
 use aletheon_meta::r#impl::meta_runtime::lineage::LineageTracker;
 use aletheon_meta::r#impl::morphogenesis::mutation_intent::MutationIntentGenerator;
@@ -51,6 +53,9 @@ pub struct EvolutionSummary {
     pub evolution_triggered: bool,
     pub pipeline_results: Vec<PipelineResult>,
     pub lineage_entries_added: usize,
+    /// Awareness entries to store — (action, SelfAwareness) pairs.
+    /// The caller stores these via EpisodicMemory::store_awareness().
+    pub awareness_entries: Vec<(String, SelfAwareness)>,
 }
 
 /// Orchestrates post-turn self-evolution.
@@ -94,6 +99,9 @@ impl EvolutionCoordinator {
 
     /// Called after each ReAct turn. Reflects on the outcome and
     /// optionally triggers the evolution pipeline.
+    ///
+    /// If `awareness_signals` is provided, they are converted to
+    /// `SelfAwareness` entries and returned in the summary for storage.
     pub async fn post_turn<M: MetaRuntimeOps>(
         &self,
         task_summary: &str,
@@ -104,6 +112,7 @@ impl EvolutionCoordinator {
         elapsed_ms: u64,
         _iterations: usize,
         meta: &MorphogenesisPipeline<M>,
+        awareness_signals: Vec<AwarenessSignal>,
     ) -> Result<EvolutionSummary> {
         // Build an ExecutionResult from turn metrics
         let exec = ExecutionResult {
@@ -153,12 +162,16 @@ impl EvolutionCoordinator {
             (false, Vec::new(), 0)
         };
 
+        // Convert awareness signals to SelfAwareness entries for storage
+        let awareness_entries = signals_to_awareness(&awareness_signals);
+
         Ok(EvolutionSummary {
             reflected: true,
             reflection_id: Some(reflection_id),
             evolution_triggered: triggered,
             pipeline_results,
             lineage_entries_added: lineage_added,
+            awareness_entries,
         })
     }
 

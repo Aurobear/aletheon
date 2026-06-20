@@ -186,6 +186,7 @@ async fn failure_triggers_evolution() {
                 1000,  // elapsed_ms
                 1,     // iterations
                 &pipeline,
+                vec![], // awareness_signals
             )
             .await
             .unwrap();
@@ -243,6 +244,7 @@ async fn periodic_trigger_at_n_turns() {
                 500,   // elapsed_ms
                 1,     // iterations
                 &pipeline,
+                vec![], // awareness_signals
             )
             .await
             .unwrap();
@@ -297,6 +299,7 @@ async fn sliding_window_eviction() {
                 100,   // elapsed_ms
                 1,     // iterations
                 &pipeline,
+                vec![], // awareness_signals
             )
             .await
             .unwrap();

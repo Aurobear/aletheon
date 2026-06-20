@@ -96,6 +96,8 @@ impl AletheonRuntime {
         iterations: usize,
         meta: &aletheon_meta::MorphogenesisPipeline<M>,
     ) -> Result<Option<EvolutionSummary>> {
+        // Drain awareness signals from the react loop before passing to evolution
+        let signals = self.react_loop.take_signals();
         match &self.evolution {
             Some(coord) => {
                 let summary = coord
@@ -108,6 +110,7 @@ impl AletheonRuntime {
                         elapsed_ms,
                         iterations,
                         meta,
+                        signals,
                     )
                     .await?;
                 // Pull updated genome config after evolution
@@ -340,5 +343,14 @@ impl AletheonRuntime {
     /// Get config
     pub fn config(&self) -> &RuntimeConfig {
         &self.config
+    }
+
+    /// Drain awareness signals collected during the last ReAct turn.
+    ///
+    /// Returns the signals and clears the internal buffer. The caller
+    /// should convert these to `SelfAwareness` entries and store them
+    /// via `EpisodicMemory::store_awareness()`.
+    pub fn take_awareness_signals(&mut self) -> Vec<aletheon_brain::core::awareness_signal::AwarenessSignal> {
+        self.react_loop.take_signals()
     }
 }

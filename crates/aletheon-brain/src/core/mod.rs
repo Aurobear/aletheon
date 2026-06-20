@@ -7,6 +7,7 @@
 //! "Should I?" is SelfField's job. "How do I?" is BrainCore's job.
 
 pub mod awareness;
+pub mod awareness_signal;
 pub mod critic;
 pub mod evolution_trigger;
 pub mod learner;

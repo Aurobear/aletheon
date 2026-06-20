@@ -1,6 +1,7 @@
 use crate::core::config::RuntimeConfig;
 use crate::r#impl::memory::compressor::AdvancedCompressor;
 use aletheon_abi::tool::ConcurrencyClass;
+use aletheon_brain::core::awareness_signal::{AwarenessSignal, StepType};
 
 /// Marker injected into user messages when plan mode is active.
 /// Shared between `ReActLoop` and `Controller` to keep them in sync.
@@ -116,6 +117,12 @@ pub struct ReActLoop {
     plan_mode: bool,
     /// Pending memory updates — drained into user message each turn.
     pending_memory: Vec<String>,
+    /// Collected awareness signals during the current turn.
+    signals: Vec<AwarenessSignal>,
+    /// Recent tool names for goal-shift detection.
+    recent_tools: Vec<String>,
+    /// Consecutive tool errors for impasse detection.
+    consecutive_errors: usize,
 }
 
 impl ReActLoop {
@@ -130,6 +137,9 @@ impl ReActLoop {
             system_prompt: String::new(),
             plan_mode: false,
             pending_memory: Vec::new(),
+            signals: Vec::new(),
+            recent_tools: Vec::new(),
+            consecutive_errors: 0,
         }
     }
 
@@ -150,6 +160,9 @@ impl ReActLoop {
         self.iteration = 0;
         self.messages.clear();
         self.pending_memory.clear();
+        self.signals.clear();
+        self.recent_tools.clear();
+        self.consecutive_errors = 0;
         // Note: plan_mode persists across resets (user choice)
         // Note: system_prompt never resets (immutable after construction)
     }
@@ -237,6 +250,87 @@ impl ReActLoop {
         parts.join("\n\n")
     }
 
+    // --- Awareness signal helpers ---
+
+    /// Emit an awareness signal into the collection buffer.
+    fn emit_signal(&mut self, signal: AwarenessSignal) {
+        self.signals.push(signal);
+    }
+
+    /// Drain collected awareness signals, leaving the buffer empty.
+    pub fn take_signals(&mut self) -> Vec<AwarenessSignal> {
+        std::mem::take(&mut self.signals)
+    }
+
+    /// Emit a LoopStart signal with impasse detection.
+    fn emit_loop_start(&mut self, action: &str) {
+        use aletheon_brain::core::awareness_signal::detect_impasse;
+        let detected = detect_impasse(
+            self.consecutive_errors,
+            self.iteration,
+            self.config.max_iterations,
+        );
+        self.emit_signal(AwarenessSignal {
+            step: StepType::LoopStart,
+            action: action.to_string(),
+            detected_state: detected,
+            timestamp: chrono::Utc::now(),
+        });
+    }
+
+    /// Emit a ThinkingComplete signal with uncertainty detection from response text.
+    fn emit_thinking_complete(&mut self, action: &str, response_text: &str) {
+        use aletheon_brain::core::awareness_signal::detect_uncertainty;
+        let detected = detect_uncertainty(response_text);
+        self.emit_signal(AwarenessSignal {
+            step: StepType::ThinkingComplete,
+            action: action.to_string(),
+            detected_state: detected,
+            timestamp: chrono::Utc::now(),
+        });
+    }
+
+    /// Emit a ToolCallEnd signal with impasse detection from consecutive errors.
+    fn emit_tool_call_end(&mut self, tool_name: &str) {
+        use aletheon_brain::core::awareness_signal::{detect_goal_shift, detect_impasse};
+
+        // Track tool name for goal-shift detection
+        self.recent_tools.push(tool_name.to_string());
+
+        let mut detected = None;
+
+        // Check impasse from errors
+        if let Some(state) = detect_impasse(
+            self.consecutive_errors,
+            self.iteration,
+            self.config.max_iterations,
+        ) {
+            detected = Some(state);
+        }
+
+        // Check goal shift from tool sequence
+        if detected.is_none() {
+            detected = detect_goal_shift(&self.recent_tools);
+        }
+
+        self.emit_signal(AwarenessSignal {
+            step: StepType::ToolCallEnd,
+            action: format!("tool:{}", tool_name),
+            detected_state: detected,
+            timestamp: chrono::Utc::now(),
+        });
+    }
+
+    /// Emit a FinalResponse signal with Focused state.
+    fn emit_final_response(&mut self, action: &str) {
+        self.emit_signal(AwarenessSignal {
+            step: StepType::FinalResponse,
+            action: action.to_string(),
+            detected_state: Some(aletheon_abi::self_field::SelfState::Focused),
+            timestamp: chrono::Utc::now(),
+        });
+    }
+
     /// Run the interleaved ReAct loop: call the LLM with tools, execute any
     /// requested tools via `execute_tool`, feed results back, and repeat until
     /// the LLM stops requesting tools or `max_iterations` is reached.
@@ -260,6 +354,7 @@ impl ReActLoop {
 
         while self.should_continue() {
             self.advance();
+            self.emit_loop_start(&format!("iter_{}", self.iteration));
             let response = match llm.complete(&self.messages, tool_defs).await {
                 Ok(r) => r,
                 Err(e) if is_context_overflow(&e) => {
@@ -287,6 +382,9 @@ impl ReActLoop {
 
             if tool_calls.is_empty() || matches!(response.stop_reason, StopReason::EndTurn) {
                 let final_text = text_parts.join("\n");
+                // Emit awareness: uncertainty from response + final response signal
+                self.emit_thinking_complete("thinking", &final_text);
+                self.emit_final_response("final_response");
                 self.messages.push(Message::assistant(&final_text));
                 let metrics = TurnMetrics {
                     tool_calls_made,
@@ -311,8 +409,13 @@ impl ReActLoop {
                 tool_calls_made += 1;
                 if is_error {
                     tool_errors += 1;
+                    self.consecutive_errors += 1;
                     warn!(tool = name.as_str(), "tool returned error");
+                } else {
+                    self.consecutive_errors = 0;
                 }
+                // Emit awareness signal for tool completion
+                self.emit_tool_call_end(name);
                 self.messages
                     .push(Message::tool_result(id, &content, is_error));
             }
@@ -374,6 +477,7 @@ impl ReActLoop {
 
         while self.should_continue() {
             self.advance();
+            self.emit_loop_start(&format!("iter_{}", self.iteration));
 
             // Use streaming instead of complete()
             let mut stream = match llm.complete_stream(&self.messages, tool_defs).await {
@@ -444,6 +548,9 @@ impl ReActLoop {
             // No tool calls -> turn complete
             if tool_calls.is_empty() || matches!(stop_reason, StopReason::EndTurn) {
                 let final_text = text_parts.join("\n");
+                // Emit awareness: uncertainty from response + final response signal
+                self.emit_thinking_complete("thinking", &final_text);
+                self.emit_final_response("final_response");
                 self.messages.push(Message::assistant(&final_text));
                 event_sink.emit(Event::TurnDone {
                     result: Ok(final_text.clone()),
@@ -494,8 +601,13 @@ impl ReActLoop {
                 tool_calls_made += 1;
                 if is_error {
                     tool_errors += 1;
+                    self.consecutive_errors += 1;
                     warn!(tool = name.as_str(), "tool returned error");
+                } else {
+                    self.consecutive_errors = 0;
                 }
+                // Emit awareness signal for tool completion
+                self.emit_tool_call_end(name);
                 self.messages
                     .push(Message::tool_result(id, &content, is_error));
             }

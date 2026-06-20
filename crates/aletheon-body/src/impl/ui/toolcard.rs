@@ -106,6 +106,86 @@ impl ToolCard {
         lines
     }
 
+    /// Render tool card lines compatible with the chat widget's visual language.
+    ///
+    /// Uses braille spinner animation for in-progress tools and the same `│`
+    /// border prefix as assistant messages.
+    pub fn render_chat_lines(&self, frame_counter: u64, expanded: bool) -> Vec<Line<'static>> {
+        const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+        let dot_color = if self.is_error {
+            Color::Red
+        } else if !self.finished {
+            Color::Yellow
+        } else {
+            tool_color(&self.tool)
+        };
+
+        let status = if !self.finished {
+            SPINNER[frame_counter as usize % SPINNER.len()].to_string()
+        } else if self.is_error {
+            " ✗".to_string()
+        } else {
+            " ✓".to_string()
+        };
+
+        let header = format!(
+            "  ⏺ {}({}){}",
+            self.tool,
+            truncate_args(&self.args, 60),
+            status
+        );
+        let mut lines = vec![Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled("● ", Style::default().fg(dot_color)),
+            Span::raw(header),
+        ])];
+
+        if expanded && !self.output.is_empty() {
+            let output_lines: Vec<&str> = self.output.lines().collect();
+            let display = if output_lines.len() > 10 {
+                &output_lines[..10]
+            } else {
+                &output_lines
+            };
+            for line in display {
+                lines.push(Line::from(vec![
+                    Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                    Span::raw(line.to_string()),
+                ]));
+            }
+            if output_lines.len() > 10 {
+                lines.push(Line::from(vec![
+                    Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("... ({} lines total)", output_lines.len()),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            }
+        } else if self.finished {
+            let line_count = self.output.lines().count();
+            if line_count > 3 {
+                lines.push(Line::from(vec![
+                    Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("{} lines output, Ctrl+B to expand", line_count),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            } else if line_count > 0 {
+                for line in self.output.lines().take(3) {
+                    lines.push(Line::from(vec![
+                        Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                        Span::raw(line.to_string()),
+                    ]));
+                }
+            }
+        }
+
+        lines
+    }
+
     pub fn to_summary(&self) -> String {
         let status = if self.is_error { "failed" } else { "done" };
         format!("  ⏺ {}({}) — {}", self.tool, truncate_args(&self.args, 40), status)

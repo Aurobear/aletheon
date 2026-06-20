@@ -35,7 +35,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Padding, Paragraph},
+    widgets::{Block, Borders, Padding, Paragraph, Wrap},
     Terminal,
 };
 use tokio::io::AsyncWriteExt;
@@ -323,12 +323,16 @@ struct App {
     active_tools: HashMap<String, ToolCard>,
     /// Current turn's token count
     turn_tokens: Option<(u32, u32)>,
+    /// Cumulative tokens across all turns
+    total_tokens: u32,
     /// Command history
     history: CommandHistory,
     /// Tab completion popup
     completion: CompletionPopup,
     /// Pager overlay (Ctrl+T to open, q/Esc to close)
     pager: Option<pager::PagerOverlay>,
+    /// Frame counter for spinner animation.
+    frame_counter: u64,
 }
 
 impl App {
@@ -364,9 +368,11 @@ impl App {
             stream_ctrl: StreamController::new(),
             active_tools: HashMap::new(),
             turn_tokens: None,
+            total_tokens: 0,
             history: CommandHistory::new(),
             completion: CompletionPopup::new(),
             pager: None,
+            frame_counter: 0,
         }
     }
 
@@ -1318,6 +1324,9 @@ fn handle_event(app: &mut App, params: &serde_json::Value) {
                 .unwrap_or(0) as u32;
             app.turn_tokens = Some((tokens_in, tokens_out));
             app.status.token_count = Some(tokens_in + tokens_out);
+            app.total_tokens += tokens_in + tokens_out;
+            app.status.total_tokens = app.total_tokens;
+            app.status.context_window = 128_000;
         }
         "turn_done" => {
             app.stream_ctrl.commit();
@@ -1325,6 +1334,7 @@ fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.turn_active = false;
             app.status.waiting = false;
             app.status.elapsed_secs = 0.0;
+            app.status.session_turns += 1;
             for (_, card) in app.active_tools.drain() {
                 app.chat
                     .add_message(ChatRole::System, card.to_summary());
@@ -1707,6 +1717,8 @@ fn draw_with_recorder<B: ratatui::backend::Backend>(
     let completion_ref = &app.completion;
     let tool_count = app.active_tools.len();
     let thinking_visible = app.stream_ctrl.is_thinking();
+    let frame_counter = app.frame_counter;
+    let active_tools_ref = &app.active_tools;
 
     let pager_ref = &app.pager;
 
@@ -1742,7 +1754,24 @@ fn draw_with_recorder<B: ratatui::backend::Backend>(
             .padding(Padding::horizontal(1));
         let chat_inner = chat_block.inner(chunks[1]);
         f.render_widget(chat_block, chunks[1]);
-        f.render_widget(chat_ref.render_widget(), chat_inner);
+
+        // Use render_with_active_tools to include inline tool cards during streaming
+        let chat_lines = chat_ref.render_with_active_tools(
+            active_tools_ref,
+            frame_counter,
+            caps_ref,
+        );
+        let total_lines = chat_lines.len() as u16;
+        let visible_height = chat_inner.height;
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let scroll = chat_ref.scroll_offset.min(max_scroll);
+        let end = total_lines.saturating_sub(scroll);
+        let start = end.saturating_sub(visible_height);
+        let visible: Vec<Line> = chat_lines[start as usize..end as usize].to_vec();
+        f.render_widget(
+            Paragraph::new(visible).wrap(Wrap { trim: false }),
+            chat_inner,
+        );
 
         render_input(f, chunks[2], caps_ref, input_buf, cursor, has_cjk);
 
@@ -1769,6 +1798,7 @@ fn draw_with_recorder<B: ratatui::backend::Backend>(
     })?;
 
     app.first_render = false;
+    app.frame_counter = app.frame_counter.wrapping_add(1);
     Ok(())
 }
 

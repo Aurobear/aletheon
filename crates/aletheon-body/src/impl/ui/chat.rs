@@ -212,6 +212,52 @@ impl ChatWidget {
     pub fn render_widget(&self) -> ChatWidgetRenderer<'_> {
         ChatWidgetRenderer { chat: self }
     }
+
+    /// Render all lines including inline active tool cards appended after the
+    /// last message. Tool cards are given the same `│` border prefix as
+    /// assistant messages so they blend into the chat stream.
+    pub fn render_with_active_tools(
+        &self,
+        active_tools: &std::collections::HashMap<String, super::toolcard::ToolCard>,
+        frame_counter: u64,
+        caps: &TermCaps,
+    ) -> Vec<Line<'static>> {
+        let width = self.render_width as usize;
+        let mut lines = self.all_lines_wrapped(width);
+
+        if active_tools.is_empty() {
+            return lines;
+        }
+
+        let border_prefix = "  │ ";
+        let border_style = Style::default().fg(caps.theme().accent);
+
+        for card in active_tools.values() {
+            let card_lines = card.render_chat_lines(frame_counter, card.expanded);
+            for card_line in card_lines {
+                let mut spans = vec![Span::styled(
+                    border_prefix.to_string(),
+                    border_style,
+                )];
+                spans.extend(card_line.spans.into_iter().map(|s| {
+                    let style = if s.style.fg.is_some() {
+                        s.style
+                    } else {
+                        s.style.fg(caps.theme().text)
+                    };
+                    Span::styled(s.content.to_string(), style)
+                }));
+                lines.extend(word_wrap_line(&Line::from(spans), width));
+            }
+            // Blank line after each tool card
+            lines.push(Line::from(vec![Span::styled(
+                border_prefix.to_string(),
+                border_style,
+            )]));
+        }
+
+        lines
+    }
 }
 
 pub struct ChatWidgetRenderer<'a> {
