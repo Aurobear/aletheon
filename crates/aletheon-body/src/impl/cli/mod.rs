@@ -41,6 +41,27 @@ pub struct Args {
     /// Positional message (treated as chat if no subcommand)
     #[arg(trailing_var_arg = true, hide = true)]
     pub message_args: Vec<String>,
+
+    // ── Test flags ──────────────────────────────────────────────
+    /// Path to test input file (one line per input)
+    #[arg(long)]
+    pub test_input: Option<PathBuf>,
+
+    /// Path to write frame snapshots (JSONL, one per render)
+    #[arg(long)]
+    pub record_frames: Option<PathBuf>,
+
+    /// Path to write daemon->TUI events (JSONL)
+    #[arg(long)]
+    pub record_events: Option<PathBuf>,
+
+    /// Auto-submit each line from --test-input (no Enter key needed)
+    #[arg(long)]
+    pub auto_submit: bool,
+
+    /// Exit after N seconds (default: 120)
+    #[arg(long, default_value_t = 120)]
+    pub test_timeout: u64,
 }
 
 #[derive(Subcommand)]
@@ -109,7 +130,14 @@ pub async fn run() -> Result<()> {
     }
 
     // Interactive mode: use the line-based TUI (IME-compatible)
-    super::ui::run(args.socket.to_str().unwrap_or(DEFAULT_SOCKET)).await
+    let test_config = super::ui::TestConfig {
+        test_input: args.test_input,
+        record_frames: args.record_frames,
+        record_events: args.record_events,
+        auto_submit: args.auto_submit,
+        test_timeout: args.test_timeout,
+    };
+    super::ui::run_with_config(args.socket.to_str().unwrap_or(DEFAULT_SOCKET), test_config).await
 }
 
 /// Handle subcommands.

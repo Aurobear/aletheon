@@ -15,8 +15,10 @@ pub mod thinking;
 pub mod toolcard;
 
 use std::collections::HashMap;
-use std::io::{self, Stdout, Write};
-use std::time::{Duration, Instant};
+use std::fs;
+use std::io::{self, BufRead, Stdout, Write};
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::{
     event::{
@@ -47,8 +49,167 @@ use self::streaming::StreamController;
 use self::term_compat::TermCaps;
 use self::toolcard::ToolCard;
 
+// ── Test infrastructure ─────────────────────────────────────────
+
+/// Configuration for test mode, passed from CLI flags.
+#[derive(Default)]
+pub struct TestConfig {
+    pub test_input: Option<PathBuf>,
+    pub record_frames: Option<PathBuf>,
+    pub record_events: Option<PathBuf>,
+    pub auto_submit: bool,
+    pub test_timeout: u64,
+}
+
+/// Milliseconds since epoch.
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+// ── FrameRecorder ───────────────────────────────────────────────
+
+/// Snapshot of a single rendered frame.
+#[derive(serde::Serialize)]
+pub struct FrameSnapshot {
+    pub ts: u64,
+    pub cols: u16,
+    pub rows: u16,
+    pub content: String,
+    pub thinking_visible: bool,
+    pub tool_count: usize,
+}
+
+/// Writes a JSONL snapshot after each render.
+pub struct FrameRecorder {
+    file: fs::File,
+}
+
+impl FrameRecorder {
+    pub fn new(path: &std::path::Path) -> anyhow::Result<Self> {
+        let file = fs::File::create(path)?;
+        Ok(Self { file })
+    }
+
+    pub fn write(&mut self, snapshot: &FrameSnapshot) {
+        if let Ok(line) = serde_json::to_string(snapshot) {
+            let _ = writeln!(self.file, "{}", line);
+        }
+    }
+}
+
+/// Extract visible text from a ratatui Buffer (one line per row).
+fn buffer_to_text(buffer: &ratatui::buffer::Buffer) -> String {
+    let area = buffer.area;
+    let mut lines = Vec::with_capacity(area.height as usize);
+    for y in area.y..area.y + area.height {
+        let mut line = String::new();
+        for x in area.x..area.x + area.width {
+            let cell = &buffer[(x, y)];
+            line.push_str(cell.symbol());
+        }
+        lines.push(line);
+    }
+    lines.join("\n")
+}
+
+// ── EventRecorder ───────────────────────────────────────────────
+
+/// Writes one JSONL line per daemon->TUI event.
+pub struct EventRecorder {
+    file: fs::File,
+}
+
+impl EventRecorder {
+    pub fn new(path: &std::path::Path) -> anyhow::Result<Self> {
+        let file = fs::File::create(path)?;
+        Ok(Self { file })
+    }
+
+    pub fn write(&mut self, event_json: &serde_json::Value) {
+        let record = serde_json::json!({
+            "ts": now_ms(),
+            "type": event_json.get("type").and_then(|v| v.as_str()).unwrap_or(""),
+            "params": event_json,
+        });
+        if let Ok(line) = serde_json::to_string(&record) {
+            let _ = writeln!(self.file, "{}", line);
+        }
+    }
+}
+
+// ── TestInputReader ─────────────────────────────────────────────
+
+/// Reads lines from a test input file and optionally auto-submits them.
+pub struct TestInputReader {
+    lines: Vec<String>,
+    index: usize,
+    pub auto_submit: bool,
+    /// All lines consumed and the final turn_done received.
+    pub done: bool,
+}
+
+impl TestInputReader {
+    pub fn new(path: &std::path::Path, auto_submit: bool) -> anyhow::Result<Self> {
+        let file = fs::File::open(path)?;
+        let reader = io::BufReader::new(file);
+        let lines: Vec<String> = reader
+            .lines()
+            .map_while(Result::ok)
+            .collect();
+        Ok(Self {
+            lines,
+            index: 0,
+            auto_submit,
+            done: false,
+        })
+    }
+
+    /// Returns the next line to submit, or None if exhausted.
+    pub fn next_line(&mut self) -> Option<String> {
+        if self.index < self.lines.len() {
+            let line = self.lines[self.index].clone();
+            self.index += 1;
+            Some(line)
+        } else {
+            None
+        }
+    }
+
+    /// Called when a turn completes; returns next line if auto_submit.
+    pub fn on_turn_done(&mut self) -> Option<String> {
+        if self.auto_submit {
+            let next = self.next_line();
+            if next.is_none() {
+                self.done = true;
+            }
+            next
+        } else {
+            if self.index >= self.lines.len() {
+                self.done = true;
+            }
+            None
+        }
+    }
+
+    /// Whether all input lines have been consumed.
+    pub fn is_exhausted(&self) -> bool {
+        self.index >= self.lines.len()
+    }
+}
+
+// ── Public entry points ─────────────────────────────────────────
+
 /// Run the full TUI with raw mode, alternate screen, and IME-aware input.
+/// This is the original entry point (no test config).
 pub async fn run(socket_path: &str) -> anyhow::Result<()> {
+    run_with_config(socket_path, TestConfig::default()).await
+}
+
+/// Run the full TUI with optional test configuration.
+pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
 
     let stream = match UnixStream::connect(socket_path).await {
@@ -90,7 +251,7 @@ pub async fn run(socket_path: &str) -> anyhow::Result<()> {
     // Clear alternate screen completely (fixes dirty data from previous runs)
     terminal.clear()?;
 
-    let result = run_app(&mut terminal, stream, caps, model_name).await;
+    let result = run_app(&mut terminal, stream, caps, model_name, test_config).await;
 
     // Restore terminal
     disable_raw_mode()?;
@@ -202,8 +363,28 @@ async fn run_app(
     stream: UnixStream,
     caps: TermCaps,
     model_name: String,
+    test_config: TestConfig,
 ) -> anyhow::Result<()> {
     let mut app = App::new(stream, caps, model_name.clone());
+
+    // ── Test infrastructure setup ──
+    let mut frame_recorder: Option<FrameRecorder> = test_config
+        .record_frames
+        .as_ref()
+        .and_then(|p| FrameRecorder::new(p).ok());
+
+    let mut event_recorder: Option<EventRecorder> = test_config
+        .record_events
+        .as_ref()
+        .and_then(|p| EventRecorder::new(p).ok());
+
+    let mut test_input: Option<TestInputReader> = test_config
+        .test_input
+        .as_ref()
+        .and_then(|p| TestInputReader::new(p, test_config.auto_submit).ok());
+
+    let test_start = Instant::now();
+    let test_timeout = Duration::from_secs(test_config.test_timeout);
 
     // Clear daemon session on startup (avoids stale data from previous runs)
     let clear_msg = serde_json::json!({"jsonrpc": "2.0", "method": "clear", "id": 0});
@@ -223,14 +404,29 @@ async fn run_app(
         "Welcome to aletheon! Type a message to get started.\nShift+Enter 换行 │ Enter 发送 │ Ctrl+C 清空/退出 │ /copy 复制 │ /help 帮助".to_string(),
     );
 
+    // If test mode with auto_submit, submit the first line immediately
+    if let Some(ref mut reader) = test_input {
+        if reader.auto_submit {
+            if let Some(line) = reader.next_line() {
+                submit_message(&mut app, line).await;
+            }
+        }
+    }
+
     while app.running {
+        // Test timeout check
+        if test_input.is_some() && test_start.elapsed() >= test_timeout {
+            app.running = false;
+            break;
+        }
+
         // Resize handling
         if let Ok(size) = terminal.size() {
             app.chat.set_width(size.width);
         }
 
-        // Draw
-        draw(terminal, &mut app)?;
+        // Draw (and optionally record frame)
+        draw_with_recorder(terminal, &mut app, &mut frame_recorder)?;
 
         // Check pending submit (IME delay)
         if let Some(pending_time) = app.pending_submit {
@@ -273,8 +469,25 @@ async fn run_app(
             }
         }
 
-        // Try reading daemon response
-        try_read_socket(&mut app);
+        // Try reading daemon response (with optional event recording)
+        try_read_socket_with_recorder(&mut app, &mut event_recorder);
+
+        // Check if a turn just completed and we should auto-submit next line
+        if let Some(ref mut reader) = test_input {
+            // Check if streaming just finished (turn_done sets streaming=false)
+            if !app.streaming && !reader.is_exhausted() {
+                if let Some(next) = reader.on_turn_done() {
+                    // Small delay to let the UI update before next turn
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    submit_message(&mut app, next).await;
+                }
+            }
+            // All inputs consumed and last turn done
+            if reader.done && !app.streaming {
+                app.running = false;
+            }
+        }
+
         if app.streaming {
             app.status.tick_spinner();
         }
@@ -827,6 +1040,62 @@ fn try_read_socket(app: &mut App) {
     }
 }
 
+/// Variant of `try_read_socket` that records events via `EventRecorder`.
+fn try_read_socket_with_recorder(
+    app: &mut App,
+    event_recorder: &mut Option<EventRecorder>,
+) {
+    loop {
+        match app.stream.try_read(&mut app.read_buf) {
+            Ok(0) => {
+                app.streaming = false;
+                app.status.waiting = false;
+                app.chat
+                    .add_message(ChatRole::System, "连接断开".to_string());
+                break;
+            }
+            Ok(n) => {
+                let chunk = String::from_utf8_lossy(&app.read_buf[..n]);
+                app.response_buf.push_str(&chunk);
+
+                while let Some(newline_pos) = app.response_buf.find('\n') {
+                    let line = app.response_buf[..newline_pos].trim().to_string();
+                    app.response_buf.drain(..=newline_pos);
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+                        if msg.get("method").and_then(|v| v.as_str()) == Some("event") {
+                            if let Some(params) = msg.get("params") {
+                                // Record event before processing
+                                if let Some(ref mut recorder) = event_recorder {
+                                    recorder.write(params);
+                                }
+                                handle_event(app, params);
+                            }
+                        } else if msg.get("method").and_then(|v| v.as_str())
+                            == Some("approval_request")
+                        {
+                            handle_approval(app, &msg);
+                        } else if msg.get("result").is_some() || msg.get("error").is_some() {
+                            process_response(app, msg);
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+            Err(_) => {
+                app.streaming = false;
+                app.status.waiting = false;
+                break;
+            }
+        }
+    }
+}
+
 fn handle_event(app: &mut App, params: &serde_json::Value) {
     let event_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match event_type {
@@ -1250,6 +1519,79 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> any
 
         // ── Completion popup (overlay) ──
         completion_ref.render(f, chunks[2]);
+    })?;
+
+    app.first_render = false;
+    Ok(())
+}
+
+/// Draw with optional frame recording — captures the buffer inside the draw closure.
+fn draw_with_recorder(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    app: &mut App,
+    frame_recorder: &mut Option<FrameRecorder>,
+) -> anyhow::Result<()> {
+    let chat_ref = &app.chat;
+    let caps_ref = &app.caps;
+    let model_name = &app.model_name;
+    let input_buf = &app.input_buf;
+    let cursor = app.cursor;
+    let has_cjk = app.has_cjk;
+    let first_render = app.first_render;
+    let status_ref = &app.status;
+    let pending_approval_ref = &app.pending_approval;
+    let completion_ref = &app.completion;
+    let tool_count = app.active_tools.len();
+    let thinking_visible = app.stream_ctrl.is_thinking();
+
+    terminal.draw(|f| {
+        let size = f.area();
+
+        // Layout: header(2) | chat(min) | input(3) | status(1)
+        let header_rows: u16 = if first_render { 3 } else { 1 };
+        let input_rows: u16 = 3;
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(header_rows),
+                Constraint::Min(1),
+                Constraint::Length(input_rows),
+                Constraint::Length(1),
+            ])
+            .split(size);
+
+        render_header(f, chunks[0], caps_ref, model_name, first_render);
+
+        let chat_block = Block::default()
+            .borders(Borders::NONE)
+            .padding(Padding::horizontal(1));
+        let chat_inner = chat_block.inner(chunks[1]);
+        f.render_widget(chat_block, chunks[1]);
+        f.render_widget(chat_ref.render_widget(), chat_inner);
+
+        render_input(f, chunks[2], caps_ref, input_buf, cursor, has_cjk);
+
+        f.render_widget(status_ref.render_widget(), chunks[3]);
+
+        if let Some(ref dialog) = pending_approval_ref {
+            dialog.render(f, size);
+        }
+
+        completion_ref.render(f, chunks[2]);
+
+        // Record frame snapshot after all widgets are rendered
+        if let Some(ref mut recorder) = frame_recorder {
+            let snapshot = FrameSnapshot {
+                ts: now_ms(),
+                cols: size.width,
+                rows: size.height,
+                content: buffer_to_text(f.buffer_mut()),
+                thinking_visible,
+                tool_count,
+            };
+            recorder.write(&snapshot);
+        }
     })?;
 
     app.first_render = false;
