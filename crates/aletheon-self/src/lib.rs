@@ -38,6 +38,9 @@
 // Core: policy engine layers (identity, boundary, care, etc.)
 pub mod core;
 
+// DaseinModule — existential substrate (temporality, bewandtnis, self-model, care)
+pub mod dasein;
+
 // Bridge: adapters from impl subsystems into SelfField Verdict system
 pub mod bridge;
 

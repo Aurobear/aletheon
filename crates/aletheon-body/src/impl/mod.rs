@@ -12,6 +12,7 @@ pub mod tools;
 #[cfg(all(feature = "input", feature = "display", feature = "a11y"))]
 pub mod acix;
 
+pub mod skills;
 pub mod ui;
 
 #[cfg(feature = "cli")]

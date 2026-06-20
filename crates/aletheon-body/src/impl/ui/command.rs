@@ -18,6 +18,16 @@ pub enum BuiltinCommand {
     Resume { id: String },
     Compact,
     Model,
+    Mode { name: String },
+    Plan,
+    Approve,
+    Agents,
+    AgentDetail { id: String },
+    Hooks,
+    Skills,
+    SkillRun { name: String, args: String },
+    Interrupt,
+    Context,
 }
 
 /// Parsed command type.
@@ -58,6 +68,23 @@ pub fn parse_command(input: &str) -> Option<CommandType> {
         })),
         "compact" | "cmp" => Some(CommandType::Builtin(BuiltinCommand::Compact)),
         "model" | "m" => Some(CommandType::Builtin(BuiltinCommand::Model)),
+        "mode" => Some(CommandType::Builtin(BuiltinCommand::Mode {
+            name: args.to_string(),
+        })),
+        "plan" | "p" => Some(CommandType::Builtin(BuiltinCommand::Plan)),
+        "approve" | "a" => Some(CommandType::Builtin(BuiltinCommand::Approve)),
+        "agents" | "ag" => Some(CommandType::Builtin(BuiltinCommand::Agents)),
+        "agent" => Some(CommandType::Builtin(BuiltinCommand::AgentDetail {
+            id: args.to_string(),
+        })),
+        "hooks" | "hk" => Some(CommandType::Builtin(BuiltinCommand::Hooks)),
+        "skills" | "sk" => Some(CommandType::Builtin(BuiltinCommand::Skills)),
+        "skill" => Some(CommandType::Builtin(BuiltinCommand::SkillRun {
+            name: args.to_string(),
+            args: String::new(),
+        })),
+        "interrupt" | "int" => Some(CommandType::Builtin(BuiltinCommand::Interrupt)),
+        "context" | "ctx" => Some(CommandType::Builtin(BuiltinCommand::Context)),
         _ => Some(CommandType::Skill {
             name: name.to_string(),
             args: args.to_string(),

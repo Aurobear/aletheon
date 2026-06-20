@@ -70,6 +70,9 @@ impl HelpOverlay {
             ("Up/Down", "Command history"),
             ("PgUp/PgDn", "Scroll chat"),
             ("Tab", "Command completion"),
+            ("Ctrl+M", "Cycle collaboration mode"),
+            ("Ctrl+I", "Toggle awareness indicators"),
+            ("Ctrl+P", "Enter/exit plan mode"),
             ("?", "This help"),
         ];
 
@@ -105,6 +108,14 @@ impl HelpOverlay {
             ("/compact", "Compact context"),
             ("/sessions", "List sessions"),
             ("/resume", "Resume session"),
+            ("/mode <name>", "Switch collaboration mode"),
+            ("/plan", "Enter plan mode"),
+            ("/approve", "Approve current plan"),
+            ("/agents", "List active sub-agents"),
+            ("/hooks", "List registered hooks"),
+            ("/skills", "List available skills"),
+            ("/interrupt", "Send interrupt signal"),
+            ("/context", "Show context breakdown"),
             ("/quit", "Quit"),
         ];
 

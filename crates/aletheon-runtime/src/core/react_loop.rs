@@ -1,7 +1,9 @@
 use crate::core::config::RuntimeConfig;
+use crate::core::interrupt::InterruptFlag;
 use crate::r#impl::memory::compressor::AdvancedCompressor;
 use aletheon_abi::tool::ConcurrencyClass;
-use aletheon_brain::core::awareness_signal::{AwarenessSignal, StepType};
+use aletheon_abi::ui_event::AwarenessLevel;
+use aletheon_brain::core::awareness_signal::{self, AwarenessSignal, StepType};
 
 /// Marker injected into user messages when plan mode is active.
 /// Shared between `ReActLoop` and `Controller` to keep them in sync.
@@ -123,6 +125,8 @@ pub struct ReActLoop {
     recent_tools: Vec<String>,
     /// Consecutive tool errors for impasse detection.
     consecutive_errors: usize,
+    /// Interrupt flag for canceling the loop externally.
+    interrupt_flag: Option<InterruptFlag>,
 }
 
 impl ReActLoop {
@@ -140,6 +144,7 @@ impl ReActLoop {
             signals: Vec::new(),
             recent_tools: Vec::new(),
             consecutive_errors: 0,
+            interrupt_flag: None,
         }
     }
 
@@ -217,6 +222,11 @@ impl ReActLoop {
         &self.system_prompt
     }
 
+    /// Set the interrupt flag for external cancellation.
+    pub fn set_interrupt_flag(&mut self, flag: InterruptFlag) {
+        self.interrupt_flag = Some(flag);
+    }
+
     /// Enable/disable plan mode. Injected into user message, NOT system prompt.
     pub fn set_plan_mode(&mut self, enabled: bool) {
         self.plan_mode = enabled;
@@ -250,6 +260,43 @@ impl ReActLoop {
         parts.join("\n\n")
     }
 
+    /// Compose user message with mid-session injections plus DaseinContext.
+    ///
+    /// The DaseinContext is injected as a `<dasein-state>` XML block in the
+    /// user message (not the system prompt) to preserve cache stability.
+    /// This lets the LLM perceive the system's existential state --
+    /// mood, temporal flow, involvement network, and care structure.
+    pub fn compose_user_message_with_dasein(
+        &self,
+        input: &str,
+        dasein_context: Option<&str>,
+    ) -> String {
+        let mut parts = Vec::new();
+
+        if self.plan_mode {
+            parts.push(PLAN_MODE_MARKER.to_string());
+        }
+
+        if !self.pending_memory.is_empty() {
+            let updates = self
+                .pending_memory
+                .iter()
+                .map(|m| format!("- {}", m))
+                .collect::<Vec<_>>()
+                .join("\n");
+            parts.push(format!("<memory-update>\n{}\n</memory-update>", updates));
+        }
+
+        if let Some(ctx) = dasein_context {
+            if !ctx.is_empty() {
+                parts.push(format!("<dasein-state>\n{}\n</dasein-state>", ctx));
+            }
+        }
+
+        parts.push(input.to_string());
+        parts.join("\n\n")
+    }
+
     // --- Awareness signal helpers ---
 
     /// Emit an awareness signal into the collection buffer.
@@ -260,6 +307,15 @@ impl ReActLoop {
     /// Drain collected awareness signals, leaving the buffer empty.
     pub fn take_signals(&mut self) -> Vec<AwarenessSignal> {
         std::mem::take(&mut self.signals)
+    }
+
+    /// Drain accumulated awareness signals as UI events.
+    ///
+    /// Returns `(AwarenessLevel, context)` pairs suitable for TUI display.
+    /// Signals with no detected state or unrecognized states are filtered out.
+    pub fn drain_awareness_events(&mut self) -> Vec<(AwarenessLevel, String)> {
+        let signals: Vec<_> = self.signals.drain(..).collect();
+        awareness_signal::signals_to_ui_events(&signals)
     }
 
     /// Emit a LoopStart signal with impasse detection.
@@ -478,6 +534,24 @@ impl ReActLoop {
         while self.should_continue() {
             self.advance();
             self.emit_loop_start(&format!("iter_{}", self.iteration));
+
+            // Check for interrupt
+            if let Some(ref flag) = self.interrupt_flag {
+                if let Some(reason) = flag.take_reason() {
+                    let msg = format!("[Interrupted: {:?}]", reason);
+                    event_sink.emit(Event::TurnDone {
+                        result: Ok(msg.clone()),
+                    });
+                    let metrics = TurnMetrics {
+                        tool_calls_made,
+                        tool_errors,
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        iterations: self.iteration,
+                        completed_normally: false,
+                    };
+                    return Ok((msg, metrics));
+                }
+            }
 
             // Use streaming instead of complete()
             let mut stream = match llm.complete_stream(&self.messages, tool_defs).await {
@@ -1138,6 +1212,57 @@ mod tests {
         let composed = lp.compose_user_message("hello");
         assert!(composed.contains("- fact a"));
         assert!(composed.contains("- fact b"));
+    }
+
+    // --- DaseinContext injection tests ---
+
+    #[test]
+    fn compose_user_message_with_dasein_injection() {
+        let cfg = RuntimeConfig::default();
+        let lp = ReActLoop::new(cfg);
+        let composed = lp.compose_user_message_with_dasein(
+            "hello",
+            Some("Mood: calm\nPresent: working"),
+        );
+        assert!(composed.contains("<dasein-state>"));
+        assert!(composed.contains("Mood: calm"));
+        assert!(composed.contains("</dasein-state>"));
+        assert!(composed.contains("hello"));
+    }
+
+    #[test]
+    fn compose_user_message_with_dasein_none() {
+        let cfg = RuntimeConfig::default();
+        let lp = ReActLoop::new(cfg);
+        let composed = lp.compose_user_message_with_dasein("hello", None);
+        assert!(!composed.contains("<dasein-state>"));
+        assert_eq!(composed, "hello");
+    }
+
+    #[test]
+    fn compose_user_message_with_dasein_empty() {
+        let cfg = RuntimeConfig::default();
+        let lp = ReActLoop::new(cfg);
+        let composed = lp.compose_user_message_with_dasein("hello", Some(""));
+        assert!(!composed.contains("<dasein-state>"));
+        assert_eq!(composed, "hello");
+    }
+
+    #[test]
+    fn compose_user_message_with_all_injections() {
+        let cfg = RuntimeConfig::default();
+        let mut lp = ReActLoop::new(cfg);
+        lp.set_plan_mode(true);
+        lp.queue_memory_update("fact 1".to_string());
+        let composed = lp.compose_user_message_with_dasein(
+            "do something",
+            Some("Mood: curious"),
+        );
+        assert!(composed.contains("[PLAN MODE ACTIVE]"));
+        assert!(composed.contains("<memory-update>"));
+        assert!(composed.contains("<dasein-state>"));
+        assert!(composed.contains("Mood: curious"));
+        assert!(composed.contains("do something"));
     }
 
     // --- Task 3: partition_tool_calls tests ---

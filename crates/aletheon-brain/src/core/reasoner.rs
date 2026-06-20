@@ -5,6 +5,7 @@
 //! the Planner to produce concrete steps.
 
 use aletheon_abi::context::Context;
+use aletheon_abi::dasein::Stimmung;
 use aletheon_abi::self_field::Intent;
 use std::collections::HashMap;
 
@@ -137,6 +138,94 @@ impl Reasoner {
         }
     }
 
+    /// Think with Stimmung awareness — selects reasoning strategy based on mood.
+    ///
+    /// Heidegger's Befindlichkeit: the way Dasein is attuned discloses
+    /// different aspects of the world. Angst demands deeper (ChainOfThought)
+    /// reasoning; calm allows fast (Direct) reasoning.
+    ///
+    /// This is additive — the caller can also use `think_with_care` to combine
+    /// both Stimmung-based strategy selection and care-weight awareness.
+    pub fn think_with_stimmung(
+        &self,
+        intent: &Intent,
+        ctx: &Context,
+        world_state: &str,
+        mood: &Stimmung,
+    ) -> String {
+        let strategy = Self::strategy_for_stimmung(mood);
+        let mut result = self.think_with_strategy(intent, ctx, world_state, &strategy);
+
+        // Annotate the reasoning with mood context
+        match mood {
+            Stimmung::Angst { facing } => {
+                result.push_str(&format!(
+                    "\n[Stimmung: Angst — facing {:?}. Deep reasoning engaged to confront existential uncertainty.]",
+                    facing
+                ));
+            }
+            Stimmung::Entschlossenheit { chosen_possibility } => {
+                result.push_str(&format!(
+                    "\n[Stimmung: Entschlossenheit — committed to '{}'. Clear projection ahead.]",
+                    chosen_possibility
+                ));
+            }
+            Stimmung::Verfallenheit { absorbed_in } => {
+                result.push_str(&format!(
+                    "\n[Stimmung: Verfallenheit — absorbed in '{}'. Be wary of losing perspective.]",
+                    absorbed_in
+                ));
+            }
+            Stimmung::Neugier { curiosity_about } => {
+                result.push_str(&format!(
+                    "\n[Stimmung: Neugier — curious about '{}'. Exploratory mode.]",
+                    curiosity_about
+                ));
+            }
+            Stimmung::Langeweile { depth } => {
+                result.push_str(&format!(
+                    "\n[Stimmung: Langeweile — boredom depth {:?}. May need novel stimulus.]",
+                    depth
+                ));
+            }
+            Stimmung::Gelaunt { toward } => {
+                result.push_str(&format!(
+                    "\n[Stimmung: Gelaunt — positively disposed toward '{}'.]",
+                    toward
+                ));
+            }
+            Stimmung::Geknickt { because } => {
+                result.push_str(&format!(
+                    "\n[Stimmung: Geknickt — dejected because '{}'. Exercise caution.]",
+                    because
+                ));
+            }
+            Stimmung::Gelassenheit => {
+                result.push_str("\n[Stimmung: Gelassenheit — calm openness. Standard reasoning sufficient.]");
+            }
+        }
+
+        result
+    }
+
+    /// Map a Stimmung to a ReasoningStrategy.
+    ///
+    /// Heidegger: Angst discloses Dasein's own being, demanding careful
+    /// multi-step reasoning. Verfallenheit (fallenness) risks shallow
+    /// engagement, also warranting ChainOfThought. Calm moods allow Direct.
+    pub fn strategy_for_stimmung(mood: &Stimmung) -> ReasoningStrategy {
+        match mood {
+            Stimmung::Angst { .. } => ReasoningStrategy::ChainOfThought,
+            Stimmung::Verfallenheit { .. } => ReasoningStrategy::ChainOfThought,
+            Stimmung::Entschlossenheit { .. } => ReasoningStrategy::ChainOfThought,
+            Stimmung::Langeweile { depth } => match depth {
+                aletheon_abi::dasein::BoredomDepth::Deep => ReasoningStrategy::ChainOfThought,
+                _ => ReasoningStrategy::Direct,
+            },
+            _ => ReasoningStrategy::Direct,
+        }
+    }
+
     /// Get the default strategy.
     pub fn default_strategy(&self) -> &ReasoningStrategy {
         &self.default_strategy
@@ -254,5 +343,71 @@ mod tests {
         let result = reasoner.think_with_care(&make_intent(), &make_ctx(), "", &care);
         assert!(result.contains("safety: 1.00"));
         assert!(result.contains("helpfulness: 0.70"));
+    }
+
+    #[test]
+    fn test_stimmung_angst_uses_cot() {
+        let reasoner = Reasoner::new(ReasoningStrategy::Direct);
+        let mood = Stimmung::Angst {
+            facing: aletheon_abi::dasein::AngstSource::Freedom,
+        };
+        let result = reasoner.think_with_stimmung(&make_intent(), &make_ctx(), "", &mood);
+        // Angst should trigger ChainOfThought reasoning
+        assert!(result.contains("Step 1"));
+        assert!(result.contains("Stimmung: Angst"));
+    }
+
+    #[test]
+    fn test_stimmung_calm_uses_direct() {
+        let reasoner = Reasoner::new(ReasoningStrategy::ChainOfThought);
+        let mood = Stimmung::Gelassenheit;
+        let result = reasoner.think_with_stimmung(&make_intent(), &make_ctx(), "ok", &mood);
+        // Calm should use Direct strategy
+        assert!(result.contains("Direct execution"));
+        assert!(result.contains("Gelassenheit"));
+    }
+
+    #[test]
+    fn test_stimmung_verfallenheit_uses_cot() {
+        let reasoner = Reasoner::new(ReasoningStrategy::Direct);
+        let mood = Stimmung::Verfallenheit {
+            absorbed_in: "debugging".to_string(),
+        };
+        let result = reasoner.think_with_stimmung(&make_intent(), &make_ctx(), "", &mood);
+        assert!(result.contains("Step 1"));
+        assert!(result.contains("Verfallenheit"));
+        assert!(result.contains("debugging"));
+    }
+
+    #[test]
+    fn test_strategy_for_stimmung() {
+        assert_eq!(
+            Reasoner::strategy_for_stimmung(&Stimmung::Angst {
+                facing: aletheon_abi::dasein::AngstSource::Nothingness,
+            }),
+            ReasoningStrategy::ChainOfThought
+        );
+        assert_eq!(
+            Reasoner::strategy_for_stimmung(&Stimmung::Gelassenheit),
+            ReasoningStrategy::Direct
+        );
+        assert_eq!(
+            Reasoner::strategy_for_stimmung(&Stimmung::Entschlossenheit {
+                chosen_possibility: "test".to_string(),
+            }),
+            ReasoningStrategy::ChainOfThought
+        );
+        assert_eq!(
+            Reasoner::strategy_for_stimmung(&Stimmung::Langeweile {
+                depth: aletheon_abi::dasein::BoredomDepth::Deep,
+            }),
+            ReasoningStrategy::ChainOfThought
+        );
+        assert_eq!(
+            Reasoner::strategy_for_stimmung(&Stimmung::Langeweile {
+                depth: aletheon_abi::dasein::BoredomDepth::Surface,
+            }),
+            ReasoningStrategy::Direct
+        );
     }
 }

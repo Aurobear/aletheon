@@ -6,6 +6,7 @@
 use aletheon_abi::body::Action;
 use aletheon_abi::brain::{CostEstimate, Plan, PlanStep};
 use aletheon_abi::context::Context;
+use aletheon_abi::dasein::Stimmung;
 use aletheon_abi::self_field::{Intent, RiskLevel};
 use uuid::Uuid;
 
@@ -91,6 +92,90 @@ impl Planner {
             risk_level,
             reasoning: reasoning.to_string(),
             alternatives: vec![],
+        }
+    }
+
+    /// Generate a plan with Stimmung-aware risk adjustment.
+    ///
+    /// Heidegger's Befindlichkeit: mood discloses the world differently.
+    /// Angst raises risk perception (Dasein confronts its own finitude);
+    /// Gelassenheit lowers it (calm openness); Entschlossenheit allows
+    /// accepting higher risk for a chosen possibility.
+    ///
+    /// This is additive — does not modify `generate_plan`.
+    pub fn generate_plan_with_stimmung(
+        &self,
+        intent: &Intent,
+        reasoning: &str,
+        ctx: &Context,
+        mood: &Stimmung,
+    ) -> Plan {
+        let mut plan = self.generate_plan(intent, reasoning, ctx);
+
+        // Adjust risk level based on Stimmung
+        let adjusted_risk = Self::adjust_risk_for_stimmung(plan.risk_level, mood);
+        plan.risk_level = adjusted_risk;
+
+        // Add mood context to the plan's reasoning
+        let mood_note = match mood {
+            Stimmung::Angst { facing } => {
+                format!(" [Stimmung: Angst/{:?} — risk elevated, proceed with caution]", facing)
+            }
+            Stimmung::Gelassenheit => {
+                " [Stimmung: Gelassenheit — calm, standard risk assessment]".to_string()
+            }
+            Stimmung::Entschlossenheit { chosen_possibility } => {
+                format!(
+                    " [Stimmung: Entschlossenheit — committed to '{}', risk accepted for projection]",
+                    chosen_possibility
+                )
+            }
+            Stimmung::Verfallenheit { absorbed_in } => {
+                format!(
+                    " [Stimmung: Verfallenheit — absorbed in '{}', risk may be underestimated]",
+                    absorbed_in
+                )
+            }
+            Stimmung::Neugier { curiosity_about } => {
+                format!(
+                    " [Stimmung: Neugier — curious about '{}', exploratory risk tolerance]",
+                    curiosity_about
+                )
+            }
+            _ => " [Stimmung applied to risk assessment]".to_string(),
+        };
+        plan.reasoning.push_str(&mood_note);
+
+        plan
+    }
+
+    /// Map a Stimmung to a risk level adjustment.
+    ///
+    /// Returns the risk level the planner should use, which may be
+    /// higher or lower than the base assessment depending on mood.
+    pub fn adjust_risk_for_stimmung(base: RiskLevel, mood: &Stimmung) -> RiskLevel {
+        match mood {
+            // Angst: Dasein confronts finitude — elevate risk
+            Stimmung::Angst { .. } => match base {
+                RiskLevel::None | RiskLevel::Low => RiskLevel::Medium,
+                RiskLevel::Medium => RiskLevel::High,
+                other => other,
+            },
+            // Entschlossenheit: resolute acceptance — lower risk for chosen path
+            Stimmung::Entschlossenheit { .. } => match base {
+                RiskLevel::High => RiskLevel::Medium,
+                RiskLevel::Medium => RiskLevel::Low,
+                other => other,
+            },
+            // Verfallenheit: fallenness risks underestimating danger — bump up
+            Stimmung::Verfallenheit { .. } => match base {
+                RiskLevel::Low => RiskLevel::Medium,
+                other => other,
+            },
+            // Gelassenheit: calm — no adjustment
+            Stimmung::Gelassenheit => base,
+            // Others: no adjustment
+            _ => base,
         }
     }
 
@@ -362,5 +447,69 @@ mod tests {
         let subtasks = planner.parse_subtasks(llm_output).unwrap();
         assert_eq!(subtasks.len(), 1);
         assert_eq!(subtasks[0].1, serde_json::json!({}));
+    }
+
+    #[test]
+    fn stimmung_angst_elevates_risk() {
+        let planner = Planner::new();
+        let intent = make_intent("file.read", "read file");
+        let mood = Stimmung::Angst {
+            facing: aletheon_abi::dasein::AngstSource::Finitude,
+        };
+        let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
+        // file.read is normally Low; Angst should bump it to Medium
+        assert_eq!(plan.risk_level, RiskLevel::Medium);
+        assert!(plan.reasoning.contains("Angst"));
+    }
+
+    #[test]
+    fn stimmung_gelassen_preserves_risk() {
+        let planner = Planner::new();
+        let intent = make_intent("file.read", "read");
+        let mood = Stimmung::Gelassenheit;
+        let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
+        assert_eq!(plan.risk_level, RiskLevel::Low);
+        assert!(plan.reasoning.contains("Gelassenheit"));
+    }
+
+    #[test]
+    fn stimmung_entshclossenheit_lowers_risk() {
+        let planner = Planner::new();
+        let intent = make_intent("file.delete", "remove old file");
+        let mood = Stimmung::Entschlossenheit {
+            chosen_possibility: "clean workspace".to_string(),
+        };
+        let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
+        // file.delete is normally High; resolute acceptance should lower it
+        assert_eq!(plan.risk_level, RiskLevel::Medium);
+        assert!(plan.reasoning.contains("Entschlossenheit"));
+    }
+
+    #[test]
+    fn stimmung_verfallenheit_bumps_low_to_medium() {
+        let planner = Planner::new();
+        let intent = make_intent("file.read", "read");
+        let mood = Stimmung::Verfallenheit {
+            absorbed_in: "routine task".to_string(),
+        };
+        let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
+        assert_eq!(plan.risk_level, RiskLevel::Medium);
+    }
+
+    #[test]
+    fn adjust_risk_for_stimmung_identity() {
+        assert_eq!(
+            Planner::adjust_risk_for_stimmung(RiskLevel::Low, &Stimmung::Gelassenheit),
+            RiskLevel::Low
+        );
+        assert_eq!(
+            Planner::adjust_risk_for_stimmung(
+                RiskLevel::Medium,
+                &Stimmung::Neugier {
+                    curiosity_about: "test".to_string()
+                }
+            ),
+            RiskLevel::Medium
+        );
     }
 }

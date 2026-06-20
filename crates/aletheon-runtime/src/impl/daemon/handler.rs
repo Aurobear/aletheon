@@ -23,6 +23,7 @@ use aletheon_abi::{
     Context as AbiContext, Intent, IntentSource, ReflectionTrigger, SelfFieldOps, Subsystem,
     SubsystemContext, Verdict,
 };
+use aletheon_abi::ui_event::{CollaborationMode, InterruptReason};
 use aletheon_body::r#impl::sandbox::executor::{SandboxExecutor, SandboxPreference};
 use aletheon_body::r#impl::security::approval::ApprovalDecision;
 use aletheon_body::r#impl::security::audit::AuditLogger;
@@ -2126,6 +2127,71 @@ impl RequestHandler {
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": { "status": "ok", "model": model }
+                })
+            }
+            "interrupt" => {
+                let reason = match request.get("params")
+                    .and_then(|p| p.get("reason"))
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("user_cancelled")
+                {
+                    "user_cancelled" => InterruptReason::UserCancelled,
+                    "timeout" => InterruptReason::Timeout,
+                    "budget_exceeded" => InterruptReason::BudgetExceeded,
+                    _ => InterruptReason::UserCancelled,
+                };
+                {
+                    let state = self.state.lock().await;
+                    state.runtime.interrupt_flag().request(reason);
+                }
+                info!(reason = ?reason, "Interrupt requested");
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "status": "interrupt_requested", "reason": format!("{:?}", reason) }
+                })
+            }
+            "mode_switch" => {
+                let mode_str = request.get("params")
+                    .and_then(|p| p.get("mode"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("default");
+                let mode = match mode_str {
+                    "plan" => CollaborationMode::Plan,
+                    "auto" => CollaborationMode::Auto,
+                    "sandbox" => CollaborationMode::Sandbox,
+                    _ => CollaborationMode::Default,
+                };
+                let old_mode;
+                {
+                    let mut state = self.state.lock().await;
+                    old_mode = state.runtime.mode_router().current_mode();
+                    state.runtime.mode_router_mut().set_mode(mode);
+                }
+                info!(old = ?old_mode, new = ?mode, "Collaboration mode switched");
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "status": "mode_switched",
+                        "old": old_mode.display_name(),
+                        "new": mode.display_name()
+                    }
+                })
+            }
+            "sub_agents" => {
+                let state = self.state.lock().await;
+                let agents: Vec<_> = state.runtime.sub_agent_spawner().list().iter().map(|a| {
+                    serde_json::json!({
+                        "id": a.id,
+                        "task": a.task,
+                        "status": format!("{:?}", a.status),
+                    })
+                }).collect();
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "agents": agents }
                 })
             }
             _ => json!({

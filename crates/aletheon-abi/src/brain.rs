@@ -171,7 +171,7 @@ impl ReflectionEntry {
 use chrono::{DateTime, Utc};
 
 /// Critique of a plan — BrainCore's self-criticism.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Critique {
     pub dimension: CriticismDimension,
     pub severity: CriticismSeverity,
@@ -189,7 +189,7 @@ pub enum CriticismDimension {
     Reversibility,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum CriticismSeverity {
     Info,
     Warning,

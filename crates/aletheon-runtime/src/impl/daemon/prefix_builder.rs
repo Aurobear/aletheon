@@ -38,6 +38,34 @@ impl PrefixBuilder {
         prefix
     }
 
+    /// Build the prefix with optional DaseinContext injection.
+    ///
+    /// When `dasein_context` is `Some`, the formatted existential state is
+    /// appended after core memory. This gives the LLM awareness of the
+    /// system's mood, temporal flow, involvement network, and care structure.
+    ///
+    /// Note: DaseinContext is intentionally appended LAST (after core memory)
+    /// because it changes more frequently than skills or core memory.
+    /// If cache stability is critical, callers should inject dasein context
+    /// into the user message instead via `<dasein-state>` blocks.
+    pub fn build_with_dasein(
+        config_prompt: &str,
+        skills: &[LoadedSkill],
+        core_memory: &CoreMemory,
+        dasein_context: Option<&str>,
+    ) -> String {
+        let mut prefix = Self::build(config_prompt, skills, core_memory);
+
+        if let Some(ctx) = dasein_context {
+            if !ctx.is_empty() {
+                prefix.push_str("\n\n");
+                prefix.push_str(ctx);
+            }
+        }
+
+        prefix
+    }
+
     /// Compare two prefixes and return whether they differ.
     /// Useful for diagnostics: explains why a cache miss happened.
     pub fn diff_reason(old: &str, new: &str) -> Option<String> {
@@ -126,5 +154,33 @@ mod tests {
     #[test]
     fn diff_reason_none_for_identical() {
         assert!(PrefixBuilder::diff_reason("same", "same").is_none());
+    }
+
+    #[test]
+    fn build_with_dasein_appends_context() {
+        let mem = CoreMemory::with_defaults();
+        let dasein = "## Existential State\nMood: calm";
+        let prefix =
+            PrefixBuilder::build_with_dasein("Base.", &[], &mem, Some(dasein));
+        assert!(prefix.contains("Base."));
+        assert!(prefix.contains("## Existential State"));
+        assert!(prefix.contains("Mood: calm"));
+    }
+
+    #[test]
+    fn build_with_dasein_none_is_same_as_build() {
+        let mem = CoreMemory::with_defaults();
+        let skills = vec![make_skill("test", "content")];
+        let p1 = PrefixBuilder::build("Base.", &skills, &mem);
+        let p2 = PrefixBuilder::build_with_dasein("Base.", &skills, &mem, None);
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn build_with_dasein_empty_is_same_as_build() {
+        let mem = CoreMemory::with_defaults();
+        let p1 = PrefixBuilder::build("Base.", &[], &mem);
+        let p2 = PrefixBuilder::build_with_dasein("Base.", &[], &mem, Some(""));
+        assert_eq!(p1, p2);
     }
 }

@@ -31,6 +31,15 @@ pub enum StreamChunk {
 /// A pinned, boxed stream of `StreamChunk` results.
 pub type LlmStream = Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>;
 
+/// Model information for TUI status bar display.
+#[derive(Debug, Clone)]
+pub struct ModelInfo {
+    /// Human-readable model name (e.g., "claude-sonnet-4-6").
+    pub name: String,
+    /// Maximum context length in tokens.
+    pub max_context: usize,
+}
+
 /// Canonical LlmProvider trait. See shared/traits.md.
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
@@ -53,6 +62,17 @@ pub trait LlmProvider: Send + Sync {
 
     /// Maximum context length in tokens.
     fn max_context_length(&self) -> usize;
+
+    /// Human-readable model info for status bar display.
+    ///
+    /// Default implementation uses `name()` and `max_context_length()`.
+    /// Providers can override to return a more specific model name.
+    fn model_info(&self) -> ModelInfo {
+        ModelInfo {
+            name: self.name().to_string(),
+            max_context: self.max_context_length(),
+        }
+    }
 }
 
 /// Tool definition sent to the LLM.

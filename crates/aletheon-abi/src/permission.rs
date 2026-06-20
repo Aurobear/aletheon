@@ -132,6 +132,30 @@ impl PermissionContext {
     }
 }
 
+/// Mode-specific configuration that overrides permission defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModeConfig {
+    /// System prompt suffix for this mode.
+    pub system_prompt_suffix: String,
+    /// Default approval policy for this mode.
+    pub approval_policy: PermissionMode,
+    /// Allowed tools (None = all tools allowed).
+    pub allowed_tools: Option<Vec<String>>,
+    /// Maximum iterations before forcing stop (None = use global default).
+    pub max_iterations: Option<usize>,
+}
+
+impl Default for ModeConfig {
+    fn default() -> Self {
+        Self {
+            system_prompt_suffix: String::new(),
+            approval_policy: PermissionMode::Default,
+            allowed_tools: None,
+            max_iterations: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

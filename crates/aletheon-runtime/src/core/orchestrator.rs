@@ -3,7 +3,10 @@ use std::sync::Arc;
 use crate::core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 use crate::core::config::{GenomeConfig, RuntimeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
+use crate::core::interrupt::InterruptFlag;
+use crate::core::mode_router::ModeRouter;
 use crate::core::react_loop::ReActLoop;
+use crate::core::sub_agent::SubAgentSpawner;
 use crate::core::verdict_handler::DefaultVerdictHandler;
 use aletheon_abi::body::{Action, ActionResult};
 use aletheon_abi::brain::Plan;
@@ -30,6 +33,9 @@ pub struct AletheonRuntime {
     genome_config: GenomeConfig,
     memory: Option<Arc<MemoryRouter>>,
     verdict_handler: Arc<dyn VerdictHandler>,
+    mode_router: ModeRouter,
+    interrupt_flag: InterruptFlag,
+    sub_agent_spawner: SubAgentSpawner,
 }
 
 impl AletheonRuntime {
@@ -42,6 +48,9 @@ impl AletheonRuntime {
             genome_config: GenomeConfig::default(),
             memory: None,
             verdict_handler: Arc::new(DefaultVerdictHandler::new()),
+            mode_router: ModeRouter::new(),
+            interrupt_flag: InterruptFlag::new(),
+            sub_agent_spawner: SubAgentSpawner::new(),
         }
     }
 
@@ -360,5 +369,30 @@ impl AletheonRuntime {
     /// via `EpisodicMemory::store_awareness()`.
     pub fn take_awareness_signals(&mut self) -> Vec<aletheon_brain::core::awareness_signal::AwarenessSignal> {
         self.react_loop.take_signals()
+    }
+
+    /// Reference to the mode router.
+    pub fn mode_router(&self) -> &ModeRouter {
+        &self.mode_router
+    }
+
+    /// Mutable reference to the mode router.
+    pub fn mode_router_mut(&mut self) -> &mut ModeRouter {
+        &mut self.mode_router
+    }
+
+    /// Reference to the interrupt flag.
+    pub fn interrupt_flag(&self) -> &InterruptFlag {
+        &self.interrupt_flag
+    }
+
+    /// Reference to the sub-agent spawner.
+    pub fn sub_agent_spawner(&self) -> &SubAgentSpawner {
+        &self.sub_agent_spawner
+    }
+
+    /// Mutable reference to the sub-agent spawner.
+    pub fn sub_agent_spawner_mut(&mut self) -> &mut SubAgentSpawner {
+        &mut self.sub_agent_spawner
     }
 }

@@ -65,6 +65,11 @@ impl SelfFieldStore {
                 mutated_at TEXT NOT NULL,
                 reason TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS dasein_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             ",
         )
         .context("Failed to create tables")?;

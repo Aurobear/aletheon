@@ -1,4 +1,5 @@
 pub mod approval_dialog;
+pub mod awareness;
 pub mod chat;
 pub mod command;
 pub mod completion;
@@ -9,9 +10,12 @@ pub mod help_overlay;
 pub mod input;
 pub mod markdown;
 pub mod pager;
+pub mod plan_view;
 pub mod skill;
+pub mod state;
 pub mod status;
 pub mod streaming;
+pub mod subagent_view;
 pub mod term_compat;
 
 pub mod toolcard;
@@ -41,12 +45,16 @@ use ratatui::{
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 
+use aletheon_abi::ui_event::{AwarenessLevel, CollaborationMode, PlanUpdate, SubAgentHandle, SubAgentStatus, EvolutionStage};
+
 use self::approval_dialog::{ApprovalDialog, DialogDecision};
 use self::chat::{ChatWidget, Role as ChatRole};
 use self::command::{parse_command, BuiltinCommand, CommandType};
 use self::completion::CompletionPopup;
 use self::input::CommandHistory;
+use self::plan_view::{PlanVersion, PlanViewState};
 use self::skill::SkillLoader;
+use self::state::AppState;
 use self::status::StatusBar;
 use self::streaming::StreamController;
 use self::term_compat::TermCaps;
@@ -331,6 +339,12 @@ struct App {
     pager: Option<pager::PagerOverlay>,
     /// Frame counter for spinner animation.
     frame_counter: u64,
+    /// Centralized application state (mode, awareness, context).
+    app_state: AppState,
+    /// Plan view state for plan mode visualization.
+    plan_view: PlanViewState,
+    /// Active sub-agents for inline display.
+    sub_agents: Vec<SubAgentHandle>,
 }
 
 impl App {
@@ -370,6 +384,9 @@ impl App {
             completion: CompletionPopup::new(),
             pager: None,
             frame_counter: 0,
+            app_state: AppState::default(),
+            plan_view: PlanViewState::default(),
+            sub_agents: Vec::new(),
         }
     }
 
@@ -684,6 +701,43 @@ async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Ctrl+M: cycle collaboration mode
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('m') {
+        let modes = [
+            CollaborationMode::Default,
+            CollaborationMode::Plan,
+            CollaborationMode::Auto,
+            CollaborationMode::Sandbox,
+        ];
+        let current = modes.iter().position(|m| *m == app.app_state.mode).unwrap_or(0);
+        let next = modes[(current + 1) % modes.len()];
+        let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": next.display_name()}});
+        let payload = serde_json::to_string(&msg).unwrap_or_default();
+        use tokio::io::AsyncWriteExt;
+        let framed = format!("{}\n", payload);
+        let _ = app.stream.write_all(framed.as_bytes()).await;
+        let _ = app.stream.flush().await;
+        app.chat.add_message(ChatRole::System, format!("Switching to {} mode", next.display_name()));
+        return;
+    }
+
+    // Ctrl+P: toggle plan mode
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+        let target = if app.app_state.mode == CollaborationMode::Plan {
+            "default"
+        } else {
+            "plan"
+        };
+        let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": target}});
+        let payload = serde_json::to_string(&msg).unwrap_or_default();
+        use tokio::io::AsyncWriteExt;
+        let framed = format!("{}\n", payload);
+        let _ = app.stream.write_all(framed.as_bytes()).await;
+        let _ = app.stream.flush().await;
+        app.chat.add_message(ChatRole::System, format!("Switching to {} mode", target));
+        return;
+    }
+
     // Ctrl+A: cursor to beginning of line
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('a') {
         let before = &app.input_buf[..app.cursor];
@@ -751,6 +805,8 @@ async fn handle_key(app: &mut App, key: KeyEvent) {
                     "/help", "/clear", "/copy", "/status", "/reflect",
                     "/reflect_now", "/evolution", "/genome", "/sessions",
                     "/resume", "/compact", "/model", "/quit",
+                    "/mode", "/plan", "/approve", "/agents", "/agent",
+                    "/hooks", "/skills", "/skill", "/interrupt", "/context",
                 ]
                 .iter()
                 .map(|s| s.to_string())
@@ -1106,6 +1162,143 @@ async fn submit_message(app: &mut App, text: String) {
                     .add_message(ChatRole::System, "查询可用模型中...".to_string());
                 return;
             }
+            // ── New P2 commands ──
+            Some(CommandType::Builtin(BuiltinCommand::Mode { name })) => {
+                let mode_str = if name.is_empty() {
+                    // Cycle to next mode
+                    let modes = [
+                        CollaborationMode::Default,
+                        CollaborationMode::Plan,
+                        CollaborationMode::Auto,
+                        CollaborationMode::Sandbox,
+                    ];
+                    let current = modes.iter().position(|m| *m == app.app_state.mode).unwrap_or(0);
+                    let next = modes[(current + 1) % modes.len()];
+                    next.display_name().to_string()
+                } else {
+                    name
+                };
+                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": mode_str}});
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                use tokio::io::AsyncWriteExt;
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat.add_message(ChatRole::System, format!("Switching mode to: {}", mode_str));
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Plan)) => {
+                let target = if app.app_state.mode == CollaborationMode::Plan {
+                    "default"
+                } else {
+                    "plan"
+                };
+                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": target}});
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                use tokio::io::AsyncWriteExt;
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat.add_message(ChatRole::System, format!("Switching to {} mode", target));
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Approve)) => {
+                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "plan_approve", "id": 1});
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                use tokio::io::AsyncWriteExt;
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat.add_message(ChatRole::System, "Plan approved".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Agents)) => {
+                if app.sub_agents.is_empty() {
+                    app.chat.add_message(ChatRole::System, "No active sub-agents".to_string());
+                } else {
+                    let lines: Vec<String> = app.sub_agents.iter().map(|a| {
+                        format!("  {} - {:?}: {}", a.id, a.status, a.task)
+                    }).collect();
+                    app.chat.add_message(ChatRole::System, format!("Active sub-agents:\n{}", lines.join("\n")));
+                }
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::AgentDetail { id })) => {
+                if let Some(agent) = app.sub_agents.iter().find(|a| a.id == id) {
+                    let msg = format!("Agent: {}\nTask: {}\nStatus: {:?}\nParent: {}",
+                        agent.id, agent.task, agent.status, agent.parent_turn_id);
+                    app.chat.add_message(ChatRole::System, msg);
+                } else {
+                    app.chat.add_message(ChatRole::System, format!("Agent not found: {}", id));
+                }
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Hooks)) => {
+                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "hooks_list", "id": 1});
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                use tokio::io::AsyncWriteExt;
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.streaming = true;
+                app.response_buf.clear();
+                app.chat.add_message(ChatRole::System, "Querying hooks...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
+                let skills = app.skill_loader.list();
+                if skills.is_empty() {
+                    app.chat.add_message(ChatRole::System, "No skills loaded".to_string());
+                } else {
+                    let lines: Vec<String> = skills.iter().map(|s| {
+                        format!("  /{} - {}", s.name, s.description)
+                    }).collect();
+                    app.chat.add_message(ChatRole::System, format!("Available skills:\n{}", lines.join("\n")));
+                }
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::SkillRun { name, args })) => {
+                let skill = match app.skill_loader.get(&name) {
+                    Some(s) => s.clone(),
+                    None => {
+                        app.chat.add_message(ChatRole::System, format!("Unknown skill: /{}", name));
+                        return;
+                    }
+                };
+                let message = if args.is_empty() {
+                    skill.content.clone()
+                } else {
+                    format!("{}\n\nUser input: {}", skill.content, args)
+                };
+                app.chat.add_message(ChatRole::User, text.clone());
+                app.chat.add_message(ChatRole::Assistant, String::new());
+                send_to_daemon(app, &message).await;
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Interrupt)) => {
+                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "interrupt", "id": 1, "params": {"reason": "user_cancelled"}});
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                use tokio::io::AsyncWriteExt;
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat.add_message(ChatRole::System, "Interrupt sent".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Context)) => {
+                let ctx = &app.app_state.context;
+                let mode = &app.app_state.mode;
+                let msg = format!(
+                    "Context: {}\nMode: {} {}\nModel: {}\nTokens: {}k\nAwareness: {} {}",
+                    ctx.display(),
+                    mode.icon(), mode.display_name(),
+                    app.app_state.model_name,
+                    app.app_state.total_tokens / 1000,
+                    app.app_state.awareness.level.icon(), app.app_state.awareness.level.display_name(),
+                );
+                app.chat.add_message(ChatRole::System, msg);
+                return;
+            }
             Some(CommandType::Builtin(_)) => return,
             Some(CommandType::Skill { name, args }) => {
                 app.chat.add_message(ChatRole::User, text.clone());
@@ -1161,6 +1354,7 @@ async fn send_to_daemon(app: &mut App, text: &str) {
     app.streaming = true;
     app.response_buf.clear();
     app.status.waiting = true;
+    app.app_state.streaming = true;
 }
 
 /// Variant of `try_read_socket` that records events via `EventRecorder`.
@@ -1173,6 +1367,7 @@ fn try_read_socket_with_recorder(
             Ok(0) => {
                 app.streaming = false;
                 app.status.waiting = false;
+                app.app_state.streaming = false;
                 app.chat
                     .add_message(ChatRole::System, "连接断开".to_string());
                 break;
@@ -1215,6 +1410,7 @@ fn try_read_socket_with_recorder(
             Err(_) => {
                 app.streaming = false;
                 app.status.waiting = false;
+                app.app_state.streaming = false;
                 break;
             }
         }
@@ -1229,6 +1425,9 @@ fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.status.waiting = true;
             app.status.elapsed_secs = 0.0;
             app.turn_active = true;
+            app.app_state.streaming = true;
+            app.app_state.turn_active = true;
+            app.app_state.turn_tool_count = 0;
         }
         "thinking_delta" => {
             if let Some(text) = params.get("text").and_then(|v| v.as_str()) {
@@ -1258,6 +1457,7 @@ fn handle_event(app: &mut App, params: &serde_json::Value) {
                 .unwrap_or_default();
             app.active_tools
                 .insert(call_id.clone(), ToolCard::new(call_id, tool, args));
+            app.app_state.turn_tool_count = app.active_tools.len();
         }
         "tool_call_result" => {
             let call_id = params.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -1287,6 +1487,7 @@ fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.total_tokens += tokens_in + tokens_out;
             app.status.total_tokens = app.total_tokens;
             app.status.context_window = 128_000;
+            app.app_state.total_tokens = app.total_tokens;
         }
         "turn_done" => {
             app.stream_ctrl.commit();
@@ -1295,6 +1496,8 @@ fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.status.waiting = false;
             app.status.elapsed_secs = 0.0;
             app.status.session_turns += 1;
+            app.app_state.streaming = false;
+            app.app_state.turn_active = false;
             for (_, card) in app.active_tools.drain() {
                 app.chat
                     .add_message(ChatRole::System, card.to_summary());
@@ -1309,6 +1512,73 @@ fn handle_event(app: &mut App, params: &serde_json::Value) {
                 .add_message(ChatRole::System, format!("Error: {}", msg));
             app.streaming = false;
             app.status.waiting = false;
+        }
+        // ── New P2 events ──
+        "awareness_changed" => {
+            if let Some(level_val) = params.get("level") {
+                if let Ok(level) = serde_json::from_value::<AwarenessLevel>(level_val.clone()) {
+                    let context = params.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    app.app_state.awareness.update(level, context);
+                }
+            }
+        }
+        "plan_update" => {
+            if let Ok(update) = serde_json::from_value::<PlanUpdate>(params.clone()) {
+                app.plan_view.add_version(PlanVersion {
+                    version: update.version,
+                    plan: update.plan,
+                    critique: update.critique,
+                });
+                app.plan_view.set_ready(update.ready_for_approval);
+            }
+        }
+        "sub_agent_status" => {
+            let agent_id = params.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if let Some(status_val) = params.get("status") {
+                if let Ok(status) = serde_json::from_value::<SubAgentStatus>(status_val.clone()) {
+                    if let Some(agent) = app.sub_agents.iter_mut().find(|a| a.id == agent_id) {
+                        agent.status = status;
+                    } else {
+                        // If the agent is not yet tracked, add it with minimal info.
+                        let task = params.get("task").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        app.sub_agents.push(SubAgentHandle {
+                            id: agent_id,
+                            task,
+                            status,
+                            parent_turn_id: String::new(),
+                            spawned_at_ms: 0,
+                        });
+                    }
+                }
+            }
+        }
+        "mode_changed" => {
+            if let Some(new_val) = params.get("new") {
+                if let Ok(new_mode) = serde_json::from_value::<CollaborationMode>(new_val.clone()) {
+                    app.app_state.mode = new_mode;
+                }
+            }
+        }
+        "context_update" => {
+            let used = params.get("used").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let max = params.get("max").and_then(|v| v.as_u64()).unwrap_or(200_000) as usize;
+            app.app_state.context.used = used;
+            app.app_state.context.max = max;
+        }
+        "model_switch" => {
+            let to = params.get("to").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            app.app_state.model_name = to.clone();
+            app.model_name = to.clone();
+            app.status.model_name = to;
+        }
+        "evolution_progress" => {
+            if let Some(stage_val) = params.get("stage") {
+                if let Ok(_stage) = serde_json::from_value::<EvolutionStage>(stage_val.clone()) {
+                    // Evolution progress is informational; show inline message
+                    let msg = format!("Evolution: {}", serde_json::to_string(stage_val).unwrap_or_default());
+                    app.chat.add_message(ChatRole::System, msg);
+                }
+            }
         }
         _ => {}
     }
@@ -1389,6 +1659,7 @@ fn process_response(app: &mut App, msg: serde_json::Value) {
     }
     app.streaming = false;
     app.status.waiting = false;
+    app.app_state.streaming = false;
     // NOTE: Do NOT clear response_buf here. In the daemon's protocol, streaming
     // events (turn_start, text_delta, turn_done) are flushed through notify_tx
     // *after* the JSON-RPC response is sent. If both arrive in the same try_read

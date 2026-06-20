@@ -39,6 +39,9 @@ use crate::core::mutation::MutationLayer;
 use crate::core::narrative::NarrativeLayer;
 
 use crate::core::store::SelfFieldStore;
+use crate::dasein::DaseinModule;
+use crate::dasein::DaseinEventBridge;
+use aletheon_abi::dasein::DaseinEvent;
 
 /// Configuration for SelfField construction.
 pub struct SelfFieldConfig {
@@ -51,6 +54,12 @@ pub struct SelfFieldConfig {
     pub continuity_max_gap: Duration,
     /// Optional path for SQLite persistence. If None, no persistence is used.
     pub db_path: Option<std::path::PathBuf>,
+    /// Enable the DaseinModule (existential substrate).
+    pub enable_dasein: bool,
+    /// Retention depth for the DaseinModule's temporal stream.
+    pub dasein_retention_depth: usize,
+    /// Decay rate for the DaseinModule's retention field (0.0-1.0).
+    pub dasein_decay_rate: f64,
 }
 
 impl Default for SelfFieldConfig {
@@ -64,6 +73,9 @@ impl Default for SelfFieldConfig {
             attention_decay_rate: 0.001,
             continuity_max_gap: Duration::hours(24),
             db_path: None,
+            enable_dasein: false,
+            dasein_retention_depth: 50,
+            dasein_decay_rate: 0.8,
         }
     }
 }
@@ -85,6 +97,9 @@ pub struct SelfField {
     policy_bridge: PolicyBridge,
     loop_bridge: LoopBridge,
     hook_bridge: HookBridge,
+    // DaseinModule (optional, opt-in via config)
+    dasein: Option<DaseinModule>,
+    dasein_event_tx: Option<tokio::sync::mpsc::Sender<DaseinEvent>>,
 }
 
 impl SelfField {
@@ -109,6 +124,13 @@ impl SelfField {
             .db_path
             .and_then(|path| SelfFieldStore::new(path).ok());
 
+        let (dasein, dasein_event_tx) = if config.enable_dasein {
+            let (module, tx) = DaseinModule::new();
+            (Some(module), Some(tx))
+        } else {
+            (None, None)
+        };
+
         Self {
             boundary,
             identity,
@@ -123,6 +145,8 @@ impl SelfField {
             policy_bridge: PolicyBridge::new(),
             loop_bridge: LoopBridge::new(),
             hook_bridge: HookBridge::new(),
+            dasein,
+            dasein_event_tx,
         }
     }
 
@@ -190,6 +214,43 @@ impl SelfField {
         self.loop_bridge.end_turn(turn_id);
     }
 
+    /// Access the DaseinModule if enabled.
+    pub fn dasein(&self) -> Option<&DaseinModule> {
+        self.dasein.as_ref()
+    }
+
+    /// Get DaseinContext for LLM injection.
+    pub fn dasein_context(&self) -> Option<aletheon_abi::dasein::DaseinContext> {
+        self.dasein.as_ref().map(|d| d.to_context_injection())
+    }
+
+    /// Get formatted Dasein context for prompt injection.
+    pub fn dasein_prompt_injection(&self) -> Option<String> {
+        self.dasein.as_ref().map(|d| d.format_context())
+    }
+
+    /// Get the DaseinModule event sender, if Dasein is enabled.
+    pub fn dasein_event_tx(&self) -> Option<&tokio::sync::mpsc::Sender<DaseinEvent>> {
+        self.dasein_event_tx.as_ref()
+    }
+
+    /// Connect the DaseinModule to the EventBus for real system event integration.
+    ///
+    /// This should be called after SelfField::init() when the EventBus is available.
+    /// It subscribes the DaseinModule to tool execution, memory, evolution, and
+    /// session lifecycle events.
+    pub async fn wire_dasein_event_bridge(
+        &self,
+        event_bus: &dyn aletheon_abi::EventBus,
+    ) -> anyhow::Result<()> {
+        if let (Some(ref _dasein), Some(ref tx)) = (&self.dasein, &self.dasein_event_tx) {
+            let bridge = DaseinEventBridge::new(tx.clone());
+            bridge.subscribe(event_bus).await?;
+            info!("DaseinModule connected to EventBus via DaseinEventBridge");
+        }
+        Ok(())
+    }
+
     /// Persist all layer states to the SQLite store (no-op if no store).
     pub fn save_all(&self) -> Result<()> {
         if let Some(ref store) = self.store {
@@ -232,6 +293,10 @@ impl Subsystem for SelfField {
         self.load_all()?;
         self.narrative
             .narrate("init", "SelfField subsystem initialized");
+        if let Some(ref dasein) = self.dasein {
+            dasein.start_sorge_loop();
+            info!("DaseinModule sorge loop started");
+        }
         self.initialized = true;
         Ok(())
     }
@@ -247,6 +312,10 @@ impl Subsystem for SelfField {
 
     async fn shutdown(&mut self) -> Result<()> {
         info!("SelfField shutting down");
+        if let Some(ref dasein) = self.dasein {
+            dasein.stop_sorge_loop();
+            info!("DaseinModule sorge loop stopped");
+        }
         self.narrative
             .narrate("shutdown", "SelfField subsystem shutting down");
         self.save_all()?;

@@ -8,6 +8,7 @@
 
 use crate::core::config::GenomeConfig;
 use aletheon_abi::brain::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
+use aletheon_abi::dasein::Stimmung;
 use aletheon_abi::meta::MetaRuntimeOps;
 use aletheon_abi::self_field::SelfAwareness;
 use aletheon_brain::core::awareness_signal::{signals_to_awareness, AwarenessSignal};
@@ -56,6 +57,30 @@ pub struct EvolutionSummary {
     /// Awareness entries to store — (action, SelfAwareness) pairs.
     /// The caller stores these via EpisodicMemory::store_awareness().
     pub awareness_entries: Vec<(String, SelfAwareness)>,
+}
+
+/// Source of negativity that can trigger evolution.
+#[derive(Debug, Clone)]
+pub enum NegativitySource {
+    /// Angst — existential confrontation (Heidegger's Angst)
+    Angst(String),
+    /// Meaning crisis — profound boredom or meaninglessness
+    MeaningCrisis,
+    /// World disclosed negatively — dejection (Geknickt)
+    WorldDisclosed(String),
+}
+
+/// A negativity signal derived from Stimmung for evolution triggering.
+#[derive(Debug, Clone)]
+pub struct NegativitySignal {
+    /// Source of the negativity
+    pub source: NegativitySource,
+    /// Depth of negativity (0.0 to 1.0) — affects evolution intensity
+    pub depth: f64,
+    /// Whether this signal should force evolution even if turn count hasn't been reached
+    pub should_force_evolution: bool,
+    /// Human-readable description
+    pub description: String,
 }
 
 /// Orchestrates post-turn self-evolution.
@@ -173,6 +198,103 @@ impl EvolutionCoordinator {
             lineage_entries_added: lineage_added,
             awareness_entries,
         })
+    }
+
+    /// Post-turn with Stimmung awareness — Angst signals trigger deeper evolution.
+    ///
+    /// Heidegger's negativity: Angst confronts Dasein with its own being-toward-death,
+    /// triggering deeper self-questioning and evolution. This method extends
+    /// `post_turn` by:
+    /// 1. Using Angst signals to force evolution regardless of turn count
+    /// 2. Adjusting the evolution depth based on the negativity source
+    /// 3. Returning the mood-derived negativity signal in the summary
+    ///
+    /// This is additive — does not modify `post_turn`.
+    pub async fn post_turn_with_stimmung<M: MetaRuntimeOps>(
+        &self,
+        task_summary: &str,
+        output: &str,
+        success: bool,
+        tool_calls: usize,
+        tool_errors: usize,
+        elapsed_ms: u64,
+        iterations: usize,
+        meta: &MorphogenesisPipeline<M>,
+        awareness_signals: Vec<AwarenessSignal>,
+        mood: &Stimmung,
+    ) -> Result<(EvolutionSummary, Option<NegativitySignal>)> {
+        // Check if Stimmung triggers forced evolution
+        let negativity = Self::negativity_from_stimmung(mood);
+
+        // Run normal post-turn
+        let mut summary = self
+            .post_turn(
+                task_summary,
+                output,
+                success,
+                tool_calls,
+                tool_errors,
+                elapsed_ms,
+                iterations,
+                meta,
+                awareness_signals,
+            )
+            .await?;
+
+        // If Angst signals present and evolution wasn't already triggered,
+        // force a deeper evolution pass
+        if let Some(ref signal) = negativity {
+            if !summary.evolution_triggered && signal.should_force_evolution {
+                tracing::info!(
+                    "Stimmung-driven evolution triggered by {:?} (depth={})",
+                    signal.source,
+                    signal.depth
+                );
+                let (triggered, pipeline_results, lineage_added) =
+                    self.run_evolution(meta).await?;
+                summary.evolution_triggered = triggered;
+                summary.pipeline_results = pipeline_results;
+                summary.lineage_entries_added += lineage_added;
+            }
+        }
+
+        Ok((summary, negativity))
+    }
+
+    /// Derive a negativity signal from the current Stimmung.
+    ///
+    /// Heidegger: Angst is not a psychological state but an ontological
+    /// disclosure — it reveals Dasein's own being. Deep Langeweile
+    /// (profound boredom) similarly confronts meaninglessness.
+    pub fn negativity_from_stimmung(mood: &Stimmung) -> Option<NegativitySignal> {
+        match mood {
+            Stimmung::Angst { facing } => Some(NegativitySignal {
+                source: NegativitySource::Angst(format!("{:?}", facing)),
+                depth: match facing {
+                    aletheon_abi::dasein::AngstSource::Nothingness => 1.0,
+                    aletheon_abi::dasein::AngstSource::Finitude => 0.9,
+                    aletheon_abi::dasein::AngstSource::Freedom => 0.8,
+                    aletheon_abi::dasein::AngstSource::Responsibility => 0.7,
+                },
+                should_force_evolution: true,
+                description: format!("Angst facing {:?} — existential negativity", facing),
+            }),
+            Stimmung::Langeweile {
+                depth: aletheon_abi::dasein::BoredomDepth::Deep,
+            } => Some(NegativitySignal {
+                source: NegativitySource::MeaningCrisis,
+                depth: 0.6,
+                should_force_evolution: true,
+                description: "Deep boredom — confronting meaninglessness".to_string(),
+            }),
+            Stimmung::Geknickt { because } => Some(NegativitySignal {
+                source: NegativitySource::WorldDisclosed(because.clone()),
+                depth: 0.4,
+                should_force_evolution: false,
+                description: format!("Dejected — world disclosed negatively: {}", because),
+            }),
+            _ => None,
+        }
     }
 
     /// Run the evolution pipeline: generate mutation intents from

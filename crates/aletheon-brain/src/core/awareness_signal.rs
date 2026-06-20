@@ -9,6 +9,7 @@
 //! inherently in the act of thinking, not as a separate reflection.
 
 use aletheon_abi::self_field::{AwarenessCore, AwarenessExtension, SelfAwareness, SelfState};
+use aletheon_abi::ui_event::AwarenessLevel;
 use chrono::{DateTime, Utc};
 
 /// Lightweight awareness signal emitted during cognitive loop.
@@ -102,6 +103,42 @@ pub fn detect_goal_shift(tool_sequence: &[String]) -> Option<SelfState> {
     } else {
         None
     }
+}
+
+/// Convert a `SelfState` to an `AwarenessLevel` for TUI display.
+pub fn self_state_to_awareness_level(state: &SelfState) -> AwarenessLevel {
+    match state {
+        SelfState::Confident => AwarenessLevel::Confident,
+        SelfState::Hesitant => AwarenessLevel::Hesitant,
+        SelfState::Confused => AwarenessLevel::Confused,
+        SelfState::Curious => AwarenessLevel::Curious,
+        SelfState::Focused => AwarenessLevel::Confident,
+        SelfState::Other(_) => AwarenessLevel::Confident,
+    }
+}
+
+/// Convert awareness signals to UiEvent pairs for TUI display.
+///
+/// Filters out signals with no detected state, then maps each to
+/// an `(AwarenessLevel, context_string)` pair.
+pub fn signals_to_ui_events(
+    signals: &[AwarenessSignal],
+) -> Vec<(AwarenessLevel, String)> {
+    signals
+        .iter()
+        .filter_map(|s| {
+            let state = s.detected_state.as_ref()?;
+            let level = self_state_to_awareness_level(state);
+            let context = match state {
+                SelfState::Confused => format!("Impasse detected at step {:?}", s.step),
+                SelfState::Hesitant => format!("Uncertainty detected at step {:?}", s.step),
+                SelfState::Curious => format!("Goal shift detected: {}", s.action),
+                SelfState::Confident => format!("Confident at step {:?}", s.step),
+                _ => return None,
+            };
+            Some((level, context))
+        })
+        .collect()
 }
 
 /// Convert collected signals into SelfAwareness entries for storage.

@@ -22,9 +22,11 @@ pub mod paths;
 pub mod runtime;
 pub mod self_field;
 pub mod subsystem;
+pub mod ui_event;
 
 // Shared types (message, tool, sandbox, IPC, LLM)
 pub mod hook;
+pub mod hook_ext;
 pub mod ipc;
 pub mod ipc_types;
 pub mod llm_types;
@@ -35,6 +37,9 @@ pub mod tool;
 // Shared error types
 pub mod error;
 pub mod permission;
+
+// DaseinModule ABI types
+pub mod dasein;
 
 // Independent execution policy engine
 pub mod execpolicy;
@@ -76,11 +81,16 @@ pub use self_field::{
     SelfAwareness, SelfFieldOps, SelfState, Verdict, VerdictAction, VerdictHandler,
 };
 pub use subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
+pub use ui_event::{
+    AwarenessLevel, CollaborationMode, EvolutionStage, InterruptReason,
+    PlanUpdate, SubAgentHandle, SubAgentStatus, UiEvent,
+};
 
 // Re-export shared types
 // Note: tool::PermissionLevel (L0-L3) is aliased as ToolPermissionLevel
 // to avoid conflict with capability::PermissionLevel (ReadOnly/SandboxWrite/...).
 pub use hook::{HookContext, HookPoint, HookResult, HookToolResult};
+pub use hook_ext::{CommandHookResult, HookConfig, HookType};
 pub use ipc::{ForkDirective, ForkResult, GroupId, IpcMessage, MessageKind, Signal};
 pub use ipc_types::{
     AgentId, AgentMessage, IpcBackend, IpcPreference, IpcPriority, IpcProbeError, MessageType,
@@ -112,4 +122,4 @@ pub use protocol::Protocol;
 pub use transport::{HealthStatus, Transport as EnvelopeTransport, TransportHealth, TransportKind};
 
 // Re-export permission types
-pub use permission::{PermissionBehavior, PermissionContext, PermissionMode, PermissionRule};
+pub use permission::{ModeConfig, PermissionBehavior, PermissionContext, PermissionMode, PermissionRule};
