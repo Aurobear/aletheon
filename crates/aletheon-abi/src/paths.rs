@@ -44,6 +44,11 @@ pub fn skills_dir() -> PathBuf {
     config_dir().join("skills")
 }
 
+/// Agents directory: ~/.aletheon/agents/
+pub fn agents_dir() -> PathBuf {
+    config_dir().join("agents")
+}
+
 /// MCP tokens path: ~/.config/aletheon/mcp_tokens.json
 pub fn mcp_tokens_path() -> PathBuf {
     xdg_config_dir().join("mcp_tokens.json")

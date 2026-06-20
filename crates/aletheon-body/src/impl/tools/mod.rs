@@ -2,6 +2,7 @@
 
 #[cfg(all(feature = "input", feature = "display", feature = "a11y"))]
 pub mod acix_tools;
+pub mod agent_tool;
 pub mod apply_patch;
 pub mod bash_exec;
 pub mod code_graph;
