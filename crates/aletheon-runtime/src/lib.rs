@@ -10,6 +10,7 @@ pub use core::config::{
 };
 pub use core::orchestrator::AletheonRuntime;
 pub use core::react_loop::{ReActLoop, TurnMetrics};
+pub use core::verdict_handler::DefaultVerdictHandler;
 
 // Re-export from impl for backward compatibility
 pub use r#impl::agent::AgentRuntime;

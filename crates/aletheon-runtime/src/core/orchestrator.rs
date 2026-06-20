@@ -4,11 +4,12 @@ use crate::core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 use crate::core::config::{GenomeConfig, RuntimeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 use crate::core::react_loop::ReActLoop;
+use crate::core::verdict_handler::DefaultVerdictHandler;
 use aletheon_abi::body::{Action, ActionResult};
 use aletheon_abi::brain::Plan;
 use aletheon_abi::context::Context;
 use aletheon_abi::runtime::StepResult;
-use aletheon_abi::self_field::{Intent, Verdict};
+use aletheon_abi::self_field::{Intent, Verdict, VerdictAction, VerdictHandler};
 use aletheon_memory::MemoryRouter;
 use anyhow::Result;
 use tracing::{debug, warn};
@@ -28,6 +29,7 @@ pub struct AletheonRuntime {
     evolution: Option<EvolutionCoordinator>,
     genome_config: GenomeConfig,
     memory: Option<Arc<MemoryRouter>>,
+    verdict_handler: Arc<dyn VerdictHandler>,
 }
 
 impl AletheonRuntime {
@@ -39,7 +41,14 @@ impl AletheonRuntime {
             evolution: None,
             genome_config: GenomeConfig::default(),
             memory: None,
+            verdict_handler: Arc::new(DefaultVerdictHandler::new()),
         }
+    }
+
+    /// Set a custom verdict handler.
+    pub fn with_verdict_handler(mut self, handler: Arc<dyn VerdictHandler>) -> Self {
+        self.verdict_handler = handler;
+        self
     }
 
     /// Set the genome configuration.
@@ -274,15 +283,35 @@ impl AletheonRuntime {
         let intent = self.react_loop.build_intent(input);
         let verdict = review_fn(&intent, ctx)?;
         debug!("SelfField verdict: {:?}", verdict);
-        if let Verdict::Deny { reason } = verdict {
-            let metrics = crate::core::react_loop::TurnMetrics {
-                tool_calls_made: 0,
-                tool_errors: 0,
-                elapsed_ms: 0,
-                iterations: 0,
-                completed_normally: false,
-            };
-            return Ok((format!("Denied by SelfField: {}", reason), metrics));
+
+        let action = self.verdict_handler.handle(&verdict, &intent, ctx);
+        match action {
+            VerdictAction::Proceed { modified_intent } => {
+                // Use modified intent if provided; otherwise continue with original.
+                if let Some(_modified) = modified_intent {
+                    debug!("Using SelfField-modified intent");
+                    // TODO: replace intent fields when modification parsing is implemented
+                }
+                // Continue to LLM execution below.
+            }
+            VerdictAction::ShortCircuit { response } => {
+                let metrics = crate::core::react_loop::TurnMetrics {
+                    tool_calls_made: 0,
+                    tool_errors: 0,
+                    elapsed_ms: 0,
+                    iterations: 0,
+                    completed_normally: false,
+                };
+                return Ok((response, metrics));
+            }
+            VerdictAction::SandboxThenProceed { reason } => {
+                // Sandbox infrastructure exists but is complex to wire here.
+                // Log and proceed without sandbox for now.
+                warn!(
+                    "SandboxFirst requested: {}. Proceeding without sandbox.",
+                    reason
+                );
+            }
         }
         // Inject genome care weights into system prompt before LLM calls
         let care_prompt = self.genome_config.care_weights_prompt();

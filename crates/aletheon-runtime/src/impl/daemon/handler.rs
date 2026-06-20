@@ -1000,7 +1000,7 @@ impl RequestHandler {
                 let session_id = self.session_manager.lock().await.session_id.clone();
                 let turn_count = self.session_manager.lock().await.turn_count();
 
-                let execute_tool = move |_id: &str, name: &str, input: &serde_json::Value| {
+                let execute_tool = move |id: &str, name: &str, input: &serde_json::Value| {
                     let runner = runner.clone();
                     let tools_arc = tools_arc.clone();
                     let hook_registry_arc = hook_registry_arc.clone();
@@ -1009,6 +1009,7 @@ impl RequestHandler {
                     let session_approvals_arc = session_approvals_arc.clone();
                     let notify_tx_arc = notify_tx_arc.clone();
                     let debug_perf = debug_perf_arc.clone();
+                    let call_id = id.to_string();
                     let name = name.to_string();
                     let input = input.clone();
                     let working_dir = working_dir.clone();
@@ -1116,12 +1117,14 @@ impl RequestHandler {
                             hr.execute(&ctx).await;
                         }
 
-                        // --- Emit tool_result event through notify_tx ---
+                        // --- Emit tool_call_result event through notify_tx ---
                         if let Some(ref tx) = notify_tx_arc {
                             let event = serde_json::json!({
-                                "type": "tool_result",
-                                "name": name,
-                                "result": content.chars().take(200).collect::<String>(),
+                                "type": "tool_call_result",
+                                "call_id": call_id,
+                                "tool": name,
+                                "output": content.chars().take(200).collect::<String>(),
+                                "is_error": is_error,
                             });
                             let _ = tx.try_send(event.to_string());
                         }

@@ -72,8 +72,8 @@ pub use meta::{Evaluation, MetaRuntimeOps, MigrationResult, RuntimeCandidate, Te
 pub use runtime::{AgentInfo, AgentStatus, RuntimeOps, ScheduleKind, ScheduledTask, StepResult};
 pub use self_field::{
     AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, AwarenessGrowthSuggestion, Care,
-    Conflict, Identity, Intent, IntentSource, MutationIntent, Resolution, SelfAwareness,
-    SelfFieldOps, SelfState, Verdict,
+    Conflict, Identity, Intent, IntentSource, MutationIntent, Resolution, RiskLevel,
+    SelfAwareness, SelfFieldOps, SelfState, Verdict, VerdictAction, VerdictHandler,
 };
 pub use subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
 

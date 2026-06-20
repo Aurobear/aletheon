@@ -1,7 +1,7 @@
 # P1: Memory → Reasoning Integration
 
 **Date**: 2026-06-20
-**Status**: 🟡 In Progress
+**Status**: ✅ Complete (PR #166 merged)
 **Goal**: Make the 4-type memory system actually influence reasoning in the ReActLoop path.
 
 ## Problem

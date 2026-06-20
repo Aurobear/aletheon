@@ -257,6 +257,31 @@ pub struct AwarenessGrowthSuggestion {
     pub confidence: f64,
 }
 
+/// What to do after handling a SelfField verdict.
+#[derive(Debug, Clone)]
+pub enum VerdictAction {
+    /// Proceed with execution (possibly with modified intent).
+    Proceed {
+        modified_intent: Option<Intent>,
+    },
+    /// Short-circuit with a response (denial, confirmation-rejected, delay).
+    ShortCircuit {
+        response: String,
+    },
+    /// Run in sandbox first, then proceed if test passes.
+    SandboxThenProceed {
+        reason: String,
+    },
+}
+
+/// Handles a SelfField verdict before execution.
+///
+/// Implementations decide how to act on each verdict type. The default
+/// implementation maps Allow -> Proceed, Deny -> ShortCircuit, etc.
+pub trait VerdictHandler: Send + Sync {
+    fn handle(&self, verdict: &Verdict, intent: &Intent, ctx: &Context) -> VerdictAction;
+}
+
 /// SelfField trait — the LSM policy engine.
 ///
 /// SelfField reviews intents, enforces boundaries, resolves conflicts,

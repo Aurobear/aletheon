@@ -7,6 +7,7 @@ pub mod evolution_coordinator;
 pub mod orchestrator;
 pub mod react_loop;
 pub mod storm_breaker;
+pub mod verdict_handler;
 
 pub use behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use config::{
@@ -16,3 +17,4 @@ pub use config::{
 pub use evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 pub use orchestrator::AletheonRuntime;
 pub use react_loop::ReActLoop;
+pub use verdict_handler::DefaultVerdictHandler;
