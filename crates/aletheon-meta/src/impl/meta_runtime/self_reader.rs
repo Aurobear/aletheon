@@ -19,6 +19,8 @@ use crate::core::types::Genome as MetaGenome;
 /// Takes a reference to a SelfField implementation to extract identity,
 /// care, and boundary information.
 pub struct SelfReader {
+    /// Schema version — reserved for future compatibility checks.
+    #[allow(dead_code)]
     version: Version,
 }
 

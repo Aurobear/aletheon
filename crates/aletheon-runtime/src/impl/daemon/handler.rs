@@ -131,10 +131,12 @@ pub struct RequestHandler {
     /// Loop detector: tracks consecutive tool failures/successes.
     storm_breaker: Arc<Mutex<StormBreaker>>,
     /// Per-session checkpoint store for file-edit rewind.
+    #[allow(dead_code)]
     checkpoint_store: Arc<Mutex<CheckpointStore>>,
     /// Keyword-based skill router for prompt-to-skill matching.
     skill_router: Arc<Mutex<SkillRouter>>,
     /// Agent role loader — loads agent markdown definitions from ~/.aletheon/agents/.
+    #[allow(dead_code)]
     agent_loader: Arc<Mutex<AgentLoader>>,
     /// Configured hook scripts from the [hooks] config section.
     hooks_config: HooksConfig,
@@ -237,13 +239,13 @@ impl RequestHandler {
 
         // Register tools including memory tools
         let mut tools = ToolRegistry::default();
-        tools.register(Arc::new(CoreMemoryAppendTool {
+        let _ = tools.register(Arc::new(CoreMemoryAppendTool {
             memory: core_memory.clone(),
         }));
-        tools.register(Arc::new(CoreMemoryReplaceTool {
+        let _ = tools.register(Arc::new(CoreMemoryReplaceTool {
             memory: core_memory.clone(),
         }));
-        tools.register(Arc::new(MemorySearchTool {
+        let _ = tools.register(Arc::new(MemorySearchTool {
             recall: recall_memory.clone(),
             core_memory: core_memory.clone(),
             fact_store: Some(fact_store.clone()),
@@ -468,7 +470,6 @@ impl RequestHandler {
             model_routing.clone(),
             Arc::new(registry.clone()),
         ));
-        let model_routing_cfg = model_routing.clone();
         info!(
             default = %model_router.model_name_for(TaskType::General),
             multimodal = %model_router.model_name_for(TaskType::Multimodal),

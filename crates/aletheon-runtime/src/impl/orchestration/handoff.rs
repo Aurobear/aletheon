@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tracing::{info, warn};
 
-use super::agent::{Agent, AgentResponse, AgentResponseStatus};
+use super::agent::{AgentResponse, AgentResponseStatus};
 use super::budget::IterationBudget;
 use super::registry::AgentRegistry;
 use aletheon_abi::message::Message;

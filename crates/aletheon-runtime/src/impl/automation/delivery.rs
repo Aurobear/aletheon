@@ -10,6 +10,7 @@ use super::DeliveryTarget;
 /// to the appropriate channel.
 pub struct DeliveryManager {
     /// Re-usable HTTP clients keyed by URL origin.
+    #[allow(dead_code)]
     clients: HashMap<String, reqwest::Client>,
 }
 

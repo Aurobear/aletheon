@@ -62,6 +62,7 @@ fn load_dotenv(path: &PathBuf) {
 }
 
 /// Default config file search paths.
+#[allow(dead_code)]
 fn default_config_path() -> PathBuf {
     // 1. ~/.aletheon/config.toml
     let path = aletheon_abi::paths::config_file();

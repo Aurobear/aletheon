@@ -206,7 +206,7 @@ impl AgentKernel {
     /// Poll a fork until it produces a result.
     async fn wait_fork(
         &self,
-        pid: Pid,
+        _pid: Pid,
         fork_arc: Arc<Mutex<AgentFork>>,
     ) -> Result<ForkResult, KernelError> {
         loop {

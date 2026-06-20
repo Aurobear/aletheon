@@ -38,6 +38,8 @@ use crate::r#impl::morphogenesis::candidate::CandidateGenerator;
 ///   `rollback()` can restore the actual genome state. It does not persist.
 pub struct DefaultMetaRuntime {
     version: Version,
+    /// Self-reader for genome introspection — reserved for future use.
+    #[allow(dead_code)]
     self_reader: SelfReader,
     candidate_gen: CandidateGenerator,
     sandbox_runner: SandboxRunner,

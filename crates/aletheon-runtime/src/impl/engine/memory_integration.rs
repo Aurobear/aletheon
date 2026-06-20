@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use tracing::{info, warn};
@@ -7,7 +6,6 @@ use aletheon_abi::envelope::*;
 use aletheon_abi::tool::ToolResult;
 use aletheon_brain::r#impl::learning::{OutcomeContext, OutcomeRecord};
 use aletheon_comm::envelope::Payload;
-use aletheon_comm::CommunicationBus;
 
 use super::cognitive_loop::Engine;
 use super::modules::{MemoryRequest, MemoryResponse};

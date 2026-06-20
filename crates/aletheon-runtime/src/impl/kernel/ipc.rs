@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, RwLock};
 
 use aletheon_abi::agent::Pid;
-use aletheon_abi::{IpcMessage, MessageKind};
+use aletheon_abi::IpcMessage;
 
 // ---------------------------------------------------------------------------
 // MessageChannel — point-to-point pipe
@@ -171,6 +171,7 @@ impl SharedScratchpad {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_abi::MessageKind;
 
     #[tokio::test]
     async fn test_message_channel_send_recv() {

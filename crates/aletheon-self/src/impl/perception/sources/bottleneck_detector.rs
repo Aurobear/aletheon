@@ -91,10 +91,18 @@ pub struct BottleneckReport {
 struct SystemMetrics {
     cpu_percent: f64,
     memory_percent: f64,
+    /// Reserved for future disk I/O bottleneck analysis.
+    #[allow(dead_code)]
     disk_read_ops: u64,
+    /// Reserved for future disk I/O bottleneck analysis.
+    #[allow(dead_code)]
     disk_write_ops: u64,
     disk_latency_us: u64,
+    /// Reserved for future network bottleneck analysis.
+    #[allow(dead_code)]
     net_rx_bytes: u64,
+    /// Reserved for future network bottleneck analysis.
+    #[allow(dead_code)]
     net_tx_bytes: u64,
     timestamp: chrono::DateTime<chrono::Utc>,
 }
@@ -104,6 +112,8 @@ pub struct BottleneckDetector {
     threshold: BottleneckThreshold,
     history: VecDeque<SystemMetrics>,
     event_id_counter: u64,
+    /// Accumulated bottleneck reports — reserved for future reporting API.
+    #[allow(dead_code)]
     reports: Vec<BottleneckReport>,
 }
 

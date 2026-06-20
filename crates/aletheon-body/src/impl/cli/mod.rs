@@ -338,7 +338,7 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
             println!("{}", format_genome(&resp["result"]["genome"]));
         } else if !resp["result"]["evolution"].is_null() {
             println!("{}", format_evolution(&resp["result"]["evolution"]));
-        } else if let Some(status) = resp["result"]["status"].as_object() {
+        } else if let Some(_status) = resp["result"]["status"].as_object() {
             println!("{}", format_status(&resp["result"]["status"]));
         } else if let Some(err) = resp["error"]["message"].as_str() {
             eprintln!("Error: {}", err);

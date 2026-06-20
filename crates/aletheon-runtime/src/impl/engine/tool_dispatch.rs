@@ -4,7 +4,6 @@
 //! cognitive_loop.rs and streaming.rs. This module exists for future
 //! extraction of tool-related helper functions if needed.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use tracing::warn;
@@ -12,10 +11,9 @@ use tracing::warn;
 use aletheon_abi::envelope::*;
 use aletheon_abi::ToolDefinition;
 use aletheon_comm::envelope::Payload;
-use aletheon_comm::CommunicationBus;
 
 use super::cognitive_loop::Engine;
-use super::modules::{BodyRequest, BodyResponse, ToolDefinitionMsg};
+use super::modules::{BodyRequest, BodyResponse};
 
 impl Engine {
     /// Get tool definitions for LLM function-calling.

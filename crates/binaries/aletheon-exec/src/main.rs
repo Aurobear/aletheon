@@ -189,7 +189,7 @@ async fn run(args: Args) -> Result<ExecResult> {
     let mut turns_used = 0;
     let mut total_input_tokens = 0u32;
     let mut total_output_tokens = 0u32;
-    let mut final_response = String::new();
+    let final_response;
 
     loop {
         if turns_used >= args.max_turns {

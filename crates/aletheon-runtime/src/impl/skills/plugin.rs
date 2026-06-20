@@ -231,7 +231,7 @@ pub fn register_skill(
             tool = tool.with_schema(schema.clone());
         }
 
-        tool_registry.register(Arc::new(tool));
+        let _ = tool_registry.register(Arc::new(tool));
         info!(skill = %skill.name, tool = %tool_def.name, "Registered skill tool");
     }
 

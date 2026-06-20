@@ -22,6 +22,7 @@ const DEDUP_BUFFER_SIZE: usize = 100;
 const MIN_MESSAGE_LENGTH: usize = 20;
 
 /// Maximum tokens for the extraction LLM call.
+#[allow(dead_code)]
 const MAX_EXTRACTION_TOKENS: u32 = 500;
 
 /// Extracted fact from a conversation turn.

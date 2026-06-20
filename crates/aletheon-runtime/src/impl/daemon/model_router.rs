@@ -205,6 +205,7 @@ mod tests {
 }
 
 // Static version for tests (no self needed)
+#[cfg(test)]
 impl ModelRouter {
     fn classify_message_static(message: &str) -> TaskType {
         if Self::has_multimodal_content(message) {

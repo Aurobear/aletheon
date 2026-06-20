@@ -88,6 +88,7 @@ struct OllamaFunctionDef {
 #[derive(Deserialize)]
 struct ChatResponse {
     message: ChatResponseMessage,
+    #[allow(dead_code)]
     done: bool,
     #[serde(default)]
     prompt_eval_count: Option<u32>,
@@ -97,6 +98,7 @@ struct ChatResponse {
 
 #[derive(Deserialize)]
 struct ChatResponseMessage {
+    #[allow(dead_code)]
     role: String,
     content: String,
     #[serde(default)]
@@ -475,6 +477,8 @@ struct OllamaToolState {
 
 struct ActiveToolCall {
     id: String,
+    /// Tool name — stored for diagnostics but not currently read during execution.
+    #[allow(dead_code)]
     name: String,
     arguments: String,
 }

@@ -213,6 +213,8 @@ impl RollbackBackend for AuditOnlyBackend {
 
 pub struct FileBackupBackend {
     backup_dir: std::path::PathBuf,
+    /// Paths excluded from rollback — reserved for future safety checks.
+    #[allow(dead_code)]
     protected_paths: Vec<String>,
 }
 

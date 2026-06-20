@@ -1372,7 +1372,7 @@ fn process_response(app: &mut App, msg: serde_json::Value) {
             // /sessions response
             let formatted = format_sessions(sessions);
             app.chat.update_last_message(formatted);
-        } else if let Some(models) = result.get("models") {
+        } else if let Some(_models) = result.get("models") {
             // /model response
             let formatted = format_models(result);
             app.chat.update_last_message(formatted);

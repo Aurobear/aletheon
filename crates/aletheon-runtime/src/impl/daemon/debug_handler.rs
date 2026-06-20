@@ -41,6 +41,8 @@ fn builtin_tracepoints() -> Vec<Value> {
 // ---------------------------------------------------------------------------
 
 struct ActiveRecording {
+    /// Recording session identifier — reserved for future correlation.
+    #[allow(dead_code)]
     id: String,
     path: PathBuf,
     started_at: Instant,

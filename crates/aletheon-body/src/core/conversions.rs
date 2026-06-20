@@ -10,7 +10,7 @@ pub fn action_to_tool_input(action: &Action) -> (String, serde_json::Value) {
 }
 
 /// Convert ToolResult to ActionResult
-pub fn tool_result_toActionResult(result: &ToolResult) -> ActionResult {
+pub fn tool_result_to_action_result(result: &ToolResult) -> ActionResult {
     ActionResult {
         success: !result.is_error,
         output: result.content.clone(),
@@ -85,7 +85,7 @@ mod tests {
                 truncated: false,
             },
         };
-        let ar = tool_result_toActionResult(&result);
+        let ar = tool_result_to_action_result(&result);
         assert!(ar.success);
         assert_eq!(ar.output, "hello");
         assert_eq!(ar.elapsed_ms, 100);

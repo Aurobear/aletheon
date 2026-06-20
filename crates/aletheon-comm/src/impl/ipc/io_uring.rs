@@ -16,13 +16,19 @@ use aletheon_abi::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
 pub struct IoUringBackend {
     available: bool,
     kernel_version: String,
+    /// io_uring ring — reserved for future zero-copy IPC implementation.
+    #[allow(dead_code)]
     ring: Option<Mutex<IoUringRing>>,
+    /// Pre-allocated receive buffer for io_uring completions.
+    #[allow(dead_code)]
     recv_buffer: Vec<u8>,
 }
 
 struct IoUringRing {
     #[cfg(feature = "io_uring")]
     ring: io_uring::IoUring,
+    /// Event file descriptor for io_uring notification — reserved for future use.
+    #[allow(dead_code)]
     eventfd: i32,
 }
 

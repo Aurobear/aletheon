@@ -134,7 +134,7 @@ impl BodyRuntime for AletheonBodyRuntime {
 
         match result {
             Ok(tool_result) => {
-                let mut action_result = conversions::tool_result_toActionResult(&tool_result);
+                let mut action_result = conversions::tool_result_to_action_result(&tool_result);
                 action_result.elapsed_ms = start.elapsed().as_millis() as u64;
                 Ok(action_result)
             }

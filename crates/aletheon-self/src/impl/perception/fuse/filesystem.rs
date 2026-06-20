@@ -33,6 +33,8 @@ pub enum FsNode {
 
 /// Agent virtual filesystem.
 pub struct AgentFs {
+    /// FUSE mount point — reserved for future filesystem integration.
+    #[allow(dead_code)]
     mount_point: std::path::PathBuf,
     nodes: Arc<RwLock<HashMap<String, FsNode>>>,
     paused: Arc<RwLock<bool>>,
