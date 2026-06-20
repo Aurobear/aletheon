@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use aletheon_abi::debug::DebugEvent;
 use anyhow::Result;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -59,7 +60,7 @@ impl UnixServer {
 
     /// Handle a single client connection. Reads JSON-RPC requests from the
     /// client and also writes out-of-band notifications (e.g. approval_request)
-    /// from the handler's notification channel.
+    /// from the handler's notification channel, and debug subscriber events.
     async fn handle_connection(
         stream: UnixStream,
         handler: RequestHandler,
@@ -68,6 +69,9 @@ impl UnixServer {
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
         let mut line = String::new();
+
+        // Debug subscriber receiver — populated when the client sends debug.subscribe.
+        let mut debug_subscriber_rx: Option<mpsc::Receiver<DebugEvent>> = None;
 
         loop {
             tokio::select! {
@@ -91,6 +95,13 @@ impl UnixServer {
                     writer.write_all(response_json.as_bytes()).await?;
                     writer.write_all(b"\n").await?;
                     writer.flush().await?;
+
+                    // Check if the debug handler has a pending subscriber rx
+                    // (populated when debug.subscribe was just processed).
+                    if let Some(rx) = handler.debug_handler().take_pending_subscriber_rx().await {
+                        debug_subscriber_rx = Some(rx);
+                        info!("Debug subscriber channel attached to client connection");
+                    }
                 }
                 // Forward out-of-band notifications from the handler to the client.
                 notification = async {
@@ -107,6 +118,23 @@ impl UnixServer {
                             // Notification channel closed — handler dropped.
                             // Continue reading requests normally.
                         }
+                    }
+                }
+                // Forward debug subscriber events to the client.
+                debug_event = async {
+                    match &mut debug_subscriber_rx {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Some(event) = debug_event {
+                        let json = serde_json::to_string(&event)?;
+                        writer.write_all(json.as_bytes()).await?;
+                        writer.write_all(b"\n").await?;
+                        writer.flush().await?;
+                    } else {
+                        // Subscriber channel closed — clear it.
+                        debug_subscriber_rx = None;
                     }
                 }
             }

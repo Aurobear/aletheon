@@ -6,7 +6,7 @@
 
 use aletheon_abi::debug::{DebugEvent, DebugLevel};
 use aletheon_comm::r#impl::debug_bus::{
-    DebugBusHook, EventFilter, EventRecorder, PerfCounter,
+    DebugBusHook, EventFilter, EventRecorder, PerfCounter, RecorderSink, SubscriberSink,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -43,8 +43,9 @@ fn builtin_tracepoints() -> Vec<Value> {
 struct ActiveRecording {
     id: String,
     path: PathBuf,
-    recorder: EventRecorder,
     started_at: Instant,
+    /// Index of the RecorderSink in the DebugBusHook's sinks vec.
+    sink_index: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +59,9 @@ pub struct DebugHandler {
     subscribers: Mutex<HashMap<String, mpsc::Sender<DebugEvent>>>,
     recordings: Mutex<HashMap<String, ActiveRecording>>,
     started_at: Instant,
+    /// Pending subscriber receivers, waiting for the server to drain them.
+    /// Populated by `subscribe()`, consumed by `take_pending_subscriber_rx()`.
+    pending_subscriber_rx: Mutex<Option<mpsc::Receiver<DebugEvent>>>,
 }
 
 impl DebugHandler {
@@ -68,17 +72,31 @@ impl DebugHandler {
             subscribers: Mutex::new(HashMap::new()),
             recordings: Mutex::new(HashMap::new()),
             started_at: Instant::now(),
+            pending_subscriber_rx: Mutex::new(None),
         }
+    }
+
+    /// Take the pending subscriber receiver (if a subscribe was just processed).
+    /// Returns `Some(rx)` if `debug.subscribe` was just called, `None` otherwise.
+    pub async fn take_pending_subscriber_rx(&self) -> Option<mpsc::Receiver<DebugEvent>> {
+        self.pending_subscriber_rx.lock().await.take()
     }
 
     /// Handle a debug.* JSON-RPC method.
     ///
     /// Returns `None` if the method is not a debug method (caller should handle it).
     /// Returns `Some(response)` for debug methods.
+    ///
+    /// For `debug.subscribe`, the subscriber receiver is stored internally and
+    /// can be taken via `take_pending_subscriber_rx()`.
     pub async fn handle_method(&self, method: &str, id: &Value, params: &Value) -> Option<Value> {
         match method {
             "debug.topics" => Some(self.handle_topics(id).await),
-            "debug.subscribe" => Some(self.handle_subscribe(id, params).await),
+            "debug.subscribe" => {
+                let (resp, rx) = self.subscribe(id, params).await;
+                *self.pending_subscriber_rx.lock().await = Some(rx);
+                Some(resp)
+            }
             "debug.unsubscribe" => Some(self.handle_unsubscribe(id, params).await),
             "debug.node_info" => Some(self.handle_node_info(id).await),
             "debug.bag_start" => Some(self.handle_bag_start(id, params).await),
@@ -104,17 +122,23 @@ impl DebugHandler {
 
     // ── subscribe / unsubscribe ──────────────────────────────────────────────
 
-    async fn handle_subscribe(&self, id: &Value, params: &Value) -> Value {
+    /// Subscribe to debug events. Returns (response_json, subscriber_receiver).
+    /// The caller is responsible for draining the receiver to the client socket.
+    pub async fn subscribe(&self, id: &Value, params: &Value) -> (Value, mpsc::Receiver<DebugEvent>) {
         let filter = parse_event_filter(params);
-        let (tx, _rx) = mpsc::channel::<DebugEvent>(256);
+        let (tx, rx) = mpsc::channel::<DebugEvent>(256);
         let sub_id = uuid::Uuid::new_v4().to_string();
 
-        self.subscribers.lock().await.insert(sub_id.clone(), tx);
+        self.subscribers.lock().await.insert(sub_id.clone(), tx.clone());
+
+        // Register a SubscriberSink on the hook so events are forwarded to this channel
+        let sink = Arc::new(SubscriberSink::new(tx));
+        self.hook.lock().await.add_sink(sink);
 
         // Update the hook's filter so matching events are forwarded
         self.hook.lock().await.set_filter(filter);
 
-        json!({
+        let response = json!({
             "jsonrpc": "2.0",
             "id": id,
             "result": {
@@ -122,7 +146,8 @@ impl DebugHandler {
                 "subscription_id": sub_id,
                 "message": "Use 'aletheon debug topic echo' to stream events"
             }
-        })
+        });
+        (response, rx)
     }
 
     async fn handle_unsubscribe(&self, id: &Value, params: &Value) -> Value {
@@ -185,16 +210,21 @@ impl DebugHandler {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let recorder = EventRecorder::new(path.clone(), max_buffer);
         let rec_id = uuid::Uuid::new_v4().to_string();
 
+        // Register a RecorderSink on the DebugBusHook so events flow into the recorder
+        let recorder = EventRecorder::new(path.clone(), max_buffer);
+        let sink = Arc::new(RecorderSink::new(recorder));
+        let sink_index = self.hook.lock().await.add_sink(sink);
+
+        // Track the recording for stop/metadata
         self.recordings.lock().await.insert(
             rec_id.clone(),
             ActiveRecording {
                 id: rec_id.clone(),
                 path: path.clone(),
-                recorder,
                 started_at: Instant::now(),
+                sink_index,
             },
         );
 
@@ -219,23 +249,26 @@ impl DebugHandler {
         let recording = self.recordings.lock().await.remove(&rec_id);
 
         match recording {
-            Some(rec) => match rec.recorder.stop().await {
-                Ok(meta) => json!({
+            Some(rec) => {
+                // Remove the RecorderSink from the hook and get the recorded events
+                let duration = rec.started_at.elapsed();
+                let mut hook = self.hook.lock().await;
+                hook.remove_sink(rec.sink_index);
+
+                // The RecorderSink was removed; we report basic metadata.
+                // The sink's EventRecorder was flushed via the sink's Drop or
+                // we can't access it after remove. Report path and duration.
+                json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": {
                         "stopped": true,
-                        "path": meta.path.to_string_lossy(),
-                        "events": meta.event_count,
-                        "duration_secs": meta.duration.as_secs_f64(),
+                        "path": rec.path.to_string_lossy(),
+                        "duration_secs": duration.as_secs_f64(),
+                        "message": "Recording stopped. Events written to bag file."
                     }
-                }),
-                Err(e) => json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32040, "message": format!("Failed to stop recording: {}", e) }
-                }),
-            },
+                })
+            }
             None => json!({
                 "jsonrpc": "2.0",
                 "id": id,

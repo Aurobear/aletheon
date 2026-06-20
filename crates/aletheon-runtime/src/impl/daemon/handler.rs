@@ -142,6 +142,8 @@ pub struct RequestHandler {
     auto_memory: Arc<Mutex<AutoMemory>>,
     /// Debug handler — exposes debug.* JSON-RPC methods for tracing, perf, and bag recording.
     debug_handler: Arc<DebugHandler>,
+    /// Performance counter — shared with DebugHandler, also used by the ReAct loop.
+    debug_perf: Arc<PerfCounter>,
 }
 
 /// Convert an `Event` to a JSONL string for the notify channel.
@@ -167,6 +169,11 @@ fn event_to_json(event: &Event) -> Option<String> {
 }
 
 impl RequestHandler {
+    /// Get a reference to the debug handler (for subscriber rx access).
+    pub fn debug_handler(&self) -> &Arc<DebugHandler> {
+        &self.debug_handler
+    }
+
     /// Set the notification channel for out-of-band messages to the client.
     /// Returns the receiver end that the server should drain alongside responses.
     pub fn set_notify_channel(&mut self, tx: mpsc::Sender<String>) {
@@ -470,7 +477,7 @@ impl RequestHandler {
         // ── Debug infrastructure ──────────────────────────────────────────
         let debug_perf = Arc::new(PerfCounter::default());
         let debug_hook = Arc::new(tokio::sync::Mutex::new(DebugBusHook::new(EventFilter::default())));
-        let debug_handler = Arc::new(DebugHandler::new(debug_hook, debug_perf));
+        let debug_handler = Arc::new(DebugHandler::new(debug_hook, debug_perf.clone()));
         info!("DebugHandler initialized");
 
         let handler = Self {
@@ -508,6 +515,7 @@ impl RequestHandler {
             session_approvals: Arc::new(Mutex::new(HashMap::new())),
             auto_memory,
             debug_handler,
+            debug_perf,
         };
 
         // Fire OnSessionStart hook
@@ -987,6 +995,7 @@ impl RequestHandler {
                 let memory_queue_arc = self.memory_queue.clone();
                 let session_approvals_arc = self.session_approvals.clone();
                 let notify_tx_arc = self.notify_tx.clone();
+                let debug_perf_arc = self.debug_perf.clone();
                 let working_dir = std::env::current_dir().unwrap_or_default();
                 let session_id = self.session_manager.lock().await.session_id.clone();
                 let turn_count = self.session_manager.lock().await.turn_count();
@@ -999,6 +1008,7 @@ impl RequestHandler {
                     let memory_queue_arc = memory_queue_arc.clone();
                     let session_approvals_arc = session_approvals_arc.clone();
                     let notify_tx_arc = notify_tx_arc.clone();
+                    let debug_perf = debug_perf_arc.clone();
                     let name = name.to_string();
                     let input = input.clone();
                     let working_dir = working_dir.clone();
@@ -1070,6 +1080,12 @@ impl RequestHandler {
                             }
                             None => (format!("Unknown tool: {}", name), true),
                         };
+
+                        // --- PerfCounter: record tool call and errors ---
+                        debug_perf.record_tool_call(&name).await;
+                        if is_error {
+                            debug_perf.record_error();
+                        }
 
                         // --- StormBreaker: track consecutive failures ---
                         {
@@ -1210,6 +1226,10 @@ impl RequestHandler {
 
                 let text = text.unwrap_or_else(|e| format!("error: {e}"));
                 info!(len = text.len(), "ReAct loop completed");
+
+                // Record turn in perf counter (token counts come from usage events
+                // which are not captured here; use 0 as placeholder).
+                self.debug_perf.record_turn(0, 0);
 
                 // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
                 let msg_preview_end = message.char_indices().nth(60).map(|(i, _)| i).unwrap_or(message.len());

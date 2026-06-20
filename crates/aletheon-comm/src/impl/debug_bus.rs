@@ -5,14 +5,15 @@
 //!
 //! Design: `docs/plans/2026-06-19-aletheon-debug-system-design.md` (Layer 2).
 
-use aletheon_abi::debug::{DebugEvent, DebugLevel, DebugSink};
+use aletheon_abi::debug::{DebugEvent, DebugLevel, DebugSink, Tracepoint};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 // ---------------------------------------------------------------------------
 // EventFilter
@@ -183,6 +184,67 @@ pub struct PerfSnapshot {
 }
 
 // ---------------------------------------------------------------------------
+// RecorderSink — DebugSink that records events to a bag file
+// ---------------------------------------------------------------------------
+
+/// A DebugSink that buffers events into an EventRecorder for bag-file recording.
+pub struct RecorderSink {
+    recorder: Mutex<EventRecorder>,
+}
+
+impl RecorderSink {
+    pub fn new(recorder: EventRecorder) -> Self {
+        Self {
+            recorder: Mutex::new(recorder),
+        }
+    }
+
+    /// Consume the sink and stop the recorder, returning metadata.
+    pub async fn into_recorder_stop(self) -> anyhow::Result<RecordingMeta> {
+        let rec = self.recorder.into_inner();
+        rec.stop().await
+    }
+}
+
+#[async_trait]
+impl DebugSink for RecorderSink {
+    async fn emit(&self, event: DebugEvent) {
+        self.recorder.lock().await.record(event);
+    }
+
+    fn should_trace(&self, _tp: &Tracepoint) -> bool {
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SubscriberSink — forwards DebugEvents to an mpsc channel
+// ---------------------------------------------------------------------------
+
+/// A DebugSink that forwards events to an mpsc channel for a connected client.
+pub struct SubscriberSink {
+    tx: mpsc::Sender<DebugEvent>,
+}
+
+impl SubscriberSink {
+    pub fn new(tx: mpsc::Sender<DebugEvent>) -> Self {
+        Self { tx }
+    }
+}
+
+#[async_trait]
+impl DebugSink for SubscriberSink {
+    async fn emit(&self, event: DebugEvent) {
+        // Best-effort: drop event if the channel is full or closed.
+        let _ = self.tx.try_send(event);
+    }
+
+    fn should_trace(&self, _tp: &Tracepoint) -> bool {
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
 // DebugBusHook
 // ---------------------------------------------------------------------------
 
@@ -222,6 +284,22 @@ impl DebugBusHook {
     /// Get a handle to the performance counter.
     pub fn perf_counter(&self) -> Arc<PerfCounter> {
         self.perf.clone()
+    }
+
+    /// Add a debug sink at runtime (non-builder).
+    /// Returns a sink ID that can be used to remove it later.
+    pub fn add_sink(&mut self, sink: Arc<dyn DebugSink>) -> usize {
+        let id = self.sinks.len();
+        self.sinks.push(sink);
+        id
+    }
+
+    /// Remove a debug sink by index (returned from add_sink).
+    /// If the index is out of range, this is a no-op.
+    pub fn remove_sink(&mut self, index: usize) {
+        if index < self.sinks.len() {
+            self.sinks.remove(index);
+        }
     }
 
     /// Replace the event filter (used by debug.trace_start/stop).
