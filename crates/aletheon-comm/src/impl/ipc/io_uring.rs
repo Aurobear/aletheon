@@ -4,6 +4,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Mutex;
 use tracing::debug;
+#[cfg(feature = "io_uring")]
+use tracing::info;
 
 use aletheon_abi::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
 

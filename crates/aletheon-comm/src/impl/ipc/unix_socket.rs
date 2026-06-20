@@ -1,4 +1,9 @@
 //! Unix socket IPC backend (Tier 1 — always available).
+//!
+//! NOTE: This implements the low-level `IpcBackend` trait with `AgentMessage` + bincode.
+//! For the high-level `Transport` trait with `Envelope` + serde_json, see
+//! `unix_socket_transport::UnixSocketTransport`. The two intentionally serve
+//! different trait hierarchies and are not duplicates.
 
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};

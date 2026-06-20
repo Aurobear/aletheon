@@ -20,6 +20,10 @@ bincode = "1"
 libc = { workspace = true }
 dashmap = "6"
 
+[features]
+default = []
+io_uring = []
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"

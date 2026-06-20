@@ -38,6 +38,7 @@ use ratatui::{
     widgets::{Block, Borders, Padding, Paragraph},
     Terminal,
 };
+use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 
 use self::approval_dialog::{ApprovalDialog, DialogDecision};
@@ -622,8 +623,16 @@ async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Ctrl+C: first press clears input, second press quits
+    // Ctrl+C: cancel streaming / clear input / double-press quits
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        // If streaming, send cancel to daemon
+        if app.streaming {
+            let msg = serde_json::json!({"jsonrpc": "2.0", "method": "cancel", "id": 1});
+            let framed = format!("{}\n", msg);
+            let _ = app.stream.write_all(framed.as_bytes()).await;
+            let _ = app.stream.flush().await;
+            return;
+        }
         if app.input_buf.is_empty() {
             match app.last_ctrl_c {
                 Some(t) if t.elapsed() < Duration::from_secs(2) => {

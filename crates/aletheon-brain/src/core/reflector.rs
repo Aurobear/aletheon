@@ -24,6 +24,9 @@ impl Reflector {
     }
 
     /// Reflect on an execution result.
+    ///
+    /// Extracts specific information from `output` (successes) and `error` (failures)
+    /// rather than emitting generic templates.
     pub fn reflect(&self, execution: &ExecutionResult) -> Reflection {
         let mut what_worked = Vec::new();
         let mut what_failed = Vec::new();
@@ -42,18 +45,62 @@ impl Reflector {
                     execution.steps_completed, execution.steps_total
                 ));
             }
+
+            // Extract specific success signals from output
+            for line in execution.output.lines() {
+                let lower = line.to_lowercase();
+                if lower.contains("created") || lower.contains("deployed") || lower.contains("installed") {
+                    what_worked.push(format!("Output indicates: {}", line.trim()));
+                }
+                if lower.contains("warning") || lower.contains("degraded") || lower.contains("partial") {
+                    what_to_improve.push(format!("Output warning: {}", line.trim()));
+                }
+            }
         } else {
             what_failed.push(format!(
                 "Plan {} failed at step {}/{}.",
                 execution.plan_id, execution.steps_completed, execution.steps_total
             ));
 
+            // Extract specific failure details from error
             if let Some(ref error) = execution.error {
-                what_failed.push(format!("Error: {}", error));
+                let error_lines: Vec<&str> = error.lines().collect();
+                if error_lines.len() > 1 {
+                    // Multi-line error: capture first line as summary, last non-empty as root cause
+                    what_failed.push(format!("Error summary: {}", error_lines[0].trim()));
+                    if let Some(root) = error_lines.iter().rev().find(|l| !l.trim().is_empty()) {
+                        what_failed.push(format!("Root cause: {}", root.trim()));
+                    }
+                } else {
+                    what_failed.push(format!("Error: {}", error));
+                }
+
+                // Suggest specific fixes based on error content
+                let lower = error.to_lowercase();
+                if lower.contains("permission") || lower.contains("access denied") {
+                    what_to_improve
+                        .push("Check file/resource permissions before retrying.".to_string());
+                } else if lower.contains("not found") || lower.contains("no such") {
+                    what_to_improve
+                        .push("Verify resource exists and path/identifier is correct.".to_string());
+                } else if lower.contains("timeout") || lower.contains("timed out") {
+                    what_to_improve
+                        .push("Increase timeout or check network/service availability.".to_string());
+                } else if lower.contains("connection") || lower.contains("refused") {
+                    what_to_improve
+                        .push("Verify service is running and network connectivity is available.".to_string());
+                } else if lower.contains("parse") || lower.contains("syntax") || lower.contains("invalid") {
+                    what_to_improve
+                        .push("Validate input format and fix syntax errors before retrying.".to_string());
+                } else {
+                    what_to_improve
+                        .push("Add error handling and retry logic for this failure mode.".to_string());
+                }
+            } else {
+                what_to_improve
+                    .push("Add error handling and retry logic for failed steps.".to_string());
             }
 
-            what_to_improve
-                .push("Add error handling and retry logic for failed steps.".to_string());
             what_to_improve
                 .push("Consider adding rollback actions for partial completion.".to_string());
         }

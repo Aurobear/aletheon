@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use tokio_util::sync::CancellationToken;
 
 use super::model_router::{ModelRouter, TaskType};
 use super::session_manager::SessionManager;
@@ -149,6 +150,8 @@ pub struct RequestHandler {
     debug_handler: Arc<DebugHandler>,
     /// Performance counter — shared with DebugHandler, also used by the ReAct loop.
     debug_perf: Arc<PerfCounter>,
+    /// Cancellation token for the current chat turn.
+    cancel_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 /// Convert an `Event` to a JSONL string for the notify channel.
@@ -535,6 +538,7 @@ impl RequestHandler {
             auto_memory,
             debug_handler,
             debug_perf,
+            cancel_token: Arc::new(Mutex::new(None)),
         };
 
         // Fire OnSessionStart hook
@@ -1250,11 +1254,27 @@ impl RequestHandler {
                 // The select! loop breaks as soon as react_task completes, but the
                 // event channel may still have pending events (especially turn_done
                 // which is the last event emitted by the ReAct loop).
+                let mut had_turn_done = false;
                 while let Ok(event) = event_rx.try_recv() {
+                    if matches!(event, Event::TurnDone { .. }) {
+                        had_turn_done = true;
+                    }
                     if let Some(json_str) = event_to_json(&event) {
                         if let Some(ref tx) = notify_tx {
                             let _ = tx.send(json_str).await;
                         }
+                    }
+                }
+
+                // If the turn was cancelled, send a synthetic turn_done event
+                // so the TUI transitions out of the streaming state.
+                if !had_turn_done {
+                    if let Some(ref tx) = notify_tx {
+                        let _ = tx.send(json!({
+                            "jsonrpc": "2.0",
+                            "method": "event",
+                            "params": {"type": "turn_done"}
+                        }).to_string()).await;
                     }
                 }
 
@@ -1521,6 +1541,11 @@ impl RequestHandler {
                         }
                     }
                     let _ = fs.decay_stale();
+                }
+                // Clear cancel token
+                {
+                    let mut ct = self.cancel_token.lock().await;
+                    *ct = None;
                 }
                 let mut state = self.state.lock().await;
                 state.pending_input = None;

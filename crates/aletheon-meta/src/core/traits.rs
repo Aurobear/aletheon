@@ -13,6 +13,7 @@ use std::sync::Mutex;
 
 use crate::r#impl::genome::loader::GenomeLoader;
 use crate::r#impl::meta_runtime::evaluator::Evaluator;
+use crate::r#impl::meta_runtime::lineage::LineageTracker;
 use crate::r#impl::meta_runtime::migration::MigrationManager;
 use crate::r#impl::meta_runtime::rollback::RollbackManager;
 use crate::r#impl::meta_runtime::sandbox_runner::SandboxRunner;
@@ -28,6 +29,13 @@ use crate::r#impl::morphogenesis::candidate::CandidateGenerator;
 /// - Evaluator: evaluates candidates after testing
 /// - MigrationManager: applies genome changes and records lineage
 /// - RollbackManager: reverts to previous genome versions
+///
+/// **Lineage vs Rollback**: These are complementary, not duplicated.
+/// - `LineageTracker` (inside `MigrationManager`) records version history as
+///   metadata — which versions existed, parent-child relationships, and why
+///   changes happened. Persisted to JSONL via `with_lineage_path()`.
+/// - `RollbackManager` holds full `Genome` snapshots in memory so that
+///   `rollback()` can restore the actual genome state. It does not persist.
 pub struct DefaultMetaRuntime {
     version: Version,
     self_reader: SelfReader,
@@ -66,6 +74,18 @@ impl DefaultMetaRuntime {
     pub fn with_work_dir(mut self, dir: PathBuf) -> Self {
         self.sandbox_runner = SandboxRunner::with_work_dir(dir);
         self
+    }
+
+    /// Create with a JSONL file path for lineage persistence.
+    ///
+    /// If the file exists, its entries are loaded on construction.
+    /// New migrations are appended to the file.
+    pub fn with_lineage_path(self, path: PathBuf) -> anyhow::Result<Self> {
+        let tracker = LineageTracker::with_path(path)?;
+        Ok(Self {
+            migration_mgr: MigrationManager::with_lineage(tracker),
+            ..self
+        })
     }
 
     /// Get the rollback manager for external rollback control.

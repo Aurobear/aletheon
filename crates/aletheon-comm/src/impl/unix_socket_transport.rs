@@ -3,6 +3,11 @@
 //! Implements the `Transport` trait using Unix domain sockets with
 //! `Envelope`-based messaging. Uses serde_json for serialization and
 //! 4-byte big-endian length-prefixed framing.
+//!
+//! NOTE: This is the high-level `Transport` abstraction (Envelope + Target routing).
+//! For the lower-level `IpcBackend` implementation using `AgentMessage` + bincode,
+//! see `ipc/unix_socket::UnixSocketBackend`. The two intentionally serve different
+//! trait hierarchies and are not duplicates.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -4,6 +4,8 @@
 //! and a set of keywords. `score_action()` computes a weighted relevance
 //! score for a given action description.
 
+use std::collections::HashMap;
+
 use aletheon_abi::Care;
 use anyhow::Result;
 use parking_lot::RwLock;
@@ -169,6 +171,61 @@ impl CareLayer {
         Some((old, new_val))
     }
 
+    /// Record an outcome and adjust care weights based on experience.
+    ///
+    /// - If `success` is true and safety care was high, slightly reduce safety
+    ///   weight (was over-cautious).
+    /// - If `success` is false and safety care was low, increase safety weight.
+    /// - If `success` is true and elapsed time is fast (< 2000ms), increase
+    ///   efficiency weight.
+    ///
+    /// `care_scores` maps care topic names to the scores they had during the
+    /// task (as returned by `score_action`-like logic). Only cares that
+    /// *matched* (score > 0) are considered.
+    pub fn record_outcome(
+        &self,
+        success: bool,
+        elapsed_ms: u64,
+        care_scores: &HashMap<String, f64>,
+    ) {
+        self.adjust_from_outcome(success, elapsed_ms, care_scores);
+    }
+
+    /// Internal implementation of outcome-based weight adjustment.
+    ///
+    /// Adjustment rules (each 0.01-0.05 magnitude to avoid oscillation):
+    ///
+    /// 1. Success + high safety score (>= 0.5) → reduce safety by 0.02
+    ///    (was over-cautious).
+    /// 2. Failure + low safety score (< 0.2) → increase safety by 0.03
+    ///    (under-weighted safety).
+    /// 3. Success + fast (< 2000ms) → increase efficiency by 0.02.
+    /// 4. Failure + slow (>= 10000ms) → increase efficiency by 0.03.
+    pub fn adjust_from_outcome(
+        &self,
+        success: bool,
+        elapsed_ms: u64,
+        care_scores: &HashMap<String, f64>,
+    ) {
+        let safety_score = care_scores.get("safety").copied().unwrap_or(0.0);
+
+        if success && safety_score >= 0.5 {
+            // Over-cautious: slightly relax safety weight
+            self.adjust_weight("safety", -0.02);
+        } else if !success && safety_score < 0.2 {
+            // Under-cautious: bump safety weight
+            self.adjust_weight("safety", 0.03);
+        }
+
+        if success && elapsed_ms < 2000 {
+            // Fast success: reward efficiency
+            self.adjust_weight("efficiency", 0.02);
+        } else if !success && elapsed_ms >= 10_000 {
+            // Slow failure: push for more efficiency
+            self.adjust_weight("efficiency", 0.03);
+        }
+    }
+
     /// Persist all cares to the SQLite store.
     pub fn save_to_store(&self, store: &crate::core::store::SelfFieldStore) -> Result<()> {
         let conn = store.conn();
@@ -332,5 +389,73 @@ mod tests {
     fn adjust_weight_nonexistent() {
         let layer = CareLayer::new();
         assert!(layer.adjust_weight("nonexistent", 0.1).is_none());
+    }
+
+    #[test]
+    fn record_outcome_success_high_safety_reduces_safety() {
+        let layer = CareLayer::new();
+        let mut scores = HashMap::new();
+        scores.insert("safety".to_string(), 0.6);
+        layer.record_outcome(true, 500, &scores);
+        // Safety was 1.0, over-cautious success → should be reduced by 0.02
+        let w = layer.weight_of("safety").unwrap();
+        assert!((w - 0.98).abs() < 1e-9, "expected ~0.98, got {}", w);
+    }
+
+    #[test]
+    fn record_outcome_failure_low_safety_increases_safety() {
+        let layer = CareLayer::new();
+        // First lower safety so it's not already at 1.0
+        layer.adjust_weight("safety", -0.25); // 1.0 → 0.75 (clamped to 0.8)
+
+        let mut scores = HashMap::new();
+        scores.insert("safety".to_string(), 0.1);
+        layer.record_outcome(false, 5000, &scores);
+        // Safety was 0.8, under-cautious failure → increase by 0.03
+        let w = layer.weight_of("safety").unwrap();
+        assert!((w - 0.83).abs() < 1e-9, "expected ~0.83, got {}", w);
+    }
+
+    #[test]
+    fn record_outcome_success_fast_increases_efficiency() {
+        let layer = CareLayer::new();
+        let scores = HashMap::new(); // no safety score → doesn't trigger safety rule
+        layer.record_outcome(true, 100, &scores);
+        // Efficiency was 0.5, fast success → +0.02
+        let w = layer.weight_of("efficiency").unwrap();
+        assert!((w - 0.52).abs() < 1e-9, "expected ~0.52, got {}", w);
+    }
+
+    #[test]
+    fn record_outcome_failure_slow_increases_efficiency() {
+        let layer = CareLayer::new();
+        let scores = HashMap::new();
+        layer.record_outcome(false, 15_000, &scores);
+        // Efficiency was 0.5, slow failure → +0.03
+        let w = layer.weight_of("efficiency").unwrap();
+        assert!((w - 0.53).abs() < 1e-9, "expected ~0.53, got {}", w);
+    }
+
+    #[test]
+    fn record_outcome_safety_floor_preserved() {
+        let layer = CareLayer::new();
+        // Bring safety to floor
+        layer.adjust_weight("safety", -0.5); // clamped to 0.8
+        assert_eq!(layer.weight_of("safety"), Some(0.8));
+
+        let mut scores = HashMap::new();
+        scores.insert("safety".to_string(), 0.8);
+        // Success with high safety → try to reduce, but floor is 0.8
+        layer.record_outcome(true, 3000, &scores);
+        assert_eq!(layer.weight_of("safety"), Some(0.8));
+    }
+
+    #[test]
+    fn adjust_from_outcome_neutral_timing_no_efficiency_change() {
+        let layer = CareLayer::new();
+        let scores = HashMap::new();
+        // 5000ms: not fast (<2000) and not slow (>=10000) → no efficiency change
+        layer.adjust_from_outcome(true, 5000, &scores);
+        assert_eq!(layer.weight_of("efficiency"), Some(0.5));
     }
 }

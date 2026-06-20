@@ -288,6 +288,90 @@ impl BrainCore {
         }
     }
 
+    /// Validate executor's plan against planner's analysis.
+    ///
+    /// Extracts key nouns (words >= 4 chars) from the planner's analysis and checks
+    /// whether enough appear in the executor's reasoning. If coverage is low,
+    /// re-prompts the executor once with the missing key terms highlighted.
+    ///
+    /// Returns the (possibly re-prompted) reasoning text.
+    async fn validate_and_reprompt(
+        dm: &DualModelBridge,
+        planner_analysis: &str,
+        executor_reasoning: &str,
+        original_executor_prompt: &str,
+    ) -> String {
+        let key_terms = Self::extract_key_terms(planner_analysis);
+        if key_terms.is_empty() {
+            return executor_reasoning.to_string();
+        }
+
+        let reasoning_lower = executor_reasoning.to_lowercase();
+        let (covered, missing): (Vec<_>, Vec<_>) = key_terms
+            .iter()
+            .partition(|term| reasoning_lower.contains(&term.to_lowercase()));
+
+        // Require at least 40% coverage of key terms
+        let total = key_terms.len();
+        let coverage = covered.len() as f64 / total as f64;
+        if coverage >= 0.4 {
+            return executor_reasoning.to_string();
+        }
+
+        // Re-prompt once with missing terms highlighted
+        let missing_str = missing
+            .iter()
+            .take(10)
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let correction_prompt = format!(
+            "{}\n\nIMPORTANT: Your plan must address these key points from the planner's analysis: {}",
+            original_executor_prompt, missing_str
+        );
+        let msgs = vec![
+            LlmBridge::system_message(
+                "You are an execution model that produces actionable plans. \
+                 You MUST address all key points from the planner's analysis.",
+            ),
+            LlmBridge::user_message(&correction_prompt),
+        ];
+
+        match dm.executor().complete(&msgs, &[]).await {
+            Ok(resp) => resp
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(""),
+            Err(_) => executor_reasoning.to_string(), // fallback to original
+        }
+    }
+
+    /// Extract key terms from text — words >= 4 chars, excluding common stopwords.
+    fn extract_key_terms(text: &str) -> Vec<String> {
+        let stopwords: &[&str] = &[
+            "this", "that", "with", "from", "have", "been", "will", "would", "could",
+            "should", "into", "about", "also", "more", "some", "than", "them", "then",
+            "there", "these", "they", "very", "what", "when", "your", "each", "make",
+            "most", "only", "over", "such", "take", "well", "just", "like", "using",
+            "based", "after", "before", "does", "done", "ensure", "consider", "possible",
+            "potential", "recommended", "analysis", "approach", "best", "brief", "produce",
+            "generate", "above", "following", "result",
+        ];
+
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() >= 4)
+            .map(|w| w.to_lowercase())
+            .filter(|w| !stopwords.contains(&w.as_str()))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     /// Get the effective LLM for a given complexity level.
     ///
     /// If dual_model is configured, routes through it. Otherwise falls back to
@@ -582,9 +666,15 @@ impl BrainCoreOps for BrainCore {
                 .collect::<Vec<_>>()
                 .join("");
 
-            // TODO(P4): DualModel feedback — validate executor's plan against planner's
-            // analysis and re-prompt executor if key points are missed (max 1 re-prompt).
-            // Deferred because it requires robust NLP comparison of plan vs analysis.
+            // Validate executor's plan against planner's analysis.
+            // Extract key terms from analysis and check coverage in reasoning.
+            let reasoning = Self::validate_and_reprompt(
+                dm,
+                &planner_analysis,
+                &reasoning,
+                &executor_prompt,
+            )
+            .await;
 
             let plan = self.planner.generate_plan(intent, &reasoning, ctx);
             Ok(plan)

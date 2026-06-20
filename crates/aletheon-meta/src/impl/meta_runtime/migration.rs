@@ -31,6 +31,18 @@ impl MigrationManager {
         }
     }
 
+    /// Create a MigrationManager with a pre-configured LineageTracker.
+    ///
+    /// Use this to inject a JSONL-backed tracker (via `LineageTracker::with_path()`)
+    /// instead of the default in-memory-only tracker.
+    pub fn with_lineage(tracker: LineageTracker) -> Self {
+        Self {
+            previous_version: Mutex::new(None),
+            genome_path: Mutex::new(None),
+            lineage: Mutex::new(tracker),
+        }
+    }
+
     /// Set the path where the genome is persisted.
     pub fn set_genome_path(&self, path: PathBuf) {
         let mut gp = self.genome_path.lock().unwrap();
