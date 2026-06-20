@@ -58,8 +58,10 @@ use crate::r#impl::skill_router::SkillRouter;
 use crate::r#impl::skills::loader::SkillLoader;
 use crate::r#impl::skills::plugin::register_skill;
 
+use super::debug_handler::DebugHandler;
 use super::prefix_builder::PrefixBuilder;
 use super::DaemonConfig;
+use aletheon_comm::r#impl::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
 /// Session state wrapping the new AletheonRuntime.
 ///
@@ -138,6 +140,8 @@ pub struct RequestHandler {
     /// Automatic memory extraction — uses a cheap LLM to extract and store
     /// important facts from each conversation turn.
     auto_memory: Arc<Mutex<AutoMemory>>,
+    /// Debug handler — exposes debug.* JSON-RPC methods for tracing, perf, and bag recording.
+    debug_handler: Arc<DebugHandler>,
 }
 
 /// Convert an `Event` to a JSONL string for the notify channel.
@@ -463,6 +467,12 @@ impl RequestHandler {
         )));
         info!("AutoMemory initialized with routed extraction model");
 
+        // ── Debug infrastructure ──────────────────────────────────────────
+        let debug_perf = Arc::new(PerfCounter::default());
+        let debug_hook = Arc::new(tokio::sync::Mutex::new(DebugBusHook::new(EventFilter::default())));
+        let debug_handler = Arc::new(DebugHandler::new(debug_hook, debug_perf));
+        info!("DebugHandler initialized");
+
         let handler = Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
@@ -497,6 +507,7 @@ impl RequestHandler {
             hooks_config,
             session_approvals: Arc::new(Mutex::new(HashMap::new())),
             auto_memory,
+            debug_handler,
         };
 
         // Fire OnSessionStart hook
@@ -697,6 +708,14 @@ impl RequestHandler {
             .get("id")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
+
+        // Route debug.* methods to the debug handler (non-blocking for other methods).
+        if method.starts_with("debug.") {
+            let params = request.get("params").cloned().unwrap_or(serde_json::Value::Null);
+            if let Some(response) = self.debug_handler.handle_method(method, &id, &params).await {
+                return response;
+            }
+        }
 
         match method {
             "chat" => {

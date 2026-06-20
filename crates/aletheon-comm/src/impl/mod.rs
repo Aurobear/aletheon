@@ -4,6 +4,7 @@
 //! routing policy, subscription registry, and IPC backends.
 
 pub mod communication_bus;
+pub mod debug_bus;
 pub mod event_log;
 pub mod in_process;
 pub mod ipc;

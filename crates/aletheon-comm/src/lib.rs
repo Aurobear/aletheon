@@ -20,6 +20,9 @@ pub use crate::core::event::{ConcreteEvent, Event, EventType, Priority};
 
 // Re-exports from impl
 pub use crate::r#impl::communication_bus::{BusConfig, CommunicationBus};
+pub use crate::r#impl::debug_bus::{
+    DebugBusHook, EventFilter, EventRecorder, PerfCounter, PerfSnapshot, RecordingMeta,
+};
 pub use crate::r#impl::event_log::{EventLog, LogEntry};
 pub use crate::r#impl::in_process::InProcessTransport;
 pub use crate::r#impl::ipc::{

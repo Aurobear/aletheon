@@ -3,6 +3,8 @@
 //! TUI mode delegates to [`super::ui::run`]. Single-message mode sends one
 //! JSON-RPC request over the daemon socket and exits.
 
+pub mod debug;
+
 use std::io;
 use std::path::PathBuf;
 
@@ -91,6 +93,12 @@ pub enum Command {
     /// Show daemon status (alias: st)
     #[command(alias = "st")]
     Status,
+
+    /// Debug tools (topic, node, bag, perf, trace)
+    Debug {
+        #[command(subcommand)]
+        action: debug::DebugCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -149,6 +157,7 @@ async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
         Command::Evolution => single_message(socket, "/evolution").await,
         Command::Genome => single_message(socket, "/genome").await,
         Command::Status => single_message(socket, "/status").await,
+        Command::Debug { action } => debug::run(socket, action).await,
     }
 }
 

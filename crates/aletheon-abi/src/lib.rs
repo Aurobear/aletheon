@@ -44,6 +44,9 @@ pub mod observable;
 pub mod registry;
 pub mod resource;
 
+// Debug infrastructure
+pub mod debug;
+
 // Communication protocol types
 pub mod envelope;
 pub mod protocol;

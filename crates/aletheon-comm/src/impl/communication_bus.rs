@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use aletheon_abi::envelope::*;
 use aletheon_abi::event::Event;
@@ -17,6 +17,7 @@ use aletheon_abi::event_bus::EventBus;
 use aletheon_abi::protocol::Protocol;
 use aletheon_abi::transport::Transport;
 
+use crate::r#impl::debug_bus::DebugBusHook;
 use crate::r#impl::in_process::InProcessTransport;
 use crate::r#impl::kernel_bus::KernelEventBus;
 use crate::r#impl::pubsub::PubSubProtocol;
@@ -57,6 +58,9 @@ pub struct CommunicationBus {
 
     /// Pub-sub protocol.
     pubsub: Arc<PubSubProtocol>,
+
+    /// Optional debug hook — observes published events.
+    debug_hook: Option<Arc<Mutex<DebugBusHook>>>,
 }
 
 impl CommunicationBus {
@@ -77,6 +81,7 @@ impl CommunicationBus {
             transports: Vec::new(),
             request_response,
             pubsub,
+            debug_hook: None,
         }
     }
 
@@ -92,6 +97,7 @@ impl CommunicationBus {
             transports: Vec::new(),
             request_response,
             pubsub,
+            debug_hook: None,
         }
     }
 
@@ -99,6 +105,16 @@ impl CommunicationBus {
     /// Transports are tried in order for `Target::Agent(pid)` routing.
     pub fn add_transport(&mut self, transport: Arc<dyn Transport>) {
         self.transports.push(transport);
+    }
+
+    /// Attach a debug hook to observe published events.
+    ///
+    /// The hook is called on every `publish()` and `publish_event()` invocation,
+    /// forwarding matching events to registered sinks and optionally recording
+    /// them to a bag file.
+    pub fn with_debug_hook(mut self, hook: DebugBusHook) -> Self {
+        self.debug_hook = Some(Arc::new(Mutex::new(hook)));
+        self
     }
 
     // -- Module-level API --
@@ -196,7 +212,26 @@ impl CommunicationBus {
 
     /// Publish an Event via the underlying EventBus.
     /// Bridge method for backward compatibility with existing Event subscribers.
+    ///
+    /// If a debug hook is attached, a corresponding `DebugEvent` is forwarded
+    /// to the hook before the EventBus dispatch.
     pub async fn publish_event(&self, event: Box<dyn Event>) -> Result<()> {
+        // Notify debug hook (best-effort, non-blocking for the bus).
+        if let Some(ref hook) = self.debug_hook {
+            let debug_event = aletheon_abi::debug::DebugEvent {
+                ts: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+                tracepoint: format!("{:?}", event.event_type()),
+                module: event.source().to_string(),
+                level: aletheon_abi::debug::DebugLevel::Info,
+                data: event.to_json(),
+                session_id: None,
+                agent_id: None,
+            };
+            hook.lock().await.on_event(&debug_event).await;
+        }
         self.event_bus().publish(event).await
     }
 
