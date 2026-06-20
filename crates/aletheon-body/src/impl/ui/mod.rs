@@ -29,7 +29,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    backend::CrosstermBackend,
+    backend::{CrosstermBackend, TestBackend},
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -230,39 +230,53 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         model
     };
 
-    // If not a TTY, fall back to simple line mode
-    if !atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout) {
+    // If not a TTY and no test input, fall back to simple line mode
+    if (!atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout))
+        && test_config.test_input.is_none()
+    {
         return simple_line_mode(stream, caps, model_name).await;
     }
 
-    // Set up terminal
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableBracketedPaste,
-        EnableFocusChange,
-        EnableMouseCapture
-    )?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    // Check if we're in test mode (no TTY needed)
+    let is_test_mode = test_config.test_input.is_some();
 
-    // Clear alternate screen completely (fixes dirty data from previous runs)
-    terminal.clear()?;
+    let result = if is_test_mode {
+        // In test mode, use a test backend (no real terminal)
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend)?;
+        run_app(&mut terminal, stream, caps, model_name, test_config, true).await
+    } else {
+        // Set up real terminal
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableFocusChange,
+            EnableMouseCapture
+        )?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, stream, caps, model_name, test_config).await;
+        // Clear alternate screen completely (fixes dirty data from previous runs)
+        terminal.clear()?;
 
-    // Restore terminal
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableBracketedPaste,
-        DisableFocusChange,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+        let result = run_app(&mut terminal, stream, caps, model_name, test_config, false).await;
+
+        // Restore terminal
+        disable_raw_mode()?;
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableBracketedPaste,
+            DisableFocusChange,
+            DisableMouseCapture
+        )?;
+        terminal.show_cursor()?;
+
+        result
+    };
 
     result
 }
@@ -358,12 +372,13 @@ impl App {
     }
 }
 
-async fn run_app(
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+async fn run_app<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
     stream: UnixStream,
     caps: TermCaps,
     model_name: String,
     test_config: TestConfig,
+    is_test_mode: bool,
 ) -> anyhow::Result<()> {
     let mut app = App::new(stream, caps, model_name.clone());
 
@@ -443,30 +458,36 @@ async fn run_app(
         }
 
         // Poll for events (short timeout to allow spinner/submit updates)
-        let poll_timeout = if app.streaming || app.pending_submit.is_some() {
-            Duration::from_millis(50)
-        } else {
-            Duration::from_millis(200)
-        };
+        // Skip event polling in test mode (no terminal to poll)
+        if !is_test_mode {
+            let poll_timeout = if app.streaming || app.pending_submit.is_some() {
+                Duration::from_millis(50)
+            } else {
+                Duration::from_millis(200)
+            };
 
-        if crossterm::event::poll(poll_timeout)? {
-            match crossterm::event::read()? {
-                Event::Key(key) => {
-                    handle_key(&mut app, key).await;
-                }
-                Event::Paste(text) => {
-                    // Paste: insert at cursor
-                    for ch in text.chars() {
-                        app.input_buf.insert(app.cursor, ch);
-                        app.cursor += ch.len_utf8();
+            if crossterm::event::poll(poll_timeout)? {
+                match crossterm::event::read()? {
+                    Event::Key(key) => {
+                        handle_key(&mut app, key).await;
                     }
-                    app.check_cjk();
+                    Event::Paste(text) => {
+                        // Paste: insert at cursor
+                        for ch in text.chars() {
+                            app.input_buf.insert(app.cursor, ch);
+                            app.cursor += ch.len_utf8();
+                        }
+                        app.check_cjk();
+                    }
+                    Event::Resize(w, _h) => {
+                        app.chat.set_width(w);
+                    }
+                    _ => {}
                 }
-                Event::Resize(w, _h) => {
-                    app.chat.set_width(w);
-                }
-                _ => {}
             }
+        } else {
+            // In test mode, just sleep briefly to avoid busy loop
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
         // Try reading daemon response (with optional event recording)
@@ -1526,8 +1547,8 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> any
 }
 
 /// Draw with optional frame recording — captures the buffer inside the draw closure.
-fn draw_with_recorder(
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+fn draw_with_recorder<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
     app: &mut App,
     frame_recorder: &mut Option<FrameRecorder>,
 ) -> anyhow::Result<()> {
