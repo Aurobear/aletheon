@@ -7,6 +7,7 @@ pub mod computer;
 pub mod event;
 pub mod input;
 pub mod markdown;
+pub mod pager;
 pub mod skill;
 pub mod status;
 pub mod streaming;
@@ -324,6 +325,8 @@ struct App {
     history: CommandHistory,
     /// Tab completion popup
     completion: CompletionPopup,
+    /// Pager overlay (Ctrl+T to open, q/Esc to close)
+    pager: Option<pager::PagerOverlay>,
 }
 
 impl App {
@@ -361,6 +364,7 @@ impl App {
             turn_tokens: None,
             history: CommandHistory::new(),
             completion: CompletionPopup::new(),
+            pager: None,
         }
     }
 
@@ -537,6 +541,20 @@ async fn run_app<B: ratatui::backend::Backend>(
 }
 
 async fn handle_key(app: &mut App, key: KeyEvent) {
+    // If pager overlay is active, route key to pager
+    if let Some(ref mut pager) = app.pager {
+        if pager.handle_key(key) {
+            app.pager = None; // close pager
+        }
+        return;
+    }
+
+    // Ctrl+T: open pager overlay
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('t') {
+        app.pager = Some(pager::PagerOverlay::from_chat(&app.chat, "Transcript"));
+        return;
+    }
+
     // If approval dialog is active, route key to dialog
     if app.pending_approval.is_some() {
         if let KeyCode::Char(c) = key.code {
@@ -1593,8 +1611,18 @@ fn draw_with_recorder<B: ratatui::backend::Backend>(
     let tool_count = app.active_tools.len();
     let thinking_visible = app.stream_ctrl.is_thinking();
 
+    let pager_ref = &app.pager;
+
     terminal.draw(|f| {
         let size = f.area();
+
+        // If pager overlay is active, render it instead of normal UI
+        if let Some(ref pager) = pager_ref {
+            let mut pager_buf = ratatui::buffer::Buffer::empty(size);
+            pager.render(size, &mut pager_buf);
+            f.buffer_mut().merge(&pager_buf);
+            return;
+        }
 
         // Layout: header(2) | chat(min) | input(3) | status(1)
         let header_rows: u16 = if first_render { 3 } else { 1 };
