@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod core;
 pub mod r#impl;
+pub mod tools;
 
 // Re-export from core for backward compatibility
 pub use core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
