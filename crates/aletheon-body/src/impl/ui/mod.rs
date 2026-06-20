@@ -493,6 +493,9 @@ async fn run_app<B: ratatui::backend::Backend>(
                     Event::Resize(w, _h) => {
                         app.chat.set_width(w);
                     }
+                    Event::Mouse(mouse) => {
+                        handle_mouse(&mut app, mouse).await;
+                    }
                     _ => {}
                 }
             }
@@ -538,6 +541,29 @@ async fn run_app<B: ratatui::backend::Backend>(
     }
 
     Ok(())
+}
+
+async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
+    use crossterm::event::MouseEventKind;
+    match mouse.kind {
+        // Mouse wheel up: scroll up in pager, or scroll chat up
+        MouseEventKind::ScrollUp => {
+            if let Some(ref mut pager) = app.pager {
+                pager.scroll_up(3);
+            } else {
+                app.chat.scroll_up(3);
+            }
+        }
+        // Mouse wheel down: scroll down in pager, or scroll chat down
+        MouseEventKind::ScrollDown => {
+            if let Some(ref mut pager) = app.pager {
+                pager.scroll_down(3);
+            } else {
+                app.chat.scroll_down(3);
+            }
+        }
+        _ => {}
+    }
 }
 
 async fn handle_key(app: &mut App, key: KeyEvent) {

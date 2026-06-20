@@ -115,6 +115,16 @@ impl PagerOverlay {
         .render(footer_area, buf);
     }
 
+    /// Scroll up by n lines (for mouse wheel).
+    pub fn scroll_up(&mut self, n: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_add(n);
+    }
+
+    /// Scroll down by n lines (for mouse wheel).
+    pub fn scroll_down(&mut self, n: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(n);
+    }
+
     /// Handle a key event. Returns true if the pager should close.
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
         use crossterm::event::KeyCode;
