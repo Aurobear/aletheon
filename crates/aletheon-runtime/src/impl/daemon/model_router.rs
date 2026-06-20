@@ -147,6 +147,7 @@ impl ModelRouter {
                 || lower.starts_with("show ")
                 || lower.starts_with("list ")
                 || lower.starts_with("ls ")
+                || lower == "ls"
                 || lower.starts_with("查看")
                 || lower.starts_with("读取")
                 || lower.starts_with("显示")
