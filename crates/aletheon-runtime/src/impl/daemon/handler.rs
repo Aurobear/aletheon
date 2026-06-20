@@ -174,6 +174,41 @@ fn event_to_json(event: &Event) -> Option<String> {
         Event::Usage { tokens_in, tokens_out, .. } => json!({"type": "usage", "tokens_in": tokens_in, "tokens_out": tokens_out}),
         Event::TurnDone { result } => json!({"type": "turn_done", "success": result.is_ok()}),
         Event::Error { message } => json!({"type": "error", "message": message}),
+        Event::AwarenessChanged { level, context } => json!({
+            "type": "awareness_changed",
+            "level": level,
+            "context": context,
+        }),
+        Event::ModeChanged { mode } => json!({
+            "type": "mode_changed",
+            "mode": mode,
+        }),
+        Event::SubAgentStatusChanged { agent_id, status, task } => json!({
+            "type": "sub_agent_status",
+            "agent_id": agent_id,
+            "status": status,
+            "task": task,
+        }),
+        Event::PlanUpdate { version, plan, critique, ready_for_approval } => json!({
+            "type": "plan_update",
+            "version": version,
+            "plan": plan,
+            "critique": critique,
+            "ready_for_approval": ready_for_approval,
+        }),
+        Event::Interrupted { reason } => json!({
+            "type": "interrupted",
+            "reason": reason,
+        }),
+        Event::ContextUpdate { used_tokens, max_tokens } => json!({
+            "type": "context_update",
+            "used_tokens": used_tokens,
+            "max_tokens": max_tokens,
+        }),
+        Event::ModelSwitch { model_name } => json!({
+            "type": "model_switch",
+            "model_name": model_name,
+        }),
         _ => return None,
     };
     Some(json!({"jsonrpc": "2.0", "method": "event", "params": params}).to_string())
@@ -2169,6 +2204,18 @@ impl RequestHandler {
                     state.runtime.mode_router_mut().set_mode(mode);
                 }
                 info!(old = ?old_mode, new = ?mode, "Collaboration mode switched");
+                // Notify all connected clients about the mode change
+                if let Some(ref tx) = self.notify_tx {
+                    let notification = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "event",
+                        "params": {
+                            "type": "mode_changed",
+                            "mode": mode.display_name(),
+                        }
+                    });
+                    let _ = tx.send(notification.to_string()).await;
+                }
                 json!({
                     "jsonrpc": "2.0",
                     "id": id,

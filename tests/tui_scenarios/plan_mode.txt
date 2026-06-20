@@ -1,0 +1,1 @@
+Create a Python script that implements a web scraper

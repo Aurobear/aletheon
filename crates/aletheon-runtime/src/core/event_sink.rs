@@ -68,6 +68,41 @@ pub enum Event {
         miss_tokens: u64,
         hit_rate: f64,
     },
+    /// Awareness level changed during reasoning.
+    AwarenessChanged {
+        level: String,
+        context: String,
+    },
+    /// Mode was changed (default/plan/auto/sandbox).
+    ModeChanged {
+        mode: String,
+    },
+    /// Sub-agent status update.
+    SubAgentStatusChanged {
+        agent_id: String,
+        status: String,
+        task: String,
+    },
+    /// Plan update (plan mode).
+    PlanUpdate {
+        version: u32,
+        plan: String,
+        critique: Option<String>,
+        ready_for_approval: bool,
+    },
+    /// Streaming was interrupted.
+    Interrupted {
+        reason: String,
+    },
+    /// Context window usage update.
+    ContextUpdate {
+        used_tokens: u32,
+        max_tokens: u32,
+    },
+    /// Model was switched.
+    ModelSwitch {
+        model_name: String,
+    },
 }
 
 /// Simplified tool result for events.
@@ -295,6 +330,34 @@ mod tests {
         let _ = Event::ToolCallStart {
             name: "bash".into(),
             call_id: "c1".into(),
+        };
+        let _ = Event::AwarenessChanged {
+            level: "hesitant".into(),
+            context: "uncertain about approach".into(),
+        };
+        let _ = Event::ModeChanged {
+            mode: "plan".into(),
+        };
+        let _ = Event::SubAgentStatusChanged {
+            agent_id: "sub1".into(),
+            status: "running".into(),
+            task: "research".into(),
+        };
+        let _ = Event::PlanUpdate {
+            version: 1,
+            plan: "do something".into(),
+            critique: Some("needs work".into()),
+            ready_for_approval: false,
+        };
+        let _ = Event::Interrupted {
+            reason: "user_cancelled".into(),
+        };
+        let _ = Event::ContextUpdate {
+            used_tokens: 50000,
+            max_tokens: 128000,
+        };
+        let _ = Event::ModelSwitch {
+            model_name: "claude-sonnet-4".into(),
         };
     }
 

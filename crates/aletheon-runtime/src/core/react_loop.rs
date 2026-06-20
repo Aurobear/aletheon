@@ -625,6 +625,13 @@ impl ReActLoop {
                 // Emit awareness: uncertainty from response + final response signal
                 self.emit_thinking_complete("thinking", &final_text);
                 self.emit_final_response("final_response");
+                // Drain awareness signals and emit as events for TUI
+                for (level, ctx) in self.drain_awareness_events() {
+                    event_sink.emit(Event::AwarenessChanged {
+                        level: level.display_name().to_string(),
+                        context: ctx,
+                    });
+                }
                 self.messages.push(Message::assistant(&final_text));
                 event_sink.emit(Event::TurnDone {
                     result: Ok(final_text.clone()),
@@ -706,6 +713,13 @@ impl ReActLoop {
                 })
             })
             .unwrap_or_else(|| format!("Max iterations ({}) reached", self.config.max_iterations));
+        // Drain awareness signals and emit as events for TUI
+        for (level, ctx) in self.drain_awareness_events() {
+            event_sink.emit(Event::AwarenessChanged {
+                level: level.display_name().to_string(),
+                context: ctx,
+            });
+        }
         event_sink.emit(Event::TurnDone {
             result: Ok(fallback.clone()),
         });
