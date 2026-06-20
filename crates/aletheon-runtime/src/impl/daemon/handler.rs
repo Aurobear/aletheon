@@ -222,6 +222,11 @@ impl RequestHandler {
         &self.debug_handler
     }
 
+    /// Get a reference to the tool registry (for MCP server).
+    pub fn tools(&self) -> Arc<Mutex<ToolRegistry>> {
+        self.tools.clone()
+    }
+
     /// Set the notification channel for out-of-band messages to the client.
     /// Returns the receiver end that the server should drain alongside responses.
     pub fn set_notify_channel(&mut self, tx: mpsc::Sender<String>) {
@@ -423,6 +428,14 @@ impl RequestHandler {
         // Create hook registry and register builtin hooks
         let mut hook_registry = HookRegistry::new();
         audit_hook::register_audit_hook(&mut hook_registry);
+
+        // Load user hooks from ~/.aletheon/hooks/
+        let hooks_dir = aletheon_dir.join("hooks");
+        let hook_loader = crate::r#impl::hooks::loader::HookLoader::new(hooks_dir);
+        let user_hook_count = hook_loader.register_all(&mut hook_registry);
+        if user_hook_count > 0 {
+            info!(count = user_hook_count, "Loaded user hooks");
+        }
 
         // Register skill hooks from loaded plugins
         for plugin in skill_loader.plugins() {

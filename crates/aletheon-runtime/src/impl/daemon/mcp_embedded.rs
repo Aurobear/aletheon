@@ -12,18 +12,19 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use aletheon_body::r#impl::tools::ToolRegistry;
 
 /// Embedded MCP server that exposes body tools via MCP protocol.
 pub struct McpEmbedded {
-    tool_registry: Arc<ToolRegistry>,
+    tool_registry: Arc<Mutex<ToolRegistry>>,
     socket_path: PathBuf,
 }
 
 impl McpEmbedded {
-    pub fn new(tool_registry: Arc<ToolRegistry>, socket_path: PathBuf) -> Self {
+    pub fn new(tool_registry: Arc<Mutex<ToolRegistry>>, socket_path: PathBuf) -> Self {
         Self {
             tool_registry,
             socket_path,
@@ -58,7 +59,7 @@ impl McpEmbedded {
 
     async fn handle_connection(
         stream: tokio::net::UnixStream,
-        registry: Arc<ToolRegistry>,
+        registry: Arc<Mutex<ToolRegistry>>,
     ) -> anyhow::Result<()> {
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
@@ -88,13 +89,13 @@ impl McpEmbedded {
         Ok(())
     }
 
-    async fn handle_request(request: &Value, registry: &Arc<ToolRegistry>) -> Value {
+    async fn handle_request(request: &Value, registry: &Arc<Mutex<ToolRegistry>>) -> Value {
         let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
         let id = request.get("id").cloned().unwrap_or(Value::Null);
 
         match method {
             "initialize" => Self::handle_initialize(id),
-            "tools/list" => Self::handle_tools_list(id, registry),
+            "tools/list" => Self::handle_tools_list(id, registry).await,
             "tools/call" => Self::handle_tools_call(id, request, registry).await,
             "ping" => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
             _ => json!({
@@ -120,8 +121,9 @@ impl McpEmbedded {
         })
     }
 
-    fn handle_tools_list(id: Value, registry: &Arc<ToolRegistry>) -> Value {
-        let tools: Vec<Value> = registry
+    async fn handle_tools_list(id: Value, registry: &Arc<Mutex<ToolRegistry>>) -> Value {
+        let reg = registry.lock().await;
+        let tools: Vec<Value> = reg
             .definitions()
             .into_iter()
             .map(|def| {
@@ -140,12 +142,16 @@ impl McpEmbedded {
         })
     }
 
-    async fn handle_tools_call(id: Value, request: &Value, registry: &Arc<ToolRegistry>) -> Value {
+    async fn handle_tools_call(id: Value, request: &Value, registry: &Arc<Mutex<ToolRegistry>>) -> Value {
         let params = request.get("params").cloned().unwrap_or(json!({}));
         let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
-        let tool = match registry.get(tool_name) {
+        let tool = {
+            let reg = registry.lock().await;
+            reg.get(tool_name).cloned()
+        };
+        let tool = match tool {
             Some(t) => t,
             None => {
                 return json!({
@@ -184,12 +190,15 @@ mod tests {
     use super::*;
     use aletheon_abi::Registry;
 
-    #[test]
-    fn handle_initialize_returns_server_info() {
-        let registry = Arc::new(ToolRegistry::new());
+    fn make_registry() -> Arc<Mutex<ToolRegistry>> {
+        Arc::new(Mutex::new(ToolRegistry::new()))
+    }
+
+    #[tokio::test]
+    async fn handle_initialize_returns_server_info() {
+        let registry = make_registry();
         let request = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}});
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let response = rt.block_on(McpEmbedded::handle_request(&request, &registry));
+        let response = McpEmbedded::handle_request(&request, &registry).await;
 
         assert_eq!(response["result"]["protocolVersion"], "2024-11-05");
         assert_eq!(
@@ -198,43 +207,42 @@ mod tests {
         );
     }
 
-    #[test]
-    fn handle_tools_list_returns_registry_tools() {
-        let mut reg = ToolRegistry::new();
-        reg.register(Arc::new(
-            aletheon_body::r#impl::tools::bash_exec::BashExecTool,
-        )).unwrap();
-        let registry = Arc::new(reg);
+    #[tokio::test]
+    async fn handle_tools_list_returns_registry_tools() {
+        let reg = make_registry();
+        {
+            let mut r = reg.lock().await;
+            r.register(Arc::new(
+                aletheon_body::r#impl::tools::bash_exec::BashExecTool,
+            )).unwrap();
+        }
 
         let request = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}});
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let response = rt.block_on(McpEmbedded::handle_request(&request, &registry));
+        let response = McpEmbedded::handle_request(&request, &reg).await;
 
         let tools = response["result"]["tools"].as_array().unwrap();
         assert!(tools.iter().any(|t| t["name"] == "bash_exec"));
     }
 
-    #[test]
-    fn handle_ping() {
-        let registry = Arc::new(ToolRegistry::new());
+    #[tokio::test]
+    async fn handle_ping() {
+        let registry = make_registry();
         let request = json!({"jsonrpc": "2.0", "id": 3, "method": "ping"});
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let response = rt.block_on(McpEmbedded::handle_request(&request, &registry));
+        let response = McpEmbedded::handle_request(&request, &registry).await;
         assert!(response["result"].is_object());
     }
 
-    #[test]
-    fn handle_unknown_method() {
-        let registry = Arc::new(ToolRegistry::new());
+    #[tokio::test]
+    async fn handle_unknown_method() {
+        let registry = make_registry();
         let request = json!({"jsonrpc": "2.0", "id": 4, "method": "unknown"});
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let response = rt.block_on(McpEmbedded::handle_request(&request, &registry));
+        let response = McpEmbedded::handle_request(&request, &registry).await;
         assert_eq!(response["error"]["code"], -32601);
     }
 
     #[tokio::test]
     async fn handle_tools_call_unknown_tool() {
-        let registry = Arc::new(ToolRegistry::new());
+        let registry = make_registry();
         let request = json!({
             "jsonrpc": "2.0", "id": 5, "method": "tools/call",
             "params": {"name": "nonexistent", "arguments": {}}

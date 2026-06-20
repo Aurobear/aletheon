@@ -261,8 +261,24 @@ pub async fn run(
 
     info!("Creating request handler...");
     let request_handler = handler::RequestHandler::new(&config, &registry, app_config.model_routing.clone(), injection_rx, Some(bus.clone())).await?;
-    info!(socket = %socket.display(), "Binding unix socket...");
 
+    // Start MCP embedded server on a separate socket
+    let mcp_socket = socket
+        .parent()
+        .unwrap_or(&PathBuf::from("/tmp/aletheon"))
+        .join("aletheon-mcp.sock");
+    let mcp_server = mcp_embedded::McpEmbedded::new(
+        request_handler.tools(),
+        mcp_socket.clone(),
+    );
+    tokio::spawn(async move {
+        if let Err(e) = mcp_server.serve().await {
+            tracing::error!("MCP embedded server error: {}", e);
+        }
+    });
+    info!(path = %mcp_socket.display(), "MCP embedded server started");
+
+    info!(socket = %socket.display(), "Binding unix socket...");
     let mut unix_server = server::UnixServer::new(&socket, request_handler).await?;
 
     // Clean up PID file and pulse on exit
