@@ -5,7 +5,7 @@ use tracing::{info, warn};
 
 use super::budget::IterationBudget;
 use super::registry::AgentRegistry;
-use corpus::r#impl::tools::{
+use tools::tools::{
     PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
 };
 

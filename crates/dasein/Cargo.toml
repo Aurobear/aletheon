@@ -8,6 +8,7 @@ description = "Aletheon Self-evolution - reflection, behavior evolution, and gen
 [dependencies]
 base = { path = "../base" }
 corpus = { path = "../corpus" }
+security = { path = "../security" }
 cognit = { path = "../cognit" }
 memory = { path = "../memory" }
 tokio = { version = "1", features = ["full"] }

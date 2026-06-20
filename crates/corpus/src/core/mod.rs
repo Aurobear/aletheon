@@ -1,7 +1,7 @@
 pub mod conversions;
 
-use crate::r#impl::security::{AuditLogger, ToolRunnerWithGuard};
-use crate::r#impl::tools::ToolRegistry;
+use security::security::{AuditLogger, ToolRunnerWithGuard};
+use tools::tools::ToolRegistry;
 use base::body::{Action, ActionResult, BodyRuntime};
 use base::capability::Capability;
 use base::context::Context;
@@ -59,7 +59,7 @@ impl AletheonBodyRuntime {
                 let level = registry
                     .get(&def.name)
                     .map(|t| t.permission_level())
-                    .unwrap_or(crate::r#impl::tools::PermissionLevel::L0);
+                    .unwrap_or(tools::tools::PermissionLevel::L0);
                 conversions::tool_to_capability(&def.name, level, &def.description)
             })
             .collect()

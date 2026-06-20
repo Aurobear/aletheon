@@ -10,7 +10,7 @@ use crate::r#impl::agent::{AgentProcess, AgentProcessConfig};
 use base::agent::Pid;
 use base::evolution::CognitivePulseEvent;
 use base::EventBus;
-use corpus::r#impl::tools::Tool;
+use tools::tools::Tool;
 use cognit::r#impl::llm::LlmProvider;
 
 /// Registry of available agents and running processes.

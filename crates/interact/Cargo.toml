@@ -1,0 +1,32 @@
+[package]
+name = "interact"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "User interaction: TUI, CLI, and ACIX"
+
+[dependencies]
+base = { path = "../base" }
+drivers = { path = "../drivers", features = ["input", "display", "a11y", "ocr"] }
+tools = { path = "../tools" }
+anyhow = "1"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+pulldown-cmark = "0.12"
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+clap = { version = "4", features = ["derive", "cargo"] }
+atty = "0.2"
+dirs = "5"
+dirs-next = "2"
+which = "7"
+libc = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }

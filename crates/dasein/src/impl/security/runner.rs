@@ -7,7 +7,7 @@ use super::output_guardrail::OutputGuardrail;
 use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
 use base::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use corpus::r#impl::sandbox::{SandboxConfig, SandboxExecutor};
+use security::sandbox::{SandboxConfig, SandboxExecutor};
 
 #[derive(Debug)]
 pub enum ToolError {
@@ -57,7 +57,7 @@ impl ToolRunnerWithGuard {
 
     /// Create with default sandbox (Auto preference).
     pub fn with_default_sandbox(audit_logger: AuditLogger) -> Self {
-        use corpus::r#impl::sandbox::SandboxPreference;
+        use security::sandbox::SandboxPreference;
         Self::new(SandboxExecutor::new(SandboxPreference::Auto), audit_logger)
     }
 

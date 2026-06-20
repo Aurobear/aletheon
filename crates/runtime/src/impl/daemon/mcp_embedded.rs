@@ -15,7 +15,7 @@ use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-use corpus::r#impl::tools::ToolRegistry;
+use tools::tools::ToolRegistry;
 
 /// Embedded MCP server that exposes body tools via MCP protocol.
 pub struct McpEmbedded {
@@ -213,7 +213,7 @@ mod tests {
         {
             let mut r = reg.lock().await;
             r.register(Arc::new(
-                corpus::r#impl::tools::bash_exec::BashExecTool,
+                tools::tools::bash_exec::BashExecTool,
             )).unwrap();
         }
 

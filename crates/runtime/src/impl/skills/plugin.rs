@@ -13,8 +13,8 @@ use tracing::{info, warn};
 
 use base::tool::{PermissionLevel, ToolExposure};
 use base::Registry;
-use corpus::r#impl::tools::script_tool::ScriptTool;
-use corpus::r#impl::tools::ToolRegistry;
+use tools::tools::script_tool::ScriptTool;
+use tools::tools::ToolRegistry;
 
 use super::manifest::{
     parse_exposure, parse_permission, HookManifest, HooksManifest, SkillManifest,

@@ -24,13 +24,13 @@ use base::{
     SubsystemContext, Verdict,
 };
 use base::ui_event::{CollaborationMode, InterruptReason};
-use corpus::r#impl::sandbox::executor::{SandboxExecutor, SandboxPreference};
-use corpus::r#impl::security::approval::ApprovalDecision;
-use corpus::r#impl::security::audit::AuditLogger;
-use corpus::r#impl::security::runner::ToolRunnerWithGuard;
-use corpus::r#impl::security::socket_approval::{PendingApproval, SocketApprovalGate};
-use corpus::r#impl::tools::Tool;
-use corpus::r#impl::tools::ToolRegistry;
+use security::sandbox::executor::{SandboxExecutor, SandboxPreference};
+use security::security::approval::ApprovalDecision;
+use security::security::audit::AuditLogger;
+use security::security::runner::ToolRunnerWithGuard;
+use security::security::socket_approval::{PendingApproval, SocketApprovalGate};
+use tools::tools::Tool;
+use tools::tools::ToolRegistry;
 use cognit::core::reflector::Reflector;
 use cognit::core::ExperienceSummarizer;
 use cognit::r#impl::llm::LlmProvider;
@@ -297,11 +297,11 @@ impl RequestHandler {
 
         // Connect configured MCP servers and register their tools alongside built-ins.
         {
-            let mcp_config = corpus::r#impl::mcp::config::McpConfig {
+            let mcp_config = tools::mcp::config::McpConfig {
                 servers: config.mcp_servers.clone(),
                 ..Default::default()
             };
-            let mut mcp = corpus::r#impl::mcp::manager::McpManager::new(mcp_config);
+            let mut mcp = tools::mcp::manager::McpManager::new(mcp_config);
             if let Err(e) = mcp.connect_all().await {
                 tracing::warn!(error = %e, "MCP connect_all failed; continuing without MCP tools");
             }
@@ -344,11 +344,11 @@ impl RequestHandler {
 
         // Collect default tools for config-based agent loading
         let default_tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(corpus::r#impl::tools::file_read::FileReadTool),
-            Box::new(corpus::r#impl::tools::file_write::FileWriteTool),
-            Box::new(corpus::r#impl::tools::bash_exec::BashExecTool),
-            Box::new(corpus::r#impl::tools::system_status::SystemStatusTool),
-            Box::new(corpus::r#impl::tools::process_list::ProcessListTool),
+            Box::new(tools::tools::file_read::FileReadTool),
+            Box::new(tools::tools::file_write::FileWriteTool),
+            Box::new(tools::tools::bash_exec::BashExecTool),
+            Box::new(tools::tools::system_status::SystemStatusTool),
+            Box::new(tools::tools::process_list::ProcessListTool),
         ];
 
         // Each config-loaded agent needs its own LLM instance; factory creates fresh ones
@@ -497,11 +497,11 @@ impl RequestHandler {
                 let _ = rt_agent_loader.load_from_dir(&agents_dir);
             }
 
-            let mut agent_defs: std::collections::HashMap<String, corpus::r#impl::tools::agent_tool::AgentDefinition> = std::collections::HashMap::new();
+            let mut agent_defs: std::collections::HashMap<String, tools::tools::agent_tool::AgentDefinition> = std::collections::HashMap::new();
             for role in rt_agent_loader.list() {
                 agent_defs.insert(
                     role.name.clone(),
-                    corpus::r#impl::tools::agent_tool::AgentDefinition {
+                    tools::tools::agent_tool::AgentDefinition {
                         name: role.name.clone(),
                         description: role.description.clone(),
                         tools: role.tools.clone(),
@@ -515,7 +515,7 @@ impl RequestHandler {
             if !agent_defs.is_empty() {
                 let llm_for_agents: Arc<dyn cognit::r#impl::llm::LlmProvider> = llm.clone();
                 let tools_for_agents = tools.clone();
-                let execute_fn: corpus::r#impl::tools::agent_tool::ExecuteSubAgentFn = Arc::new(
+                let execute_fn: tools::tools::agent_tool::ExecuteSubAgentFn = Arc::new(
                     move |system_prompt: String, user_prompt: String, allowed_tools: Vec<String>| {
                         let llm = llm_for_agents.clone();
                         let tools = tools_for_agents.clone();
@@ -598,7 +598,7 @@ impl RequestHandler {
                     },
                 );
 
-                let agent_tool = corpus::r#impl::tools::agent_tool::AgentTool::new(
+                let agent_tool = tools::tools::agent_tool::AgentTool::new(
                     agent_defs.clone(),
                     execute_fn,
                 );

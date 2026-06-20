@@ -1,9 +1,8 @@
-pub mod bridge;
+//! Core execution body — the minimal runtime for tool execution.
+
 pub mod core;
-#[path = "impl/mod.rs"]
-pub mod r#impl;
-
-pub use core::AletheonBodyRuntime;
-
-#[cfg(test)]
+pub mod bridge;
 pub mod testing;
+
+// Re-export main types
+pub use core::AletheonBodyRuntime;

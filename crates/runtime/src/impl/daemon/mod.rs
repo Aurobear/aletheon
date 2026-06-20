@@ -34,7 +34,7 @@ pub struct DaemonConfig {
     pub system_prompt: String,
     pub sandbox_preference: String,
     /// MCP server definitions loaded from config (passed through to McpManager at handler init).
-    pub mcp_servers: Vec<corpus::r#impl::mcp::config::McpServerConfig>,
+    pub mcp_servers: Vec<tools::mcp::config::McpServerConfig>,
     /// Hook script configuration from the [hooks] config section.
     pub hooks: crate::core::config::HooksConfig,
 }
@@ -129,27 +129,27 @@ pub async fn run(
         mcp_servers: app_config
             .mcp_servers
             .iter()
-            .map(|s| corpus::r#impl::mcp::config::McpServerConfig {
+            .map(|s| tools::mcp::config::McpServerConfig {
                 name: s.name.clone(),
                 transport: match s.transport.as_str() {
-                    "stdio" => corpus::r#impl::mcp::config::McpTransportConfig::Stdio {
+                    "stdio" => tools::mcp::config::McpTransportConfig::Stdio {
                         command: s.command.clone().unwrap_or_default(),
                         args: Vec::new(),
                     },
                     "http" => {
-                        corpus::r#impl::mcp::config::McpTransportConfig::StreamableHttp {
+                        tools::mcp::config::McpTransportConfig::StreamableHttp {
                             url: s.url.clone().unwrap_or_default(),
                         }
                     }
-                    "sse" => corpus::r#impl::mcp::config::McpTransportConfig::Sse {
+                    "sse" => tools::mcp::config::McpTransportConfig::Sse {
                         url: s.url.clone().unwrap_or_default(),
                     },
-                    _ => corpus::r#impl::mcp::config::McpTransportConfig::Stdio {
+                    _ => tools::mcp::config::McpTransportConfig::Stdio {
                         command: s.command.clone().unwrap_or_default(),
                         args: Vec::new(),
                     },
                 },
-                trust: corpus::r#impl::mcp::config::McpTrustLevel::LocalTrusted,
+                trust: tools::mcp::config::McpTrustLevel::LocalTrusted,
                 enabled: true,
             })
             .collect(),

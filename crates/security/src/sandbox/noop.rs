@@ -1,0 +1,75 @@
+use anyhow::Result;
+use async_trait::async_trait;
+use std::time::{Duration, Instant};
+use tracing::warn;
+
+use crate::sandbox::{
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
+};
+
+/// No-op sandbox backend — executes commands directly with no isolation.
+/// Always available. Used as last-resort fallback.
+pub struct NoopBackend;
+
+#[async_trait]
+impl SandboxBackend for NoopBackend {
+    fn name(&self) -> &str {
+        "noop"
+    }
+
+    fn isolation_level(&self) -> IsolationLevel {
+        IsolationLevel::None
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    fn capabilities(&self) -> SandboxCapabilities {
+        SandboxCapabilities {
+            filesystem_isolation: false,
+            network_isolation: false,
+            resource_limits: false,
+            seccomp_filter: false,
+            limitations: vec![
+                "No filesystem isolation".into(),
+                "No network isolation".into(),
+                "No resource limits".into(),
+                "No seccomp filter".into(),
+            ],
+        }
+    }
+
+    async fn execute(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        _timeout: Duration,
+    ) -> Result<SandboxResult> {
+        warn!(
+            command = cmd,
+            "Executing command WITHOUT sandbox (noop backend)"
+        );
+
+        let start = Instant::now();
+
+        let output = tokio::process::Command::new("bash")
+            .arg("-c")
+            .arg(cmd)
+            .current_dir(&config.working_dir)
+            .envs(&config.env_vars)
+            .output()
+            .await?;
+
+        let elapsed = start.elapsed();
+
+        Ok(SandboxResult {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: output.status.code().unwrap_or(-1),
+            backend_used: "noop".to_string(),
+            isolation_level: IsolationLevel::None,
+            elapsed_ms: elapsed.as_millis() as u64,
+        })
+    }
+}

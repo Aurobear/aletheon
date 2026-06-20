@@ -2,9 +2,9 @@ use async_trait::async_trait;
 
 use super::super::agent::{Agent, AgentConfig, Capability};
 use base::message::{ContentBlock, Message};
-use corpus::r#impl::tools::process_list::ProcessListTool;
-use corpus::r#impl::tools::system_status::SystemStatusTool;
-use corpus::r#impl::tools::Tool;
+use tools::tools::process_list::ProcessListTool;
+use tools::tools::system_status::SystemStatusTool;
+use tools::tools::Tool;
 use cognit::r#impl::llm::{LlmProvider, ToolDefinition};
 
 /// Network agent — handles network operations and monitoring.

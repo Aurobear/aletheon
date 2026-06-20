@@ -16,7 +16,7 @@ use base::envelope::Envelope;
 use base::tool::Tool as ToolTrait;
 use base::tool::{ToolContext, ToolResult};
 use base::{ContentBlock, Message, Role, ToolDefinition};
-use corpus::r#impl::tools::ToolRegistry;
+use tools::tools::ToolRegistry;
 use cognit::r#impl::learning::{OutcomeRecorder, PatternExtractor, RuleStore};
 use cognit::r#impl::llm::LlmProvider;
 use base::CommunicationBus;

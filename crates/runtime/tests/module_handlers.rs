@@ -22,7 +22,7 @@ use runtime::r#impl::engine::modules::{
     SelfFieldResponse,
 };
 
-use corpus::r#impl::tools::ToolRegistry;
+use tools::tools::ToolRegistry;
 use runtime::CoreMemory;
 use dasein::core::{SelfField, SelfFieldConfig};
 use dasein::r#impl::perception::event::{
