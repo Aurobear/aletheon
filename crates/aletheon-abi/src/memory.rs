@@ -118,6 +118,21 @@ pub struct MemoryStats {
     pub newest_entry: Option<DateTime<Utc>>,
 }
 
+/// Trait for text embedding models.
+///
+/// Implementations convert a text string into a dense float vector
+/// suitable for cosine similarity search.  The ABI crate defines only
+/// the contract; concrete providers (OpenAI, local models, hash-based
+/// fallbacks) live in higher-level crates.
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    /// Embed a text string into a vector of floats.
+    async fn embed(&self, text: &str) -> Result<Vec<f32>>;
+
+    /// Return the dimension of the embedding vectors.
+    fn dimension(&self) -> usize;
+}
+
 /// Memory backend trait — like VFS super_operations.
 ///
 /// Each memory type (episodic, semantic, procedural, self) implements

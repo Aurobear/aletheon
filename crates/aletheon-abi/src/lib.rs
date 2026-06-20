@@ -65,8 +65,8 @@ pub use event::{AsyncEventHandler, Event, EventHandler, EventType, Priority, Sub
 pub use event_bus::EventBus;
 pub use genome::Genome;
 pub use memory::{
-    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
-    MemoryQuery, MemoryStats, MemoryType,
+    CompactResult, CompactStrategy, EmbeddingProvider, MemoryBackend, MemoryEntry, MemoryFilter,
+    MemoryHandle, MemoryQuery, MemoryStats, MemoryType,
 };
 pub use meta::{Evaluation, MetaRuntimeOps, MigrationResult, RuntimeCandidate, TestResult};
 pub use runtime::{AgentInfo, AgentStatus, RuntimeOps, ScheduleKind, ScheduledTask, StepResult};

@@ -1,11 +1,13 @@
-//! SemanticMemory — knowledge, concepts, facts, with FTS5 keyword search.
+//! SemanticMemory — knowledge, concepts, facts, with FTS5 keyword search
+//! and optional embedding-based vector search.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 
 use aletheon_abi::{
-    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
-    MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext, SubsystemHealth, Version,
+    CompactResult, CompactStrategy, EmbeddingProvider, MemoryBackend, MemoryEntry, MemoryFilter,
+    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext,
+    SubsystemHealth, Version,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -16,9 +18,161 @@ use uuid::Uuid;
 use crate::activation::{compute_activation, ActivationEntry};
 use crate::schema;
 
+// ---------------------------------------------------------------------------
+// In-memory vector index — pure cosine similarity, no external deps.
+// ---------------------------------------------------------------------------
+
+/// A single entry in the vector index.
+struct VectorEntry {
+    memory_id: Uuid,
+    embedding: Vec<f32>,
+}
+
+/// Simple in-memory vector index with brute-force cosine similarity search.
+///
+/// Suitable for small-to-medium collections (up to ~100k entries).  For
+/// larger collections a proper ANN index (HNSW, IVF) can be swapped in
+/// later without changing the public interface.
+struct VectorIndex {
+    entries: RwLock<Vec<VectorEntry>>,
+}
+
+impl VectorIndex {
+    fn new() -> Self {
+        Self {
+            entries: RwLock::new(Vec::new()),
+        }
+    }
+
+    /// Insert or update the embedding for a memory entry.
+    fn upsert(&self, memory_id: Uuid, embedding: Vec<f32>) {
+        let mut entries = self.entries.write().unwrap();
+        if let Some(entry) = entries.iter_mut().find(|e| e.memory_id == memory_id) {
+            entry.embedding = embedding;
+        } else {
+            entries.push(VectorEntry {
+                memory_id,
+                embedding,
+            });
+        }
+    }
+
+    /// Remove an entry by memory id.
+    fn remove(&self, memory_id: &Uuid) {
+        let mut entries = self.entries.write().unwrap();
+        entries.retain(|e| &e.memory_id != memory_id);
+    }
+
+    /// Search for the top-k most similar entries using cosine similarity.
+    /// Returns `(memory_id, similarity_score)` pairs sorted by descending score.
+    fn search(&self, query: &[f32], top_k: usize) -> Vec<(Uuid, f32)> {
+        let entries = self.entries.read().unwrap();
+        let query_norm = l2_norm(query);
+        if query_norm == 0.0 {
+            return Vec::new();
+        }
+
+        let mut scored: Vec<(Uuid, f32)> = entries
+            .iter()
+            .map(|e| {
+                let sim = cosine_similarity(query, query_norm, &e.embedding);
+                (e.memory_id, sim)
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top_k);
+        scored
+    }
+
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.entries.read().unwrap().len()
+    }
+}
+
+/// Compute the L2 (Euclidean) norm of a vector.
+fn l2_norm(v: &[f32]) -> f32 {
+    v.iter().map(|x| x * x).sum::<f32>().sqrt()
+}
+
+/// Compute cosine similarity between two vectors, given the pre-computed
+/// L2 norm of the first vector.
+fn cosine_similarity(a: &[f32], a_norm: f32, b: &[f32]) -> f32 {
+    if a.len() != b.len() || a_norm == 0.0 {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let b_norm = l2_norm(b);
+    if b_norm == 0.0 {
+        0.0
+    } else {
+        dot / (a_norm * b_norm)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hash-based fallback embedding provider — not semantically meaningful,
+// but allows the vector pipeline to be exercised without a real model.
+// ---------------------------------------------------------------------------
+
+/// A deterministic hash-based embedding provider.
+///
+/// Produces a fixed-dimension vector from a text string using a simple
+/// hash function.  The vectors are NOT semantically meaningful — they
+/// exist solely to exercise the VectorIndex plumbing in environments
+/// where no real embedding model is available.
+pub struct HashEmbeddingProvider {
+    dimension: usize,
+}
+
+impl HashEmbeddingProvider {
+    pub fn new(dimension: usize) -> Self {
+        Self { dimension }
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for HashEmbeddingProvider {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        Ok(hash_embedding(text, self.dimension))
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+}
+
+/// Produce a deterministic float vector from text using a simple hash.
+///
+/// Each byte of the input seeds a position in the output vector via
+/// modular indexing.  The result is L2-normalised so cosine similarity
+/// is well-defined.
+fn hash_embedding(text: &str, dim: usize) -> Vec<f32> {
+    let mut vec = vec![0.0f32; dim];
+    for (i, byte) in text.bytes().enumerate() {
+        let idx = (i.wrapping_mul(31).wrapping_add(byte as usize)) % dim;
+        vec[idx] += 1.0;
+    }
+    // Normalise
+    let norm = l2_norm(&vec);
+    if norm > 0.0 {
+        for v in &mut vec {
+            *v /= norm;
+        }
+    }
+    vec
+}
+
+// ---------------------------------------------------------------------------
+// SemanticMemory
+// ---------------------------------------------------------------------------
+
 pub struct SemanticMemory {
     db_path: PathBuf,
     conn: Mutex<Option<Connection>>,
+    embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    vector_index: VectorIndex,
 }
 
 impl SemanticMemory {
@@ -26,6 +180,21 @@ impl SemanticMemory {
         Self {
             db_path,
             conn: Mutex::new(None),
+            embedding_provider: None,
+            vector_index: VectorIndex::new(),
+        }
+    }
+
+    /// Create a SemanticMemory with an embedding provider for vector search.
+    pub fn with_embedding_provider(
+        db_path: PathBuf,
+        provider: Arc<dyn EmbeddingProvider>,
+    ) -> Self {
+        Self {
+            db_path,
+            conn: Mutex::new(None),
+            embedding_provider: Some(provider),
+            vector_index: VectorIndex::new(),
         }
     }
 
@@ -33,6 +202,51 @@ impl SemanticMemory {
         let guard = self.conn.lock().unwrap();
         let conn = guard.as_ref().expect("SemanticMemory not initialized");
         f(conn)
+    }
+
+    /// Search by embedding vector.  Returns memory entries sorted by
+    /// descending cosine similarity.
+    pub async fn search_by_embedding(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<MemoryEntry>> {
+        let scored = self.vector_index.search(query_embedding, top_k);
+        if scored.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.with_conn(|conn| {
+            let mut entries = Vec::new();
+            for (memory_id, _score) in &scored {
+                let id_str = memory_id.to_string();
+                let result = conn.query_row(
+                    "SELECT * FROM aletheon_memory WHERE id = ?1",
+                    params![id_str],
+                    row_to_entry,
+                );
+                if let Ok(entry) = result {
+                    entries.push(entry);
+                }
+            }
+            Ok(entries)
+        })
+    }
+
+    /// Generate an embedding for the given text using the configured provider.
+    /// Returns None if no embedding provider is configured.
+    async fn generate_embedding(&self, text: &str) -> Option<Vec<f32>> {
+        if let Some(ref provider) = self.embedding_provider {
+            match provider.embed(text).await {
+                Ok(embedding) => Some(embedding),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to generate embedding, skipping vector index");
+                    None
+                }
+            }
+        } else {
+            None
+        }
     }
 }
 
@@ -109,12 +323,17 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
 #[async_trait]
 impl MemoryBackend for SemanticMemory {
     async fn store(&self, entry: MemoryEntry) -> Result<MemoryHandle> {
+        let id = entry.id;
+        let text_content = String::from_utf8_lossy(&entry.content).to_string();
+
+        // Generate embedding before locking the DB connection (embedding
+        // calls may be async / network-bound).
+        let embedding = self.generate_embedding(&text_content).await;
+
         self.with_conn(|conn| {
-            let id = entry.id;
             let now = entry.created_at.to_rfc3339();
             let tags = serde_json::to_string(&entry.tags)?;
             let assoc = serde_json::to_string(&entry.associations)?;
-            let text_content = String::from_utf8_lossy(&entry.content).to_string();
 
             let title = text_content
                 .lines()
@@ -161,10 +380,40 @@ impl MemoryBackend for SemanticMemory {
                 id,
                 memory_type: MemoryType::Semantic,
             })
+        })?;
+
+        // Index the embedding in the vector store (outside the DB lock).
+        if let Some(emb) = embedding {
+            self.vector_index.upsert(id, emb);
+        }
+
+        Ok(MemoryHandle {
+            id,
+            memory_type: MemoryType::Semantic,
         })
     }
 
     async fn recall(&self, query: &MemoryQuery) -> Result<Vec<MemoryEntry>> {
+        // If an embedding vector is provided, prefer vector search.
+        if let Some(ref query_embedding) = query.semantic {
+            let top_k = if query.limit > 0 { query.limit } else { 10 };
+            let entries = self.search_by_embedding(query_embedding, top_k).await?;
+            if !entries.is_empty() {
+                // Update access counts
+                self.with_conn(|conn| {
+                    for entry in &entries {
+                        conn.execute(
+                            "UPDATE aletheon_memory SET access_count = access_count + 1 WHERE id = ?1",
+                            params![entry.id.to_string()],
+                        )?;
+                    }
+                    Ok(())
+                })?;
+                return Ok(entries);
+            }
+            // Fall through to FTS if vector search returned nothing.
+        }
+
         self.with_conn(|conn| {
             let mut entries;
             if let Some(ref text) = query.text {
@@ -327,6 +576,9 @@ impl MemoryBackend for SemanticMemory {
     }
 
     async fn forget(&self, handle: &MemoryHandle) -> Result<()> {
+        // Remove from vector index
+        self.vector_index.remove(&handle.id);
+
         self.with_conn(|conn| {
             let id = handle.id.to_string();
             conn.execute(
@@ -352,7 +604,8 @@ impl MemoryBackend for SemanticMemory {
                 |r| r.get(0),
             )?;
 
-            match strategy {
+            // Collect IDs to remove so we can also clean the vector index.
+            let ids_to_remove: Vec<String> = match strategy {
                 CompactStrategy::PruneBelowImportance { threshold } => {
                     let ids: Vec<String> = conn
                         .prepare(
@@ -375,6 +628,7 @@ impl MemoryBackend for SemanticMemory {
                         "DELETE FROM aletheon_memory WHERE memory_type = 'semantic' AND importance < ?1",
                         params![threshold],
                     )?;
+                    ids
                 }
                 CompactStrategy::KeepTopN { n } => {
                     let ids: Vec<String> = conn
@@ -396,6 +650,7 @@ impl MemoryBackend for SemanticMemory {
                         )?;
                         conn.execute("DELETE FROM aletheon_memory WHERE id = ?1", params![id])?;
                     }
+                    ids
                 }
                 CompactStrategy::MergeSimilar { .. } => {
                     let duplicates: Vec<(String, String)> = conn
@@ -408,6 +663,7 @@ impl MemoryBackend for SemanticMemory {
                         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
                         .collect::<std::result::Result<Vec<_>, _>>()?;
 
+                    let mut removed_ids = Vec::new();
                     for (_memory_id, title) in &duplicates {
                         let ids_to_remove: Vec<String> = conn
                             .prepare(
@@ -433,7 +689,9 @@ impl MemoryBackend for SemanticMemory {
                                 params![remove_id],
                             )?;
                         }
+                        removed_ids.extend(ids_to_remove);
                     }
+                    removed_ids
                 }
                 CompactStrategy::AgeBased {
                     max_age,
@@ -459,6 +717,14 @@ impl MemoryBackend for SemanticMemory {
                         )?;
                         conn.execute("DELETE FROM aletheon_memory WHERE id = ?1", params![id])?;
                     }
+                    ids
+                }
+            };
+
+            // Remove from vector index
+            for id_str in &ids_to_remove {
+                if let Ok(uuid) = Uuid::parse_str(id_str) {
+                    self.vector_index.remove(&uuid);
                 }
             }
 
@@ -527,6 +793,13 @@ mod tests {
     fn setup() -> (tempfile::NamedTempFile, SemanticMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mem = SemanticMemory::new(tmp.path().to_path_buf());
+        (tmp, mem)
+    }
+
+    fn setup_with_embedding() -> (tempfile::NamedTempFile, SemanticMemory) {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let provider = Arc::new(HashEmbeddingProvider::new(32));
+        let mem = SemanticMemory::with_embedding_provider(tmp.path().to_path_buf(), provider);
         (tmp, mem)
     }
 
@@ -630,5 +903,212 @@ mod tests {
 
         let stats = mem.stats().await.unwrap();
         assert_eq!(stats.total_entries, 0);
+    }
+
+    // --- Vector search tests ---
+
+    #[tokio::test]
+    async fn test_vector_index_cosine_similarity() {
+        let index = VectorIndex::new();
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+
+        // Two similar vectors and one different
+        let v1 = vec![1.0, 0.0, 0.0];
+        let v2 = vec![0.9, 0.1, 0.0]; // similar to v1
+        let v3 = vec![0.0, 0.0, 1.0]; // orthogonal to v1
+
+        index.upsert(id1, v1.clone());
+        index.upsert(id2, v2);
+        index.upsert(id3, v3);
+
+        let results = index.search(&v1, 3);
+        assert_eq!(results.len(), 3);
+        // id1 should be first (exact match, score ~1.0)
+        assert_eq!(results[0].0, id1);
+        assert!((results[0].1 - 1.0).abs() < 0.001);
+        // id2 should be second (similar)
+        assert_eq!(results[1].0, id2);
+        assert!(results[1].1 > 0.8);
+        // id3 should be last (orthogonal, score ~0)
+        assert_eq!(results[2].0, id3);
+        assert!(results[2].1 < 0.1);
+    }
+
+    #[tokio::test]
+    async fn test_vector_index_top_k() {
+        let index = VectorIndex::new();
+        let query = vec![1.0, 0.0, 0.0];
+
+        for _ in 0..10 {
+            index.upsert(Uuid::new_v4(), vec![0.5, 0.5, 0.0]);
+        }
+
+        let results = index.search(&query, 3);
+        assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_vector_index_upsert_updates() {
+        let index = VectorIndex::new();
+        let id = Uuid::new_v4();
+
+        index.upsert(id, vec![1.0, 0.0, 0.0]);
+        assert_eq!(index.len(), 1);
+
+        // Upsert same ID with different embedding
+        index.upsert(id, vec![0.0, 1.0, 0.0]);
+        assert_eq!(index.len(), 1);
+
+        let results = index.search(&[0.0, 1.0, 0.0], 1);
+        assert!((results[0].1 - 1.0).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_vector_index_remove() {
+        let index = VectorIndex::new();
+        let id = Uuid::new_v4();
+        index.upsert(id, vec![1.0, 0.0]);
+        assert_eq!(index.len(), 1);
+
+        index.remove(&id);
+        assert_eq!(index.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_hash_embedding_deterministic() {
+        let provider = HashEmbeddingProvider::new(32);
+        let e1 = provider.embed("hello world").await.unwrap();
+        let e2 = provider.embed("hello world").await.unwrap();
+        assert_eq!(e1, e2);
+        assert_eq!(e1.len(), 32);
+    }
+
+    #[tokio::test]
+    async fn test_hash_embedding_different_texts() {
+        let provider = HashEmbeddingProvider::new(32);
+        let e1 = provider.embed("hello").await.unwrap();
+        let e2 = provider.embed("world").await.unwrap();
+        // Different texts should produce different embeddings
+        assert_ne!(e1, e2);
+    }
+
+    #[tokio::test]
+    async fn test_semantic_store_and_vector_search() {
+        let (_tmp, mut mem) = setup_with_embedding();
+        init_mem(&mut mem).await;
+
+        let e1 = make_entry(b"Rust is a systems programming language");
+        let e2 = make_entry(b"Python is a scripting language");
+        let id1 = e1.id;
+        mem.store(e1).await.unwrap();
+        mem.store(e2).await.unwrap();
+
+        // Direct vector search should find the stored entries
+        let query_text = "Rust is a systems programming language";
+        let provider = HashEmbeddingProvider::new(32);
+        let query_emb = provider.embed(query_text).await.unwrap();
+
+        let results = mem.search_by_embedding(&query_emb, 10).await.unwrap();
+        assert!(!results.is_empty());
+        // The exact match should be first
+        assert_eq!(results[0].id, id1);
+    }
+
+    #[tokio::test]
+    async fn test_recall_with_semantic_field() {
+        let (_tmp, mut mem) = setup_with_embedding();
+        init_mem(&mut mem).await;
+
+        mem.store(make_entry(b"quantum computing basics"))
+            .await
+            .unwrap();
+        mem.store(make_entry(b"classical algorithms overview"))
+            .await
+            .unwrap();
+
+        // Use recall with semantic field set
+        let provider = HashEmbeddingProvider::new(32);
+        let query_emb = provider.embed("quantum computing basics").await.unwrap();
+
+        let query = MemoryQuery {
+            semantic: Some(query_emb),
+            limit: 5,
+            ..Default::default()
+        };
+        let results = mem.recall(&query).await.unwrap();
+        assert!(!results.is_empty());
+        assert!(String::from_utf8_lossy(&results[0].content).contains("quantum"));
+    }
+
+    #[tokio::test]
+    async fn test_recall_semantic_fallback_to_fts() {
+        // Without embedding provider, semantic field is ignored, falls back to FTS
+        let (_tmp, mut mem) = setup();
+        init_mem(&mut mem).await;
+
+        mem.store(make_entry(b"Rust memory safety guarantees"))
+            .await
+            .unwrap();
+
+        let query = MemoryQuery {
+            text: Some("memory".into()),
+            semantic: Some(vec![1.0, 0.0]), // will be ignored (no provider)
+            limit: 10,
+            ..Default::default()
+        };
+        let results = mem.recall(&query).await.unwrap();
+        assert!(!results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_forget_removes_from_vector_index() {
+        let (_tmp, mut mem) = setup_with_embedding();
+        init_mem(&mut mem).await;
+
+        let entry = make_entry(b"forgettable with embedding");
+        let handle = mem.store(entry).await.unwrap();
+
+        // Verify vector index has the entry
+        let results = mem
+            .search_by_embedding(&hash_embedding("forgettable with embedding", 32), 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+
+        // Forget
+        mem.forget(&handle).await.unwrap();
+
+        // Verify vector index no longer has the entry
+        let results = mem
+            .search_by_embedding(&hash_embedding("forgettable with embedding", 32), 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_cosine_similarity_basic() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        let a_norm = l2_norm(&a);
+        assert!((cosine_similarity(&a, a_norm, &b) - 1.0).abs() < 0.001);
+
+        let c = vec![0.0, 1.0, 0.0];
+        assert!(cosine_similarity(&a, a_norm, &c).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cosine_similarity_zero_vector() {
+        let a = vec![0.0, 0.0];
+        let b = vec![1.0, 0.0];
+        assert_eq!(cosine_similarity(&a, 0.0, &b), 0.0);
+    }
+
+    #[test]
+    fn test_l2_norm() {
+        assert!((l2_norm(&[3.0, 4.0]) - 5.0).abs() < 0.001);
+        assert_eq!(l2_norm(&[0.0, 0.0]), 0.0);
     }
 }

@@ -5,6 +5,7 @@ pub mod completion;
 #[cfg(all(feature = "input", feature = "display", feature = "a11y"))]
 pub mod computer;
 pub mod event;
+pub mod help_overlay;
 pub mod input;
 pub mod markdown;
 pub mod pager;
@@ -671,6 +672,65 @@ async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Ctrl+A: cursor to beginning of line
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('a') {
+        let before = &app.input_buf[..app.cursor];
+        if let Some(pos) = before.rfind('\n') {
+            app.cursor = pos + 1;
+        } else {
+            app.cursor = 0;
+        }
+        return;
+    }
+
+    // Ctrl+E: cursor to end of line
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
+        let after = &app.input_buf[app.cursor..];
+        if let Some(pos) = after.find('\n') {
+            app.cursor = app.cursor + pos;
+        } else {
+            app.cursor = app.input_buf.len();
+        }
+        return;
+    }
+
+    // Ctrl+W: delete word backward
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') {
+        if app.cursor > 0 {
+            // Skip trailing spaces
+            let before = &app.input_buf[..app.cursor];
+            let trimmed_end = before.trim_end().len();
+            // Find start of word
+            let trimmed = &before[..trimmed_end];
+            let word_start = trimmed.rfind(|c: char| c.is_whitespace())
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            app.input_buf.drain(word_start..app.cursor);
+            app.cursor = word_start;
+            app.check_cjk();
+        }
+        return;
+    }
+
+    // Ctrl+K: delete from cursor to end of line
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
+        let after = &app.input_buf[app.cursor..];
+        let cut_len = after.find('\n').unwrap_or(after.len());
+        app.input_buf.drain(app.cursor..app.cursor + cut_len);
+        app.check_cjk();
+        return;
+    }
+
+    // Ctrl+U: delete from cursor to beginning of line
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('u') {
+        let before = &app.input_buf[..app.cursor];
+        let cut_start = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
+        app.input_buf.drain(cut_start..app.cursor);
+        app.cursor = cut_start;
+        app.check_cjk();
+        return;
+    }
+
     match key.code {
         // Tab: trigger completion for slash commands
         KeyCode::Tab => {
@@ -764,11 +824,13 @@ async fn handle_key(app: &mut App, key: KeyEvent) {
             }
         }
 
-        // Character input
+        // Character input (skip control characters from Ctrl+letter)
         KeyCode::Char(c) => {
-            app.input_buf.insert(app.cursor, c);
-            app.cursor += c.len_utf8();
-            app.check_cjk();
+            if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                app.input_buf.insert(app.cursor, c);
+                app.cursor += c.len_utf8();
+                app.check_cjk();
+            }
         }
 
         // Cursor movement
