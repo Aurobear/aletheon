@@ -291,6 +291,12 @@ struct App {
     read_buf: Vec<u8>,
     running: bool,
     streaming: bool,
+    /// Whether a chat turn is active (between turn_start and turn_done).
+    /// Unlike `streaming` (which controls the spinner and is reset by
+    /// process_response), `turn_active` is only set by turn_start and
+    /// cleared by turn_done. Used by auto-submit to know when the next
+    /// message can be sent.
+    turn_active: bool,
     response_buf: String,
     caps: TermCaps,
     skill_loader: SkillLoader,
@@ -338,6 +344,7 @@ impl App {
             read_buf: vec![0u8; 8192],
             running: true,
             streaming: false,
+            turn_active: false,
             response_buf: String::new(),
             caps,
             skill_loader,
@@ -505,8 +512,10 @@ async fn run_app<B: ratatui::backend::Backend>(
 
         // Check if a turn just completed and we should auto-submit next line
         if let Some(ref mut reader) = test_input {
-            // Check if streaming just finished (turn_done sets streaming=false)
-            if !app.streaming && !reader.is_exhausted() {
+            // Use turn_active (set by turn_start, cleared by turn_done) instead
+            // of streaming (which is also cleared by process_response and would
+            // trigger premature auto-submit before the turn actually completes).
+            if !app.turn_active && !reader.is_exhausted() {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
                     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -514,7 +523,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                 }
             }
             // All inputs consumed and last turn done
-            if reader.done && !app.streaming {
+            if reader.done && !app.turn_active {
                 app.running = false;
             }
         }
@@ -1138,6 +1147,7 @@ fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.stream_ctrl.start_turn();
             app.status.waiting = true;
             app.status.elapsed_secs = 0.0;
+            app.turn_active = true;
         }
         "thinking_delta" => {
             if let Some(text) = params.get("text").and_then(|v| v.as_str()) {
@@ -1197,6 +1207,7 @@ fn handle_event(app: &mut App, params: &serde_json::Value) {
         "turn_done" => {
             app.stream_ctrl.commit();
             app.streaming = false;
+            app.turn_active = false;
             app.status.waiting = false;
             app.status.elapsed_secs = 0.0;
             for (_, card) in app.active_tools.drain() {

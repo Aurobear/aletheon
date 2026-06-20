@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 use crate::core::config::{GenomeConfig, RuntimeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
@@ -7,6 +9,7 @@ use aletheon_abi::brain::Plan;
 use aletheon_abi::context::Context;
 use aletheon_abi::runtime::StepResult;
 use aletheon_abi::self_field::{Intent, Verdict};
+use aletheon_memory::MemoryRouter;
 use anyhow::Result;
 use tracing::{debug, warn};
 
@@ -24,8 +27,7 @@ pub struct AletheonRuntime {
     react_loop: ReActLoop,
     evolution: Option<EvolutionCoordinator>,
     genome_config: GenomeConfig,
-    // Subsystem references would be injected here in production
-    // For now, we define the orchestration logic that coordinates them
+    memory: Option<Arc<MemoryRouter>>,
 }
 
 impl AletheonRuntime {
@@ -36,6 +38,7 @@ impl AletheonRuntime {
             react_loop,
             evolution: None,
             genome_config: GenomeConfig::default(),
+            memory: None,
         }
     }
 
@@ -62,6 +65,12 @@ impl AletheonRuntime {
     pub fn with_evolution(mut self, evo_config: EvolutionConfig) -> Result<Self> {
         self.evolution = Some(EvolutionCoordinator::new(evo_config)?);
         Ok(self)
+    }
+
+    /// Attach a MemoryRouter for prompt-time memory recall.
+    pub fn with_memory(mut self, memory: Arc<MemoryRouter>) -> Self {
+        self.memory = Some(memory);
+        self
     }
 
     /// Run post-turn evolution if a coordinator is attached.
@@ -281,6 +290,17 @@ impl AletheonRuntime {
             let current = self.react_loop.system_prompt().to_string();
             self.react_loop
                 .set_system_prompt(format!("{}\n\n{}", current, care_prompt));
+        }
+
+        // Inject memory context into system prompt
+        if let Some(ref memory) = self.memory {
+            let mem_ctx = memory.recall_for_prompt(input, 3).await;
+            let mem_section = mem_ctx.to_prompt_section();
+            if !mem_section.is_empty() {
+                let current = self.react_loop.system_prompt().to_string();
+                self.react_loop
+                    .set_system_prompt(format!("{}\n\n{}", current, mem_section));
+            }
         }
 
         self.react_loop

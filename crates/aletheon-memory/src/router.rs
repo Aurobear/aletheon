@@ -4,7 +4,8 @@ use std::collections::HashMap;
 
 use aletheon_abi::{
     CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
-    MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext, SubsystemHealth, Version,
+    MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, Subsystem, SubsystemContext,
+    SubsystemHealth, Version,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -13,6 +14,85 @@ use crate::episodic::EpisodicMemory;
 use crate::procedural::ProceduralMemory;
 use crate::self_memory::SelfMemory;
 use crate::semantic::SemanticMemory;
+
+/// Summary of a past reflection, for injection into reasoning context.
+#[derive(Debug, Clone)]
+pub struct ReflectionSummary {
+    pub task_summary: String,
+    pub what_worked: Vec<String>,
+    pub what_failed: Vec<String>,
+    pub learned: Vec<String>,
+}
+
+/// Summary of a learned skill, for injection into reasoning context.
+#[derive(Debug, Clone)]
+pub struct SkillSummary {
+    pub name: String,
+    pub description: String,
+    pub success_rate: f64,
+}
+
+/// Lightweight bundle of memories recalled for a specific prompt.
+///
+/// Injected into the LLM's system prompt so the agent can reason with
+/// awareness of its past reflections, stored knowledge, and learned skills.
+#[derive(Debug, Clone, Default)]
+pub struct MemoryContext {
+    /// Recent reflections (from episodic memory)
+    pub recent_reflections: Vec<ReflectionSummary>,
+    /// Relevant knowledge snippets (from semantic memory, keyword search)
+    pub relevant_knowledge: Vec<String>,
+    /// Matching skills/procedures (from procedural memory)
+    pub matching_skills: Vec<SkillSummary>,
+}
+
+impl MemoryContext {
+    /// Render into a prompt section for LLM injection.
+    pub fn to_prompt_section(&self) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+
+        let mut sections = vec!["## Relevant Memory".to_string()];
+
+        if !self.recent_reflections.is_empty() {
+            sections.push("### Recent Reflections".to_string());
+            for r in &self.recent_reflections {
+                let mut line = format!("- {}", r.task_summary);
+                if !r.learned.is_empty() {
+                    line += &format!(" (learned: {})", r.learned.join(", "));
+                }
+                if !r.what_failed.is_empty() {
+                    line += &format!(" (pitfalls: {})", r.what_failed.join(", "));
+                }
+                sections.push(line);
+            }
+        }
+
+        if !self.relevant_knowledge.is_empty() {
+            sections.push("### Relevant Knowledge".to_string());
+            for k in &self.relevant_knowledge {
+                sections.push(format!("- {}", k));
+            }
+        }
+
+        if !self.matching_skills.is_empty() {
+            sections.push("### Matching Skills".to_string());
+            for s in &self.matching_skills {
+                let rate = (s.success_rate * 100.0) as u32;
+                sections.push(format!("- {} ({}% success): {}", s.name, rate, s.description));
+            }
+        }
+
+        sections.join("\n")
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.recent_reflections.is_empty()
+            && self.relevant_knowledge.is_empty()
+            && self.matching_skills.is_empty()
+    }
+}
 
 /// Routes memory operations to dynamically registered backends.
 pub struct MemoryRouter {
@@ -61,6 +141,89 @@ impl MemoryRouter {
             .iter()
             .find(|(t, _)| *t == mt)
             .map(|(_, b)| b.as_ref())
+    }
+
+    /// Recall relevant memories for a user prompt.
+    ///
+    /// Queries episodic (recent reflections), semantic (keyword search),
+    /// and procedural (matching skills) backends to build a `MemoryContext`
+    /// that can be injected into the LLM's system prompt.
+    pub async fn recall_for_prompt(&self, prompt: &str, max_per_category: usize) -> MemoryContext {
+        let mut ctx = MemoryContext::default();
+
+        // 1. Episodic: recent reflections (last N), parsed from stored JSON
+        let epi_query = MemoryQuery {
+            memory_type: Some(MemoryType::Episodic),
+            limit: max_per_category,
+            ..Default::default()
+        };
+        if let Some(epi_backend) = self.backend_for(MemoryType::Episodic) {
+            match epi_backend.recall(&epi_query).await {
+                Ok(entries) => {
+                    ctx.recent_reflections = entries
+                        .into_iter()
+                        .filter_map(|e| {
+                            let entry = ReflectionEntry::from_json_bytes(&e.content)?;
+                            Some(ReflectionSummary {
+                                task_summary: entry.task_summary,
+                                what_worked: entry.what_worked,
+                                what_failed: entry.what_failed,
+                                learned: entry.learned,
+                            })
+                        })
+                        .collect();
+                }
+                Err(e) => tracing::warn!("episodic recall failed: {}", e),
+            }
+        }
+
+        // 2. Semantic: keyword search on prompt
+        let sem_query = MemoryQuery {
+            text: Some(prompt.to_string()),
+            memory_type: Some(MemoryType::Semantic),
+            limit: max_per_category,
+            ..Default::default()
+        };
+        if let Some(sem_backend) = self.backend_for(MemoryType::Semantic) {
+            match sem_backend.recall(&sem_query).await {
+                Ok(entries) => {
+                    ctx.relevant_knowledge = entries
+                        .into_iter()
+                        .filter_map(|e| String::from_utf8(e.content).ok())
+                        .collect();
+                }
+                Err(e) => tracing::warn!("semantic recall failed: {}", e),
+            }
+        }
+
+        // 3. Procedural: skills (via generic recall)
+        let proc_query = MemoryQuery {
+            memory_type: Some(MemoryType::Procedural),
+            limit: max_per_category,
+            ..Default::default()
+        };
+        if let Some(proc_backend) = self.backend_for(MemoryType::Procedural) {
+            match proc_backend.recall(&proc_query).await {
+                Ok(entries) => {
+                    ctx.matching_skills = entries
+                        .into_iter()
+                        .filter_map(|e| {
+                            let name = e.tags.first().cloned().unwrap_or_else(|| "unnamed".into());
+                            let description = String::from_utf8(e.content).ok()?;
+                            let success_rate = e.importance;
+                            Some(SkillSummary {
+                                name,
+                                description,
+                                success_rate,
+                            })
+                        })
+                        .collect();
+                }
+                Err(e) => tracing::warn!("procedural recall failed: {}", e),
+            }
+        }
+
+        ctx
     }
 }
 
@@ -366,5 +529,228 @@ mod tests {
         // exists by checking that registered types work fine.
         let result = router.store(make_entry(MemoryType::Episodic, b"ok")).await;
         assert!(result.is_ok());
+    }
+
+    // --- MemoryContext tests ---
+
+    #[test]
+    fn test_memory_context_empty() {
+        let ctx = MemoryContext::default();
+        assert!(ctx.is_empty());
+        assert_eq!(ctx.to_prompt_section(), "");
+    }
+
+    #[test]
+    fn test_memory_context_reflections_only() {
+        let ctx = MemoryContext {
+            recent_reflections: vec![ReflectionSummary {
+                task_summary: "fixed auth bug".into(),
+                what_worked: vec!["reading logs".into()],
+                what_failed: vec!["guessing".into()],
+                learned: vec!["always check logs first".into()],
+            }],
+            relevant_knowledge: vec![],
+            matching_skills: vec![],
+        };
+        assert!(!ctx.is_empty());
+        let section = ctx.to_prompt_section();
+        assert!(section.contains("## Relevant Memory"));
+        assert!(section.contains("### Recent Reflections"));
+        assert!(section.contains("fixed auth bug"));
+        assert!(section.contains("always check logs first"));
+        assert!(section.contains("pitfalls: guessing"));
+        assert!(!section.contains("### Relevant Knowledge"));
+    }
+
+    #[test]
+    fn test_memory_context_knowledge_only() {
+        let ctx = MemoryContext {
+            recent_reflections: vec![],
+            relevant_knowledge: vec!["Rust uses ownership for memory safety".into()],
+            matching_skills: vec![],
+        };
+        let section = ctx.to_prompt_section();
+        assert!(section.contains("### Relevant Knowledge"));
+        assert!(section.contains("Rust uses ownership"));
+        assert!(!section.contains("### Recent Reflections"));
+    }
+
+    #[test]
+    fn test_memory_context_skills_only() {
+        let ctx = MemoryContext {
+            recent_reflections: vec![],
+            relevant_knowledge: vec![],
+            matching_skills: vec![SkillSummary {
+                name: "git-commit".into(),
+                description: "commit changes".into(),
+                success_rate: 0.95,
+            }],
+        };
+        let section = ctx.to_prompt_section();
+        assert!(section.contains("### Matching Skills"));
+        assert!(section.contains("git-commit"));
+        assert!(section.contains("95% success"));
+    }
+
+    #[test]
+    fn test_memory_context_all_sections() {
+        let ctx = MemoryContext {
+            recent_reflections: vec![ReflectionSummary {
+                task_summary: "deployed v2".into(),
+                what_worked: vec![],
+                what_failed: vec![],
+                learned: vec!["test first".into()],
+            }],
+            relevant_knowledge: vec!["CI/CD pipelines".into()],
+            matching_skills: vec![SkillSummary {
+                name: "deploy".into(),
+                description: "deploy to prod".into(),
+                success_rate: 0.9,
+            }],
+        };
+        let section = ctx.to_prompt_section();
+        assert!(section.contains("### Recent Reflections"));
+        assert!(section.contains("### Relevant Knowledge"));
+        assert!(section.contains("### Matching Skills"));
+    }
+
+    // --- recall_for_prompt integration tests ---
+
+    #[tokio::test]
+    async fn test_recall_for_prompt_empty() {
+        let (_dir, router) = setup_router().await;
+        let ctx = router.recall_for_prompt("hello world", 3).await;
+        assert!(ctx.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_recall_for_prompt_with_episodic() {
+        let (_dir, router) = setup_router().await;
+
+        // Store a reflection via the episodic backend's store_reflection
+        // We need to use the MemoryBackend trait to store, then verify recall_for_prompt
+        // picks it up. But store_reflection is on EpisodicMemory directly, not on
+        // MemoryBackend. The generic store() puts raw bytes in aletheon_memory table,
+        // while store_reflection() also populates reflection_events table.
+        //
+        // For recall_for_prompt, we go through the generic MemoryBackend::recall()
+        // which reads from aletheon_memory table, so content is the serialized bytes.
+        // We store a ReflectionEntry as JSON bytes.
+        use aletheon_abi::{ReflectionEntry, ReflectionTrigger, ReflectionOutcome};
+
+        let reflection = ReflectionEntry {
+            id: "test-ref-1".into(),
+            timestamp: Utc::now(),
+            trigger: ReflectionTrigger::TaskComplete,
+            task_summary: "fixed memory leak in router".into(),
+            outcome: ReflectionOutcome::Success,
+            what_worked: vec!["valgrind".into()],
+            what_failed: vec![],
+            learned: vec!["always check for leaks".into()],
+            behavior_changes: vec![],
+            confidence: 0.9,
+        };
+        let content = reflection.to_json_bytes();
+        let entry = make_entry(MemoryType::Episodic, &content);
+        router.store(entry).await.unwrap();
+
+        let ctx = router.recall_for_prompt("memory leak", 5).await;
+        assert_eq!(ctx.recent_reflections.len(), 1);
+        assert_eq!(ctx.recent_reflections[0].task_summary, "fixed memory leak in router");
+        assert_eq!(ctx.recent_reflections[0].learned, vec!["always check for leaks"]);
+        assert_eq!(ctx.recent_reflections[0].what_worked, vec!["valgrind"]);
+    }
+
+    #[tokio::test]
+    async fn test_recall_for_prompt_with_semantic() {
+        let (_dir, router) = setup_router().await;
+
+        // Store a semantic entry with text content
+        let entry = make_entry(MemoryType::Semantic, b"Rust borrow checker prevents data races");
+        router.store(entry).await.unwrap();
+
+        let ctx = router.recall_for_prompt("Rust borrow checker", 5).await;
+        assert_eq!(ctx.relevant_knowledge.len(), 1);
+        assert_eq!(ctx.relevant_knowledge[0], "Rust borrow checker prevents data races");
+    }
+
+    #[tokio::test]
+    async fn test_recall_for_prompt_with_procedural() {
+        let (_dir, router) = setup_router().await;
+
+        // Store a procedural entry
+        let mut entry = make_entry(MemoryType::Procedural, b"run cargo test before committing");
+        entry.tags = vec!["git-workflow".into()];
+        entry.importance = 0.85;
+        router.store(entry).await.unwrap();
+
+        let ctx = router.recall_for_prompt("how to commit", 5).await;
+        assert_eq!(ctx.matching_skills.len(), 1);
+        assert_eq!(ctx.matching_skills[0].name, "git-workflow");
+        assert!((ctx.matching_skills[0].success_rate - 0.85).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_recall_for_prompt_full_flow() {
+        let (_dir, router) = setup_router().await;
+
+        // Store one of each type
+        use aletheon_abi::{ReflectionEntry, ReflectionTrigger, ReflectionOutcome};
+
+        let reflection = ReflectionEntry {
+            id: "ref-full".into(),
+            timestamp: Utc::now(),
+            trigger: ReflectionTrigger::TaskComplete,
+            task_summary: "deployed microservice".into(),
+            outcome: ReflectionOutcome::Success,
+            what_worked: vec!["blue-green deploy".into()],
+            what_failed: vec!["direct cutover".into()],
+            learned: vec!["always use blue-green".into()],
+            behavior_changes: vec![],
+            confidence: 0.95,
+        };
+        router
+            .store(make_entry(MemoryType::Episodic, &reflection.to_json_bytes()))
+            .await
+            .unwrap();
+
+        router
+            .store(make_entry(MemoryType::Semantic, b"Rust borrow checker prevents data races"))
+            .await
+            .unwrap();
+
+        let mut proc = make_entry(MemoryType::Procedural, b"deploy to k8s");
+        proc.tags = vec!["k8s-deploy".into()];
+        proc.importance = 0.8;
+        router.store(proc).await.unwrap();
+
+        let ctx = router.recall_for_prompt("Rust borrow", 5).await;
+        assert!(!ctx.is_empty());
+        assert_eq!(ctx.recent_reflections.len(), 1);
+        assert_eq!(ctx.relevant_knowledge.len(), 1);
+        assert_eq!(ctx.matching_skills.len(), 1);
+
+        // Verify the prompt section renders correctly
+        let section = ctx.to_prompt_section();
+        assert!(section.contains("deployed microservice"));
+        assert!(section.contains("always use blue-green"));
+        assert!(section.contains("Rust borrow checker"));
+        assert!(section.contains("k8s-deploy"));
+    }
+
+    #[tokio::test]
+    async fn test_recall_for_prompt_max_per_category() {
+        let (_dir, router) = setup_router().await;
+
+        // Store 5 semantic entries
+        for i in 0..5 {
+            router
+                .store(make_entry(MemoryType::Semantic, format!("fact {}", i).as_bytes()))
+                .await
+                .unwrap();
+        }
+
+        let ctx = router.recall_for_prompt("fact", 2).await;
+        assert!(ctx.relevant_knowledge.len() <= 2);
     }
 }

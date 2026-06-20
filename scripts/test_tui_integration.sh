@@ -12,7 +12,7 @@ DAEMON_BIN="$ALETHEON_BIN/aletheond"
 CLI_BIN="$ALETHEON_BIN/aletheon"
 SCENARIOS_DIR="$PROJECT_ROOT/tests/tui_scenarios"
 SOCKET="/tmp/aletheon-tui-test.sock"
-TIMEOUT=120
+TIMEOUT=45
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 OUTPUT_DIR="/tmp/aletheon-tui-test-$TIMESTAMP"
 
@@ -72,55 +72,70 @@ if [[ ${#SCENARIOS[@]} -eq 0 ]]; then
     done
 fi
 
-log "Running ${#SCENARIOS[@]} scenarios..."
+log "Running ${#SCENARIOS[@]} scenarios in parallel..."
 echo ""
 
-PASS_COUNT=0
-FAIL_COUNT=0
-
+# Run all scenarios in parallel
+PIDS=()
 for scenario in "${SCENARIOS[@]}"; do
     INPUT_FILE="$SCENARIOS_DIR/${scenario}.txt"
     if [[ ! -f "$INPUT_FILE" ]]; then
         fail "Scenario file not found: $INPUT_FILE"
-        FAIL_COUNT=$((FAIL_COUNT+1))
         continue
     fi
 
-    log "Running scenario: $scenario"
     FRAMES_FILE="$OUTPUT_DIR/${scenario}_frames.jsonl"
     EVENTS_FILE="$OUTPUT_DIR/${scenario}_events.jsonl"
 
-    # Run TUI with test flags
-    timeout "$TIMEOUT" "$CLI_BIN" \
-        -s "$SOCKET" \
-        --test-input "$INPUT_FILE" \
-        --record-frames "$FRAMES_FILE" \
-        --record-events "$EVENTS_FILE" \
-        --auto-submit \
-        --test-timeout "$TIMEOUT" \
-        > "$OUTPUT_DIR/${scenario}_tui.log" 2>&1 || true
+    # Run TUI in background
+    (
+        timeout "$TIMEOUT" "$CLI_BIN" \
+            -s "$SOCKET" \
+            --test-input "$INPUT_FILE" \
+            --record-frames "$FRAMES_FILE" \
+            --record-events "$EVENTS_FILE" \
+            --auto-submit \
+            --test-timeout "$TIMEOUT" \
+            > "$OUTPUT_DIR/${scenario}_tui.log" 2>&1
+        echo $? > "$OUTPUT_DIR/${scenario}_exit"
+    ) &
+    PIDS+=($!)
+    log "  Started: $scenario (PID=${PIDS[-1]})"
+done
 
-    # Basic verification
-    if [[ -f "$FRAMES_FILE" ]]; then
-        FRAME_COUNT=$(wc -l < "$FRAMES_FILE")
-        log "  Frames recorded: $FRAME_COUNT"
-    else
-        log "  No frames recorded"
-    fi
+# Wait for all scenarios
+log "Waiting for all scenarios to complete..."
+for pid in "${PIDS[@]}"; do
+    wait "$pid" 2>/dev/null || true
+done
 
-    if [[ -f "$EVENTS_FILE" ]]; then
-        EVENT_COUNT=$(wc -l < "$EVENTS_FILE")
-        log "  Events recorded: $EVENT_COUNT"
-    else
-        log "  No events recorded"
-    fi
+# Verify results
+PASS_COUNT=0
+FAIL_COUNT=0
+
+for scenario in "${SCENARIOS[@]}"; do
+    FRAMES_FILE="$OUTPUT_DIR/${scenario}_frames.jsonl"
+    EVENTS_FILE="$OUTPUT_DIR/${scenario}_events.jsonl"
+
+    FRAME_COUNT=0
+    EVENT_COUNT=0
+    [[ -f "$FRAMES_FILE" ]] && FRAME_COUNT=$(wc -l < "$FRAMES_FILE")
+    [[ -f "$EVENTS_FILE" ]] && EVENT_COUNT=$(wc -l < "$EVENTS_FILE")
+
+    EXIT_CODE=0
+    [[ -f "$OUTPUT_DIR/${scenario}_exit" ]] && EXIT_CODE=$(cat "$OUTPUT_DIR/${scenario}_exit")
+
+    log "  $scenario: frames=$FRAME_COUNT events=$EVENT_COUNT exit=$EXIT_CODE"
 
     # Check for panic in daemon log
     if grep -qi "panic\|thread.*panicked" "$OUTPUT_DIR/daemon.log" 2>/dev/null; then
-        fail "  [$scenario] Daemon panic detected"
+        fail "  [$scenario] Daemon panic"
+        FAIL_COUNT=$((FAIL_COUNT+1))
+    elif [[ $FRAME_COUNT -eq 0 ]]; then
+        fail "  [$scenario] No frames captured"
         FAIL_COUNT=$((FAIL_COUNT+1))
     else
-        pass "  [$scenario] No panic"
+        pass "  [$scenario] OK"
         PASS_COUNT=$((PASS_COUNT+1))
     fi
 done

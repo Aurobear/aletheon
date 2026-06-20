@@ -18,7 +18,7 @@ pub mod semantic;
 // Re-export primary types
 pub use episodic::EpisodicMemory;
 pub use procedural::ProceduralMemory;
-pub use router::MemoryRouter;
+pub use router::{MemoryContext, MemoryRouter, ReflectionSummary, SkillSummary};
 pub use self_memory::SelfMemory;
 pub use semantic::SemanticMemory;
 

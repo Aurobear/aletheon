@@ -1224,6 +1224,18 @@ impl RequestHandler {
                     }
                 };
 
+                // Drain remaining events from the ReAct loop (including turn_done).
+                // The select! loop breaks as soon as react_task completes, but the
+                // event channel may still have pending events (especially turn_done
+                // which is the last event emitted by the ReAct loop).
+                while let Ok(event) = event_rx.try_recv() {
+                    if let Some(json_str) = event_to_json(&event) {
+                        if let Some(ref tx) = notify_tx {
+                            let _ = tx.send(json_str).await;
+                        }
+                    }
+                }
+
                 let (text, _metrics) = text.unwrap_or_else(|e| (format!("error: {e}"), TurnMetrics {
                     tool_calls_made: 0,
                     tool_errors: 0,
