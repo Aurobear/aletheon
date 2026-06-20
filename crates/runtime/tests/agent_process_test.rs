@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use base::evolution::{CognitivePulseEvent, ProviderHealth};
 use base::{EventBus, EventType};
-use comm::KernelEventBus;
+use base::KernelEventBus;
 use runtime::r#impl::agent::{AgentProcess, AgentProcessConfig, AgentState};
 
 use std::sync::atomic::{AtomicBool, Ordering};

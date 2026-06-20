@@ -1,4 +1,4 @@
-use base::{EventType, Priority};
+use crate::{EventType, Priority};
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
 
@@ -24,7 +24,7 @@ impl EventLog {
         }
     }
 
-    pub fn record(&mut self, event: &dyn base::Event) {
+    pub fn record(&mut self, event: &dyn crate::Event) {
         let entry = LogEntry {
             timestamp: Utc::now(),
             event_type: event.event_type(),
@@ -66,7 +66,7 @@ mod tests {
         source: String,
     }
 
-    impl base::Event for TestEvent {
+    impl crate::Event for TestEvent {
         fn event_type(&self) -> EventType {
             self.event_type.clone()
         }

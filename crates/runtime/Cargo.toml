@@ -9,7 +9,6 @@ description = "Aletheon Runtime - core agent runtime and orchestration"
 base = { path = "../base" }
 cognit = { path = "../cognit" }
 corpus = { path = "../corpus" }
-comm = { path = "../comm" }
 memory = { path = "../memory" }
 dasein = { path = "../dasein" }
 metacog = { path = "../metacog" }

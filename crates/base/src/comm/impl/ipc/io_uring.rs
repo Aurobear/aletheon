@@ -7,7 +7,7 @@ use tracing::debug;
 #[cfg(feature = "io_uring")]
 use tracing::info;
 
-use base::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
+use crate::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
 
 /// Real io_uring IPC backend.
 ///

@@ -5,7 +5,7 @@
 //! Design: `docs/plans/2026-06-19-aletheon-debug-system-design.md` (Layer 3).
 
 use base::debug::{DebugEvent, DebugLevel};
-use comm::r#impl::debug_bus::{
+use base::comm::r#impl::debug_bus::{
     DebugBusHook, EventFilter, EventRecorder, PerfCounter, RecorderSink, SubscriberSink,
 };
 use serde_json::{json, Value};

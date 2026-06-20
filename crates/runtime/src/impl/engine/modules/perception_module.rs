@@ -11,8 +11,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use base::envelope::*;
-use comm::envelope::Payload;
-use comm::CommunicationBus;
+use base::envelope::Payload;
+use base::CommunicationBus;
 
 use dasein::r#impl::perception::event::{PerceptionEvent, Priority as EventPriority};
 

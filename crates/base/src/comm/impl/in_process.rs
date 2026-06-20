@@ -14,13 +14,13 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use tokio::sync::{broadcast, mpsc};
 
-use base::envelope::*;
-use base::event::{Event, EventType, Priority};
-use base::transport::{HealthStatus, Transport, TransportHealth, TransportKind};
+use crate::envelope::*;
+use crate::event::{Event, EventType, Priority};
+use crate::transport::{HealthStatus, Transport, TransportHealth, TransportKind};
 
-use crate::r#impl::event_log::EventLog;
-use crate::r#impl::kernel_bus::KernelEventBus;
-use crate::r#impl::routing_policy::{RouteAction, RoutingPolicy};
+use crate::comm::r#impl::event_log::EventLog;
+use crate::comm::r#impl::kernel_bus::KernelEventBus;
+use crate::comm::r#impl::routing_policy::{RouteAction, RoutingPolicy};
 
 /// Intra-process transport — based on tokio channels.
 /// Wraps existing KernelEventBus for backward-compatible event dispatch.

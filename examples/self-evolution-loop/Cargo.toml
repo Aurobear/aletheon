@@ -6,7 +6,6 @@ publish = false
 
 [dependencies]
 base = { path = "../../crates/base" }
-comm = { path = "../../crates/comm" }
 cognit = { path = "../../crates/cognit" }
 dasein = { path = "../../crates/dasein" }
 metacog = { path = "../../crates/metacog" }

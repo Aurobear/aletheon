@@ -5,7 +5,6 @@ members = [
     "crates/binaries/exec",
     "crates/binaries/cli",
     "crates/base",
-    "crates/comm",
     "crates/memory",
     "crates/dasein",
     "crates/cognit",

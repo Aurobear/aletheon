@@ -19,7 +19,7 @@ use cognit::r#impl::llm::pulse::{LlmPulse, PulseConfig};
 use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
-use comm::KernelEventBus;
+use base::KernelEventBus;
 
 use crate::ProviderRegistry;
 

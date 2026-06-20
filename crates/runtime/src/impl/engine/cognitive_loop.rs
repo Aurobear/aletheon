@@ -19,7 +19,7 @@ use base::{ContentBlock, Message, Role, ToolDefinition};
 use corpus::r#impl::tools::ToolRegistry;
 use cognit::r#impl::learning::{OutcomeRecorder, PatternExtractor, RuleStore};
 use cognit::r#impl::llm::LlmProvider;
-use comm::CommunicationBus;
+use base::CommunicationBus;
 use dasein::bridge::perception::PerceptionInjection;
 use dasein::r#impl::hook::dispatcher::HookDispatcher;
 use dasein::r#impl::hook::types::{HandlerResult as HookResult, HookContext, HookEventName};
@@ -655,7 +655,7 @@ impl Engine {
                 if let Some(ref bus) = self.bus {
                     use base::evolution::ToolObservationPayload;
                     use base::{EventType, Priority};
-                    use comm::core::event::ConcreteEvent;
+                    use base::ConcreteEvent;
 
                     let turn_uuid =
                         uuid::Uuid::parse_str(&turn_id).unwrap_or_else(|_| uuid::Uuid::new_v4());

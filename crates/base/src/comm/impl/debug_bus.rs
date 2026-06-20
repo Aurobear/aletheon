@@ -5,7 +5,7 @@
 //!
 //! Design: `docs/plans/2026-06-19-aletheon-debug-system-design.md` (Layer 2).
 
-use base::debug::{DebugEvent, DebugLevel, DebugSink, Tracepoint};
+use crate::debug::{DebugEvent, DebugLevel, DebugSink, Tracepoint};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -469,7 +469,7 @@ mod tests {
         async fn emit(&self, event: DebugEvent) {
             self.events.lock().await.push(event);
         }
-        fn should_trace(&self, _tp: &base::debug::Tracepoint) -> bool {
+        fn should_trace(&self, _tp: &crate::debug::Tracepoint) -> bool {
             true
         }
     }

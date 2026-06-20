@@ -1,4 +1,4 @@
-use base::{Event, EventHandler, EventType, SubscriptionId};
+use crate::{Event, EventHandler, EventType, SubscriptionId};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -78,7 +78,7 @@ impl Default for SubscriptionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::Priority;
+    use crate::Priority;
     use std::any::Any;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;

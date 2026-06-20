@@ -10,8 +10,8 @@ use tokio::sync::{mpsc, Mutex};
 
 use base::envelope::*;
 use base::self_field::{Intent, IntentSource};
-use comm::envelope::Payload;
-use comm::CommunicationBus;
+use base::envelope::Payload;
+use base::CommunicationBus;
 
 use runtime::r#impl::engine::modules::body_module::BodyModule;
 use runtime::r#impl::engine::modules::memory_module::MemoryModule;

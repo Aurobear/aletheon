@@ -23,8 +23,8 @@ use cognit::r#impl::event_handlers::{
 use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
-use comm::core::event::{ConcreteEvent, EventType, Priority};
-use comm::KernelEventBus;
+use base::{ConcreteEvent, KernelEventBus};
+use base::event::{EventType, Priority};
 
 // ---------------------------------------------------------------------------
 // Helpers

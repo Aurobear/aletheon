@@ -34,8 +34,8 @@ use corpus::r#impl::tools::ToolRegistry;
 use cognit::core::reflector::Reflector;
 use cognit::core::ExperienceSummarizer;
 use cognit::r#impl::llm::LlmProvider;
-use comm::envelope::Payload;
-use comm::CommunicationBus;
+use base::envelope::Payload;
+use base::CommunicationBus;
 use memory::episodic::EpisodicMemory;
 use metacog::r#impl::meta_runtime::self_reader::SelfReader;
 use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
@@ -66,7 +66,7 @@ use crate::r#impl::skills::plugin::register_skill;
 use super::debug_handler::DebugHandler;
 use super::prefix_builder::PrefixBuilder;
 use super::DaemonConfig;
-use comm::r#impl::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
+use base::comm::r#impl::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
 /// Session state wrapping the new AletheonRuntime.
 ///

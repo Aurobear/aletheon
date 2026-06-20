@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use base::evolution::CognitivePulseEvent;
 use base::{EventBus, EventType, Priority};
-use comm::core::event::ConcreteEvent;
+use base::ConcreteEvent;
 
 use super::scheduler::LlmScheduler;
 

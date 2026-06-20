@@ -11,17 +11,17 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use base::envelope::*;
-use base::event::Event;
-use base::event_bus::EventBus;
-use base::protocol::Protocol;
-use base::transport::Transport;
+use crate::envelope::*;
+use crate::event::Event;
+use crate::event_bus::EventBus;
+use crate::protocol::Protocol;
+use crate::transport::Transport;
 
-use crate::r#impl::debug_bus::DebugBusHook;
-use crate::r#impl::in_process::InProcessTransport;
-use crate::r#impl::kernel_bus::KernelEventBus;
-use crate::r#impl::pubsub::PubSubProtocol;
-use crate::r#impl::request_response::RequestResponseProtocol;
+use crate::comm::r#impl::debug_bus::DebugBusHook;
+use crate::comm::r#impl::in_process::InProcessTransport;
+use crate::comm::r#impl::kernel_bus::KernelEventBus;
+use crate::comm::r#impl::pubsub::PubSubProtocol;
+use crate::comm::r#impl::request_response::RequestResponseProtocol;
 
 /// Configuration for CommunicationBus.
 pub struct BusConfig {
@@ -218,14 +218,14 @@ impl CommunicationBus {
     pub async fn publish_event(&self, event: Box<dyn Event>) -> Result<()> {
         // Notify debug hook (best-effort, non-blocking for the bus).
         if let Some(ref hook) = self.debug_hook {
-            let debug_event = base::debug::DebugEvent {
+            let debug_event = crate::debug::DebugEvent {
                 ts: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as u64,
                 tracepoint: format!("{:?}", event.event_type()),
                 module: event.source().to_string(),
-                level: base::debug::DebugLevel::Info,
+                level: crate::debug::DebugLevel::Info,
                 data: event.to_json(),
                 session_id: None,
                 agent_id: None,
@@ -243,7 +243,7 @@ impl CommunicationBus {
     }
 
     /// Health status of the underlying transport.
-    pub fn health(&self) -> base::transport::TransportHealth {
+    pub fn health(&self) -> crate::transport::TransportHealth {
         self.in_process.health()
     }
 }

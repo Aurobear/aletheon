@@ -8,9 +8,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use base::envelope::*;
-use base::protocol::Protocol;
-use base::transport::Transport;
+use crate::envelope::*;
+use crate::protocol::Protocol;
+use crate::transport::Transport;
 
 /// Publish-Subscribe protocol.
 /// Delegates to the underlying Transport for delivery.

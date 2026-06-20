@@ -9,7 +9,7 @@ use base::envelope::*;
 use base::event::Priority;
 use base::event_bus::EventBus;
 
-use comm::CommunicationBus;
+use base::CommunicationBus;
 
 #[tokio::test]
 async fn test_point_to_point_request_response() {

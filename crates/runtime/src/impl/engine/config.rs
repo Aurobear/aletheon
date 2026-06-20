@@ -21,7 +21,7 @@ pub struct EngineConfig {
     pub learning_max_rules: usize,
     /// Optional CommunicationBus for inter-module communication.
     /// Replaces the old event_bus; provides request-response, pub-sub, and module mailbox APIs.
-    pub bus: Option<std::sync::Arc<comm::CommunicationBus>>,
+    pub bus: Option<std::sync::Arc<base::CommunicationBus>>,
 }
 
 impl Default for EngineConfig {

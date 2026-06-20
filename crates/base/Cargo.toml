@@ -13,8 +13,20 @@ anyhow = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 bincode = "1"
-tokio = { version = "1", features = ["time", "rt"] }
+tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 
+# Merged from comm crate
+tracing = "0.1"
+parking_lot = "0.12"
+nix = { workspace = true }
+libc = { workspace = true }
+dashmap = "6"
+
+[features]
+default = []
+io_uring = []
+
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"

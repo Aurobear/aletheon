@@ -10,8 +10,8 @@ use tracing::{debug, error};
 
 use base::envelope::*;
 use base::SelfFieldOps;
-use comm::envelope::Payload;
-use comm::CommunicationBus;
+use base::envelope::Payload;
+use base::CommunicationBus;
 
 use dasein::core::SelfField;
 

@@ -3,11 +3,11 @@
 //! Provides convenience functions for creating events and publishing them
 //! through the KernelEventBus.
 
-use base::{Event, EventBus, EventType, Priority};
+use crate::{Event, EventBus, EventType, Priority};
 use anyhow::Result;
 
-use crate::core::event::ConcreteEvent;
-use crate::r#impl::kernel_bus::KernelEventBus;
+use crate::event::ConcreteEvent;
+use crate::comm::r#impl::kernel_bus::KernelEventBus;
 
 /// Bridge between core event types and the KernelEventBus implementation.
 pub struct EventBridge;

@@ -11,7 +11,7 @@ use base::evolution::{
     AgentSpawnedPayload, AgentStartedPayload, AgentStoppedPayload, CognitivePulseEvent,
 };
 use base::{EventBus, EventType, Priority};
-use comm::ConcreteEvent;
+use base::ConcreteEvent;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};

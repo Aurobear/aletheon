@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
-use crate::r#impl::event_log::EventLog;
-use crate::r#impl::routing_policy::{RouteAction, RoutingPolicy};
-use crate::r#impl::subscription::SubscriptionRegistry;
-use base::{AsyncEventHandler, Event, EventBus, EventHandler, EventType, SubscriptionId};
+use crate::comm::r#impl::event_log::EventLog;
+use crate::comm::r#impl::routing_policy::{RouteAction, RoutingPolicy};
+use crate::comm::r#impl::subscription::SubscriptionRegistry;
+use crate::{AsyncEventHandler, Event, EventBus, EventHandler, EventType, SubscriptionId};
 
 pub struct KernelEventBus {
     subscriptions: SubscriptionRegistry,

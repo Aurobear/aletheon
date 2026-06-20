@@ -10,7 +10,7 @@ use tracing::warn;
 
 use base::envelope::*;
 use base::ToolDefinition;
-use comm::envelope::Payload;
+use base::envelope::Payload;
 
 use super::cognitive_loop::Engine;
 use super::modules::{BodyRequest, BodyResponse};

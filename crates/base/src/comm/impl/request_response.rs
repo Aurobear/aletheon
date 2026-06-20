@@ -11,9 +11,9 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use tokio::sync::oneshot;
 
-use base::envelope::*;
-use base::protocol::Protocol;
-use base::transport::Transport;
+use crate::envelope::*;
+use crate::protocol::Protocol;
+use crate::transport::Transport;
 
 /// Request-Response protocol.
 /// Correlates requests and responses via envelope ID.

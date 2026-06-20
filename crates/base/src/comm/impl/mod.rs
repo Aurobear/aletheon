@@ -1,7 +1,4 @@
-//! # Implementation — Concrete comm implementations
-//!
-//! Contains the concrete implementations of event bus, event log,
-//! routing policy, subscription registry, and IPC backends.
+//! Implementation layer for communication subsystem.
 
 pub mod communication_bus;
 pub mod debug_bus;

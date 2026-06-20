@@ -1,4 +1,4 @@
-use base::ipc_types::AgentMessage;
+use crate::ipc_types::AgentMessage;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -119,7 +119,7 @@ impl PriorityQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::ipc_types::{AgentId, IpcPriority, MessageType};
+    use crate::ipc_types::{AgentId, IpcPriority, MessageType};
 
     fn make_msg(sender: AgentId, priority: IpcPriority) -> AgentMessage {
         AgentMessage::new(sender, 0, MessageType::Event, priority, vec![0; 8])

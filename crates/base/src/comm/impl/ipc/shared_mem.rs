@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::info;
 
-use base::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
+use crate::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
 
 /// Shared memory region for zero-copy IPC.
 pub struct SharedMemRegion {
@@ -232,7 +232,7 @@ impl IpcBackend for SharedMemBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::ipc_types::IpcPriority;
+    use crate::ipc_types::IpcPriority;
 
     #[test]
     fn test_shared_mem_create() {

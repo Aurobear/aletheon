@@ -136,3 +136,50 @@ pub type AsyncEventHandler =
 
 /// Maximum time to wait for a request-response cycle.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A concrete event implementation for direct use.
+pub struct ConcreteEvent {
+    event_type: EventType,
+    priority: Priority,
+    source: String,
+    payload: Box<dyn Any + Send + Sync>,
+}
+
+impl ConcreteEvent {
+    pub fn new(
+        event_type: EventType,
+        priority: Priority,
+        source: String,
+        payload: Box<dyn Any + Send + Sync>,
+    ) -> Self {
+        Self {
+            event_type,
+            priority,
+            source,
+            payload,
+        }
+    }
+}
+
+#[async_trait]
+impl Event for ConcreteEvent {
+    fn event_type(&self) -> EventType {
+        self.event_type.clone()
+    }
+    fn priority(&self) -> Priority {
+        self.priority
+    }
+    fn source(&self) -> &str {
+        &self.source
+    }
+    fn payload(&self) -> &dyn Any {
+        &*self.payload
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        self.payload
+            .downcast_ref::<serde_json::Value>()
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    }
+}

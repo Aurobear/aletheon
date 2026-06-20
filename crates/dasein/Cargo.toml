@@ -9,7 +9,6 @@ description = "Aletheon Self-evolution - reflection, behavior evolution, and gen
 base = { path = "../base" }
 corpus = { path = "../corpus" }
 cognit = { path = "../cognit" }
-comm = { path = "../comm" }
 memory = { path = "../memory" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"

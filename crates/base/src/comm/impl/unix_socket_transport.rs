@@ -19,8 +19,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
-use base::envelope::*;
-use base::transport::{HealthStatus, Transport, TransportHealth, TransportKind};
+use crate::envelope::*;
+use crate::transport::{HealthStatus, Transport, TransportHealth, TransportKind};
 
 /// Default socket directory.
 const DEFAULT_SOCKET_DIR: &str = "/tmp/agent-ipc";
@@ -286,8 +286,8 @@ impl Drop for UnixSocketTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::envelope::*;
-    use base::event::Priority;
+    use crate::envelope::*;
+    use crate::event::Priority;
 
     #[tokio::test]
     async fn test_register_and_send_envelope() {

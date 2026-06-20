@@ -5,7 +5,7 @@ use tracing::{info, warn};
 use base::envelope::*;
 use base::tool::ToolResult;
 use cognit::r#impl::learning::{OutcomeContext, OutcomeRecord};
-use comm::envelope::Payload;
+use base::envelope::Payload;
 
 use super::cognitive_loop::Engine;
 use super::modules::{MemoryRequest, MemoryResponse};

@@ -1,4 +1,4 @@
-use base::{EventType, Priority};
+use crate::{EventType, Priority};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteAction {

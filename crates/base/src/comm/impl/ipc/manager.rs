@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
-use base::ipc_types::{AgentId, AgentMessage, IpcBackend, IpcPreference, IpcProbeError};
+use crate::ipc_types::{AgentId, AgentMessage, IpcBackend, IpcPreference, IpcProbeError};
 
 use super::io_uring::IoUringBackend;
 use super::priority_queue::PriorityQueue;

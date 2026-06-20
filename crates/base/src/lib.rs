@@ -57,6 +57,9 @@ pub mod envelope;
 pub mod protocol;
 pub mod transport;
 
+// Communication subsystem (merged from comm crate)
+pub mod comm;
+
 // Re-export key types at crate root for convenience
 pub use body::{Action, ActionResult, BodyRuntime};
 pub use brain::{
@@ -66,7 +69,7 @@ pub use brain::{
 };
 pub use capability::{Capability, CapabilitySet, PermissionLevel};
 pub use context::{Context, TraceState};
-pub use event::{AsyncEventHandler, Event, EventHandler, EventType, Priority, SubscriptionId};
+pub use event::{AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId};
 pub use event_bus::EventBus;
 pub use genome::Genome;
 pub use memory::{
@@ -120,6 +123,11 @@ pub use resource::{ManagedResource, ResourceState};
 pub use envelope::{Endpoint, Envelope, EnvelopeId, ModuleId, Pattern, Payload, Target};
 pub use protocol::Protocol;
 pub use transport::{HealthStatus, Transport as EnvelopeTransport, TransportHealth, TransportKind};
+
+// Re-export communication subsystem types
+pub use comm::{CommunicationBus, KernelEventBus, EventBridge};
+pub use comm::r#impl::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
+pub use comm::r#impl::event_log::{EventLog, LogEntry};
 
 // Re-export permission types
 pub use permission::{ModeConfig, PermissionBehavior, PermissionContext, PermissionMode, PermissionRule};

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use base::agent::Pid;
 use base::envelope::{Endpoint, Payload, Target};
 use base::ForkDirective;
-use comm::CommunicationBus;
+use base::CommunicationBus;
 use runtime::r#impl::agent::process::AgentProcessConfig;
 use runtime::r#impl::kernel::{AgentKernel, KernelError};
 

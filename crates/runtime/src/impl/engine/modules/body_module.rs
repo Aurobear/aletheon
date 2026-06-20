@@ -9,8 +9,8 @@ use tokio::sync::Mutex;
 use tracing::{debug, error};
 
 use base::envelope::*;
-use comm::envelope::Payload;
-use comm::CommunicationBus;
+use base::envelope::Payload;
+use base::CommunicationBus;
 
 use corpus::r#impl::tools::ToolRegistry;
 

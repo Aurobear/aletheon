@@ -10,7 +10,7 @@ use std::sync::Arc;
 use base::agent::Pid;
 use base::envelope::Envelope;
 use base::{ForkDirective, ForkResult};
-use comm::CommunicationBus;
+use base::CommunicationBus;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::r#impl::agent::fork::AgentFork;
