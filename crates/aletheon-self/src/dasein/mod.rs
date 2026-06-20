@@ -125,6 +125,30 @@ impl DaseinModule {
         format_dasein_context(&ctx)
     }
 
+    /// Fast-path mood update based on turn text content.
+    /// Uses keyword matching for quick transitions without deep analysis.
+    pub fn quick_mood_update(&self, turn_text: &str) -> Stimmung {
+        let mut mood = self.mood.write();
+        let new_mood = if turn_text.contains("error") || turn_text.contains("failed") {
+            Stimmung::Geknickt { because: "turn had errors".to_string() }
+        } else if turn_text.contains("success") || turn_text.contains("completed") {
+            Stimmung::Gelaunt { toward: "successful completion".to_string() }
+        } else {
+            mood.clone()
+        };
+        let changed = std::mem::discriminant(&*mood) != std::mem::discriminant(&new_mood);
+        if changed {
+            let old = mood.clone();
+            *mood = new_mood.clone();
+            let _ = self.event_tx.try_send(DaseinEvent::MoodShift {
+                from: old,
+                to: new_mood.clone(),
+                reason: "quick_update_after_turn".to_string(),
+            });
+        }
+        new_mood
+    }
+
     /// Access internal components for integration tests.
     pub fn temporality(&self) -> &TemporalStream {
         &self.temporality
@@ -265,5 +289,19 @@ mod tests {
         let (module, _tx) = DaseinModule::new();
         let _sender = module.event_sender();
         // Just verify we can get a sender without panicking
+    }
+
+    #[test]
+    fn test_quick_mood_update_error() {
+        let (module, _rx) = DaseinModule::new();
+        let mood = module.quick_mood_update("operation failed with error");
+        assert!(matches!(mood, Stimmung::Geknickt { .. }));
+    }
+
+    #[test]
+    fn test_quick_mood_update_success() {
+        let (module, _rx) = DaseinModule::new();
+        let mood = module.quick_mood_update("task completed successfully");
+        assert!(matches!(mood, Stimmung::Gelaunt { .. }));
     }
 }
