@@ -2,6 +2,7 @@
 
 pub mod builtin;
 pub mod lifecycle;
+pub mod loader;
 pub mod registry;
 
 use aletheon_abi::hook::{HookContext, HookPoint, HookResult};

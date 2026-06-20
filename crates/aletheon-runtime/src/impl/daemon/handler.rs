@@ -489,6 +489,127 @@ impl RequestHandler {
 
         info!("CommunicationBus created with SelfField, Memory, and Body module handlers");
 
+        // ── AgentTool — sub-agent delegation ───────────────────────────────────────
+        {
+            let agents_dir = aletheon_dir.join("agents");
+            let mut rt_agent_loader = crate::r#impl::agent_loader::AgentLoader::new();
+            if agents_dir.exists() {
+                let _ = rt_agent_loader.load_from_dir(&agents_dir);
+            }
+
+            let mut agent_defs: std::collections::HashMap<String, aletheon_body::r#impl::tools::agent_tool::AgentDefinition> = std::collections::HashMap::new();
+            for role in rt_agent_loader.list() {
+                agent_defs.insert(
+                    role.name.clone(),
+                    aletheon_body::r#impl::tools::agent_tool::AgentDefinition {
+                        name: role.name.clone(),
+                        description: role.description.clone(),
+                        tools: role.tools.clone(),
+                        model: role.model.clone(),
+                        max_iterations: 20,
+                        system_prompt: role.body.clone(),
+                    },
+                );
+            }
+
+            if !agent_defs.is_empty() {
+                let llm_for_agents: Arc<dyn aletheon_brain::r#impl::llm::LlmProvider> = llm.clone();
+                let tools_for_agents = tools.clone();
+                let execute_fn: aletheon_body::r#impl::tools::agent_tool::ExecuteSubAgentFn = Arc::new(
+                    move |system_prompt: String, user_prompt: String, allowed_tools: Vec<String>| {
+                        let llm = llm_for_agents.clone();
+                        let tools = tools_for_agents.clone();
+                        Box::pin(async move {
+                            // Filter tool registry to only allowed tools
+                            let reg = tools.lock().await;
+                            let agent_tool_defs: Vec<aletheon_abi::ToolDefinition> = reg
+                                .definitions()
+                                .into_iter()
+                                .filter(|d| allowed_tools.contains(&d.name))
+                                .collect();
+                            drop(reg);
+
+                            // Build messages for the LLM
+                            let mut current_messages = vec![
+                                aletheon_abi::message::Message::system(&system_prompt),
+                                aletheon_abi::message::Message::user(&user_prompt),
+                            ];
+
+                            // ReAct loop: up to 20 iterations
+                            let mut response_text = String::new();
+                            for _ in 0..20 {
+                                let response = llm.complete(&current_messages, &agent_tool_defs).await?;
+
+                                // Extract text and tool calls from response
+                                let mut text_parts = Vec::new();
+                                let mut tool_calls = Vec::new();
+                                for block in &response.content {
+                                    match block {
+                                        aletheon_abi::message::ContentBlock::Text { text } => {
+                                            text_parts.push(text.clone());
+                                        }
+                                        aletheon_abi::message::ContentBlock::ToolUse { id, name, input } => {
+                                            tool_calls.push((id.clone(), name.clone(), input.clone()));
+                                        }
+                                        _ => {}
+                                    }
+                                }
+
+                                if tool_calls.is_empty() {
+                                    response_text = text_parts.join("\n");
+                                    break;
+                                }
+
+                                // Add assistant message verbatim (text + tool_use blocks)
+                                current_messages.push(aletheon_abi::message::Message {
+                                    role: aletheon_abi::message::Role::Assistant,
+                                    content: response.content.clone(),
+                                });
+
+                                // Execute each tool call
+                                for (id, name, input) in tool_calls {
+                                    let reg = tools.lock().await;
+                                    let result = if let Some(tool) = reg.get(&name) {
+                                        let ctx = aletheon_abi::tool::ToolContext {
+                                            working_dir: std::env::current_dir().unwrap_or_default(),
+                                            session_id: "sub-agent".into(),
+                                        };
+                                        tool.execute(input, &ctx).await
+                                    } else {
+                                        aletheon_abi::tool::ToolResult {
+                                            content: format!("Unknown tool: {}", name),
+                                            is_error: true,
+                                            metadata: aletheon_abi::tool::ToolResultMeta::default(),
+                                        }
+                                    };
+                                    drop(reg);
+
+                                    // Add tool result as user message
+                                    current_messages.push(aletheon_abi::message::Message::tool_result(
+                                        &id,
+                                        &result.content,
+                                        result.is_error,
+                                    ));
+                                }
+                            }
+
+                            Ok(response_text)
+                        })
+                    },
+                );
+
+                let agent_tool = aletheon_body::r#impl::tools::agent_tool::AgentTool::new(
+                    agent_defs.clone(),
+                    execute_fn,
+                );
+                if let Err(e) = tools.lock().await.register(Arc::new(agent_tool)) {
+                    tracing::warn!(error = %e, "Failed to register AgentTool");
+                } else {
+                    info!(agents = agent_defs.len(), "Registered AgentTool with sub-agents");
+                }
+            }
+        }
+
         // ── StormBreaker ──────────────────────────────────────────────────────
         let storm_breaker = Arc::new(Mutex::new(StormBreaker::new(3)));
 
