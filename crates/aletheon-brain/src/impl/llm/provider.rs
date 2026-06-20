@@ -10,6 +10,8 @@ use aletheon_abi::message::Message;
 pub enum StreamChunk {
     /// Text content delta
     TextDelta { text: String },
+    /// Thinking/reasoning content delta (for models that support extended thinking)
+    ThinkingDelta { text: String },
     /// Tool use start (name + id)
     ToolUseStart { id: String, name: String },
     /// Tool use input delta (partial JSON)
