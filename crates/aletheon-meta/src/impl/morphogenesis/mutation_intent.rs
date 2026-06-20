@@ -7,6 +7,7 @@ use aletheon_abi::brain::{ReflectionEntry, ReflectionOutcome};
 use aletheon_abi::MutationIntent;
 
 /// Generate mutation intents from reflection and experience.
+#[derive(Default)]
 pub struct MutationIntentGenerator;
 
 impl MutationIntentGenerator {
@@ -31,7 +32,7 @@ impl MutationIntentGenerator {
                     "weight_delta": 0.05,
                     "action": "increase_weight"
                 }),
-                reason: format!("Failures detected in recent context — increasing safety priority"),
+                reason: "Failures detected in recent context — increasing safety priority".to_string(),
                 reversible: true,
             });
         }
