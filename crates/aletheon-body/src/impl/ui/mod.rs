@@ -486,8 +486,18 @@ async fn run_app<B: ratatui::backend::Backend>(
                 }
             }
         } else {
-            // In test mode, just sleep briefly to avoid busy loop
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            // In test mode, wait for socket to be readable (with timeout)
+            // This properly registers with the tokio reactor so we wake up
+            // when the daemon sends data, instead of busy-polling with try_read.
+            tokio::select! {
+                result = app.stream.readable() => {
+                    if result.is_err() {
+                        app.running = false;
+                        break;
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+            }
         }
 
         // Try reading daemon response (with optional event recording)
@@ -1046,7 +1056,9 @@ fn try_read_socket(app: &mut App) {
                             handle_approval(app, &msg);
                         } else if msg.get("result").is_some() || msg.get("error").is_some() {
                             process_response(app, msg);
-                            break;
+                            // Don't break — continue processing remaining lines
+                            // in the buffer (streaming events may follow in the
+                            // same chunk as the response).
                         }
                     }
                 }
@@ -1102,7 +1114,9 @@ fn try_read_socket_with_recorder(
                             handle_approval(app, &msg);
                         } else if msg.get("result").is_some() || msg.get("error").is_some() {
                             process_response(app, msg);
-                            break;
+                            // Don't break — continue processing remaining lines
+                            // in the buffer (streaming events may follow in the
+                            // same chunk as the response).
                         }
                     }
                 }
@@ -1275,7 +1289,10 @@ fn process_response(app: &mut App, msg: serde_json::Value) {
     }
     app.streaming = false;
     app.status.waiting = false;
-    app.response_buf.clear();
+    // NOTE: Do NOT clear response_buf here. In the daemon's protocol, streaming
+    // events (turn_start, text_delta, turn_done) are flushed through notify_tx
+    // *after* the JSON-RPC response is sent. If both arrive in the same try_read
+    // chunk, clearing the buffer here would discard the trailing events.
 }
 
 /// Format reflection entries for display.
