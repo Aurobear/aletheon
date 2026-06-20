@@ -1,5 +1,6 @@
 use crate::core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 use crate::core::config::RuntimeConfig;
+use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 use crate::core::react_loop::ReActLoop;
 use aletheon_abi::body::{Action, ActionResult};
 use aletheon_abi::brain::Plan;
@@ -21,6 +22,7 @@ use tracing::{debug, warn};
 pub struct AletheonRuntime {
     config: RuntimeConfig,
     react_loop: ReActLoop,
+    evolution: Option<EvolutionCoordinator>,
     // Subsystem references would be injected here in production
     // For now, we define the orchestration logic that coordinates them
 }
@@ -28,7 +30,59 @@ pub struct AletheonRuntime {
 impl AletheonRuntime {
     pub fn new(config: RuntimeConfig) -> Self {
         let react_loop = ReActLoop::new(config.clone());
-        Self { config, react_loop }
+        Self {
+            config,
+            react_loop,
+            evolution: None,
+        }
+    }
+
+    /// Attach an EvolutionCoordinator with the given configuration.
+    ///
+    /// Returns `Err` if the coordinator cannot be initialized (e.g., lineage
+    /// directory creation fails).
+    pub fn with_evolution(mut self, evo_config: EvolutionConfig) -> Result<Self> {
+        self.evolution = Some(EvolutionCoordinator::new(evo_config)?);
+        Ok(self)
+    }
+
+    /// Run post-turn evolution if a coordinator is attached.
+    ///
+    /// Returns `None` if evolution is not configured.
+    pub async fn post_evolution<M: aletheon_abi::meta::MetaRuntimeOps>(
+        &self,
+        task_summary: &str,
+        output: &str,
+        success: bool,
+        tool_calls: usize,
+        tool_errors: usize,
+        elapsed_ms: u64,
+        iterations: usize,
+        meta: &aletheon_meta::MorphogenesisPipeline<M>,
+    ) -> Result<Option<EvolutionSummary>> {
+        match &self.evolution {
+            Some(coord) => {
+                let summary = coord
+                    .post_turn(
+                        task_summary,
+                        output,
+                        success,
+                        tool_calls,
+                        tool_errors,
+                        elapsed_ms,
+                        iterations,
+                        meta,
+                    )
+                    .await?;
+                Ok(Some(summary))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Reference to the evolution coordinator, if configured.
+    pub fn evolution(&self) -> Option<&EvolutionCoordinator> {
+        self.evolution.as_ref()
     }
 
     /// Process a user input through the full Aletheon pipeline.
