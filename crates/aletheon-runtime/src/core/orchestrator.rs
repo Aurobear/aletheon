@@ -178,7 +178,7 @@ impl AletheonRuntime {
         llm: &L,
         tool_defs: &[aletheon_abi::ToolDefinition],
         execute_tool: F,
-    ) -> Result<String>
+    ) -> Result<(String, crate::core::react_loop::TurnMetrics)>
     where
         L: aletheon_brain::r#impl::llm::provider::LlmProvider + ?Sized,
         R: Fn(&Intent, &Context) -> Result<Verdict>,
@@ -190,7 +190,14 @@ impl AletheonRuntime {
         let verdict = review_fn(&intent, ctx)?;
         debug!("SelfField verdict: {:?}", verdict);
         if let Verdict::Deny { reason } = verdict {
-            return Ok(format!("Denied by SelfField: {}", reason));
+            let metrics = crate::core::react_loop::TurnMetrics {
+                tool_calls_made: 0,
+                tool_errors: 0,
+                elapsed_ms: 0,
+                iterations: 0,
+                completed_normally: false,
+            };
+            return Ok((format!("Denied by SelfField: {}", reason), metrics));
         }
         self.react_loop
             .run(input, llm, tool_defs, execute_tool)

@@ -10,6 +10,16 @@ use aletheon_abi::message::{ContentBlock, Message, Role};
 use aletheon_abi::self_field::{Intent, IntentSource};
 use aletheon_abi::ToolDefinition;
 
+/// Metrics collected during a single ReAct turn.
+#[derive(Debug, Clone)]
+pub struct TurnMetrics {
+    pub tool_calls_made: usize,
+    pub tool_errors: usize,
+    pub elapsed_ms: u64,
+    pub iterations: usize,
+    pub completed_normally: bool,
+}
+
 /// Maximum number of tools to execute in a single parallel batch.
 const MAX_PARALLEL_TOOLS: usize = 8;
 
@@ -236,12 +246,16 @@ impl ReActLoop {
         llm: &L,
         tool_defs: &[ToolDefinition],
         execute_tool: F,
-    ) -> anyhow::Result<String>
+    ) -> anyhow::Result<(String, TurnMetrics)>
     where
         L: LlmProvider + ?Sized,
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
         Fut: Future<Output = (String, bool)>,
     {
+        let start = std::time::Instant::now();
+        let mut tool_calls_made: usize = 0;
+        let mut tool_errors: usize = 0;
+
         self.messages.push(Message::user(user_input));
 
         while self.should_continue() {
@@ -274,7 +288,14 @@ impl ReActLoop {
             if tool_calls.is_empty() || matches!(response.stop_reason, StopReason::EndTurn) {
                 let final_text = text_parts.join("\n");
                 self.messages.push(Message::assistant(&final_text));
-                return Ok(final_text);
+                let metrics = TurnMetrics {
+                    tool_calls_made,
+                    tool_errors,
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    iterations: self.iteration,
+                    completed_normally: true,
+                };
+                return Ok((final_text, metrics));
             }
 
             // Record the assistant turn (text + tool_use blocks) verbatim.
@@ -287,7 +308,9 @@ impl ReActLoop {
             for (id, name, input) in &tool_calls {
                 debug!(tool = name.as_str(), "ReActLoop executing tool");
                 let (content, is_error) = execute_tool(id, name, input).await;
+                tool_calls_made += 1;
                 if is_error {
+                    tool_errors += 1;
                     warn!(tool = name.as_str(), "tool returned error");
                 }
                 self.messages
@@ -304,7 +327,7 @@ impl ReActLoop {
             max = self.config.max_iterations,
             "ReActLoop hit max_iterations"
         );
-        Ok(self
+        let final_text = self
             .messages
             .iter()
             .rev()
@@ -314,7 +337,15 @@ impl ReActLoop {
                     _ => None,
                 })
             })
-            .unwrap_or_else(|| format!("Max iterations ({}) reached", self.config.max_iterations)))
+            .unwrap_or_else(|| format!("Max iterations ({}) reached", self.config.max_iterations));
+        let metrics = TurnMetrics {
+            tool_calls_made,
+            tool_errors,
+            elapsed_ms: start.elapsed().as_millis() as u64,
+            iterations: self.iteration,
+            completed_normally: false,
+        };
+        Ok((final_text, metrics))
     }
 
     /// Streaming variant of `run()`. Uses `llm.complete_stream()` instead of
@@ -326,13 +357,17 @@ impl ReActLoop {
         tool_defs: &[ToolDefinition],
         execute_tool: F,
         event_sink: &dyn EventSink,
-    ) -> anyhow::Result<String>
+    ) -> anyhow::Result<(String, TurnMetrics)>
     where
         L: LlmProvider + ?Sized,
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
         Fut: Future<Output = (String, bool)>,
     {
         use futures::StreamExt;
+
+        let start = std::time::Instant::now();
+        let mut tool_calls_made: usize = 0;
+        let mut tool_errors: usize = 0;
 
         self.messages.push(Message::user(user_input));
         event_sink.emit(Event::TurnStarted);
@@ -413,7 +448,14 @@ impl ReActLoop {
                 event_sink.emit(Event::TurnDone {
                     result: Ok(final_text.clone()),
                 });
-                return Ok(final_text);
+                let metrics = TurnMetrics {
+                    tool_calls_made,
+                    tool_errors,
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    iterations: self.iteration,
+                    completed_normally: true,
+                };
+                return Ok((final_text, metrics));
             }
 
             // Has tool calls -> execute them
@@ -449,7 +491,9 @@ impl ReActLoop {
                     },
                 });
 
+                tool_calls_made += 1;
                 if is_error {
+                    tool_errors += 1;
                     warn!(tool = name.as_str(), "tool returned error");
                 }
                 self.messages
@@ -479,7 +523,14 @@ impl ReActLoop {
         event_sink.emit(Event::TurnDone {
             result: Ok(fallback.clone()),
         });
-        Ok(fallback)
+        let metrics = TurnMetrics {
+            tool_calls_made,
+            tool_errors,
+            elapsed_ms: start.elapsed().as_millis() as u64,
+            iterations: self.iteration,
+            completed_normally: false,
+        };
+        Ok((fallback, metrics))
     }
 }
 
@@ -575,7 +626,7 @@ mod tests {
         let executed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let executed2 = executed.clone();
 
-        let out = lp
+        let (out, metrics) = lp
             .run(
                 "make hi",
                 &llm,
@@ -598,6 +649,9 @@ mod tests {
             "tool ran exactly once"
         );
         assert!(out.contains("done"), "final text returned: {out}");
+        assert_eq!(metrics.tool_calls_made, 1);
+        assert_eq!(metrics.tool_errors, 0);
+        assert!(metrics.completed_normally);
     }
 
     /// An LLM that always returns tool-use, then ends with text on the Nth call.
@@ -680,7 +734,7 @@ mod tests {
         };
         let tool_defs: Vec<ToolDefinition> = vec![];
 
-        let out = lp
+        let (out, _metrics) = lp
             .run(
                 "do many big things",
                 &llm,
@@ -858,7 +912,7 @@ mod tests {
         };
         let tool_defs: Vec<ToolDefinition> = vec![];
 
-        let out = lp
+        let (out, _metrics) = lp
             .run(
                 "test overflow recovery",
                 &llm,

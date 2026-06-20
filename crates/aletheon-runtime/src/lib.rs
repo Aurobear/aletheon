@@ -9,7 +9,7 @@ pub use core::config::{
     PluginsConfig, ProviderConfig, RuntimeConfig, SandboxConfig, Transport,
 };
 pub use core::orchestrator::AletheonRuntime;
-pub use core::react_loop::ReActLoop;
+pub use core::react_loop::{ReActLoop, TurnMetrics};
 
 // Re-export from impl for backward compatibility
 pub use r#impl::agent::AgentRuntime;

@@ -46,7 +46,7 @@ use tracing::{info, warn};
 use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
 use crate::core::checkpoint::CheckpointStore;
 use crate::core::event_sink::{ChannelEventSink, Event};
-use crate::core::react_loop::ReActLoop;
+use crate::core::react_loop::{ReActLoop, TurnMetrics};
 use crate::core::storm_breaker::StormBreaker;
 use crate::r#impl::hooks::builtin::audit_hook;
 use crate::r#impl::hooks::registry::HookRegistry;
@@ -1224,7 +1224,13 @@ impl RequestHandler {
                     }
                 };
 
-                let text = text.unwrap_or_else(|e| format!("error: {e}"));
+                let (text, _metrics) = text.unwrap_or_else(|e| (format!("error: {e}"), TurnMetrics {
+                    tool_calls_made: 0,
+                    tool_errors: 0,
+                    elapsed_ms: 0,
+                    iterations: 0,
+                    completed_normally: false,
+                }));
                 info!(len = text.len(), "ReAct loop completed");
 
                 // Record turn in perf counter (token counts come from usage events
