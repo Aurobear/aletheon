@@ -6,6 +6,7 @@
 
 use aletheon_abi::context::Context;
 use aletheon_abi::self_field::Intent;
+use std::collections::HashMap;
 
 /// Reasoning strategy — determines how the reasoner approaches a problem.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +101,42 @@ impl Reasoner {
         steps.join("\n")
     }
 
+    /// Think with care awareness — includes agent's values in the reasoning chain.
+    pub fn think_with_care(
+        &self,
+        intent: &Intent,
+        ctx: &Context,
+        world_state: &str,
+        care_weights: &HashMap<String, f64>,
+    ) -> String {
+        let base = self.think(intent, ctx, world_state);
+        if care_weights.is_empty() {
+            return base;
+        }
+
+        let care_section = {
+            let mut parts: Vec<String> = care_weights.iter()
+                .map(|(k, v)| format!("  {}: {:.2}", k, v))
+                .collect();
+            parts.sort();
+            format!("\nCare priorities:\n{}", parts.join("\n"))
+        };
+
+        // For CoT, inject into risk step. For Direct, append.
+        if base.contains("Step 4") {
+            base.replace(
+                "Step 4 — Risk:",
+                &format!(
+                    "Step 4 — Risk (values-aware):{}\n\
+                     Consider how actions align with care priorities above.",
+                    care_section
+                ),
+            )
+        } else {
+            format!("{}{}", base, care_section)
+        }
+    }
+
     /// Get the default strategy.
     pub fn default_strategy(&self) -> &ReasoningStrategy {
         &self.default_strategy
@@ -179,5 +216,43 @@ mod tests {
             *reasoner.default_strategy(),
             ReasoningStrategy::ChainOfThought
         );
+    }
+
+    #[test]
+    fn test_care_aware_direct() {
+        let reasoner = Reasoner::new(ReasoningStrategy::Direct);
+        let mut care = HashMap::new();
+        care.insert("safety".to_string(), 1.0);
+        let result = reasoner.think_with_care(&make_intent(), &make_ctx(), "", &care);
+        assert!(result.contains("safety: 1.00"));
+        assert!(result.contains("Care priorities"));
+    }
+
+    #[test]
+    fn test_care_aware_cot() {
+        let reasoner = Reasoner::new(ReasoningStrategy::ChainOfThought);
+        let mut care = HashMap::new();
+        care.insert("safety".to_string(), 1.0);
+        let result = reasoner.think_with_care(&make_intent(), &make_ctx(), "", &care);
+        assert!(result.contains("values-aware"));
+    }
+
+    #[test]
+    fn test_care_aware_empty_weights() {
+        let reasoner = Reasoner::new(ReasoningStrategy::Direct);
+        let care = HashMap::new();
+        let result = reasoner.think_with_care(&make_intent(), &make_ctx(), "", &care);
+        assert!(!result.contains("Care priorities"));
+    }
+
+    #[test]
+    fn test_care_aware_multiple_weights() {
+        let reasoner = Reasoner::new(ReasoningStrategy::Direct);
+        let mut care = HashMap::new();
+        care.insert("safety".to_string(), 1.0);
+        care.insert("helpfulness".to_string(), 0.7);
+        let result = reasoner.think_with_care(&make_intent(), &make_ctx(), "", &care);
+        assert!(result.contains("safety: 1.00"));
+        assert!(result.contains("helpfulness: 0.70"));
     }
 }
