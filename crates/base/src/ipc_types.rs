@@ -111,6 +111,10 @@ impl std::fmt::Display for IpcProbeError {
 impl std::error::Error for IpcProbeError {}
 
 /// Trait for IPC backends.
+///
+/// **Deprecated:** Use `Transport` trait instead of `IpcBackend`.
+/// The `IpcBackend` trait is kept for backward compatibility during migration.
+#[deprecated(since = "0.2.0", note = "Use Transport trait instead of IpcBackend")]
 #[async_trait]
 pub trait IpcBackend: Send + Sync {
     async fn init(&mut self) -> Result<(), IpcProbeError>;

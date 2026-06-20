@@ -2,14 +2,20 @@
 //!
 //! Provides convenience functions for creating events and publishing them
 //! through the KernelEventBus.
+//!
+//! **Migration path:** Use `CommunicationBus` directly for new code.
+//! This bridge converts Events to Envelopes for cross-process compatibility.
 
 use crate::{Event, EventBus, EventType, Priority};
 use anyhow::Result;
 
+use crate::envelope::{Endpoint, Envelope, EventEnvelopeExt, Payload, Target};
 use crate::event::ConcreteEvent;
 use crate::comm::r#impl::kernel_bus::KernelEventBus;
 
 /// Bridge between core event types and the KernelEventBus implementation.
+///
+/// **Deprecated:** Use `CommunicationBus` directly for new code.
 pub struct EventBridge;
 
 impl EventBridge {
@@ -48,6 +54,38 @@ impl EventBridge {
     ) -> Result<()> {
         let event = Self::create_json_event(event_type, priority, source, json);
         Self::publish(bus, event).await
+    }
+
+    /// Convert an Event to an Envelope for cross-process compatibility.
+    ///
+    /// This is the migration path: Events are wrapped as Envelope payloads
+    /// and can be sent through the unified Transport system.
+    pub fn event_to_envelope(
+        event: Box<dyn Event>,
+        source: Endpoint,
+        target: Target,
+    ) -> Envelope {
+        let priority = event.priority();
+        let json = event.to_json();
+        Envelope::new(
+            source,
+            target,
+            crate::envelope::Pattern::Publish,
+            Payload::Json(json),
+        )
+        .with_priority(priority)
+    }
+
+    /// Publish an Event as an Envelope through the unified transport.
+    ///
+    /// Converts the Event to an Envelope and returns it for sending
+    /// through CommunicationBus or Transport.
+    pub fn prepare_envelope(
+        event: Box<dyn Event>,
+        source: Endpoint,
+        target: Target,
+    ) -> Envelope {
+        Self::event_to_envelope(event, source, target)
     }
 }
 

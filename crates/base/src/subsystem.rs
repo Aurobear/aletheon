@@ -4,9 +4,13 @@
 //! implements this trait. The runtime uses it for init, health checks, and
 //! graceful shutdown.
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+
+use crate::comm::CommunicationBus;
 
 /// Semantic version for ABI compatibility checks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,12 +61,17 @@ pub enum SubsystemHealth {
 
 /// Context passed to subsystem during init.
 ///
-/// Contains references to shared infrastructure (EventBus, Memory, etc.)
+/// Contains references to shared infrastructure (CommunicationBus, Memory, etc.)
 /// that the subsystem needs to register with.
 pub struct SubsystemContext {
     pub name: String,
     pub working_dir: std::path::PathBuf,
     pub config: serde_json::Value,
+    /// Unified communication bus for cross-subsystem communication.
+    ///
+    /// Subsystems should use `context.bus` for all inter-subsystem
+    /// communication instead of creating their own EventBus instances.
+    pub bus: Arc<CommunicationBus>,
 }
 
 /// Unified subsystem lifecycle — every Aletheon subsystem implements this.

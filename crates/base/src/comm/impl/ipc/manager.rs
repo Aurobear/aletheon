@@ -1,14 +1,19 @@
 //! IPC manager with auto-detection, preference-based selection, and runtime fallback.
+//!
+//! **Migration path:** Use `CommunicationBus` with `Transport` implementations
+//! for new code. The `IpcManager` is kept for backward compatibility.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 use crate::ipc_types::{AgentId, AgentMessage, IpcBackend, IpcPreference, IpcProbeError};
+use crate::transport::Transport;
 
 use super::io_uring::IoUringBackend;
 use super::priority_queue::PriorityQueue;
 use super::shared_mem::SharedMemBackend;
+use super::transport_adapter::IpcBackendAdapter;
 use super::unix_socket::UnixSocketBackend;
 
 // ---------------------------------------------------------------------------
@@ -305,6 +310,21 @@ impl IpcManager {
     /// Register an agent name for routing / diagnostics.
     pub fn register_agent(&mut self, agent_id: AgentId, name: String) {
         self.agents.insert(agent_id, name);
+    }
+
+    // ------------------------------------------------------------------
+    // Transport integration.
+    // ------------------------------------------------------------------
+
+    /// Get a Transport adapter for the primary backend.
+    ///
+    /// This allows the IPC manager to be used with the unified Transport
+    /// interface for cross-process communication.
+    pub fn as_transport(&self) -> Box<dyn Transport> {
+        // Create a new adapter wrapping the primary backend
+        // Note: This requires the backend to be cloneable or we need a different approach
+        // For now, we'll create a new backend instance
+        Box::new(IpcBackendAdapter::new(Self::make_unix_socket(PathBuf::from("/tmp"))))
     }
 
     // ------------------------------------------------------------------

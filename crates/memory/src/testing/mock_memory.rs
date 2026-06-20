@@ -265,6 +265,7 @@ mod tests {
             name: "test".into(),
             working_dir: PathBuf::from("/tmp"),
             config: json!({}),
+            bus: std::sync::Arc::new(base::comm::CommunicationBus::new()),
         };
         backend.init(&ctx).await.unwrap();
         backend

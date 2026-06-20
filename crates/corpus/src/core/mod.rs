@@ -193,6 +193,7 @@ mod tests {
             name: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
             config: serde_json::json!({}),
+            bus: std::sync::Arc::new(base::comm::CommunicationBus::new()),
         };
         rt.init(&ctx).await.unwrap();
 

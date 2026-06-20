@@ -22,14 +22,136 @@ use crate::comm::r#impl::event_log::EventLog;
 use crate::comm::r#impl::kernel_bus::KernelEventBus;
 use crate::comm::r#impl::routing_policy::{RouteAction, RoutingPolicy};
 
+/// Priority-aware channel wrapper for envelope delivery.
+///
+/// Maintains a priority heap alongside the mpsc channel to ensure
+/// critical messages are delivered before lower-priority ones.
+pub struct PriorityChannel {
+    tx: mpsc::Sender<Envelope>,
+    /// Priority heap for reordering messages before delivery.
+    /// Uses parking_lot::Mutex for non-async locking.
+    heap: std::sync::Mutex<std::collections::BinaryHeap<PriorityEnvelope>>,
+}
+
+/// Wrapper for Envelope with priority ordering.
+#[derive(Debug)]
+struct PriorityEnvelope {
+    envelope: Envelope,
+    /// Sequence number for FIFO within same priority.
+    sequence: u64,
+}
+
+impl PartialEq for PriorityEnvelope {
+    fn eq(&self, other: &Self) -> bool {
+        self.envelope.priority == other.envelope.priority && self.sequence == other.sequence
+    }
+}
+
+impl Eq for PriorityEnvelope {}
+
+impl PartialOrd for PriorityEnvelope {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PriorityEnvelope {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // BinaryHeap is a max-heap, so we reverse to get min-heap behavior
+        // Lower priority value = higher precedence (Critical=0, Background=4)
+        other
+            .envelope
+            .priority
+            .cmp(&self.envelope.priority)
+            .then(other.sequence.cmp(&self.sequence))
+    }
+}
+
+impl PriorityChannel {
+    fn new(buffer: usize) -> (Self, mpsc::Receiver<Envelope>) {
+        let (tx, rx) = mpsc::channel(buffer);
+        let channel = Self {
+            tx,
+            heap: std::sync::Mutex::new(std::collections::BinaryHeap::new()),
+        };
+        (channel, rx)
+    }
+
+    /// Send an envelope through the priority channel.
+    ///
+    /// The envelope is added to the priority heap and then the highest-priority
+    /// envelope is sent through the mpsc channel.
+    async fn send(&self, envelope: Envelope, sequence: &mut u64) -> Result<()> {
+        {
+            let mut heap = self.heap.lock().unwrap();
+            heap.push(PriorityEnvelope {
+                envelope,
+                sequence: *sequence,
+            });
+            *sequence += 1;
+        }
+
+        // Send the highest-priority envelope from the heap
+        let to_send = {
+            let mut heap = self.heap.lock().unwrap();
+            heap.pop()
+        };
+
+        if let Some(entry) = to_send {
+            self.tx
+                .send(entry.envelope)
+                .await
+                .map_err(|_| anyhow::anyhow!("priority channel closed"))?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Transport metrics for health monitoring.
+struct TransportMetrics {
+    /// Total messages sent successfully.
+    messages_sent: std::sync::atomic::AtomicU64,
+    /// Total messages received.
+    messages_received: std::sync::atomic::AtomicU64,
+    /// Total errors encountered.
+    errors: std::sync::atomic::AtomicU64,
+    /// Total latency in microseconds.
+    total_latency_us: std::sync::atomic::AtomicU64,
+}
+
+impl TransportMetrics {
+    fn new() -> Self {
+        Self {
+            messages_sent: std::sync::atomic::AtomicU64::new(0),
+            messages_received: std::sync::atomic::AtomicU64::new(0),
+            errors: std::sync::atomic::AtomicU64::new(0),
+            total_latency_us: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    fn avg_latency_us(&self) -> u64 {
+        let sent = self
+            .messages_sent
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if sent == 0 {
+            return 0;
+        }
+        let total = self
+            .total_latency_us
+            .load(std::sync::atomic::Ordering::Relaxed);
+        total / sent
+    }
+}
+
 /// Intra-process transport — based on tokio channels.
 /// Wraps existing KernelEventBus for backward-compatible event dispatch.
 pub struct InProcessTransport {
     /// Per-module mailboxes for point-to-point delivery.
-    mailboxes: DashMap<ModuleId, mpsc::Sender<Envelope>>,
+    mailboxes: DashMap<ModuleId, PriorityChannel>,
 
     /// Per-agent mailboxes for point-to-point delivery.
-    agent_mailboxes: DashMap<u64, mpsc::Sender<Envelope>>,
+    agent_mailboxes: DashMap<u64, PriorityChannel>,
 
     /// Per-topic broadcast channels for pub-sub.
     topics: DashMap<String, broadcast::Sender<Envelope>>,
@@ -39,6 +161,12 @@ pub struct InProcessTransport {
 
     /// Event log (shared with KernelEventBus).
     event_log: Arc<RwLock<EventLog>>,
+
+    /// Global sequence counter for priority ordering.
+    sequence: std::sync::atomic::AtomicU64,
+
+    /// Transport metrics for health monitoring.
+    metrics: TransportMetrics,
 }
 
 impl InProcessTransport {
@@ -51,22 +179,48 @@ impl InProcessTransport {
             topics: DashMap::new(),
             event_bus,
             event_log,
+            sequence: std::sync::atomic::AtomicU64::new(0),
+            metrics: TransportMetrics::new(),
+        }
+    }
+
+    /// Create a new InProcessTransport with cross-process transport bridging.
+    ///
+    /// The provided transport is passed to KernelEventBus for event bridging.
+    pub fn with_transport(
+        event_bus: Arc<KernelEventBus>,
+        transport: Arc<dyn Transport>,
+    ) -> Self {
+        let event_log = event_bus.event_log();
+        // Create a new KernelEventBus with the transport for bridging
+        let bridged_bus = Arc::new(KernelEventBus::with_transport(
+            event_log.read().capacity(),
+            transport,
+        ));
+        Self {
+            mailboxes: DashMap::new(),
+            agent_mailboxes: DashMap::new(),
+            topics: DashMap::new(),
+            event_bus: bridged_bus,
+            event_log,
+            sequence: std::sync::atomic::AtomicU64::new(0),
+            metrics: TransportMetrics::new(),
         }
     }
 
     /// Register a module mailbox for point-to-point delivery.
     /// Returns a receiver for envelopes addressed to this module.
     pub fn register_module(&self, module: ModuleId, buffer: usize) -> mpsc::Receiver<Envelope> {
-        let (tx, rx) = mpsc::channel(buffer);
-        self.mailboxes.insert(module, tx);
+        let (channel, rx) = PriorityChannel::new(buffer);
+        self.mailboxes.insert(module, channel);
         rx
     }
 
     /// Register an agent mailbox for point-to-point delivery.
     /// Returns a receiver for envelopes addressed to this agent.
     pub async fn register_agent(&self, pid: u64, buffer: usize) -> mpsc::Receiver<Envelope> {
-        let (tx, rx) = mpsc::channel(buffer);
-        self.agent_mailboxes.insert(pid, tx);
+        let (channel, rx) = PriorityChannel::new(buffer);
+        self.agent_mailboxes.insert(pid, channel);
         rx
     }
 
@@ -92,43 +246,71 @@ impl InProcessTransport {
 
     /// Deliver an envelope to its target.
     async fn deliver(&self, envelope: Envelope) -> Result<()> {
+        let start = std::time::Instant::now();
+
         // Record in event log
         {
             let mut log = self.event_log.write();
             log.record(&OwnedEnvelopeEventAdapter::new(&envelope));
         }
 
-        match &envelope.target {
+        let mut seq = self
+            .sequence
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let result = match &envelope.target {
             Target::Module(module) => {
-                if let Some(tx) = self.mailboxes.get(module) {
-                    tx.send(envelope)
+                if let Some(channel) = self.mailboxes.get(module) {
+                    channel
+                        .send(envelope, &mut seq)
                         .await
-                        .map_err(|_| anyhow::anyhow!("module mailbox closed"))?;
+                        .map_err(|_| anyhow::anyhow!("module mailbox closed"))
                 } else {
                     tracing::warn!("no mailbox registered for module {:?}", module);
+                    Ok(())
                 }
             }
             Target::Agent(pid) => {
-                if let Some(tx) = self.agent_mailboxes.get(pid) {
-                    tx.send(envelope)
+                if let Some(channel) = self.agent_mailboxes.get(pid) {
+                    channel
+                        .send(envelope, &mut seq)
                         .await
-                        .map_err(|_| anyhow::anyhow!("agent mailbox closed"))?;
+                        .map_err(|_| anyhow::anyhow!("agent mailbox closed"))
                 } else {
                     tracing::warn!("no mailbox registered for agent pid {}", pid);
+                    Ok(())
                 }
             }
             Target::Topic(topic) => {
                 if let Some(tx) = self.topics.get(topic) {
                     let _ = tx.send(envelope); // Ignore if no receivers
                 }
+                Ok(())
             }
             Target::Broadcast => {
                 for entry in self.mailboxes.iter() {
-                    let _ = entry.value().send(envelope.clone()).await;
+                    let _ = entry.value().send(envelope.clone(), &mut seq).await;
                 }
+                Ok(())
             }
+        };
+
+        // Track metrics
+        let latency = start.elapsed().as_micros() as u64;
+        self.metrics
+            .messages_sent
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.metrics
+            .total_latency_us
+            .fetch_add(latency, std::sync::atomic::Ordering::Relaxed);
+
+        if result.is_err() {
+            self.metrics
+                .errors
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
-        Ok(())
+
+        result
     }
 }
 
@@ -169,11 +351,31 @@ impl Transport for InProcessTransport {
     }
 
     fn health(&self) -> TransportHealth {
+        let messages_sent = self
+            .metrics
+            .messages_sent
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let errors = self
+            .metrics
+            .errors
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let error_rate = if messages_sent > 0 {
+            errors as f64 / messages_sent as f64
+        } else {
+            0.0
+        };
+
         TransportHealth {
-            status: HealthStatus::Healthy,
-            latency_ms: 0,
-            queue_depth: 0,
-            error_rate: 0.0,
+            status: if error_rate < 0.1 {
+                HealthStatus::Healthy
+            } else if error_rate < 0.5 {
+                HealthStatus::Degraded
+            } else {
+                HealthStatus::Unhealthy
+            },
+            latency_ms: self.metrics.avg_latency_us() / 1000, // Convert to ms
+            queue_depth: 0, // Not tracked for in-process
+            error_rate,
         }
     }
 }

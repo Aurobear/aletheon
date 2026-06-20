@@ -8,11 +8,16 @@ use tracing::{debug, warn};
 use crate::comm::r#impl::event_log::EventLog;
 use crate::comm::r#impl::routing_policy::{RouteAction, RoutingPolicy};
 use crate::comm::r#impl::subscription::SubscriptionRegistry;
+use crate::envelope::{Endpoint, Envelope, EventEnvelopeExt, Payload, Target};
+use crate::transport::Transport;
 use crate::{AsyncEventHandler, Event, EventBus, EventHandler, EventType, SubscriptionId};
 
 pub struct KernelEventBus {
     subscriptions: SubscriptionRegistry,
     event_log: Arc<RwLock<EventLog>>,
+    /// Optional transport for cross-process event bridging.
+    /// When set, published events are also sent through this transport.
+    transport: Option<Arc<dyn Transport>>,
 }
 
 impl KernelEventBus {
@@ -20,6 +25,19 @@ impl KernelEventBus {
         Self {
             subscriptions: SubscriptionRegistry::new(),
             event_log: Arc::new(RwLock::new(EventLog::new(log_capacity))),
+            transport: None,
+        }
+    }
+
+    /// Create a new KernelEventBus with cross-process transport bridging.
+    ///
+    /// When a transport is provided, published events are also sent through
+    /// the transport for cross-process delivery.
+    pub fn with_transport(log_capacity: usize, transport: Arc<dyn Transport>) -> Self {
+        Self {
+            subscriptions: SubscriptionRegistry::new(),
+            event_log: Arc::new(RwLock::new(EventLog::new(log_capacity))),
+            transport: Some(transport),
         }
     }
 
@@ -54,8 +72,23 @@ impl EventBus for KernelEventBus {
             }
         }
 
-        // 3. Dispatch to subscribers
+        // 3. Dispatch to in-process subscribers
         self.subscriptions.dispatch(&*event);
+
+        // 4. Cross-process bridging: send through transport if available
+        if let Some(transport) = &self.transport {
+            let envelope = crate::envelope::Envelope::new(
+                Endpoint::System,
+                Target::Broadcast,
+                crate::envelope::Pattern::Publish,
+                Payload::Json(event.to_json()),
+            )
+            .with_priority(event.priority());
+            if let Err(e) = transport.send(envelope).await {
+                warn!(error = %e, "Failed to bridge event to transport");
+                // Non-fatal: in-process delivery already succeeded
+            }
+        }
 
         Ok(())
     }

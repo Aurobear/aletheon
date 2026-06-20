@@ -400,6 +400,7 @@ impl RequestHandler {
             name: "episodic_memory".into(),
             working_dir: data_dir.clone(),
             config: serde_json::Value::Null,
+            bus: Arc::new(base::comm::CommunicationBus::new()),
         };
         episodic_memory.init(&ctx).await?;
         let episodic_memory = Arc::new(Mutex::new(episodic_memory));

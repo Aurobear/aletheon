@@ -928,6 +928,7 @@ mod tests {
             name: "brain_core".to_string(),
             working_dir: PathBuf::from("/tmp"),
             config: json!({}),
+            bus: std::sync::Arc::new(base::comm::CommunicationBus::new()),
         };
         bc.init(&ctx).await.unwrap();
         assert!(matches!(bc.health().await, SubsystemHealth::Healthy));

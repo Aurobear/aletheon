@@ -92,6 +92,10 @@ pub struct SubscriptionId(pub u64);
 ///
 /// Like Linux kernel's `sk_buff`, events carry typed payloads through
 /// the system. All cross-subsystem communication happens via events.
+///
+/// **Deprecated:** Use `Envelope` instead of `Event` for new code.
+/// The `Event` trait is kept for backward compatibility during migration.
+#[deprecated(since = "0.2.0", note = "Use Envelope instead of Event for new code")]
 #[async_trait]
 pub trait Event: Send + Sync + 'static {
     /// The event type (used for routing and subscription filtering).

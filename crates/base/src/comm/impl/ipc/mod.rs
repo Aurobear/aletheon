@@ -2,14 +2,20 @@
 //!
 //! Provides Unix socket, io_uring, and shared memory
 //! IPC backends with auto-detection and runtime fallback.
+//!
+//! **Migration path:** Use `Transport` trait directly for new code.
+//! The `IpcBackendAdapter` wraps legacy `IpcBackend` implementations
+//! as `Transport` instances.
 
 pub mod io_uring;
 pub mod json_rpc;
 pub mod manager;
 pub mod priority_queue;
 pub mod shared_mem;
+pub mod transport_adapter;
 pub mod unix_socket;
 
 pub use json_rpc::JsonRpcAdapter;
 pub use manager::{Environment, IpcBackendKind, IpcManager};
 pub use priority_queue::PriorityQueue;
+pub use transport_adapter::IpcBackendAdapter;

@@ -17,6 +17,10 @@ use crate::event::{AsyncEventHandler, Event, EventHandler, EventType, Subscripti
 /// Subsystems subscribe to event types and receive callbacks when
 /// events are published. The EventBus handles routing, priority
 /// ordering, and delivery.
+///
+/// **Deprecated:** Use `CommunicationBus` instead of `EventBus` for new code.
+/// The `EventBus` trait is kept for backward compatibility during migration.
+#[deprecated(since = "0.2.0", note = "Use CommunicationBus instead of EventBus for new code")]
 #[async_trait]
 pub trait EventBus: Send + Sync {
     /// Publish an event. All matching subscribers are notified.
