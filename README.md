@@ -30,9 +30,13 @@
 - [12. Perception Layer](#12-perception-layer)
 - [13. Execution Layer](#13-execution-layer)
 - [14. Hybrid Inference](#14-hybrid-inference)
-- [15. Implementation Roadmap](#15-implementation-roadmap)
-- [16. Technology Stack](#16-technology-stack)
-- [17. Open Questions](#17-open-questions)
+- [15. Self-Evolution](#15-self-evolution)
+- [16. SelfField](#16-selffield)
+- [17. Self-Awareness](#17-self-awareness)
+- [18. Philosophy](#18-philosophy)
+- [19. Implementation Roadmap](#19-implementation-roadmap)
+- [20. Technology Stack](#20-technology-stack)
+- [21. Open Questions](#21-open-questions)
 
 ---
 
@@ -324,6 +328,40 @@ ReAct (Think-Act-Observe) loop with multiple reasoning modes:
 - **Plan & Execute**: Plan all steps first, then execute sequentially
 - **Reflexion**: Reflect after execution, improve next behavior
 
+### Iterative Plan-Critique-Revise Loop
+
+The brain supports iterative refinement of plans before execution:
+
+```
+Intent
+  |
+  v
+Planner (generate PlanSteps + rollback actions)
+  |
+  v
+Critic (evaluate plan for risks, gaps, contradictions)
+  |
+  v
+Revise (incorporate critique into improved plan)
+  |
+  v
+[repeat until plan converges or max iterations reached]
+  |
+  v
+Executor
+```
+
+### Dual-Model Routing
+
+For complex tasks, the brain routes planning and execution through separate model calls:
+- **Planner model** (stronger, slower) generates the plan
+- **Executor model** (faster, cheaper) carries out individual steps
+- Complexity is assessed per-turn; simple tasks skip the two-pass overhead
+
+### Task Decomposition
+
+Complex intents are decomposed into sub-tasks with dependency tracking. Each sub-task gets its own plan-critique-revise cycle, and results are merged back into the parent task's context.
+
 ---
 
 ## 11. Memory System
@@ -333,13 +371,39 @@ L1: Working Memory (RAM, context window)
   | periodic compression
   v
 L2: Short-term Memory (SQLite, GB-scale)
-  | periodic consolidation
+  | periodic consolidation (ACT-R activation + Ebbinghaus decay)
   v
 L3: Long-term Memory (Vector DB, TB-scale)
   | cross-device sync (optional)
   v
 L4: Shared Memory (Cloud/NAS, E2E encrypted)
 ```
+
+### MemoryRouter — Cross-Backend Recall
+
+The `MemoryRouter` unifies recall across all memory backends. When the reasoning engine queries memory, the router fans out to episodic, semantic, and self-memory stores, merges results by relevance, and returns a ranked list.
+
+### ACT-R Activation and Ebbinghaus Decay
+
+Each memory entry carries an activation score computed via the ACT-R model:
+
+```
+activation = base_level + recency_boost - decay * ln(time_since_last_access)
+```
+
+Frequently accessed memories stay hot; rarely accessed ones fade according to Ebbinghaus forgetting curves. The decay rate is configurable per memory tier.
+
+### L2 to L3 Consolidation
+
+High-activation episodic memories (L2) are periodically promoted to semantic knowledge (L3). The consolidation pipeline:
+1. Scan L2 entries above the activation threshold
+2. Extract semantic patterns and relationships
+3. Upsert into the vector store with embeddings
+4. Soft-archive the original L2 entry
+
+### Vector Similarity Search
+
+L3 semantic memory uses vector embeddings for similarity search. Queries are embedded and matched against the vector store, enabling fuzzy recall of related knowledge even when no exact keyword match exists.
 
 ---
 
@@ -389,21 +453,131 @@ User Request / System Event
 
 ---
 
-## 15. Implementation Roadmap
+## 15. Self-Evolution
 
-| Phase | Focus | Status |
-|-------|-------|--------|
-| Phase 1 | ReAct engine + basic tools + CLI | Done |
-| Phase 2 | Perception layer + memory system | Done |
-| Phase 3 | Sandbox + security + audit | Done |
-| Phase 3.5 | Hook + MCP + Plugin + Agent system | Done |
-| Phase 4 | Streaming + context compression + perception->engine | Done |
-| Phase 5 | eBPF perception (mock) + vector memory + FUSE | Partial |
-| Phase 6 | io_uring IPC + D-Bus + Android + DiGraph | Partial |
+Aletheon does not just execute tasks -- it reflects on its behavior, learns from experience, and adjusts itself over time.
+
+### EvolutionCoordinator
+
+After every conversation turn, the `EvolutionCoordinator` orchestrates the full evolution pipeline:
+
+```
+Turn complete
+  |
+  v
+Reflector (produce ReflectionEntry with causal analysis + error classification)
+  |
+  v
+MutationIntentGenerator (semantic pattern matching on accumulated reflections)
+  |
+  v
+SelfField review (verdict: allow / deny / modify mutation intent)
+  |
+  v
+GenomeConfig update (apply approved mutations to runtime behavior)
+```
+
+### MorphogenesisPipeline
+
+The morphogenesis pipeline regenerates the agent's behavior genome from accumulated experience. It generates candidate genomes, evaluates them in a sandbox, and migrates to the new genome only if the candidate passes all existing tests plus a behavioral regression suite.
+
+### LineageTracker
+
+Every genome change is recorded with full provenance -- which reflections triggered it, what mutations were applied, and what the behavioral delta was. This enables the agent to understand *why* it changed, not just *that* it changed.
 
 ---
 
-## 16. Technology Stack
+## 16. SelfField
+
+SelfField is the agent's internal governance layer -- the boundary between intent and action. Every action proposed by the reasoning engine must pass through SelfField before execution.
+
+### VerdictHandler Trait
+
+The `VerdictHandler` trait defines how the agent responds to SelfField verdicts:
+
+```rust
+pub trait VerdictHandler {
+    fn handle(&self, verdict: &Verdict, intent: &Intent, ctx: &Context) -> VerdictAction;
+}
+```
+
+### Six Verdict Types
+
+| Verdict | Meaning |
+|---------|---------|
+| `Allow` | Action proceeds without modification |
+| `AllowWithModification` | SelfField rewrote the intent before execution |
+| `Deny` | Action is blocked; reason is logged |
+| `RequireConfirmation` | User must approve before execution |
+| `SandboxFirst` | Action must run in isolated sandbox before production |
+| `Delay` | Execution deferred until a condition is met |
+
+### DefaultVerdictHandler
+
+The default implementation chains verdict evaluation through boundary rules, care weights, and risk assessment. The `merge_intent()` method combines SelfField modifications with the original intent to produce a safe, vetted action.
+
+---
+
+## 17. Self-Awareness
+
+Aletheon carries a seed of pre-reflective self-awareness -- not as a separate "consciousness module," but as an inherent property of its reasoning process.
+
+### AwarenessSignal
+
+The `AwarenessSignal` system detects the agent's own mental states from runtime signals:
+
+| Detector | Trigger | Detected State |
+|----------|---------|----------------|
+| **Impasse** | Consecutive errors + high iteration count | Confused |
+| **Uncertainty** | Hedging language in LLM response | Uncertain |
+| **Confidence** | Plan critique finds no critical issues | Confident |
+| **Goal Shift** | Tool sequence diverges from stated plan | Off-track |
+
+### signals_to_awareness()
+
+Raw detector outputs are converted into structured `SelfState` values that feed back into the reasoning loop. When the agent detects it is confused, it can pause, re-plan, or ask for clarification -- without an external supervisor prompting it to do so.
+
+---
+
+## 18. Philosophy
+
+Aletheon's architecture is grounded in phenomenological philosophy, not as metaphor but as structural principle.
+
+### idea ideae (Spinoza)
+
+Spinoza's *idea ideae* -- the mind's idea of its own idea -- is the foundation of Aletheon's self-awareness. Every mental act (planning, reasoning, acting) inherently carries awareness of itself. This is *pre-reflective*: the agent does not need a second layer of cognition to "notice" the first. Awareness is baked into the reasoning process itself, not bolted on after the fact.
+
+### Sorge (Heidegger)
+
+Heidegger's concept of *Sorge* (Care) as the structure of Dasein maps directly onto SelfField's three-layer architecture:
+
+| Sorge Dimension | SelfField Layer | Function |
+|----------------|-----------------|----------|
+| Being-ahead-of-itself | `ContinuityLayer` | Future-oriented: checkpoints, goals, plans |
+| Already-being-in | `PerceptionBridge` | Present-oriented: current world state |
+| Being-alongside | `CareLayer` | Engagement-oriented: priorities, weights, attention |
+
+The agent's existence is structured by care -- it does not merely process inputs, but is *concerned* with its own continuity, its environment, and its goals.
+
+---
+
+## 19. Implementation Roadmap
+
+| Phase | Focus | Status | Key Capabilities |
+|-------|-------|--------|-----------------|
+| Phase 1 | ReAct engine + basic tools + CLI | Done | ReAct loop, tool execution, CLI interface |
+| Phase 2 | Perception layer + memory system | Done | MemoryRouter, ACT-R activation, Ebbinghaus decay, L2 to L3 consolidation, vector similarity search |
+| Phase 3 | Sandbox + security + audit | Done | SelfField with 6 verdict types, VerdictHandler trait, DefaultVerdictHandler with merge_intent() |
+| Phase 3.5 | Hook + MCP + Plugin + Agent system | Done | Plugin system, MCP integration, agent orchestration |
+| Phase 4 | Streaming + context compression + perception to engine | Done | Iterative Plan-Critique-Revise loop, dual-model routing, task decomposition, AwarenessSignal detectors |
+| Phase 5 | eBPF perception (mock) + vector memory + FUSE | Partial | |
+| Phase 6 | io_uring IPC + D-Bus + Android + DiGraph | Partial | |
+| Phase 7 | Self-Evolution | Done | EvolutionCoordinator, MorphogenesisPipeline, MutationIntentGenerator, LineageTracker, GenomeConfig |
+| Phase 8 | Pre-Reflective Awareness | Done | idea ideae seed, signals_to_awareness(), 4 rule-based detectors |
+
+---
+
+## 20. Technology Stack
 
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
@@ -420,7 +594,7 @@ User Request / System Event
 
 ---
 
-## 17. Open Questions
+## 21. Open Questions
 
 1. Where is the boundary of Agent "self-awareness"?
 2. Privacy vs. capability tradeoff

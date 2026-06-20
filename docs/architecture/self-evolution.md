@@ -206,9 +206,9 @@ sandbox_evaluation = true      # test candidates before migration
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 1: Reflection | Implemented | `ReflectionEntry`, episodic storage, `/reflect` command |
-| Phase 2: Behavior Evolution | In Progress | ExperienceSummarizer designed, Care/Boundary adjustment partially wired |
-| Phase 3: Genome + Morphogenesis | Skeleton | `aletheon-meta` crate exists with trait definitions, implementations are `todo!()` |
+| Phase 1: Reflection | Done | `Reflector` with causal analysis, error classification, episodic storage, `/reflect` command |
+| Phase 2: Behavior Evolution | Done | `EvolutionCoordinator` post-turn orchestration, `MutationIntentGenerator` with semantic pattern matching, Care/Boundary adjustment wired |
+| Phase 3: Genome + Morphogenesis | Done | `MorphogenesisPipeline`, `LineageTracker` with JSONL provenance, `GenomeConfig` wired to `AletheonRuntime` |
 
 See the [Self-Evolution Design](../plans/2026-06-14-self-evolution-design.md) for the full implementation plan.
 
