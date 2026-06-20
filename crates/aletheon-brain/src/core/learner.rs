@@ -119,6 +119,52 @@ impl Learner {
         self.rules.read().len()
     }
 
+    /// Get rules whose pattern matches a context string.
+    ///
+    /// Matching strategy:
+    /// - Exact substring match (context in pattern, or pattern in context)
+    /// - Word-level match: if any word from context (split on whitespace/colons/dots)
+    ///   appears as a substring in the pattern
+    ///
+    /// Returns rules formatted as a bullet-point string suitable for LLM prompt injection.
+    pub fn rules_for_context(&self, context: &str) -> String {
+        let rules = self.rules.read();
+        let context_lower = context.to_lowercase();
+        let context_words: Vec<&str> = context_lower
+            .split(|c: char| c.is_whitespace() || c == ':' || c == '.')
+            .filter(|w| w.len() >= 2)
+            .collect();
+        let matched: Vec<&LearnedRule> = rules
+            .values()
+            .filter(|r| {
+                let pattern_lower = r.pattern.to_lowercase();
+                // Direct substring match
+                if context_lower.contains(&pattern_lower)
+                    || pattern_lower.contains(&context_lower)
+                {
+                    return true;
+                }
+                // Word-level match: any context word appears in pattern
+                context_words
+                    .iter()
+                    .any(|w| pattern_lower.contains(w))
+            })
+            .collect();
+
+        if matched.is_empty() {
+            return String::new();
+        }
+
+        let mut lines = vec!["Learned rules:".to_string()];
+        for rule in &matched {
+            lines.push(format!(
+                "- [conf={:.2}] {} ({})",
+                rule.confidence, rule.action, rule.pattern
+            ));
+        }
+        lines.join("\n")
+    }
+
     /// Upsert a rule — if pattern exists, merge (increase confidence, add examples).
     /// If at capacity and new rule has higher confidence than the lowest, replace.
     fn upsert_rule(&self, pattern: String, rule: LearnedRule) {

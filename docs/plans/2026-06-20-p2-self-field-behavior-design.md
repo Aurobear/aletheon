@@ -1,7 +1,7 @@
 # P2: SelfField → Behavior Integration
 
 **Date**: 2026-06-20
-**Status**: 🟡 In Progress
+**Status**: ✅ Complete (PR #167 merged)
 **Goal**: Make all 6 SelfField verdict types actually influence behavior in the ReAct loop.
 
 ## Problem

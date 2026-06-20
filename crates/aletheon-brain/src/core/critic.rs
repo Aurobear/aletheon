@@ -79,7 +79,7 @@ impl Critic {
             if is_destructive && step.rollback_action.is_none() {
                 critiques.push(Critique {
                     dimension: CriticismDimension::Risk,
-                    severity: CriticismSeverity::Warning,
+                    severity: CriticismSeverity::Fatal,
                     description: format!(
                         "Destructive action '{}' has no rollback action.",
                         step.action.name
@@ -108,7 +108,7 @@ impl Critic {
         if plan.estimated_cost.estimated_tool_calls > 10 {
             critiques.push(Critique {
                 dimension: CriticismDimension::Efficiency,
-                severity: CriticismSeverity::Info,
+                severity: CriticismSeverity::Warning,
                 description: format!(
                     "Plan has {} tool calls — consider batching.",
                     plan.estimated_cost.estimated_tool_calls
@@ -120,7 +120,7 @@ impl Critic {
         if plan.estimated_cost.estimated_time_ms > 30_000 {
             critiques.push(Critique {
                 dimension: CriticismDimension::Efficiency,
-                severity: CriticismSeverity::Info,
+                severity: CriticismSeverity::Warning,
                 description: format!(
                     "Estimated execution time {}ms is high.",
                     plan.estimated_cost.estimated_time_ms
@@ -147,7 +147,7 @@ impl Critic {
             if ratio < 0.5 && total > 1 {
                 critiques.push(Critique {
                     dimension: CriticismDimension::Reversibility,
-                    severity: CriticismSeverity::Info,
+                    severity: CriticismSeverity::Warning,
                     description: format!(
                         "Only {}/{} steps have rollback actions ({:.0}%).",
                         with_rollback,
@@ -179,6 +179,48 @@ impl Critic {
         }
 
         critiques
+    }
+
+    /// Returns true if any critique has severity >= Error (Fatal or Error).
+    ///
+    /// Fatal and Error are considered "Critical" for the refinement loop.
+    pub fn has_critical(critiques: &[Critique]) -> bool {
+        critiques
+            .iter()
+            .any(|c| c.severity >= CriticismSeverity::Error)
+    }
+
+    /// Build a revision prompt from critiques with severity >= Error.
+    pub fn build_revision_prompt(critiques: &[Critique]) -> String {
+        let critical: Vec<&Critique> = critiques
+            .iter()
+            .filter(|c| c.severity >= CriticismSeverity::Error)
+            .collect();
+        let mut lines = vec![
+            "The plan has these critical issues that must be fixed:".to_string(),
+            String::new(),
+        ];
+        for (i, c) in critical.iter().enumerate() {
+            let suggestion = c
+                .suggestion
+                .as_deref()
+                .unwrap_or("no suggestion");
+            lines.push(format!(
+                "{}. [{}] {}: {} (Suggestion: {})",
+                i + 1,
+                format!("{:?}", c.severity),
+                format!("{:?}", c.dimension),
+                c.description,
+                suggestion
+            ));
+        }
+        lines.push(String::new());
+        lines.push(
+            "Please revise the plan to address these issues. \
+             Output the revised plan as a JSON array of steps with 'action' and 'params' fields."
+                .to_string(),
+        );
+        lines.join("\n")
     }
 
     /// Detect cycles in step dependencies using DFS.
@@ -277,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn destructive_without_rollback_warns() {
+    fn destructive_without_rollback_is_fatal() {
         let critic = Critic::new();
         let plan = make_plan(vec![PlanStep {
             id: Uuid::new_v4(),
@@ -289,7 +331,7 @@ mod tests {
         let critiques = critic.critique(&plan);
         assert!(critiques.iter().any(|c| {
             matches!(c.dimension, CriticismDimension::Risk)
-                && c.severity == CriticismSeverity::Warning
+                && c.severity == CriticismSeverity::Fatal
         }));
     }
 
@@ -411,5 +453,144 @@ mod tests {
         assert!(critiques
             .iter()
             .all(|c| c.severity <= CriticismSeverity::Info));
+    }
+
+    // --- P4 severity and refinement tests ---
+
+    #[test]
+    fn destructive_risk_is_fatal_severity() {
+        let critic = Critic::new();
+        let plan = make_plan(vec![PlanStep {
+            id: Uuid::new_v4(),
+            action: make_action("file.delete"),
+            depends_on: vec![],
+            expected_outcome: "deleted".to_string(),
+            rollback_action: None,
+        }]);
+        let critiques = critic.critique(&plan);
+        let risk_critiques: Vec<_> = critiques
+            .iter()
+            .filter(|c| matches!(c.dimension, CriticismDimension::Risk))
+            .collect();
+        assert!(risk_critiques.iter().any(|c| c.severity == CriticismSeverity::Fatal));
+    }
+
+    #[test]
+    fn efficiency_high_tool_calls_is_warning() {
+        let critic = Critic::new();
+        let steps: Vec<PlanStep> = (0..15)
+            .map(|i| PlanStep {
+                id: Uuid::new_v4(),
+                action: make_action(&format!("action_{}", i)),
+                depends_on: vec![],
+                expected_outcome: "done".to_string(),
+                rollback_action: None,
+            })
+            .collect();
+        let mut plan = make_plan(steps);
+        plan.estimated_cost.estimated_tool_calls = 15;
+        let critiques = critic.critique(&plan);
+        let eff_critiques: Vec<_> = critiques
+            .iter()
+            .filter(|c| matches!(c.dimension, CriticismDimension::Efficiency))
+            .collect();
+        assert!(eff_critiques.iter().any(|c| c.severity == CriticismSeverity::Warning));
+    }
+
+    #[test]
+    fn reversibility_low_is_warning() {
+        let critic = Critic::new();
+        let plan = make_plan(vec![
+            PlanStep {
+                id: Uuid::new_v4(),
+                action: make_action("step.with.rollback"),
+                depends_on: vec![],
+                expected_outcome: "ok".to_string(),
+                rollback_action: Some(make_action("undo")),
+            },
+            PlanStep {
+                id: Uuid::new_v4(),
+                action: make_action("step.no.rollback"),
+                depends_on: vec![],
+                expected_outcome: "ok".to_string(),
+                rollback_action: None,
+            },
+            PlanStep {
+                id: Uuid::new_v4(),
+                action: make_action("step.another.no.rollback"),
+                depends_on: vec![],
+                expected_outcome: "ok".to_string(),
+                rollback_action: None,
+            },
+        ]);
+        let critiques = critic.critique(&plan);
+        // 1/3 = 33% < 50% → should trigger reversibility warning
+        let rev_critiques: Vec<_> = critiques
+            .iter()
+            .filter(|c| matches!(c.dimension, CriticismDimension::Reversibility))
+            .collect();
+        assert!(rev_critiques.iter().any(|c| c.severity == CriticismSeverity::Warning));
+    }
+
+    #[test]
+    fn has_critical_detects_fatal() {
+        let critiques = vec![Critique {
+            dimension: CriticismDimension::Completeness,
+            severity: CriticismSeverity::Fatal,
+            description: "test".to_string(),
+            suggestion: None,
+        }];
+        assert!(Critic::has_critical(&critiques));
+    }
+
+    #[test]
+    fn has_critical_ignores_warning_and_info() {
+        let critiques = vec![
+            Critique {
+                dimension: CriticismDimension::Risk,
+                severity: CriticismSeverity::Warning,
+                description: "warn".to_string(),
+                suggestion: None,
+            },
+            Critique {
+                dimension: CriticismDimension::Efficiency,
+                severity: CriticismSeverity::Info,
+                description: "info".to_string(),
+                suggestion: None,
+            },
+        ];
+        assert!(!Critic::has_critical(&critiques));
+    }
+
+    #[test]
+    fn has_critical_empty_is_false() {
+        assert!(!Critic::has_critical(&[]));
+    }
+
+    #[test]
+    fn build_revision_prompt_includes_critical_issues() {
+        let critiques = vec![
+            Critique {
+                dimension: CriticismDimension::Risk,
+                severity: CriticismSeverity::Fatal,
+                description: "Destructive action 'rm' has no rollback.".to_string(),
+                suggestion: Some("Add rollback action.".to_string()),
+            },
+            Critique {
+                dimension: CriticismDimension::Efficiency,
+                severity: CriticismSeverity::Warning,
+                description: "Too many tool calls.".to_string(),
+                suggestion: Some("Batch operations.".to_string()),
+            },
+        ];
+        let prompt = Critic::build_revision_prompt(&critiques);
+        // Should include the Fatal issue
+        assert!(prompt.contains("rm"));
+        assert!(prompt.contains("rollback"));
+        // Should NOT include the Warning-only issue
+        assert!(!prompt.contains("tool calls"));
+        // Should include revision instructions
+        assert!(prompt.contains("revise"));
+        assert!(prompt.contains("JSON array"));
     }
 }

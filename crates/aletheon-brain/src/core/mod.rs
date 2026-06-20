@@ -323,6 +323,160 @@ impl BrainCore {
     pub fn update_awareness_suggestions(&mut self, suggestions: Vec<AwarenessGrowthSuggestion>) {
         self.awareness_generator.update_suggestions(suggestions);
     }
+
+    /// Think with iterative refinement — the P4 plan-critique-revise loop.
+    ///
+    /// 1. Queries learned rules for the intent context.
+    /// 2. Generates initial plan (with task decomposition if LLM output supports it).
+    /// 3. Runs up to 3 critique-revise rounds, stopping when no Critical-severity
+    ///    (Fatal or Error) critiques remain.
+    ///
+    /// Falls back to template-based reasoning when no LLM is available.
+    pub async fn think_with_refinement(
+        &mut self,
+        intent: &Intent,
+        ctx: &Context,
+    ) -> Result<(Plan, String)> {
+        const MAX_REFINE_ROUNDS: usize = 3;
+
+        let world_state = self.world_model.snapshot();
+
+        // 1. Query learned rules for this intent context
+        let learned_rules_text = self.learner.rules_for_context(&intent.description);
+
+        // 2. Generate initial reasoning + plan
+        let (mut plan, mut reasoning) = self
+            .generate_initial_plan(intent, ctx, &world_state, &learned_rules_text)
+            .await?;
+
+        // 3. Refinement loop: critique → revise, max 3 rounds
+        for _round in 0..MAX_REFINE_ROUNDS {
+            let critiques = self.critic.critique(&plan);
+
+            if !Critic::has_critical(&critiques) {
+                break;
+            }
+
+            // Build revision prompt and call LLM
+            let revision_prompt = Critic::build_revision_prompt(&critiques);
+            let revised_reasoning = self.revise_via_llm(intent, &revision_prompt).await?;
+
+            // Try to parse subtasks from revised output
+            if let Some(subtasks) = self.planner.parse_subtasks(&revised_reasoning) {
+                plan = self
+                    .planner
+                    .generate_multi_step_plan(intent, &revised_reasoning, subtasks);
+            } else {
+                plan = self.planner.generate_plan(intent, &revised_reasoning, ctx);
+            }
+            reasoning = revised_reasoning;
+        }
+
+        Ok((plan, reasoning))
+    }
+
+    /// Internal: generate the initial plan, incorporating learned rules and task decomposition.
+    async fn generate_initial_plan(
+        &self,
+        intent: &Intent,
+        ctx: &Context,
+        world_state: &str,
+        learned_rules: &str,
+    ) -> Result<(Plan, String)> {
+        let complexity = Self::estimate_complexity(intent);
+
+        if let Some(llm) = self.effective_llm(complexity) {
+            let system_prompt = if learned_rules.is_empty() {
+                format!(
+                    "You are a reasoning engine. Current world state:\n{}",
+                    world_state
+                )
+            } else {
+                format!(
+                    "You are a reasoning engine. Current world state:\n{}\n\n{}",
+                    world_state, learned_rules
+                )
+            };
+
+            let user_prompt = format!(
+                "Intent: {}\nParameters: {}\nDescription: {}\n\n\
+                 Break this into subtasks as a JSON array of {{\"action\": \"...\", \"params\": {{...}}}}.\n\
+                 If the intent is simple enough for a single step, still output a JSON array with one element.\n\
+                 Include rollback considerations for each step.",
+                intent.action, intent.parameters, intent.description
+            );
+
+            let messages = vec![
+                LlmBridge::system_message(&system_prompt),
+                LlmBridge::user_message(&user_prompt),
+            ];
+
+            let response = llm.complete(&messages, &[]).await?;
+            let reasoning: String = response
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+
+            // Try task decomposition first
+            if let Some(subtasks) = self.planner.parse_subtasks(&reasoning) {
+                let plan = self
+                    .planner
+                    .generate_multi_step_plan(intent, &reasoning, subtasks);
+                Ok((plan, reasoning))
+            } else {
+                let plan = self.planner.generate_plan(intent, &reasoning, ctx);
+                Ok((plan, reasoning))
+            }
+        } else {
+            // Template fallback
+            let reasoning = self.reasoner.think(intent, ctx, world_state);
+            let plan = self.planner.generate_plan(intent, &reasoning, ctx);
+            Ok((plan, reasoning))
+        }
+    }
+
+    /// Internal: call LLM with a revision prompt to get a corrected plan.
+    async fn revise_via_llm(&self, intent: &Intent, revision_prompt: &str) -> Result<String> {
+        let complexity = Self::estimate_complexity(intent);
+
+        if let Some(llm) = self.effective_llm(complexity) {
+            let system_prompt = "You are a plan revision engine. \
+                 Given a plan with identified issues, produce a corrected plan.\n\
+                 Output the revised plan as a JSON array of steps with 'action' and 'params' fields.";
+
+            let user_prompt = format!(
+                "Original intent: {}\nDescription: {}\n\n{}",
+                intent.action, intent.description, revision_prompt
+            );
+
+            let messages = vec![
+                LlmBridge::system_message(system_prompt),
+                LlmBridge::user_message(&user_prompt),
+            ];
+
+            let response = llm.complete(&messages, &[]).await?;
+            let revised: String = response
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+
+            Ok(revised)
+        } else {
+            // No LLM — return the original reasoning; the loop will break
+            // because template plans don't produce Critical critiques.
+            Ok(revision_prompt.to_string())
+        }
+    }
 }
 
 #[async_trait]
@@ -427,6 +581,10 @@ impl BrainCoreOps for BrainCore {
                 })
                 .collect::<Vec<_>>()
                 .join("");
+
+            // TODO(P4): DualModel feedback — validate executor's plan against planner's
+            // analysis and re-prompt executor if key points are missed (max 1 re-prompt).
+            // Deferred because it requires robust NLP comparison of plan vs analysis.
 
             let plan = self.planner.generate_plan(intent, &reasoning, ctx);
             Ok(plan)
@@ -997,5 +1155,104 @@ mod tests {
         let bc = make_dual_brain_core();
         let plan = bc.think(&make_intent(), &make_ctx()).await.unwrap();
         assert!(!plan.steps.is_empty());
+    }
+
+    // --- P4 think_with_refinement tests ---
+
+    #[tokio::test]
+    async fn think_with_refinement_template_fallback() {
+        let mut bc = BrainCore::new(make_config());
+        let (plan, reasoning) = bc
+            .think_with_refinement(&make_intent(), &make_ctx())
+            .await
+            .unwrap();
+        // Template fallback produces a plan
+        assert!(!plan.steps.is_empty());
+        assert!(!reasoning.is_empty());
+    }
+
+    #[tokio::test]
+    async fn think_with_refinement_with_llm() {
+        let planner_prov = LlmBridge::new(Arc::new(StubProvider {
+            tag: "planner".into(),
+        }));
+        let executor_prov = LlmBridge::new(Arc::new(StubProvider {
+            tag: "executor".into(),
+        }));
+        let dm = DualModelBridge::new(planner_prov, executor_prov, DualModelConfig::default());
+        let mut bc = BrainCore::new(make_config()).with_dual_model(dm);
+        let (plan, reasoning) = bc
+            .think_with_refinement(&make_intent(), &make_ctx())
+            .await
+            .unwrap();
+        assert!(!plan.steps.is_empty());
+        // StubProvider returns "{tag} response" — reasoning should contain it
+        assert!(reasoning.contains("executor response") || reasoning.contains("planner response"));
+    }
+
+    #[tokio::test]
+    async fn think_with_refinement_stops_on_no_critical() {
+        // A simple read-only plan should not have critical critiques,
+        // so refinement loop should exit after round 0
+        let mut bc = BrainCore::new(make_config());
+        let intent = Intent {
+            action: "file.read".to_string(),
+            parameters: json!({"path": "/tmp/test"}),
+            source: IntentSource::User,
+            description: "Read a file".to_string(),
+        };
+        let (plan, _) = bc.think_with_refinement(&intent, &make_ctx()).await.unwrap();
+        // Should produce a valid plan
+        assert!(!plan.steps.is_empty());
+    }
+
+    // --- P4 learner.rules_for_context test ---
+
+    #[test]
+    fn learner_rules_for_context_matching() {
+        let learner = Learner::new(100);
+        // Seed some rules by learning from experiences
+        let exp = make_experience_for_learner("shell.execute", false, Some("permission denied"), 100);
+        learner.learn(&exp);
+        let text = learner.rules_for_context("shell.execute something");
+        assert!(!text.is_empty());
+        assert!(text.contains("Learned rules"));
+        assert!(text.contains("permission denied"));
+    }
+
+    #[test]
+    fn learner_rules_for_context_no_match() {
+        let learner = Learner::new(100);
+        let exp = make_experience_for_learner("shell.execute", false, Some("timeout"), 100);
+        learner.learn(&exp);
+        let text = learner.rules_for_context("file.read something completely different");
+        // "file.read" doesn't match "shell.execute" pattern, so should be empty
+        assert!(text.is_empty());
+    }
+
+    fn make_experience_for_learner(
+        action_name: &str,
+        success: bool,
+        error: Option<&str>,
+        elapsed_ms: u64,
+    ) -> Experience {
+        use aletheon_abi::body::{Action, ActionResult};
+        Experience {
+            action: Action {
+                name: action_name.to_string(),
+                parameters: json!({}),
+                requires_sandbox: false,
+                timeout: None,
+            },
+            result: ActionResult {
+                success,
+                output: "output".to_string(),
+                error: error.map(|s| s.to_string()),
+                elapsed_ms,
+                truncated: false,
+                side_effects: vec![],
+            },
+            context: make_ctx(),
+        }
     }
 }

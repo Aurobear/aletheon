@@ -94,6 +94,51 @@ impl Planner {
         }
     }
 
+    /// Parse subtasks from LLM output.
+    ///
+    /// Looks for a JSON array in `llm_output` (between ```json and ```, or raw `[...]`).
+    /// Each element must have "action" (string) and "params" (object) fields.
+    /// Returns `Some(vec)` if parsing succeeds, `None` otherwise.
+    pub fn parse_subtasks(
+        &self,
+        llm_output: &str,
+    ) -> Option<Vec<(String, serde_json::Value)>> {
+        // Try fenced JSON block first
+        let json_str = if let Some(start) = llm_output.find("```json") {
+            let after_fence = &llm_output[start + 7..];
+            if let Some(end) = after_fence.find("```") {
+                after_fence[..end].trim()
+            } else {
+                return None;
+            }
+        } else if let Some(start) = llm_output.find('[') {
+            if let Some(end) = llm_output[start..].rfind(']') {
+                &llm_output[start..=start + end]
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        };
+
+        let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;
+        let arr = parsed.as_array()?;
+
+        let mut subtasks = Vec::new();
+        for item in arr {
+            let obj = item.as_object()?;
+            let action = obj.get("action")?.as_str()?;
+            let params = obj.get("params").cloned().unwrap_or(serde_json::json!({}));
+            subtasks.push((action.to_string(), params));
+        }
+
+        if subtasks.is_empty() {
+            return None;
+        }
+
+        Some(subtasks)
+    }
+
     /// Convert an intent into an Action.
     fn intent_to_action(&self, intent: &Intent) -> Action {
         Action {
@@ -259,5 +304,63 @@ mod tests {
         let cost = planner.estimate_cost(&intent, "a reasoning chain of some length");
         assert!(cost.estimated_tokens > 0);
         assert_eq!(cost.estimated_tool_calls, 1);
+    }
+
+    #[test]
+    fn parse_subtasks_fenced_json() {
+        let planner = Planner::new();
+        let llm_output = r#"Here is the plan:
+```json
+[
+  {"action": "build.project", "params": {"target": "release"}},
+  {"action": "test.suite", "params": {}},
+  {"action": "deploy.prod", "params": {"env": "production"}}
+]
+```"#;
+        let subtasks = planner.parse_subtasks(llm_output).unwrap();
+        assert_eq!(subtasks.len(), 3);
+        assert_eq!(subtasks[0].0, "build.project");
+        assert_eq!(subtasks[1].0, "test.suite");
+        assert_eq!(subtasks[2].0, "deploy.prod");
+    }
+
+    #[test]
+    fn parse_subtasks_raw_json_array() {
+        let planner = Planner::new();
+        let llm_output = r#"[
+            {"action": "read.config", "params": {"path": "/etc/app.conf"}},
+            {"action": "write.config", "params": {"path": "/etc/app.conf"}}
+        ]"#;
+        let subtasks = planner.parse_subtasks(llm_output).unwrap();
+        assert_eq!(subtasks.len(), 2);
+        assert_eq!(subtasks[0].0, "read.config");
+    }
+
+    #[test]
+    fn parse_subtasks_returns_none_for_no_json() {
+        let planner = Planner::new();
+        assert!(planner.parse_subtasks("just plain text with no JSON").is_none());
+    }
+
+    #[test]
+    fn parse_subtasks_returns_none_for_empty_array() {
+        let planner = Planner::new();
+        assert!(planner.parse_subtasks("[]").is_none());
+    }
+
+    #[test]
+    fn parse_subtasks_returns_none_for_missing_action() {
+        let planner = Planner::new();
+        let llm_output = r#"[{"params": {}}]"#;
+        assert!(planner.parse_subtasks(llm_output).is_none());
+    }
+
+    #[test]
+    fn parse_subtasks_defaults_params_to_empty_object() {
+        let planner = Planner::new();
+        let llm_output = r#"[{"action": "step.one"}]"#;
+        let subtasks = planner.parse_subtasks(llm_output).unwrap();
+        assert_eq!(subtasks.len(), 1);
+        assert_eq!(subtasks[0].1, serde_json::json!({}));
     }
 }
