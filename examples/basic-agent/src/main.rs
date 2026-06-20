@@ -5,11 +5,11 @@
 //!
 //! Run with:  cargo run -p basic-agent-example
 
-use aletheon_abi::body::{Action, ActionResult};
-use aletheon_abi::brain::{CostEstimate, Plan, PlanStep};
-use aletheon_abi::context::Context;
-use aletheon_abi::self_field::{Intent, RiskLevel, Verdict};
-use aletheon_runtime::{AletheonRuntime, RuntimeConfig};
+use base::body::{Action, ActionResult};
+use base::brain::{CostEstimate, Plan, PlanStep};
+use base::context::Context;
+use base::self_field::{Intent, RiskLevel, Verdict};
+use runtime::{AletheonRuntime, RuntimeConfig};
 use anyhow::Result;
 use std::path::PathBuf;
 

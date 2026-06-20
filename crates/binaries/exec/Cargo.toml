@@ -1,0 +1,23 @@
+[package]
+name = "exec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "exec"
+path = "src/main.rs"
+
+[dependencies]
+base = { path = "../../base" }
+runtime = { path = "../../runtime" }
+corpus = { path = "../../corpus" }
+cognit = { path = "../../cognit" }
+tokio.workspace = true
+serde_json.workspace = true
+serde = { workspace = true }
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap = { version = "4", features = ["derive"] }
+uuid.workspace = true

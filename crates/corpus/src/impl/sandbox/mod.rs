@@ -1,0 +1,28 @@
+//! Sandbox execution layer.
+
+pub mod backend;
+pub mod bubblewrap;
+pub mod bwrap_builder;
+pub mod container;
+pub mod env;
+pub mod executor;
+pub mod glob_scanner;
+pub mod noop;
+pub mod policy;
+pub mod process;
+pub mod profile;
+
+// Re-export key types for convenience (inlined from backend.rs)
+pub use base::sandbox::{
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
+};
+pub use bubblewrap::BubblewrapBackend;
+pub use bwrap_builder::BwrapBuilder;
+pub use container::{ContainerBackend, ContainerResourceLimits, ContainerRuntime, NetworkMode};
+pub use env::SandboxEnvironment;
+pub use executor::{SandboxExecutor, SandboxPreference};
+pub use glob_scanner::GlobScanner;
+pub use noop::NoopBackend;
+pub use policy::{FilesystemPolicy, FsDefault, WritableRoot};
+pub use process::ProcessBackend;
+pub use profile::SandboxProfile;
