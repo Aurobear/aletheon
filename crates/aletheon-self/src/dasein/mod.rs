@@ -14,6 +14,7 @@ pub mod care_structure;
 pub mod sorge;
 pub mod context_injection;
 pub mod event_bridge;
+pub mod persistence;
 
 pub use aletheon_abi::dasein::*;
 
@@ -101,6 +102,11 @@ impl DaseinModule {
     /// Get current mood.
     pub fn mood(&self) -> Stimmung {
         self.mood.read().clone()
+    }
+
+    /// Get raw mood RwLock for persistence.
+    pub fn mood_raw(&self) -> &parking_lot::RwLock<Stimmung> {
+        &self.mood
     }
 
     /// Get the event sender for external events.
