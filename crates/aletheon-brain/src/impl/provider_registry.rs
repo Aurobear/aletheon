@@ -27,6 +27,7 @@ pub fn detect_transport(base_url: &str) -> ResolvedTransport {
 }
 
 /// Registry of configured providers.
+#[derive(Clone)]
 pub struct ProviderRegistry {
     providers: HashMap<String, ProviderConfig>,
     aliases: HashMap<String, (String, String)>, // alias → (provider_name, model)

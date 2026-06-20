@@ -87,9 +87,11 @@ pub fn partition_tool_calls(
 
     batches
 }
-use aletheon_brain::r#impl::llm::provider::{LlmProvider, StopReason};
+use aletheon_brain::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
 use std::future::Future;
 use tracing::{debug, warn};
+
+use crate::core::event_sink::{Event, EventSink, ToolResultEvent};
 
 /// The ReAct (Reason + Act) iteration loop
 /// This is the core cognitive cycle extracted from Engine::run_turn()
@@ -313,6 +315,171 @@ impl ReActLoop {
                 })
             })
             .unwrap_or_else(|| format!("Max iterations ({}) reached", self.config.max_iterations)))
+    }
+
+    /// Streaming variant of `run()`. Uses `llm.complete_stream()` instead of
+    /// `llm.complete()` and emits granular events through `event_sink`.
+    pub async fn run_streaming<L, F, Fut>(
+        &mut self,
+        user_input: &str,
+        llm: &L,
+        tool_defs: &[ToolDefinition],
+        execute_tool: F,
+        event_sink: &dyn EventSink,
+    ) -> anyhow::Result<String>
+    where
+        L: LlmProvider + ?Sized,
+        F: Fn(&str, &str, &serde_json::Value) -> Fut,
+        Fut: Future<Output = (String, bool)>,
+    {
+        use futures::StreamExt;
+
+        self.messages.push(Message::user(user_input));
+        event_sink.emit(Event::TurnStarted);
+
+        while self.should_continue() {
+            self.advance();
+
+            // Use streaming instead of complete()
+            let mut stream = match llm.complete_stream(&self.messages, tool_defs).await {
+                Ok(s) => s,
+                Err(e) if is_context_overflow(&e) => {
+                    warn!("Context overflow detected, forcing compaction: {e}");
+                    self.compressor.maybe_compact(&mut self.messages, llm).await?;
+                    llm.complete_stream(&self.messages, tool_defs).await?
+                }
+                Err(e) => return Err(e),
+            };
+
+            let mut text_parts = Vec::new();
+            let mut current_text = String::new();
+            let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
+            let mut stop_reason = StopReason::EndTurn;
+
+            while let Some(chunk) = stream.next().await {
+                match chunk? {
+                    StreamChunk::TextDelta { text } => {
+                        current_text.push_str(&text);
+                        event_sink.emit(Event::TextDelta { delta: text });
+                    }
+                    StreamChunk::ToolUseStart { id, name } => {
+                        // Flush any pending text
+                        if !current_text.is_empty() {
+                            text_parts.push(current_text.clone());
+                            current_text.clear();
+                        }
+                        event_sink.emit(Event::ToolCallStart {
+                            name: name.clone(),
+                            call_id: id.clone(),
+                        });
+                        tool_calls.push((id, name, serde_json::Value::Null));
+                    }
+                    StreamChunk::ToolUseDelta { id: _, delta: _ } => {
+                        // Accumulated in ToolUseComplete
+                    }
+                    StreamChunk::ToolUseComplete { id, input } => {
+                        // Update tool_calls with correct input
+                        if let Some(tc) = tool_calls.iter_mut().find(|(tid, _, _)| *tid == id) {
+                            tc.2 = input;
+                        }
+                    }
+                    StreamChunk::Usage {
+                        input_tokens,
+                        output_tokens,
+                    } => {
+                        event_sink.emit(Event::Usage {
+                            tokens_in: input_tokens,
+                            tokens_out: output_tokens,
+                            cache_hit_tokens: 0,
+                            cache_miss_tokens: 0,
+                        });
+                    }
+                    StreamChunk::Done { stop_reason: sr } => {
+                        stop_reason = sr;
+                        break;
+                    }
+                }
+            }
+
+            // Flush remaining text
+            if !current_text.is_empty() {
+                text_parts.push(current_text);
+            }
+
+            // No tool calls -> turn complete
+            if tool_calls.is_empty() || matches!(stop_reason, StopReason::EndTurn) {
+                let final_text = text_parts.join("\n");
+                self.messages.push(Message::assistant(&final_text));
+                event_sink.emit(Event::TurnDone {
+                    result: Ok(final_text.clone()),
+                });
+                return Ok(final_text);
+            }
+
+            // Has tool calls -> execute them
+            let content_blocks: Vec<ContentBlock> = tool_calls
+                .iter()
+                .map(|(id, name, input)| ContentBlock::ToolUse {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input: input.clone(),
+                })
+                .collect();
+
+            self.messages.push(Message {
+                role: Role::Assistant,
+                content: content_blocks,
+            });
+
+            for (id, name, input) in &tool_calls {
+                debug!(tool = name.as_str(), "ReActLoop streaming: executing tool");
+                event_sink.emit(Event::ToolDispatch {
+                    name: name.clone(),
+                    args: input.clone(),
+                });
+
+                let (content, is_error) = execute_tool(id, name, input).await;
+
+                event_sink.emit(Event::ToolResult {
+                    name: name.clone(),
+                    result: ToolResultEvent {
+                        content: content.clone(),
+                        is_error,
+                        execution_time_ms: 0,
+                    },
+                });
+
+                if is_error {
+                    warn!(tool = name.as_str(), "tool returned error");
+                }
+                self.messages
+                    .push(Message::tool_result(id, &content, is_error));
+            }
+
+            if self.config.compaction_enabled {
+                let _ = self.compressor.maybe_compact(&mut self.messages, llm).await;
+            }
+        }
+
+        warn!(
+            max = self.config.max_iterations,
+            "ReActLoop streaming hit max_iterations"
+        );
+        let fallback = self
+            .messages
+            .iter()
+            .rev()
+            .find_map(|m| {
+                m.content.iter().find_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap_or_else(|| format!("Max iterations ({}) reached", self.config.max_iterations));
+        event_sink.emit(Event::TurnDone {
+            result: Ok(fallback.clone()),
+        });
+        Ok(fallback)
     }
 }
 

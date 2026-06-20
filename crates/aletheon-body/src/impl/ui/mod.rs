@@ -1,6 +1,7 @@
 pub mod approval_dialog;
 pub mod chat;
 pub mod command;
+pub mod completion;
 #[cfg(all(feature = "input", feature = "display", feature = "a11y"))]
 pub mod computer;
 pub mod event;
@@ -8,8 +9,12 @@ pub mod input;
 pub mod markdown;
 pub mod skill;
 pub mod status;
+pub mod streaming;
 pub mod term_compat;
+pub mod thinking;
+pub mod toolcard;
 
+use std::collections::HashMap;
 use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 
@@ -34,9 +39,13 @@ use tokio::net::UnixStream;
 use self::approval_dialog::{ApprovalDialog, DialogDecision};
 use self::chat::{ChatWidget, Role as ChatRole};
 use self::command::{parse_command, BuiltinCommand, CommandType};
+use self::completion::CompletionPopup;
+use self::input::CommandHistory;
 use self::skill::SkillLoader;
 use self::status::StatusBar;
+use self::streaming::StreamController;
 use self::term_compat::TermCaps;
+use self::toolcard::ToolCard;
 
 /// Run the full TUI with raw mode, alternate screen, and IME-aware input.
 pub async fn run(socket_path: &str) -> anyhow::Result<()> {
@@ -124,6 +133,16 @@ struct App {
     first_render: bool,
     /// Pending approval dialog (shown as modal overlay).
     pending_approval: Option<approval_dialog::ApprovalDialog>,
+    /// Streaming controller for incremental rendering
+    stream_ctrl: StreamController,
+    /// Active tool calls (call_id → ToolCard)
+    active_tools: HashMap<String, ToolCard>,
+    /// Current turn's token count
+    turn_tokens: Option<(u32, u32)>,
+    /// Command history
+    history: CommandHistory,
+    /// Tab completion popup
+    completion: CompletionPopup,
 }
 
 impl App {
@@ -155,6 +174,11 @@ impl App {
             scroll_offset: 0,
             first_render: true,
             pending_approval: None,
+            stream_ctrl: StreamController::new(),
+            active_tools: HashMap::new(),
+            turn_tokens: None,
+            history: CommandHistory::new(),
+            completion: CompletionPopup::new(),
         }
     }
 
@@ -189,6 +213,9 @@ async fn run_app(
         .write_all(format!("{}\n", clear_msg).as_bytes())
         .await;
     let _ = app.stream.flush().await;
+    // Read and discard the clear response so it doesn't pollute the socket buffer
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let _ = app.stream.try_read(&mut app.read_buf);
 
     // Welcome message
     app.chat.add_message(
@@ -247,8 +274,9 @@ async fn run_app(
         }
 
         // Try reading daemon response
+        try_read_socket(&mut app);
         if app.streaming {
-            try_read_response(&mut app);
+            app.status.tick_spinner();
         }
     }
 
@@ -332,9 +360,49 @@ async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Ctrl+O: toggle thinking display
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o') {
+        app.stream_ctrl.toggle_thinking();
+        return;
+    }
+
+    // Ctrl+B: toggle last tool card
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
+        if let Some(last) = app.active_tools.values_mut().last() {
+            last.toggle();
+        }
+        return;
+    }
+
     match key.code {
-        // Enter: submit (or Shift+Enter / Alt+Enter: newline)
+        // Tab: trigger completion for slash commands
+        KeyCode::Tab => {
+            if app.input_buf.starts_with('/') {
+                let commands: Vec<String> = vec![
+                    "/help", "/clear", "/copy", "/status", "/reflect",
+                    "/reflect_now", "/evolution", "/genome", "/sessions",
+                    "/resume", "/compact", "/quit",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+                app.completion.show(&app.input_buf, &commands);
+            }
+            return;
+        }
+
+        // Enter: submit (or accept completion, or Shift+Enter / Alt+Enter: newline)
         KeyCode::Enter => {
+            // Accept completion if visible
+            if app.completion.visible {
+                if let Some(selected) = app.completion.selected() {
+                    app.input_buf = selected.to_string();
+                    app.cursor = app.input_buf.len();
+                    app.completion.hide();
+                }
+                return;
+            }
+
             // Shift+Enter or Alt+Enter → newline
             if key.modifiers.contains(KeyModifiers::SHIFT)
                 || key.modifiers.contains(KeyModifiers::ALT)
@@ -428,7 +496,30 @@ async fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Home => app.cursor = 0,
         KeyCode::End => app.cursor = app.input_buf.len(),
 
-        // History (up/down) — scroll chat for now
+        // Up: completion prev, or history, or scroll chat
+        KeyCode::Up => {
+            if app.completion.visible {
+                app.completion.prev();
+            } else if let Some(entry) = app.history.up() {
+                app.input_buf = entry.to_string();
+                app.cursor = app.input_buf.len();
+            } else {
+                app.chat.scroll_up(5);
+            }
+        }
+        // Down: completion next, or history, or scroll chat
+        KeyCode::Down => {
+            if app.completion.visible {
+                app.completion.next();
+            } else if let Some(entry) = app.history.down() {
+                app.input_buf = entry.to_string();
+                app.cursor = app.input_buf.len();
+            } else {
+                app.chat.scroll_down(5);
+            }
+        }
+
+        // PageUp/PageDown: scroll chat
         KeyCode::PageUp => {
             app.chat.scroll_up(5);
         }
@@ -436,8 +527,12 @@ async fn handle_key(app: &mut App, key: KeyEvent) {
             app.chat.scroll_down(5);
         }
 
-        // Escape: clear input
+        // Escape: hide completion, or clear input
         KeyCode::Esc => {
+            if app.completion.visible {
+                app.completion.hide();
+                return;
+            }
             app.input_buf.clear();
             app.cursor = 0;
             app.has_cjk = false;
@@ -655,6 +750,7 @@ async fn submit_message(app: &mut App, text: String) {
     }
 
     // Regular chat message
+    app.history.push(text.clone());
     app.chat.add_message(ChatRole::User, text.clone());
     app.chat.add_message(ChatRole::Assistant, String::new());
     send_to_daemon(app, &text).await;
@@ -682,7 +778,7 @@ async fn send_to_daemon(app: &mut App, text: &str) {
     app.status.waiting = true;
 }
 
-fn try_read_response(app: &mut App) {
+fn try_read_socket(app: &mut App) {
     loop {
         match app.stream.try_read(&mut app.read_buf) {
             Ok(0) => {
@@ -695,48 +791,30 @@ fn try_read_response(app: &mut App) {
             Ok(n) => {
                 let chunk = String::from_utf8_lossy(&app.read_buf[..n]);
                 app.response_buf.push_str(&chunk);
-                if let Some(msg) =
-                    serde_json::from_str::<serde_json::Value>(app.response_buf.trim()).ok()
-                {
-                    // Detect out-of-band approval_request notification
-                    // (has "method" but no "result" and no "id")
-                    if msg.get("method").and_then(|v| v.as_str()) == Some("approval_request")
-                        && msg.get("result").is_none()
-                        && msg.get("id").is_none()
-                    {
-                        if let Some(params) = msg.get("params") {
-                            let approval_id = params
-                                .get("approval_id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let tool = params
-                                .get("tool")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let action_summary = params
-                                .get("action_summary")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let risk_level = params
-                                .get("risk_level")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            app.pending_approval = Some(ApprovalDialog::new(
-                                approval_id,
-                                tool,
-                                action_summary,
-                                risk_level,
-                            ));
-                        }
-                        app.response_buf.clear();
-                        break;
+
+                // Process each complete JSONL line
+                while let Some(newline_pos) = app.response_buf.find('\n') {
+                    let line = app.response_buf[..newline_pos].trim().to_string();
+                    app.response_buf.drain(..=newline_pos);
+
+                    if line.is_empty() {
+                        continue;
                     }
-                    process_response(app, msg);
-                    break;
+
+                    if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+                        if msg.get("method").and_then(|v| v.as_str()) == Some("event") {
+                            if let Some(params) = msg.get("params") {
+                                handle_event(app, params);
+                            }
+                        } else if msg.get("method").and_then(|v| v.as_str())
+                            == Some("approval_request")
+                        {
+                            handle_approval(app, &msg);
+                        } else if msg.get("result").is_some() || msg.get("error").is_some() {
+                            process_response(app, msg);
+                            break;
+                        }
+                    }
                 }
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
@@ -746,6 +824,125 @@ fn try_read_response(app: &mut App) {
                 break;
             }
         }
+    }
+}
+
+fn handle_event(app: &mut App, params: &serde_json::Value) {
+    let event_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    match event_type {
+        "turn_start" => {
+            app.stream_ctrl.start_turn();
+            app.status.waiting = true;
+            app.status.elapsed_secs = 0.0;
+        }
+        "thinking_delta" => {
+            if let Some(text) = params.get("text").and_then(|v| v.as_str()) {
+                app.stream_ctrl.push_thinking(text);
+            }
+        }
+        "text_delta" => {
+            if let Some(text) = params.get("text").and_then(|v| v.as_str()) {
+                app.stream_ctrl.push_text(text);
+                app.chat.update_last_message(app.stream_ctrl.current_text());
+            }
+        }
+        "tool_call_start" => {
+            let call_id = params
+                .get("call_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let tool = params
+                .get("tool")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string();
+            let args = params
+                .get("args")
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            app.active_tools
+                .insert(call_id.clone(), ToolCard::new(call_id, tool, args));
+        }
+        "tool_call_result" => {
+            let call_id = params.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+            if let Some(card) = app.active_tools.get_mut(call_id) {
+                let output = params
+                    .get("output")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let is_error = params
+                    .get("is_error")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                card.finish(output, is_error);
+            }
+        }
+        "usage" => {
+            let tokens_in = params
+                .get("tokens_in")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let tokens_out = params
+                .get("tokens_out")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            app.turn_tokens = Some((tokens_in, tokens_out));
+            app.status.token_count = Some(tokens_in + tokens_out);
+        }
+        "turn_done" => {
+            app.stream_ctrl.commit();
+            app.streaming = false;
+            app.status.waiting = false;
+            app.status.elapsed_secs = 0.0;
+            for (_, card) in app.active_tools.drain() {
+                app.chat
+                    .add_message(ChatRole::System, card.to_summary());
+            }
+        }
+        "error" => {
+            let msg = params
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
+            app.chat
+                .add_message(ChatRole::System, format!("Error: {}", msg));
+            app.streaming = false;
+            app.status.waiting = false;
+        }
+        _ => {}
+    }
+}
+
+fn handle_approval(app: &mut App, msg: &serde_json::Value) {
+    if let Some(params) = msg.get("params") {
+        let approval_id = params
+            .get("approval_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let tool = params
+            .get("tool")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let action_summary = params
+            .get("action_summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let risk_level = params
+            .get("risk_level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        app.pending_approval =
+            Some(approval_dialog::ApprovalDialog::new(
+                approval_id,
+                tool,
+                action_summary,
+                risk_level,
+            ));
     }
 }
 
@@ -1010,6 +1207,7 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> any
     let first_render = app.first_render;
     let status_ref = &app.status;
     let pending_approval_ref = &app.pending_approval;
+    let completion_ref = &app.completion;
 
     terminal.draw(|f| {
         let size = f.area();
@@ -1049,6 +1247,9 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> any
         if let Some(ref dialog) = pending_approval_ref {
             dialog.render(f, size);
         }
+
+        // ── Completion popup (overlay) ──
+        completion_ref.render(f, chunks[2]);
     })?;
 
     app.first_render = false;

@@ -106,6 +106,9 @@ struct ChatResponseMessage {
     content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<ToolCall>>,
+    /// Some reasoning models (GLM-5.2, DeepSeek Reasoning) put their output here
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -373,11 +376,12 @@ impl LlmProvider for OpenAiProvider {
 
         let mut content = Vec::new();
 
-        // Text content
-        if let Some(text) = choice.message.content {
-            if !text.is_empty() {
-                content.push(ContentBlock::Text { text });
-            }
+        // Text content — prefer `content`, fall back to `reasoning_content`
+        // (some reasoning models like GLM-5.2 put output in reasoning_content)
+        let text = choice.message.content.filter(|s| !s.is_empty())
+            .or(choice.message.reasoning_content.filter(|s| !s.is_empty()));
+        if let Some(text) = text {
+            content.push(ContentBlock::Text { text });
         }
 
         // Tool calls

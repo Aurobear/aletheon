@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 
+use super::model_router::{ModelRouter, TaskType};
 use super::session_manager::SessionManager;
 use crate::core::config::RuntimeConfig;
 use crate::core::orchestrator::AletheonRuntime;
@@ -44,6 +45,8 @@ use tracing::{info, warn};
 
 use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
 use crate::core::checkpoint::CheckpointStore;
+use crate::core::event_sink::{ChannelEventSink, Event};
+use crate::core::react_loop::ReActLoop;
 use crate::core::storm_breaker::StormBreaker;
 use crate::r#impl::hooks::builtin::audit_hook;
 use crate::r#impl::hooks::registry::HookRegistry;
@@ -75,6 +78,7 @@ struct SessionState {
 pub struct RequestHandler {
     state: Arc<Mutex<SessionState>>,
     llm: Arc<dyn LlmProvider>,
+    model_router: Arc<ModelRouter>,
     session_manager: Arc<Mutex<SessionManager>>,
     recall_memory: Arc<Mutex<RecallMemory>>,
     data_dir: PathBuf,
@@ -136,6 +140,28 @@ pub struct RequestHandler {
     auto_memory: Arc<Mutex<AutoMemory>>,
 }
 
+/// Convert an `Event` to a JSONL string for the notify channel.
+/// Returns `None` for events that don't have a client-facing representation.
+fn event_to_json(event: &Event) -> Option<String> {
+    let params = match event {
+        Event::TurnStarted => json!({"type": "turn_start"}),
+        Event::TextDelta { delta } => json!({"type": "text_delta", "text": delta}),
+        Event::ToolCallStart { name, call_id } => json!({"type": "tool_call_start", "call_id": call_id, "tool": name}),
+        Event::ToolResult { name, result } => json!({
+            "type": "tool_call_result",
+            "tool": name,
+            "output": result.content,
+            "is_error": result.is_error,
+        }),
+        Event::ToolDispatch { name, args } => json!({"type": "tool_dispatch", "tool": name, "args": args}),
+        Event::Usage { tokens_in, tokens_out, .. } => json!({"type": "usage", "tokens_in": tokens_in, "tokens_out": tokens_out}),
+        Event::TurnDone { result } => json!({"type": "turn_done", "success": result.is_ok()}),
+        Event::Error { message } => json!({"type": "error", "message": message}),
+        _ => return None,
+    };
+    Some(json!({"jsonrpc": "2.0", "method": "event", "params": params}).to_string())
+}
+
 impl RequestHandler {
     /// Set the notification channel for out-of-band messages to the client.
     /// Returns the receiver end that the server should drain alongside responses.
@@ -154,6 +180,7 @@ impl RequestHandler {
     pub async fn new(
         config: &DaemonConfig,
         registry: &ProviderRegistry,
+        model_routing: crate::core::config::ModelRoutingConfig,
         _perception_rx: mpsc::Receiver<PerceptionInjection>,
     ) -> anyhow::Result<Self> {
         let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create("")?);
@@ -171,6 +198,15 @@ impl RequestHandler {
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
         let recall_db_path = data_dir.join("recall_memory.db");
         let recall_memory = Arc::new(Mutex::new(RecallMemory::new(&recall_db_path)?));
+
+        // FactStore — structured long-term memory with trust scoring
+        let aletheon_dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".aletheon");
+        std::fs::create_dir_all(&aletheon_dir)?;
+        let fact_store = FactStore::open(&aletheon_dir.join("fact_store.db"))
+            .context("opening fact store")?;
+        let fact_store = Arc::new(Mutex::new(fact_store));
 
         // Create SessionManager (owns the journal, history, and compaction)
         let session_manager = SessionManager::new(
@@ -190,6 +226,8 @@ impl RequestHandler {
         }));
         tools.register(Arc::new(MemorySearchTool {
             recall: recall_memory.clone(),
+            core_memory: core_memory.clone(),
+            fact_store: Some(fact_store.clone()),
         }));
 
         // Connect configured MCP servers and register their tools alongside built-ins.
@@ -359,15 +397,6 @@ impl RequestHandler {
 
         info!("CommunicationBus created with SelfField, Memory, and Body module handlers");
 
-        // ── FactStore ─────────────────────────────────────────────────────────
-        let aletheon_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".aletheon");
-        std::fs::create_dir_all(&aletheon_dir)?;
-        let fact_store = FactStore::open(&aletheon_dir.join("fact_store.db"))
-            .context("opening fact store")?;
-        let fact_store = Arc::new(Mutex::new(fact_store));
-
         // ── StormBreaker ──────────────────────────────────────────────────────
         let storm_breaker = Arc::new(Mutex::new(StormBreaker::new(3)));
 
@@ -402,23 +431,37 @@ impl RequestHandler {
         // ── HooksConfig ───────────────────────────────────────────────────────
         let hooks_config = config.hooks.clone();
 
-        // ── AutoMemory ──────────────────────────────────────────────────────
-        // Use a cheap model for memory extraction. Try "deepseek_flash" alias first,
-        // fall back to the default model if not configured.
-        let cheap_llm: Arc<dyn LlmProvider> = Arc::from(
-            registry
-                .resolve_and_create("deepseek_flash")
-                .or_else(|_| registry.resolve_and_create(""))
-                .unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, "Failed to create cheap LLM for AutoMemory, using default");
-                    registry.resolve_and_create("").expect("no LLM available")
-                }),
+        // Create ModelRouter for dynamic model selection
+        let model_router = Arc::new(ModelRouter::new(
+            model_routing.clone(),
+            Arc::new(registry.clone()),
+        ));
+        let model_routing_cfg = model_routing.clone();
+        info!(
+            default = %model_router.model_name_for(TaskType::General),
+            multimodal = %model_router.model_name_for(TaskType::Multimodal),
+            cheap = %model_router.model_name_for(TaskType::Simple),
+            reasoning = %model_router.model_name_for(TaskType::Reasoning),
+            "ModelRouter initialized"
         );
+
+        // ── AutoMemory ──────────────────────────────────────────────────────
+        // Use ModelRouter to get the AutoMemory model (cheap model for fact extraction)
+        let cheap_llm: Arc<dyn LlmProvider> = match model_router.create_provider(TaskType::AutoMemory) {
+            Ok(provider) => {
+                info!(model = provider.name(), "AutoMemory using routed model");
+                Arc::from(provider)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "ModelRouter AutoMemory failed, falling back to default");
+                Arc::from(registry.resolve_and_create("").expect("no LLM available"))
+            }
+        };
         let auto_memory = Arc::new(Mutex::new(AutoMemory::new(
             cheap_llm,
             core_memory.clone(),
         )));
-        info!("AutoMemory initialized with cheap extraction model");
+        info!("AutoMemory initialized with routed extraction model");
 
         let handler = Self {
             state: Arc::new(Mutex::new(SessionState {
@@ -426,6 +469,7 @@ impl RequestHandler {
                 pending_input: None,
             })),
             llm,
+            model_router,
             session_manager: Arc::new(Mutex::new(session_manager)),
             recall_memory,
             data_dir,
@@ -664,10 +708,10 @@ impl RequestHandler {
                     action: "chat".to_string(),
                     parameters: serde_json::json!({ "message": message }),
                     source: IntentSource::User,
-                    description: format!(
-                        "User chat message: {}",
-                        &message[..message.len().min(80)]
-                    ),
+                    description: {
+                        let end = message.char_indices().nth(80).map(|(i, _)| i).unwrap_or(message.len());
+                        format!("User chat message: {}", &message[..end])
+                    },
                 };
                 let sf_ctx = AbiContext::new(
                     &self.state.lock().await.runtime.config().session_id,
@@ -778,6 +822,33 @@ impl RequestHandler {
                                 info!(count = facts.len(), "Fact recall injected");
                                 effective_message.push_str(&recall_block);
                             }
+                        }
+                    }
+                }
+
+                // --- Inject current CoreMemory state ---
+                // CoreMemory is baked into the system prompt prefix at boot, but
+                // core_memory_append/AutoMemory updates it in-memory after that.
+                // Inject the current state so the model sees up-to-date facts.
+                {
+                    let cm = self.core_memory.lock().await;
+                    let mut core_lines = Vec::new();
+                    for (label, block) in cm.blocks() {
+                        if block.read_only || block.value.is_empty() {
+                            continue;
+                        }
+                        // Only inject non-empty, writable blocks (human, learned, etc.)
+                        for line in block.value.lines() {
+                            if !line.trim().is_empty() {
+                                core_lines.push(format!("[core:{}] {}", label, line));
+                            }
+                        }
+                    }
+                    if !core_lines.is_empty() {
+                        effective_message.push_str("\n[Core Memory — current state]\n");
+                        for line in &core_lines {
+                            effective_message.push_str(line);
+                            effective_message.push('\n');
                         }
                     }
                 }
@@ -1032,22 +1103,40 @@ impl RequestHandler {
                 let approval_rx = self.approval_rx.clone();
                 let pending_approvals = self.pending_approvals.clone();
                 let notify_tx = self.notify_tx.clone();
-                let llm = self.llm.clone();
 
-                let mut rt = AletheonRuntime::new(self.state.lock().await.runtime.config().clone());
+                // Dynamic model selection based on message content
+                let task_type = self.model_router.classify_message(&message);
+                let llm: Arc<dyn LlmProvider> = match self.model_router.create_provider(task_type) {
+                    Ok(provider) => {
+                        info!(task = ?task_type, model = provider.name(), "Model selected by router");
+                        Arc::from(provider)
+                    }
+                    Err(e) => {
+                        warn!(error = %e, task = ?task_type, "ModelRouter failed, falling back to default");
+                        self.llm.clone()
+                    }
+                };
+
+                // Create event channel for streaming ReAct loop events.
+                let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(64);
+                let event_sink = ChannelEventSink::new(event_tx);
+
+                let config = self.state.lock().await.runtime.config().clone();
+                let llm_clone = llm.clone();
+                let tool_defs_clone = tool_defs.clone();
+
                 let mut react_task = tokio::spawn(async move {
-                    rt.process_react(
+                    let mut react_loop = ReActLoop::new(config);
+                    react_loop.run_streaming(
                         &effective_message,
-                        &sf_ctx,
-                        |_intent: &Intent, _c: &AbiContext| Ok::<_, anyhow::Error>(Verdict::Allow),
-                        &*llm,
-                        &tool_defs,
+                        &*llm_clone,
+                        &tool_defs_clone,
                         execute_tool,
-                    )
-                    .await
+                        &event_sink,
+                    ).await
                 });
 
-                // Pump approval requests while the ReAct loop is running.
+                // Pump approval requests and streaming events while the ReAct loop is running.
                 // When a tool needs L2+ approval, the SocketApprovalGate sends
                 // a PendingApproval through the channel. We generate an
                 // approval_id, store the oneshot sender, and notify the client.
@@ -1057,6 +1146,13 @@ impl RequestHandler {
                             // ReAct loop finished — drain any remaining approvals
                             // (they get auto-denied by the 120s timeout in the gate).
                             break result.unwrap_or_else(|e| Err(anyhow::anyhow!("react task panicked: {e}")));
+                        }
+                        Some(event) = event_rx.recv() => {
+                            if let Some(json_str) = event_to_json(&event) {
+                                if let Some(ref tx) = notify_tx {
+                                    let _ = tx.send(json_str).await;
+                                }
+                            }
                         }
                         Some(pending) = async {
                             let mut rx = approval_rx.lock().await;
@@ -1097,11 +1193,12 @@ impl RequestHandler {
                 info!(len = text.len(), "ReAct loop completed");
 
                 // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
+                let msg_preview_end = message.char_indices().nth(60).map(|(i, _)| i).unwrap_or(message.len());
                 self.sf_narrate(
                     "chat_completed",
                     &format!(
                         "User asked: '{}...' | Response: {} chars",
-                        &message[..message.len().min(60)],
+                        &message[..msg_preview_end],
                         text.len(),
                     ),
                 )

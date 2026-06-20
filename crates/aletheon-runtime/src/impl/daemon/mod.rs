@@ -1,6 +1,7 @@
 pub mod cache_shape;
 pub mod handler;
 pub mod mcp_embedded;
+pub mod model_router;
 pub mod prefix_builder;
 pub mod server;
 pub mod session_manager;
@@ -251,7 +252,7 @@ pub async fn run(
     });
 
     info!("Creating request handler...");
-    let request_handler = handler::RequestHandler::new(&config, &registry, injection_rx).await?;
+    let request_handler = handler::RequestHandler::new(&config, &registry, app_config.model_routing.clone(), injection_rx).await?;
     info!(socket = %socket.display(), "Binding unix socket...");
 
     let mut unix_server = server::UnixServer::new(&socket, request_handler).await?;

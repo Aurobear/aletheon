@@ -7,6 +7,33 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Dynamic model routing — maps task types to model specs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRoutingConfig {
+    /// Default model for general chat (e.g., "mimo/mimo-v2.5-pro").
+    pub default: Option<String>,
+    /// Model for multimodal inputs (images, audio).
+    pub multimodal: Option<String>,
+    /// Cheap model for simple tasks, code reading, extraction.
+    pub cheap: Option<String>,
+    /// Model for complex reasoning tasks.
+    pub reasoning: Option<String>,
+    /// Model for AutoMemory fact extraction.
+    pub auto_memory: Option<String>,
+}
+
+impl Default for ModelRoutingConfig {
+    fn default() -> Self {
+        Self {
+            default: None,
+            multimodal: None,
+            cheap: None,
+            reasoning: None,
+            auto_memory: None,
+        }
+    }
+}
+
 /// Top-level application config (loaded from TOML).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -16,6 +43,8 @@ pub struct AppConfig {
     pub providers: Vec<ProviderConfig>,
     #[serde(default)]
     pub model_aliases: HashMap<String, String>,
+    #[serde(default)]
+    pub model_routing: ModelRoutingConfig,
     #[serde(default)]
     pub sandbox: SandboxConfig,
     #[serde(default)]
@@ -289,6 +318,23 @@ impl AppConfig {
             self.model_aliases.insert(key, value);
         }
 
+        // Model routing: override non-default values
+        if other.model_routing.default.is_some() {
+            self.model_routing.default = other.model_routing.default;
+        }
+        if other.model_routing.multimodal.is_some() {
+            self.model_routing.multimodal = other.model_routing.multimodal;
+        }
+        if other.model_routing.cheap.is_some() {
+            self.model_routing.cheap = other.model_routing.cheap;
+        }
+        if other.model_routing.reasoning.is_some() {
+            self.model_routing.reasoning = other.model_routing.reasoning;
+        }
+        if other.model_routing.auto_memory.is_some() {
+            self.model_routing.auto_memory = other.model_routing.auto_memory;
+        }
+
         // Sandbox: override if non-default
         if other.sandbox.preference != default_sandbox_preference() {
             self.sandbox.preference = other.sandbox.preference;
@@ -357,6 +403,7 @@ impl Default for AppConfig {
             agent: AgentConfig::default(),
             providers: Vec::new(),
             model_aliases: HashMap::new(),
+            model_routing: ModelRoutingConfig::default(),
             sandbox: SandboxConfig::default(),
             mcp_servers: Vec::new(),
             plugins: PluginsConfig::default(),

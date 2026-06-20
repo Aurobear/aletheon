@@ -32,8 +32,9 @@ impl StatusBar {
     }
 
     pub fn tick_spinner(&mut self) {
+        self.spinner_frame = (self.spinner_frame + 1) % 8;
         if self.waiting {
-            self.spinner_frame = (self.spinner_frame + 1) % 4;
+            self.elapsed_secs += 0.06; // ~60ms per tick
         }
     }
 

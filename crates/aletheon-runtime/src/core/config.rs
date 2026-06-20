@@ -34,6 +34,9 @@ impl Default for RuntimeConfig {
 // AppConfig — top-level application config
 // ---------------------------------------------------------------------------
 
+/// Re-export ModelRoutingConfig from aletheon-brain to avoid duplicate types.
+pub use aletheon_brain::config::ModelRoutingConfig;
+
 /// Top-level application config (loaded from TOML).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -43,6 +46,8 @@ pub struct AppConfig {
     pub providers: Vec<ProviderConfig>,
     #[serde(default)]
     pub model_aliases: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub model_routing: ModelRoutingConfig,
     #[serde(default)]
     pub sandbox: SandboxConfig,
     #[serde(default)]
@@ -356,6 +361,23 @@ impl AppConfig {
             self.model_aliases.insert(key, value);
         }
 
+        // Model routing: override non-default values
+        if other.model_routing.default.is_some() {
+            self.model_routing.default = other.model_routing.default;
+        }
+        if other.model_routing.multimodal.is_some() {
+            self.model_routing.multimodal = other.model_routing.multimodal;
+        }
+        if other.model_routing.cheap.is_some() {
+            self.model_routing.cheap = other.model_routing.cheap;
+        }
+        if other.model_routing.reasoning.is_some() {
+            self.model_routing.reasoning = other.model_routing.reasoning;
+        }
+        if other.model_routing.auto_memory.is_some() {
+            self.model_routing.auto_memory = other.model_routing.auto_memory;
+        }
+
         // Sandbox: override if non-default
         if other.sandbox.preference != default_sandbox_preference() {
             self.sandbox.preference = other.sandbox.preference;
@@ -430,6 +452,7 @@ impl Default for AppConfig {
             agent: AgentConfig::default(),
             providers: Vec::new(),
             model_aliases: std::collections::HashMap::new(),
+            model_routing: ModelRoutingConfig::default(),
             sandbox: SandboxConfig::default(),
             mcp_servers: Vec::new(),
             plugins: PluginsConfig::default(),
@@ -619,6 +642,39 @@ log_level = "debug"
 
         assert_eq!(base.model_aliases["fast"], "gpt-4o-mini");
         assert_eq!(base.model_aliases["smart"], "gpt-4o");
+    }
+
+    #[test]
+    fn test_merge_model_routing() {
+        let mut base = AppConfig::default();
+        base.model_routing.default = Some("base/default".to_string());
+        base.model_routing.cheap = Some("base/cheap".to_string());
+
+        let mut other = AppConfig::default();
+        other.model_routing.default = Some("other/default".to_string());
+        other.model_routing.multimodal = Some("other/multimodal".to_string());
+        other.model_routing.reasoning = Some("other/reasoning".to_string());
+        // cheap not set in other — should keep base value
+
+        base.merge(other);
+
+        assert_eq!(
+            base.model_routing.default.as_deref(),
+            Some("other/default")
+        );
+        assert_eq!(
+            base.model_routing.multimodal.as_deref(),
+            Some("other/multimodal")
+        );
+        assert_eq!(
+            base.model_routing.cheap.as_deref(),
+            Some("base/cheap")
+        );
+        assert_eq!(
+            base.model_routing.reasoning.as_deref(),
+            Some("other/reasoning")
+        );
+        assert!(base.model_routing.auto_memory.is_none());
     }
 
     #[test]
