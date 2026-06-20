@@ -290,24 +290,8 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
         reader.read_line(&mut response).await?;
         let resp: serde_json::Value = serde_json::from_str(&response)?;
 
-        // Skip streaming events (notifications have no "id" field).
-        // These are text_delta, tool_call_start, tool_call_result, usage,
-        // turn_done, awareness_changed, mode_changed, etc.
-        if resp.get("id").is_none() && resp.get("method").is_some() {
-            // Print text_delta inline for progressive output
-            if let Some(params) = resp.get("params") {
-                if resp["method"] == "text_delta" {
-                    if let Some(text) = params["text"].as_str() {
-                        eprint!("{}", text);
-                    }
-                } else if resp["method"] == "turn_done" {
-                    eprintln!(); // newline after streaming
-                }
-            }
-            continue;
-        }
-
-        // Handle out-of-band approval_request notification
+        // Handle out-of-band approval_request notification (must check before
+        // the general notification skip, since approval_request also has no "id")
         if resp.get("method").and_then(|v| v.as_str()) == Some("approval_request")
             && resp.get("result").is_none()
             && resp.get("id").is_none()
@@ -344,6 +328,23 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
             writer.write_all(resp_str.as_bytes()).await?;
             writer.write_all(b"\n").await?;
             continue; // wait for the actual response
+        }
+
+        // Skip streaming events (notifications have no "id" field).
+        // These are text_delta, tool_call_start, tool_call_result, usage,
+        // turn_done, awareness_changed, mode_changed, etc.
+        if resp.get("id").is_none() && resp.get("method").is_some() {
+            // Print text_delta inline for progressive output
+            if let Some(params) = resp.get("params") {
+                if resp["method"] == "text_delta" {
+                    if let Some(text) = params["text"].as_str() {
+                        eprint!("{}", text);
+                    }
+                } else if resp["method"] == "turn_done" {
+                    eprintln!(); // newline after streaming
+                }
+            }
+            continue;
         }
 
         // Final response
