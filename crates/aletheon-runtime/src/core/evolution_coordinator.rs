@@ -6,6 +6,7 @@
 //! 3. Periodically triggers the morphogenesis pipeline
 //! 4. Records successful migrations to the lineage tracker
 
+use crate::core::config::GenomeConfig;
 use aletheon_abi::brain::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
 use aletheon_abi::meta::MetaRuntimeOps;
 use aletheon_brain::core::reflector::Reflector;
@@ -63,6 +64,7 @@ pub struct EvolutionCoordinator {
     lineage: LineageTracker,
     recent_reflections: Arc<Mutex<Vec<ReflectionEntry>>>,
     turn_counter: Arc<Mutex<usize>>,
+    genome_config: Arc<Mutex<GenomeConfig>>,
 }
 
 impl EvolutionCoordinator {
@@ -75,7 +77,19 @@ impl EvolutionCoordinator {
             lineage,
             recent_reflections: Arc::new(Mutex::new(Vec::new())),
             turn_counter: Arc::new(Mutex::new(0)),
+            genome_config: Arc::new(Mutex::new(GenomeConfig::default())),
         })
+    }
+
+    /// Set the genome configuration.
+    pub fn with_genome_config(mut self, config: GenomeConfig) -> Self {
+        self.genome_config = Arc::new(Mutex::new(config));
+        self
+    }
+
+    /// Clone of the current genome configuration.
+    pub async fn genome_config(&self) -> GenomeConfig {
+        self.genome_config.lock().await.clone()
     }
 
     /// Called after each ReAct turn. Reflects on the outcome and
@@ -176,11 +190,44 @@ impl EvolutionCoordinator {
                         &result.message,
                     );
                 }
+                // Update care weights from the mutation intent that was applied.
+                self.apply_care_mutation(intent).await;
             }
             results.push(result);
         }
 
         Ok((true, results, lineage_count))
+    }
+
+    /// Apply a care-related mutation intent to the tracked genome config.
+    ///
+    /// Only processes intents targeting "care.priorities" with adjust_weight / increase_weight
+    /// actions. Other intent targets are ignored.
+    async fn apply_care_mutation(&self, intent: &aletheon_abi::self_field::MutationIntent) {
+        if intent.target != "care.priorities" {
+            return;
+        }
+        let topic = intent.change.get("topic").and_then(|v| v.as_str());
+        let delta = intent
+            .change
+            .get("delta")
+            .or_else(|| intent.change.get("weight_delta"))
+            .and_then(|v| v.as_f64());
+        let (Some(topic), Some(delta)) = (topic, delta) else {
+            return;
+        };
+        let mut gc = self.genome_config.lock().await;
+        let entry = gc
+            .care_weights
+            .entry(topic.to_string())
+            .or_insert(0.0);
+        *entry = (*entry + delta).clamp(0.0, 2.0);
+        tracing::debug!(
+            "Evolution adjusted care weight: {} += {:.3} -> {:.3}",
+            topic,
+            delta,
+            *entry
+        );
     }
 
     /// Current turn count.

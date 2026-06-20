@@ -1,5 +1,5 @@
 use crate::core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
-use crate::core::config::RuntimeConfig;
+use crate::core::config::{GenomeConfig, RuntimeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 use crate::core::react_loop::ReActLoop;
 use aletheon_abi::body::{Action, ActionResult};
@@ -23,6 +23,7 @@ pub struct AletheonRuntime {
     config: RuntimeConfig,
     react_loop: ReActLoop,
     evolution: Option<EvolutionCoordinator>,
+    genome_config: GenomeConfig,
     // Subsystem references would be injected here in production
     // For now, we define the orchestration logic that coordinates them
 }
@@ -34,7 +35,24 @@ impl AletheonRuntime {
             config,
             react_loop,
             evolution: None,
+            genome_config: GenomeConfig::default(),
         }
+    }
+
+    /// Set the genome configuration.
+    pub fn with_genome_config(mut self, genome_config: GenomeConfig) -> Self {
+        self.genome_config = genome_config;
+        self
+    }
+
+    /// Reference to the current genome configuration.
+    pub fn genome_config(&self) -> &GenomeConfig {
+        &self.genome_config
+    }
+
+    /// Replace the genome configuration (e.g., after evolution).
+    pub fn update_genome_config(&mut self, genome_config: GenomeConfig) {
+        self.genome_config = genome_config;
     }
 
     /// Attach an EvolutionCoordinator with the given configuration.
@@ -50,7 +68,7 @@ impl AletheonRuntime {
     ///
     /// Returns `None` if evolution is not configured.
     pub async fn post_evolution<M: aletheon_abi::meta::MetaRuntimeOps>(
-        &self,
+        &mut self,
         task_summary: &str,
         output: &str,
         success: bool,
@@ -74,6 +92,10 @@ impl AletheonRuntime {
                         meta,
                     )
                     .await?;
+                // Pull updated genome config after evolution
+                if summary.evolution_triggered {
+                    self.genome_config = coord.genome_config().await;
+                }
                 Ok(Some(summary))
             }
             None => Ok(None),
@@ -253,6 +275,14 @@ impl AletheonRuntime {
             };
             return Ok((format!("Denied by SelfField: {}", reason), metrics));
         }
+        // Inject genome care weights into system prompt before LLM calls
+        let care_prompt = self.genome_config.care_weights_prompt();
+        if !care_prompt.is_empty() {
+            let current = self.react_loop.system_prompt().to_string();
+            self.react_loop
+                .set_system_prompt(format!("{}\n\n{}", current, care_prompt));
+        }
+
         self.react_loop
             .run(input, llm, tool_defs, execute_tool)
             .await
