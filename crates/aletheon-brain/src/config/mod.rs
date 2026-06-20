@@ -55,6 +55,8 @@ pub struct AppConfig {
     pub memory: MemoryConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
+    #[serde(default)]
+    pub perception: PerceptionConfig,
 }
 
 /// Agent-level settings.
@@ -262,6 +264,30 @@ impl Default for DaemonConfig {
     }
 }
 
+/// Perception subsystem configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerceptionConfig {
+    /// Filesystem paths to watch with inotify.
+    #[serde(default = "default_perception_watch_paths")]
+    pub watch_paths: Vec<String>,
+    /// Whether to enable journald log monitoring.
+    #[serde(default = "default_true")]
+    pub enable_journald: bool,
+}
+
+fn default_perception_watch_paths() -> Vec<String> {
+    vec!["/etc".to_string(), "/var/log".to_string()]
+}
+
+impl Default for PerceptionConfig {
+    fn default() -> Self {
+        Self {
+            watch_paths: default_perception_watch_paths(),
+            enable_journald: true,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AppConfig methods
 // ---------------------------------------------------------------------------
@@ -409,6 +435,7 @@ impl Default for AppConfig {
             plugins: PluginsConfig::default(),
             memory: MemoryConfig::default(),
             daemon: DaemonConfig::default(),
+            perception: PerceptionConfig::default(),
         }
     }
 }

@@ -233,12 +233,18 @@ pub async fn run(
     let (injection_tx, injection_rx) =
         mpsc::channel::<aletheon_self::r#impl::perception::bridge::PerceptionInjection>(64);
 
-    let watch_paths = vec![PathBuf::from("/etc"), PathBuf::from("/var/log")];
+    let perception_config = &app_config.perception;
+    let watch_paths: Vec<PathBuf> = perception_config
+        .watch_paths
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    let enable_journald = perception_config.enable_journald;
     tokio::spawn(async move {
         let mut manager = aletheon_self::r#impl::perception::manager::PerceptionManager::new(
             event_tx,
             watch_paths,
-            true, // enable journald
+            enable_journald,
         );
         if let Err(e) = manager.start().await {
             tracing::error!(error = %e, "Perception manager failed");

@@ -1,7 +1,7 @@
 # P4: Brain Depth — Multi-Step Reasoning & Iterative Planning
 
 **Date**: 2026-06-20
-**Status**: 🟡 In Progress
+**Status**: ✅ Complete (PR #168 merged)
 **Goal**: Transform the brain from single-step template to iterative, decomposing, self-correcting cognitive engine.
 
 ## Problem

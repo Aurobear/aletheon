@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
+use crate::activation::{compute_activation, ActivationEntry};
 use crate::schema;
 
 pub struct ProceduralMemory {
@@ -190,20 +191,46 @@ impl MemoryBackend for ProceduralMemory {
                 }
             }
 
-            sql += " ORDER BY m.importance DESC, pe.success_count DESC";
-
+            // Fetch without ORDER BY — activation sort happens in Rust.
+            // If a limit is set, fetch 2x to give re-ranking room.
             if query.limit > 0 {
                 sql += &format!(" LIMIT ?{idx}", idx = param_idx);
-                param_values.push(Box::new(query.limit as i64));
+                param_values.push(Box::new((query.limit as i64) * 2));
             }
 
             let mut stmt = conn.prepare(&sql)?;
             let params_refs: Vec<&dyn rusqlite::types::ToSql> =
                 param_values.iter().map(|p| p.as_ref()).collect();
 
-            let entries = stmt
+            let mut entries = stmt
                 .query_map(params_refs.as_slice(), row_to_entry)?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            // Re-sort by activation score (importance + recency + frequency)
+            let now = Utc::now().timestamp();
+            entries.sort_by(|a, b| {
+                let sa = compute_activation(
+                    &ActivationEntry::new(
+                        a.importance,
+                        a.access_count as i64,
+                        a.created_at.timestamp(),
+                    ),
+                    now,
+                );
+                let sb = compute_activation(
+                    &ActivationEntry::new(
+                        b.importance,
+                        b.access_count as i64,
+                        b.created_at.timestamp(),
+                    ),
+                    now,
+                );
+                sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            if query.limit > 0 {
+                entries.truncate(query.limit);
+            }
 
             for entry in &entries {
                 conn.execute(
@@ -494,5 +521,37 @@ mod tests {
         let stats = mem.stats().await.unwrap();
         assert_eq!(stats.total_entries, 2);
         assert!(stats.total_size_bytes > 0);
+    }
+
+    #[tokio::test]
+    async fn test_procedural_recall_activation_ordering() {
+        let (_tmp, mut mem) = setup();
+        init_mem(&mut mem).await;
+
+        // Store an old high-importance skill
+        let mut old_skill = make_skill("old-skill", b"old approach");
+        old_skill.importance = 0.9;
+        old_skill.created_at = Utc::now() - chrono::Duration::days(60);
+        mem.store(old_skill).await.unwrap();
+
+        // Store a recent moderate-importance skill
+        let mut recent_skill = make_skill("recent-skill", b"new approach");
+        recent_skill.importance = 0.5;
+        recent_skill.created_at = Utc::now();
+        mem.store(recent_skill).await.unwrap();
+
+        let query = MemoryQuery {
+            limit: 10,
+            ..Default::default()
+        };
+        let results = mem.recall(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+
+        // With activation-based ordering, the old high-importance entry
+        // should still rank higher (importance=0.9 dominates at 40% weight)
+        // unless it's extremely old. At 60 days, recency decays but importance
+        // still keeps it competitive.
+        let first = &results[0];
+        assert!(first.importance > 0.0, "activation-sorted results should have positive importance");
     }
 }

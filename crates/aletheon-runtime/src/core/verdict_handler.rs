@@ -2,6 +2,7 @@
 
 use aletheon_abi::context::Context;
 use aletheon_abi::self_field::{Intent, Verdict, VerdictAction, VerdictHandler};
+use serde_json::Value;
 
 /// Callback for user confirmation. Returns true to proceed, false to deny.
 pub type ConfirmCallback = Box<dyn Fn(&str, &str) -> bool + Send + Sync>;
@@ -41,16 +42,47 @@ impl Default for DefaultVerdictHandler {
     }
 }
 
+/// Merge a modification payload (partial overlay) into an existing Intent.
+///
+/// - `action` key overrides `intent.action`
+/// - `parameters` key shallow-merges into `intent.parameters` (object values only)
+/// - `description` key overrides `intent.description`
+/// - `source` is never changed by modification
+fn merge_intent(intent: &Intent, modification: &Value) -> Intent {
+    let mut merged = intent.clone();
+
+    if let Some(action) = modification.get("action").and_then(Value::as_str) {
+        merged.action = action.to_string();
+    }
+
+    if let Some(new_params) = modification.get("parameters").and_then(|v| v.as_object()) {
+        if let Some(existing) = merged.parameters.as_object_mut() {
+            for (key, value) in new_params {
+                existing.insert(key.clone(), value.clone());
+            }
+        } else {
+            // intent.parameters was not an object — replace entirely
+            merged.parameters = Value::Object(new_params.clone());
+        }
+    }
+
+    if let Some(desc) = modification.get("description").and_then(Value::as_str) {
+        merged.description = desc.to_string();
+    }
+
+    merged
+}
+
 impl VerdictHandler for DefaultVerdictHandler {
     fn handle(&self, verdict: &Verdict, _intent: &Intent, _ctx: &Context) -> VerdictAction {
         match verdict {
             Verdict::Allow => VerdictAction::Proceed {
                 modified_intent: None,
             },
-            Verdict::AllowWithModification { modification: _ } => {
-                // TODO: parse modification into a modified Intent
+            Verdict::AllowWithModification { modification } => {
+                let merged = merge_intent(_intent, modification);
                 VerdictAction::Proceed {
-                    modified_intent: None,
+                    modified_intent: Some(merged),
                 }
             }
             Verdict::Deny { reason } => VerdictAction::ShortCircuit {
@@ -118,18 +150,91 @@ mod tests {
     }
 
     #[test]
-    fn allow_with_modification_returns_proceed() {
+    fn allow_with_modification_returns_merged_intent() {
         let handler = DefaultVerdictHandler::new();
         let verdict = Verdict::AllowWithModification {
-            modification: json!({"tone": "gentler"}),
+            modification: json!({"description": "modified description", "extra": "ignored"}),
         };
         let action = handler.handle(&verdict, &test_intent(), &test_ctx());
         match action {
             VerdictAction::Proceed { modified_intent } => {
-                assert!(modified_intent.is_none());
+                let merged = modified_intent.expect("expected merged intent");
+                assert_eq!(merged.description, "modified description");
+                // action and source unchanged
+                assert_eq!(merged.action, "test");
+                assert!(matches!(merged.source, IntentSource::User));
             }
             _ => panic!("expected Proceed"),
         }
+    }
+
+    #[test]
+    fn merge_intent_overrides_action() {
+        let intent = test_intent();
+        let modification = json!({"action": "rewritten"});
+        let merged = merge_intent(&intent, &modification);
+        assert_eq!(merged.action, "rewritten");
+        assert_eq!(merged.description, "test intent");
+        assert!(matches!(merged.source, IntentSource::User));
+    }
+
+    #[test]
+    fn merge_intent_shallow_merges_parameters() {
+        let intent = Intent {
+            action: "test".to_string(),
+            parameters: json!({"key_a": "original", "key_b": 42}),
+            source: IntentSource::User,
+            description: "test intent".to_string(),
+        };
+        let modification = json!({"parameters": {"key_b": 99, "key_c": "new"}});
+        let merged = merge_intent(&intent, &modification);
+        let params = merged.parameters.as_object().unwrap();
+        assert_eq!(params["key_a"], "original");
+        assert_eq!(params["key_b"], 99);
+        assert_eq!(params["key_c"], "new");
+    }
+
+    #[test]
+    fn merge_intent_overrides_description() {
+        let intent = test_intent();
+        let modification = json!({"description": "new desc"});
+        let merged = merge_intent(&intent, &modification);
+        assert_eq!(merged.description, "new desc");
+        assert_eq!(merged.action, "test");
+    }
+
+    #[test]
+    fn merge_intent_preserves_source() {
+        let intent = test_intent();
+        let modification = json!({"source": "Brain", "action": "hijack"});
+        let merged = merge_intent(&intent, &modification);
+        // source must never change
+        assert!(matches!(merged.source, IntentSource::User));
+        // but action does
+        assert_eq!(merged.action, "hijack");
+    }
+
+    #[test]
+    fn merge_intent_all_keys() {
+        let intent = test_intent();
+        let modification = json!({
+            "action": "new_action",
+            "parameters": {"x": 1},
+            "description": "new_desc"
+        });
+        let merged = merge_intent(&intent, &modification);
+        assert_eq!(merged.action, "new_action");
+        assert_eq!(merged.parameters["x"], 1);
+        assert_eq!(merged.description, "new_desc");
+    }
+
+    #[test]
+    fn merge_intent_empty_modification_is_noop() {
+        let intent = test_intent();
+        let modification = json!({});
+        let merged = merge_intent(&intent, &modification);
+        assert_eq!(merged.action, "test");
+        assert_eq!(merged.description, "test intent");
     }
 
     #[test]

@@ -61,6 +61,8 @@ pub struct AppConfig {
     pub daemon: DaemonConfig,
     #[serde(default)]
     pub hooks: HooksConfig,
+    #[serde(default)]
+    pub perception: PerceptionConfig,
 }
 
 /// Agent-level settings.
@@ -302,6 +304,30 @@ impl Default for HooksConfig {
     }
 }
 
+/// Perception subsystem configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerceptionConfig {
+    /// Filesystem paths to watch with inotify.
+    #[serde(default = "default_perception_watch_paths")]
+    pub watch_paths: Vec<String>,
+    /// Whether to enable journald log monitoring.
+    #[serde(default = "default_true")]
+    pub enable_journald: bool,
+}
+
+fn default_perception_watch_paths() -> Vec<String> {
+    vec!["/etc".to_string(), "/var/log".to_string()]
+}
+
+impl Default for PerceptionConfig {
+    fn default() -> Self {
+        Self {
+            watch_paths: default_perception_watch_paths(),
+            enable_journald: true,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AppConfig methods
 // ---------------------------------------------------------------------------
@@ -460,6 +486,7 @@ impl Default for AppConfig {
             memory: MemoryConfig::default(),
             daemon: DaemonConfig::default(),
             hooks: HooksConfig::default(),
+            perception: PerceptionConfig::default(),
         }
     }
 }
@@ -929,5 +956,39 @@ base_url = "http://localhost"
         assert_eq!(config.reasoning_strategy, "plan-then-execute");
         assert_eq!(config.impasse_threshold, 0.3);
         assert_eq!(config.genome_version, "0.1.0");
+    }
+
+    #[test]
+    fn test_perception_config_default() {
+        let config = PerceptionConfig::default();
+        assert_eq!(config.watch_paths, vec!["/etc", "/var/log"]);
+        assert!(config.enable_journald);
+    }
+
+    #[test]
+    fn test_perception_config_from_toml() {
+        let toml = r#"
+[perception]
+watch_paths = ["/tmp", "/home/user/logs"]
+enable_journald = false
+"#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.perception.watch_paths,
+            vec!["/tmp", "/home/user/logs"]
+        );
+        assert!(!config.perception.enable_journald);
+    }
+
+    #[test]
+    fn test_perception_config_default_in_app_config() {
+        let toml = r#"
+[[providers]]
+name = "test"
+base_url = "http://localhost"
+"#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.perception.watch_paths, vec!["/etc", "/var/log"]);
+        assert!(config.perception.enable_journald);
     }
 }

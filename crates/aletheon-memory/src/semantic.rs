@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
+use crate::activation::{compute_activation, ActivationEntry};
 use crate::schema;
 
 pub struct SemanticMemory {
@@ -165,8 +166,15 @@ impl MemoryBackend for SemanticMemory {
 
     async fn recall(&self, query: &MemoryQuery) -> Result<Vec<MemoryEntry>> {
         self.with_conn(|conn| {
-            let entries;
+            let mut entries;
             if let Some(ref text) = query.text {
+                // FTS path: keep BM25 rank as primary relevance filter.
+                // Fetch 2x the limit to give activation re-ranking room.
+                let fetch_limit = if query.limit > 0 {
+                    query.limit * 2
+                } else {
+                    0
+                };
                 let sql = format!(
                     "SELECT m.* FROM aletheon_memory m
                      INNER JOIN semantic_entries se ON se.memory_id = m.id
@@ -174,8 +182,8 @@ impl MemoryBackend for SemanticMemory {
                      WHERE semantic_fts MATCH ?1
                      ORDER BY rank
                      {}",
-                    if query.limit > 0 {
-                        format!("LIMIT {}", query.limit)
+                    if fetch_limit > 0 {
+                        format!("LIMIT {}", fetch_limit)
                     } else {
                         String::new()
                     }
@@ -183,7 +191,39 @@ impl MemoryBackend for SemanticMemory {
                 let mut stmt = conn.prepare(&sql)?;
                 let rows = stmt.query_map(params![text], row_to_entry)?;
                 entries = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+
+                // Activation-based tiebreaker: for entries with similar activation
+                // scores (within 10%), prefer the one that ranked higher in FTS.
+                // Stable sort preserves FTS rank order for equal-activation entries.
+                let now = Utc::now().timestamp();
+                let scores: Vec<f64> = entries
+                    .iter()
+                    .map(|e| {
+                        compute_activation(
+                            &ActivationEntry::new(
+                                e.importance,
+                                e.access_count as i64,
+                                e.created_at.timestamp(),
+                            ),
+                            now,
+                        )
+                    })
+                    .collect();
+                let mut indexed: Vec<(usize, &MemoryEntry)> =
+                    entries.iter().enumerate().collect();
+                indexed.sort_by(|&(i, _), &(j, _)| {
+                    let (si, sj) = (scores[i], scores[j]);
+                    let max_s = si.max(sj);
+                    // If scores are within 10% of each other, keep FTS rank order
+                    if max_s > 0.0 && (si - sj).abs() / max_s < 0.1 {
+                        std::cmp::Ordering::Equal // stable sort preserves FTS order
+                    } else {
+                        sj.partial_cmp(&si).unwrap_or(std::cmp::Ordering::Equal)
+                    }
+                });
+                entries = indexed.into_iter().map(|(_, e)| e.clone()).collect();
             } else {
+                // Non-FTS path: activation-based sorting
                 let mut sql =
                     String::from("SELECT * FROM aletheon_memory WHERE memory_type = 'semantic'");
                 let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -203,11 +243,11 @@ impl MemoryBackend for SemanticMemory {
                     param_idx += 1;
                 }
 
-                sql += " ORDER BY importance DESC";
-
+                // Fetch without ORDER BY — activation sort happens in Rust.
+                // If a limit is set, fetch 2x to give re-ranking room.
                 if query.limit > 0 {
                     sql += &format!(" LIMIT ?{idx}", idx = param_idx);
-                    param_values.push(Box::new(query.limit as i64));
+                    param_values.push(Box::new((query.limit as i64) * 2));
                 }
 
                 let mut stmt = conn.prepare(&sql)?;
@@ -215,6 +255,31 @@ impl MemoryBackend for SemanticMemory {
                     param_values.iter().map(|p| p.as_ref()).collect();
                 let rows = stmt.query_map(params_refs.as_slice(), row_to_entry)?;
                 entries = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+
+                let now = Utc::now().timestamp();
+                entries.sort_by(|a, b| {
+                    let sa = compute_activation(
+                        &ActivationEntry::new(
+                            a.importance,
+                            a.access_count as i64,
+                            a.created_at.timestamp(),
+                        ),
+                        now,
+                    );
+                    let sb = compute_activation(
+                        &ActivationEntry::new(
+                            b.importance,
+                            b.access_count as i64,
+                            b.created_at.timestamp(),
+                        ),
+                        now,
+                    );
+                    sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+
+            if query.limit > 0 {
+                entries.truncate(query.limit);
             }
 
             for entry in &entries {

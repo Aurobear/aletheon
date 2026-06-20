@@ -10,6 +10,7 @@ use aletheon_abi::{
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::activation::{compute_activation, ActivationEntry};
 use crate::episodic::EpisodicMemory;
 use crate::procedural::ProceduralMemory;
 use crate::self_memory::SelfMemory;
@@ -297,10 +298,26 @@ impl MemoryBackend for MemoryRouter {
             }
         }
 
+        // Cross-type fan-out: sort by activation (importance + recency + frequency)
+        let now = chrono::Utc::now().timestamp();
         all.sort_by(|a, b| {
-            b.importance
-                .partial_cmp(&a.importance)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            let sa = compute_activation(
+                &ActivationEntry::new(
+                    a.importance,
+                    a.access_count as i64,
+                    a.created_at.timestamp(),
+                ),
+                now,
+            );
+            let sb = compute_activation(
+                &ActivationEntry::new(
+                    b.importance,
+                    b.access_count as i64,
+                    b.created_at.timestamp(),
+                ),
+                now,
+            );
+            sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
         });
         if query.limit > 0 {
             all.truncate(query.limit);
@@ -752,5 +769,76 @@ mod tests {
 
         let ctx = router.recall_for_prompt("fact", 2).await;
         assert!(ctx.relevant_knowledge.len() <= 2);
+    }
+
+    #[tokio::test]
+    async fn test_router_recall_activation_ordering_cross_type() {
+        let (_dir, router) = setup_router().await;
+
+        // Store an old moderate-importance episodic entry (90 days ago)
+        let mut old_entry = make_entry(MemoryType::Episodic, b"old important event");
+        old_entry.importance = 0.6;
+        old_entry.created_at = Utc::now() - chrono::Duration::days(90);
+        router.store(old_entry).await.unwrap();
+
+        // Store a recent very-low-importance semantic entry
+        let mut recent_entry = make_entry(MemoryType::Semantic, b"recent minor fact");
+        recent_entry.importance = 0.1;
+        recent_entry.created_at = Utc::now();
+        router.store(recent_entry).await.unwrap();
+
+        // Recall across all types (no memory_type filter)
+        let query = MemoryQuery {
+            limit: 10,
+            ..Default::default()
+        };
+        let results = router.recall(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+
+        // With activation-based cross-type sort:
+        // Old: importance=0.6 (0.4*0.6=0.24), recency=1/(1+sqrt(2160))~0.02 (0.35*0.02=0.007), freq=ln(2)/ln(5)*0.25~0.108
+        //   activation ≈ 0.24 + 0.007 + 0.108 = 0.355
+        // Recent: importance=0.1 (0.4*0.1=0.04), recency=1.0 (0.35*1.0=0.35), freq=ln(2)/ln(5)*0.25~0.108
+        //   activation ≈ 0.04 + 0.35 + 0.108 = 0.498
+        // The recent entry wins despite lower importance because recency dominates.
+        // This verifies activation is being used (old importance-only sort would put
+        // the 0.6-importance entry first).
+        let first_content = String::from_utf8_lossy(&results[0].content);
+        assert!(
+            first_content.contains("recent"),
+            "recent entry should rank higher via activation despite lower importance: got {:?}",
+            first_content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_router_recall_fresh_beats_stale_same_importance() {
+        let (_dir, router) = setup_router().await;
+
+        // Two entries with same importance, but different ages
+        let mut stale = make_entry(MemoryType::Semantic, b"stale fact");
+        stale.importance = 0.5;
+        stale.created_at = Utc::now() - chrono::Duration::days(90);
+        router.store(stale).await.unwrap();
+
+        let mut fresh = make_entry(MemoryType::Episodic, b"fresh event");
+        fresh.importance = 0.5;
+        fresh.created_at = Utc::now();
+        router.store(fresh).await.unwrap();
+
+        let query = MemoryQuery {
+            limit: 10,
+            ..Default::default()
+        };
+        let results = router.recall(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Fresh entry should rank first (same importance, but better recency)
+        let first_content = String::from_utf8_lossy(&results[0].content);
+        assert!(
+            first_content.contains("fresh"),
+            "fresh entry should rank higher: got {:?}",
+            first_content
+        );
     }
 }

@@ -16,6 +16,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
+use crate::activation::{compute_activation, ActivationEntry};
 use crate::schema;
 
 pub struct SelfMemory {
@@ -194,20 +195,46 @@ impl MemoryBackend for SelfMemory {
                 }
             }
 
-            sql += " ORDER BY m.created_at DESC";
-
+            // Fetch without ORDER BY — activation sort happens in Rust.
+            // If a limit is set, fetch 2x to give re-ranking room.
             if query.limit > 0 {
                 sql += &format!(" LIMIT ?{idx}", idx = param_idx);
-                param_values.push(Box::new(query.limit as i64));
+                param_values.push(Box::new((query.limit as i64) * 2));
             }
 
             let mut stmt = conn.prepare(&sql)?;
             let params_refs: Vec<&dyn rusqlite::types::ToSql> =
                 param_values.iter().map(|p| p.as_ref()).collect();
 
-            let entries = stmt
+            let mut entries = stmt
                 .query_map(params_refs.as_slice(), row_to_entry)?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            // Re-sort by activation score (importance + recency + frequency)
+            let now = Utc::now().timestamp();
+            entries.sort_by(|a, b| {
+                let sa = compute_activation(
+                    &ActivationEntry::new(
+                        a.importance,
+                        a.access_count as i64,
+                        a.created_at.timestamp(),
+                    ),
+                    now,
+                );
+                let sb = compute_activation(
+                    &ActivationEntry::new(
+                        b.importance,
+                        b.access_count as i64,
+                        b.created_at.timestamp(),
+                    ),
+                    now,
+                );
+                sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            if query.limit > 0 {
+                entries.truncate(query.limit);
+            }
 
             for entry in &entries {
                 conn.execute(
