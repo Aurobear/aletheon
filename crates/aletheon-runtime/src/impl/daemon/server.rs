@@ -73,9 +73,16 @@ impl UnixServer {
         // Debug subscriber receiver — populated when the client sends debug.subscribe.
         let mut debug_subscriber_rx: Option<mpsc::Receiver<DebugEvent>> = None;
 
+        // Channel for receiving handler responses from background tasks.
+        // This allows the select! loop to continue forwarding notifications
+        // while the handler is processing a long-running request (e.g. LLM API call).
+        let (resp_tx, mut resp_rx) = mpsc::channel::<String>(1);
+
         loop {
             tokio::select! {
                 // Read incoming requests from the client.
+                // Dispatch to a background task so the select loop continues
+                // forwarding notifications while the handler processes.
                 read_result = reader.read_line(&mut line) => {
                     let n = read_result?;
                     if n == 0 {
@@ -88,19 +95,30 @@ impl UnixServer {
                         continue;
                     }
 
-                    // Parse JSON request
+                    // Parse JSON request and spawn handler in background
                     let request: serde_json::Value = serde_json::from_str(&trimmed)?;
-                    let response = handler.handle(request).await;
-                    let response_json = serde_json::to_string(&response)?;
-                    writer.write_all(response_json.as_bytes()).await?;
-                    writer.write_all(b"\n").await?;
-                    writer.flush().await?;
+                    let handler = handler.clone();
+                    let resp_tx = resp_tx.clone();
+                    tokio::spawn(async move {
+                        let response = handler.handle(request).await;
+                        let response_json = serde_json::to_string(&response)
+                            .unwrap_or_default();
+                        let _ = resp_tx.send(response_json).await;
+                    });
+                }
+                // Receive handler response from background task.
+                response_json = resp_rx.recv() => {
+                    if let Some(json) = response_json {
+                        writer.write_all(json.as_bytes()).await?;
+                        writer.write_all(b"\n").await?;
+                        writer.flush().await?;
 
-                    // Check if the debug handler has a pending subscriber rx
-                    // (populated when debug.subscribe was just processed).
-                    if let Some(rx) = handler.debug_handler().take_pending_subscriber_rx().await {
-                        debug_subscriber_rx = Some(rx);
-                        info!("Debug subscriber channel attached to client connection");
+                        // Check if the debug handler has a pending subscriber rx
+                        // (populated when debug.subscribe was just processed).
+                        if let Some(rx) = handler.debug_handler().take_pending_subscriber_rx().await {
+                            debug_subscriber_rx = Some(rx);
+                            info!("Debug subscriber channel attached to client connection");
+                        }
                     }
                 }
                 // Forward out-of-band notifications from the handler to the client.
