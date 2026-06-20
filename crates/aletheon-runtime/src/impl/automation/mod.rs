@@ -265,6 +265,7 @@ impl Default for AutomationScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     fn make_cron_auto(id: &str, expr: &str, limit: u32) -> Automation {
         Automation {

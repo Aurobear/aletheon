@@ -182,6 +182,7 @@ impl McpEmbedded {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_abi::Registry;
 
     #[test]
     fn handle_initialize_returns_server_info() {
@@ -202,7 +203,7 @@ mod tests {
         let mut reg = ToolRegistry::new();
         reg.register(Arc::new(
             aletheon_body::r#impl::tools::bash_exec::BashExecTool,
-        ));
+        )).unwrap();
         let registry = Arc::new(reg);
 
         let request = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}});
