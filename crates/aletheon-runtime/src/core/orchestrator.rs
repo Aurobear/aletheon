@@ -288,14 +288,21 @@ impl AletheonRuntime {
         debug!("SelfField verdict: {:?}", verdict);
 
         let action = self.verdict_handler.handle(&verdict, &intent, ctx);
+        // Effective input: use modified intent's description when available,
+        // otherwise fall back to the original user input.
+        let effective_input: String;
         match action {
             VerdictAction::Proceed { modified_intent } => {
-                // Use modified intent if provided; otherwise continue with original.
-                if let Some(_modified) = modified_intent {
-                    debug!("Using SelfField-modified intent");
-                    // TODO: replace intent fields when modification parsing is implemented
+                if let Some(modified) = modified_intent {
+                    debug!(
+                        action = %modified.action,
+                        description = %modified.description,
+                        "Using SelfField-modified intent"
+                    );
+                    effective_input = modified.description.clone();
+                } else {
+                    effective_input = input.to_string();
                 }
-                // Continue to LLM execution below.
             }
             VerdictAction::ShortCircuit { response } => {
                 let metrics = crate::core::react_loop::TurnMetrics {
@@ -314,6 +321,7 @@ impl AletheonRuntime {
                     "SandboxFirst requested: {}. Proceeding without sandbox.",
                     reason
                 );
+                effective_input = input.to_string();
             }
         }
         // Inject genome care weights into system prompt before LLM calls
@@ -326,7 +334,7 @@ impl AletheonRuntime {
 
         // Inject memory context into system prompt
         if let Some(ref memory) = self.memory {
-            let mem_ctx = memory.recall_for_prompt(input, 3).await;
+            let mem_ctx = memory.recall_for_prompt(&effective_input, 3).await;
             let mem_section = mem_ctx.to_prompt_section();
             if !mem_section.is_empty() {
                 let current = self.react_loop.system_prompt().to_string();
@@ -336,7 +344,7 @@ impl AletheonRuntime {
         }
 
         self.react_loop
-            .run(input, llm, tool_defs, execute_tool)
+            .run(&effective_input, llm, tool_defs, execute_tool)
             .await
     }
 

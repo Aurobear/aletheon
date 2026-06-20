@@ -17,4 +17,4 @@ pub use config::{
 pub use evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 pub use orchestrator::AletheonRuntime;
 pub use react_loop::ReActLoop;
-pub use verdict_handler::DefaultVerdictHandler;
+pub use verdict_handler::{DefaultVerdictHandler, Modifications};

@@ -1,5 +1,7 @@
 //! Default verdict handler — maps SelfField verdicts to VerdictAction.
 
+use std::collections::HashMap;
+
 use aletheon_abi::context::Context;
 use aletheon_abi::self_field::{Intent, Verdict, VerdictAction, VerdictHandler};
 use serde_json::Value;
@@ -7,10 +9,86 @@ use serde_json::Value;
 /// Callback for user confirmation. Returns true to proceed, false to deny.
 pub type ConfirmCallback = Box<dyn Fn(&str, &str) -> bool + Send + Sync>;
 
+/// Explicit specification of modifications to apply to an Intent.
+///
+/// Unlike the raw JSON overlay, this struct distinguishes between:
+/// - **Overrides**: fields that replace the original value entirely
+/// - **Merges**: parameter keys that overlay without removing unmentioned keys
+/// - **Additions**: constraints that are appended to the intent metadata
+#[derive(Debug, Clone, Default)]
+pub struct Modifications {
+    /// Replace `intent.action` if set.
+    pub action: Option<String>,
+    /// Parameter keys that replace specific values (partial override).
+    pub parameter_overrides: HashMap<String, serde_json::Value>,
+    /// Parameter keys that are deep-merged into the existing parameters.
+    pub parameter_merges: HashMap<String, serde_json::Value>,
+    /// Replace `intent.description` if set.
+    pub description: Option<String>,
+    /// Constraints to append (e.g., safety rails, scope limits).
+    pub add_constraints: Vec<String>,
+}
+
+impl Modifications {
+    /// Parse a `Modifications` from a raw JSON modification payload.
+    ///
+    /// Expected JSON shape:
+    /// ```json
+    /// {
+    ///   "action": "new_action",
+    ///   "parameters": { "key": "override_value" },
+    ///   "parameter_merges": { "nested_key": { "sub": "merge" } },
+    ///   "description": "new description",
+    ///   "add_constraints": ["constraint1", "constraint2"]
+    /// }
+    /// ```
+    pub fn from_value(value: &Value) -> Self {
+        let action = value
+            .get("action")
+            .and_then(Value::as_str)
+            .map(String::from);
+
+        let description = value
+            .get("description")
+            .and_then(Value::as_str)
+            .map(String::from);
+
+        let parameter_overrides = value
+            .get("parameters")
+            .and_then(Value::as_object)
+            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+
+        let parameter_merges = value
+            .get("parameter_merges")
+            .and_then(Value::as_object)
+            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+
+        let add_constraints = value
+            .get("add_constraints")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Modifications {
+            action,
+            parameter_overrides,
+            parameter_merges,
+            description,
+            add_constraints,
+        }
+    }
+}
+
 /// Default verdict handler that maps all 6 verdict types to actions.
 ///
 /// - `Allow` -> `Proceed`
-/// - `AllowWithModification` -> `Proceed` (modification noted but not parsed into Intent yet)
+/// - `AllowWithModification` -> `Proceed` (modification applied via deep merge)
 /// - `Deny` -> `ShortCircuit`
 /// - `RequireConfirmation` -> calls callback if present, otherwise `ShortCircuit`
 /// - `SandboxFirst` -> `SandboxThenProceed`
@@ -42,35 +120,105 @@ impl Default for DefaultVerdictHandler {
     }
 }
 
-/// Merge a modification payload (partial overlay) into an existing Intent.
+/// Deep merge a `Modifications` into an existing Intent.
 ///
-/// - `action` key overrides `intent.action`
-/// - `parameters` key shallow-merges into `intent.parameters` (object values only)
-/// - `description` key overrides `intent.description`
-/// - `source` is never changed by modification
-fn merge_intent(intent: &Intent, modification: &Value) -> Intent {
+/// - `action`: replaced if present in modifications
+/// - `parameters`: keys from `parameter_overrides` replace; keys from
+///   `parameter_merges` are recursively merged (nested objects merged, scalars replace)
+/// - `description`: replaced if present
+/// - `add_constraints`: appended as a `_constraints` array in parameters
+/// - `source`: never changed
+pub fn merge_intent_deep(intent: &Intent, modifications: &Modifications) -> Intent {
     let mut merged = intent.clone();
 
-    if let Some(action) = modification.get("action").and_then(Value::as_str) {
-        merged.action = action.to_string();
+    // Override action
+    if let Some(ref action) = modifications.action {
+        merged.action = action.clone();
     }
 
-    if let Some(new_params) = modification.get("parameters").and_then(|v| v.as_object()) {
+    // Override description
+    if let Some(ref desc) = modifications.description {
+        merged.description = desc.clone();
+    }
+
+    // Apply parameter overrides (direct key replacement)
+    if !modifications.parameter_overrides.is_empty() {
         if let Some(existing) = merged.parameters.as_object_mut() {
-            for (key, value) in new_params {
+            for (key, value) in &modifications.parameter_overrides {
                 existing.insert(key.clone(), value.clone());
             }
         } else {
             // intent.parameters was not an object — replace entirely
-            merged.parameters = Value::Object(new_params.clone());
+            let mut obj = serde_json::Map::new();
+            for (key, value) in &modifications.parameter_overrides {
+                obj.insert(key.clone(), value.clone());
+            }
+            merged.parameters = Value::Object(obj);
         }
     }
 
-    if let Some(desc) = modification.get("description").and_then(Value::as_str) {
-        merged.description = desc.to_string();
+    // Apply parameter merges (recursive deep merge for objects, direct replace for scalars)
+    if !modifications.parameter_merges.is_empty() {
+        if let Some(existing) = merged.parameters.as_object_mut() {
+            for (key, value) in &modifications.parameter_merges {
+                deep_merge_value(
+                    existing.entry(key).or_insert(Value::Null),
+                    value,
+                );
+            }
+        } else {
+            let mut obj = serde_json::Map::new();
+            for (key, value) in &modifications.parameter_merges {
+                obj.insert(key.clone(), value.clone());
+            }
+            merged.parameters = Value::Object(obj);
+        }
+    }
+
+    // Append constraints
+    if !modifications.add_constraints.is_empty() {
+        if let Some(obj) = merged.parameters.as_object_mut() {
+            let constraints = obj
+                .entry("_constraints")
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(arr) = constraints.as_array_mut() {
+                for c in &modifications.add_constraints {
+                    arr.push(Value::String(c.clone()));
+                }
+            }
+        }
     }
 
     merged
+}
+
+/// Recursively merge `overlay` into `base`.
+///
+/// - If both are objects, merge keys recursively (overlay keys win)
+/// - Otherwise, `overlay` replaces `base`
+fn deep_merge_value(base: &mut Value, overlay: &Value) {
+    match (base, overlay) {
+        (Value::Object(base_map), Value::Object(overlay_map)) => {
+            for (key, value) in overlay_map {
+                deep_merge_value(
+                    base_map.entry(key).or_insert(Value::Null),
+                    value,
+                );
+            }
+        }
+        (base, overlay) => {
+            *base = overlay.clone();
+        }
+    }
+}
+
+/// Legacy merge from raw JSON modification (backward-compatible).
+///
+/// Delegates to `Modifications::from_value` + `merge_intent_deep`.
+#[cfg(test)]
+fn merge_intent(intent: &Intent, modification: &Value) -> Intent {
+    let modifications = Modifications::from_value(modification);
+    merge_intent_deep(intent, &modifications)
 }
 
 impl VerdictHandler for DefaultVerdictHandler {
@@ -80,7 +228,8 @@ impl VerdictHandler for DefaultVerdictHandler {
                 modified_intent: None,
             },
             Verdict::AllowWithModification { modification } => {
-                let merged = merge_intent(_intent, modification);
+                let modifications = Modifications::from_value(modification);
+                let merged = merge_intent_deep(_intent, &modifications);
                 VerdictAction::Proceed {
                     modified_intent: Some(merged),
                 }
@@ -137,6 +286,8 @@ mod tests {
         Context::new("test", std::path::PathBuf::from("/tmp"))
     }
 
+    // --- VerdictHandler tests (existing) ---
+
     #[test]
     fn allow_returns_proceed() {
         let handler = DefaultVerdictHandler::new();
@@ -160,13 +311,14 @@ mod tests {
             VerdictAction::Proceed { modified_intent } => {
                 let merged = modified_intent.expect("expected merged intent");
                 assert_eq!(merged.description, "modified description");
-                // action and source unchanged
                 assert_eq!(merged.action, "test");
                 assert!(matches!(merged.source, IntentSource::User));
             }
             _ => panic!("expected Proceed"),
         }
     }
+
+    // --- merge_intent legacy tests (backward compatibility) ---
 
     #[test]
     fn merge_intent_overrides_action() {
@@ -208,9 +360,7 @@ mod tests {
         let intent = test_intent();
         let modification = json!({"source": "Brain", "action": "hijack"});
         let merged = merge_intent(&intent, &modification);
-        // source must never change
         assert!(matches!(merged.source, IntentSource::User));
-        // but action does
         assert_eq!(merged.action, "hijack");
     }
 
@@ -236,6 +386,180 @@ mod tests {
         assert_eq!(merged.action, "test");
         assert_eq!(merged.description, "test intent");
     }
+
+    // --- Deep merge tests (new) ---
+
+    #[test]
+    fn deep_merge_action_override() {
+        let intent = Intent {
+            action: "original_action".to_string(),
+            parameters: json!({"existing": "value"}),
+            source: IntentSource::User,
+            description: "original desc".to_string(),
+        };
+        let mods = Modifications {
+            action: Some("replaced_action".to_string()),
+            ..Default::default()
+        };
+        let merged = merge_intent_deep(&intent, &mods);
+        assert_eq!(merged.action, "replaced_action");
+        assert_eq!(merged.description, "original desc");
+        assert_eq!(merged.parameters["existing"], "value");
+        assert!(matches!(merged.source, IntentSource::User));
+    }
+
+    #[test]
+    fn deep_merge_parameter_overrides_partial() {
+        let intent = Intent {
+            action: "act".to_string(),
+            parameters: json!({"a": 1, "b": 2, "c": 3}),
+            source: IntentSource::User,
+            description: "desc".to_string(),
+        };
+        let mut overrides = HashMap::new();
+        overrides.insert("b".to_string(), json!(99));
+        overrides.insert("d".to_string(), json!(4));
+        let mods = Modifications {
+            parameter_overrides: overrides,
+            ..Default::default()
+        };
+        let merged = merge_intent_deep(&intent, &mods);
+        let params = merged.parameters.as_object().unwrap();
+        assert_eq!(params["a"], 1);     // untouched
+        assert_eq!(params["b"], 99);    // overridden
+        assert_eq!(params["c"], 3);     // untouched
+        assert_eq!(params["d"], 4);     // added
+    }
+
+    #[test]
+    fn deep_merge_parameter_merges_nested_objects() {
+        let intent = Intent {
+            action: "act".to_string(),
+            parameters: json!({"config": {"debug": false, "level": 1}}),
+            source: IntentSource::User,
+            description: "desc".to_string(),
+        };
+        let mut merges = HashMap::new();
+        merges.insert("config".to_string(), json!({"debug": true, "verbose": true}));
+        let mods = Modifications {
+            parameter_merges: merges,
+            ..Default::default()
+        };
+        let merged = merge_intent_deep(&intent, &mods);
+        let config = &merged.parameters["config"];
+        assert_eq!(config["debug"], true);      // overridden
+        assert_eq!(config["level"], 1);         // preserved
+        assert_eq!(config["verbose"], true);    // added
+    }
+
+    #[test]
+    fn deep_merge_add_constraints() {
+        let intent = Intent {
+            action: "act".to_string(),
+            parameters: json!({"existing": "val"}),
+            source: IntentSource::User,
+            description: "desc".to_string(),
+        };
+        let mods = Modifications {
+            add_constraints: vec!["no_file_delete".to_string(), "read_only_mode".to_string()],
+            ..Default::default()
+        };
+        let merged = merge_intent_deep(&intent, &mods);
+        assert_eq!(merged.parameters["existing"], "val");
+        let constraints = merged.parameters["_constraints"].as_array().unwrap();
+        assert_eq!(constraints.len(), 2);
+        assert_eq!(constraints[0], "no_file_delete");
+        assert_eq!(constraints[1], "read_only_mode");
+    }
+
+    #[test]
+    fn deep_merge_identity_no_modifications() {
+        let intent = Intent {
+            action: "act".to_string(),
+            parameters: json!({"x": 1}),
+            source: IntentSource::User,
+            description: "desc".to_string(),
+        };
+        let mods = Modifications::default();
+        let merged = merge_intent_deep(&intent, &mods);
+        assert_eq!(merged.action, "act");
+        assert_eq!(merged.parameters["x"], 1);
+        assert_eq!(merged.description, "desc");
+        assert!(matches!(merged.source, IntentSource::User));
+    }
+
+    #[test]
+    fn deep_merge_all_fields() {
+        let intent = Intent {
+            action: "original".to_string(),
+            parameters: json!({"a": 1, "nested": {"x": 10}}),
+            source: IntentSource::User,
+            description: "original desc".to_string(),
+        };
+        let mut overrides = HashMap::new();
+        overrides.insert("a".to_string(), json!(2));
+        let mut merges = HashMap::new();
+        merges.insert("nested".to_string(), json!({"y": 20}));
+        let mods = Modifications {
+            action: Some("new_action".to_string()),
+            parameter_overrides: overrides,
+            parameter_merges: merges,
+            description: Some("new desc".to_string()),
+            add_constraints: vec!["safe_mode".to_string()],
+        };
+        let merged = merge_intent_deep(&intent, &mods);
+        assert_eq!(merged.action, "new_action");
+        assert_eq!(merged.description, "new desc");
+        assert_eq!(merged.parameters["a"], 2);          // override
+        assert_eq!(merged.parameters["nested"]["x"], 10); // preserved
+        assert_eq!(merged.parameters["nested"]["y"], 20); // merged
+        let c = merged.parameters["_constraints"].as_array().unwrap();
+        assert_eq!(c[0], "safe_mode");
+        assert!(matches!(merged.source, IntentSource::User));
+    }
+
+    #[test]
+    fn deep_merge_empty_parameters_on_intent() {
+        let intent = test_intent(); // parameters: {}
+        let mut overrides = HashMap::new();
+        overrides.insert("new_key".to_string(), json!("new_val"));
+        let mods = Modifications {
+            parameter_overrides: overrides,
+            ..Default::default()
+        };
+        let merged = merge_intent_deep(&intent, &mods);
+        assert_eq!(merged.parameters["new_key"], "new_val");
+    }
+
+    #[test]
+    fn modifications_from_value_parses_all_fields() {
+        let value = json!({
+            "action": "parsed_action",
+            "parameters": {"a": 1},
+            "parameter_merges": {"b": {"nested": true}},
+            "description": "parsed desc",
+            "add_constraints": ["c1", "c2"]
+        });
+        let mods = Modifications::from_value(&value);
+        assert_eq!(mods.action.as_deref(), Some("parsed_action"));
+        assert_eq!(mods.parameter_overrides["a"], json!(1));
+        assert_eq!(mods.parameter_merges["b"]["nested"], true);
+        assert_eq!(mods.description.as_deref(), Some("parsed desc"));
+        assert_eq!(mods.add_constraints, vec!["c1", "c2"]);
+    }
+
+    #[test]
+    fn modifications_from_value_empty() {
+        let value = json!({});
+        let mods = Modifications::from_value(&value);
+        assert!(mods.action.is_none());
+        assert!(mods.description.is_none());
+        assert!(mods.parameter_overrides.is_empty());
+        assert!(mods.parameter_merges.is_empty());
+        assert!(mods.add_constraints.is_empty());
+    }
+
+    // --- VerdictHandler tests (existing, unchanged) ---
 
     #[test]
     fn deny_returns_short_circuit() {
