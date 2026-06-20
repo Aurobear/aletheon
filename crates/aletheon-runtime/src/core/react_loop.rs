@@ -425,10 +425,14 @@ impl ReActLoop {
             };
 
             let mut text_parts = Vec::new();
+            let mut thinking_parts = Vec::new();
             let mut tool_calls = Vec::new();
             for block in &response.content {
                 match block {
                     ContentBlock::Text { text } => text_parts.push(text.clone()),
+                    ContentBlock::Thinking { text, .. } => {
+                        thinking_parts.push(text.clone());
+                    }
                     ContentBlock::ToolUse { id, name, input } => {
                         tool_calls.push((id.clone(), name.clone(), input.clone()));
                     }
@@ -586,6 +590,10 @@ impl ReActLoop {
                             call_id: id.clone(),
                         });
                         tool_calls.push((id, name, serde_json::Value::Null));
+                    }
+                    StreamChunk::ThinkingDelta { .. } => {
+                        // Thinking content is collected in non-streaming path;
+                        // in streaming mode we discard deltas for now.
                     }
                     StreamChunk::ToolUseDelta { id: _, delta: _ } => {
                         // Accumulated in ToolUseComplete

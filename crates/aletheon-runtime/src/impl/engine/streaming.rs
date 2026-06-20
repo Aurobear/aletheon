@@ -131,6 +131,9 @@ impl Engine {
                     StreamChunk::ToolUseStart { id, name } => {
                         tool_inputs.insert(id.clone(), (name, String::new()));
                     }
+                    StreamChunk::ThinkingDelta { .. } => {
+                        // Thinking content is not yet surfaced in streaming assembly.
+                    }
                     StreamChunk::ToolUseDelta { id, delta } => {
                         if let Some((_, args)) = tool_inputs.get_mut(&id) {
                             args.push_str(&delta);
