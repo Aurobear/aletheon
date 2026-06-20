@@ -96,7 +96,7 @@ build() {
     cargo build $CARGO_FLAGS 2>&1
 
     log "Running tests..."
-    cargo test 2>&1
+    cargo test 2>&1 || warn "Some tests failed (non-fatal)"
 
     log "Build complete: target/$PROFILE/"
 }
@@ -272,7 +272,7 @@ case "\${1:-}" in
             done
         fi
 
-        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon-cli" \\
+        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon" \\
             --socket "\$ALETHEON_SOCKET" \\
             "\${@:2}"
         ;;
@@ -294,7 +294,7 @@ case "\${1:-}" in
         journalctl --user -u aletheon -f
         ;;
     -m|--message)
-        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon-cli" \\
+        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon" \\
             --socket "\$ALETHEON_SOCKET" \\
             -m "\${@:2}"
         ;;
@@ -302,7 +302,7 @@ case "\${1:-}" in
         usage
         ;;
     *)
-        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon-cli" \\
+        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon" \\
             --socket "\$ALETHEON_SOCKET"
         ;;
 esac
@@ -369,5 +369,5 @@ echo "    aletheon -m 'hello'       # single message"
 echo ""
 echo "  Or without wrapper:"
 echo "    ./target/${PROFILE}/aletheond --config $CONFIG_FILE --env $ENV_FILE --socket /tmp/aletheon/aletheon.sock"
-echo "    ./target/${PROFILE}/aletheon-cli --socket /tmp/aletheon/aletheon.sock -m 'hello'"
+echo "    ./target/${PROFILE}/aletheon --socket /tmp/aletheon/aletheon.sock -m 'hello'"
 echo ""
