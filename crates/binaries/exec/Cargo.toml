@@ -12,8 +12,6 @@ path = "src/main.rs"
 base = { path = "../../base" }
 runtime = { path = "../../runtime" }
 corpus = { path = "../../corpus" }
-tools = { path = "../../tools" }
-security = { path = "../../security" }
 cognit = { path = "../../cognit" }
 tokio.workspace = true
 serde_json.workspace = true

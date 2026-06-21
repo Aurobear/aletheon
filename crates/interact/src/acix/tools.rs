@@ -9,10 +9,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
-use tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use corpus::tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use crate::acix::Aci;
 use crate::acix::GroundingProvider;
-use drivers::driver::types::{Key, ScrollDirection};
+use corpus::drivers::driver::types::{Key, ScrollDirection};
 use base::Registry;
 
 // ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ impl Tool for TreeTool {
     }
 }
 
-fn format_element(elem: &drivers::driver::types::Element, depth: usize) -> String {
+fn format_element(elem: &corpus::drivers::driver::types::Element, depth: usize) -> String {
     let indent = "  ".repeat(depth);
     let mut out = format!(
         "{}[{}] {:?} bounds=({},{}+{}x{})\n",
@@ -384,18 +384,18 @@ impl Tool for ObserveTool {
         match self.aci.smart_observe() {
             Ok(observation) => {
                 let text = match observation {
-                    drivers::driver::types::Observation::AccessibilityTree(tree) => {
+                    corpus::drivers::driver::types::Observation::AccessibilityTree(tree) => {
                         format!(
                             "[AT-SPI2] app: {}\n{}",
                             tree.app_name,
                             format_element(&tree.root, 0),
                         )
                     }
-                    drivers::driver::types::Observation::OcrFallback(ocr) => {
+                    corpus::drivers::driver::types::Observation::OcrFallback(ocr) => {
                         let words: Vec<&str> = ocr.words.iter().map(|w| w.text.as_str()).collect();
                         format!("[OCR] text: {}\nwords: {}", ocr.text, words.join(", "))
                     }
-                    drivers::driver::types::Observation::ScreenshotOnly(img) => {
+                    corpus::drivers::driver::types::Observation::ScreenshotOnly(img) => {
                         format!(
                             "[Screenshot] {}x{} ({} bytes)",
                             img.width,
@@ -851,17 +851,17 @@ impl Tool for AcixGroundTool {
 /// Panics if called without the `input`, `display`, and `a11y` features enabled on the `drivers` crate.
 pub fn default_aci() -> Arc<Aci> {
     Arc::new(Aci::new_basic(
-        Box::new(drivers::driver::input::MockInputDriver::new()),
-        Box::new(drivers::driver::display::MockDisplayDriver::new(
+        Box::new(corpus::drivers::driver::input::MockInputDriver::new()),
+        Box::new(corpus::drivers::driver::display::MockDisplayDriver::new(
             1920, 1080,
         )),
-        Box::new(drivers::driver::a11y::MockA11yDriver::new()),
-        Some(Box::new(drivers::driver::ocr::MockOcrDriver)),
+        Box::new(corpus::drivers::driver::a11y::MockA11yDriver::new()),
+        Some(Box::new(corpus::drivers::driver::ocr::MockOcrDriver)),
     ))
 }
 
 /// Register all ACIX tools into the given `ToolRegistry` using a caller-provided `Aci`.
-pub fn register_acix_tools_with(registry: &mut tools::tools::ToolRegistry, aci: Arc<Aci>) {
+pub fn register_acix_tools_with(registry: &mut corpus::tools::tools::ToolRegistry, aci: Arc<Aci>) {
     let _ = registry.register(Arc::new(ScreenshotTool {
         aci: Arc::clone(&aci),
     }));
@@ -895,7 +895,7 @@ pub fn register_acix_tools_with(registry: &mut tools::tools::ToolRegistry, aci: 
 /// Register all ACIX tools into the given `ToolRegistry` with mock drivers.
 ///
 /// Convenience for testing. For production, use `register_acix_tools_with`.
-pub fn register_acix_tools(registry: &mut tools::tools::ToolRegistry) {
+pub fn register_acix_tools(registry: &mut corpus::tools::tools::ToolRegistry) {
     register_acix_tools_with(registry, default_aci());
 }
 
@@ -904,7 +904,7 @@ pub fn register_acix_tools(registry: &mut tools::tools::ToolRegistry) {
 /// Requires a caller-provided `Aci` and `GroundingProvider`. The grounding
 /// provider is typically a `VisionGroundingProvider` backed by a multimodal LLM.
 pub fn register_acix_ground_tool(
-    registry: &mut tools::tools::ToolRegistry,
+    registry: &mut corpus::tools::tools::ToolRegistry,
     aci: Arc<Aci>,
     grounding: Arc<dyn GroundingProvider>,
 ) {

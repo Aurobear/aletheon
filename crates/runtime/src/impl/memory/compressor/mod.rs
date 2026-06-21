@@ -60,7 +60,7 @@ impl AdvancedCompressor {
 
         // Prune tool outputs before summarization
         let mut pruned_messages = old_messages.to_vec();
-        tools::tools::output::pruner::prune_tool_outputs(&mut pruned_messages, 0);
+        corpus::tools::tools::output::pruner::prune_tool_outputs(&mut pruned_messages, 0);
 
         let summary = self.generate_summary(&pruned_messages, llm).await?;
 

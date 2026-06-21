@@ -6,7 +6,7 @@ use tracing::info;
 
 use super::agent::{Agent, Capability};
 use base::message::{ContentBlock, Message};
-use tools::tools::Tool;
+use corpus::tools::tools::Tool;
 use cognit::r#impl::llm::{LlmProvider, ToolDefinition};
 
 /// TOML agent configuration (loaded from `agents/<id>.toml`).

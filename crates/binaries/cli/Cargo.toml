@@ -11,6 +11,5 @@ path = "src/main.rs"
 [dependencies]
 tokio.workspace = true
 anyhow.workspace = true
-corpus = { path = "../../corpus" }
-drivers = { path = "../../drivers", features = ["input", "display", "a11y", "ocr"] }
+corpus = { path = "../../corpus", features = ["input", "display", "a11y", "ocr"] }
 interact = { path = "../../interact" }

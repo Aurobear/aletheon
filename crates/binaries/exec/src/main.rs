@@ -24,10 +24,10 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use base::{ContentBlock, Message, Role};
-use security::security::approval::{ApprovalGate, TerminalApprovalGate};
-use security::security::audit::AuditLogger;
-use security::security::runner::ToolRunnerWithGuard;
-use tools::tools::{ToolContext, ToolRegistry};
+use corpus::security::security::approval::{ApprovalGate, TerminalApprovalGate};
+use corpus::security::security::audit::AuditLogger;
+use corpus::security::security::runner::ToolRunnerWithGuard;
+use corpus::tools::tools::{ToolContext, ToolRegistry};
 use cognit::r#impl::llm::LlmProvider;
 use cognit::r#impl::llm::StopReason;
 use cognit::r#impl::provider_registry::ProviderRegistry;

@@ -7,8 +7,7 @@ description = "User interaction: TUI, CLI, and ACIX"
 
 [dependencies]
 base = { path = "../base" }
-drivers = { path = "../drivers", features = ["input", "display", "a11y", "ocr"] }
-tools = { path = "../tools" }
+corpus = { path = "../corpus", features = ["input", "display", "a11y", "ocr"] }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }

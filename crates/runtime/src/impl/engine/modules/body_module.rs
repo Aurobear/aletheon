@@ -12,7 +12,7 @@ use base::envelope::*;
 use base::envelope::Payload;
 use base::CommunicationBus;
 
-use tools::tools::ToolRegistry;
+use corpus::tools::tools::ToolRegistry;
 
 use super::{BodyRequest, BodyResponse, ToolDefinitionMsg};
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::acix::{Aci, GroundingProvider, MockGroundingProvider};
-use drivers::driver::{
+use corpus::drivers::driver::{
     a11y::MockA11yDriver, display::MockDisplayDriver, factory::DriverFactory,
     input::MockInputDriver, ocr::MockOcrDriver,
 };
@@ -23,7 +23,7 @@ impl ComputerCommands {
         #[cfg(feature = "ocr-tesseract")]
         let ocr = DriverFactory::try_ocr().or_else(|| Some(Box::new(MockOcrDriver)));
         #[cfg(not(feature = "ocr-tesseract"))]
-        let ocr: Option<Box<dyn drivers::driver::ocr::OcrDriver>> =
+        let ocr: Option<Box<dyn corpus::drivers::driver::ocr::OcrDriver>> =
             Some(Box::new(MockOcrDriver));
         let window = DriverFactory::try_window();
         let clipboard = DriverFactory::try_clipboard();
@@ -171,7 +171,7 @@ impl ComputerCommands {
     }
 }
 
-fn format_tree(elem: &drivers::driver::types::Element, depth: usize) -> String {
+fn format_tree(elem: &corpus::drivers::driver::types::Element, depth: usize) -> String {
     let indent = "  ".repeat(depth);
     let mut out = format!(
         "{indent}[{}] {:?} bounds={:?}\n",

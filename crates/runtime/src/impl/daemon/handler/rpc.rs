@@ -12,7 +12,7 @@ use super::format::expand_tilde;
 use crate::r#impl::daemon::prefix_builder::PrefixBuilder;
 use crate::session::store::SessionStore;
 use crate::r#impl::daemon::session_manager::SessionManager;
-use security::security::approval::ApprovalDecision;
+use corpus::security::security::approval::ApprovalDecision;
 
 impl RequestHandler {
     pub(super) async fn handle_rpc(

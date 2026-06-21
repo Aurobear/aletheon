@@ -1,4 +1,4 @@
-use drivers::driver::types::{Bounds, Image};
+use corpus::drivers::driver::types::{Bounds, Image};
 use anyhow::Result;
 use async_trait::async_trait;
 

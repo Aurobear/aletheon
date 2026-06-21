@@ -572,7 +572,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "corpus",
- "drivers",
  "interact",
  "tokio",
 ]
@@ -587,18 +586,15 @@ dependencies = [
  "chrono",
  "corpus",
  "dirs",
- "drivers",
  "futures",
  "interact",
  "parking_lot",
  "reqwest",
  "rusqlite",
- "security",
  "serde",
  "serde_json",
  "tokio",
  "toml",
- "tools",
  "tracing",
  "uuid",
 ]
@@ -664,14 +660,37 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "atspi",
  "base",
- "security",
+ "base64",
+ "chrono",
+ "dashmap",
+ "dirs",
+ "futures",
+ "glob",
+ "hostname",
+ "libc",
+ "nix",
+ "parking_lot",
+ "png",
+ "regex",
+ "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
+ "tesseract",
  "tokio",
  "tokio-test",
- "tools",
+ "tokio-util",
+ "toml",
  "tracing",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "uuid",
+ "walkdir",
+ "which 7.0.3",
+ "x11rb",
+ "zbus 4.4.0",
 ]
 
 [[package]]
@@ -797,7 +816,6 @@ dependencies = [
  "parking_lot",
  "regex",
  "rusqlite",
- "security",
  "serde",
  "serde_json",
  "tempfile",
@@ -895,32 +913,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "drivers"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "atspi",
- "base",
- "base64",
- "chrono",
- "hostname",
- "libc",
- "nix",
- "png",
- "serde",
- "serde_json",
- "tempfile",
- "tesseract",
- "tokio",
- "tokio-test",
- "tracing",
- "uuid",
- "x11rb",
- "zbus 4.4.0",
-]
-
-[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1015,11 +1007,9 @@ dependencies = [
  "cognit",
  "corpus",
  "runtime",
- "security",
  "serde",
  "serde_json",
  "tokio",
- "tools",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -1684,10 +1674,10 @@ dependencies = [
  "base",
  "chrono",
  "clap",
+ "corpus",
  "crossterm",
  "dirs",
  "dirs-next",
- "drivers",
  "libc",
  "pulldown-cmark",
  "ratatui",
@@ -1696,7 +1686,6 @@ dependencies = [
  "syntect",
  "tempfile",
  "tokio",
- "tools",
  "tracing",
  "uuid",
  "which 7.0.3",
@@ -2476,7 +2465,6 @@ dependencies = [
  "regex",
  "reqwest",
  "rusqlite",
- "security",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2486,7 +2474,6 @@ dependencies = [
  "tokio-test",
  "tokio-util",
  "toml",
- "tools",
  "tracing",
  "urlencoding",
  "uuid",
@@ -2606,30 +2593,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "security"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base",
- "chrono",
- "dashmap",
- "dirs",
- "glob",
- "nix",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-test",
- "toml",
- "tracing",
- "uuid",
- "which 7.0.3",
-]
 
 [[package]]
 name = "security-framework"
@@ -3297,36 +3260,6 @@ name = "toml_write"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
-
-[[package]]
-name = "tools"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base",
- "chrono",
- "dashmap",
- "dirs",
- "futures",
- "glob",
- "libc",
- "parking_lot",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "tree-sitter",
- "tree-sitter-rust",
- "uuid",
- "walkdir",
- "which 7.0.3",
-]
 
 [[package]]
 name = "tower"

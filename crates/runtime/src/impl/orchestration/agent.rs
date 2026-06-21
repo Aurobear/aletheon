@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use base::message::{ContentBlock, Message};
-use tools::tools::Tool;
+use corpus::tools::tools::Tool;
 
 /// A capability that an agent advertises.
 #[derive(Debug, Clone, Serialize, Deserialize)]
