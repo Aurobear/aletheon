@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "User interaction: TUI, CLI, and ACIX"
 
+[[bin]]
+name = "aletheon"
+path = "src/bin/aletheon.rs"
+
 [dependencies]
 base = { path = "../base" }
 corpus = { path = "../corpus", features = ["input", "display", "a11y", "ocr"] }

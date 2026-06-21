@@ -5,6 +5,14 @@ edition.workspace = true
 license.workspace = true
 description = "Aletheon Runtime - core agent runtime and orchestration"
 
+[[bin]]
+name = "aletheond"
+path = "src/bin/aletheond.rs"
+
+[[bin]]
+name = "aletheon-exec"
+path = "src/bin/aletheon-exec.rs"
+
 [dependencies]
 base = { path = "../base" }
 cognit = { path = "../cognit" }
@@ -32,6 +40,8 @@ sha2 = { workspace = true }
 urlencoding = { workspace = true }
 regex = { workspace = true }
 dirs = "5"
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

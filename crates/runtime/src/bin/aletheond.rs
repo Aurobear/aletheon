@@ -1,3 +1,5 @@
+//! aletheond — Aletheon daemon.
+
 use std::path::PathBuf;
 
 use anyhow::Result;

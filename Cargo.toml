@@ -1,9 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/binaries/daemon",
-    "crates/binaries/exec",
-    "crates/binaries/cli",
     "crates/base",
     "crates/memory",
     "crates/dasein",
