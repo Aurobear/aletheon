@@ -1,3 +1,5 @@
+//! TUI interface — interactive terminal UI and CLI entry point.
+
 pub mod app;
 pub mod render;
 pub mod response;
@@ -11,6 +13,7 @@ pub mod completion;
 pub mod computer;
 
 pub mod help_overlay;
+pub mod history_search;
 pub mod input;
 pub mod markdown;
 pub mod pager;
@@ -23,6 +26,13 @@ pub mod subagent_view;
 pub mod term_compat;
 
 pub mod toolcard;
+
+// CLI modules (formerly cli/)
+pub mod cli;
+pub mod debug;
+
+// Re-export the main entry point
+pub use cli::run;
 
 use std::collections::HashMap;
 use std::io;
@@ -60,7 +70,7 @@ use base::ui_event::SubAgentHandle;
 
 /// Run the full TUI with raw mode, alternate screen, and IME-aware input.
 /// This is the original entry point (no test config).
-pub async fn run(socket_path: &str) -> anyhow::Result<()> {
+pub async fn run_tui(socket_path: &str) -> anyhow::Result<()> {
     run_with_config(socket_path, TestConfig::default()).await
 }
 

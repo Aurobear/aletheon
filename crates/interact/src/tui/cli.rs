@@ -1,9 +1,9 @@
 //! CLI entry point — argument parsing and single-message mode.
 //!
-//! TUI mode delegates to [`super::ui::run`]. Single-message mode sends one
+//! TUI mode delegates to [`super::run_tui`]. Single-message mode sends one
 //! JSON-RPC request over the daemon socket and exits.
 
-pub mod debug;
+use super::debug;
 
 use std::io;
 use std::path::PathBuf;
@@ -138,14 +138,14 @@ pub async fn run() -> Result<()> {
     }
 
     // Interactive mode: use the line-based TUI (IME-compatible)
-    let test_config = super::ui::TestConfig {
+    let test_config = super::TestConfig {
         test_input: args.test_input,
         record_frames: args.record_frames,
         record_events: args.record_events,
         auto_submit: args.auto_submit,
         test_timeout: args.test_timeout,
     };
-    super::ui::run_with_config(args.socket.to_str().unwrap_or(DEFAULT_SOCKET), test_config).await
+    super::run_with_config(args.socket.to_str().unwrap_or(DEFAULT_SOCKET), test_config).await
 }
 
 /// Handle subcommands.
