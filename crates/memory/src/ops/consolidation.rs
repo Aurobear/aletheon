@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use base::{MemoryBackend, MemoryEntry, MemoryType};
 
-use crate::activation::{compute_activation, ActivationEntry};
-use crate::episodic::EpisodicMemory;
-use crate::semantic::SemanticMemory;
+use crate::ops::activation::{compute_activation, ActivationEntry};
+use crate::backends::episodic::EpisodicMemory;
+use crate::backends::semantic::SemanticMemory;
 
 /// Configuration for memory consolidation.
 pub struct ConsolidationConfig {

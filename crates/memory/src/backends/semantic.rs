@@ -15,8 +15,8 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use crate::activation::{compute_activation, ActivationEntry};
-use crate::schema;
+use crate::ops::activation::{compute_activation, ActivationEntry};
+use crate::ops::schema;
 
 // ---------------------------------------------------------------------------
 // In-memory vector index — pure cosine similarity, no external deps.

@@ -15,8 +15,8 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use crate::activation::{compute_activation, ActivationEntry};
-use crate::schema;
+use crate::ops::activation::{compute_activation, ActivationEntry};
+use crate::ops::schema;
 
 /// Episodic memory backend — stores events, actions, observations.
 pub struct EpisodicMemory {

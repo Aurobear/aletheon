@@ -10,11 +10,11 @@ use base::{
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::activation::{compute_activation, ActivationEntry};
-use crate::episodic::EpisodicMemory;
-use crate::procedural::ProceduralMemory;
-use crate::self_memory::SelfMemory;
-use crate::semantic::SemanticMemory;
+use crate::ops::activation::{compute_activation, ActivationEntry};
+use crate::backends::episodic::EpisodicMemory;
+use crate::backends::procedural::ProceduralMemory;
+use crate::backends::self_memory::SelfMemory;
+use crate::backends::semantic::SemanticMemory;
 
 /// Summary of a past reflection, for injection into reasoning context.
 #[derive(Debug, Clone)]

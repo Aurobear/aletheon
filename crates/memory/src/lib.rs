@@ -6,22 +6,26 @@
 //! Each backend has its own SQLite file (no lock contention).
 //! `MemoryRouter` dispatches by `MemoryType`.
 
-pub mod activation;
-pub mod consolidation;
-pub mod decay;
-pub mod episodic;
-pub mod procedural;
-pub mod router;
-pub mod schema;
-pub mod self_memory;
-pub mod semantic;
+pub mod backends;
+pub mod ops;
 
-// Re-export primary types
-pub use episodic::EpisodicMemory;
-pub use procedural::ProceduralMemory;
-pub use router::{MemoryContext, MemoryRouter, ReflectionSummary, SkillSummary};
-pub use self_memory::SelfMemory;
-pub use semantic::SemanticMemory;
+// Backward-compatible re-exports (flat API)
+pub use backends::{EpisodicMemory, ProceduralMemory, SelfMemory, SemanticMemory};
+pub use ops::{ConsolidationConfig, ConsolidationResult, MemoryContext, MemoryRouter, ReflectionSummary, SkillSummary};
+pub use ops::{compute_activation, ActivationEntry};
+pub use ops::{apply_access_boost, compute_strength, should_forget};
+
+// Sub-module re-exports for direct path access (e.g. `memory::episodic::EpisodicMemory`)
+pub use backends::episodic;
+pub use backends::procedural;
+pub use backends::self_memory;
+pub use backends::semantic;
+
+pub use ops::router;
+pub use ops::consolidation;
+pub use ops::decay;
+pub use ops::activation;
+pub use ops::schema;
 
 #[cfg(test)]
 pub mod testing;

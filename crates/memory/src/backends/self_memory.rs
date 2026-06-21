@@ -1,4 +1,7 @@
-//! ProceduralMemory — skills, workflows, reusable patterns.
+//! SelfMemory — identity changes, lineage graph, boundary decisions.
+//!
+//! Identity history is permanent: `compact()` is a no-op.
+//! `forget()` requires the entry to be approved (approved != 0).
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -7,21 +10,21 @@ use base::{
     CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
     MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext, SubsystemHealth, Version,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use crate::activation::{compute_activation, ActivationEntry};
-use crate::schema;
+use crate::ops::activation::{compute_activation, ActivationEntry};
+use crate::ops::schema;
 
-pub struct ProceduralMemory {
+pub struct SelfMemory {
     db_path: PathBuf,
     conn: Mutex<Option<Connection>>,
 }
 
-impl ProceduralMemory {
+impl SelfMemory {
     pub fn new(db_path: PathBuf) -> Self {
         Self {
             db_path,
@@ -31,15 +34,15 @@ impl ProceduralMemory {
 
     fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
         let guard = self.conn.lock().unwrap();
-        let conn = guard.as_ref().expect("ProceduralMemory not initialized");
+        let conn = guard.as_ref().expect("SelfMemory not initialized");
         f(conn)
     }
 }
 
 #[async_trait]
-impl Subsystem for ProceduralMemory {
+impl Subsystem for SelfMemory {
     fn name(&self) -> &str {
-        "procedural_memory"
+        "self_memory"
     }
 
     async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
@@ -47,20 +50,20 @@ impl Subsystem for ProceduralMemory {
             .with_context(|| format!("Failed to open {}", self.db_path.display()))?;
         schema::init_base_table(&conn)?;
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS procedural_entries (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                memory_id       TEXT NOT NULL,
-                skill_name      TEXT NOT NULL,
-                description     TEXT NOT NULL DEFAULT '',
-                steps           TEXT NOT NULL DEFAULT '[]',
-                triggers        TEXT NOT NULL DEFAULT '[]',
-                version         INTEGER NOT NULL DEFAULT 1,
-                success_count   INTEGER NOT NULL DEFAULT 0,
-                failure_count   INTEGER NOT NULL DEFAULT 0
+            "CREATE TABLE IF NOT EXISTS self_entries (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id    TEXT NOT NULL,
+                change_type  TEXT NOT NULL DEFAULT '',
+                description  TEXT NOT NULL DEFAULT '',
+                before_state TEXT NOT NULL DEFAULT '',
+                after_state  TEXT NOT NULL DEFAULT '',
+                reason       TEXT NOT NULL DEFAULT '',
+                approved     INTEGER NOT NULL DEFAULT 0,
+                parent_id    TEXT
             );",
         )?;
         self.conn = Mutex::new(Some(conn));
-        tracing::info!(path = %self.db_path.display(), "ProceduralMemory initialized");
+        tracing::info!(path = %self.db_path.display(), "SelfMemory initialized");
         Ok(())
     }
 
@@ -94,7 +97,7 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
 
     Ok(MemoryEntry {
         id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::nil()),
-        memory_type: MemoryType::Procedural,
+        memory_type: MemoryType::SelfMemory,
         content: row.get("content")?,
         tags: serde_json::from_str(&tags_str).unwrap_or_default(),
         created_at: created_at_str
@@ -108,7 +111,7 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
 }
 
 #[async_trait]
-impl MemoryBackend for ProceduralMemory {
+impl MemoryBackend for SelfMemory {
     async fn store(&self, entry: MemoryEntry) -> Result<MemoryHandle> {
         self.with_conn(|conn| {
             let id = entry.id;
@@ -116,31 +119,29 @@ impl MemoryBackend for ProceduralMemory {
             let tags = serde_json::to_string(&entry.tags)?;
             let assoc = serde_json::to_string(&entry.associations)?;
 
-            let text_content = String::from_utf8_lossy(&entry.content).to_string();
-            let skill_name = entry
-                .tags
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "unnamed".into());
-
-            let existing_version: Option<i64> = conn
-                .query_row(
-                    "SELECT MAX(pe.version) FROM procedural_entries pe
-                     INNER JOIN memory m ON m.id = pe.memory_id
-                     WHERE pe.skill_name = ?1 AND m.importance > 0",
-                    params![skill_name],
-                    |r| r.get(0),
-                )
-                .unwrap_or(None);
-
-            let new_version = existing_version.unwrap_or(0) + 1;
+            // Validate parent_id if present in associations
+            if let Some(parent_uuid) = entry.associations.first() {
+                let parent_exists: bool = conn
+                    .query_row(
+                        "SELECT COUNT(*) > 0 FROM memory WHERE id = ?1 AND memory_type = 'self'",
+                        params![parent_uuid.to_string()],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(false);
+                if !parent_exists {
+                    bail!(
+                        "parent_id {} does not exist in self_memory",
+                        parent_uuid
+                    );
+                }
+            }
 
             conn.execute(
                 "INSERT INTO memory (id, memory_type, content, tags, created_at, access_count, importance, decay_rate, associations)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     id.to_string(),
-                    "procedural",
+                    "self",
                     entry.content,
                     tags,
                     now,
@@ -151,15 +152,17 @@ impl MemoryBackend for ProceduralMemory {
                 ],
             )?;
 
+            let parent_id = entry.associations.first().map(|u| u.to_string());
+
             conn.execute(
-                "INSERT INTO procedural_entries (memory_id, skill_name, description, steps, triggers, version, success_count, failure_count)
-                 VALUES (?1, ?2, ?3, '[]', '[]', ?4, 0, 0)",
-                params![id.to_string(), skill_name, text_content, new_version],
+                "INSERT INTO self_entries (memory_id, change_type, description, before_state, after_state, reason, approved, parent_id)
+                 VALUES (?1, '', '', '', '', '', 0, ?2)",
+                params![id.to_string(), parent_id],
             )?;
 
             Ok(MemoryHandle {
                 id,
-                memory_type: MemoryType::Procedural,
+                memory_type: MemoryType::SelfMemory,
             })
         })
     }
@@ -167,16 +170,17 @@ impl MemoryBackend for ProceduralMemory {
     async fn recall(&self, query: &MemoryQuery) -> Result<Vec<MemoryEntry>> {
         self.with_conn(|conn| {
             let mut sql = String::from(
-                "SELECT m.* FROM memory m
-                 INNER JOIN procedural_entries pe ON pe.memory_id = m.id
-                 WHERE m.memory_type = 'procedural' AND m.importance > 0",
+                "SELECT m.* FROM memory m WHERE m.memory_type = 'self'",
             );
             let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
             let mut param_idx = 1;
 
             if let Some(ref text) = query.text {
                 sql += &format!(
-                    " AND (pe.skill_name LIKE ?{idx} OR pe.description LIKE ?{idx} OR CAST(m.content AS TEXT) LIKE ?{idx})",
+                    " AND (CAST(m.content AS TEXT) LIKE ?{idx} OR EXISTS (
+                        SELECT 1 FROM self_entries se WHERE se.memory_id = m.id
+                        AND (se.description LIKE ?{idx} OR se.change_type LIKE ?{idx} OR se.reason LIKE ?{idx})
+                    ))",
                     idx = param_idx
                 );
                 param_values.push(Box::new(format!("%{}%", text)));
@@ -245,9 +249,7 @@ impl MemoryBackend for ProceduralMemory {
 
     async fn list(&self, filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> {
         self.with_conn(|conn| {
-            let mut sql = String::from(
-                "SELECT * FROM memory WHERE memory_type = 'procedural' AND importance > 0",
-            );
+            let mut sql = String::from("SELECT * FROM memory WHERE memory_type = 'self'");
             let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
             let mut param_idx = 1;
 
@@ -259,7 +261,7 @@ impl MemoryBackend for ProceduralMemory {
                 }
             }
 
-            sql += " ORDER BY importance DESC";
+            sql += " ORDER BY created_at DESC";
 
             if filter.limit > 0 {
                 sql += &format!(" LIMIT ?{idx}", idx = param_idx);
@@ -278,85 +280,45 @@ impl MemoryBackend for ProceduralMemory {
     }
 
     async fn forget(&self, handle: &MemoryHandle) -> Result<()> {
-        // Soft-delete: set importance to 0
         self.with_conn(|conn| {
-            conn.execute(
-                "UPDATE memory SET importance = 0.0 WHERE id = ?1",
-                params![handle.id.to_string()],
-            )?;
+            let id = handle.id.to_string();
+
+            // Only allow forgetting if approved
+            let approved: i64 = conn
+                .query_row(
+                    "SELECT approved FROM self_entries WHERE memory_id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .context("self_entry not found")?;
+
+            if approved == 0 {
+                bail!(
+                    "Cannot forget unapproved self_memory entry {}. \
+                     Approval required (approved != 0).",
+                    id
+                );
+            }
+
+            conn.execute("DELETE FROM self_entries WHERE memory_id = ?1", params![id])?;
+            conn.execute("DELETE FROM memory WHERE id = ?1", params![id])?;
             Ok(())
         })
     }
 
-    async fn compact(&self, strategy: CompactStrategy) -> Result<CompactResult> {
+    async fn compact(&self, _strategy: CompactStrategy) -> Result<CompactResult> {
+        // Identity history is permanent — compact is a no-op
         self.with_conn(|conn| {
-            let before: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM memory WHERE memory_type = 'procedural'",
-                [],
-                |r| r.get(0),
-            )?;
-
-            match strategy {
-                CompactStrategy::KeepTopN { n } => {
-                    let ids_to_remove: Vec<String> = conn
-                        .prepare(
-                            "SELECT m.id FROM memory m
-                             INNER JOIN procedural_entries pe ON pe.memory_id = m.id
-                             WHERE m.memory_type = 'procedural'
-                             ORDER BY m.importance * (pe.success_count + 1.0) / (pe.success_count + pe.failure_count + 1.0) DESC
-                             LIMIT -1 OFFSET ?1",
-                        )?
-                        .query_map(params![n as i64], |r| r.get(0))?
-                        .collect::<std::result::Result<Vec<_>, _>>()?;
-
-                    for id in &ids_to_remove {
-                        conn.execute(
-                            "DELETE FROM procedural_entries WHERE memory_id = ?1",
-                            params![id],
-                        )?;
-                        conn.execute("DELETE FROM memory WHERE id = ?1", params![id])?;
-                    }
-                }
-                CompactStrategy::PruneBelowImportance { threshold } => {
-                    conn.execute(
-                        "DELETE FROM memory WHERE memory_type = 'procedural' AND importance < ?1",
-                        params![threshold],
-                    )?;
-                    conn.execute(
-                        "DELETE FROM procedural_entries WHERE memory_id NOT IN (SELECT id FROM memory)",
-                        [],
-                    )?;
-                }
-                CompactStrategy::AgeBased {
-                    max_age,
-                    min_access_count,
-                } => {
-                    let cutoff = (Utc::now() - max_age).to_rfc3339();
-                    conn.execute(
-                        "DELETE FROM memory WHERE memory_type = 'procedural'
-                         AND created_at < ?1 AND access_count < ?2",
-                        params![cutoff, min_access_count as i64],
-                    )?;
-                    conn.execute(
-                        "DELETE FROM procedural_entries WHERE memory_id NOT IN (SELECT id FROM memory)",
-                        [],
-                    )?;
-                }
-                CompactStrategy::MergeSimilar { .. } => {
-                    // No-op for procedural — skills are distinct
-                }
-            }
-
-            let after: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM memory WHERE memory_type = 'procedural'",
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM memory WHERE memory_type = 'self'",
                 [],
                 |r| r.get(0),
             )?;
 
             Ok(CompactResult {
-                entries_before: before as usize,
-                entries_after: after as usize,
-                entries_removed: (before - after) as usize,
+                entries_before: count as usize,
+                entries_after: count as usize,
+                entries_removed: 0,
                 entries_merged: 0,
             })
         })
@@ -365,34 +327,34 @@ impl MemoryBackend for ProceduralMemory {
     async fn stats(&self) -> Result<MemoryStats> {
         self.with_conn(|conn| {
             let total: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM memory WHERE memory_type = 'procedural'",
+                "SELECT COUNT(*) FROM memory WHERE memory_type = 'self'",
                 [],
                 |r| r.get(0),
             )?;
             let total_size: i64 = conn
                 .query_row(
-                    "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM memory WHERE memory_type = 'procedural'",
+                    "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM memory WHERE memory_type = 'self'",
                     [],
                     |r| r.get(0),
                 )
                 .unwrap_or(0);
             let oldest: Option<String> = conn
                 .query_row(
-                    "SELECT MIN(created_at) FROM memory WHERE memory_type = 'procedural'",
+                    "SELECT MIN(created_at) FROM memory WHERE memory_type = 'self'",
                     [],
                     |r| r.get(0),
                 )
                 .unwrap_or(None);
             let newest: Option<String> = conn
                 .query_row(
-                    "SELECT MAX(created_at) FROM memory WHERE memory_type = 'procedural'",
+                    "SELECT MAX(created_at) FROM memory WHERE memory_type = 'self'",
                     [],
                     |r| r.get(0),
                 )
                 .unwrap_or(None);
 
             let mut by_type = std::collections::HashMap::new();
-            by_type.insert(MemoryType::Procedural, total as usize);
+            by_type.insert(MemoryType::SelfMemory, total as usize);
 
             Ok(MemoryStats {
                 total_entries: total as usize,
@@ -409,13 +371,13 @@ impl MemoryBackend for ProceduralMemory {
 mod tests {
     use super::*;
 
-    fn setup() -> (tempfile::NamedTempFile, ProceduralMemory) {
+    fn setup() -> (tempfile::NamedTempFile, SelfMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        let mem = ProceduralMemory::new(tmp.path().to_path_buf());
+        let mem = SelfMemory::new(tmp.path().to_path_buf());
         (tmp, mem)
     }
 
-    async fn init_mem(mem: &mut ProceduralMemory) {
+    async fn init_mem(mem: &mut SelfMemory) {
         let ctx = SubsystemContext {
             name: "test".into(),
             working_dir: std::env::temp_dir(),
@@ -425,58 +387,31 @@ mod tests {
         mem.init(&ctx).await.unwrap();
     }
 
-    fn make_skill(name: &str, content: &[u8]) -> MemoryEntry {
+    fn make_identity_change(content: &[u8]) -> MemoryEntry {
         MemoryEntry {
             id: Uuid::new_v4(),
-            memory_type: MemoryType::Procedural,
+            memory_type: MemoryType::SelfMemory,
             content: content.to_vec(),
-            tags: vec![name.into()],
+            tags: vec!["identity".into()],
             created_at: Utc::now(),
             access_count: 0,
-            importance: 0.8,
+            importance: 1.0,
             decay_rate: 0.0,
             associations: vec![],
         }
     }
 
     #[tokio::test]
-    async fn test_procedural_store_skill() {
+    async fn test_self_memory_store_and_recall() {
         let (_tmp, mut mem) = setup();
         init_mem(&mut mem).await;
 
-        let handle = mem
-            .store(make_skill("git-commit", b"git add . && git commit"))
-            .await
-            .unwrap();
-        assert_eq!(handle.memory_type, MemoryType::Procedural);
-    }
-
-    #[tokio::test]
-    async fn test_procedural_version_evolution() {
-        let (_tmp, mut mem) = setup();
-        init_mem(&mut mem).await;
-
-        mem.store(make_skill("deploy", b"deploy v1")).await.unwrap();
-        mem.store(make_skill("deploy", b"deploy v2")).await.unwrap();
-
-        let stats = mem.stats().await.unwrap();
-        assert_eq!(stats.total_entries, 2);
-    }
-
-    #[tokio::test]
-    async fn test_procedural_recall_by_trigger() {
-        let (_tmp, mut mem) = setup();
-        init_mem(&mut mem).await;
-
-        mem.store(make_skill("test-runner", b"cargo test"))
-            .await
-            .unwrap();
-        mem.store(make_skill("deployer", b"deploy to prod"))
+        mem.store(make_identity_change(b"renamed agent to Aletheon"))
             .await
             .unwrap();
 
         let query = MemoryQuery {
-            text: Some("deploy".into()),
+            text: Some("renamed".into()),
             limit: 10,
             ..Default::default()
         };
@@ -485,74 +420,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_procedural_soft_forget() {
+    async fn test_self_memory_lineage_chain() {
         let (_tmp, mut mem) = setup();
         init_mem(&mut mem).await;
 
-        let handle = mem
-            .store(make_skill("old-skill", b"deprecated"))
-            .await
-            .unwrap();
+        let root = make_identity_change(b"initial identity");
+        let root_id = root.id;
+        mem.store(root).await.unwrap();
 
-        // Soft-forget
-        mem.forget(&handle).await.unwrap();
-
-        // Should not appear in recall (importance filtered to > 0)
-        let query = MemoryQuery {
-            text: Some("old-skill".into()),
-            limit: 10,
-            ..Default::default()
-        };
-        let results = mem.recall(&query).await.unwrap();
-        assert!(results.is_empty());
-
-        // Still counted in stats (memory row still exists)
-        let stats = mem.stats().await.unwrap();
-        assert_eq!(stats.total_entries, 1);
-    }
-
-    #[tokio::test]
-    async fn test_procedural_stats() {
-        let (_tmp, mut mem) = setup();
-        init_mem(&mut mem).await;
-
-        mem.store(make_skill("a", b"alpha")).await.unwrap();
-        mem.store(make_skill("b", b"beta")).await.unwrap();
+        let mut child = make_identity_change(b"first evolution");
+        child.associations = vec![root_id];
+        mem.store(child).await.unwrap();
 
         let stats = mem.stats().await.unwrap();
         assert_eq!(stats.total_entries, 2);
-        assert!(stats.total_size_bytes > 0);
     }
 
     #[tokio::test]
-    async fn test_procedural_recall_activation_ordering() {
+    async fn test_self_memory_forget_requires_approval() {
         let (_tmp, mut mem) = setup();
         init_mem(&mut mem).await;
 
-        // Store an old high-importance skill
-        let mut old_skill = make_skill("old-skill", b"old approach");
-        old_skill.importance = 0.9;
-        old_skill.created_at = Utc::now() - chrono::Duration::days(60);
-        mem.store(old_skill).await.unwrap();
+        let entry = make_identity_change(b"temporary note");
+        let handle = mem.store(entry).await.unwrap();
 
-        // Store a recent moderate-importance skill
-        let mut recent_skill = make_skill("recent-skill", b"new approach");
-        recent_skill.importance = 0.5;
-        recent_skill.created_at = Utc::now();
-        mem.store(recent_skill).await.unwrap();
+        // Should fail — not approved
+        let result = mem.forget(&handle).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Approval required"));
 
-        let query = MemoryQuery {
-            limit: 10,
-            ..Default::default()
-        };
-        let results = mem.recall(&query).await.unwrap();
-        assert_eq!(results.len(), 2);
+        // Approve it
+        {
+            let guard = mem.conn.lock().unwrap();
+            let conn = guard.as_ref().unwrap();
+            conn.execute(
+                "UPDATE self_entries SET approved = 1 WHERE memory_id = ?1",
+                params![handle.id.to_string()],
+            )
+            .unwrap();
+        }
 
-        // With activation-based ordering, the old high-importance entry
-        // should still rank higher (importance=0.9 dominates at 40% weight)
-        // unless it's extremely old. At 60 days, recency decays but importance
-        // still keeps it competitive.
-        let first = &results[0];
-        assert!(first.importance > 0.0, "activation-sorted results should have positive importance");
+        // Now forget should succeed
+        mem.forget(&handle).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_self_memory_compact_is_noop() {
+        let (_tmp, mut mem) = setup();
+        init_mem(&mut mem).await;
+
+        mem.store(make_identity_change(b"a")).await.unwrap();
+        mem.store(make_identity_change(b"b")).await.unwrap();
+
+        let result = mem
+            .compact(CompactStrategy::PruneBelowImportance { threshold: 0.5 })
+            .await
+            .unwrap();
+        assert_eq!(result.entries_before, 2);
+        assert_eq!(result.entries_after, 2);
+        assert_eq!(result.entries_removed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_self_memory_stats() {
+        let (_tmp, mut mem) = setup();
+        init_mem(&mut mem).await;
+
+        mem.store(make_identity_change(b"first")).await.unwrap();
+
+        let stats = mem.stats().await.unwrap();
+        assert_eq!(stats.total_entries, 1);
+        assert!(stats.oldest_entry.is_some());
     }
 }
