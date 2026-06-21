@@ -629,7 +629,7 @@ mod tests {
             name: "self_field".to_string(),
             working_dir: PathBuf::from("/tmp"),
             config: json!({}),
-            bus: std::sync::Arc::new(base::comm::CommunicationBus::new()),
+            bus: std::sync::Arc::new(base::CommunicationBus::new()),
         };
         sf.init(&ctx).await.unwrap();
         assert!(matches!(sf.health().await, SubsystemHealth::Healthy));

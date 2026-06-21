@@ -66,7 +66,7 @@ use crate::r#impl::skills::plugin::register_skill;
 use super::debug_handler::DebugHandler;
 use super::prefix_builder::PrefixBuilder;
 use super::DaemonConfig;
-use base::comm::r#impl::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
+use base::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
 /// Session state wrapping the new AletheonRuntime.
 ///
@@ -400,7 +400,7 @@ impl RequestHandler {
             name: "episodic_memory".into(),
             working_dir: data_dir.clone(),
             config: serde_json::Value::Null,
-            bus: Arc::new(base::comm::CommunicationBus::new()),
+            bus: Arc::new(base::CommunicationBus::new()),
         };
         episodic_memory.init(&ctx).await?;
         let episodic_memory = Arc::new(Mutex::new(episodic_memory));

@@ -805,7 +805,7 @@ mod tests {
             name: "test".into(),
             working_dir: std::env::temp_dir(),
             config: serde_json::Value::Null,
-            bus: std::sync::Arc::new(base::comm::CommunicationBus::new()),
+            bus: std::sync::Arc::new(base::CommunicationBus::new()),
         };
         mem.init(&ctx).await.unwrap();
     }
