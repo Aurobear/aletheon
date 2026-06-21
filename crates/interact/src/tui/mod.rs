@@ -128,6 +128,22 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         // Clear alternate screen completely (fixes dirty data from previous runs)
         terminal.clear()?;
 
+        // Install panic hook to ensure terminal is restored on panic/crash.
+        // Without this, a panic leaves the terminal in raw mode with mouse
+        // tracking enabled, producing garbage escape sequences.
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = disable_raw_mode();
+            let _ = execute!(
+                io::stderr(),
+                LeaveAlternateScreen,
+                DisableBracketedPaste,
+                DisableFocusChange,
+                DisableMouseCapture
+            );
+            original_hook(info);
+        }));
+
         let result = run_app(&mut terminal, stream, caps, model_name, test_config, false).await;
 
         // Restore terminal
@@ -200,6 +216,8 @@ struct App {
     plan_view: PlanViewState,
     /// Active sub-agents for inline display.
     sub_agents: Vec<SubAgentHandle>,
+    /// Current ReAct loop iteration (0 = first call, 1+ = after tool calls).
+    current_iteration: usize,
 }
 
 impl App {
@@ -242,6 +260,7 @@ impl App {
             app_state: AppState::default(),
             plan_view: PlanViewState::default(),
             sub_agents: Vec::new(),
+            current_iteration: 0,
         }
     }
 

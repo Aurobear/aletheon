@@ -213,9 +213,9 @@ impl ChatWidget {
         ChatWidgetRenderer { chat: self }
     }
 
-    /// Render all lines including inline active tool cards appended after the
-    /// last message. Tool cards are given the same `│` border prefix as
-    /// assistant messages so they blend into the chat stream.
+    /// Render all lines including inline active tool cards inserted BEFORE the
+    /// last message. This ensures tool execution is visible above the streaming
+    /// text output, matching the expected order: tools first, then content.
     pub fn render_with_active_tools(
         &self,
         active_tools: &std::collections::HashMap<String, super::toolcard::ToolCard>,
@@ -223,15 +223,28 @@ impl ChatWidget {
         caps: &TermCaps,
     ) -> Vec<Line<'static>> {
         let width = self.render_width as usize;
-        let mut lines = self.all_lines_wrapped(width);
 
         if active_tools.is_empty() {
-            return lines;
+            return self.all_lines_wrapped(width);
         }
 
         let border_prefix = "  │ ";
         let border_style = Style::default().fg(caps.theme().accent);
 
+        // Render all messages except the last one (which is the streaming text)
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let msg_count = self.messages.len();
+        for (i, msg) in self.messages.iter().enumerate() {
+            // Skip the last message — we'll add it after tool cards
+            if i == msg_count - 1 {
+                continue;
+            }
+            for line in &msg.rendered {
+                lines.extend(word_wrap_line(line, width));
+            }
+        }
+
+        // Insert tool cards before the last message
         for card in active_tools.values() {
             let card_lines = card.render_chat_lines(frame_counter, card.expanded);
             for card_line in card_lines {
@@ -254,6 +267,13 @@ impl ChatWidget {
                 border_prefix.to_string(),
                 border_style,
             )]));
+        }
+
+        // Now add the last message (streaming text) after tool cards
+        if let Some(last_msg) = self.messages.last() {
+            for line in &last_msg.rendered {
+                lines.extend(word_wrap_line(line, width));
+            }
         }
 
         lines

@@ -76,6 +76,7 @@ impl LlmScheduler {
                     _ => Transport::Openai,
                 },
                 models: vec![pc.model.clone()],
+                max_context_length: None,
             };
             let provider = create_provider_by_kind(&pc.kind, &provider_config, &pc.model)?;
             providers.insert(pc.name.clone(), provider);

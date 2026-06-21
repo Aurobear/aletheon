@@ -409,18 +409,7 @@ impl RequestHandler {
                     hr.execute(&ctx).await;
                 }
 
-                // --- Emit tool_call_result event through notify_tx ---
-                if let Some(ref tx) = notify_tx_arc {
-                    let event = serde_json::json!({
-                        "type": "tool_call_result",
-                        "call_id": call_id,
-                        "tool": name,
-                        "output": content.chars().take(200).collect::<String>(),
-                        "is_error": is_error,
-                    });
-                    let _ = tx.try_send(event.to_string());
-                }
-
+                // tool_call_result is emitted via EventSink in ReActLoop (single source of truth).
                 (content, is_error)
             }
         };

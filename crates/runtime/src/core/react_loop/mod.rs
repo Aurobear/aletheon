@@ -5,6 +5,11 @@ pub mod circuit_breaker;
 pub mod goal_tracker;
 pub mod reflection;
 
+use tool_budget::ToolBudget;
+use circuit_breaker::{CircuitBreaker, CircuitBreakerStatus, ToolCallSignature};
+use goal_tracker::GoalTracker;
+use reflection::ReflectionEngine;
+
 use crate::core::config::RuntimeConfig;
 use crate::core::interrupt::InterruptFlag;
 use crate::r#impl::memory::compressor::AdvancedCompressor;
@@ -135,6 +140,14 @@ pub struct ReActLoop {
     consecutive_errors: usize,
     /// Interrupt flag for canceling the loop externally.
     interrupt_flag: Option<InterruptFlag>,
+    /// Tool call budget per turn.
+    tool_budget: ToolBudget,
+    /// Circuit breaker for loop detection.
+    circuit_breaker: CircuitBreaker,
+    /// Goal and sub-goal tracker.
+    goal_tracker: GoalTracker,
+    /// Periodic reflection engine.
+    reflection_engine: ReflectionEngine,
 }
 
 impl ReActLoop {
@@ -150,6 +163,14 @@ impl ReActLoop {
         };
         let compressor =
             AdvancedCompressor::new(effective_tail, config.target_summary_chars);
+        let tool_budget = ToolBudget::new(config.agent_loop.max_tool_calls);
+        let circuit_breaker = CircuitBreaker::new(
+            config.circuit_breaker.max_repeats,
+            config.circuit_breaker.window_size,
+        );
+        let goal_tracker = GoalTracker::new();
+        let reflection_engine = ReflectionEngine::new(config.agent_loop.reflection_interval);
+
         Self {
             config,
             iteration: 0,
@@ -162,6 +183,10 @@ impl ReActLoop {
             recent_tools: Vec::new(),
             consecutive_errors: 0,
             interrupt_flag: None,
+            tool_budget,
+            circuit_breaker,
+            goal_tracker,
+            reflection_engine,
         }
     }
 
@@ -185,6 +210,10 @@ impl ReActLoop {
         self.signals.clear();
         self.recent_tools.clear();
         self.consecutive_errors = 0;
+        self.tool_budget.reset();
+        self.circuit_breaker.reset();
+        self.goal_tracker.reset();
+        self.reflection_engine.reset();
         // Note: plan_mode persists across resets (user choice)
         // Note: system_prompt never resets (immutable after construction)
     }
@@ -596,6 +625,14 @@ mod tests {
             tail_token_budget: 5_000,
             target_summary_chars: 200,
             context_window_tokens: 128_000,
+            agent_loop: crate::core::config::AgentLoopConfig {
+                max_tool_calls: 25, // Higher threshold for this compaction test
+                ..Default::default()
+            },
+            circuit_breaker: crate::core::config::CircuitBreakerConfig {
+                max_repeats: 25, // Higher threshold for this compaction test
+                window_size: 50,
+            },
             ..RuntimeConfig::default()
         };
         let mut lp = ReActLoop::new(cfg);

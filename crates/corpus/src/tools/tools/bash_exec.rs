@@ -45,21 +45,24 @@ impl Tool for BashExecTool {
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let command = input["command"].as_str().unwrap_or("");
-        let _timeout = input["timeout_seconds"].as_u64().unwrap_or(30);
+        let timeout_secs = input["timeout_seconds"].as_u64().unwrap_or(30);
 
         let start = std::time::Instant::now();
 
-        let result = Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .current_dir(&ctx.working_dir)
-            .output()
-            .await;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            Command::new("bash")
+                .arg("-c")
+                .arg(command)
+                .current_dir(&ctx.working_dir)
+                .output(),
+        )
+        .await;
 
         let elapsed = start.elapsed().as_millis() as u64;
 
         match result {
-            Ok(output) => {
+            Ok(Ok(output)) => {
                 // Layer 1: Capture with byte-level limits (1MB per stream)
                 let captured = capture_output(&output.stdout, &output.stderr, &Default::default());
 
@@ -89,8 +92,16 @@ impl Tool for BashExecTool {
                     },
                 }
             }
-            Err(e) => ToolResult {
+            Ok(Err(e)) => ToolResult {
                 content: format!("Failed to execute command: {}", e),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: elapsed,
+                    truncated: false,
+                },
+            },
+            Err(_) => ToolResult {
+                content: format!("Command timed out after {} seconds", timeout_secs),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,

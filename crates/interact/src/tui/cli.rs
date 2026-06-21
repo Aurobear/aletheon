@@ -14,7 +14,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 /// Default socket path for the aletheond daemon.
-pub const DEFAULT_SOCKET: &str = "/tmp/aletheon/aletheon.sock";
+pub const DEFAULT_SOCKET: &str = "/run/aletheond/aletheond.sock";
 
 #[derive(Parser)]
 #[command(

@@ -95,6 +95,8 @@ pub struct RequestHandler {
     session_manager: Arc<Mutex<SessionManager>>,
     recall_memory: Arc<Mutex<RecallMemory>>,
     data_dir: PathBuf,
+    /// The LLM's context window size, used for SessionManager creation.
+    context_window: usize,
     /// Retained for future use; currently unused after Engine removal.
     #[allow(dead_code)]
     agent_registry: Arc<AgentRegistry>,
@@ -222,13 +224,16 @@ impl RequestHandler {
             .context("opening fact store")?;
         let fact_store = Arc::new(Mutex::new(fact_store));
 
-        // Create SessionManager (owns the journal, history, and compaction)
+        // Use the LLM provider's actual context window size for session management.
+        // This replaces the hardcoded 100_000 with the real model limit.
+        let context_window = llm.max_context_length();
         let session_manager = SessionManager::new(
             &data_dir,
             session_id.clone(),
-            100_000, // max_tokens: ~100k default context window
+            context_window,
         )
         .await?;
+        info!(context_window = context_window, "Session context window configured");
 
         // Register tools including memory tools
         let mut tools = ToolRegistry::default();
@@ -285,6 +290,7 @@ impl RequestHandler {
 
         let runtime_config = RuntimeConfig {
             session_id: session_id.clone(),
+            context_window_tokens: context_window,
             ..Default::default()
         };
 
@@ -641,6 +647,7 @@ impl RequestHandler {
             session_manager: Arc::new(Mutex::new(session_manager)),
             recall_memory,
             data_dir,
+            context_window,
             agent_registry,
             reflector,
             episodic_memory,

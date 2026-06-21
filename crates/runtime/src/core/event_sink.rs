@@ -9,7 +9,9 @@ use base::tool::ToolResult;
 #[derive(Debug, Clone)]
 pub enum Event {
     /// A new turn started.
-    TurnStarted,
+    TurnStarted {
+        iteration: usize,
+    },
     /// Streaming text from the LLM.
     Text { text: String },
     /// Streaming text delta (incremental token).
@@ -26,6 +28,7 @@ pub enum Event {
     /// A tool execution completed.
     ToolResult {
         name: String,
+        call_id: String,
         result: ToolResultEvent,
     },
     /// Token usage update.
@@ -103,6 +106,25 @@ pub enum Event {
     ModelSwitch {
         model_name: String,
     },
+    /// Agent goal was set.
+    GoalSet {
+        goal: String,
+        sub_goals: Vec<String>,
+    },
+    /// Reflection completed.
+    Reflection {
+        summary: String,
+        recommendation: String,
+    },
+    /// Tool budget exceeded.
+    BudgetExceeded {
+        used: usize,
+        max: usize,
+    },
+    /// Circuit breaker tripped.
+    CircuitBreakerTripped {
+        reason: String,
+    },
 }
 
 /// Simplified tool result for events.
@@ -177,7 +199,7 @@ mod tests {
     #[test]
     fn null_sink_does_nothing() {
         let sink = NullEventSink;
-        sink.emit(Event::TurnStarted); // should not panic
+        sink.emit(Event::TurnStarted { iteration: 0 }); // should not panic
     }
 
     #[test]
@@ -221,7 +243,7 @@ mod tests {
 
     #[test]
     fn event_debug_works() {
-        let event = Event::TurnStarted;
+        let event = Event::TurnStarted { iteration: 0 };
         let debug_str = format!("{:?}", event);
         assert!(debug_str.contains("TurnStarted"));
     }
@@ -231,7 +253,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         let sink = ChannelEventSink::new(tx);
 
-        sink.emit(Event::TurnStarted);
+        sink.emit(Event::TurnStarted { iteration: 0 });
         sink.emit(Event::Text {
             text: "hello".into(),
         });
@@ -240,7 +262,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let e1 = rx.recv().await.unwrap();
-            assert!(matches!(e1, Event::TurnStarted));
+            assert!(matches!(e1, Event::TurnStarted { iteration: 0 }));
 
             let e2 = rx.recv().await.unwrap();
             assert!(matches!(e2, Event::Text { text } if text == "hello"));
@@ -255,21 +277,21 @@ mod tests {
         let mut rx1 = tx.subscribe();
         let mut rx2 = tx.subscribe();
 
-        sink.emit(Event::TurnStarted);
+        sink.emit(Event::TurnStarted { iteration: 0 });
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let e1 = rx1.recv().await.unwrap();
             let e2 = rx2.recv().await.unwrap();
-            assert!(matches!(e1, Event::TurnStarted));
-            assert!(matches!(e2, Event::TurnStarted));
+            assert!(matches!(e1, Event::TurnStarted { iteration: 0 }));
+            assert!(matches!(e2, Event::TurnStarted { iteration: 0 }));
         });
     }
 
     #[test]
     fn event_variants_constructible() {
         // Verify all variants can be constructed
-        let _ = Event::TurnStarted;
+        let _ = Event::TurnStarted { iteration: 0 };
         let _ = Event::Text {
             text: "t".into(),
         };
@@ -282,6 +304,7 @@ mod tests {
         };
         let _ = Event::ToolResult {
             name: "bash".into(),
+            call_id: "call-1".into(),
             result: ToolResultEvent {
                 content: "out".into(),
                 is_error: false,

@@ -72,6 +72,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
     let event_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match event_type {
         "turn_start" => {
+            let iteration = params.get("iteration").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             app.stream_ctrl.start_turn();
             app.status.waiting = true;
             app.status.elapsed_secs = 0.0;
@@ -79,6 +80,8 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.app_state.streaming = true;
             app.app_state.turn_active = true;
             app.app_state.turn_tool_count = 0;
+            app.current_iteration = iteration;
+            app.app_state.current_iteration = iteration;
         }
         "thinking_delta" => {
             if let Some(text) = params.get("text").and_then(|v| v.as_str()) {
@@ -149,10 +152,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.status.session_turns += 1;
             app.app_state.streaming = false;
             app.app_state.turn_active = false;
-            for (_, card) in app.active_tools.drain() {
-                app.chat
-                    .add_message(ChatRole::System, card.to_summary());
-            }
+            // Clear active tool cards — they've been rendered inline and are
+            // no longer needed. Without this, finished tools persist on screen.
+            app.active_tools.clear();
+            app.app_state.turn_tool_count = 0;
         }
         "error" => {
             let msg = params
@@ -211,10 +214,17 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             }
         }
         "context_update" => {
-            let used = params.get("used").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            let max = params.get("max").and_then(|v| v.as_u64()).unwrap_or(200_000) as usize;
+            // Daemon sends "used_tokens" and "max_tokens"
+            let used = params.get("used_tokens").and_then(|v| v.as_u64())
+                .or_else(|| params.get("used").and_then(|v| v.as_u64()))
+                .unwrap_or(0) as usize;
+            let max = params.get("max_tokens").and_then(|v| v.as_u64())
+                .or_else(|| params.get("max").and_then(|v| v.as_u64()))
+                .unwrap_or(200_000) as usize;
             app.app_state.context.used = used;
             app.app_state.context.max = max;
+            // Also update the legacy status bar context_window
+            app.status.context_window = max as u32;
         }
         "model_switch" => {
             let to = params.get("to").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
@@ -320,13 +330,12 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             .unwrap_or("Unknown error");
         app.chat.update_last_message(format!("Error: {}", err));
     }
-    app.streaming = false;
-    app.status.waiting = false;
-    app.app_state.streaming = false;
-    // NOTE: Do NOT clear response_buf here. In the daemon's protocol, streaming
-    // events (turn_start, text_delta, turn_done) are flushed through notify_tx
-    // *after* the JSON-RPC response is sent. If both arrive in the same try_read
-    // chunk, clearing the buffer here would discard the trailing events.
+    // NOTE: Do NOT clear streaming/waiting here. The JSON-RPC result arrives
+    // BEFORE the turn_done event. Clearing streaming here causes a visible UI
+    // freeze between tool calls. Let turn_done handle the state transition.
+    //
+    // Also do NOT clear response_buf — streaming events may follow in the
+    // same try_read chunk.
 }
 
 /// Format reflection entries for display.

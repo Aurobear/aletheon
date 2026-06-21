@@ -138,6 +138,14 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
             ));
         }
 
+        if self.state.current_iteration > 0 {
+            spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                format!("turn {}", self.state.current_iteration),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+
         // Awareness
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
         spans.push(AwarenessWidget::render_status_bar(&self.state.awareness, &self.status.caps));

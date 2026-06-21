@@ -29,6 +29,11 @@ impl AnthropicProvider {
         self.base_url = url.into();
         self
     }
+
+    pub fn with_max_context(mut self, max_context: usize) -> Self {
+        self.max_context = max_context;
+        self
+    }
 }
 
 #[derive(Serialize)]

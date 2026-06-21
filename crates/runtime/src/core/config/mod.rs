@@ -5,7 +5,7 @@ mod provider;
 mod infra;
 mod genome;
 
-pub use agent::{AgentConfig, HooksConfig, PerceptionConfig, RuntimeConfig};
+pub use agent::{AgentConfig, AgentLoopConfig, CircuitBreakerConfig, HooksConfig, PerceptionConfig, RuntimeConfig};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
 pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig};
 pub use genome::GenomeConfig;
@@ -297,7 +297,7 @@ backend = "sqlite"
 data_dir = "/var/lib/aletheon/memory"
 
 [daemon]
-socket_path = "/run/aletheon/aletheon.sock"
+socket_path = "/run/aletheond/aletheond.sock"
 log_level = "debug"
 "#;
         let config: AppConfig = toml::from_str(toml).unwrap();
@@ -339,6 +339,7 @@ log_level = "debug"
             api_key: String::new(),
             transport: Transport::Openai,
             models: vec!["gpt-4".to_string()],
+            max_context_length: None,
         });
 
         let mut other = AppConfig::default();
@@ -348,6 +349,7 @@ log_level = "debug"
             api_key: "sk-new".to_string(),
             transport: Transport::Openai,
             models: vec!["gpt-4o".to_string()],
+            max_context_length: None,
         });
         other.providers.push(ProviderConfig {
             name: "anthropic".to_string(),
@@ -355,6 +357,7 @@ log_level = "debug"
             api_key: String::new(),
             transport: Transport::Anthropic,
             models: vec![],
+            max_context_length: None,
         });
 
         base.merge(other);
@@ -427,7 +430,7 @@ log_level = "debug"
 
         assert_eq!(base.sandbox.preference, "require");
         assert_eq!(base.daemon.log_level, "debug");
-        assert_eq!(base.daemon.socket_path, "/run/aletheon/aletheon.sock");
+        assert_eq!(base.daemon.socket_path, "/run/aletheond/aletheond.sock");
     }
 
     #[test]

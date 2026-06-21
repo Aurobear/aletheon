@@ -34,4 +34,9 @@ pub struct ProviderConfig {
     pub transport: Transport,
     #[serde(default)]
     pub models: Vec<String>,
+    /// Override the default max context length for this provider's models.
+    /// If not set, the provider uses its built-in default (128K for OpenAI, 200K for Anthropic).
+    /// Use `model_context_limits` in config.toml for per-model overrides.
+    #[serde(default)]
+    pub max_context_length: Option<usize>,
 }

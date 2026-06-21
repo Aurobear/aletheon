@@ -5,11 +5,12 @@ use serde_json::json;
 /// Returns `None` for events that don't have a client-facing representation.
 pub fn event_to_json(event: &Event) -> Option<String> {
     let params = match event {
-        Event::TurnStarted => json!({"type": "turn_start"}),
+        Event::TurnStarted { iteration } => json!({"type": "turn_start", "iteration": iteration}),
         Event::TextDelta { delta } => json!({"type": "text_delta", "text": delta}),
         Event::ToolCallStart { name, call_id } => json!({"type": "tool_call_start", "call_id": call_id, "tool": name}),
-        Event::ToolResult { name, result } => json!({
+        Event::ToolResult { name, call_id, result } => json!({
             "type": "tool_call_result",
+            "call_id": call_id,
             "tool": name,
             "output": result.content,
             "is_error": result.is_error,
@@ -52,6 +53,25 @@ pub fn event_to_json(event: &Event) -> Option<String> {
         Event::ModelSwitch { model_name } => json!({
             "type": "model_switch",
             "model_name": model_name,
+        }),
+        Event::GoalSet { goal, sub_goals } => json!({
+            "type": "goal_set",
+            "goal": goal,
+            "sub_goals": sub_goals,
+        }),
+        Event::Reflection { summary, recommendation } => json!({
+            "type": "reflection",
+            "summary": summary,
+            "recommendation": recommendation,
+        }),
+        Event::BudgetExceeded { used, max } => json!({
+            "type": "budget_exceeded",
+            "used": used,
+            "max": max,
+        }),
+        Event::CircuitBreakerTripped { reason } => json!({
+            "type": "circuit_breaker_tripped",
+            "reason": reason,
         }),
         _ => return None,
     };

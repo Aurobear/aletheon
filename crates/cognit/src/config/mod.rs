@@ -139,6 +139,10 @@ pub struct ProviderConfig {
     pub transport: Transport,
     #[serde(default)]
     pub models: Vec<String>,
+    /// Override the default max context length for this provider's models.
+    /// If not set, the provider uses its built-in default (128K for OpenAI, 200K for Anthropic).
+    #[serde(default)]
+    pub max_context_length: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +253,7 @@ pub struct DaemonConfig {
 }
 
 fn default_daemon_socket_path() -> String {
-    "/run/aletheon/aletheon.sock".to_string()
+    "/run/aletheond/aletheond.sock".to_string()
 }
 fn default_daemon_log_level() -> String {
     "info".to_string()

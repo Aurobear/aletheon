@@ -106,7 +106,7 @@ pub struct DaemonConfig {
 }
 
 pub(crate) fn default_daemon_socket_path() -> String {
-    "/run/aletheon/aletheon.sock".to_string()
+    "/run/aletheond/aletheond.sock".to_string()
 }
 pub(crate) fn default_daemon_log_level() -> String {
     "info".to_string()

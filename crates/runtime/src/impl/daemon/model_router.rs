@@ -135,23 +135,23 @@ impl ModelRouter {
     }
 
     /// Detect simple tasks that don't need an expensive model.
+    ///
+    /// IMPORTANT: Only classify messages as Simple if they DON'T require
+    /// tool execution. File operations (read/cat/ls/list) all need bash_exec
+    /// or file_read tools, so they must go through the General model which
+    /// reliably supports tool calling.
     fn is_simple_task(message: &str) -> bool {
         let word_count = message.split_whitespace().count();
 
-        // Very short messages
-        if word_count <= 10 {
+        // Very short greetings / acknowledgments that need only text response
+        if word_count <= 5 {
             let lower = message.to_lowercase();
-            // Simple file operations
-            if lower.starts_with("read ")
-                || lower.starts_with("cat ")
-                || lower.starts_with("show ")
-                || lower.starts_with("list ")
-                || lower.starts_with("ls ")
-                || lower == "ls"
-                || lower.starts_with("查看")
-                || lower.starts_with("读取")
-                || lower.starts_with("显示")
-            {
+            let simple_patterns = [
+                "hello", "hi", "hey", "thanks", "thank you", "ok", "okay",
+                "yes", "no", "sure", "好的", "谢谢", "你好", "嗨",
+                "再见", "bye", "goodbye",
+            ];
+            if simple_patterns.iter().any(|p| lower.trim() == *p || lower.trim().starts_with(p)) {
                 return true;
             }
         }
@@ -185,13 +185,23 @@ mod tests {
 
     #[test]
     fn classify_simple() {
+        // Greetings/acknowledgments that don't need tools
         assert_eq!(
-            ModelRouter::classify_message_static("read README.md"),
+            ModelRouter::classify_message_static("hello"),
             TaskType::Simple
         );
         assert_eq!(
-            ModelRouter::classify_message_static("ls"),
+            ModelRouter::classify_message_static("thanks"),
             TaskType::Simple
+        );
+        // File operations need tools → General, not Simple
+        assert_eq!(
+            ModelRouter::classify_message_static("read README.md"),
+            TaskType::General
+        );
+        assert_eq!(
+            ModelRouter::classify_message_static("ls"),
+            TaskType::General
         );
     }
 

@@ -1,4 +1,6 @@
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
+use super::tool_budget;
+use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
 use crate::core::event_sink::{Event, EventSink, ToolResultEvent};
 
 use base::message::{ContentBlock, Message, Role};
@@ -30,10 +32,11 @@ impl ReActLoop {
         let mut tool_errors: usize = 0;
 
         self.messages.push(Message::user(user_input));
-        event_sink.emit(Event::TurnStarted);
+        event_sink.emit(Event::TurnStarted { iteration: 0 });
 
         while self.should_continue() {
             self.advance();
+            event_sink.emit(Event::TurnStarted { iteration: self.iteration });
             self.emit_loop_start(&format!("iter_{}", self.iteration));
 
             // Check for interrupt
@@ -67,17 +70,29 @@ impl ReActLoop {
 
             let mut text_parts = Vec::new();
             let mut current_text = String::new();
+            let mut pending_think = String::new();
             let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
             let mut stop_reason = StopReason::EndTurn;
 
             while let Some(chunk) = stream.next().await {
                 match chunk? {
                     StreamChunk::TextDelta { text } => {
+                        // Flush any pending thinking content first
+                        if !pending_think.is_empty() {
+                            current_text.push_str(&pending_think);
+                            event_sink.emit(Event::TextDelta { delta: pending_think.clone() });
+                            pending_think.clear();
+                        }
                         current_text.push_str(&text);
                         event_sink.emit(Event::TextDelta { delta: text });
                     }
                     StreamChunk::ToolUseStart { id, name } => {
-                        // Flush any pending text
+                        // Flush any pending text/thinking
+                        if !pending_think.is_empty() {
+                            current_text.push_str(&pending_think);
+                            event_sink.emit(Event::TextDelta { delta: pending_think.clone() });
+                            pending_think.clear();
+                        }
                         if !current_text.is_empty() {
                             text_parts.push(current_text.clone());
                             current_text.clear();
@@ -88,9 +103,11 @@ impl ReActLoop {
                         });
                         tool_calls.push((id, name, serde_json::Value::Null));
                     }
-                    StreamChunk::ThinkingDelta { .. } => {
-                        // Thinking content is collected in non-streaming path;
-                        // in streaming mode we discard deltas for now.
+                    StreamChunk::ThinkingDelta { text } => {
+                        // Batch thinking content — emit as single chunk when flushed
+                        // to avoid per-token socket writes (which cause TUI lag).
+                        pending_think.push_str(&text);
+                        current_text.push_str(&text);
                     }
                     StreamChunk::ToolUseDelta { id: _, delta: _ } => {
                         // Accumulated in ToolUseComplete
@@ -111,6 +128,12 @@ impl ReActLoop {
                             cache_hit_tokens: 0,
                             cache_miss_tokens: 0,
                         });
+                        // Emit context window usage so TUI can display it
+                        let total_estimate = self.messages.iter().map(|m| m.estimate_tokens()).sum::<usize>() as u32;
+                        event_sink.emit(Event::ContextUpdate {
+                            used_tokens: total_estimate,
+                            max_tokens: self.config.context_window_tokens as u32,
+                        });
                     }
                     StreamChunk::Done { stop_reason: sr } => {
                         stop_reason = sr;
@@ -119,13 +142,19 @@ impl ReActLoop {
                 }
             }
 
+            // Flush any remaining thinking content
+            if !pending_think.is_empty() {
+                event_sink.emit(Event::TextDelta { delta: pending_think });
+            }
             // Flush remaining text
             if !current_text.is_empty() {
                 text_parts.push(current_text);
             }
 
             // No tool calls -> turn complete
-            if tool_calls.is_empty() || matches!(stop_reason, StopReason::EndTurn) {
+            // Note: some models return EndTurn even when tool calls are present.
+            // We must check tool_calls first — only exit if there are no tools to run.
+            if tool_calls.is_empty() {
                 let final_text = text_parts.join("\n");
                 // Emit awareness: uncertainty from response + final response signal
                 self.emit_thinking_complete("thinking", &final_text);
@@ -167,6 +196,58 @@ impl ReActLoop {
             });
 
             for (id, name, input) in &tool_calls {
+                // Check tool budget before executing
+                if !self.tool_budget.can_call() {
+                    warn!("Tool budget exhausted, stopping loop");
+                    let msg = format!(
+                        "Tool budget exhausted after {} calls. Partial result: {}",
+                        self.tool_budget.total_calls(),
+                        text_parts.join(" ")
+                    );
+                    event_sink.emit(Event::BudgetExceeded {
+                        used: self.tool_budget.total_calls(),
+                        max: self.config.agent_loop.max_tool_calls,
+                    });
+                    event_sink.emit(Event::TurnDone {
+                        result: Ok(msg.clone()),
+                    });
+                    let metrics = TurnMetrics {
+                        tool_calls_made,
+                        tool_errors,
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        iterations: self.iteration,
+                        completed_normally: false,
+                    };
+                    return Ok((msg, metrics));
+                }
+
+                // Check circuit breaker before executing
+                let signature = ToolCallSignature::new(name, input);
+                match self.circuit_breaker.check(&signature) {
+                    CircuitBreakerStatus::Tripped(reason) => {
+                        warn!("Circuit breaker tripped: {}", reason);
+                        let msg = format!("Loop detected: {}. Stopping.", reason);
+                        event_sink.emit(Event::CircuitBreakerTripped {
+                            reason: reason.clone(),
+                        });
+                        event_sink.emit(Event::TurnDone {
+                            result: Ok(msg.clone()),
+                        });
+                        let metrics = TurnMetrics {
+                            tool_calls_made,
+                            tool_errors,
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            iterations: self.iteration,
+                            completed_normally: false,
+                        };
+                        return Ok((msg, metrics));
+                    }
+                    CircuitBreakerStatus::Warning(reason) => {
+                        warn!("Circuit breaker warning: {}", reason);
+                    }
+                    CircuitBreakerStatus::Ok => {}
+                }
+
                 debug!(tool = name.as_str(), "ReActLoop streaming: executing tool");
                 event_sink.emit(Event::ToolDispatch {
                     name: name.clone(),
@@ -177,6 +258,7 @@ impl ReActLoop {
 
                 event_sink.emit(Event::ToolResult {
                     name: name.clone(),
+                    call_id: id.clone(),
                     result: ToolResultEvent {
                         content: content.clone(),
                         is_error,
@@ -192,10 +274,27 @@ impl ReActLoop {
                 } else {
                     self.consecutive_errors = 0;
                 }
+                // Record call in budget tracker
+                self.tool_budget.record_call(tool_budget::ToolCallRecord {
+                    tool_name: name.clone(),
+                    timestamp: std::time::Instant::now(),
+                    success: !is_error,
+                });
                 // Emit awareness signal for tool completion
                 self.emit_tool_call_end(name);
+                // Truncate large tool outputs before storing in conversation
+                // to prevent context window bloat. Keep head + tail for visibility.
+                const MAX_TOOL_RESULT_CHARS: usize = 8000;
+                let truncated_content = if content.len() > MAX_TOOL_RESULT_CHARS {
+                    let head = &content[..content.char_indices().nth(3500).map(|(i, _)| i).unwrap_or(3500)];
+                    let tail_start = content.char_indices().nth(content.chars().count().saturating_sub(3500)).map(|(i, _)| i).unwrap_or(0);
+                    let tail = &content[tail_start..];
+                    format!("{}\n... ({} chars truncated) ...\n{}", head, content.len() - 7000, tail)
+                } else {
+                    content.clone()
+                };
                 self.messages
-                    .push(Message::tool_result(id, &content, is_error));
+                    .push(Message::tool_result(id, &truncated_content, is_error));
             }
 
             if self.config.compaction_enabled {

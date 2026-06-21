@@ -82,6 +82,8 @@ pub struct AppState {
     pub streaming: bool,
     /// Whether a turn is active (between turn_start and turn_done).
     pub turn_active: bool,
+    /// Current ReAct loop iteration (0 = first call, 1+ = after tool calls).
+    pub current_iteration: usize,
 }
 
 impl Default for AppState {
@@ -95,6 +97,7 @@ impl Default for AppState {
             turn_tool_count: 0,
             streaming: false,
             turn_active: false,
+            current_iteration: 0,
         }
     }
 }

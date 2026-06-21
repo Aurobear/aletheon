@@ -8,7 +8,7 @@ Get from zero to a running Aletheon agent in 5 minutes.
 
 - Linux system (Ubuntu 22.04+ or Arch Linux recommended)
 - Rust toolchain 1.75.0+
-- At least 4 GB RAM, 2 GB disk space
+- An LLM provider API key (Anthropic, OpenAI, DeepSeek, or local Ollama)
 
 ---
 
@@ -24,117 +24,145 @@ Build time depends on your machine; expect 3-8 minutes for a clean build.
 
 ---
 
-## 2. Run the Test Suite
+## 2. Configure the Agent
 
-Verify the build is healthy:
-
-```bash
-cargo test --workspace
-```
-
-All 600+ tests should pass. If you see failures, check your Rust version (`rustc --version`).
-
----
-
-## 3. Configure the Agent
-
-Create a minimal configuration:
+Create the config directory and a minimal configuration:
 
 ```bash
-mkdir -p ~/.config/aletheon
-cat > ~/.config/aletheon/config.toml << 'EOF'
+mkdir -p ~/.aletheon
+cat > ~/.aletheon/config.toml << 'EOF'
 [agent]
-name = "my-first-agent"
+default_provider = "anthropic"
+default_model = "claude-sonnet-4-20250514"
 
 [[providers]]
-name = "openai"
-url = "https://api.openai.com/v1"
-api_key = "sk-..."
-model = "gpt-4o"
-
-[memory]
-backend = "sqlite"
-path = "~/.local/share/aletheon/memory.db"
-
-[tools]
-enabled = ["bash", "file", "http"]
+name = "anthropic"
+base_url = "https://api.anthropic.com"
+transport = "anthropic"
 EOF
 ```
 
-See [configuration reference](../design/runtime/react-loop.md) for all options. The `[[providers]]` section supports any OpenAI-compatible or Anthropic-compatible endpoint.
-
----
-
-## 4. Start the Daemon
+Set your API key (pick one):
 
 ```bash
-./target/release/daemon
+# Option A: environment variable
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Option B: .env file (loaded automatically)
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > ~/.aletheon/.env
 ```
 
-The daemon starts a Unix socket listener at `/tmp/aletheon.sock`.
+**Other providers** — add more `[[providers]]` entries. Any OpenAI-compatible API works:
+
+```toml
+[[providers]]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+transport = "openai"
+models = ["deepseek-chat"]
+
+[[providers]]
+name = "ollama"
+base_url = "http://localhost:11434"
+transport = "openai"
+models = ["qwen3:8b"]
+```
+
+API keys resolve from config first, then env var `<NAME>_API_KEY` (e.g. `DEEPSEEK_API_KEY`).
+
+See [`config/default.toml`](../../config/default.toml) for all options.
 
 ---
 
-## 5. Interact with the Agent
+## 3. Quick Test (no daemon needed)
 
-In a separate terminal:
+The fastest way to verify everything works:
 
 ```bash
-./target/release/cli "What files are in the current directory?"
+./target/release/aletheon-exec --prompt "Say hello"
 ```
 
-The agent will reason, call the `bash` tool with `ls`, and return a structured response.
+This runs a single prompt through the agent loop and prints the response. No daemon, no socket, no TUI — just a one-shot test.
 
 ---
 
-## Experience Self-Evolution
+## 4. System Service Mode (recommended for daily use)
 
-Self-Evolution is Aletheon's distinguishing feature. The agent reflects on completed tasks and adjusts its behavior over time.
-
-Try giving it a repetitive task across multiple sessions, then ask it to reflect:
+Install as a system service with sudo:
 
 ```bash
-./target/release/cli "/reflect"
-```
+# Copy binaries to system path
+sudo cp target/release/aletheond /usr/local/bin/
+sudo cp target/release/aletheon /usr/local/bin/
+sudo cp target/release/aletheon-exec /usr/local/bin/
 
-The agent produces a structured `ReflectionEntry` analyzing what worked, what failed, and what it learned. Over time, these reflections accumulate in episodic memory and drive behavior adjustments.
-
-For a full walkthrough, see the [Self-Evolution Demo](../../examples/self-evolution-demo/README.md).
-
----
-
-## Service Mode (systemd)
-
-To run Aletheon as a persistent system service:
-
-```ini
-# /etc/systemd/system/aletheon.service
+# Create systemd service
+sudo tee /etc/systemd/system/aletheond.service > /dev/null << 'EOF'
 [Unit]
-Description=Aletheon Agent Runtime
+Description=Aletheon Agent Daemon
 After=network.target
 
 [Service]
 Type=simple
-User=aletheon
-ExecStart=/usr/bin/daemon
-Restart=always
+ExecStart=/usr/local/bin/aletheond
+Restart=on-failure
 RestartSec=5
+EnvironmentFile=-/home/YOUR_USER/.aletheon/.env
 
 [Install]
 WantedBy=multi-user.target
+EOF
+
+# Edit EnvironmentFile to point to your actual user path, then:
+sudo systemctl daemon-reload
+sudo systemctl enable --now aletheond
+sudo journalctl -u aletheond -f
 ```
 
+The daemon creates its socket at `/run/aletheond/aletheond.sock` (default).
+
+---
+
+## 5. Interact via TUI
+
 ```bash
-sudo systemctl enable --now aletheon
-sudo journalctl -u aletheon -f
+# Single message mode
+aletheon -m "What files are in the current directory?"
+
+# Interactive TUI mode
+aletheon --tui
 ```
+
+---
+
+## Alternative: User Mode (no sudo)
+
+For development/testing without system-wide install:
+
+```bash
+# Start daemon with user-writable socket
+./target/release/aletheond --socket /tmp/aletheon/aletheon.sock &
+
+# Connect TUI to that socket
+./target/release/aletheon -m "hello" -s /tmp/aletheon/aletheon.sock
+```
+
+---
+
+## Binary Reference
+
+| Binary | Purpose | Example |
+|--------|---------|---------|
+| `aletheon-exec` | One-shot execution (no daemon) | `aletheon-exec --prompt "fix the bug"` |
+| `aletheond` | Daemon (persistent, serves TUI) | `aletheond` (uses config defaults) |
+| `aletheon` | TUI client (connects to daemon) | `aletheon -m "hello"` or `aletheon --tui` |
 
 ---
 
 ## Next Steps
 
-- [Core Concepts](concepts.md) -- understand SelfField, BrainCore, BodyRuntime
-- [Self-Evolution](../architecture/self-evolution.md) -- how the agent learns and evolves
-- [Linux Integration](../architecture/linux-integration.md) -- eBPF, systemd, FUSE details
-- [Architecture Overview](../design/architecture-overview.md) -- full system architecture
-- [Testing](../development/testing.md) -- how to run and write tests
+- [Core Concepts](concepts.md) — understand SelfField, BrainCore, BodyRuntime
+- [Self-Evolution](../architecture/self-evolution.md) — how the agent learns and evolves
+- [Linux Integration](../architecture/linux-integration.md) — eBPF, systemd, FUSE details
+- [Architecture Overview](../design/architecture-overview.md) — full system architecture
+- [`config/default.toml`](../../config/default.toml) — full configuration reference

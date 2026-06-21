@@ -144,6 +144,8 @@ struct StreamDelta {
     #[serde(default)]
     content: Option<String>,
     #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
     tool_calls: Option<Vec<StreamToolCall>>,
 }
 
@@ -491,6 +493,13 @@ impl LlmProvider for OpenAiProvider {
                         if let Some(data) = line.strip_prefix("data: ") {
                             let data = data.trim();
                             if data == "[DONE]" {
+                                // Emit any completed tool calls before signaling done.
+                                if let Some(completed) = tool_state.take_completed() {
+                                    return Some((
+                                        Ok(completed),
+                                        (byte_stream, buffer, tool_state),
+                                    ));
+                                }
                                 let stop_reason = tool_state.final_stop_reason();
                                 return Some((
                                     Ok(StreamChunk::Done { stop_reason }),
@@ -521,6 +530,18 @@ impl LlmProvider for OpenAiProvider {
                                                 return Some((
                                                     Ok(StreamChunk::TextDelta {
                                                         text: text.clone(),
+                                                    }),
+                                                    (byte_stream, buffer, tool_state),
+                                                ));
+                                            }
+                                        }
+
+                                        // Handle reasoning content (DeepSeek reasoning models)
+                                        if let Some(thinking) = &choice.delta.reasoning_content {
+                                            if !thinking.is_empty() {
+                                                return Some((
+                                                    Ok(StreamChunk::ThinkingDelta {
+                                                        text: thinking.clone(),
                                                     }),
                                                     (byte_stream, buffer, tool_state),
                                                 ));

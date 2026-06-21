@@ -1,4 +1,5 @@
-//! Agent-level configuration: RuntimeConfig, AgentConfig, HooksConfig, PerceptionConfig.
+//! Agent-level configuration: RuntimeConfig, AgentConfig, HooksConfig, PerceptionConfig,
+//! AgentLoopConfig, CircuitBreakerConfig.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,10 @@ pub struct RuntimeConfig {
     pub tail_token_budget: usize,
     pub target_summary_chars: usize,
     pub context_window_tokens: usize,
+    #[serde(default)]
+    pub agent_loop: AgentLoopConfig,
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -27,6 +32,8 @@ impl Default for RuntimeConfig {
             tail_token_budget: 16_000,
             target_summary_chars: 2_000,
             context_window_tokens: 128_000,
+            agent_loop: AgentLoopConfig::default(),
+            circuit_breaker: CircuitBreakerConfig::default(),
         }
     }
 }
@@ -148,6 +155,53 @@ impl Default for PerceptionConfig {
         Self {
             watch_paths: default_perception_watch_paths(),
             enable_journald: true,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AgentLoopConfig
+// ---------------------------------------------------------------------------
+
+/// Agent loop configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLoopConfig {
+    /// Maximum tool calls per turn.
+    pub max_tool_calls: usize,
+    /// Reflection interval (every N tool calls).
+    pub reflection_interval: usize,
+    /// Progress check interval (every N tool calls).
+    pub progress_check_interval: usize,
+}
+
+impl Default for AgentLoopConfig {
+    fn default() -> Self {
+        Self {
+            max_tool_calls: 10,
+            reflection_interval: 5,
+            progress_check_interval: 3,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CircuitBreakerConfig
+// ---------------------------------------------------------------------------
+
+/// Circuit breaker configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerConfig {
+    /// Maximum repeated calls before tripping.
+    pub max_repeats: usize,
+    /// Window size for tracking recent calls.
+    pub window_size: usize,
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            max_repeats: 3,
+            window_size: 10,
         }
     }
 }

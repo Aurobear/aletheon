@@ -341,7 +341,7 @@ impl RequestHandler {
                             match SessionManager::new(
                                 &self.data_dir,
                                 target_session_id.to_string(),
-                                100_000,
+                                self.context_window,
                             )
                             .await
                             {
@@ -499,7 +499,7 @@ impl RequestHandler {
                         .await;
                 }
                 // Create new session and replace SessionManager
-                match SessionManager::new(&self.data_dir, new_id.clone(), 100_000).await {
+                match SessionManager::new(&self.data_dir, new_id.clone(), self.context_window).await {
                     Ok(new_sm) => {
                         // Register session in store
                         if let Ok(store) = SessionStore::new(&self.data_dir) {
@@ -546,7 +546,7 @@ impl RequestHandler {
                                     match SessionManager::new(
                                         &self.data_dir,
                                         recent_id.clone(),
-                                        100_000,
+                                        self.context_window,
                                     )
                                     .await
                                     {
@@ -579,7 +579,7 @@ impl RequestHandler {
                                     match SessionManager::new(
                                         &self.data_dir,
                                         recent_id.clone(),
-                                        100_000,
+                                        self.context_window,
                                     )
                                     .await
                                     {
@@ -607,7 +607,7 @@ impl RequestHandler {
                         Ok(None) => {
                             // No sessions exist at all — create a new one
                             let new_id = uuid::Uuid::new_v4().to_string();
-                            match SessionManager::new(&self.data_dir, new_id.clone(), 100_000).await
+                            match SessionManager::new(&self.data_dir, new_id.clone(), self.context_window).await
                             {
                                 Ok(new_sm) => {
                                     if let Ok(store) = SessionStore::new(&self.data_dir) {

@@ -1,5 +1,7 @@
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
-use crate::core::event_sink::EventSink;
+use crate::core::event_sink::{Event, EventSink};
+use super::tool_budget;
+use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
 
 use base::message::{ContentBlock, Message, Role};
 use base::ToolDefinition;
@@ -85,6 +87,45 @@ impl ReActLoop {
 
             // Execute each requested tool and feed results back.
             for (id, name, input) in &tool_calls {
+                // Check tool budget before executing
+                if !self.tool_budget.can_call() {
+                    warn!("Tool budget exhausted, stopping loop");
+                    let msg = format!(
+                        "Tool budget exhausted after {} calls. Partial result: {}",
+                        self.tool_budget.total_calls(),
+                        text_parts.join(" ")
+                    );
+                    let metrics = TurnMetrics {
+                        tool_calls_made,
+                        tool_errors,
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        iterations: self.iteration,
+                        completed_normally: false,
+                    };
+                    return Ok((msg, metrics));
+                }
+
+                // Check circuit breaker before executing
+                let signature = ToolCallSignature::new(name, input);
+                match self.circuit_breaker.check(&signature) {
+                    CircuitBreakerStatus::Tripped(reason) => {
+                        warn!("Circuit breaker tripped: {}", reason);
+                        let msg = format!("Loop detected: {}. Stopping.", reason);
+                        let metrics = TurnMetrics {
+                            tool_calls_made,
+                            tool_errors,
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            iterations: self.iteration,
+                            completed_normally: false,
+                        };
+                        return Ok((msg, metrics));
+                    }
+                    CircuitBreakerStatus::Warning(reason) => {
+                        warn!("Circuit breaker warning: {}", reason);
+                    }
+                    CircuitBreakerStatus::Ok => {}
+                }
+
                 debug!(tool = name.as_str(), "ReActLoop executing tool");
                 let (content, is_error) = execute_tool(id, name, input).await;
                 tool_calls_made += 1;
@@ -95,10 +136,26 @@ impl ReActLoop {
                 } else {
                     self.consecutive_errors = 0;
                 }
+                // Record call in budget tracker
+                self.tool_budget.record_call(tool_budget::ToolCallRecord {
+                    tool_name: name.clone(),
+                    timestamp: std::time::Instant::now(),
+                    success: !is_error,
+                });
                 // Emit awareness signal for tool completion
                 self.emit_tool_call_end(name);
+                // Truncate large tool outputs before storing in conversation
+                const MAX_TOOL_RESULT_CHARS: usize = 8000;
+                let truncated_content = if content.len() > MAX_TOOL_RESULT_CHARS {
+                    let head = &content[..content.char_indices().nth(3500).map(|(i, _)| i).unwrap_or(3500)];
+                    let tail_start = content.char_indices().nth(content.chars().count().saturating_sub(3500)).map(|(i, _)| i).unwrap_or(0);
+                    let tail = &content[tail_start..];
+                    format!("{}\n... ({} chars truncated) ...\n{}", head, content.len() - 7000, tail)
+                } else {
+                    content.clone()
+                };
                 self.messages
-                    .push(Message::tool_result(id, &content, is_error));
+                    .push(Message::tool_result(id, &truncated_content, is_error));
             }
 
             // A2: proactive compaction after pushing tool results
