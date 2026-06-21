@@ -13,7 +13,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::ipc::envelope::*;
 use crate::events::event::Event;
-use crate::abi::event_bus::EventBus;
+use crate::include::event_bus::EventBus;
 use crate::ipc::protocol::Protocol;
 use crate::ipc::transport::Transport;
 
