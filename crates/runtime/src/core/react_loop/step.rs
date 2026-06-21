@@ -148,6 +148,19 @@ impl ReActLoop {
                 });
                 // Emit awareness signal for tool completion
                 self.emit_tool_call_end(name);
+                // Record call in reflection engine
+                if self.reflection_engine.record_call() {
+                    let ctx = crate::core::react_loop::reflection::ReflectionContext {
+                        goal: self.goal_tracker.current_goal_description(),
+                        recent_actions: self.recent_tools.clone(),
+                        current_state: if is_error { "error" } else { "ok" }.to_string(),
+                        tool_calls_made,
+                        errors: tool_errors,
+                    };
+                    let result = self.reflection_engine.reflect(&ctx);
+                    // Inject reflection into conversation
+                    self.messages.push(Message::user(format!("[Reflection]\n{}", result.summary)));
+                }
                 // Truncate large tool outputs before storing in conversation
                 const MAX_TOOL_RESULT_CHARS: usize = 8000;
                 let truncated_content = if content.len() > MAX_TOOL_RESULT_CHARS {
@@ -160,6 +173,24 @@ impl ReActLoop {
                 };
                 self.messages
                     .push(Message::tool_result(id, &truncated_content, is_error));
+            }
+
+            // Check if reflection recommended stopping
+            if self.reflection_engine.should_stop() {
+                let final_text = text_parts.join("\n");
+                let final_text = if final_text.is_empty() {
+                    "Reflection recommended stopping.".to_string()
+                } else {
+                    final_text
+                };
+                let metrics = TurnMetrics {
+                    tool_calls_made,
+                    tool_errors,
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    iterations: self.iteration,
+                    completed_normally: false,
+                };
+                return Ok((final_text, metrics));
             }
 
             // A2: proactive compaction after pushing tool results

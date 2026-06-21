@@ -273,6 +273,16 @@ impl ReActLoop {
         self.interrupt_flag = Some(flag);
     }
 
+    /// Set the goal for this turn.
+    pub fn set_goal(&mut self, goal: String) {
+        self.goal_tracker.set_goal(goal);
+    }
+
+    /// Get the current goal context for LLM prompting.
+    pub fn get_goal_context(&self) -> String {
+        self.goal_tracker.get_context()
+    }
+
     /// Enable/disable plan mode. Injected into user message, NOT system prompt.
     pub fn set_plan_mode(&mut self, enabled: bool) {
         self.plan_mode = enabled;
@@ -300,6 +310,11 @@ impl ReActLoop {
                 .collect::<Vec<_>>()
                 .join("\n");
             parts.push(format!("<memory-update>\n{}\n</memory-update>", updates));
+        }
+
+        let goal_ctx = self.goal_tracker.get_context();
+        if !goal_ctx.is_empty() {
+            parts.push(format!("<goal-context>\n{}\n</goal-context>", goal_ctx));
         }
 
         parts.push(input.to_string());
@@ -331,6 +346,11 @@ impl ReActLoop {
                 .collect::<Vec<_>>()
                 .join("\n");
             parts.push(format!("<memory-update>\n{}\n</memory-update>", updates));
+        }
+
+        let goal_ctx = self.goal_tracker.get_context();
+        if !goal_ctx.is_empty() {
+            parts.push(format!("<goal-context>\n{}\n</goal-context>", goal_ctx));
         }
 
         if let Some(ctx) = dasein_context {
@@ -627,6 +647,7 @@ mod tests {
             context_window_tokens: 128_000,
             agent_loop: crate::core::config::AgentLoopConfig {
                 max_tool_calls: 25, // Higher threshold for this compaction test
+                reflection_interval: 30, // Disable reflection for this compaction test
                 ..Default::default()
             },
             circuit_breaker: crate::core::config::CircuitBreakerConfig {

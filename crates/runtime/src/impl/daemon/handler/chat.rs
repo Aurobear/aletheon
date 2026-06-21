@@ -13,7 +13,7 @@ use base::ui_event::InterruptReason;
 use std::collections::HashMap;
 
 use cognit::r#impl::llm::LlmProvider;
-use crate::core::event_sink::{ChannelEventSink, Event};
+use crate::core::event_sink::{ChannelEventSink, Event, EventSink};
 use crate::core::react_loop::ReActLoop;
 use crate::r#impl::memory::fact_store::FactStore;
 
@@ -453,9 +453,15 @@ impl RequestHandler {
         let config = self.state.lock().await.runtime.config().clone();
         let llm_clone = llm.clone();
         let tool_defs_clone = tool_defs.clone();
+        let goal_message = message.to_string();
 
         let mut react_task = tokio::spawn(async move {
             let mut react_loop = ReActLoop::new(config);
+            react_loop.set_goal(goal_message.clone());
+            event_sink.emit(Event::GoalSet {
+                goal: goal_message,
+                sub_goals: vec![],
+            });
             react_loop.run_streaming(
                 &effective_message,
                 &*llm_clone,

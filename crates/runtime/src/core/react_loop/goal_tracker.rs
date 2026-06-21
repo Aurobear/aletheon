@@ -106,6 +106,11 @@ impl GoalTracker {
         !self.sub_goals.is_empty() && self.sub_goals.iter().all(|sg| sg.completed)
     }
 
+    /// Get the current goal description, if set.
+    pub fn current_goal_description(&self) -> Option<String> {
+        self.current_goal.as_ref().map(|g| g.description.clone())
+    }
+
     /// Get context string for LLM reasoning.
     pub fn get_context(&self) -> String {
         let mut parts = Vec::new();

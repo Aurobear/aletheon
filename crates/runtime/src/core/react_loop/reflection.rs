@@ -49,6 +49,7 @@ pub struct ReflectionResult {
 pub struct ReflectionEngine {
     reflection_interval: usize,
     calls_since_reflection: usize,
+    should_stop: bool,
 }
 
 impl ReflectionEngine {
@@ -58,7 +59,13 @@ impl ReflectionEngine {
         Self {
             reflection_interval,
             calls_since_reflection: 0,
+            should_stop: false,
         }
+    }
+
+    /// Check if the last reflection recommended stopping.
+    pub fn should_stop(&self) -> bool {
+        self.should_stop
     }
 
     /// Check if it's time to reflect.
@@ -90,8 +97,10 @@ impl ReflectionEngine {
         };
 
         let recommendation = if error_rate > 0.5 {
+            self.should_stop = true;
             ReflectionRecommendation::Stop(TerminationReason::StuckInLoop)
         } else if context.tool_calls_made >= 10 {
+            self.should_stop = true;
             ReflectionRecommendation::Stop(TerminationReason::BudgetExhausted)
         } else {
             ReflectionRecommendation::Continue
@@ -124,6 +133,7 @@ impl ReflectionEngine {
     /// Reset for a new turn.
     pub fn reset(&mut self) {
         self.calls_since_reflection = 0;
+        self.should_stop = false;
     }
 }
 
