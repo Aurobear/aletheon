@@ -6,6 +6,7 @@ pub mod aci;
 pub mod experience;
 pub mod grounding;
 pub mod task;
+pub mod tools;
 
 pub use aci::Aci;
 pub use experience::{

@@ -3,4 +3,6 @@
 pub mod ui;
 pub mod cli;
 pub mod acix;
-pub mod acix_tools;
+
+/// Backward compatibility: acix_tools is now acix::tools
+pub use acix::tools as acix_tools;
