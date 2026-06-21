@@ -42,7 +42,9 @@ pub struct CircuitBreaker {
 
 impl CircuitBreaker {
     /// Create a new circuit breaker.
-    /// - max_repeats: how many identical calls before tripping
+    /// - max_repeats: number of identical calls *allowed* before the *next* one
+    ///   trips the breaker. E.g. max_repeats=3 means 3 calls get Ok/Warning,
+    ///   and the 4th call triggers Tripped.
     /// - window_size: how many recent calls to track
     pub fn new(max_repeats: usize, window_size: usize) -> Self {
         Self {

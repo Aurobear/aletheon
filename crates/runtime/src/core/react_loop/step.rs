@@ -63,7 +63,10 @@ impl ReActLoop {
                 }
             }
 
-            if tool_calls.is_empty() || matches!(response.stop_reason, StopReason::EndTurn) {
+            // No tool calls -> turn complete.
+            // Note: some models return EndTurn even when tool calls are present.
+            // We must check tool_calls first — only exit if there are no tools to run.
+            if tool_calls.is_empty() {
                 let final_text = text_parts.join("\n");
                 // Emit awareness: uncertainty from response + final response signal
                 self.emit_thinking_complete("thinking", &final_text);
@@ -136,7 +139,8 @@ impl ReActLoop {
                 } else {
                     self.consecutive_errors = 0;
                 }
-                // Record call in budget tracker
+                // Record call in budget tracker (for analytics/history only;
+                // the can_call() guard above already enforces the budget limit)
                 self.tool_budget.record_call(tool_budget::ToolCallRecord {
                     tool_name: name.clone(),
                     timestamp: std::time::Instant::now(),
