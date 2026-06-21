@@ -83,6 +83,64 @@ impl SharedMemRegion {
         })
     }
 
+    /// Write data to the ring buffer, handling boundary crossing.
+    ///
+    /// If the write wraps around the end of the buffer, it splits into two copies.
+    fn write_at_offset(&self, offset: usize, data: &[u8]) {
+        let size = self.size;
+        let end = offset + data.len();
+
+        if end <= size {
+            // No wrap-around: single copy
+            unsafe {
+                let dst = self.base.add(offset);
+                std::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
+            }
+        } else {
+            // Wrap-around: split into two copies
+            let first_part = size - offset;
+            let second_part = data.len() - first_part;
+
+            unsafe {
+                // Copy to end of buffer
+                let dst = self.base.add(offset);
+                std::ptr::copy_nonoverlapping(data.as_ptr(), dst, first_part);
+
+                // Copy remainder to beginning of buffer
+                let dst = self.base;
+                std::ptr::copy_nonoverlapping(data.as_ptr().add(first_part), dst, second_part);
+            }
+        }
+    }
+
+    /// Read data from the ring buffer, handling boundary crossing.
+    fn read_at_offset(&self, offset: usize, buf: &mut [u8]) {
+        let size = self.size;
+        let end = offset + buf.len();
+
+        if end <= size {
+            // No wrap-around: single copy
+            unsafe {
+                let src = self.base.add(offset);
+                std::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), buf.len());
+            }
+        } else {
+            // Wrap-around: split into two copies
+            let first_part = size - offset;
+            let second_part = buf.len() - first_part;
+
+            unsafe {
+                // Copy from end of buffer
+                let src = self.base.add(offset);
+                std::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), first_part);
+
+                // Copy remainder from beginning of buffer
+                let src = self.base;
+                std::ptr::copy_nonoverlapping(src, buf.as_mut_ptr().add(first_part), second_part);
+            }
+        }
+    }
+
     /// Write a message to the ring buffer.
     pub fn write(&self, msg: &AgentMessage) -> Result<(), anyhow::Error> {
         let bytes = msg.to_bytes();
@@ -103,15 +161,16 @@ impl SharedMemRegion {
             return Err(anyhow::anyhow!("Shared memory buffer full"));
         }
 
-        // Write length prefix
+        // Write length prefix + payload (handles boundary crossing)
         let len_bytes = (len as u64).to_le_bytes();
         let offset = (write_pos % self.size as u64) as usize;
 
-        unsafe {
-            let dst = self.base.add(offset);
-            std::ptr::copy_nonoverlapping(len_bytes.as_ptr(), dst, 8);
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.add(8), bytes.len());
-        }
+        // Write length prefix (8 bytes)
+        self.write_at_offset(offset, &len_bytes);
+
+        // Write payload (may cross boundary)
+        let payload_offset = (offset + 8) % self.size;
+        self.write_at_offset(payload_offset, &bytes);
 
         self.write_pos
             .store(write_pos + total_len, Ordering::Release);
@@ -129,20 +188,15 @@ impl SharedMemRegion {
 
         let offset = (read_pos % self.size as u64) as usize;
 
-        // Read length prefix
+        // Read length prefix (8 bytes)
         let mut len_bytes = [0u8; 8];
-        unsafe {
-            let src = self.base.add(offset);
-            std::ptr::copy_nonoverlapping(src, len_bytes.as_mut_ptr(), 8);
-        }
+        self.read_at_offset(offset, &mut len_bytes);
         let len = u64::from_le_bytes(len_bytes) as usize;
 
-        // Read payload
+        // Read payload (may cross boundary)
         let mut payload = vec![0u8; len];
-        unsafe {
-            let src = self.base.add(offset + 8);
-            std::ptr::copy_nonoverlapping(src, payload.as_mut_ptr(), len);
-        }
+        let payload_offset = (offset + 8) % self.size;
+        self.read_at_offset(payload_offset, &mut payload);
 
         self.read_pos
             .store(read_pos + 8 + len as u64, Ordering::Release);

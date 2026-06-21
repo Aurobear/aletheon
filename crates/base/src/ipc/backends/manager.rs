@@ -97,6 +97,8 @@ pub struct IpcManager {
     agents: HashMap<AgentId, String>,
     /// Environment snapshot taken at construction time.
     env: Environment,
+    /// Socket directory for Unix socket IPC.
+    socket_dir: PathBuf,
 }
 
 impl IpcManager {
@@ -130,6 +132,7 @@ impl IpcManager {
                     queue: PriorityQueue::new(1024),
                     agents: HashMap::new(),
                     env,
+                    socket_dir,
                 };
             }
             warn!("io_uring probe failed despite kernel version, falling back to Unix socket");
@@ -137,12 +140,13 @@ impl IpcManager {
 
         info!("Selected Unix socket IPC backend");
         Self {
-            primary: Self::make_unix_socket(socket_dir),
+            primary: Self::make_unix_socket(socket_dir.clone()),
             fallback,
             active_kind: IpcBackendKind::UnixSocket,
             queue: PriorityQueue::new(1024),
             agents: HashMap::new(),
             env,
+            socket_dir,
         }
     }
 
@@ -176,18 +180,20 @@ impl IpcManager {
                     queue: PriorityQueue::new(1024),
                     agents: HashMap::new(),
                     env,
+                    socket_dir,
                 })
             }
 
             IpcPreference::UnixSocket => {
                 let env = Environment::detect();
                 Ok(Self {
-                    primary: Self::make_unix_socket(socket_dir),
+                    primary: Self::make_unix_socket(socket_dir.clone()),
                     fallback: Self::make_unix_socket(PathBuf::from("/tmp")),
                     active_kind: IpcBackendKind::UnixSocket,
                     queue: PriorityQueue::new(1024),
                     agents: HashMap::new(),
                     env,
+                    socket_dir,
                 })
             }
 
@@ -204,6 +210,7 @@ impl IpcManager {
                     queue: PriorityQueue::new(1024),
                     agents: HashMap::new(),
                     env,
+                    socket_dir,
                 })
             }
         }
@@ -338,10 +345,9 @@ impl IpcManager {
         }
     }
 
-    /// Extract the socket directory from the primary backend if it's a Unix socket.
+    /// Get the socket directory used by this manager.
     fn socket_dir(&self) -> PathBuf {
-        // Default fallback; the primary backend's actual socket path is internal
-        PathBuf::from("/tmp")
+        self.socket_dir.clone()
     }
 
     // ------------------------------------------------------------------
