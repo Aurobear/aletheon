@@ -1,42 +1,25 @@
+//! Application and runtime configuration.
+
+mod agent;
+mod provider;
+mod infra;
+mod genome;
+
+pub use agent::{AgentConfig, HooksConfig, PerceptionConfig, RuntimeConfig};
+pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
+pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig};
+pub use genome::GenomeConfig;
+
+use agent::{
+    default_compaction_keep_recent, default_compaction_threshold, default_max_iterations,
+    default_max_tokens,
+};
+use infra::{
+    default_daemon_log_level, default_daemon_socket_path, default_memory_backend,
+    default_memory_data_dir, default_sandbox_preference,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
-
-// ---------------------------------------------------------------------------
-// RuntimeConfig — retained for orchestrator / react_loop backward compat
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeConfig {
-    pub max_iterations: usize,
-    pub session_id: String,
-    pub learning_enabled: bool,
-    pub compaction_enabled: bool,
-    pub tail_token_budget: usize,
-    pub target_summary_chars: usize,
-    pub context_window_tokens: usize,
-}
-
-impl Default for RuntimeConfig {
-    fn default() -> Self {
-        Self {
-            max_iterations: 50,
-            session_id: uuid::Uuid::new_v4().to_string(),
-            learning_enabled: true,
-            compaction_enabled: true,
-            tail_token_budget: 16_000,
-            target_summary_chars: 2_000,
-            context_window_tokens: 128_000,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// AppConfig — top-level application config
-// ---------------------------------------------------------------------------
-
-/// Re-export ModelRoutingConfig from aletheon-brain to avoid duplicate types.
-pub use cognit::config::ModelRoutingConfig;
 
 /// Top-level application config (loaded from TOML).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,273 +47,6 @@ pub struct AppConfig {
     #[serde(default)]
     pub perception: PerceptionConfig,
 }
-
-/// Agent-level settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentConfig {
-    pub default_provider: Option<String>,
-    pub default_model: Option<String>,
-    #[serde(default = "default_max_iterations")]
-    pub max_iterations: usize,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: usize,
-    #[serde(default = "default_true")]
-    pub compaction_enabled: bool,
-    #[serde(default = "default_compaction_keep_recent")]
-    pub compaction_keep_recent: usize,
-    #[serde(default = "default_compaction_threshold")]
-    pub compaction_threshold: usize,
-    #[serde(default = "default_system_prompt")]
-    pub system_prompt: String,
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            default_provider: None,
-            default_model: None,
-            max_iterations: default_max_iterations(),
-            max_tokens: default_max_tokens(),
-            compaction_enabled: true,
-            compaction_keep_recent: default_compaction_keep_recent(),
-            compaction_threshold: default_compaction_threshold(),
-            system_prompt: default_system_prompt(),
-        }
-    }
-}
-
-fn default_max_iterations() -> usize {
-    25
-}
-fn default_max_tokens() -> usize {
-    100_000
-}
-fn default_true() -> bool {
-    true
-}
-fn default_compaction_keep_recent() -> usize {
-    10
-}
-fn default_compaction_threshold() -> usize {
-    30
-}
-
-fn default_system_prompt() -> String {
-    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user.".to_string()
-}
-
-/// Wire protocol between client and LLM server.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Transport {
-    /// OpenAI chat/completions API (also covers Ollama, LM Studio, vLLM, DeepSeek, etc.)
-    Openai,
-    /// Anthropic messages API (native)
-    Anthropic,
-    /// Auto-detect from base_url
-    Auto,
-}
-
-impl Default for Transport {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
-
-/// Per-provider configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderConfig {
-    pub name: String,
-    pub base_url: String,
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default)]
-    pub transport: Transport,
-    #[serde(default)]
-    pub models: Vec<String>,
-}
-
-// ---------------------------------------------------------------------------
-// New config sub-structs
-// ---------------------------------------------------------------------------
-
-/// Sandbox execution preference.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SandboxConfig {
-    /// "auto", "require", or "forbid"
-    #[serde(default = "default_sandbox_preference")]
-    pub preference: String,
-    #[serde(default)]
-    pub bubblewrap_path: Option<String>,
-}
-
-fn default_sandbox_preference() -> String {
-    "auto".to_string()
-}
-
-impl Default for SandboxConfig {
-    fn default() -> Self {
-        Self {
-            preference: default_sandbox_preference(),
-            bubblewrap_path: None,
-        }
-    }
-}
-
-/// MCP (Model Context Protocol) server configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpServerConfig {
-    pub name: String,
-    /// "stdio", "http", or "sse"
-    #[serde(default = "default_mcp_transport")]
-    pub transport: String,
-    /// For stdio transport: command to run
-    #[serde(default)]
-    pub command: Option<String>,
-    /// For http/sse transport: URL to connect to
-    #[serde(default)]
-    pub url: Option<String>,
-}
-
-fn default_mcp_transport() -> String {
-    "stdio".to_string()
-}
-
-impl Default for McpServerConfig {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            transport: default_mcp_transport(),
-            command: None,
-            url: None,
-        }
-    }
-}
-
-/// Plugin directories.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginsConfig {
-    #[serde(default)]
-    pub directories: Vec<String>,
-}
-
-impl Default for PluginsConfig {
-    fn default() -> Self {
-        Self {
-            directories: Vec::new(),
-        }
-    }
-}
-
-/// Memory backend configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryConfig {
-    /// "sqlite" or "in_memory"
-    #[serde(default = "default_memory_backend")]
-    pub backend: String,
-    #[serde(default = "default_memory_data_dir")]
-    pub data_dir: String,
-}
-
-fn default_memory_backend() -> String {
-    "sqlite".to_string()
-}
-fn default_memory_data_dir() -> String {
-    "~/.aletheon/memory".to_string()
-}
-
-impl Default for MemoryConfig {
-    fn default() -> Self {
-        Self {
-            backend: default_memory_backend(),
-            data_dir: default_memory_data_dir(),
-        }
-    }
-}
-
-/// Daemon runtime settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DaemonConfig {
-    #[serde(default = "default_daemon_socket_path")]
-    pub socket_path: String,
-    #[serde(default = "default_daemon_log_level")]
-    pub log_level: String,
-}
-
-fn default_daemon_socket_path() -> String {
-    "/run/aletheon/aletheon.sock".to_string()
-}
-fn default_daemon_log_level() -> String {
-    "info".to_string()
-}
-
-impl Default for DaemonConfig {
-    fn default() -> Self {
-        Self {
-            socket_path: default_daemon_socket_path(),
-            log_level: default_daemon_log_level(),
-        }
-    }
-}
-
-/// Hook script configuration.
-///
-/// Each field is a list of script paths to execute at the specified lifecycle point.
-/// Paths may use `~` for home directory expansion.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HooksConfig {
-    /// Scripts to run before each turn (receives user prompt as JSON on stdin).
-    #[serde(default)]
-    pub pre_turn: Vec<String>,
-    /// Scripts to run after each tool call (receives tool name + result as JSON on stdin).
-    #[serde(default)]
-    pub post_tool: Vec<String>,
-    /// Scripts to run on session end (receives session_id + cwd as JSON on stdin).
-    #[serde(default)]
-    pub on_session_end: Vec<String>,
-    /// Scripts to run before each tool call (can block execution).
-    #[serde(default)]
-    pub pre_tool: Vec<String>,
-}
-
-impl Default for HooksConfig {
-    fn default() -> Self {
-        Self {
-            pre_turn: Vec::new(),
-            post_tool: Vec::new(),
-            on_session_end: Vec::new(),
-            pre_tool: Vec::new(),
-        }
-    }
-}
-
-/// Perception subsystem configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerceptionConfig {
-    /// Filesystem paths to watch with inotify.
-    #[serde(default = "default_perception_watch_paths")]
-    pub watch_paths: Vec<String>,
-    /// Whether to enable journald log monitoring.
-    #[serde(default = "default_true")]
-    pub enable_journald: bool,
-}
-
-fn default_perception_watch_paths() -> Vec<String> {
-    vec!["/etc".to_string(), "/var/log".to_string()]
-}
-
-impl Default for PerceptionConfig {
-    fn default() -> Self {
-        Self {
-            watch_paths: default_perception_watch_paths(),
-            enable_journald: true,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// AppConfig methods
-// ---------------------------------------------------------------------------
 
 impl AppConfig {
     /// Load config from a TOML file.
@@ -361,8 +77,6 @@ impl AppConfig {
         if other.agent.max_tokens != default_max_tokens() {
             self.agent.max_tokens = other.agent.max_tokens;
         }
-        // compaction fields use defaults — only override if explicitly set
-        // (serde defaults are the same as Default, so we override if different from defaults)
         if other.agent.compaction_keep_recent != default_compaction_keep_recent() {
             self.agent.compaction_keep_recent = other.agent.compaction_keep_recent;
         }
@@ -488,63 +202,6 @@ impl Default for AppConfig {
             hooks: HooksConfig::default(),
             perception: PerceptionConfig::default(),
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GenomeConfig — genome-derived behavior parameters
-// ---------------------------------------------------------------------------
-
-/// Lightweight genome config snapshot held by the runtime.
-/// Extracted from GenomeMeta — does not hold the full genome.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenomeConfig {
-    /// Reasoning strategy name (e.g., "plan-then-execute", "react").
-    pub reasoning_strategy: String,
-    /// Confidence threshold below which the agent considers itself stuck.
-    pub impasse_threshold: f64,
-    /// What triggers reflection.
-    pub reflection_trigger: String,
-    /// Care weights by topic (e.g., "safety" -> 1.0).
-    pub care_weights: HashMap<String, f64>,
-    /// Current genome version string.
-    pub genome_version: String,
-}
-
-impl Default for GenomeConfig {
-    fn default() -> Self {
-        Self {
-            reasoning_strategy: "plan-then-execute".to_string(),
-            impasse_threshold: 0.3,
-            reflection_trigger: "task_complete".to_string(),
-            care_weights: HashMap::new(),
-            genome_version: "0.1.0".to_string(),
-        }
-    }
-}
-
-impl GenomeConfig {
-    /// Extract from a GenomeMeta.
-    pub fn from_genome_meta(meta: &metacog::GenomeMeta) -> Self {
-        Self {
-            reasoning_strategy: meta.reasoning.default_strategy.clone(),
-            impasse_threshold: meta.reasoning.impasse_threshold,
-            reflection_trigger: meta.reasoning.reflection_trigger.clone(),
-            care_weights: meta.care_ext.weights.clone(),
-            genome_version: meta.genome_version.clone(),
-        }
-    }
-
-    /// Format care weights for injection into system prompt.
-    pub fn care_weights_prompt(&self) -> String {
-        if self.care_weights.is_empty() {
-            return String::new();
-        }
-        let mut parts: Vec<String> = self.care_weights.iter()
-            .map(|(k, v)| format!("  {}: {:.2}", k, v))
-            .collect();
-        parts.sort();
-        format!("Current care priorities:\n{}", parts.join("\n"))
     }
 }
 
@@ -685,7 +342,6 @@ log_level = "debug"
         });
 
         let mut other = AppConfig::default();
-        // Same name — should replace
         other.providers.push(ProviderConfig {
             name: "openai".to_string(),
             base_url: "https://api.openai.com/v2".to_string(),
@@ -693,7 +349,6 @@ log_level = "debug"
             transport: Transport::Openai,
             models: vec!["gpt-4o".to_string()],
         });
-        // New provider — should append
         other.providers.push(ProviderConfig {
             name: "anthropic".to_string(),
             base_url: "https://api.anthropic.com".to_string(),
@@ -739,7 +394,6 @@ log_level = "debug"
         other.model_routing.default = Some("other/default".to_string());
         other.model_routing.multimodal = Some("other/multimodal".to_string());
         other.model_routing.reasoning = Some("other/reasoning".to_string());
-        // cheap not set in other — should keep base value
 
         base.merge(other);
 
@@ -773,7 +427,6 @@ log_level = "debug"
 
         assert_eq!(base.sandbox.preference, "require");
         assert_eq!(base.daemon.log_level, "debug");
-        // Default values should not override
         assert_eq!(base.daemon.socket_path, "/run/aletheon/aletheon.sock");
     }
 
@@ -820,7 +473,6 @@ log_level = "debug"
     #[test]
     fn test_load_layered_global_only() {
         let config = AppConfig::load_layered(None);
-        // Should return defaults (global may or may not exist)
         assert_eq!(config.agent.max_iterations, 25);
     }
 
@@ -852,7 +504,6 @@ preference = "require"
     fn test_load_layered_no_project_config() {
         let tmp = tempfile::tempdir().unwrap();
         let config = AppConfig::load_layered(Some(tmp.path()));
-        // Should still be defaults since no .aletheon/config.toml exists
         assert_eq!(config.agent.max_iterations, 25);
     }
 
@@ -908,7 +559,6 @@ name = "test"
 base_url = "http://localhost"
 "#;
         let config: AppConfig = toml::from_str(toml).unwrap();
-        // hooks section absent => defaults to empty
         assert!(config.hooks.pre_turn.is_empty());
         assert!(config.hooks.post_tool.is_empty());
         assert!(config.hooks.on_session_end.is_empty());
