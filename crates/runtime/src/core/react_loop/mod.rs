@@ -1,5 +1,9 @@
 mod step;
 mod tool_exec;
+pub mod tool_budget;
+pub mod circuit_breaker;
+pub mod goal_tracker;
+pub mod reflection;
 
 use crate::core::config::RuntimeConfig;
 use crate::core::interrupt::InterruptFlag;
@@ -135,8 +139,17 @@ pub struct ReActLoop {
 
 impl ReActLoop {
     pub fn new(config: RuntimeConfig) -> Self {
+        // Scale tail_token_budget proportionally to context_window_tokens.
+        // Default config has tail_token_budget=16K for 128K context (~12.5%).
+        // For larger contexts, scale up so compaction doesn't fire too early.
+        let effective_tail = if config.tail_token_budget * 4 < config.context_window_tokens {
+            // tail_token_budget is less than 25% of context window — scale up
+            config.context_window_tokens / 8  // ~12.5% of context
+        } else {
+            config.tail_token_budget
+        };
         let compressor =
-            AdvancedCompressor::new(config.tail_token_budget, config.target_summary_chars);
+            AdvancedCompressor::new(effective_tail, config.target_summary_chars);
         Self {
             config,
             iteration: 0,
