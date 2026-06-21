@@ -12,12 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source readiness: MIT license badges and quick start links
 - Open-source readiness: Contributing guidelines
 - Open-source readiness: Crate descriptions for all workspace members
+- **IPC:** Added Transport implementations for io_uring and shared memory
+- **IPC:** Added connection pooling to UnixSocketTransport
+- **IPC:** Integrated JSON-RPC adapter into Transport system
+- **Documentation:** Added README.md for 8 crates (base, cognit, dasein, corpus, memory, interact, drivers, tools)
 
 ### Changed
 - Refactored runtime structure to core/bridge/impl/ pattern
 - Refactored self-field to core/bridge/impl/ pattern
 - Refactored brain-core to core/bridge/impl/ pattern
 - Refactored body to core/bridge/impl/ pattern
+- **Phase 5: Intra-crate modularization (Linux kernel style)**
+  - `base`: 7 top-level modules (include/, types/, events/, ipc/, kernel/, policy/, dasein/)
+  - `memory`: backends/ and ops/ organization
+  - `cognit`: core/ split into 14 sub-modules
+  - `interact`: ui/ split into 20+ sub-modules with app/ and render/ subdirs
+  - `runtime`: handler, fact_store, react_loop split into sub-modules
+- Updated all crate name references (aletheon-* to new names)
+
+### Fixed
+- **IPC:** Fixed SharedMemBackend ring buffer wrap-around bug
+- **IPC:** Fixed IpcManager::as_transport() to use actual active backend
+
+### Deprecated
+- **IPC:** Marked KernelEventBus::request() as deprecated (use RequestResponseProtocol)
 
 ## [0.1.0] - 2026-06-06
 
