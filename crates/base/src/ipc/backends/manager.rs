@@ -319,12 +319,29 @@ impl IpcManager {
     /// Get a Transport adapter for the primary backend.
     ///
     /// This allows the IPC manager to be used with the unified Transport
-    /// interface for cross-process communication.
+    /// interface for cross-process communication. Creates a fresh backend
+    /// instance of the same kind as the active primary.
     pub fn as_transport(&self) -> Box<dyn Transport> {
-        // Create a new adapter wrapping the primary backend
-        // Note: This requires the backend to be cloneable or we need a different approach
-        // For now, we'll create a new backend instance
-        Box::new(IpcBackendAdapter::new(Self::make_unix_socket(PathBuf::from("/tmp"))))
+        match self.active_kind {
+            IpcBackendKind::UnixSocket => {
+                // For Unix socket, use the dedicated UnixSocketTransport
+                // which has proper Envelope-level routing
+                let socket_dir = self.socket_dir();
+                Box::new(crate::ipc::transport::unix_socket_transport::UnixSocketTransport::with_socket_dir(socket_dir))
+            }
+            IpcBackendKind::IoUring => {
+                Box::new(IpcBackendAdapter::new(Box::new(IoUringBackend::new())))
+            }
+            IpcBackendKind::SharedMemory => {
+                Box::new(IpcBackendAdapter::new(Box::new(SharedMemBackend::new())))
+            }
+        }
+    }
+
+    /// Extract the socket directory from the primary backend if it's a Unix socket.
+    fn socket_dir(&self) -> PathBuf {
+        // Default fallback; the primary backend's actual socket path is internal
+        PathBuf::from("/tmp")
     }
 
     // ------------------------------------------------------------------

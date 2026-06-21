@@ -45,6 +45,10 @@ pub struct UnixSocketTransport {
     listener_handle: Option<tokio::task::JoinHandle<()>>,
     /// Whether the transport has been initialized.
     initialized: bool,
+    /// Connection pool: maps socket path to reusable stream.
+    pool: Arc<tokio::sync::Mutex<HashMap<PathBuf, UnixStream>>>,
+    /// Maximum connections in pool.
+    max_pool_size: usize,
 }
 
 impl UnixSocketTransport {
@@ -62,6 +66,8 @@ impl UnixSocketTransport {
             registered: Arc::new(RwLock::new(std::collections::HashSet::new())),
             listener_handle: None,
             initialized: false,
+            pool: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            max_pool_size: 8,
         }
     }
 
@@ -73,6 +79,30 @@ impl UnixSocketTransport {
         self.spawn_listener().await?;
         self.initialized = true;
         Ok(())
+    }
+
+    /// Get a connection from the pool or create a new one.
+    async fn get_pooled_connection(&self, path: &std::path::Path) -> Result<UnixStream> {
+        let mut pool = self.pool.lock().await;
+        if let Some(stream) = pool.remove(path) {
+            // Verify connection is still alive
+            if stream.peer_addr().is_ok() {
+                return Ok(stream);
+            }
+        }
+        // Create new connection
+        UnixStream::connect(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Connect failed: {}", e))
+    }
+
+    /// Return a connection to the pool.
+    async fn return_to_pool(&self, path: PathBuf, stream: UnixStream) {
+        let mut pool = self.pool.lock().await;
+        if pool.len() < self.max_pool_size {
+            pool.insert(path, stream);
+        }
+        // If pool is full, stream is dropped (connection closed)
     }
 
     /// Register an agent and obtain its message receiver.
@@ -248,12 +278,18 @@ impl Transport for UnixSocketTransport {
             anyhow::bail!("envelope expired");
         }
 
-        // Connect to the socket and send the envelope.
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("Connect failed: {}", e))?;
+        // Get connection from pool (or create new one)
+        let mut stream = self.get_pooled_connection(&self.socket_path).await?;
 
-        Self::write_envelope(&mut stream, &envelope).await
+        // Send the envelope
+        let result = Self::write_envelope(&mut stream, &envelope).await;
+
+        // Return connection to pool on success
+        if result.is_ok() {
+            self.return_to_pool(self.socket_path.clone(), stream).await;
+        }
+
+        result
     }
 
     fn health(&self) -> TransportHealth {

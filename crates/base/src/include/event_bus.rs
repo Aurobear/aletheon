@@ -44,6 +44,15 @@ pub trait EventBus: Send + Sync {
     ///
     /// Like Linux ioctl — synchronous call that blocks until the handler
     /// produces a response or timeout is reached.
+    ///
+    /// # Deprecated
+    ///
+    /// This method is a Phase 1 stub that always returns an error after timeout.
+    /// Use `RequestResponseProtocol` via `CommunicationBus` for actual request-response.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use RequestResponseProtocol via CommunicationBus instead"
+    )]
     async fn request(&self, event: Box<dyn Event>, timeout: Duration) -> Result<Box<dyn Event>>;
 
     /// Unsubscribe a previously registered handler.
