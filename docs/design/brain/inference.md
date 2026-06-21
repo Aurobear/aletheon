@@ -184,7 +184,7 @@ agent "自动判断的任务"                  # 使用分类器
 
 ## Implementation Summary
 
-**Code location:** `crates/aletheon-brain/src/impl/inference/`
+**Code location:** `crates/cognit/src/impl/inference/`
 
 **Key types/traits implemented:**
 - `Complexity` enum (`classifier.rs`) — Simple/Medium/Complex intent categories

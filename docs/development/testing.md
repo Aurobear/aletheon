@@ -12,7 +12,7 @@ Aletheon's testing approach covers six layers: unit tests, integration tests, sa
 | Integration | Module interactions (engine+tool, perception+bridge) | `cargo test --test` | Core paths 100% | Not acceptable |
 | Sandbox | Isolation works (namespace, seccomp, cgroups) | bubblewrap + test | All sandbox backends | Acceptable (env-dependent) |
 | eBPF | Kernel program loading and event collection | libbpf + test | Load + 3 event types | Acceptable (kernel-version) |
-| End-to-end | Full user flows | aletheon-cli + test | 5 critical scenarios | Not acceptable |
+| End-to-end | Full user flows | cli + test | 5 critical scenarios | Not acceptable |
 | Performance | Latency/throughput | criterion | Baseline comparison | Acceptable |
 
 ---
@@ -30,9 +30,9 @@ This runs all unit and integration tests across every crate. Currently 600+ test
 ### Specific Crate
 
 ```bash
-cargo test -p aletheon-abi
-cargo test -p aletheon-self
-cargo test -p aletheon-runtime
+cargo test -p base
+cargo test -p dasein
+cargo test -p runtime
 ```
 
 ### Specific Test
@@ -46,7 +46,7 @@ cargo test test_loop_detector
 
 ```bash
 RUST_LOG=debug cargo test
-RUST_LOG=aletheon_body=trace cargo test -p aletheon-body
+RUST_LOG=aletheon_body=trace cargo test -p corpus
 ```
 
 ### Single Test with Output
@@ -102,11 +102,11 @@ Each crate has a `testing/` module with mock implementations:
 
 | Mock | Location | Replaces |
 |------|----------|----------|
-| `MockLlm` | `crates/aletheon-brain/src/testing/` | Real LLM provider |
-| `MockSandbox` | `crates/aletheon-body/src/testing/` | bubblewrap sandbox |
-| `MockMemory` | `crates/aletheon-memory/src/testing/` | SQLite memory backend |
-| `MockPerception` | `crates/aletheon-self/src/testing/` | /proc, journald sources |
-| `MockStateProvider` | `crates/aletheon-self/src/impl/perception/fuse/provider.rs` | Live system state |
+| `MockLlm` | `crates/cognit/src/testing/` | Real LLM provider |
+| `MockSandbox` | `crates/corpus/src/testing/` | bubblewrap sandbox |
+| `MockMemory` | `crates/memory/src/testing/` | SQLite memory backend |
+| `MockPerception` | `crates/dasein/src/testing/` | /proc, journald sources |
+| `MockStateProvider` | `crates/dasein/src/impl/perception/fuse/provider.rs` | Live system state |
 
 Example using `MockLlm`:
 
@@ -133,11 +133,11 @@ Five critical scenarios must always pass:
 
 | Scenario | Steps | Verification |
 |----------|-------|-------------|
-| Basic conversation | Start aletheond -> aletheon-cli sends message -> receive response | Response is non-empty, no errors |
+| Basic conversation | Start daemon -> cli sends message -> receive response | Response is non-empty, no errors |
 | Tool call | Request "list files" -> agent calls `bash_exec("ls")` -> returns file list | Tool executes, result is correct |
-| Memory persistence | Tell agent a preference -> restart aletheond -> converse again -> agent remembers | CoreMemory restores correctly |
+| Memory persistence | Tell agent a preference -> restart daemon -> converse again -> agent remembers | CoreMemory restores correctly |
 | Security block | Request "rm -rf /" -> agent blocks -> returns safety message | L3 operation is denied |
-| Crash recovery | Kill aletheond with SIGKILL -> systemd restarts -> session resumes | Session data is not lost |
+| Crash recovery | Kill daemon with SIGKILL -> systemd restarts -> session resumes | Session data is not lost |
 
 These scenarios are tested in CI and must pass before any merge.
 
@@ -194,7 +194,7 @@ Uses [criterion](https://github.com/bheisler/criterion.rs) for statistically rig
 
 ```bash
 cargo install cargo-flamegraph
-cargo flamegraph --bin aletheond
+cargo flamegraph --bin daemon
 ```
 
 ### Key Metrics

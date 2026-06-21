@@ -1,9 +1,9 @@
-# Body Crate (`aletheon-body`)
+# Body Crate (`corpus`)
 
 > The body crate provides the physical interface layer — tools, sandbox, MCP, platform adaptation, security policy, drivers, UI, and ACIX.
 
-**Crate:** `aletheon-body`
-**Source:** `crates/aletheon-body/`
+**Crate:** `corpus`
+**Source:** `crates/corpus/`
 **Last updated:** 2026-06-14
 
 ---
@@ -11,7 +11,7 @@
 ## Crate Structure
 
 ```
-crates/aletheon-body/
+crates/corpus/
 ├── core/           — Core types and traits
 ├── bridge/         — FFI and cross-crate bridges
 ├── impl/           — Implementation modules

@@ -44,16 +44,16 @@
 
 | Crate | 目录 | 核心内容 |
 |-------|------|----------|
-| `aletheon-abi` | [abi/](abi/) | 共享类型定义、Trait 接口、ABI 契约 |
-| `aletheon-comm` | [comm/](comm/) | IPC 层、Unix Socket、消息优先队列 |
-| `aletheon-memory` | [memory/](memory/) | 记忆系统：episodic/semantic/procedural/self-memory |
-| `aletheon-body` | [body/](body/) | 执行层：工具、沙箱、MCP、感知、平台、驱动、UI |
-| `aletheon-self` | [self/](self/) | SelfField：身份、边界、关切、叙事、Hook、安全、容错 |
-| `aletheon-brain` | [brain/](brain/) | 认知引擎：推理、规划、反思、学习、推理路由 |
-| `aletheon-runtime` | [runtime/](runtime/) | 运行时：ReAct 循环、会话、编排、可观测、插件、自动化 |
-| `aletheon-meta` | [meta/](meta/) | MetaRuntime：自我更新、形态演化、基因组 |
-| `aletheond` | [daemon/](daemon/) | 守护进程入口、配置加载、Unix Socket 服务 |
-| `aletheon-cli` | [cli/](cli/) | CLI/TUI 客户端（逻辑在 body crate，thin re-export） |
+| `base` | [abi/](abi/) | 共享类型定义、Trait 接口、ABI 契约 |
+| `base` | [comm/](comm/) | IPC 层、Unix Socket、消息优先队列 |
+| `memory` | [memory/](memory/) | 记忆系统：episodic/semantic/procedural/self-memory |
+| `corpus` | [body/](body/) | 执行层：工具、沙箱、MCP、感知、平台、驱动、UI |
+| `dasein` | [self/](self/) | SelfField：身份、边界、关切、叙事、Hook、安全、容错 |
+| `cognit` | [brain/](brain/) | 认知引擎：推理、规划、反思、学习、推理路由 |
+| `runtime` | [runtime/](runtime/) | 运行时：ReAct 循环、会话、编排、可观测、插件、自动化 |
+| `metacog` | [meta/](meta/) | MetaRuntime：自我更新、形态演化、基因组 |
+| `daemon` | [daemon/](daemon/) | 守护进程入口、配置加载、Unix Socket 服务 |
+| `cli` | [cli/](cli/) | CLI/TUI 客户端（逻辑在 body crate，thin re-export） |
 
 **按关注点查阅：**
 
@@ -78,7 +78,7 @@
 │                    Aletheon System                           │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │              aletheon-runtime (Orchestrator)           │  │
+│  │              runtime (Orchestrator)           │  │
 │  │                                                       │  │
 │  │  ┌─────────────┐ ┌──────────────┐ ┌───────────────┐  │  │
 │  │  │ ReAct Loop  │ │ Memory       │ │ Orchestration │  │  │
@@ -87,12 +87,12 @@
 │  │  └──────┬──────┘ └──────┬───────┘ └───────┬───────┘  │  │
 │  │         │               │                 │           │  │
 │  │  ┌──────┴───────────────┴─────────────────┴────────┐  │  │
-│  │  │              EventBus (aletheon-comm)            │  │  │
+│  │  │              EventBus (base)            │  │  │
 │  │  └──────┬───────────────┬─────────────────┬────────┘  │  │
 │  └─────────┼───────────────┼─────────────────┼──────────┘  │
 │            │               │                 │              │
 │  ┌─────────┴──────┐ ┌──────┴───────┐ ┌──────┴───────────┐  │
-│  │ aletheon-body  │ │ aletheon-self│ │ aletheon-brain   │  │
+│  │ corpus  │ │ dasein│ │ cognit   │  │
 │  │                │ │              │ │                  │  │
 │  │ Tools/Sandbox  │ │ Identity     │ │ Reasoning        │  │
 │  │ MCP/Perception │ │ Boundary     │ │ Planning         │  │
@@ -102,15 +102,15 @@
 │                     └──────────────┘ └──────────────────┘  │
 │                                                             │
 │  ┌──────────────────────┐  ┌────────────────────────────┐  │
-│  │ aletheon-memory      │  │ aletheon-abi               │  │
+│  │ memory      │  │ base               │  │
 │  │ episodic/semantic/   │  │ Shared types, traits,      │  │
 │  │ procedural/self      │  │ message, tool, sandbox     │  │
 │  └──────────────────────┘  └────────────────────────────┘  │
 │                                                             │
 │  ┌──────────────────────┐  ┌────────────────────────────┐  │
-│  │ aletheon-meta        │  │ Entry Points               │  │
-│  │ MetaRuntime          │  │ aletheond (daemon)         │  │
-│  │ Morphogenesis        │  │ aletheon-cli (CLI/TUI)     │  │
+│  │ metacog        │  │ Entry Points               │  │
+│  │ MetaRuntime          │  │ daemon (daemon)         │  │
+│  │ Morphogenesis        │  │ cli (CLI/TUI)     │  │
 │  └──────────────────────┘  └────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -176,16 +176,16 @@ aletheon/
 ├── Cargo.toml                  # workspace 根
 │
 ├── crates/
-│   ├── aletheon-abi/           # ABI 类型: IPC, tool, message, sandbox, LLM types
-│   ├── aletheon-comm/          # IPC 层: Unix socket, priority queue
-│   ├── aletheon-memory/        # 记忆系统: self-memory, episodic/semantic
-│   ├── aletheon-self/          # SelfField: identity, boundary, care, narrative
-│   ├── aletheon-brain/         # BrainCore: reasoning, planning, reflection
-│   ├── aletheon-body/          # BodyRuntime: tools, sandbox, perception, MCP, TUI
-│   ├── aletheon-runtime/       # Runtime engine: cognitive loop, orchestration, daemon
-│   ├── aletheon-meta/          # MetaRuntime: self-update, self-generation
-│   ├── aletheond/              # Daemon 入口
-│   └── aletheon-cli/           # CLI + TUI 客户端
+│   ├── base/           # ABI 类型: IPC, tool, message, sandbox, LLM types
+│   ├── base/          # IPC 层: Unix socket, priority queue
+│   ├── memory/        # 记忆系统: self-memory, episodic/semantic
+│   ├── dasein/          # SelfField: identity, boundary, care, narrative
+│   ├── cognit/         # BrainCore: reasoning, planning, reflection
+│   ├── corpus/          # BodyRuntime: tools, sandbox, perception, MCP, TUI
+│   ├── runtime/       # Runtime engine: cognitive loop, orchestration, daemon
+│   ├── metacog/          # MetaRuntime: self-update, self-generation
+│   ├── daemon/              # Daemon 入口
+│   └── cli/           # CLI + TUI 客户端
 │
 ├── agents/                     # Agent 定义文件 (TOML + .md)
 │   ├── fs-agent.md
@@ -196,7 +196,7 @@ aletheon/
 │   └── default.toml            # 默认配置
 │
 ├── systemd/
-│   └── aletheond.service       # systemd 服务文件
+│   └── daemon.service       # systemd 服务文件
 │
 ├── references/                 # 参考项目 (~3GB, gitignored)
 │
@@ -213,10 +213,10 @@ aletheon/
 
 | Crate | 设计文档 | 核心内容 |
 |-------|---------|----------|
-| **aletheon-abi** | [abi/types.md](abi/types.md) | 共享类型、Trait 定义、接口规范 |
-| **aletheon-comm** | [comm/ipc.md](comm/ipc.md) | Unix Socket、io_uring、优先队列、消息路由 |
-| **aletheon-memory** | [memory/memory-system.md](memory/memory-system.md) | 三级记忆、上下文预算、记忆管道、向量存储 |
-| **aletheon-body** | [body/tools.md](body/tools.md) | Tool trait、并行执行、分层暴露 |
+| **base** | [abi/types.md](abi/types.md) | 共享类型、Trait 定义、接口规范 |
+| **base** | [comm/ipc.md](comm/ipc.md) | Unix Socket、io_uring、优先队列、消息路由 |
+| **memory** | [memory/memory-system.md](memory/memory-system.md) | 三级记忆、上下文预算、记忆管道、向量存储 |
+| **corpus** | [body/tools.md](body/tools.md) | Tool trait、并行执行、分层暴露 |
 | | [body/sandbox.md](body/sandbox.md) | bubblewrap、seccomp、cgroups |
 | | [body/mcp.md](body/mcp.md) | MCP 集成、OAuth、工具转换 |
 | | [body/perception.md](body/perception.md) | eBPF、事件聚合、背压控制 |
@@ -226,25 +226,25 @@ aletheon/
 | | [body/driver.md](body/driver.md) | 显示/输入/OCR/无障碍驱动 |
 | | [body/ui.md](body/ui.md) | TUI 终端界面 |
 | | [body/acix.md](body/acix.md) | Agent-Computer 交互体验 |
-| **aletheon-self** | [self/self-field.md](self/self-field.md) | SelfField 架构：身份/边界/关切/叙事/冲突/注意力/连续性/变异 |
+| **dasein** | [self/self-field.md](self/self-field.md) | SelfField 架构：身份/边界/关切/叙事/冲突/注意力/连续性/变异 |
 | | [self/hook-system.md](self/hook-system.md) | 21 事件类型，3 层配置，命令钩子 |
 | | [self/loop-detector.md](self/loop-detector.md) | 循环检测、熔断器 |
 | | [self/self-protection.md](self/self-protection.md) | 注入防御、资源治理、紧急停止 |
 | | [self/writable-root.md](self/writable-root.md) | 可写根路径隔离 |
 | | [self/resilience.md](self/resilience.md) | 错误处理、限流、panic 恢复 |
 | | [self/perception-sources.md](self/perception-sources.md) | eBPF、inotify、journald、/proc |
-| **aletheon-brain** | [brain/cognitive-engine.md](brain/cognitive-engine.md) | 推理、规划、批判、反思、学习 |
+| **cognit** | [brain/cognitive-engine.md](brain/cognitive-engine.md) | 推理、规划、批判、反思、学习 |
 | | [brain/inference.md](brain/inference.md) | 推理路由、Provider 管理 |
-| **aletheon-runtime** | [runtime/react-loop.md](runtime/react-loop.md) | ReAct 循环、ContentBlock 协议 |
+| **runtime** | [runtime/react-loop.md](runtime/react-loop.md) | ReAct 循环、ContentBlock 协议 |
 | | [runtime/session.md](runtime/session.md) | 会话持久化、崩溃恢复 |
 | | [runtime/orchestration.md](runtime/orchestration.md) | Selector、Handoff、DiGraph |
 | | [runtime/observability.md](runtime/observability.md) | Metrics、Tracing、健康检查 |
 | | [runtime/plugin.md](runtime/plugin.md) | 插件系统 |
 | | [runtime/automation.md](runtime/automation.md) | Cron、Webhook、脚本 |
-| **aletheon-meta** | [meta/meta-runtime.md](meta/meta-runtime.md) | 自我读取、修改、回滚、迁移 |
+| **metacog** | [meta/meta-runtime.md](meta/meta-runtime.md) | 自我读取、修改、回滚、迁移 |
 | | [meta/morphogenesis.md](meta/morphogenesis.md) | 形态演化、Genome、候选生成 |
-| **aletheond** | [daemon/README.md](daemon/README.md) | 守护进程、Unix Socket 服务 |
-| **aletheon-cli** | [cli/README.md](cli/README.md) | CLI/TUI、三种运行模式 |
+| **daemon** | [daemon/README.md](daemon/README.md) | 守护进程、Unix Socket 服务 |
+| **cli** | [cli/README.md](cli/README.md) | CLI/TUI、三种运行模式 |
 
 ### 跨 Crate 文档
 

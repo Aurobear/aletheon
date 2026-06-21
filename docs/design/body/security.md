@@ -150,10 +150,10 @@
 ## Implementation Summary
 
 **Code Locations:**
-- `crates/aletheon-body/src/impl/security/mod.rs` — PolicyEngine with hardcoded rules
-- `crates/aletheon-body/src/impl/security/audit.rs` — AuditLogger
-- `crates/aletheon-body/src/impl/security/rollback/mod.rs` — RollbackEngine (3-tier: AuditOnly, FileBackup, BtrfsRollback)
-- `crates/aletheon-body/src/impl/security/risk_classifier.rs` — RiskClassifier
+- `crates/corpus/src/impl/security/mod.rs` — PolicyEngine with hardcoded rules
+- `crates/corpus/src/impl/security/audit.rs` — AuditLogger
+- `crates/corpus/src/impl/security/rollback/mod.rs` — RollbackEngine (3-tier: AuditOnly, FileBackup, BtrfsRollback)
+- `crates/corpus/src/impl/security/risk_classifier.rs` — RiskClassifier
 
 **Key Types/Traits Implemented:**
 - `PolicyEngine` — rule-based permission checks (L0-L3), hardcoded rules

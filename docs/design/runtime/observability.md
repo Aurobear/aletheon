@@ -4,8 +4,8 @@
 
 > Aletheon's diagnostic core as a system-level service, including event classification, Fragment Accumulator, Debug CLI, Prometheus metrics, structured reasoning logs.
 
-**Crate:** `aletheon-runtime`
-**Code location:** `aletheon-runtime/src/impl/session/observability/`
+**Crate:** `runtime`
+**Code location:** `runtime/src/impl/session/observability/`
 **Related modules:** [session.md](session.md)
 **Last Updated:** 2026-06-14
 
@@ -15,14 +15,14 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| EventJournal | Implemented | `aletheon-runtime/src/impl/session/journal.rs` | JSONL append-only log |
+| EventJournal | Implemented | `runtime/src/impl/session/journal.rs` | JSONL append-only log |
 | Durable/Ephemeral split | Planned | — | Event classification designed, not started |
-| Fragment Accumulator | Planned | `aletheon-runtime/src/impl/session/observability/fragment.rs` | Streaming delta accumulation designed |
+| Fragment Accumulator | Planned | `runtime/src/impl/session/observability/fragment.rs` | Streaming delta accumulation designed |
 | Debug CLI (JSON-RPC) | Planned | — | 8 RPC methods designed |
-| Prometheus metrics | Planned | `aletheon-runtime/src/impl/session/observability/metrics.rs` | prometheus-client integration designed |
-| ToolTracker | Planned | `aletheon-runtime/src/impl/session/observability/tool_tracker.rs` | Per-callID tool call lifecycle state machine |
-| ReasoningLogger | Planned | `aletheon-runtime/src/impl/session/observability/reasoning_logger.rs` | Structured reasoning log |
-| EventPublisher | Planned | `aletheon-runtime/src/impl/session/observability/publisher.rs` | Event fan-out to journal, subscribers, metrics |
+| Prometheus metrics | Planned | `runtime/src/impl/session/observability/metrics.rs` | prometheus-client integration designed |
+| ToolTracker | Planned | `runtime/src/impl/session/observability/tool_tracker.rs` | Per-callID tool call lifecycle state machine |
+| ReasoningLogger | Planned | `runtime/src/impl/session/observability/reasoning_logger.rs` | Structured reasoning log |
+| EventPublisher | Planned | `runtime/src/impl/session/observability/publisher.rs` | Event fan-out to journal, subscribers, metrics |
 | FTS5 full-text search | Planned | — | SQLite FTS5 designed |
 
 ---
@@ -56,7 +56,7 @@ Inspired by OpenCode `createLLMEventPublisher.fragments()`, `FragmentAccumulator
 
 Core operations: start_text/append_text/end_text (reasoning and tool input same pattern), and `flush_all()` for flushing all incomplete accumulations on interrupt/error recovery.
 
-Code location: `aletheon-runtime/src/impl/session/observability/fragment.rs`
+Code location: `runtime/src/impl/session/observability/fragment.rs`
 
 ## 3. Tool Call Lifecycle State Machine
 
@@ -72,7 +72,7 @@ Each tool call tracks complete lifecycle state, preventing duplicate events, det
 - `cleanup_settled()` — clean up completed tool calls (prevent memory leak)
 - `detect_inconsistencies()` — detect inconsistent states
 
-Code location: `aletheon-runtime/src/impl/session/observability/tool_tracker.rs`
+Code location: `runtime/src/impl/session/observability/tool_tracker.rs`
 
 ## 4. Structured Reasoning Log (ReasoningLogger)
 
@@ -88,7 +88,7 @@ Difference from EventJournal: EventJournal records session events (for recovery)
 
 Core operations: `log(entry)` writes and checks rotation, `rotate()` renames current file and reopens, `cleanup_old_logs()` cleans logs older than retention days.
 
-Code location: `aletheon-runtime/src/impl/session/observability/reasoning_logger.rs`
+Code location: `runtime/src/impl/session/observability/reasoning_logger.rs`
 
 ## 5. Token Usage Safe Normalization
 
@@ -146,7 +146,7 @@ Uses `prometheus-client` crate to expose `/metrics` endpoint, default listen `12
 
 Core operations: `record_inference(duration, usage)`, `record_tool_call(tool_name, duration, success)`, `record_hook_execution(duration, blocked)`
 
-Code location: `aletheon-runtime/src/impl/session/observability/metrics.rs`
+Code location: `runtime/src/impl/session/observability/metrics.rs`
 
 ## 9. Integration with SessionStore EventJournal
 
@@ -156,7 +156,7 @@ Architecture: Receive SessionEvent -> push to real-time subscribers (all events)
 
 `add_live_subscriber()` returns `mpsc::Receiver<SessionEvent>` for Debug CLI streaming output. `cleanup_subscribers()` removes disconnected subscribers.
 
-Code location: `aletheon-runtime/src/impl/session/observability/publisher.rs`
+Code location: `runtime/src/impl/session/observability/publisher.rs`
 
 ## 10. FUSE Integration
 
@@ -169,28 +169,28 @@ Code location: `aletheon-runtime/src/impl/session/observability/publisher.rs`
 
 ```bash
 # View current session state
-aletheon-cli debug status
+cli debug status
 
 # Stream reasoning log
-aletheon-cli debug follow-reasoning [--filter "Thinking|ToolCall*"]
+cli debug follow-reasoning [--filter "Thinking|ToolCall*"]
 
 # View last N reasoning steps
-aletheon-cli debug recent-steps [--n 20]
+cli debug recent-steps [--n 20]
 
 # View memory usage
-aletheon-cli debug memory
+cli debug memory
 
 # View Hook registration state
-aletheon-cli debug hooks
+cli debug hooks
 
 # View Prometheus metrics
-aletheon-cli debug metrics
+cli debug metrics
 
 # Replay specified session history
-aletheon-cli debug replay --session-id <id> [--from-seq 0]
+cli debug replay --session-id <id> [--from-seq 0]
 
 # Subscribe to real-time event stream
-aletheon-cli debug subscribe [--filter "ToolCall*"] [--ephemeral]
+cli debug subscribe [--filter "ToolCall*"] [--ephemeral]
 ```
 
 ---
@@ -198,11 +198,11 @@ aletheon-cli debug subscribe [--filter "ToolCall*"] [--ephemeral]
 ## Implementation Summary
 
 **Code locations:**
-- `aletheon-runtime/src/impl/session/observability/fragment.rs` — FragmentAccumulator
-- `aletheon-runtime/src/impl/session/observability/metrics.rs` — MetricsExporter
-- `aletheon-runtime/src/impl/session/observability/publisher.rs` — EventPublisher
-- `aletheon-runtime/src/impl/session/observability/reasoning_logger.rs` — ReasoningLogger
-- `aletheon-runtime/src/impl/session/observability/tool_tracker.rs` — ToolTracker
+- `runtime/src/impl/session/observability/fragment.rs` — FragmentAccumulator
+- `runtime/src/impl/session/observability/metrics.rs` — MetricsExporter
+- `runtime/src/impl/session/observability/publisher.rs` — EventPublisher
+- `runtime/src/impl/session/observability/reasoning_logger.rs` — ReasoningLogger
+- `runtime/src/impl/session/observability/tool_tracker.rs` — ToolTracker
 
 **Key types/traits designed:**
 - `EventPersistence` — Durable/Ephemeral event classification

@@ -1,12 +1,12 @@
 # Aletheon CLI
 
-> 用户交互入口，支持单消息和 TUI 两种模式。通过 Unix socket 与 aletheond 通信。
-> CLI 逻辑已合并到 `aletheon-body/src/impl/cli/`，TUI 在 `aletheon-body/src/impl/ui/`。
-> `aletheon-cli` crate 保留为薄包装（向后兼容），实际逻辑在 body crate 中。
+> 用户交互入口，支持单消息和 TUI 两种模式。通过 Unix socket 与 daemon 通信。
+> CLI 逻辑已合并到 `corpus/src/impl/cli/`，TUI 在 `corpus/src/impl/ui/`。
+> `cli` crate 保留为薄包装（向后兼容），实际逻辑在 body crate 中。
 
 **模块编号:** CLI
 **关联模块:** [daemon](../daemon/README.md), [body/ui](../body/ui.md)
-**Crate:** `aletheon-body` (feature `cli`), `aletheon-cli` (thin re-export)
+**Crate:** `corpus` (feature `cli`), `cli` (thin re-export)
 **最后更新:** 2026-06-14
 
 ---
@@ -15,18 +15,18 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| CLI arg parsing | ✅ Implemented | `aletheon-cli/src/main.rs` | clap, -m/--tui/--simple |
-| Single message mode | ✅ Implemented | `aletheon-cli/src/main.rs` | `-m "text"` → send → print → exit |
-| Simple REPL mode | ✅ Implemented | `aletheon-cli/src/main.rs` | `--simple`, stdin loop |
-| TUI mode (default) | ✅ Implemented | `aletheon-body/src/impl/ui/mod.rs` | ratatui, alternate screen |
-| Chat widget | ✅ Implemented | `aletheon-body/src/impl/ui/chat.rs` | Message list, scroll, streaming update |
-| Input handling | ✅ Implemented | `aletheon-body/src/impl/ui/mod.rs` | CJK-aware, IME delay, cursor movement |
-| Command parser | ✅ Implemented | `aletheon-body/src/impl/ui/command.rs` | /help, /clear, /quit, /status, /skills |
-| Skill loader | ✅ Implemented | `aletheon-body/src/impl/ui/skill.rs` | ~/.aletheon/skills/ SKILL.md |
-| Status bar | ✅ Implemented | `aletheon-body/src/impl/ui/status.rs` | Connection status, model name |
-| Markdown renderer | ✅ Implemented | `aletheon-body/src/impl/ui/markdown.rs` | Styled text for ratatui |
-| Terminal compat | ✅ Implemented | `aletheon-body/src/impl/ui/term_compat.rs` | Unicode/color detection |
-| Computer view | 🔶 Partial | `aletheon-body/src/impl/ui/computer.rs` | Feature-gated (input+display+a11y) |
+| CLI arg parsing | ✅ Implemented | `cli/src/main.rs` | clap, -m/--tui/--simple |
+| Single message mode | ✅ Implemented | `cli/src/main.rs` | `-m "text"` → send → print → exit |
+| Simple REPL mode | ✅ Implemented | `cli/src/main.rs` | `--simple`, stdin loop |
+| TUI mode (default) | ✅ Implemented | `corpus/src/impl/ui/mod.rs` | ratatui, alternate screen |
+| Chat widget | ✅ Implemented | `corpus/src/impl/ui/chat.rs` | Message list, scroll, streaming update |
+| Input handling | ✅ Implemented | `corpus/src/impl/ui/mod.rs` | CJK-aware, IME delay, cursor movement |
+| Command parser | ✅ Implemented | `corpus/src/impl/ui/command.rs` | /help, /clear, /quit, /status, /skills |
+| Skill loader | ✅ Implemented | `corpus/src/impl/ui/skill.rs` | ~/.aletheon/skills/ SKILL.md |
+| Status bar | ✅ Implemented | `corpus/src/impl/ui/status.rs` | Connection status, model name |
+| Markdown renderer | ✅ Implemented | `corpus/src/impl/ui/markdown.rs` | Styled text for ratatui |
+| Terminal compat | ✅ Implemented | `corpus/src/impl/ui/term_compat.rs` | Unicode/color detection |
+| Computer view | 🔶 Partial | `corpus/src/impl/ui/computer.rs` | Feature-gated (input+display+a11y) |
 | Streaming display | ⬜ Planned | — | Response chunks not streamed to TUI |
 | History persistence | ⬜ Planned | — | No command history across sessions |
 | Multi-line editor | ⬜ Planned | — | Only Shift+Enter newline, no real editor |
@@ -55,10 +55,10 @@
 
 ## 1. 概述
 
-`aletheon-cli` 是 Aletheon 的用户交互层。它不包含推理逻辑，仅负责:
+`cli` 是 Aletheon 的用户交互层。它不包含推理逻辑，仅负责:
 - 接收用户输入
 - 格式化为 JSON-RPC 请求
-- 通过 Unix socket 发送到 `aletheond`
+- 通过 Unix socket 发送到 `daemon`
 - 接收并渲染响应
 
 三种模式满足不同场景需求:
@@ -72,7 +72,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                    aletheon-cli                           │
+│                    cli                           │
 │                                                          │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐ │
 │  │ -m mode     │  │ TUI mode     │  │ --simple mode   │ │
@@ -99,7 +99,7 @@
                            │
                            ▼
                     ┌──────────────┐
-                    │  aletheond   │
+                    │  daemon   │
                     └──────────────┘
 ```
 
@@ -107,11 +107,11 @@
 
 ## 3. 三种运行模式
 
-入口文件: `aletheon-cli/src/main.rs`
+入口文件: `cli/src/main.rs`
 
 ```rust
 #[derive(Parser)]
-#[command(name = "aletheon-cli", about = "Aletheon CLI client")]
+#[command(name = "cli", about = "Aletheon CLI client")]
 struct Args {
     #[arg(short, long, default_value = "/tmp/aletheon/aletheon.sock")]
     socket: PathBuf,
@@ -196,7 +196,7 @@ async fn simple_cli(socket: &PathBuf) -> Result<()> {
 
 ## 5. TUI 架构
 
-代码位置: `aletheon-body/src/impl/ui/`
+代码位置: `corpus/src/impl/ui/`
 
 ### 5.1 App 状态
 
@@ -239,7 +239,7 @@ poll 超时:
 
 ### 5.3 输入处理
 
-代码位置: `aletheon-body/src/impl/ui/mod.rs` `handle_key()`
+代码位置: `corpus/src/impl/ui/mod.rs` `handle_key()`
 
 | 按键 | 行为 |
 |------|------|
@@ -288,7 +288,7 @@ CJK 检测范围: `U+4E00-9FFF`, `U+3400-4DBF`, `U+3000-303F`, `U+FF00-FFEF`, `U
 
 ### 5.5 命令系统
 
-代码位置: `aletheon-body/src/impl/ui/command.rs`
+代码位置: `corpus/src/impl/ui/command.rs`
 
 以 `/` 开头的输入被解析为命令:
 
@@ -304,7 +304,7 @@ CJK 检测范围: `U+4E00-9FFF`, `U+3400-4DBF`, `U+3000-303F`, `U+FF00-FFEF`, `U
 
 ### 5.6 技能系统
 
-代码位置: `aletheon-body/src/impl/ui/skill.rs`
+代码位置: `corpus/src/impl/ui/skill.rs`
 
 技能目录: `~/.aletheon/skills/`
 

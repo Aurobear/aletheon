@@ -186,16 +186,16 @@ aletheon/
 +-- Cargo.toml                   # Workspace root
 |
 +-- crates/
-|   +-- aletheon-abi/            # ABI types: IPC, tool, message, sandbox, LLM types
-|   +-- aletheon-comm/           # IPC layer: Unix socket, priority queue
-|   +-- aletheon-memory/         # Memory system: self-memory, episodic/semantic
-|   +-- aletheon-self/           # SelfField: identity, boundary, care, narrative
-|   +-- aletheon-brain/          # BrainCore: reasoning, planning, reflection
-|   +-- aletheon-body/           # BodyRuntime: tools, sandbox, perception, MCP, TUI
-|   +-- aletheon-runtime/        # Runtime engine: cognitive loop, orchestration, daemon
-|   +-- aletheon-meta/           # MetaRuntime: self-update, self-generation
-|   +-- aletheond/               # Daemon entry point
-|   +-- aletheon-cli/            # CLI + TUI client
+|   +-- base/            # ABI types: IPC, tool, message, sandbox, LLM types
+|   +-- base/           # IPC layer: Unix socket, priority queue
+|   +-- memory/         # Memory system: self-memory, episodic/semantic
+|   +-- dasein/           # SelfField: identity, boundary, care, narrative
+|   +-- cognit/          # BrainCore: reasoning, planning, reflection
+|   +-- corpus/           # BodyRuntime: tools, sandbox, perception, MCP, TUI
+|   +-- runtime/        # Runtime engine: cognitive loop, orchestration, daemon
+|   +-- metacog/           # MetaRuntime: self-update, self-generation
+|   +-- daemon/               # Daemon entry point
+|   +-- cli/            # CLI + TUI client
 |
 +-- agents/                      # Agent definitions (TOML + Markdown)
 +-- config/                      # Default configuration
@@ -205,14 +205,14 @@ aletheon/
 ### Crate Dependency Graph
 
 ```
-aletheon-cli  --->  aletheon-comm  --->  aletheon-abi
-aletheond    --->  aletheon-runtime ---> aletheon-body
-                                      +-> aletheon-brain
-                                      +-> aletheon-self
-                                      +-> aletheon-memory
-                                      +-> aletheon-comm
-                                      +-> aletheon-abi
-aletheon-meta --->  aletheon-abi
+cli  --->  base  --->  base
+daemon    --->  runtime ---> corpus
+                                      +-> cognit
+                                      +-> dasein
+                                      +-> memory
+                                      +-> base
+                                      +-> base
+metacog --->  base
 ```
 
 ---
@@ -254,14 +254,14 @@ eBPF is Linux's killer feature for safe kernel-level perception.
 ### systemd Integration
 
 ```ini
-# /etc/systemd/system/aletheond.service
+# /etc/systemd/system/daemon.service
 [Unit]
 Description=Aletheon Agent Service
 After=network.target
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/aletheond --config /etc/aletheon/config.toml
+ExecStart=/usr/bin/daemon --config /etc/aletheon/config.toml
 ProtectSystem=strict
 ReadWritePaths=/home /tmp /var/lib/aletheon
 WatchdogSec=30s

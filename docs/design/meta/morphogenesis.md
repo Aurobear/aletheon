@@ -4,8 +4,8 @@
 
 > Morphogenesis is Aletheon's self-evolution flow. The agent does not update code — it regenerates itself. The pipeline: run -> reflect -> mutate spec -> generate candidate -> evaluate -> migrate -> become.
 
-**Crate:** `aletheon-meta`
-**Code location:** `aletheon-meta/src/impl/morphogenesis/`
+**Crate:** `metacog`
+**Code location:** `metacog/src/impl/morphogenesis/`
 **Related modules:** [meta-runtime.md](meta-runtime.md)
 **Last Updated:** 2026-06-14
 
@@ -15,10 +15,10 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| MorphogenesisPipeline | Design skeleton | `aletheon-meta/src/impl/morphogenesis/pipeline.rs` | Orchestrates full pipeline (all `todo!()`) |
-| Candidate | Design skeleton | `aletheon-meta/src/impl/morphogenesis/candidate.rs` | Runtime candidate model |
-| MutationIntent | Design skeleton | `aletheon-meta/src/impl/morphogenesis/mutation_intent.rs` | Mutation intent from reflection |
-| GenomeLoader | Design skeleton | `aletheon-meta/src/impl/genome/loader.rs` | Genome loading and parsing |
+| MorphogenesisPipeline | Design skeleton | `metacog/src/impl/morphogenesis/pipeline.rs` | Orchestrates full pipeline (all `todo!()`) |
+| Candidate | Design skeleton | `metacog/src/impl/morphogenesis/candidate.rs` | Runtime candidate model |
+| MutationIntent | Design skeleton | `metacog/src/impl/morphogenesis/mutation_intent.rs` | Mutation intent from reflection |
+| GenomeLoader | Design skeleton | `metacog/src/impl/genome/loader.rs` | Genome loading and parsing |
 
 ---
 
@@ -66,7 +66,7 @@ The agent operates normally, accumulating performance data, tool call outcomes, 
 
 ### 2.2 Reflect
 
-The agent analyzes its own performance. This uses the `SelfFieldOps` trait from `aletheon-abi` to read the current state, and `BrainCoreOps` for reflection and critique.
+The agent analyzes its own performance. This uses the `SelfFieldOps` trait from `base` to read the current state, and `BrainCoreOps` for reflection and critique.
 
 Output: `MutationIntent` — a structured description of what should change.
 
@@ -74,13 +74,13 @@ Output: `MutationIntent` — a structured description of what should change.
 
 Takes the `MutationIntent` and applies it to the current `Genome`, producing a modified genome specification.
 
-Code location: `aletheon-meta/src/impl/morphogenesis/mutation_intent.rs`
+Code location: `metacog/src/impl/morphogenesis/mutation_intent.rs`
 
 ### 2.4 Generate Candidate
 
 Builds a `RuntimeCandidate` from the mutated genome. This involves the `RuntimeBuilder` from the MetaRuntime subsystem.
 
-Code location: `aletheon-meta/src/impl/morphogenesis/candidate.rs`
+Code location: `metacog/src/impl/morphogenesis/candidate.rs`
 
 ### 2.5 Evaluate
 
@@ -118,7 +118,7 @@ pub struct Genome {
 }
 ```
 
-Code location: `aletheon-abi/src/genome.rs`
+Code location: `base/src/genome.rs`
 
 ### 3.1 Topology
 
@@ -174,11 +174,11 @@ The `LineageRecorder` in the MetaRuntime preserves these invariants across all m
 ## Implementation Summary
 
 **Code locations:**
-- `aletheon-meta/src/impl/morphogenesis/pipeline.rs` — `MorphogenesisPipeline<M: MetaRuntimeOps>` (design skeleton)
-- `aletheon-meta/src/impl/morphogenesis/candidate.rs` — Candidate model
-- `aletheon-meta/src/impl/morphogenesis/mutation_intent.rs` — Mutation intent model
-- `aletheon-meta/src/impl/genome/loader.rs` — `GenomeLoader`
-- `aletheon-abi/src/genome.rs` — `Genome` struct definition
+- `metacog/src/impl/morphogenesis/pipeline.rs` — `MorphogenesisPipeline<M: MetaRuntimeOps>` (design skeleton)
+- `metacog/src/impl/morphogenesis/candidate.rs` — Candidate model
+- `metacog/src/impl/morphogenesis/mutation_intent.rs` — Mutation intent model
+- `metacog/src/impl/genome/loader.rs` — `GenomeLoader`
+- `base/src/genome.rs` — `Genome` struct definition
 
 **Key types:**
 - `MorphogenesisPipeline` — orchestrates the full pipeline

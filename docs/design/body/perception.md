@@ -137,7 +137,7 @@ Core Memory 中的 `system_state` block 由感知引擎自动更新，包含 CPU
 
 | 阶段 | 能力 |
 |------|------|
-| Phase 1（现有） | 固定 eBPF 程序集合，BPF CO-RE 编译，aletheond 启动时加载、退出时卸载 |
+| Phase 1（现有） | 固定 eBPF 程序集合，BPF CO-RE 编译，daemon 启动时加载、退出时卸载 |
 | Phase 2（扩展） | 动态加载/卸载，Agent 可请求新感知点，eBPF map 共享，tail call 链式处理 |
 
 ---
