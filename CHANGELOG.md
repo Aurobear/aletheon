@@ -31,8 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated all crate name references (aletheon-* to new names)
 
 ### Fixed
-- **IPC:** Fixed SharedMemBackend ring buffer wrap-around bug
+- **IPC:** Fixed SharedMemBackend ring buffer: corrected available() calculation with wrapping_sub, and fixed write()/read() to handle messages crossing buffer boundary
 - **IPC:** Fixed IpcManager::as_transport() to use actual active backend
+- **IPC:** Fixed IpcManager to store and use actual socket_dir instead of hardcoded /tmp
 
 ### Deprecated
 - **IPC:** Marked KernelEventBus::request() as deprecated (use RequestResponseProtocol)
