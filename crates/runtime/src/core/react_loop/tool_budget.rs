@@ -29,8 +29,9 @@ impl ToolBudget {
     }
 
     /// Check if we can still make tool calls.
+    /// max_calls == 0 means unlimited.
     pub fn can_call(&self) -> bool {
-        self.used_calls < self.max_calls
+        self.max_calls == 0 || self.used_calls < self.max_calls
     }
 
     /// Record a tool call and check budget.
@@ -52,13 +53,19 @@ impl ToolBudget {
     }
 
     /// Get remaining calls in budget.
+    /// max_calls == 0 means unlimited (returns usize::MAX).
     pub fn remaining(&self) -> usize {
-        self.max_calls.saturating_sub(self.used_calls)
+        if self.max_calls == 0 {
+            usize::MAX
+        } else {
+            self.max_calls.saturating_sub(self.used_calls)
+        }
     }
 
     /// Check if budget is exhausted.
+    /// max_calls == 0 means unlimited (never exhausted).
     pub fn is_exhausted(&self) -> bool {
-        self.used_calls >= self.max_calls
+        self.max_calls > 0 && self.used_calls >= self.max_calls
     }
 
     /// Get total calls made.

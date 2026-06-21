@@ -14,18 +14,20 @@ use template::{SummaryTemplate, SUMMARY_PREFIX};
 pub struct AdvancedCompressor {
     pub tail_config: TailProtectionConfig,
     pub target_summary_chars: usize,
+    context_window_tokens: usize,
     previous_summary: Option<String>,
     template: SummaryTemplate,
 }
 
 impl AdvancedCompressor {
-    pub fn new(tail_token_budget: usize, target_summary_chars: usize) -> Self {
+    pub fn new(tail_token_budget: usize, target_summary_chars: usize, context_window_tokens: usize) -> Self {
         Self {
             tail_config: TailProtectionConfig {
                 tail_token_budget,
                 ..Default::default()
             },
             target_summary_chars,
+            context_window_tokens,
             previous_summary: None,
             template: SummaryTemplate,
         }
@@ -40,7 +42,8 @@ impl AdvancedCompressor {
     ) -> Result<bool> {
         let total_tokens: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
 
-        if total_tokens < self.tail_config.tail_token_budget * 2 {
+        let threshold = (self.context_window_tokens as f64 * 0.8) as usize;
+        if total_tokens < threshold {
             return Ok(false);
         }
 
@@ -124,9 +127,10 @@ mod tests {
 
     #[test]
     fn test_new_compressor() {
-        let compressor = AdvancedCompressor::new(20_000, 4_000);
+        let compressor = AdvancedCompressor::new(20_000, 4_000, 128_000);
         assert_eq!(compressor.tail_config.tail_token_budget, 20_000);
         assert_eq!(compressor.target_summary_chars, 4_000);
+        assert_eq!(compressor.context_window_tokens, 128_000);
         assert!(compressor.previous_summary.is_none());
     }
 
@@ -166,7 +170,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compressor_actually_compacts() {
-        let mut compressor = AdvancedCompressor::new(100, 200);
+        let mut compressor = AdvancedCompressor::new(100, 200, 1_000);
         let llm = SimpleLlm;
 
         // Build many large messages to exceed threshold

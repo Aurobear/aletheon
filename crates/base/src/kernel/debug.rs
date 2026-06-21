@@ -43,6 +43,10 @@ pub struct DebugEvent {
 pub trait DebugSink: Send + Sync {
     async fn emit(&self, event: DebugEvent);
     fn should_trace(&self, tp: &Tracepoint) -> bool;
+    /// Unique identifier for this sink (used for removal).
+    fn sink_id(&self) -> &str { "" }
+    /// Per-sink event filter. If None, accepts all events.
+    fn sink_filter(&self) -> Option<&crate::kernel::debug_bus::EventFilter> { None }
 }
 
 /// Macro for declaring static tracepoints.

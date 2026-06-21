@@ -11,6 +11,8 @@ pub struct EngineConfig {
     pub tail_token_budget: usize,
     /// Target summary length in characters after compaction
     pub target_summary_chars: usize,
+    /// Context window size in tokens (used for 80% auto-compaction threshold).
+    pub context_window_tokens: usize,
     /// Enable the learning module for outcome recording and pattern matching.
     pub learning_enabled: bool,
     /// Minimum occurrences before a pattern is considered significant.
@@ -38,6 +40,7 @@ impl Default for EngineConfig {
             compaction_threshold: 30,
             tail_token_budget: 4000,
             target_summary_chars: 2000,
+            context_window_tokens: 128_000,
             learning_enabled: false,
             learning_min_occurrences: 3,
             learning_success_threshold: 0.5,

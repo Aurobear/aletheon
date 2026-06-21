@@ -112,7 +112,7 @@ impl Engine {
         tool_runner: Option<ToolRunnerWithGuard>,
     ) -> Self {
         let compressor =
-            AdvancedCompressor::new(config.tail_token_budget, config.target_summary_chars);
+            AdvancedCompressor::new(config.tail_token_budget, config.target_summary_chars, config.context_window_tokens);
         // Initialize learning components if enabled
         let (outcome_recorder, pattern_extractor) = if config.learning_enabled {
             let db_path = working_dir.join(".learning_outcomes.db");

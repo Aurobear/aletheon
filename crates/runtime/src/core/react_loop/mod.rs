@@ -162,7 +162,7 @@ impl ReActLoop {
             config.tail_token_budget
         };
         let compressor =
-            AdvancedCompressor::new(effective_tail, config.target_summary_chars);
+            AdvancedCompressor::new(effective_tail, config.target_summary_chars, config.context_window_tokens);
         let tool_budget = ToolBudget::new(config.agent_loop.max_tool_calls);
         let circuit_breaker = CircuitBreaker::new(
             config.circuit_breaker.max_repeats,
@@ -636,7 +636,8 @@ mod tests {
     async fn loop_compacts_when_over_budget() {
         // tail_token_budget=5000 so the tail can hold ~3 messages (~7500 tokens).
         // Messages from tool interactions are ~2500 tokens each, so compaction
-        // triggers when total > 10000 tokens (about 4 messages).
+        // triggers when total > 80% of context_window_tokens.
+        // Set context_window_tokens=12_500 so 80% threshold = 10_000 tokens (about 4 messages).
         let cfg = RuntimeConfig {
             max_iterations: 30,
             session_id: "t".into(),
@@ -644,7 +645,7 @@ mod tests {
             compaction_enabled: true,
             tail_token_budget: 5_000,
             target_summary_chars: 200,
-            context_window_tokens: 128_000,
+            context_window_tokens: 12_500,
             agent_loop: crate::core::config::AgentLoopConfig {
                 max_tool_calls: 25, // Higher threshold for this compaction test
                 reflection_interval: 30, // Disable reflection for this compaction test

@@ -455,8 +455,16 @@ impl RequestHandler {
         let tool_defs_clone = tool_defs.clone();
         let goal_message = message.to_string();
 
+        // Get existing messages from session manager for context continuity
+        let existing_messages = {
+            let sm = self.session_manager.lock().await;
+            sm.history().to_vec()
+        };
+
         let mut react_task = tokio::spawn(async move {
             let mut react_loop = ReActLoop::new(config);
+            // Seed with existing conversation history for context continuity
+            react_loop.seed_messages(existing_messages);
             react_loop.set_goal(goal_message.clone());
             event_sink.emit(Event::GoalSet {
                 goal: goal_message,
@@ -475,6 +483,9 @@ impl RequestHandler {
         // When a tool needs L2+ approval, the SocketApprovalGate sends
         // a PendingApproval through the channel. We generate an
         // approval_id, store the oneshot sender, and notify the client.
+        let mut tool_calls_for_session: Vec<(String, String, serde_json::Value)> = Vec::new();
+        let mut tool_results_for_session: Vec<(String, String, bool)> = Vec::new();
+
         let text = loop {
             tokio::select! {
                 result = &mut react_task => {
@@ -483,6 +494,23 @@ impl RequestHandler {
                     break result.unwrap_or_else(|e| Err(anyhow::anyhow!("react task panicked: {e}")));
                 }
                 Some(event) = event_rx.recv() => {
+                    // Track tool calls for session manager
+                    match &event {
+                        Event::ToolCallStart { name, call_id } => {
+                            tool_calls_for_session.push((call_id.clone(), name.clone(), serde_json::Value::Null));
+                        }
+                        Event::ToolCallComplete { call_id, name: _, args } => {
+                            // Update the tool call with its actual arguments
+                            if let Some(tc) = tool_calls_for_session.iter_mut().find(|(id, _, _)| id == call_id) {
+                                tc.2 = args.clone();
+                            }
+                        }
+                        Event::ToolResult { name: _, call_id, result } => {
+                            tool_results_for_session.push((call_id.clone(), result.content.clone(), result.is_error));
+                        }
+                        _ => {}
+                    }
+
                     if let Some(json_str) = event_to_json(&event) {
                         if let Some(ref tx) = notify_tx {
                             let _ = tx.send(json_str).await;
@@ -613,9 +641,35 @@ impl RequestHandler {
             }
         }
 
-        // Push assistant response and compact if needed
+        // Push tool call messages and assistant response to session manager
+        // This ensures the session history has the correct structure for OpenAI API
         let turn = {
             let mut sm = self.session_manager.lock().await;
+
+            // Push tool call messages if any
+            if !tool_calls_for_session.is_empty() {
+                use base::message::{ContentBlock, Message, Role};
+
+                // Create assistant message with tool_use blocks
+                let content_blocks: Vec<ContentBlock> = tool_calls_for_session
+                    .iter()
+                    .map(|(id, name, input)| ContentBlock::ToolUse {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                    })
+                    .collect();
+                sm.push_message(Message {
+                    role: Role::Assistant,
+                    content: content_blocks,
+                });
+
+                // Push tool result messages
+                for (call_id, content, is_error) in &tool_results_for_session {
+                    sm.push_message(Message::tool_result(call_id, content, *is_error));
+                }
+            }
+
             sm.push_assistant(&text).await;
             let _ = sm.compact_if_needed(&*self.llm).await;
             sm.turn_count()

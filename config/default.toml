@@ -97,8 +97,8 @@ pre_tool = []                                     # Before each tool call (can b
 
 # ── Agent Loop ─────────────────────────────────────────────────────────
 [agent.agent_loop]
-# Maximum tool calls per turn
-max_tool_calls = 10
+# Maximum tool calls per turn (0 = unlimited)
+max_tool_calls = 0
 
 # Reflection interval (every N tool calls)
 reflection_interval = 5

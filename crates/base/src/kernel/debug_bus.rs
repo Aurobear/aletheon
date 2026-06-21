@@ -223,12 +223,14 @@ impl DebugSink for RecorderSink {
 
 /// A DebugSink that forwards events to an mpsc channel for a connected client.
 pub struct SubscriberSink {
+    id: String,
     tx: mpsc::Sender<DebugEvent>,
+    filter: EventFilter,
 }
 
 impl SubscriberSink {
-    pub fn new(tx: mpsc::Sender<DebugEvent>) -> Self {
-        Self { tx }
+    pub fn new(id: String, tx: mpsc::Sender<DebugEvent>, filter: EventFilter) -> Self {
+        Self { id, tx, filter }
     }
 }
 
@@ -241,6 +243,14 @@ impl DebugSink for SubscriberSink {
 
     fn should_trace(&self, _tp: &Tracepoint) -> bool {
         true
+    }
+
+    fn sink_id(&self) -> &str {
+        &self.id
+    }
+
+    fn sink_filter(&self) -> Option<&EventFilter> {
+        Some(&self.filter)
     }
 }
 
@@ -307,22 +317,42 @@ impl DebugBusHook {
         self.filter = filter;
     }
 
+    /// Get a reference to the current global event filter.
+    pub fn current_filter(&self) -> &EventFilter {
+        &self.filter
+    }
+
+    /// Remove a sink by its sink_id (used for subscriber unsubscription).
+    pub fn remove_sink_by_id(&mut self, id: &str) {
+        self.sinks.retain(|s| s.sink_id() != id);
+    }
+
+    /// Remove all subscriber sinks (those that have a per-sink filter).
+    /// Keeps non-subscriber sinks (e.g. recorder sinks).
+    pub fn clear_subscriber_sinks(&mut self) {
+        self.sinks.retain(|s| s.sink_filter().is_none());
+    }
+
     /// Called on every EventBus.publish().
     ///
     /// Forwards matching events to sinks and records to bag.
     pub async fn on_event(&mut self, event: &DebugEvent) {
-        if !self.filter.matches(event) {
-            return;
-        }
-
-        // Forward to sinks
+        // Forward to sinks with per-sink filtering
         for sink in &self.sinks {
-            sink.emit(event.clone()).await;
+            let passes = match sink.sink_filter() {
+                Some(f) => f.matches(event),
+                None => self.filter.matches(event), // fallback to global
+            };
+            if passes {
+                sink.emit(event.clone()).await;
+            }
         }
 
-        // Record to bag
-        if let Some(ref mut rec) = self.recorder {
-            rec.record(event.clone());
+        // Record to bag (uses global filter)
+        if self.filter.matches(event) {
+            if let Some(ref mut rec) = self.recorder {
+                rec.record(event.clone());
+            }
         }
     }
 

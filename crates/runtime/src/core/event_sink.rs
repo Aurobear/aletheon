@@ -25,6 +25,8 @@ pub enum Event {
     },
     /// A tool call has started (name + call_id for streaming).
     ToolCallStart { name: String, call_id: String },
+    /// A tool call's arguments are now complete (after streaming accumulation).
+    ToolCallComplete { call_id: String, name: String, args: serde_json::Value },
     /// A tool execution completed.
     ToolResult {
         name: String,
@@ -123,6 +125,12 @@ pub enum Event {
     },
     /// Circuit breaker tripped.
     CircuitBreakerTripped {
+        reason: String,
+    },
+    /// Compaction was triggered due to context usage.
+    CompactionTriggered {
+        used_tokens: usize,
+        threshold: usize,
         reason: String,
     },
 }
@@ -353,6 +361,11 @@ mod tests {
         let _ = Event::ToolCallStart {
             name: "bash".into(),
             call_id: "c1".into(),
+        };
+        let _ = Event::ToolCallComplete {
+            call_id: "c1".into(),
+            name: "bash".into(),
+            args: serde_json::json!({"command": "ls"}),
         };
         let _ = Event::AwarenessChanged {
             level: "hesitant".into(),

@@ -94,6 +94,9 @@ pub enum Command {
     #[command(alias = "st")]
     Status,
 
+    /// Restore terminal to normal state (fix stuck raw mode/mouse capture)
+    RestoreTerminal,
+
     /// Debug tools (topic, node, bag, perf, trace)
     Debug {
         #[command(subcommand)]
@@ -157,6 +160,11 @@ async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
         Command::Evolution => single_message(socket, "/evolution").await,
         Command::Genome => single_message(socket, "/genome").await,
         Command::Status => single_message(socket, "/status").await,
+        Command::RestoreTerminal => {
+            super::restore_terminal();
+            println!("Terminal restored to normal state.");
+            Ok(())
+        }
         Command::Debug { action } => debug::run(socket, action).await,
     }
 }
@@ -237,6 +245,9 @@ async fn handle_daemon_action(action: DaemonAction) -> Result<()> {
     Ok(())
 }
 
+/// Default timeout for single-message mode (seconds).
+const SINGLE_MESSAGE_TIMEOUT_SECS: u64 = 120;
+
 /// Send a single message and print the response.
 pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
     let mut stream = UnixStream::connect(socket).await?;
@@ -285,85 +296,189 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
     writer.write_all(req_str.as_bytes()).await?;
     writer.write_all(b"\n").await?;
 
-    loop {
-        let mut response = String::new();
-        reader.read_line(&mut response).await?;
-        let resp: serde_json::Value = serde_json::from_str(&response)?;
+    // Track whether we received any streaming text to avoid duplicate output.
+    let mut had_streaming_text = false;
 
-        // Handle out-of-band approval_request notification (must check before
-        // the general notification skip, since approval_request also has no "id")
-        if resp.get("method").and_then(|v| v.as_str()) == Some("approval_request")
-            && resp.get("result").is_none()
-            && resp.get("id").is_none()
-        {
-            let params = &resp["params"];
-            let tool = params["tool"].as_str().unwrap_or("?");
-            let action_summary = params["action_summary"].as_str().unwrap_or("");
-            let risk_level = params["risk_level"].as_str().unwrap_or("");
-            let approval_id = params["approval_id"].as_str().unwrap_or("");
-            eprintln!(
-                "\n\u{26a0}  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
-                risk_level, tool, action_summary,
-            );
-            let mut line = String::new();
-            let stdin = io::stdin();
-            let decision = match stdin.read_line(&mut line) {
-                Ok(0) | Err(_) => "deny",
-                Ok(_) => match line.trim().to_lowercase().as_str() {
-                    "y" | "yes" => "approve",
-                    "a" | "always" => "approve_for_session",
-                    _ => "deny",
-                },
-            };
-            let approval_resp = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": null,
-                "method": "approval_response",
-                "params": {
-                    "approval_id": approval_id,
-                    "decision": decision,
+    // Use tokio::time::timeout to wrap the entire response reading loop.
+    // This provides a clean timeout mechanism.
+    let timeout_duration = std::time::Duration::from_secs(SINGLE_MESSAGE_TIMEOUT_SECS);
+
+    let result = tokio::time::timeout(timeout_duration, async {
+        let mut response_buf = String::new();
+        loop {
+            response_buf.clear();
+            match reader.read_line(&mut response_buf).await {
+                Ok(0) => {
+                    eprintln!("Connection lost");
+                    return Ok::<(), anyhow::Error>(());
                 }
-            });
-            let resp_str = serde_json::to_string(&approval_resp)?;
-            writer.write_all(resp_str.as_bytes()).await?;
-            writer.write_all(b"\n").await?;
-            continue; // wait for the actual response
-        }
-
-        // Skip streaming events (notifications have no "id" field).
-        // These are text_delta, tool_call_start, tool_call_result, usage,
-        // turn_done, awareness_changed, mode_changed, etc.
-        if resp.get("id").is_none() && resp.get("method").is_some() {
-            // Print text_delta inline for progressive output
-            if let Some(params) = resp.get("params") {
-                if resp["method"] == "text_delta" {
-                    if let Some(text) = params["text"].as_str() {
-                        eprint!("{}", text);
-                    }
-                } else if resp["method"] == "turn_done" {
-                    eprintln!(); // newline after streaming
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("Error reading response: {}", e);
+                    return Err(anyhow::anyhow!("Read error: {}", e));
                 }
             }
+
+            let resp: serde_json::Value = match serde_json::from_str(response_buf.trim()) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            // Handle out-of-band approval_request notification
+            if resp.get("method").and_then(|v| v.as_str()) == Some("approval_request")
+                && resp.get("result").is_none()
+                && resp.get("id").is_none()
+            {
+                let params = &resp["params"];
+                let tool = params["tool"].as_str().unwrap_or("?");
+                let action_summary = params["action_summary"].as_str().unwrap_or("");
+                let risk_level = params["risk_level"].as_str().unwrap_or("");
+                let approval_id = params["approval_id"].as_str().unwrap_or("");
+                eprintln!(
+                    "\n\u{26a0}  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
+                    risk_level, tool, action_summary,
+                );
+                let mut line = String::new();
+                let stdin = io::stdin();
+                let decision = match stdin.read_line(&mut line) {
+                    Ok(0) | Err(_) => "deny",
+                    Ok(_) => match line.trim().to_lowercase().as_str() {
+                        "y" | "yes" => "approve",
+                        "a" | "always" => "approve_for_session",
+                        _ => "deny",
+                    },
+                };
+                let approval_resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "method": "approval_response",
+                    "params": {
+                        "approval_id": approval_id,
+                        "decision": decision,
+                    }
+                });
+                let resp_str = serde_json::to_string(&approval_resp)?;
+                writer.write_all(resp_str.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                continue; // wait for the actual response
+            }
+
+            // Skip streaming events (notifications have no "id" field).
+            // These are text_delta, tool_call_start, tool_call_result, usage,
+            // turn_done, awareness_changed, mode_changed, etc.
+            if resp.get("id").is_none() && resp.get("method").is_some() {
+                // Print tool_call_start for visibility, but skip text_delta
+                // since the final response contains the full text (avoids duplication).
+                if let Some(params) = resp.get("params") {
+                    let event_method = resp["method"].as_str().unwrap_or("");
+                    if event_method == "event" {
+                        if let Some(event_type) = params.get("type").and_then(|v| v.as_str()) {
+                            match event_type {
+                                "tool_call_start" => {
+                                    if let Some(name) = params.get("tool").and_then(|v| v.as_str()) {
+                                        eprintln!("🔧 [{}]", name);
+                                    }
+                                }
+                                "tool_call_result" => {
+                                    // Show brief tool result
+                                }
+                                "text_delta" => {
+                                    had_streaming_text = true;
+                                    // Skip — final response has full text
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Final response — print the full text (this is the authoritative output)
+            if let Some(text) = resp["result"]["response"].as_str() {
+                // Deduplicate consecutive identical lines (some models repeat text)
+                let deduped = deduplicate_response(text);
+                println!("{}", deduped);
+            } else if !resp["result"]["reflections"].is_null() {
+                println!("{}", format_reflections(&resp["result"]["reflections"]));
+            } else if !resp["result"]["genome"].is_null() {
+                println!("{}", format_genome(&resp["result"]["genome"]));
+            } else if !resp["result"]["evolution"].is_null() {
+                println!("{}", format_evolution(&resp["result"]["evolution"]));
+            } else if let Some(_status) = resp["result"]["status"].as_object() {
+                println!("{}", format_status(&resp["result"]["status"]));
+            } else if let Some(err) = resp["error"]["message"].as_str() {
+                eprintln!("Error: {}", err);
+            }
+            return Ok(());
+        }
+    }).await;
+
+    match result {
+        Ok(inner) => inner?,
+        Err(_) => {
+            eprintln!("\n⏰ Timeout: no response after {}s", SINGLE_MESSAGE_TIMEOUT_SECS);
+        }
+    }
+    Ok(())
+}
+
+/// Deduplicate consecutive identical content in response text.
+/// Some models (especially with tool calls) repeat the same text twice.
+/// This function handles both line-level and sentence-level duplication.
+fn deduplicate_response(text: &str) -> String {
+    // First, try line-level deduplication
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return text.to_string();
+    }
+
+    let mut deduped_lines = Vec::new();
+    let mut prev_line = lines[0];
+    deduped_lines.push(prev_line);
+
+    for line in &lines[1..] {
+        // Skip consecutive identical lines (trimmed comparison)
+        if line.trim() == prev_line.trim() {
+            continue;
+        }
+        prev_line = line;
+        deduped_lines.push(line);
+    }
+
+    let result = deduped_lines.join("\n");
+
+    // Also handle sentence-level duplication (same sentence repeated on same line)
+    // This handles cases like "Sentence.Sentence." -> "Sentence."
+    deduplicate_sentences(&result)
+}
+
+/// Deduplicate consecutive identical text blocks within a string.
+/// Handles cases where the same text (one or more sentences) is repeated.
+fn deduplicate_sentences(text: &str) -> String {
+    // Try to find the longest repeated prefix
+    // This handles multi-sentence duplicates like "Sentence1. Sentence2.Sentence1. Sentence2."
+    let len = text.len();
+
+    // Try different split points to find the repeated block
+    for split_pos in (1..=len / 2).rev() {
+        // Ensure we split at a valid UTF-8 boundary
+        if !text.is_char_boundary(split_pos) {
             continue;
         }
 
-        // Final response
-        if let Some(text) = resp["result"]["response"].as_str() {
-            println!("{}", text);
-        } else if !resp["result"]["reflections"].is_null() {
-            println!("{}", format_reflections(&resp["result"]["reflections"]));
-        } else if !resp["result"]["genome"].is_null() {
-            println!("{}", format_genome(&resp["result"]["genome"]));
-        } else if !resp["result"]["evolution"].is_null() {
-            println!("{}", format_evolution(&resp["result"]["evolution"]));
-        } else if let Some(_status) = resp["result"]["status"].as_object() {
-            println!("{}", format_status(&resp["result"]["status"]));
-        } else if let Some(err) = resp["error"]["message"].as_str() {
-            eprintln!("Error: {}", err);
+        let prefix = &text[..split_pos];
+        let suffix = &text[split_pos..];
+
+        // Check if the suffix starts with the same prefix
+        if suffix.starts_with(prefix) {
+            // Found a repeated block - return just the prefix
+            return prefix.to_string();
         }
-        break;
     }
-    Ok(())
+
+    // No repeated block found, return original text
+    text.to_string()
 }
 
 /// Format reflection entries for display.

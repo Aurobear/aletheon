@@ -88,6 +88,10 @@ impl ReActLoop {
                 content: response.content.clone(),
             });
 
+            // Deferred reflection — injected after all tool results to preserve
+            // OpenAI API message format (assistant(tool_use) → tool results only)
+            let mut pending_reflection: Option<String> = None;
+
             // Execute each requested tool and feed results back.
             for (id, name, input) in &tool_calls {
                 // Check tool budget before executing
@@ -148,18 +152,11 @@ impl ReActLoop {
                 });
                 // Emit awareness signal for tool completion
                 self.emit_tool_call_end(name);
-                // Record call in reflection engine
+                // Record call in reflection engine (defer injection until after
+                // all tool results to preserve OpenAI API message format)
+                let mut should_reflect = false;
                 if self.reflection_engine.record_call() {
-                    let ctx = crate::core::react_loop::reflection::ReflectionContext {
-                        goal: self.goal_tracker.current_goal_description(),
-                        recent_actions: self.recent_tools.clone(),
-                        current_state: if is_error { "error" } else { "ok" }.to_string(),
-                        tool_calls_made,
-                        errors: tool_errors,
-                    };
-                    let result = self.reflection_engine.reflect(&ctx);
-                    // Inject reflection into conversation
-                    self.messages.push(Message::user(format!("[Reflection]\n{}", result.summary)));
+                    should_reflect = true;
                 }
                 // Truncate large tool outputs before storing in conversation
                 const MAX_TOOL_RESULT_CHARS: usize = 8000;
@@ -173,6 +170,24 @@ impl ReActLoop {
                 };
                 self.messages
                     .push(Message::tool_result(id, &truncated_content, is_error));
+                // Defer reflection until after all tool results
+                if should_reflect {
+                    let ctx = crate::core::react_loop::reflection::ReflectionContext {
+                        goal: self.goal_tracker.current_goal_description(),
+                        recent_actions: self.recent_tools.clone(),
+                        current_state: if is_error { "error" } else { "ok" }.to_string(),
+                        tool_calls_made,
+                        errors: tool_errors,
+                    };
+                    let result = self.reflection_engine.reflect(&ctx);
+                    // Store for injection after all tool results
+                    pending_reflection = Some(result.summary);
+                }
+            }
+
+            // Inject reflection AFTER all tool results to preserve API message format
+            if let Some(summary) = pending_reflection.take() {
+                self.messages.push(Message::user(format!("[Reflection]\n{}", summary)));
             }
 
             // Check if reflection recommended stopping

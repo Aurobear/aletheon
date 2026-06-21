@@ -69,28 +69,16 @@ pub fn render_input(
         spans.push(Span::styled(rest, Style::default().fg(Color::White)));
     }
 
-    // CJK indicator
-    if has_cjk {
-        spans.push(Span::styled(
-            "  [CJK]",
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
-
     let input_line = Paragraph::new(Line::from(spans));
     f.render_widget(input_line, input_area);
 
-    // Row 2: hint line
+    // Row 2: hint line (Claude/Codex style - minimal)
     let hint_area = Rect {
         y: area.y + 2,
         height: 1,
         ..area
     };
-    let hint = if has_cjk {
-        "  Enter 发送(延迟) │ Shift+Enter 换行 │ Esc 清空"
-    } else {
-        "  Enter 发送 │ Shift+Enter 换行 │ Esc 清空"
-    };
+    let hint = "  \\ + Enter 换行 │ /help 帮助";
     let hint_line = Paragraph::new(Line::from(Span::styled(
         hint,
         Style::default().fg(Color::DarkGray),

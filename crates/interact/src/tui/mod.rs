@@ -34,6 +34,20 @@ pub mod debug;
 // Re-export the main entry point
 pub use cli::run;
 
+/// Restore terminal to normal state.
+/// Useful when the terminal is stuck in raw mode or mouse capture mode.
+pub fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        io::stderr(),
+        LeaveAlternateScreen,
+        DisableBracketedPaste,
+        DisableFocusChange,
+        DisableMouseCapture
+    );
+    let _ = execute!(io::stderr(), crossterm::cursor::Show);
+}
+
 use std::collections::HashMap;
 use std::io;
 use std::time::{Duration, Instant};
@@ -112,6 +126,23 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         let mut terminal = Terminal::new(backend)?;
         run_app(&mut terminal, stream, caps, model_name, test_config, true).await
     } else {
+        // RAII guard that restores terminal state on drop.
+        // Handles normal exit, panic, and signal-driven exit.
+        struct TerminalGuard;
+        impl Drop for TerminalGuard {
+            fn drop(&mut self) {
+                let _ = disable_raw_mode();
+                let _ = execute!(
+                    io::stderr(),
+                    LeaveAlternateScreen,
+                    DisableBracketedPaste,
+                    DisableFocusChange,
+                    DisableMouseCapture
+                );
+                let _ = execute!(io::stderr(), crossterm::cursor::Show);
+            }
+        }
+
         // Set up real terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -128,11 +159,25 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         // Clear alternate screen completely (fixes dirty data from previous runs)
         terminal.clear()?;
 
+        // Install RAII guard — dropped on any exit path (return, panic, signal)
+        let _guard = TerminalGuard;
+
         // Install panic hook to ensure terminal is restored on panic/crash.
-        // Without this, a panic leaves the terminal in raw mode with mouse
-        // tracking enabled, producing garbage escape sequences.
+        // The Drop guard handles the actual cleanup; this hook just ensures
+        // the panic message is visible by flushing stderr.
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
+            // TerminalGuard::drop() will run during unwinding
+            original_hook(info);
+        }));
+
+        // Install signal handler to restore terminal on SIGINT/SIGTERM.
+        // Note: We do NOT call std::process::exit() here because that would
+        // skip Drop destructors (including TerminalGuard). Instead, we force
+        // cleanup directly and then exit via exit() — the guard is already
+        // redundant at that point since we cleaned up manually.
+        ctrlc::set_handler(move || {
+            // Directly restore terminal state (can't rely on Drop here)
             let _ = disable_raw_mode();
             let _ = execute!(
                 io::stderr(),
@@ -141,21 +186,16 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
                 DisableFocusChange,
                 DisableMouseCapture
             );
-            original_hook(info);
-        }));
+            let _ = execute!(io::stderr(), crossterm::cursor::Show);
+            std::process::exit(130);
+        })
+        .expect("Error setting Ctrl-C handler");
 
         let result = run_app(&mut terminal, stream, caps, model_name, test_config, false).await;
 
-        // Restore terminal
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableBracketedPaste,
-            DisableFocusChange,
-            DisableMouseCapture
-        )?;
-        terminal.show_cursor()?;
+        // TerminalGuard::drop() handles terminal cleanup.
+        // Explicitly drop the guard before returning to ensure clean state.
+        drop(_guard);
 
         result
     };

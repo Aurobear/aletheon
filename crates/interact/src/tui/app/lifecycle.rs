@@ -263,82 +263,140 @@ pub async fn simple_line_mode(
             .await?;
         stream.flush().await?;
 
-        // Wait for response
-        loop {
-            match stream.try_read(&mut read_buf) {
-                Ok(0) => {
-                    println!("Connection lost");
-                    return Ok(());
-                }
-                Ok(n) => {
-                    let chunk = String::from_utf8_lossy(&read_buf[..n]);
-                    if let Ok(msg) = serde_json::from_str::<serde_json::Value>(chunk.trim()) {
-                        // Handle out-of-band approval_request notification
-                        if msg.get("method").and_then(|v| v.as_str()) == Some("approval_request")
-                            && msg.get("result").is_none()
-                            && msg.get("id").is_none()
-                        {
-                            let params = &msg["params"];
-                            let tool = params["tool"].as_str().unwrap_or("?");
-                            let action_summary = params["action_summary"].as_str().unwrap_or("");
-                            let risk_level = params["risk_level"].as_str().unwrap_or("");
-                            let approval_id = params["approval_id"].as_str().unwrap_or("");
-                            println!(
-                                "\n⚠  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
-                                risk_level, tool, action_summary,
-                            );
-                            io::stdout().flush()?;
-                            let mut line = String::new();
-                            let decision = match stdin.read_line(&mut line) {
-                                Ok(0) | Err(_) => "deny",
-                                Ok(_) => match line.trim().to_lowercase().as_str() {
-                                    "y" | "yes" => "approve",
-                                    "a" | "always" => "approve_for_session",
-                                    _ => "deny",
-                                },
-                            };
-                            let resp = serde_json::json!({
-                                "jsonrpc": "2.0",
-                                "id": null,
-                                "method": "approval_response",
-                                "params": {
-                                    "approval_id": approval_id,
-                                    "decision": decision,
-                                }
-                            });
-                            let payload = serde_json::to_string(&resp)?;
-                            stream
-                                .write_all(format!("{}\n", payload).as_bytes())
-                                .await?;
-                            stream.flush().await?;
-                            continue; // go back to wait for the actual response
-                        }
-                        if let Some(text) = msg["result"]["response"].as_str() {
-                            println!("\n{}\n", text);
-                        } else if !msg["result"]["reflections"].is_null() {
-                            println!("\n{}\n", format_reflections(&msg["result"]["reflections"]));
-                        } else if !msg["result"]["genome"].is_null() {
-                            println!("\n{}\n", format_genome(&msg["result"]["genome"]));
-                        } else if !msg["result"]["evolution"].is_null() {
-                            println!("\n{}\n", format_evolution(&msg["result"]["evolution"]));
-                        } else if !msg["result"]["status"].is_null() {
-                            println!("\n{}\n", format_status(&msg["result"]["status"]));
-                        } else if !msg["result"]["sessions"].is_null() {
-                            println!("\n{}\n", format_sessions(&msg["result"]["sessions"]));
-                        } else if !msg["result"]["models"].is_null() {
-                            println!("\n{}\n", format_models(&msg["result"]));
-                        } else if let Some(msg_text) = msg["result"]["message"].as_str() {
-                            println!("\n{}\n", msg_text);
-                        } else if let Some(err) = msg["error"]["message"].as_str() {
-                            eprintln!("Error: {}\n", err);
-                        }
-                        break;
+        // Wait for response — drain out-of-band notifications until we get
+        // the actual JSON-RPC response (identified by having "id" + "result"/"error").
+        // Use tokio::time::timeout for clean timeout handling.
+        let timeout_duration = Duration::from_secs(120);
+
+        let result = tokio::time::timeout(timeout_duration, async {
+            loop {
+                // Wait for stream to be readable
+                match stream.readable().await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        return Ok::<(), anyhow::Error>(());
                     }
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+
+                match stream.try_read(&mut read_buf) {
+                    Ok(0) => {
+                        println!("Connection lost");
+                        return Ok(());
+                    }
+                    Ok(n) => {
+                        let chunk = String::from_utf8_lossy(&read_buf[..n]);
+                        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(chunk.trim()) {
+                            // Handle out-of-band approval_request notification
+                            if msg.get("method").and_then(|v| v.as_str()) == Some("approval_request")
+                                && msg.get("result").is_none()
+                                && msg.get("id").is_none()
+                            {
+                                let params = &msg["params"];
+                                let tool = params["tool"].as_str().unwrap_or("?");
+                                let action_summary = params["action_summary"].as_str().unwrap_or("");
+                                let risk_level = params["risk_level"].as_str().unwrap_or("");
+                                let approval_id = params["approval_id"].as_str().unwrap_or("");
+                                println!(
+                                    "\n⚠  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
+                                    risk_level, tool, action_summary,
+                                );
+                                io::stdout().flush()?;
+                                let mut line = String::new();
+                                let decision = match stdin.read_line(&mut line) {
+                                    Ok(0) | Err(_) => "deny",
+                                    Ok(_) => match line.trim().to_lowercase().as_str() {
+                                        "y" | "yes" => "approve",
+                                        "a" | "always" => "approve_for_session",
+                                        _ => "deny",
+                                    },
+                                };
+                                let resp = serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": null,
+                                    "method": "approval_response",
+                                    "params": {
+                                        "approval_id": approval_id,
+                                        "decision": decision,
+                                    }
+                                });
+                                let payload = serde_json::to_string(&resp)?;
+                                stream
+                                    .write_all(format!("{}\n", payload).as_bytes())
+                                    .await?;
+                                stream.flush().await?;
+                                continue; // go back to wait for the actual response
+                            }
+
+                            // Skip out-of-band notifications (method: "event", etc.)
+                            // These are streaming events from the ReAct loop — not the
+                            // final JSON-RPC response.  A real response has "id" and
+                            // either "result" or "error".
+                            let is_notification = msg.get("method").is_some()
+                                && msg.get("id").is_none_or(|v| v.is_null());
+                            if is_notification {
+                                // Print streaming events that carry text content
+                                if let Some(event_type) = msg.pointer("/params/type").and_then(|v| v.as_str()) {
+                                    match event_type {
+                                        "text" | "text_delta" => {
+                                            // Skip text_delta in simple_line_mode to avoid
+                                            // duplicate output (final response has full text)
+                                        }
+                                        "tool_call_start" => {
+                                            if let Some(name) = msg.pointer("/params/tool").and_then(|v| v.as_str()) {
+                                                eprintln!("\n🔧 [{}]", name);
+                                            }
+                                        }
+                                        "tool_result" => {
+                                            // Optionally show tool results inline
+                                        }
+                                        "error" => {
+                                            if let Some(err) = msg.pointer("/params/message").and_then(|v| v.as_str()) {
+                                                eprintln!("\n❌ {}", err);
+                                            }
+                                        }
+                                        _ => {} // silently skip other event types
+                                    }
+                                }
+                                io::stdout().flush()?;
+                                continue; // keep waiting for the actual response
+                            }
+
+                            // This is the actual JSON-RPC response — process it
+                            if let Some(text) = msg["result"]["response"].as_str() {
+                                println!("\n{}\n", text);
+                            } else if !msg["result"]["reflections"].is_null() {
+                                println!("\n{}\n", format_reflections(&msg["result"]["reflections"]));
+                            } else if !msg["result"]["genome"].is_null() {
+                                println!("\n{}\n", format_genome(&msg["result"]["genome"]));
+                            } else if !msg["result"]["evolution"].is_null() {
+                                println!("\n{}\n", format_evolution(&msg["result"]["evolution"]));
+                            } else if !msg["result"]["status"].is_null() {
+                                println!("\n{}\n", format_status(&msg["result"]["status"]));
+                            } else if !msg["result"]["sessions"].is_null() {
+                                println!("\n{}\n", format_sessions(&msg["result"]["sessions"]));
+                            } else if !msg["result"]["models"].is_null() {
+                                println!("\n{}\n", format_models(&msg["result"]));
+                            } else if let Some(msg_text) = msg["result"]["message"].as_str() {
+                                println!("\n{}\n", msg_text);
+                            } else if let Some(err) = msg["error"]["message"].as_str() {
+                                eprintln!("Error: {}\n", err);
+                            }
+                            return Ok(());
+                        }
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                    Err(_) => return Ok(()),
                 }
-                Err(_) => break,
+            }
+        }).await;
+
+        match result {
+            Ok(inner) => inner?,
+            Err(_) => {
+                eprintln!("\n⏰ Timeout: no response after 120s");
             }
         }
     }

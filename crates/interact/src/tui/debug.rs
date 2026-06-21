@@ -54,6 +54,50 @@ pub enum DebugCommand {
         #[command(subcommand)]
         action: TraceAction,
     },
+
+    /// Unified health dashboard
+    Health,
+
+    /// List running subsystems
+    Nodes,
+
+    /// Runtime parameter inspection
+    Param {
+        #[command(subcommand)]
+        action: ParamAction,
+    },
+
+    /// Event rate monitoring (like ros2 topic hz)
+    Hz {
+        /// Tracepoint name to monitor
+        tracepoint: String,
+
+        /// Monitoring window in seconds
+        #[arg(short, long, default_value = "5")]
+        window: u64,
+    },
+
+    /// Show event flow topology (like rqt_graph)
+    Graph {
+        /// Output format: text or dot
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+
+    /// Structured log streaming (like roslog)
+    Log {
+        /// Filter by minimum level
+        #[arg(long, default_value = "info")]
+        level: String,
+
+        /// Filter by module
+        #[arg(long)]
+        r#module: Option<String>,
+
+        /// Grep pattern for log messages
+        #[arg(long)]
+        grep: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -137,6 +181,21 @@ pub enum TraceAction {
     Status,
 }
 
+#[derive(Subcommand)]
+pub enum ParamAction {
+    /// Get a parameter value
+    Get {
+        /// Parameter key (e.g., agent.max_iterations)
+        key: String,
+    },
+
+    /// List all parameters
+    List,
+
+    /// Dump full configuration as JSON
+    Dump,
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -170,6 +229,16 @@ pub async fn run(socket: &std::path::Path, cmd: DebugCommand) -> Result<()> {
             TraceAction::Stop => trace_stop(socket).await,
             TraceAction::Status => trace_status(socket).await,
         },
+        DebugCommand::Health => health_dashboard(socket).await,
+        DebugCommand::Nodes => nodes_list(socket).await,
+        DebugCommand::Param { action } => match action {
+            ParamAction::Get { key } => param_get(socket, &key).await,
+            ParamAction::List => param_list(socket).await,
+            ParamAction::Dump => param_dump(socket).await,
+        },
+        DebugCommand::Hz { tracepoint, window } => topic_hz(socket, &tracepoint, window).await,
+        DebugCommand::Graph { format } => show_graph(socket, &format).await,
+        DebugCommand::Log { level, module, grep } => log_stream(socket, level, module, grep).await,
     }
 }
 
@@ -660,12 +729,458 @@ async fn trace_status(socket: &std::path::Path) -> Result<()> {
     }
 
     let tracing = response["result"]["tracing"].as_bool().unwrap_or(false);
+    let sub_count = response["result"]["subscribers"].as_u64().unwrap_or(0);
     if tracing {
         let level = response["result"]["level"].as_str().unwrap_or("?");
         let module = response["result"]["module"].as_str().unwrap_or("all");
-        println!("Tracing: ON (level={}, module={})", level, module);
+        println!("Tracing: ON (level={}, module={}, subscribers={})", level, module, sub_count);
     } else {
-        println!("Tracing: OFF");
+        println!("Tracing: OFF (subscribers={})", sub_count);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// health
+// ---------------------------------------------------------------------------
+
+async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "debug.health",
+        "params": {}
+    });
+
+    let response = send_rpc(socket, &request).await?;
+
+    if response["error"].is_object() {
+        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        anyhow::bail!("Health check failed: {}", msg);
+    }
+
+    let h = &response["result"]["health"];
+    let overall = h["overall"].as_str().unwrap_or("UNKNOWN");
+    let icon = if overall == "HEALTHY" { "✅" } else { "⚠️ " };
+
+    println!("{} Overall: {}", icon, overall);
+    println!();
+    println!("  PID:         {}", h["pid"].as_u64().unwrap_or(0));
+    println!("  Uptime:      {}", h["uptime_human"].as_str().unwrap_or("?"));
+    println!("  Memory:      {} MB", h["memory_rss_mb"].as_u64().unwrap_or(0));
+    println!(
+        "  Tokens:      {} in / {} out",
+        h["tokens_in"].as_u64().unwrap_or(0),
+        h["tokens_out"].as_u64().unwrap_or(0)
+    );
+    println!("  Turns:       {}", h["turn_count"].as_u64().unwrap_or(0));
+    println!("  Errors:      {}", h["error_count"].as_u64().unwrap_or(0));
+    println!("  Subscribers: {}", h["active_subscribers"].as_u64().unwrap_or(0));
+    println!("  Recordings:  {}", h["active_recordings"].as_u64().unwrap_or(0));
+
+    if let Some(tools) = h["tool_calls"].as_object() {
+        if !tools.is_empty() {
+            println!();
+            println!("  Tool Calls:");
+            let mut sorted: Vec<_> = tools.iter().collect();
+            sorted.sort_by(|a, b| {
+                b.1.as_u64().unwrap_or(0).cmp(&a.1.as_u64().unwrap_or(0))
+            });
+            for (name, count) in sorted {
+                println!("    {}: {}", name, count);
+            }
+        }
+    }
+
+    if let Some(warnings) = h["warnings"].as_array() {
+        if !warnings.is_empty() {
+            println!();
+            println!("  Warnings:");
+            for w in warnings {
+                println!("    ⚠️  {}", w.as_str().unwrap_or(""));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// nodes
+// ---------------------------------------------------------------------------
+
+async fn nodes_list(socket: &std::path::Path) -> Result<()> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "debug.nodes",
+        "params": {}
+    });
+
+    let response = send_rpc(socket, &request).await?;
+
+    if response["error"].is_object() {
+        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        anyhow::bail!("Nodes list failed: {}", msg);
+    }
+
+    let nodes = response["result"]["nodes"]
+        .as_array()
+        .context("No nodes in response")?;
+
+    if nodes.is_empty() {
+        println!("No subsystems registered.");
+        return Ok(());
+    }
+
+    println!("{:<20} {:<10} {}", "NAME", "STATUS", "DETAILS");
+    println!("{}", "-".repeat(60));
+    for node in nodes {
+        let name = node["name"].as_str().unwrap_or("?");
+        let running = node["running"].as_bool().unwrap_or(false);
+        let status = if running { "running" } else { "stopped" };
+        let details = node["status_line"].as_str().unwrap_or("");
+        println!("{:<20} {:<10} {}", name, status, details);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// param
+// ---------------------------------------------------------------------------
+
+async fn param_get(socket: &std::path::Path, key: &str) -> Result<()> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "debug.param_get",
+        "params": { "key": key }
+    });
+
+    let response = send_rpc(socket, &request).await?;
+
+    if response["error"].is_object() {
+        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        anyhow::bail!("Param get failed: {}", msg);
+    }
+
+    let value = &response["result"]["value"];
+    println!("{} = {}", key, value);
+    Ok(())
+}
+
+async fn param_list(socket: &std::path::Path) -> Result<()> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "debug.param_list",
+        "params": {}
+    });
+
+    let response = send_rpc(socket, &request).await?;
+
+    if response["error"].is_object() {
+        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        anyhow::bail!("Param list failed: {}", msg);
+    }
+
+    let params = response["result"]["params"]
+        .as_object()
+        .context("No params in response")?;
+
+    let mut keys: Vec<_> = params.keys().collect();
+    keys.sort();
+    for key in keys {
+        println!("{} = {}", key, params[key]);
+    }
+
+    Ok(())
+}
+
+async fn param_dump(socket: &std::path::Path) -> Result<()> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "debug.param_list",
+        "params": {}
+    });
+
+    let response = send_rpc(socket, &request).await?;
+
+    if response["error"].is_object() {
+        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        anyhow::bail!("Param dump failed: {}", msg);
+    }
+
+    let params = &response["result"]["params"];
+    println!("{}", serde_json::to_string_pretty(params)?);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// topic hz
+// ---------------------------------------------------------------------------
+
+async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) -> Result<()> {
+    // Subscribe to the specific tracepoint
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "debug.subscribe",
+        "params": {
+            "tracepoint": tracepoint
+        }
+    });
+
+    let mut stream = UnixStream::connect(socket)
+        .await
+        .with_context(|| format!("Cannot connect to daemon socket: {}", socket.display()))?;
+
+    let req_str = serde_json::to_string(&request)?;
+    stream.write_all(req_str.as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    stream.flush().await?;
+
+    // Read subscription response
+    let (reader, _) = stream.split();
+    let mut reader = BufReader::new(reader);
+    let mut response_line = String::new();
+    reader.read_line(&mut response_line).await?;
+
+    println!("Monitoring '{}' for {}s (Ctrl+C to stop)...", tracepoint, window_secs);
+    println!();
+
+    // Count events in the window
+    let start = std::time::Instant::now();
+    let mut count: u64 = 0;
+    let mut last_report = std::time::Instant::now();
+    let report_interval = std::time::Duration::from_secs(window_secs);
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match tokio::time::timeout(std::time::Duration::from_millis(100), reader.read_line(&mut line)).await {
+            Ok(Ok(0)) => break, // Connection closed
+            Ok(Ok(_)) => {
+                if !line.trim().is_empty() {
+                    count += 1;
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => {} // Timeout — check if we should report
+        }
+
+        if last_report.elapsed() >= report_interval {
+            let elapsed = start.elapsed().as_secs_f64();
+            let hz = count as f64 / elapsed;
+            println!(
+                "average rate: {:.3} Hz\t{} messages in {:.1}s",
+                hz, count, elapsed
+            );
+            last_report = std::time::Instant::now();
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// graph
+// ---------------------------------------------------------------------------
+
+async fn show_graph(socket: &std::path::Path, format: &str) -> Result<()> {
+    if format == "dot" {
+        // Get DOT format from topology endpoint
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "debug.topology",
+            "params": {}
+        });
+
+        let response = send_rpc(socket, &request).await?;
+
+        if response["error"].is_object() {
+            let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+            anyhow::bail!("Topology failed: {}", msg);
+        }
+
+        let dot = response["result"]["topology"]["dot"].as_str().unwrap_or("");
+        println!("{}", dot);
+    } else {
+        // Get graph data and render as ASCII
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "debug.graph",
+            "params": {}
+        });
+
+        let response = send_rpc(socket, &request).await?;
+
+        if response["error"].is_object() {
+            let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+            anyhow::bail!("Graph failed: {}", msg);
+        }
+
+        let graph = &response["result"]["graph"];
+        let empty_vec = vec![];
+        let nodes = graph["nodes"].as_array().unwrap_or(&empty_vec);
+        let edges = graph["edges"].as_array().unwrap_or(&empty_vec);
+
+        println!("=== Aletheon Event Flow Topology ===");
+        println!();
+        println!("Nodes ({}):", nodes.len());
+        for node in nodes {
+            let id = node["id"].as_str().unwrap_or("?");
+            let label = node["label"].as_str().unwrap_or("?");
+            let ntype = node["type"].as_str().unwrap_or("?");
+            let icon = match ntype {
+                "io" => "🖥️ ",
+                "network" => "🌐",
+                "core" => "⚙️ ",
+                "external" => "☁️ ",
+                "debug" => "🔍",
+                "memory" => "💾",
+                _ => "📦",
+            };
+            println!("  {} {:<15} {}", icon, id, label);
+        }
+
+        println!();
+        println!("Edges ({}):", edges.len());
+        for edge in edges {
+            let from = edge["from"].as_str().unwrap_or("?");
+            let to = edge["to"].as_str().unwrap_or("?");
+            let label = edge["label"].as_str().unwrap_or("");
+            println!("  {} ──({})──> {}", from, label, to);
+        }
+
+        println!();
+        println!("Tip: Use '--format dot' to get Graphviz DOT output");
+        println!("     pipe to: | dot -Tpng > graph.png");
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// log (structured log streaming)
+// ---------------------------------------------------------------------------
+
+async fn log_stream(
+    socket: &std::path::Path,
+    level: String,
+    module: Option<String>,
+    grep: Option<String>,
+) -> Result<()> {
+    // Subscribe to log events
+    let mut params = serde_json::json!({ "level": level });
+    if let Some(m) = &module {
+        params["module"] = serde_json::json!(m);
+    }
+
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "debug.log_subscribe",
+        "params": params
+    });
+
+    let mut stream = UnixStream::connect(socket)
+        .await
+        .with_context(|| format!("Cannot connect to daemon socket: {}", socket.display()))?;
+
+    let req_str = serde_json::to_string(&request)?;
+    stream.write_all(req_str.as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    stream.flush().await?;
+
+    let (reader, _) = stream.split();
+    let mut reader = BufReader::new(reader);
+
+    // Read subscription response
+    let mut response_line = String::new();
+    reader.read_line(&mut response_line).await?;
+
+    let resp: serde_json::Value = serde_json::from_str(&response_line)
+        .unwrap_or(serde_json::json!({}));
+
+    if resp["error"].is_object() {
+        let msg = resp["error"]["message"].as_str().unwrap_or("unknown error");
+        anyhow::bail!("Log subscribe failed: {}", msg);
+    }
+
+    let sub_id = resp["result"]["subscription_id"].as_str().unwrap_or("?");
+    println!("Log stream started (subscription: {})", sub_id);
+    println!("Press Ctrl+C to stop");
+    println!();
+
+    // Stream log events
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line).await {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            // Check if this is a debug event notification
+            if let Some(event) = msg.get("event").or(msg.get("params")) {
+                let ts = event["ts"].as_u64().unwrap_or(0);
+                let tp = event["tracepoint"].as_str().unwrap_or("");
+                let mod_name = event["module"].as_str().unwrap_or("?");
+                let event_level = event["level"].as_str().unwrap_or("info");
+                let data = &event["data"];
+
+                // Apply grep filter
+                if let Some(ref pattern) = grep {
+                    let data_str = data.to_string();
+                    if !data_str.contains(pattern) && !tp.contains(pattern) {
+                        continue;
+                    }
+                }
+
+                // Format timestamp
+                let secs = ts / 1000;
+                let ms = ts % 1000;
+                let mins = secs / 60;
+                let secs_of_min = secs % 60;
+                let hours = mins / 60;
+                let mins_of_hour = mins % 60;
+
+                // Level icon
+                let level_icon = match event_level {
+                    "error" => "❌",
+                    "warn" => "⚠️ ",
+                    "info" => "ℹ️ ",
+                    "debug" => "🔍",
+                    "trace" => "📝",
+                    _ => "  ",
+                };
+
+                println!(
+                    "[{:02}:{:02}:{:02}.{:03}] {} {:<8} {:<25} {}",
+                    hours % 24,
+                    mins_of_hour,
+                    secs_of_min,
+                    ms,
+                    level_icon,
+                    event_level,
+                    mod_name,
+                    if data.is_null() { tp.to_string() } else { format!("{} {}", tp, data) }
+                );
+            }
+        }
     }
 
     Ok(())

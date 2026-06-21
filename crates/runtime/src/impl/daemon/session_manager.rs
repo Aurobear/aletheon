@@ -80,6 +80,13 @@ impl SessionManager {
         debug!(len = content.len(), "Pushed system message");
     }
 
+    /// Push an arbitrary message into the conversation history (no journal).
+    /// Used for tool call/result messages that need to be preserved in session history.
+    pub fn push_message(&mut self, message: Message) {
+        debug!(role = ?message.role, blocks = message.content.len(), "Pushed message");
+        self.messages.push(message);
+    }
+
     /// Return a reference to the full message history.
     pub fn history(&self) -> &[Message] {
         &self.messages

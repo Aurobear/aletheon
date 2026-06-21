@@ -108,6 +108,13 @@ impl DebugHandler {
             "debug.trace_start" => Some(self.handle_trace_start(id, params).await),
             "debug.trace_stop" => Some(self.handle_trace_stop(id).await),
             "debug.trace_status" => Some(self.handle_trace_status(id).await),
+            "debug.health" => Some(self.handle_health(id).await),
+            "debug.nodes" => Some(self.handle_nodes(id).await),
+            "debug.param_get" => Some(self.handle_param_get(id, params).await),
+            "debug.param_list" => Some(self.handle_param_list(id).await),
+            "debug.graph" => Some(self.handle_graph(id).await),
+            "debug.topology" => Some(self.handle_topology(id).await),
+            "debug.log_subscribe" => Some(self.handle_log_subscribe(id, params).await),
             _ => None,
         }
     }
@@ -133,12 +140,11 @@ impl DebugHandler {
 
         self.subscribers.lock().await.insert(sub_id.clone(), tx.clone());
 
-        // Register a SubscriberSink on the hook so events are forwarded to this channel
-        let sink = Arc::new(SubscriberSink::new(tx));
+        // Register a SubscriberSink with its OWN filter (per-sink filtering)
+        let sink = Arc::new(SubscriberSink::new(sub_id.clone(), tx, filter));
         self.hook.lock().await.add_sink(sink);
 
-        // Update the hook's filter so matching events are forwarded
-        self.hook.lock().await.set_filter(filter);
+        // DO NOT update the hook's global filter — each sink has its own
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -155,6 +161,7 @@ impl DebugHandler {
     async fn handle_unsubscribe(&self, id: &Value, params: &Value) -> Value {
         let sub_id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
         self.subscribers.lock().await.remove(sub_id);
+        self.hook.lock().await.remove_sink_by_id(sub_id);
 
         json!({
             "jsonrpc": "2.0",
@@ -298,31 +305,57 @@ impl DebugHandler {
             .and_then(|v| v.as_f64())
             .unwrap_or(1.0);
 
-        match tokio::fs::read_to_string(&path).await {
-            Ok(contents) => {
-                let events: Vec<Value> = contents
-                    .lines()
-                    .filter(|l| !l.trim().is_empty())
-                    .filter_map(|line| serde_json::from_str(line).ok())
-                    .collect();
-
-                json!({
+        let contents = match tokio::fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(e) => {
+                return json!({
                     "jsonrpc": "2.0",
                     "id": id,
-                    "result": {
-                        "replayed": true,
-                        "events": events.len(),
-                        "speed": speed,
-                        "path": path.to_string_lossy(),
-                    }
-                })
+                    "error": { "code": -32043, "message": format!("Failed to read bag file: {}", e) }
+                });
             }
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32043, "message": format!("Failed to read bag file: {}", e) }
-            }),
-        }
+        };
+
+        // Parse all DebugEvent entries from the bag file
+        let events: Vec<DebugEvent> = contents
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+
+        let event_count = events.len();
+        let hook = self.hook.clone();
+        let _perf = self.perf.clone();
+
+        // Spawn async replay task — re-publish events with timing
+        tokio::spawn(async move {
+            let mut prev_ts: u64 = 0;
+            for event in events {
+                // Respect original timing scaled by speed
+                if speed > 0.0 && prev_ts > 0 && event.ts > prev_ts {
+                    let delay_ms = (event.ts - prev_ts) as f64 / speed;
+                    if delay_ms > 0.0 && delay_ms < 60_000.0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
+                    }
+                }
+                prev_ts = event.ts;
+
+                // Re-publish through the hook so subscribers receive it
+                let mut h = hook.lock().await;
+                h.on_event(&event).await;
+            }
+        });
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "replaying": true,
+                "events": event_count,
+                "speed": speed,
+                "path": path.to_string_lossy(),
+            }
+        })
     }
 
     // ── perf ─────────────────────────────────────────────────────────────────
@@ -387,7 +420,10 @@ impl DebugHandler {
     }
 
     async fn handle_trace_stop(&self, id: &Value) -> Value {
-        self.hook.lock().await.set_filter(EventFilter::default());
+        // Clear subscriber sinks, keep recorder sinks
+        self.hook.lock().await.clear_subscriber_sinks();
+        // Clear subscriber map
+        self.subscribers.lock().await.clear();
 
         json!({
             "jsonrpc": "2.0",
@@ -397,15 +433,291 @@ impl DebugHandler {
     }
 
     async fn handle_trace_status(&self, id: &Value) -> Value {
-        // We don't store the current filter separately, so report "off"
-        // unless there are active subscribers.
         let sub_count = self.subscribers.lock().await.len();
         let tracing = sub_count > 0;
+        let hook = self.hook.lock().await;
+        let filter = hook.current_filter();
 
         json!({
             "jsonrpc": "2.0",
             "id": id,
-            "result": { "tracing": tracing }
+            "result": {
+                "tracing": tracing,
+                "subscribers": sub_count,
+                "level": format!("{:?}", filter.min_level).to_lowercase(),
+                "modules": filter.modules,
+            }
+        })
+    }
+
+    // ── health ───────────────────────────────────────────────────────────────
+
+    async fn handle_health(&self, id: &Value) -> Value {
+        let perf = self.perf.snapshot();
+        let tool_calls = {
+            let map = self.perf.tool_calls.lock().await;
+            map.clone()
+        };
+        let uptime = self.started_at.elapsed();
+        let rss_kb = read_rss_kb().unwrap_or(0);
+        let sub_count = self.subscribers.lock().await.len();
+        let rec_count = self.recordings.lock().await.len();
+
+        // Determine overall status
+        let overall = if perf.error_count == 0 { "HEALTHY" } else { "DEGRADED" };
+
+        let mut warnings = Vec::new();
+        if perf.error_count > 0 {
+            warnings.push(format!("{} errors recorded", perf.error_count));
+        }
+        if rss_kb > 500_000 {
+            warnings.push(format!("High memory usage: {} MB", rss_kb / 1024));
+        }
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "health": {
+                    "overall": overall,
+                    "pid": std::process::id(),
+                    "uptime_secs": uptime.as_secs(),
+                    "uptime_human": format_duration(uptime),
+                    "memory_rss_mb": rss_kb / 1024,
+                    "tokens_in": perf.tokens_in,
+                    "tokens_out": perf.tokens_out,
+                    "turn_count": perf.turn_count,
+                    "error_count": perf.error_count,
+                    "tool_calls": serde_json::to_value(&tool_calls).unwrap_or_default(),
+                    "active_subscribers": sub_count,
+                    "active_recordings": rec_count,
+                    "warnings": warnings,
+                }
+            }
+        })
+    }
+
+    // ── nodes ────────────────────────────────────────────────────────────────
+
+    async fn handle_nodes(&self, id: &Value) -> Value {
+        let perf = self.perf.snapshot();
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "nodes": [
+                    {
+                        "name": "daemon",
+                        "running": true,
+                        "status_line": format!("uptime={}, turns={}", format_duration(self.started_at.elapsed()), perf.turn_count),
+                        "details": {
+                            "pid": std::process::id(),
+                            "tokens_in": perf.tokens_in,
+                            "tokens_out": perf.tokens_out,
+                            "error_count": perf.error_count,
+                        }
+                    }
+                ]
+            }
+        })
+    }
+
+    // ── param ────────────────────────────────────────────────────────────────
+
+    async fn handle_param_get(&self, id: &Value, params: &Value) -> Value {
+        let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Return known configuration values
+        let value = match key {
+            "agent.max_iterations" => json!(25),
+            "agent.max_tokens" => json!(100000),
+            "agent.default_provider" => json!("deepseek"),
+            "agent.default_model" => json!("deepseek-v4-flash"),
+            "debug.subscriber_count" => {
+                let count = self.subscribers.lock().await.len();
+                json!(count)
+            }
+            "debug.recording_count" => {
+                let count = self.recordings.lock().await.len();
+                json!(count)
+            }
+            "debug.uptime_secs" => json!(self.started_at.elapsed().as_secs()),
+            "debug.memory_rss_kb" => json!(read_rss_kb().unwrap_or(0)),
+            _ => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32050, "message": format!("Unknown parameter: {}", key) }
+                });
+            }
+        };
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": { "key": key, "value": value }
+        })
+    }
+
+    async fn handle_param_list(&self, id: &Value) -> Value {
+        let sub_count = self.subscribers.lock().await.len();
+        let rec_count = self.recordings.lock().await.len();
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "params": {
+                    "agent.max_iterations": 25,
+                    "agent.max_tokens": 100000,
+                    "agent.default_provider": "deepseek",
+                    "agent.default_model": "deepseek-v4-flash",
+                    "debug.subscriber_count": sub_count,
+                    "debug.recording_count": rec_count,
+                    "debug.uptime_secs": self.started_at.elapsed().as_secs(),
+                    "debug.memory_rss_kb": read_rss_kb().unwrap_or(0),
+                }
+            }
+        })
+    }
+
+    // ── graph ────────────────────────────────────────────────────────────────
+
+    async fn handle_graph(&self, id: &Value) -> Value {
+        // Returns the event flow topology as a directed graph
+        // Nodes = subsystems, Edges = event flow direction
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "graph": {
+                    "nodes": [
+                        {"id": "user",        "label": "User Input",     "type": "io"},
+                        {"id": "tui",         "label": "TUI",            "type": "io"},
+                        {"id": "server",      "label": "UnixServer",     "type": "network"},
+                        {"id": "handler",     "label": "RequestHandler", "type": "core"},
+                        {"id": "react_loop",  "label": "ReActLoop",      "type": "core"},
+                        {"id": "llm",         "label": "LLM Provider",   "type": "external"},
+                        {"id": "tools",       "label": "ToolRunner",     "type": "core"},
+                        {"id": "event_sink",  "label": "EventSink",      "type": "core"},
+                        {"id": "debug_bus",   "label": "DebugBusHook",   "type": "debug"},
+                        {"id": "session_mgr", "label": "SessionManager", "type": "core"},
+                        {"id": "fact_store",  "label": "FactStore",      "type": "memory"},
+                        {"id": "hooks",       "label": "HookRegistry",   "type": "core"},
+                        {"id": "self_field",  "label": "SelfField",      "type": "core"},
+                        {"id": "perception",  "label": "Perception",     "type": "core"},
+                    ],
+                    "edges": [
+                        {"from": "user",       "to": "tui",         "label": "keyboard"},
+                        {"from": "tui",        "to": "server",      "label": "json-rpc"},
+                        {"from": "server",     "to": "handler",     "label": "request"},
+                        {"from": "handler",    "to": "react_loop",  "label": "chat"},
+                        {"from": "handler",    "to": "hooks",       "label": "pre/post turn"},
+                        {"from": "handler",    "to": "self_field",  "label": "review"},
+                        {"from": "handler",    "to": "fact_store",  "label": "recall"},
+                        {"from": "handler",    "to": "session_mgr", "label": "push/compact"},
+                        {"from": "react_loop", "to": "llm",         "label": "completion"},
+                        {"from": "react_loop", "to": "tools",       "label": "tool_call"},
+                        {"from": "react_loop", "to": "event_sink",  "label": "events"},
+                        {"from": "event_sink", "to": "tui",         "label": "notify"},
+                        {"from": "event_sink", "to": "debug_bus",   "label": "debug events"},
+                        {"from": "debug_bus",  "to": "subscribers", "label": "debug subscribe"},
+                        {"from": "perception", "to": "handler",     "label": "inject"},
+                    ]
+                }
+            }
+        })
+    }
+
+    // ── topology (DOT format) ────────────────────────────────────────────────
+
+    async fn handle_topology(&self, id: &Value) -> Value {
+        let dot = r#"digraph aletheon {
+    rankdir=LR;
+    node [shape=box, style=filled, fillcolor=lightblue];
+
+    user [label="User", shape=ellipse, fillcolor=lightyellow];
+    tui [label="TUI"];
+    server [label="UnixServer"];
+    handler [label="RequestHandler"];
+    react_loop [label="ReActLoop"];
+    llm [label="LLM Provider", fillcolor=lightpink];
+    tools [label="ToolRunner"];
+    event_sink [label="EventSink"];
+    debug_bus [label="DebugBusHook", fillcolor=lightgreen];
+    session_mgr [label="SessionManager"];
+    fact_store [label="FactStore", fillcolor=wheat];
+    hooks [label="HookRegistry"];
+    self_field [label="SelfField"];
+    perception [label="Perception"];
+
+    user -> tui [label="input"];
+    tui -> server [label="json-rpc"];
+    server -> handler [label="dispatch"];
+    handler -> react_loop [label="chat"];
+    handler -> hooks [label="pre/post"];
+    handler -> self_field [label="review"];
+    handler -> fact_store [label="recall"];
+    handler -> session_mgr [label="state"];
+    react_loop -> llm [label="completion"];
+    react_loop -> tools [label="tool_call"];
+    react_loop -> event_sink [label="events"];
+    event_sink -> tui [label="notify"];
+    event_sink -> debug_bus [label="debug"];
+    debug_bus -> subscribers [label="subscribe", style=dashed];
+    perception -> handler [label="inject", style=dashed];
+}"#;
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "topology": {
+                    "format": "dot",
+                    "dot": dot,
+                }
+            }
+        })
+    }
+
+    // ── log_subscribe (structured log streaming) ─────────────────────────────
+
+    async fn handle_log_subscribe(&self, id: &Value, params: &Value) -> Value {
+        let level = params
+            .get("level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("info");
+        let module_filter = params.get("module").and_then(|v| v.as_str());
+
+        let min_level = parse_level(level);
+
+        // Create a subscriber that captures log-level events
+        let filter = EventFilter {
+            min_level,
+            modules: module_filter.map(|m| HashSet::from([m.to_string()])),
+            tracepoints: None,
+        };
+
+        let (tx, rx) = mpsc::channel::<DebugEvent>(512);
+        let sub_id = uuid::Uuid::new_v4().to_string();
+
+        self.subscribers.lock().await.insert(sub_id.clone(), tx.clone());
+        let sink = Arc::new(SubscriberSink::new(sub_id.clone(), tx, filter));
+        self.hook.lock().await.add_sink(sink);
+
+        *self.pending_subscriber_rx.lock().await = Some(rx);
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "subscribed": true,
+                "subscription_id": sub_id,
+                "level": level,
+                "module": module_filter,
+                "message": "Log stream started. Events will be forwarded as notifications."
+            }
         })
     }
 }

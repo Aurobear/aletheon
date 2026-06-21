@@ -327,8 +327,22 @@ impl ToolRunnerWithGuard {
                 },
             }
         } else {
-            // Direct execution for L0 tools
-            tool.execute(input.clone(), ctx).await
+            // Direct execution for L0 tools with timeout
+            const L0_TIMEOUT_SECS: u64 = 60;
+            match tokio::time::timeout(
+                Duration::from_secs(L0_TIMEOUT_SECS),
+                tool.execute(input.clone(), ctx),
+            ).await {
+                Ok(result) => result,
+                Err(_) => ToolResult {
+                    content: format!("Tool '{}' timed out after {}s", tool_name, L0_TIMEOUT_SECS),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: L0_TIMEOUT_SECS * 1000,
+                        truncated: false,
+                    },
+                },
+            }
         };
 
         // 4. Output guardrail validation with retries

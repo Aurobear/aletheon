@@ -73,6 +73,12 @@ pub fn event_to_json(event: &Event) -> Option<String> {
             "type": "circuit_breaker_tripped",
             "reason": reason,
         }),
+        Event::CompactionTriggered { used_tokens, threshold, reason } => json!({
+            "type": "compaction_triggered",
+            "used_tokens": used_tokens,
+            "threshold": threshold,
+            "reason": reason,
+        }),
         _ => return None,
     };
     Some(json!({"jsonrpc": "2.0", "method": "event", "params": params}).to_string())

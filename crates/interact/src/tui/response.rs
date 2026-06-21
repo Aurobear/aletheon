@@ -280,9 +280,10 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
 pub fn process_response(app: &mut App, msg: serde_json::Value) {
     if let Some(result) = msg.get("result") {
         if let Some(text) = result.get("response").and_then(|v| v.as_str()) {
-            // Standard chat response
-            let display = format!("{}\n\n💡 /reflect to see reflections", text);
-            app.chat.update_last_message(display);
+            // Standard chat response - deduplicate consecutive identical text
+            // Some models repeat thinking/reasoning text
+            let deduped = deduplicate_consecutive_text(text);
+            app.chat.update_last_message(deduped);
         } else if let Some(entries) = result.get("reflections") {
             // /reflect response — format reflection entries
             let formatted = format_reflections(entries);
@@ -336,6 +337,32 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
     //
     // Also do NOT clear response_buf — streaming events may follow in the
     // same try_read chunk.
+}
+
+/// Deduplicate consecutive identical text blocks.
+/// Some models repeat thinking/reasoning text twice.
+fn deduplicate_consecutive_text(text: &str) -> String {
+    let len = text.len();
+
+    // Try to find the longest repeated prefix
+    for split_pos in (1..=len / 2).rev() {
+        // Ensure we split at a valid UTF-8 boundary
+        if !text.is_char_boundary(split_pos) {
+            continue;
+        }
+
+        let prefix = &text[..split_pos];
+        let suffix = &text[split_pos..];
+
+        // Check if the suffix starts with the same prefix
+        if suffix.starts_with(prefix) {
+            // Found a repeated block - return just the prefix
+            return prefix.to_string();
+        }
+    }
+
+    // No repeated block found, return original text
+    text.to_string()
 }
 
 /// Format reflection entries for display.
