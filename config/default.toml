@@ -1,120 +1,23 @@
-# Aletheon Configuration Reference
-#
-# This file documents all available config options.
-# Actual config is loaded from: ~/.aletheon/config.toml
-# Environment file:               ~/.aletheon/.env
-#
-# Layered loading (later layers override earlier):
-#   1. Compiled defaults (this file's values)
-#   2. ~/.aletheon/config.toml (user global)
-#   3. <project>/.aletheon/config.toml (project local)
-
-# ── Agent ──────────────────────────────────────────────────────────────
 [agent]
-default_provider = "anthropic"                    # Provider name from [[providers]]
-default_model = "claude-sonnet-4-20250514"        # Model name (or "provider/model" spec)
-max_iterations = 25                               # Max agentic turns per request
-max_tokens = 100000                               # Max tokens per turn
-compaction_enabled = true                         # Auto-compact long conversations
-compaction_keep_recent = 10                       # Keep N recent messages during compaction
-compaction_threshold = 30                         # Compact after N messages
-system_prompt = "You are a helpful AI assistant with tools. Use tools when appropriate to help the user."
+default_model = "claude-sonnet-4-20250514"
+max_iterations = 50
 
-# ── Providers ──────────────────────────────────────────────────────────
-# Each provider needs: name, base_url
-# api_key:       set here or via env var <NAME>_API_KEY (e.g. ANTHROPIC_API_KEY)
-# transport:     "auto" (detect from URL) | "openai" | "anthropic"
-# models:        list of available model names (informational, used for routing)
-
-[[providers]]
-name = "anthropic"
-base_url = "https://api.anthropic.com"
-# api_key = ""                                  # Or set ANTHROPIC_API_KEY env var
-transport = "anthropic"
-models = ["claude-sonnet-4-20250514"]
-
-[[providers]]
-name = "openai"
-base_url = "https://api.openai.com/v1"
-# api_key = ""                                  # Or set OPENAI_API_KEY env var
-transport = "openai"
-models = ["gpt-4o", "gpt-4o-mini"]
-
-# Example: local Ollama (no api_key needed)
-# [[providers]]
-# name = "ollama"
-# base_url = "http://localhost:11434"
-# transport = "openai"
-# models = ["qwen3:8b"]
-
-# ── Model Aliases ──────────────────────────────────────────────────────
-# Short names that expand to "provider/model" specs.
-[model_aliases]
-# sonnet = "anthropic/claude-sonnet-4-20250514"
-# local = "ollama/qwen3:8b"
-
-# ── Model Routing ──────────────────────────────────────────────────────
-# Route task types to specific models. Each value is a model spec or alias.
-[model_routing]
-# default = "anthropic/claude-sonnet-4-20250514"
-# multimodal = "anthropic/claude-sonnet-4-20250514"
-# cheap = "openai/gpt-4o-mini"
-# reasoning = "anthropic/claude-sonnet-4-20250514"
-# auto_memory = "openai/gpt-4o-mini"
-
-# ── Sandbox ────────────────────────────────────────────────────────────
 [sandbox]
-preference = "auto"                               # "auto" | "require" | "forbid"
-# bubblewrap_path = "/usr/bin/bwrap"              # Path to bubblewrap binary
+preference = "auto"
+# bubblewrap_path = "/usr/bin/bwrap"
 
-# ── MCP Servers ────────────────────────────────────────────────────────
 # [[mcp_servers]]
 # name = "filesystem"
-# transport = "stdio"                             # "stdio" | "http" | "sse"
-# command = "mcp-fs"                              # For stdio transport
+# transport = "stdio"
+# command = "mcp-fs"
 
-# ── Plugins ────────────────────────────────────────────────────────────
 [plugins]
 directories = []
 
-# ── Memory ─────────────────────────────────────────────────────────────
 [memory]
-backend = "sqlite"                                # "sqlite" | "in_memory"
+backend = "sqlite"
 data_dir = "~/.aletheon/memory"
 
-# ── Daemon ─────────────────────────────────────────────────────────────
 [daemon]
-socket_path = "/run/aletheond/aletheond.sock"      # Unix socket path (system service)
-log_level = "info"                                # "trace" | "debug" | "info" | "warn" | "error"
-
-# ── Hooks ──────────────────────────────────────────────────────────────
-# Script paths to execute at lifecycle points. Paths may use ~ for home.
-[hooks]
-pre_turn = []                                     # Before each turn (receives prompt JSON on stdin)
-post_tool = []                                    # After each tool call (receives result JSON on stdin)
-on_session_end = []                               # On session end
-pre_tool = []                                     # Before each tool call (can block execution)
-
-# ── Agent Loop ─────────────────────────────────────────────────────────
-[agent.agent_loop]
-# Maximum tool calls per turn (0 = unlimited)
-max_tool_calls = 0
-
-# Reflection interval (every N tool calls)
-reflection_interval = 5
-
-# Progress check interval (every N tool calls)
-progress_check_interval = 3
-
-# ── Circuit Breaker ───────────────────────────────────────────────────
-[agent.circuit_breaker]
-# Maximum repeated calls before tripping
-max_repeats = 3
-
-# Window size for tracking recent calls
-window_size = 10
-
-# ── Perception ─────────────────────────────────────────────────────────
-[perception]
-watch_paths = ["/etc", "/var/log"]                # Filesystem paths to watch with inotify
-enable_journald = true                            # Monitor systemd journal
+socket_path = "/run/aletheon/aletheon.sock"
+log_level = "info"

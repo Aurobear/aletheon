@@ -11,10 +11,10 @@
 > 1b 再补齐状态管理。
 
 ```
-目标: 能在 Arch Linux 上跑起来的 daemon
+目标: 能在 Arch Linux 上跑起来的 aletheond
 
 ├── 项目骨架搭建
-│   ├── Cargo workspace (base, base, memory, corpus, dasein, cognit, runtime, metacog, daemon, cli)
+│   ├── Cargo workspace (aletheon-abi, aletheon-comm, aletheon-memory, aletheon-body, aletheon-self, aletheon-brain, aletheon-runtime, aletheon-meta, aletheond, aletheon-cli)
 │   ├── 目录结构
 │   └── CI/CD 基础
 │

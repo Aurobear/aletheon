@@ -30,6 +30,237 @@ dependencies = [
 ]
 
 [[package]]
+name = "aletheon-abi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "aletheon-body"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "anyhow",
+ "async-trait",
+ "atspi",
+ "atty",
+ "base64",
+ "chrono",
+ "clap",
+ "crossterm",
+ "dashmap",
+ "dirs",
+ "dirs-next",
+ "futures",
+ "hostname",
+ "libc",
+ "nix",
+ "parking_lot",
+ "png",
+ "pulldown-cmark",
+ "ratatui",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "syntect",
+ "tempfile",
+ "tesseract",
+ "tokio",
+ "tokio-test",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "uuid",
+ "walkdir",
+ "which 7.0.3",
+ "x11rb",
+ "zbus 4.4.0",
+]
+
+[[package]]
+name = "aletheon-brain"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "aletheon-body",
+ "aletheon-comm",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "futures",
+ "parking_lot",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "aletheon-cli"
+version = "0.1.0"
+dependencies = [
+ "aletheon-body",
+ "anyhow",
+ "tokio",
+]
+
+[[package]]
+name = "aletheon-comm"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "libc",
+ "nix",
+ "parking_lot",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "aletheon-exec"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "aletheon-body",
+ "aletheon-brain",
+ "aletheon-runtime",
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "aletheon-memory"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "aletheon-meta"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "aletheon-runtime"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "aletheon-body",
+ "aletheon-brain",
+ "aletheon-comm",
+ "aletheon-memory",
+ "aletheon-meta",
+ "aletheon-self",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "futures",
+ "hmac",
+ "parking_lot",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "toml",
+ "tracing",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "aletheon-self"
+version = "0.1.0"
+dependencies = [
+ "aletheon-abi",
+ "aletheon-body",
+ "aletheon-brain",
+ "aletheon-comm",
+ "aletheon-memory",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "glob",
+ "libc",
+ "parking_lot",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "aletheond"
+version = "0.1.0"
+dependencies = [
+ "aletheon-runtime",
+ "anyhow",
+ "clap",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -323,27 +554,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "base"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bincode",
- "chrono",
- "dashmap",
- "libc",
- "nix 0.29.0",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -353,9 +563,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "basic-agent-example"
 version = "0.1.0"
 dependencies = [
+ "aletheon-abi",
+ "aletheon-runtime",
  "anyhow",
- "base",
- "runtime",
  "serde_json",
  "tokio",
  "tracing",
@@ -428,15 +638,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
-]
-
-[[package]]
-name = "block2"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdeb9d870516001442e364c5220d3574d2da8dc765554b4a617230d33fa58ef5"
-dependencies = [
- "objc2",
 ]
 
 [[package]]
@@ -576,29 +777,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "cognit"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base",
- "chrono",
- "corpus",
- "dirs",
- "futures",
- "interact",
- "parking_lot",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -652,45 +830,6 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
-
-[[package]]
-name = "corpus"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "atspi",
- "base",
- "base64",
- "chrono",
- "dashmap",
- "dirs",
- "futures",
- "glob",
- "hostname",
- "libc",
- "nix 0.29.0",
- "parking_lot",
- "png",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tesseract",
- "tokio",
- "tokio-test",
- "tokio-util",
- "toml",
- "tracing",
- "tree-sitter",
- "tree-sitter-rust",
- "uuid",
- "walkdir",
- "which 7.0.3",
- "x11rb",
- "zbus 4.4.0",
-]
 
 [[package]]
 name = "cpufeatures"
@@ -753,17 +892,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctrlc"
-version = "3.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0b1fab2ae45819af2d0731d60f2afe17227ebb1a1538a236da84c93e9a60162"
-dependencies = [
- "dispatch2",
- "nix 0.31.3",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -795,32 +923,6 @@ dependencies = [
  "darling_core",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "dasein"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base",
- "chrono",
- "cognit",
- "corpus",
- "dirs",
- "glob",
- "libc",
- "memory",
- "parking_lot",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -897,18 +999,6 @@ dependencies = [
  "libc",
  "redox_users",
  "winapi",
-]
-
-[[package]]
-name = "dispatch2"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
-dependencies = [
- "bitflags 2.13.0",
- "block2",
- "libc",
- "objc2",
 ]
 
 [[package]]
@@ -1657,34 +1747,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "interact"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "atty",
- "base",
- "chrono",
- "clap",
- "corpus",
- "crossterm",
- "ctrlc",
- "dirs",
- "dirs-next",
- "libc",
- "pulldown-cmark",
- "ratatui",
- "serde",
- "serde_json",
- "syntect",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
- "which 7.0.3",
-]
-
-[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1872,40 +1934,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "memory"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base",
- "chrono",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "metacog"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base",
- "chrono",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1970,18 +1998,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nix"
-version = "0.31.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
-dependencies = [
- "bitflags 2.13.0",
- "cfg-if",
- "cfg_aliases",
- "libc",
-]
-
-[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2014,21 +2030,6 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
 ]
-
-[[package]]
-name = "objc2"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a12a8ed07aefc768292f076dc3ac8c48f3781c8f2d5851dd3d98950e8c5a89f"
-dependencies = [
- "objc2-encode",
-]
-
-[[package]]
-name = "objc2-encode"
-version = "4.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef25abbcd74fb2609453eb695bd2f860d389e457f67dc17cafc8b8cbc89d0c33"
 
 [[package]]
 name = "once_cell"
@@ -2466,42 +2467,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runtime"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base",
- "chrono",
- "clap",
- "cognit",
- "corpus",
- "dasein",
- "dirs",
- "futures",
- "hmac",
- "memory",
- "metacog",
- "parking_lot",
- "regex",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-test",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "rusqlite"
 version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2643,14 +2608,15 @@ dependencies = [
 name = "self-evolution-loop-example"
 version = "0.1.0"
 dependencies = [
+ "aletheon-abi",
+ "aletheon-body",
+ "aletheon-brain",
+ "aletheon-comm",
+ "aletheon-memory",
+ "aletheon-meta",
+ "aletheon-runtime",
+ "aletheon-self",
  "anyhow",
- "base",
- "cognit",
- "corpus",
- "dasein",
- "memory",
- "metacog",
- "runtime",
  "serde",
  "serde_json",
  "tokio",
@@ -3372,6 +3338,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-subscriber"
 version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3381,12 +3357,15 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex-automata",
+ "serde",
+ "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]
@@ -4205,7 +4184,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "hex",
- "nix 0.29.0",
+ "nix",
  "ordered-stream",
  "rand",
  "serde",

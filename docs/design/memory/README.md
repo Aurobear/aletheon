@@ -2,7 +2,7 @@
 
 > Code paths updated to aletheon-* crate structure
 
-**Crate:** `memory`
+**Crate:** `aletheon-memory`
 **Purpose:** Backend memory storage implementations. Provides episodic, semantic, procedural, and self-memory backends, plus a router that dispatches queries to the appropriate backend.
 
 ---
@@ -10,7 +10,7 @@
 ## Internal Structure
 
 ```
-memory/src/
+aletheon-memory/src/
   lib.rs                      # Crate root
   schema.rs                   # Schema definitions for memory storage
   router.rs                   # MemoryRouter — routes queries to backends
@@ -33,7 +33,7 @@ memory/src/
 
 ## Architecture Note
 
-This crate provides the **backend storage** layer. The **runtime-level memory** (CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline, scope) lives in `runtime/src/impl/memory/`. The ABI trait definitions (`MemoryBackend`, `MemoryEntry`, etc.) live in `base/src/memory.rs`.
+This crate provides the **backend storage** layer. The **runtime-level memory** (CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline, scope) lives in `aletheon-runtime/src/impl/memory/`. The ABI trait definitions (`MemoryBackend`, `MemoryEntry`, etc.) live in `aletheon-abi/src/memory.rs`.
 
 ## Related Docs
 

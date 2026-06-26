@@ -5,7 +5,7 @@
 > Inspired by Letta (MemGPT)'s three-tier self-editing memory architecture, enabling agents to manage their own memory like an OS manages virtual memory. Self-learning loop.
 
 **Module:** 02
-**Crates:** `runtime` (runtime-level memory: CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline), `memory` (backend storage: episodic, semantic, procedural, self_memory, router)
+**Crates:** `aletheon-runtime` (runtime-level memory: CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline), `aletheon-memory` (backend storage: episodic, semantic, procedural, self_memory, router)
 **Related modules:** [cognitive-engine](../runtime/react-loop.md), [tool-system](../runtime/orchestration.md)
 **Last Updated:** 2026-06-14
 
@@ -15,27 +15,27 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| CoreMemory (L1) | Implemented | `runtime/src/impl/memory/core_memory.rs` | Block-based in-context memory with self-edit tools |
-| RecallMemory (L2) | Implemented | `runtime/src/impl/memory/recall_memory.rs` | SQLite-backed conversation history |
-| ArchivalMemory (L3) | Implemented | `runtime/src/impl/memory/archival_memory.rs` | `InMemoryArchival` (keyword search) + `VectorArchival` (vector-backed via VectorStore) |
-| Memory tools | Implemented | `runtime/src/impl/memory/tools.rs` | core_memory_append/replace/recall_search etc. |
-| ContextBudget | Implemented | `runtime/src/impl/memory/budget.rs` | Token budget tracking |
-| AdvancedCompressor | Implemented | `runtime/src/impl/memory/compressor/mod.rs` | Token-budget tail protection with iterative summary updates |
-| Tail Protection | Implemented | `runtime/src/impl/memory/compressor/tail.rs` | `TailProtectionConfig`, `find_tail_cut()` — soft ceiling + hard minimum + boundary alignment |
-| Summary Template | Implemented | `runtime/src/impl/memory/compressor/template.rs` | `SummaryTemplate` with `render()` and `render_iterative()` for iterative summary updates |
-| MemoryScope | Implemented | `runtime/src/impl/memory/scope.rs` | 3-tier isolation (Global/Session/Agent) with `ScopedCoreMemory`, `PendingWrite` approval, `Scratchpad` |
-| Scoped Recall | Implemented | `runtime/src/impl/memory/scope.rs` | `ScopeFilter`, `ScopedRecallFilter` — scope-aware recall queries via metadata JSON |
-| MemoryPipeline | Implemented | `runtime/src/impl/memory/pipeline/mod.rs` | Two-phase pipeline: Phase1 extraction + Phase2 consolidation |
-| Phase1Extractor | Implemented | `runtime/src/impl/memory/pipeline/phase1.rs` | Parallel session extraction with lease-based claiming |
-| Phase2Consolidator | Implemented | `runtime/src/impl/memory/pipeline/phase2.rs` | Global lock, rollout summaries, raw_memories.md output |
-| StateDatabase | Implemented | `runtime/src/impl/memory/pipeline/state_db.rs` | In-memory session tracking with lease/watermark |
-| Vector DB | Implemented | `runtime/src/impl/memory/vector_store.rs` | QdrantVectorStore, LanceVectorStore, OpenAIEmbedder |
-| EpisodicMemory | Implemented | `memory/src/episodic.rs` | Episodic memory backend |
-| SemanticMemory | Implemented | `memory/src/semantic.rs` | Semantic memory backend |
-| ProceduralMemory | Implemented | `memory/src/procedural.rs` | Procedural memory backend |
-| SelfMemory | Implemented | `memory/src/self_memory.rs` | Self-memory backend |
-| MemoryRouter | Implemented | `memory/src/router.rs` | Routes queries to appropriate backends |
-| MemorySchema | Implemented | `memory/src/schema.rs` | Schema definitions for memory storage |
+| CoreMemory (L1) | Implemented | `aletheon-runtime/src/impl/memory/core_memory.rs` | Block-based in-context memory with self-edit tools |
+| RecallMemory (L2) | Implemented | `aletheon-runtime/src/impl/memory/recall_memory.rs` | SQLite-backed conversation history |
+| ArchivalMemory (L3) | Implemented | `aletheon-runtime/src/impl/memory/archival_memory.rs` | `InMemoryArchival` (keyword search) + `VectorArchival` (vector-backed via VectorStore) |
+| Memory tools | Implemented | `aletheon-runtime/src/impl/memory/tools.rs` | core_memory_append/replace/recall_search etc. |
+| ContextBudget | Implemented | `aletheon-runtime/src/impl/memory/budget.rs` | Token budget tracking |
+| AdvancedCompressor | Implemented | `aletheon-runtime/src/impl/memory/compressor/mod.rs` | Token-budget tail protection with iterative summary updates |
+| Tail Protection | Implemented | `aletheon-runtime/src/impl/memory/compressor/tail.rs` | `TailProtectionConfig`, `find_tail_cut()` — soft ceiling + hard minimum + boundary alignment |
+| Summary Template | Implemented | `aletheon-runtime/src/impl/memory/compressor/template.rs` | `SummaryTemplate` with `render()` and `render_iterative()` for iterative summary updates |
+| MemoryScope | Implemented | `aletheon-runtime/src/impl/memory/scope.rs` | 3-tier isolation (Global/Session/Agent) with `ScopedCoreMemory`, `PendingWrite` approval, `Scratchpad` |
+| Scoped Recall | Implemented | `aletheon-runtime/src/impl/memory/scope.rs` | `ScopeFilter`, `ScopedRecallFilter` — scope-aware recall queries via metadata JSON |
+| MemoryPipeline | Implemented | `aletheon-runtime/src/impl/memory/pipeline/mod.rs` | Two-phase pipeline: Phase1 extraction + Phase2 consolidation |
+| Phase1Extractor | Implemented | `aletheon-runtime/src/impl/memory/pipeline/phase1.rs` | Parallel session extraction with lease-based claiming |
+| Phase2Consolidator | Implemented | `aletheon-runtime/src/impl/memory/pipeline/phase2.rs` | Global lock, rollout summaries, raw_memories.md output |
+| StateDatabase | Implemented | `aletheon-runtime/src/impl/memory/pipeline/state_db.rs` | In-memory session tracking with lease/watermark |
+| Vector DB | Implemented | `aletheon-runtime/src/impl/memory/vector_store.rs` | QdrantVectorStore, LanceVectorStore, OpenAIEmbedder |
+| EpisodicMemory | Implemented | `aletheon-memory/src/episodic.rs` | Episodic memory backend |
+| SemanticMemory | Implemented | `aletheon-memory/src/semantic.rs` | Semantic memory backend |
+| ProceduralMemory | Implemented | `aletheon-memory/src/procedural.rs` | Procedural memory backend |
+| SelfMemory | Implemented | `aletheon-memory/src/self_memory.rs` | Self-memory backend |
+| MemoryRouter | Implemented | `aletheon-memory/src/router.rs` | Routes queries to appropriate backends |
+| MemorySchema | Implemented | `aletheon-memory/src/schema.rs` | Schema definitions for memory storage |
 
 ---
 
@@ -147,7 +147,7 @@ The `system_state` block in Core Memory is automatically updated by the percepti
 
 - **MemorySystem** — Contains CoreMemory (L1), RecallDatabase (L2 SQLite), ArchivalDatabase (L3 vector DB), ContextBudget, Summarizer
 - **CoreMemory** — Block array, each block has label/value/limit/read_only
-- Code location: `runtime/src/impl/memory/core_memory.rs`, `runtime/src/impl/memory/recall_memory.rs`, `runtime/src/impl/memory/budget.rs`
+- Code location: `aletheon-runtime/src/impl/memory/core_memory.rs`, `aletheon-runtime/src/impl/memory/recall_memory.rs`, `aletheon-runtime/src/impl/memory/budget.rs`
 
 ---
 
@@ -157,7 +157,7 @@ The `system_state` block in Core Memory is automatically updated by the percepti
 
 **Severity:** P0
 
-If daemon process crashes during Core Memory update (`append`/`replace`/`rethink`), block values may be partially written, or Recall Memory and Core Memory states may be inconsistent.
+If aletheond process crashes during Core Memory update (`append`/`replace`/`rethink`), block values may be partially written, or Recall Memory and Core Memory states may be inconsistent.
 
 **Mitigation:** Unified by the Session persistence module. Memory system side needs:
 - Core Memory update operations should be atomic (write WAL first, then apply)
@@ -247,13 +247,13 @@ Provides temporary working memory for each sub-agent task:
 
 | Item | Description |
 |------|-------------|
-| **Core Memory** | `runtime/src/impl/memory/core_memory.rs` — MemoryBlock structure + self-edit tools |
-| **Recall Memory** | `runtime/src/impl/memory/recall_memory.rs` — SQLite schema + query interface |
-| **Archival Memory** | `runtime/src/impl/memory/archival_memory.rs` — Vector DB wrapper |
-| **Budget tracking** | `runtime/src/impl/memory/budget.rs` — ContextBudget |
-| **Compressor** | `runtime/src/impl/memory/compressor/mod.rs` — AdvancedCompressor with tail protection |
-| **Pipeline** | `runtime/src/impl/memory/pipeline/` — Two-phase consolidation (extraction + merge) |
-| **Backend storage** | `memory/src/` — episodic, semantic, procedural, self_memory, router |
+| **Core Memory** | `aletheon-runtime/src/impl/memory/core_memory.rs` — MemoryBlock structure + self-edit tools |
+| **Recall Memory** | `aletheon-runtime/src/impl/memory/recall_memory.rs` — SQLite schema + query interface |
+| **Archival Memory** | `aletheon-runtime/src/impl/memory/archival_memory.rs` — Vector DB wrapper |
+| **Budget tracking** | `aletheon-runtime/src/impl/memory/budget.rs` — ContextBudget |
+| **Compressor** | `aletheon-runtime/src/impl/memory/compressor/mod.rs` — AdvancedCompressor with tail protection |
+| **Pipeline** | `aletheon-runtime/src/impl/memory/pipeline/` — Two-phase consolidation (extraction + merge) |
+| **Backend storage** | `aletheon-memory/src/` — episodic, semantic, procedural, self_memory, router |
 | **WAL** | Planned — with Session persistence shared WAL |
 
 ---
@@ -273,7 +273,7 @@ Provides temporary working memory for each sub-agent task:
 
 ## Implementation Summary
 
-**Runtime-level memory (all under `runtime/src/impl/memory/`):**
+**Runtime-level memory (all under `aletheon-runtime/src/impl/memory/`):**
 - `core_memory.rs` — CoreMemory (L1) with block-based in-context memory and self-edit tools
 - `recall_memory.rs` — RecallMemory (L2) with SQLite-backed conversation history
 - `archival_memory.rs` — ArchivalMemory (L3) with `InMemoryArchival` (keyword search) and `VectorArchival` (vector-backed semantic search)
@@ -289,7 +289,7 @@ Provides temporary working memory for each sub-agent task:
 - `pipeline/state_db.rs` — `StateDatabase` for in-memory session tracking
 - `vector_store.rs` — `VectorStore` trait with QdrantVectorStore, LanceVectorStore; `Embedder` trait with OpenAIEmbedder
 
-**Backend storage (all under `memory/src/`):**
+**Backend storage (all under `aletheon-memory/src/`):**
 - `episodic.rs` — Episodic memory backend
 - `semantic.rs` — Semantic memory backend
 - `procedural.rs` — Procedural memory backend

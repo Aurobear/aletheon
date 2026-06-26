@@ -13,10 +13,10 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| InputSanitizer | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/input_sanitizer.rs` | Prompt injection detection + sanitization |
-| ResourceGovernor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/resource_governor.rs` | Multi-resource limits + throttling |
-| EmergencyKillswitch | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/emergency_killswitch.rs` | Multi-trigger emergency stop |
-| IntegrityMonitor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/integrity_monitor.rs` | FNV-1a hash checking, baseline tracking, killswitch integration |
+| InputSanitizer | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/input_sanitizer.rs` | Prompt injection detection + sanitization |
+| ResourceGovernor | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/resource_governor.rs` | Multi-resource limits + throttling |
+| EmergencyKillswitch | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/emergency_killswitch.rs` | Multi-trigger emergency stop |
+| IntegrityMonitor | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/integrity_monitor.rs` | FNV-1a hash checking, baseline tracking, killswitch integration |
 
 ---
 
@@ -189,7 +189,7 @@ struct SelfUpdateManager {
 ```rust
 struct IntegrityMonitor {
     config_hashes: HashMap<PathBuf, Hash>,  // 配置文件的已知 hash
-    binary_hash: Hash,                       // daemon 二进制的已知 hash
+    binary_hash: Hash,                       // aletheond 二进制的已知 hash
     /// 定期完整性检查（默认每 5 分钟）
     async fn check_integrity(&self) -> IntegrityReport { ... }
     /// 检测到篡改时触发紧急停止
@@ -201,7 +201,7 @@ struct IntegrityMonitor {
 
 | 检查项 | 方法 | 检查频率 |
 |--------|------|----------|
-| daemon 二进制 | mmap + SHA256 | 启动时 + 每 5min |
+| aletheond 二进制 | mmap + SHA256 | 启动时 + 每 5min |
 | 配置文件 (TOML) | SHA256 | 每次重新加载 |
 | 安全策略 (YAML) | SHA256 | 每次策略评估 |
 | Agent 定义 (TOML) | SHA256 | 启动时 |
@@ -229,8 +229,8 @@ struct IntegrityMonitor {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| InputSanitizer | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/input_sanitizer.rs` |
-| ResourceGovernor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/resource_governor.rs` |
-| EmergencyKillswitch | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/emergency_killswitch.rs` |
-| IntegrityMonitor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/integrity_monitor.rs` — FNV-1a, baseline, killswitch integration |
+| InputSanitizer | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/input_sanitizer.rs` |
+| ResourceGovernor | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/resource_governor.rs` |
+| EmergencyKillswitch | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/emergency_killswitch.rs` |
+| IntegrityMonitor | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/integrity_monitor.rs` — FNV-1a, baseline, killswitch integration |
 | SelfUpdateManager | ⬜ Planned | Update + rollback designed |

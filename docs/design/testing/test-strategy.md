@@ -45,11 +45,11 @@
 
 | 场景 | 步骤 | 验证点 |
 |------|------|--------|
-| 基础对话 | 启动 daemon → cli 发送消息 → 收到响应 | 响应非空，无错误 |
+| 基础对话 | 启动 aletheond → aletheon-cli 发送消息 → 收到响应 | 响应非空，无错误 |
 | 工具调用 | 请求 "list files" → agent 调用 `bash_exec("ls")` → 返回文件列表 | 工具执行成功，结果正确 |
-| 记忆持久化 | 告诉 agent 偏好 → 重启 daemon → 再次对话 → agent 记得偏好 | CoreMemory 恢复成功 |
+| 记忆持久化 | 告诉 agent 偏好 → 重启 aletheond → 再次对话 → agent 记得偏好 | CoreMemory 恢复成功 |
 | 安全阻断 | 请求 "rm -rf /" → agent 阻断 → 返回安全提示 | L3 操作被阻断 |
-| 崩溃恢复 | daemon 运行时 SIGKILL → systemd 重启 → 恢复会话 | 会话不丢失 |
+| 崩溃恢复 | aletheond 运行时 SIGKILL → systemd 重启 → 恢复会话 | 会话不丢失 |
 
 ---
 
@@ -112,7 +112,7 @@ fn test_crash_recovery_from_checkpoint() {
     // 1. 创建会话
     // 2. 设置 CoreMemory block
     // 3. 模拟崩溃 (SIGKILL)
-    // 4. 重启 daemon
+    // 4. 重启 aletheond
     // 5. 验证会话恢复
     // 6. 验证 CoreMemory 内容不变
 }
@@ -141,8 +141,8 @@ fn test_crash_recovery_from_checkpoint() {
 | 记忆查询延迟 | criterion | recall < 10ms, archival < 100ms | SQLite / LanceDB |
 | IPC 消息延迟 | criterion | Unix socket < 100μs | IPC 层 |
 | 上下文压缩 | criterion | 10K 消息 < 1s | LLM 摘要 |
-| 冷启动时间 | measure | < 2s | daemon 启动 |
-| 内存占用 | measure | 空闲 < 50MB, 峰值 < 500MB | daemon 运行时 |
+| 冷启动时间 | measure | < 2s | aletheond 启动 |
+| 内存占用 | measure | 空闲 < 50MB, 峰值 < 500MB | aletheond 运行时 |
 
 ---
 

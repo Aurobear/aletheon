@@ -4,8 +4,8 @@
 
 > The self-awareness layer — 8 internal layers for identity, boundary, care, narrative, conflict, attention, continuity, and mutation.
 
-**Crate:** `dasein`
-**Source:** `crates/dasein/`
+**Crate:** `aletheon-self`
+**Source:** `crates/aletheon-self/`
 **Last updated:** 2026-06-14
 
 ---
@@ -25,7 +25,7 @@
 
 ## 1. Overview
 
-The `dasein` crate implements the agent's self-awareness and self-protection capabilities. It contains 8 conceptual internal layers organized around the agent's sense of self:
+The `aletheon-self` crate implements the agent's self-awareness and self-protection capabilities. It contains 8 conceptual internal layers organized around the agent's sense of self:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -151,7 +151,7 @@ Action Request
 ## 4. Crate Structure
 
 ```
-crates/dasein/
+crates/aletheon-self/
 ├── core/           — Shared types and traits
 ├── bridge/         — Cross-crate integration points
 ├── impl/

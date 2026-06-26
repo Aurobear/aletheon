@@ -5,8 +5,8 @@
 > Pluggable multi-agent collaboration orchestration system, supporting Selector/Handoff/DiGraph strategies, with delegation unified as Tool calls.
 
 **Module:** 06
-**Crate:** `runtime`
-**Code location:** `runtime/src/impl/orchestration/`
+**Crate:** `aletheon-runtime`
+**Code location:** `aletheon-runtime/src/impl/orchestration/`
 **Related modules:** [react-loop.md](react-loop.md), [session.md](session.md)
 **Last Updated:** 2026-06-14
 
@@ -16,16 +16,16 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| Agent trait | Implemented | `runtime/src/impl/orchestration/agent.rs` | Core agent abstraction |
-| AgentRegistry | Implemented | `runtime/src/impl/orchestration/registry.rs` | Agent registration and lookup |
-| DelegateTool | Implemented | `runtime/src/impl/orchestration/delegate.rs` | Delegation as tool call |
-| SelectorStrategy | Implemented | `runtime/src/impl/orchestration/selector.rs` | Agent selection strategy |
-| HandoffStrategy | Implemented | `runtime/src/impl/orchestration/handoff.rs` | Agent handoff pattern |
-| TerminationConditions | Implemented | `runtime/src/impl/orchestration/termination.rs` | Stop conditions for orchestration |
-| IterationBudget | Implemented | `runtime/src/impl/orchestration/budget.rs` | Token/iteration budget control |
-| DiGraph | Implemented | `runtime/src/impl/orchestration/digraph/` | DAG-based orchestration graph (edge, node, state) |
-| Built-in agents | Implemented | `runtime/src/impl/orchestration/builtin/` | fs_agent, net_agent, code_agent |
-| ConfigAgent | Implemented | `runtime/src/impl/orchestration/config_agent.rs` | Configuration-driven agent |
+| Agent trait | Implemented | `aletheon-runtime/src/impl/orchestration/agent.rs` | Core agent abstraction |
+| AgentRegistry | Implemented | `aletheon-runtime/src/impl/orchestration/registry.rs` | Agent registration and lookup |
+| DelegateTool | Implemented | `aletheon-runtime/src/impl/orchestration/delegate.rs` | Delegation as tool call |
+| SelectorStrategy | Implemented | `aletheon-runtime/src/impl/orchestration/selector.rs` | Agent selection strategy |
+| HandoffStrategy | Implemented | `aletheon-runtime/src/impl/orchestration/handoff.rs` | Agent handoff pattern |
+| TerminationConditions | Implemented | `aletheon-runtime/src/impl/orchestration/termination.rs` | Stop conditions for orchestration |
+| IterationBudget | Implemented | `aletheon-runtime/src/impl/orchestration/budget.rs` | Token/iteration budget control |
+| DiGraph | Implemented | `aletheon-runtime/src/impl/orchestration/digraph/` | DAG-based orchestration graph (edge, node, state) |
+| Built-in agents | Implemented | `aletheon-runtime/src/impl/orchestration/builtin/` | fs_agent, net_agent, code_agent |
+| ConfigAgent | Implemented | `aletheon-runtime/src/impl/orchestration/config_agent.rs` | Configuration-driven agent |
 
 ---
 
@@ -57,10 +57,10 @@ The orchestration engine delivers progressively by phase:
 ### 2.2 Agent Registry
 
 **Agent trait** — Core agent abstraction, containing id, capabilities, tools, on_messages.
-- Code location: `runtime/src/impl/orchestration/agent.rs`
+- Code location: `aletheon-runtime/src/impl/orchestration/agent.rs`
 
 **AgentRegistry** — Agent registry, supports registration, lookup, lifecycle management.
-- Code location: `runtime/src/impl/orchestration/registry.rs`
+- Code location: `aletheon-runtime/src/impl/orchestration/registry.rs`
 
 ```
 +--------------+----------------+------------------+
@@ -78,7 +78,7 @@ The orchestration engine delivers progressively by phase:
 ### 2.3 Delegation as Tool (DelegateTool)
 
 **DelegateTool** — Inspired by CrewAI's core innovation, agent delegation unified as Tool call.
-- Code location: `runtime/src/impl/orchestration/delegate.rs`
+- Code location: `aletheon-runtime/src/impl/orchestration/delegate.rs`
 
 ```
 coordinator: "Help me check nginx config"
@@ -90,7 +90,7 @@ coordinator: "Help me check nginx config"
 ### 2.4 Termination Conditions
 
 **TerminationCondition** — Inspired by AutoGen's composable termination conditions, supports And/Or composition.
-- Code location: `runtime/src/impl/orchestration/termination.rs`
+- Code location: `aletheon-runtime/src/impl/orchestration/termination.rs`
 - Types: MaxIterations, MaxTokens, Timeout, AndCondition, OrCondition
 
 ### 2.5 Safety Guardrails
@@ -145,7 +145,7 @@ New design (independent mode):
   -> one sub-agent exhaustion doesn't affect others or parent
 ```
 
-Code location: `runtime/src/impl/orchestration/budget.rs`
+Code location: `aletheon-runtime/src/impl/orchestration/budget.rs`
 
 ### 4.2 Integration into DelegateTool
 
@@ -207,7 +207,7 @@ Default degradation rules:
 
 ## Implementation Summary
 
-**Code location:** `runtime/src/impl/orchestration/`
+**Code location:** `aletheon-runtime/src/impl/orchestration/`
 
 **Key types/traits implemented:**
 - `Agent` trait (`agent.rs`) — core agent abstraction with id, capabilities, tools, on_messages

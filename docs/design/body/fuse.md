@@ -14,15 +14,15 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| AgentFs (in-memory API) | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/filesystem.rs` | In-memory virtual filesystem with read/write/readdir, pause support |
-| FsNode types | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/filesystem.rs` | Directory/File/DynamicFile node types |
-| FUSE module | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/mod.rs` | Module entry point |
-| FuseMount | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/mount.rs` | `fuse3::path::PathFileSystem` integration behind `fuse` feature flag; stub mode when feature disabled |
-| PathFileSystem impl | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/mount.rs` | `AgentFs` implements `fuse3::path::PathFileSystem` (lookup, getattr, read, write, readdir) behind `#[cfg(feature = "fuse")]` |
-| StateProvider trait | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/provider.rs` | Abstraction for data sources (`get_sensor_data`, `get_context`, `get_log`, `get_agent_status`) |
-| LiveStateProvider | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/provider.rs` | Reads live system state from `/proc` (loadavg, meminfo, diskstats, net/dev) |
-| MockStateProvider | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/provider.rs` | In-memory mock with pre-settable responses and call recording for testing |
-| ControlsValidator | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/controls.rs` | Write validation for `/controls/` (toggle "0"/"1", TOML syntax check, allowlist) |
+| AgentFs (in-memory API) | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/filesystem.rs` | In-memory virtual filesystem with read/write/readdir, pause support |
+| FsNode types | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/filesystem.rs` | Directory/File/DynamicFile node types |
+| FUSE module | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/mod.rs` | Module entry point |
+| FuseMount | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/mount.rs` | `fuse3::path::PathFileSystem` integration behind `fuse` feature flag; stub mode when feature disabled |
+| PathFileSystem impl | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/mount.rs` | `AgentFs` implements `fuse3::path::PathFileSystem` (lookup, getattr, read, write, readdir) behind `#[cfg(feature = "fuse")]` |
+| StateProvider trait | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/provider.rs` | Abstraction for data sources (`get_sensor_data`, `get_context`, `get_log`, `get_agent_status`) |
+| LiveStateProvider | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/provider.rs` | Reads live system state from `/proc` (loadavg, meminfo, diskstats, net/dev) |
+| MockStateProvider | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/provider.rs` | In-memory mock with pre-settable responses and call recording for testing |
+| ControlsValidator | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/controls.rs` | Write validation for `/controls/` (toggle "0"/"1", TOML syntax check, allowlist) |
 
 > **Note:** The real FUSE mount is implemented behind the `fuse` feature flag. When `fuse` is enabled, `AgentFs` implements `fuse3::path::PathFileSystem` and `FuseMount` performs an actual mount via `fuse3::Session`. Without the feature, `FuseMount` operates in stub mode (always reports unmounted). The directory structure `/context/`, `/controls/`, `/sensors/`, `/logs/`, `/agents/` is fully wired.
 
@@ -189,11 +189,11 @@ FUSE 层自动选择：运行时用 Live，离线用 Checkpoint。
 ## 5. 实现要点
 
 - **使用 fuse3 crate**: libfuse 3.x 的 Rust 绑定，支持 async/await。
-- **挂载点权限**: `/mnt/agent/` 应由 daemon 创建和管理，挂载时使用 `allow_other` 或 `allow_root` 选项。
+- **挂载点权限**: `/mnt/agent/` 应由 aletheond 创建和管理，挂载时使用 `allow_other` 或 `allow_root` 选项。
 - **缓存策略**: `context/` 和 `sensors/` 的内容变化频繁，不应启用页缓存 (direct_io)。
 - **日志轮转**: `logs/` 下的文件应支持大小限制和轮转，避免 FUSE 返回无限大的文件。
-- **优雅关闭**: daemon 停止时应执行 `fusermount -u /mnt/agent/`，确保挂载点清理。
-- **systemd 集成**: FUSE 挂载应作为 daemon.service 的一部分，或独立为 agent-fuse.service。
+- **优雅关闭**: aletheond 停止时应执行 `fusermount -u /mnt/agent/`，确保挂载点清理。
+- **systemd 集成**: FUSE 挂载应作为 aletheond.service 的一部分，或独立为 agent-fuse.service。
 - **与 Session Persistence 的集成**: FUSE 层的状态读取应通过 StateProvider trait 抽象，支持从检查点恢复。
 - **Poll 支持**: 对 `sensors/events` 和 `logs/` 等流式文件实现 `poll()`，让 `select()`/`epoll()` 可用。
 
@@ -212,7 +212,7 @@ FUSE 层自动选择：运行时用 Live，离线用 Checkpoint。
 
 ## Implementation Summary
 
-**Code location:** `crates/dasein/src/impl/perception/fuse/` (5 files: mod.rs, filesystem.rs, mount.rs, provider.rs, controls.rs)
+**Code location:** `crates/aletheon-self/src/impl/perception/fuse/` (5 files: mod.rs, filesystem.rs, mount.rs, provider.rs, controls.rs)
 
 **What IS implemented:**
 - `FsNode` enum (`filesystem.rs`) — Directory/File/DynamicFile node types

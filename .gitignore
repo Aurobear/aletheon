@@ -12,7 +12,3 @@ references/letta/
 references/opencode/
 references/OpenHands/
 references/claude-code/
-
-# Runtime artifacts
-.aletheon-audit.jsonl
-hello.py

@@ -2,8 +2,8 @@
 
 > Migrated from `docs/design/core/cognitive-engine.md` (ReAct loop and ContentBlock sections only) — code paths updated to aletheon-* crate structure
 
-**Crate:** `runtime`
-**Code location:** `runtime/src/impl/engine/cognitive_loop.rs`
+**Crate:** `aletheon-runtime`
+**Code location:** `aletheon-runtime/src/impl/engine/cognitive_loop.rs`
 **Last Updated:** 2026-06-14
 
 ---
@@ -12,18 +12,18 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| ReAct loop | Implemented | `runtime/src/impl/engine/cognitive_loop.rs` | Core tool loop works end-to-end |
-| ContentBlock types | Implemented | `base/src/message.rs` | Text, ToolUse, ToolResult, Image |
-| Context compaction | Implemented | `runtime/src/impl/memory/compressor/` | AdvancedCompressor with token-budget tail protection, iterative summary, tool output pre-pruning |
-| Streaming | Implemented | `cognit/src/impl/inference/provider.rs` | `LlmStream` trait with SSE chunk streaming |
-| LoopDetector integration | Implemented | `corpus/src/impl/security/loop_detector.rs` | Wired to engine via `pre_check()`/`post_check()` |
+| ReAct loop | Implemented | `aletheon-runtime/src/impl/engine/cognitive_loop.rs` | Core tool loop works end-to-end |
+| ContentBlock types | Implemented | `aletheon-abi/src/message.rs` | Text, ToolUse, ToolResult, Image |
+| Context compaction | Implemented | `aletheon-runtime/src/impl/memory/compressor/` | AdvancedCompressor with token-budget tail protection, iterative summary, tool output pre-pruning |
+| Streaming | Implemented | `aletheon-brain/src/impl/inference/provider.rs` | `LlmStream` trait with SSE chunk streaming |
+| LoopDetector integration | Implemented | `aletheon-body/src/impl/security/loop_detector.rs` | Wired to engine via `pre_check()`/`post_check()` |
 
 ---
 
 ## 1. ReAct Reasoning Loop
 
 **ReAct loop** — Uses Anthropic SDK's Think-Act-Observe tool loop pattern to drive agent reasoning and decision-making.
-- Code location: `runtime/src/impl/engine/cognitive_loop.rs`
+- Code location: `aletheon-runtime/src/impl/engine/cognitive_loop.rs`
 
 ```
 +-------------------------------------------------------------+
@@ -55,7 +55,7 @@
 ## 2. Content-Block Message Protocol
 
 **ContentBlock** — Unified content-block message format (inspired by Anthropic SDK), used for all agent communication.
-- Code location: `base/src/message.rs`
+- Code location: `aletheon-abi/src/message.rs`
 - Contains Text, ToolUse, ToolResult, Image four variants
 - Aligned with LLM API native format, reducing conversion overhead; `ToolResult`'s `is_error` field implements structured tool errors
 
@@ -77,7 +77,7 @@ struct Message {
 
 ## 3. LoopDetector Integration
 
-The security model's `LoopDetector` (`corpus/src/impl/security/loop_detector.rs`) provides pre-check and post-check hooks integrated into the ReAct loop.
+The security model's `LoopDetector` (`aletheon-body/src/impl/security/loop_detector.rs`) provides pre-check and post-check hooks integrated into the ReAct loop.
 
 **Integration points:**
 1. Pre-check before tool call: risk classification + loop detection
@@ -98,7 +98,7 @@ The security model's `LoopDetector` (`corpus/src/impl/security/loop_detector.rs`
 
 ## 4. Context Compression
 
-Implemented in `runtime/src/impl/memory/compressor/`:
+Implemented in `aletheon-runtime/src/impl/memory/compressor/`:
 
 ```rust
 async fn compact(&mut self) {
@@ -131,7 +131,7 @@ async fn compact(&mut self) {
 
 | Component | Code Location | Key Types |
 |-----------|---------------|-----------|
-| ReAct loop | `runtime/src/impl/engine/cognitive_loop.rs` | `Engine`, `TurnConfig`, `TurnResult` |
-| ContentBlock protocol | `base/src/message.rs` | `ContentBlock` (Text/ToolUse/ToolResult/Image), `Message` |
-| LoopDetector integration | `corpus/src/impl/security/loop_detector.rs` | `LoopDetector`, `pre_check()`, `post_check()` |
-| Compressor | `runtime/src/impl/memory/compressor/` | `AdvancedCompressor`, `TailProtectionConfig`, `SummaryTemplate` |
+| ReAct loop | `aletheon-runtime/src/impl/engine/cognitive_loop.rs` | `Engine`, `TurnConfig`, `TurnResult` |
+| ContentBlock protocol | `aletheon-abi/src/message.rs` | `ContentBlock` (Text/ToolUse/ToolResult/Image), `Message` |
+| LoopDetector integration | `aletheon-body/src/impl/security/loop_detector.rs` | `LoopDetector`, `pre_check()`, `post_check()` |
+| Compressor | `aletheon-runtime/src/impl/memory/compressor/` | `AdvancedCompressor`, `TailProtectionConfig`, `SummaryTemplate` |

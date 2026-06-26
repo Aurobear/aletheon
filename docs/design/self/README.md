@@ -1,9 +1,9 @@
-# Self Crate (`dasein`)
+# Self Crate (`aletheon-self`)
 
 > The self-awareness and self-protection layer — hooks, security, resilience, and perception.
 
-**Crate:** `dasein`
-**Source:** `crates/dasein/`
+**Crate:** `aletheon-self`
+**Source:** `crates/aletheon-self/`
 **Last updated:** 2026-06-14
 
 ---
@@ -11,7 +11,7 @@
 ## Crate Structure
 
 ```
-crates/dasein/
+crates/aletheon-self/
 ├── core/           — Shared types and traits
 ├── bridge/         — Cross-crate integration points
 ├── impl/

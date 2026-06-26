@@ -1,4 +1,4 @@
-# Aletheon Daemon (daemon)
+# Aletheon Daemon (aletheond)
 
 > 持久运行的后台守护进程，通过 Unix socket 接收 CLI 请求，调度 LLM 推理与工具执行。
 > 作为 systemd 服务运行，是 Aletheon 系统的核心入口。
@@ -13,16 +13,16 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| CLI entry point | ✅ Implemented | `daemon/src/main.rs` | clap-based arg parsing |
-| .env loading | ✅ Implemented | `runtime/src/impl/daemon/mod.rs` | Simple KEY=VALUE parser |
-| TOML config loading | ✅ Implemented | `runtime/src/impl/daemon/mod.rs` | `AppConfig::load_or_default()` |
-| Provider registry init | ✅ Implemented | `runtime/src/impl/daemon/mod.rs` | `ProviderRegistry::from_config()` |
-| Unix socket server | ✅ Implemented | `runtime/src/impl/daemon/server.rs` | Line-delimited JSON-RPC |
-| RequestHandler | ✅ Implemented | `runtime/src/impl/daemon/handler.rs` | chat/clear/status methods |
-| Perception manager | ✅ Implemented | `runtime/src/impl/daemon/mod.rs` | Spawns in background task |
-| Perception bridge | ✅ Implemented | `runtime/src/impl/daemon/mod.rs` | Event→Engine injection channel |
-| Agent registry | ✅ Implemented | `runtime/src/impl/daemon/handler.rs` | Config-based + builtin fallback |
-| Memory system init | ✅ Implemented | `runtime/src/impl/daemon/handler.rs` | CoreMemory + RecallMemory |
+| CLI entry point | ✅ Implemented | `aletheond/src/main.rs` | clap-based arg parsing |
+| .env loading | ✅ Implemented | `aletheon-runtime/src/impl/daemon/mod.rs` | Simple KEY=VALUE parser |
+| TOML config loading | ✅ Implemented | `aletheon-runtime/src/impl/daemon/mod.rs` | `AppConfig::load_or_default()` |
+| Provider registry init | ✅ Implemented | `aletheon-runtime/src/impl/daemon/mod.rs` | `ProviderRegistry::from_config()` |
+| Unix socket server | ✅ Implemented | `aletheon-runtime/src/impl/daemon/server.rs` | Line-delimited JSON-RPC |
+| RequestHandler | ✅ Implemented | `aletheon-runtime/src/impl/daemon/handler.rs` | chat/clear/status methods |
+| Perception manager | ✅ Implemented | `aletheon-runtime/src/impl/daemon/mod.rs` | Spawns in background task |
+| Perception bridge | ✅ Implemented | `aletheon-runtime/src/impl/daemon/mod.rs` | Event→Engine injection channel |
+| Agent registry | ✅ Implemented | `aletheon-runtime/src/impl/daemon/handler.rs` | Config-based + builtin fallback |
+| Memory system init | ✅ Implemented | `aletheon-runtime/src/impl/daemon/handler.rs` | CoreMemory + RecallMemory |
 | Streaming responses | ⬜ Planned | — | Current impl is request-response, not streaming |
 | Graceful shutdown | ⬜ Planned | — | No signal handling or drain logic |
 | Health check endpoint | ⬜ Planned | — | No health/readiness probe |
@@ -51,7 +51,7 @@
 
 ## 1. 概述
 
-`daemon` 是 Aletheon 系统的持久后台进程。它：
+`aletheond` 是 Aletheon 系统的持久后台进程。它：
 
 1. 加载 TOML 配置和环境变量
 2. 初始化 LLM Provider 注册表
@@ -68,13 +68,13 @@
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                     cli                          │
+│                     aletheon-cli                          │
 │           (single message / TUI / simple REPL)            │
 └────────────────────────┬─────────────────────────────────┘
                          │ Unix Socket (JSON-RPC, line-delimited)
                          ▼
 ┌──────────────────────────────────────────────────────────┐
-│                     daemon (daemon)                    │
+│                     aletheond (daemon)                    │
 │                                                          │
 │  ┌─────────────────────────────────────────────────────┐ │
 │  │                 UnixServer                           │ │
@@ -112,11 +112,11 @@
 
 ### 3.1 CLI 参数
 
-入口文件: `daemon/src/main.rs`
+入口文件: `aletheond/src/main.rs`
 
 ```rust
 #[derive(Parser)]
-#[command(name = "daemon", about = "Aletheon daemon")]
+#[command(name = "aletheond", about = "Aletheon daemon")]
 struct Args {
     /// Path to config file
     #[arg(short, long)]
@@ -127,7 +127,7 @@ struct Args {
     env: Option<PathBuf>,
 
     /// Socket path
-    #[arg(short, long, default_value = "/run/daemon/daemon.sock")]
+    #[arg(short, long, default_value = "/run/aletheond/aletheond.sock")]
     socket: PathBuf,
 }
 ```
@@ -136,7 +136,7 @@ struct Args {
 
 ### 3.2 配置加载
 
-代码位置: `runtime/src/impl/daemon/mod.rs`
+代码位置: `aletheon-runtime/src/impl/daemon/mod.rs`
 
 启动顺序:
 
@@ -176,7 +176,7 @@ let (default_provider_config, default_model) = registry.resolve("")?;
 
 ### 3.4 感知管理器启动
 
-代码位置: `runtime/src/impl/daemon/mod.rs` `run()` 函数
+代码位置: `aletheon-runtime/src/impl/daemon/mod.rs` `run()` 函数
 
 ```rust
 let (event_tx, event_rx) = mpsc::channel::<PerceptionEvent>(256);
@@ -199,7 +199,7 @@ tokio::spawn(async move { bridge.run().await; });
 
 ### 3.5 RequestHandler 初始化
 
-代码位置: `runtime/src/impl/daemon/handler.rs`
+代码位置: `aletheon-runtime/src/impl/daemon/handler.rs`
 
 `RequestHandler::new()` 完成以下初始化:
 
@@ -226,7 +226,7 @@ unix_server.run().await?;
 
 ### 4.1 Unix Socket 服务器
 
-代码位置: `runtime/src/impl/daemon/server.rs`
+代码位置: `aletheon-runtime/src/impl/daemon/server.rs`
 
 协议: **行分隔 JSON-RPC**（每条消息以 `\n` 结尾）
 
@@ -256,7 +256,7 @@ client connect
 
 ### 4.2 RequestHandler 请求分发
 
-代码位置: `runtime/src/impl/daemon/handler.rs`
+代码位置: `aletheon-runtime/src/impl/daemon/handler.rs`
 
 ```rust
 pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value

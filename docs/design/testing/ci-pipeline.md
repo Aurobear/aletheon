@@ -155,10 +155,10 @@ jobs:
 
 | 产物 | 格式 | 包含 | 分发方式 |
 |------|------|------|----------|
-| daemon + cli | `.pkg.tar.zst` | 二进制 + systemd service + 默认配置 | AUR |
-| daemon + cli | `.deb` | 二进制 + systemd service + 默认配置 | 手动 |
+| aletheond + aletheon-cli | `.pkg.tar.zst` | 二进制 + systemd service + 默认配置 | AUR |
+| aletheond + aletheon-cli | `.deb` | 二进制 + systemd service + 默认配置 | 手动 |
 | DKMS 包 | `.deb` / `.pkg.tar.zst` | `agent_ipc.ko` 内核模块 | 手动 |
-| Docker 镜像 | `ghcr.io/aurobear/aletheon` | daemon + base tools | GHCR |
+| Docker 镜像 | `ghcr.io/aurobear/aletheon` | aletheond + base tools | GHCR |
 
 ---
 

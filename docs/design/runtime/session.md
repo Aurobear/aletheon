@@ -5,8 +5,8 @@
 > Session persistence, EventJournal, crash recovery. Observability sections extracted to [observability.md](observability.md).
 
 **Module:** 10
-**Crate:** `runtime`
-**Code location:** `runtime/src/impl/session/`
+**Crate:** `aletheon-runtime`
+**Code location:** `aletheon-runtime/src/impl/session/`
 **Related modules:** [react-loop.md](react-loop.md), [observability.md](observability.md)
 **Last Updated:** 2026-06-14
 
@@ -16,9 +16,9 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| SessionStore | Implemented | `runtime/src/impl/session/store.rs` | Session CRUD + metadata |
-| EventJournal | Implemented | `runtime/src/impl/session/journal.rs` | JSONL append-only log + SQLite index |
-| Session recovery | Partial | `runtime/src/impl/session/journal.rs` | `recover()` exists but unused in practice |
+| SessionStore | Implemented | `aletheon-runtime/src/impl/session/store.rs` | Session CRUD + metadata |
+| EventJournal | Implemented | `aletheon-runtime/src/impl/session/journal.rs` | JSONL append-only log + SQLite index |
+| Session recovery | Partial | `aletheon-runtime/src/impl/session/journal.rs` | `recover()` exists but unused in practice |
 | InterruptManager | Planned | — | Designed but not started |
 | CompressionManager | Planned | — | Designed but not started |
 | SessionHierarchy | Planned | — | Multi-agent session tree not started |
@@ -90,7 +90,7 @@ Event body `SessionEventBody` is a tagged union covering:
 - **checkpoint()** — write CheckpointBoundary and fsync, ensuring recovery point persistence
 - **WAL checkpoint strategy** — execute `PRAGMA wal_checkpoint(TRUNCATE)` every 50 writes, preventing WAL file unbounded growth
 
-Code location: `runtime/src/impl/session/journal.rs`
+Code location: `aletheon-runtime/src/impl/session/journal.rs`
 
 #### 3.1.3 Thread Store Abstraction (ThreadStore trait)
 
@@ -226,8 +226,8 @@ use_audit_as_fallback = true
 ## Implementation Summary
 
 **Code locations:**
-- `runtime/src/impl/session/store.rs` — SessionStore (session CRUD + metadata)
-- `runtime/src/impl/session/journal.rs` — EventJournal (JSONL append-only log + SQLite index), session recovery
+- `aletheon-runtime/src/impl/session/store.rs` — SessionStore (session CRUD + metadata)
+- `aletheon-runtime/src/impl/session/journal.rs` — EventJournal (JSONL append-only log + SQLite index), session recovery
 
 **Key types/traits implemented:**
 - `SessionStore` — session CRUD operations and metadata management

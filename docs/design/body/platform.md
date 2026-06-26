@@ -103,7 +103,7 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 
 ## Implementation Summary
 
-**Code location:** `crates/corpus/src/impl/platform/`
+**Code location:** `crates/aletheon-body/src/impl/platform/`
 
 **Key types/traits implemented:**
 - `PlatformAdapter` trait (`adapter.rs`) — cross-platform abstraction with send/recv, process spawn/kill, fs read/write/watch, permission check/elevate
@@ -138,23 +138,23 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 | ServiceDependencyGraph | ✅ Implemented | `platform/boot.rs` | Topological sort + cycle detection (`would_create_cycle`) |
 | Lazy loading (5-stage) | ✅ Implemented | `platform/boot.rs` | `LazyLoadStage`: immediate → 500ms → 2s → 5s → on-demand |
 | Boot diagnosis | ✅ Implemented | `platform/boot.rs` | `BootDiagnosis`: resource/service/historical checks |
-| systemd service | ✅ Exists | `systemd/daemon.service` | Service file |
+| systemd service | ✅ Exists | `systemd/aletheond.service` | Service file |
 
 ---
 
 ## 1. 启动阶段
 
 ```
-GRUB/UEFI → initramfs → systemd init → services → user session → daemon
-              [Phase 6]    [Phase 1-3]    [...services]     [cli]
+GRUB/UEFI → initramfs → systemd init → services → user session → aletheond
+              [Phase 6]    [Phase 1-3]    [...services]     [aletheon-cli]
 ```
 
 | 阶段 | Agent 参与方式 | 功能 |
 |------|---------------|------|
 | initramfs | ❌ 未参与 | 挂载根文件系统前 Agent 不可用 |
 | systemd early | ❌ 未参与 | basic.target 前依赖缺失 |
-| systemd services | ✅ systemd service | daemon 在 network.target 后启动 |
-| user session | ✅ systemd --user / 桌面启动 | cli 提供用户交互 |
+| systemd services | ✅ systemd service | aletheond 在 network.target 后启动 |
+| user session | ✅ systemd --user / 桌面启动 | aletheon-cli 提供用户交互 |
 
 ---
 
@@ -167,7 +167,7 @@ After=network.target dbus.service sysinit.target
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/daemon --config /etc/agent/agent.toml
+ExecStart=/usr/bin/aletheond --config /etc/agent/agent.toml
 Restart=on-failure
 RestartSec=5
 WatchdogSec=30
@@ -270,7 +270,7 @@ Agent 检测到服务启动失败
 
 ## 5. 启动后延迟加载
 
-为了不影响系统启动时间，daemon 的功能分层加载：
+为了不影响系统启动时间，aletheond 的功能分层加载：
 
 | 加载阶段 | 加载内容 | 延迟 |
 |----------|----------|------|
@@ -300,12 +300,12 @@ Agent 检测到服务启动失败
 
 | Component | Code Location | Notes |
 |-----------|---------------|-------|
-| BootMonitor | `crates/corpus/src/impl/platform/boot.rs` | Boot phase FSM + dependency tracking + lazy stages |
-| BootPhase | `crates/corpus/src/impl/platform/boot.rs` | Initializing → Monitoring → Ready / Degraded |
-| ServiceDependencyGraph | `crates/corpus/src/impl/platform/boot.rs` | Topological sort + `would_create_cycle()` cycle detection |
-| LazyLoadStage | `crates/corpus/src/impl/platform/boot.rs` | 5 stages: immediate / 500ms / 2s / 5s / on-demand |
-| BootDiagnosis | `crates/corpus/src/impl/platform/boot.rs` | Resource/service/historical checks |
-| systemd service | `systemd/daemon.service` | Service file exists |
+| BootMonitor | `crates/aletheon-body/src/impl/platform/boot.rs` | Boot phase FSM + dependency tracking + lazy stages |
+| BootPhase | `crates/aletheon-body/src/impl/platform/boot.rs` | Initializing → Monitoring → Ready / Degraded |
+| ServiceDependencyGraph | `crates/aletheon-body/src/impl/platform/boot.rs` | Topological sort + `would_create_cycle()` cycle detection |
+| LazyLoadStage | `crates/aletheon-body/src/impl/platform/boot.rs` | 5 stages: immediate / 500ms / 2s / 5s / on-demand |
+| BootDiagnosis | `crates/aletheon-body/src/impl/platform/boot.rs` | Resource/service/historical checks |
+| systemd service | `systemd/aletheond.service` | Service file exists |
 
 
 ---
@@ -363,7 +363,7 @@ struct AgentInfo {
 | 层级 | 发现机制 | 范围 | 延迟 | 适用场景 |
 |------|----------|------|------|----------|
 | L1: 进程内 | `AgentRegistry` | 同一进程的 Agent | <1ms | 编排引擎子 Agent |
-| L2: 本机 | D-Bus / Unix socket | 同一主机的 Agent | <5ms | daemon 发现 ROS Agent |
+| L2: 本机 | D-Bus / Unix socket | 同一主机的 Agent | <5ms | aletheond 发现 ROS Agent |
 | L3: LAN | mDNS (RFC 6762) | 同一网段的 Agent | <100ms | 多设备协作 |
 | L4: WAN | 中心注册表 / NATS | 跨网络 Agent | 可变 | 云端 Agent 集群 |
 
@@ -492,11 +492,11 @@ Registered → Active ↔ Idle ↔ Busy → Degraded → Offline
 
 | Component | Code Location | Notes |
 |-----------|---------------|-------|
-| Core types (AgentId, AgentInfo, etc.) | `crates/corpus/src/impl/platform/awareness/mod.rs` | AgentId, AgentKind, TrustLevel, Capability, Endpoint, AgentInfo |
-| AgentDiscovery | `crates/corpus/src/impl/platform/awareness/discovery.rs` | Unix socket scan, L2 local discovery |
-| ConflictDetector | `crates/corpus/src/impl/platform/awareness/conflict.rs` | File/service/resource/memory conflicts |
-| AgentLifecycle | `crates/corpus/src/impl/platform/awareness/lifecycle.rs` | FSM: Starting→Running→Paused/Degraded→Stopped/Crashed |
-| AgentCommunication trait | `crates/corpus/src/impl/platform/awareness/communication.rs` | JSON-RPC 2.0 over Unix socket |
+| Core types (AgentId, AgentInfo, etc.) | `crates/aletheon-body/src/impl/platform/awareness/mod.rs` | AgentId, AgentKind, TrustLevel, Capability, Endpoint, AgentInfo |
+| AgentDiscovery | `crates/aletheon-body/src/impl/platform/awareness/discovery.rs` | Unix socket scan, L2 local discovery |
+| ConflictDetector | `crates/aletheon-body/src/impl/platform/awareness/conflict.rs` | File/service/resource/memory conflicts |
+| AgentLifecycle | `crates/aletheon-body/src/impl/platform/awareness/lifecycle.rs` | FSM: Starting→Running→Paused/Degraded→Stopped/Crashed |
+| AgentCommunication trait | `crates/aletheon-body/src/impl/platform/awareness/communication.rs` | JSON-RPC 2.0 over Unix socket |
 | L3 mDNS discovery | — | 未实现 |
 | L4 WAN discovery | — | 未实现 |
 
@@ -956,7 +956,7 @@ io_uring 混合架构        可选内核模块            自定义 syscall
 
 ## Implementation Summary
 
-**Code location:** `crates/corpus/src/impl/platform/ipc/`
+**Code location:** `crates/aletheon-body/src/impl/platform/ipc/`
 
 **Key types/traits implemented:**
 - `IpcBackend` trait (`backend.rs`) — unified backend interface with send/recv/probe

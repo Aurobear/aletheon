@@ -4,8 +4,8 @@
 
 > P3 automation system providing cron-triggered, webhook-triggered, and API-triggered automations with multi-channel delivery, script pre-processing, and daily-run limits.
 
-**Crate:** `runtime`
-**Code location:** `runtime/src/impl/automation/`
+**Crate:** `aletheon-runtime`
+**Code location:** `aletheon-runtime/src/impl/automation/`
 **Last Updated:** 2026-06-14
 
 ---
@@ -14,11 +14,11 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| AutomationScheduler | Implemented | `runtime/src/impl/automation/mod.rs` | Top-level scheduler with CRUD, cron/webhook triggers |
-| CronParser | Implemented | `runtime/src/impl/automation/cron.rs` | Cron expression parsing and matching |
-| DeliveryManager | Implemented | `runtime/src/impl/automation/delivery.rs` | Multi-channel delivery (Telegram, Discord, Slack, Email, Webhook, Local, Stdout) |
-| ScriptRunner | Implemented | `runtime/src/impl/automation/script.rs` | Script pre-processing execution |
-| WebhookEvent | Implemented | `runtime/src/impl/automation/webhook.rs` | Webhook event matching and HMAC verification |
+| AutomationScheduler | Implemented | `aletheon-runtime/src/impl/automation/mod.rs` | Top-level scheduler with CRUD, cron/webhook triggers |
+| CronParser | Implemented | `aletheon-runtime/src/impl/automation/cron.rs` | Cron expression parsing and matching |
+| DeliveryManager | Implemented | `aletheon-runtime/src/impl/automation/delivery.rs` | Multi-channel delivery (Telegram, Discord, Slack, Email, Webhook, Local, Stdout) |
+| ScriptRunner | Implemented | `aletheon-runtime/src/impl/automation/script.rs` | Script pre-processing execution |
+| WebhookEvent | Implemented | `aletheon-runtime/src/impl/automation/webhook.rs` | Webhook event matching and HMAC verification |
 
 ---
 
@@ -70,13 +70,13 @@ enum DeliveryTarget {
 
 Standard cron expression parsing and matching. The scheduler evaluates all cron-triggered automations against the current time, respecting daily limits.
 
-Code location: `runtime/src/impl/automation/cron.rs`
+Code location: `aletheon-runtime/src/impl/automation/cron.rs`
 
 ### 3.2 Webhook Trigger
 
 Matches incoming webhook events against configured event types. HMAC signature verification is expected to be done by the caller before passing to the scheduler.
 
-Code location: `runtime/src/impl/automation/webhook.rs`
+Code location: `aletheon-runtime/src/impl/automation/webhook.rs`
 
 ### 3.3 API Trigger
 
@@ -94,7 +94,7 @@ Endpoint-based trigger (designed, integration with daemon HTTP server needed).
 6. **Multi-channel delivery** — deliver to all configured targets via `DeliveryManager`
 7. **Counter update** — increment daily_count, update last_run
 
-Code location: `runtime/src/impl/automation/mod.rs`
+Code location: `aletheon-runtime/src/impl/automation/mod.rs`
 
 ---
 
@@ -111,7 +111,7 @@ Code location: `runtime/src/impl/automation/mod.rs`
 - **Local** — Write to local file path
 - **Stdout** — Print to standard output
 
-Code location: `runtime/src/impl/automation/delivery.rs`
+Code location: `aletheon-runtime/src/impl/automation/delivery.rs`
 
 ---
 
@@ -139,10 +139,10 @@ If the agent's response equals `"[SILENT]"`, the delivery step is skipped entire
 
 | Component | Code Location | Key Types |
 |-----------|---------------|-----------|
-| AutomationScheduler | `runtime/src/impl/automation/mod.rs` | `AutomationScheduler`, `Automation`, `AutomationTrigger`, `DeliveryTarget`, `AutomationResult` |
-| CronParser | `runtime/src/impl/automation/cron.rs` | `CronParser`, `CronSchedule` |
-| DeliveryManager | `runtime/src/impl/automation/delivery.rs` | `DeliveryManager` |
-| ScriptRunner | `runtime/src/impl/automation/script.rs` | `ScriptRunner` |
-| WebhookEvent | `runtime/src/impl/automation/webhook.rs` | `WebhookEvent`, `matches_event_type()` |
+| AutomationScheduler | `aletheon-runtime/src/impl/automation/mod.rs` | `AutomationScheduler`, `Automation`, `AutomationTrigger`, `DeliveryTarget`, `AutomationResult` |
+| CronParser | `aletheon-runtime/src/impl/automation/cron.rs` | `CronParser`, `CronSchedule` |
+| DeliveryManager | `aletheon-runtime/src/impl/automation/delivery.rs` | `DeliveryManager` |
+| ScriptRunner | `aletheon-runtime/src/impl/automation/script.rs` | `ScriptRunner` |
+| WebhookEvent | `aletheon-runtime/src/impl/automation/webhook.rs` | `WebhookEvent`, `matches_event_type()` |
 
 **Test coverage:** 14+ tests covering CRUD operations, cron matching, daily limits, webhook triggers, execution with delivery, SILENT marker, counter increments, scheduler lifecycle.

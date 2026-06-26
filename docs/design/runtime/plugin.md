@@ -4,8 +4,8 @@
 
 > Plugin system for extending Aletheon with external tools and hooks, supporting command-based plugins with manifest-driven discovery and dependency resolution.
 
-**Crate:** `runtime`
-**Code location:** `runtime/src/impl/plugin/`
+**Crate:** `aletheon-runtime`
+**Code location:** `aletheon-runtime/src/impl/plugin/`
 **Last Updated:** 2026-06-14
 
 ---
@@ -14,10 +14,10 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| PluginManifest | Implemented | `runtime/src/impl/plugin/manifest.rs` | TOML-based plugin manifest with validation |
-| PluginLoader | Implemented | `runtime/src/impl/plugin/loader.rs` | Discovery and dependency resolution |
-| PluginManager | Implemented | `runtime/src/impl/plugin/manager.rs` | Lifecycle management, tool creation |
-| PluginRuntime | Implemented | `runtime/src/impl/plugin/runtime.rs` | Command-based execution (native/WASM/agent planned) |
+| PluginManifest | Implemented | `aletheon-runtime/src/impl/plugin/manifest.rs` | TOML-based plugin manifest with validation |
+| PluginLoader | Implemented | `aletheon-runtime/src/impl/plugin/loader.rs` | Discovery and dependency resolution |
+| PluginManager | Implemented | `aletheon-runtime/src/impl/plugin/manager.rs` | Lifecycle management, tool creation |
+| PluginRuntime | Implemented | `aletheon-runtime/src/impl/plugin/runtime.rs` | Command-based execution (native/WASM/agent planned) |
 
 ---
 
@@ -68,7 +68,7 @@ network = ["*.example.com"]
 - `dependencies` — Plugin dependencies with optional flag
 - `plugin_permissions` — Structured permissions (filesystem, network)
 
-Code location: `runtime/src/impl/plugin/manifest.rs`
+Code location: `aletheon-runtime/src/impl/plugin/manifest.rs`
 
 ---
 
@@ -86,7 +86,7 @@ Discovers plugins from configured search directories and resolves dependency ord
 - Returns error if required dependency is missing
 - Topological sort ensures dependencies load before dependents
 
-Code location: `runtime/src/impl/plugin/loader.rs`
+Code location: `aletheon-runtime/src/impl/plugin/loader.rs`
 
 ---
 
@@ -103,12 +103,12 @@ Manages plugin lifecycle: discovery, loading, tool creation, and unloading.
 
 **Key operations:**
 - `load_all()` — Discover, resolve dependencies, load all plugins
-- `get_tools()` — Get all active plugin tools (implements `base::tool::Tool` trait)
+- `get_tools()` — Get all active plugin tools (implements `aletheon-abi::tool::Tool` trait)
 - `unload(plugin_id)` — Unload a specific plugin
 
 **Tool creation:** Each tool defined in a plugin manifest is wrapped in a `PluginTool` struct that implements the `Tool` trait. Tool execution delegates to the plugin's runtime.
 
-Code location: `runtime/src/impl/plugin/manager.rs`
+Code location: `aletheon-runtime/src/impl/plugin/manager.rs`
 
 ---
 
@@ -128,7 +128,7 @@ Defines how plugin tools are executed.
 3. Parse stdout as JSON result
 4. Return error with stderr on failure
 
-Code location: `runtime/src/impl/plugin/runtime.rs`
+Code location: `aletheon-runtime/src/impl/plugin/runtime.rs`
 
 ---
 
@@ -145,9 +145,9 @@ Code location: `runtime/src/impl/plugin/runtime.rs`
 
 | Component | Code Location | Key Types |
 |-----------|---------------|-----------|
-| PluginManifest | `runtime/src/impl/plugin/manifest.rs` | `PluginManifest`, `PluginToolDef`, `PluginHookDef`, `PluginDependency`, `PluginPermissions` |
-| PluginLoader | `runtime/src/impl/plugin/loader.rs` | `PluginLoader` |
-| PluginManager | `runtime/src/impl/plugin/manager.rs` | `PluginManager`, `PluginState`, `ManagedPlugin`, `PluginTool` |
-| PluginRuntime | `runtime/src/impl/plugin/runtime.rs` | `PluginRuntime` (Command variant) |
+| PluginManifest | `aletheon-runtime/src/impl/plugin/manifest.rs` | `PluginManifest`, `PluginToolDef`, `PluginHookDef`, `PluginDependency`, `PluginPermissions` |
+| PluginLoader | `aletheon-runtime/src/impl/plugin/loader.rs` | `PluginLoader` |
+| PluginManager | `aletheon-runtime/src/impl/plugin/manager.rs` | `PluginManager`, `PluginState`, `ManagedPlugin`, `PluginTool` |
+| PluginRuntime | `aletheon-runtime/src/impl/plugin/runtime.rs` | `PluginRuntime` (Command variant) |
 
 **Test coverage:** manifest.rs has 5 tests (validation, TOML parsing, entry type parsing). manager.rs has integration tests for tool creation and execution. automation/mod.rs has 10+ tests for scheduler lifecycle.

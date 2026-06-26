@@ -5,13 +5,13 @@
 //!
 //! Run with:  cargo run -p basic-agent-example
 
-use base::body::{Action, ActionResult};
-use base::brain::{CostEstimate, Plan, PlanStep};
-use base::context::Context;
-use base::self_field::{Intent, RiskLevel, Verdict};
-use runtime::{AletheonRuntime, RuntimeConfig};
-use anyhow::Result;
 use std::path::PathBuf;
+use anyhow::Result;
+use aletheon_abi::context::Context;
+use aletheon_abi::self_field::{Intent, Verdict, RiskLevel};
+use aletheon_abi::body::{Action, ActionResult};
+use aletheon_abi::brain::{Plan, PlanStep, CostEstimate};
+use aletheon_runtime::{AletheonRuntime, RuntimeConfig};
 
 /// Stub: policy review -- always approves in this example.
 fn review(_intent: &Intent, _ctx: &Context) -> Result<Verdict> {
@@ -45,9 +45,7 @@ fn think(intent: &Intent, _ctx: &Context) -> Result<Plan> {
 
 /// Stub: tool execution -- echoes the action back as text.
 fn execute(action: &Action, _ctx: &Context) -> Result<ActionResult> {
-    let msg = action
-        .parameters
-        .get("message")
+    let msg = action.parameters.get("message")
         .and_then(|v| v.as_str())
         .unwrap_or("(no message)");
     Ok(ActionResult {
@@ -62,7 +60,9 @@ fn execute(action: &Action, _ctx: &Context) -> Result<ActionResult> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .init();
 
     let config = RuntimeConfig::default();
     let mut runtime = AletheonRuntime::new(config);
@@ -71,9 +71,7 @@ async fn main() -> Result<()> {
     let user_input = "Hello, Aletheon! What can you do?";
     tracing::info!("User input: {}", user_input);
 
-    let response = runtime
-        .process(user_input, &ctx, review, think, execute)
-        .await?;
+    let response = runtime.process(user_input, &ctx, review, think, execute).await?;
     println!("Agent response:\n{}", response);
 
     Ok(())

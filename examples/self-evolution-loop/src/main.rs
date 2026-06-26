@@ -15,16 +15,14 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 
-use base::evolution::*;
-use base::EventBus;
-use cognit::r#impl::event_handlers::{
-    EvolutionEvent, ObserverConfig, ToolObservationHandler,
-};
-use cognit::r#impl::llm::scheduler::{
+use aletheon_abi::evolution::*;
+use aletheon_abi::EventBus;
+use aletheon_brain::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
+use aletheon_brain::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
-use base::{ConcreteEvent, KernelEventBus};
-use base::event::{EventType, Priority};
+use aletheon_comm::core::event::{ConcreteEvent, EventType, Priority};
+use aletheon_comm::KernelEventBus;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -211,9 +209,7 @@ async fn main() -> Result<()> {
             turn_id: Uuid::new_v4(),
             tool_name: "bash_exec".to_string(),
             input: serde_json::json!({"command": "cat /var/log/syslog | head -100"}),
-            output: serde_json::json!(
-                "Jan  1 00:00:01 host kernel: ...\nJan  1 00:00:02 host sshd[123]: ..."
-            ),
+            output: serde_json::json!("Jan  1 00:00:01 host kernel: ...\nJan  1 00:00:02 host sshd[123]: ..."),
             duration_ms: 150,
             error: None,
             rules_applied: vec![],

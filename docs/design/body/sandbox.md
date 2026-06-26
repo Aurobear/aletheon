@@ -247,9 +247,9 @@ fallback_log_level = "warn"
 
 | 项目 | 说明 |
 |------|------|
-| **沙箱后端** | `corpus/src/impl/sandbox/backend.rs` — `SandboxBackend` trait + Bubblewrap/Process/Noop 三后端 |
-| **沙箱执行器** | `runtime/src/impl/sandbox.rs` — `SandboxExecutor` + `CaptureConfig` + `SandboxResult` |
-| **环境检测** | `corpus/src/impl/sandbox/env.rs` — `SandboxEnvironment::detect()` + `recommended_preference()` |
+| **沙箱后端** | `aletheon-body/src/impl/sandbox/backend.rs` — `SandboxBackend` trait + Bubblewrap/Process/Noop 三后端 |
+| **沙箱执行器** | `aletheon-runtime/src/impl/sandbox.rs` — `SandboxExecutor` + `CaptureConfig` + `SandboxResult` |
+| **环境检测** | `aletheon-body/src/impl/sandbox/env.rs` — `SandboxEnvironment::detect()` + `recommended_preference()` |
 
 **关键依赖：**
 - `bwrap` (或直接调用 CLI) — bubblewrap 沙箱
@@ -273,8 +273,8 @@ fallback_log_level = "warn"
 ## Implementation Summary
 
 **Code Locations:**
-- `crates/corpus/src/impl/sandbox/mod.rs` — SandboxExecutor, multi-backend dispatch
-- `crates/corpus/src/impl/sandbox/bubblewrap.rs` — BubblewrapBackend implementation
+- `crates/aletheon-body/src/impl/sandbox/mod.rs` — SandboxExecutor, multi-backend dispatch
+- `crates/aletheon-body/src/impl/sandbox/bubblewrap.rs` — BubblewrapBackend implementation
 
 **Key Types/Traits Implemented:**
 - `SandboxBackend` trait — `name()`, `isolation_level()`, `is_available()`, `capabilities()`, `execute()`
@@ -289,7 +289,7 @@ fallback_log_level = "warn"
 **Not Yet Implemented:** libseccomp filter integration, Landlock LSM integration.
 
 **Additional Implemented Components (filesystem policy layer):**
-- `crates/corpus/src/impl/sandbox/policy.rs` — `FilesystemPolicy`, `WritableRoot`, `FsDefault` enum, `protected_metadata`, `unreadable_globs`
-- `crates/corpus/src/impl/sandbox/bwrap_builder.rs` — `BwrapBuilder`: ordered bwrap arg construction from `FilesystemPolicy`, reprotection of `.git`/`.agents` dirs
-- `crates/corpus/src/impl/sandbox/glob_scanner.rs` — `GlobScanner`: ripgrep-first + walkdir fallback for glob matching
-- `crates/corpus/src/impl/sandbox/container.rs` — `ContainerBackend`: Docker/Podman container runtime support
+- `crates/aletheon-body/src/impl/sandbox/policy.rs` — `FilesystemPolicy`, `WritableRoot`, `FsDefault` enum, `protected_metadata`, `unreadable_globs`
+- `crates/aletheon-body/src/impl/sandbox/bwrap_builder.rs` — `BwrapBuilder`: ordered bwrap arg construction from `FilesystemPolicy`, reprotection of `.git`/`.agents` dirs
+- `crates/aletheon-body/src/impl/sandbox/glob_scanner.rs` — `GlobScanner`: ripgrep-first + walkdir fallback for glob matching
+- `crates/aletheon-body/src/impl/sandbox/container.rs` — `ContainerBackend`: Docker/Podman container runtime support

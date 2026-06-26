@@ -2,7 +2,7 @@
 
 > Code paths updated to aletheon-* crate structure
 
-**Crate:** `base`
+**Crate:** `aletheon-comm`
 **Purpose:** Agent-to-agent communication infrastructure, including IPC backends, event bus, routing, and transport.
 
 ---
@@ -10,7 +10,7 @@
 ## Internal Structure
 
 ```
-base/src/
+aletheon-comm/src/
   lib.rs
   core/                       # Core abstractions
     bus.rs                    # EventBus trait implementation
@@ -40,7 +40,7 @@ base/src/
 - `IpcManager` — Unified management with auto-detect and fallback
 - `UnixSocketBackend` — Full Unix socket server/client
 - `PriorityQueue` — Priority-based message routing
-- `AgentMessage` — Structured IPC message (defined in `base/src/ipc_types.rs`)
+- `AgentMessage` — Structured IPC message (defined in `aletheon-abi/src/ipc_types.rs`)
 
 ## Related Docs
 

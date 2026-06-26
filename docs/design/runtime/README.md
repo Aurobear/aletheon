@@ -2,7 +2,7 @@
 
 > Code paths updated to aletheon-* crate structure
 
-**Crate:** `runtime`
+**Crate:** `aletheon-runtime`
 **Purpose:** The core runtime that drives agent reasoning, manages sessions, orchestrates multi-agent collaboration, and hosts plugins and automations.
 
 ---
@@ -10,7 +10,7 @@
 ## Internal Structure
 
 ```
-runtime/src/
+aletheon-runtime/src/
   impl/
     mod.rs
     coordinator.rs              # Runtime coordinator
@@ -86,7 +86,7 @@ runtime/src/
       webhook.rs                # WebhookEvent
     agent/                      # Agent abstractions
       mod.rs
-    daemon/                     # Daemon (daemon)
+    daemon/                     # Daemon (aletheond)
       mod.rs
       handler.rs                # Request handler
       server.rs                 # Server
@@ -106,10 +106,10 @@ runtime/src/
 
 ## Related Crates
 
-- `base` — Trait definitions and shared types
-- `memory` — Backend memory storage (episodic, semantic, procedural)
-- `base` — IPC and inter-process communication
-- `corpus` — Tools, sandbox, security, platform adapters
-- `cognit` — LLM inference
-- `dasein` — Perception, hooks
-- `metacog` — Self-modification engine (MetaRuntime, morphogenesis)
+- `aletheon-abi` — Trait definitions and shared types
+- `aletheon-memory` — Backend memory storage (episodic, semantic, procedural)
+- `aletheon-comm` — IPC and inter-process communication
+- `aletheon-body` — Tools, sandbox, security, platform adapters
+- `aletheon-brain` — LLM inference
+- `aletheon-self` — Perception, hooks
+- `aletheon-meta` — Self-modification engine (MetaRuntime, morphogenesis)
