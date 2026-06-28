@@ -15,11 +15,11 @@ pub enum ResolvedTransport {
 /// Detect transport from base_url (hermes-style auto-detection).
 ///
 /// Rules:
-/// - URL ending with `/anthropic` → Anthropic
+/// - URL containing `anthropic.com` or ending with `/anthropic` → Anthropic
 /// - Everything else → OpenAI
 pub fn detect_transport(base_url: &str) -> ResolvedTransport {
     let normalized = base_url.trim().to_lowercase();
-    if normalized.ends_with("/anthropic") {
+    if normalized.contains("anthropic.com") || normalized.ends_with("/anthropic") {
         ResolvedTransport::Anthropic
     } else {
         ResolvedTransport::OpenAi
@@ -114,8 +114,8 @@ impl ProviderRegistry {
     }
 
     /// Create an LlmProvider from config.
-    pub fn create_provider(&self, config: &ProviderConfig, model: &str) -> Box<dyn LlmProvider> {
-        let api_key = self.resolve_api_key(config);
+    pub fn create_provider(&self, config: &ProviderConfig, model: &str) -> anyhow::Result<Box<dyn LlmProvider>> {
+        let api_key = self.resolve_api_key(config)?;
         let transport = match &config.transport {
             Transport::Auto => detect_transport(&config.base_url),
             Transport::Openai => ResolvedTransport::OpenAi,
@@ -124,31 +124,50 @@ impl ProviderRegistry {
 
         match transport {
             ResolvedTransport::OpenAi => {
-                Box::new(OpenAiProvider::new(&api_key, model, &config.base_url))
+                Ok(Box::new(OpenAiProvider::new(&api_key, model, &config.base_url)))
             }
             ResolvedTransport::Anthropic => {
-                Box::new(
+                Ok(Box::new(
                     AnthropicProvider::new(&api_key, model)
                         .with_base_url(&config.base_url),
-                )
+                ))
             }
         }
     }
 
     /// Resolve API key: config value first, then env var `<NAME>_API_KEY`.
-    fn resolve_api_key(&self, config: &ProviderConfig) -> String {
+    ///
+    /// Returns an error if no key is found and the provider requires one.
+    /// Ollama (local) is exempt — it doesn't need an API key.
+    fn resolve_api_key(&self, config: &ProviderConfig) -> anyhow::Result<String> {
         if !config.api_key.is_empty() {
-            return config.api_key.clone();
+            return Ok(config.api_key.clone());
         }
         // Try env var: MIMO_API_KEY, DEEPSEEK_API_KEY, etc.
         let env_name = format!("{}_API_KEY", config.name.to_uppercase().replace('-', "_"));
-        std::env::var(&env_name).unwrap_or_default()
+        match std::env::var(&env_name) {
+            Ok(key) if !key.is_empty() => Ok(key),
+            _ => {
+                // Ollama doesn't need an API key
+                let base_lower = config.base_url.to_lowercase();
+                if base_lower.contains("localhost:11434") || base_lower.contains("127.0.0.1:11434") {
+                    Ok(String::new())
+                } else {
+                    anyhow::bail!(
+                        "API key not found for provider '{}'. \
+                         Set {} in your environment or add api_key to config.",
+                        config.name,
+                        env_name
+                    )
+                }
+            }
+        }
     }
 
     /// Resolve and create provider in one step.
     pub fn resolve_and_create(&self, spec: &str) -> anyhow::Result<Box<dyn LlmProvider>> {
         let (config, model) = self.resolve(spec)?;
-        Ok(self.create_provider(&config, &model))
+        self.create_provider(&config, &model)
     }
 
     /// Get the default model spec (provider/model format).
@@ -211,6 +230,22 @@ local = "ollama/qwen3:8b"
         assert_eq!(detect_transport("https://api.deepseek.com"), ResolvedTransport::OpenAi);
         assert_eq!(detect_transport("http://localhost:11434"), ResolvedTransport::OpenAi);
         assert_eq!(detect_transport("https://api.openai.com"), ResolvedTransport::OpenAi);
+    }
+
+    #[test]
+    fn test_detect_transport_anthropic_official() {
+        assert_eq!(
+            detect_transport("https://api.anthropic.com"),
+            ResolvedTransport::Anthropic
+        );
+    }
+
+    #[test]
+    fn test_detect_transport_anthropic_proxy() {
+        assert_eq!(
+            detect_transport("https://proxy.example.com/anthropic"),
+            ResolvedTransport::Anthropic
+        );
     }
 
     #[test]

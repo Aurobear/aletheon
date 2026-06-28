@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 /// Default socket directory for aletheon.
-pub const DEFAULT_SOCKET_DIR: &str = aletheon_abi::paths::SOCKET_DIR;
+pub const DEFAULT_SOCKET_DIR: &str = aletheon_abi::paths::SYSTEM_SOCKET_DIR;
 
 /// Discovers agents by scanning a Unix socket directory.
 pub struct AgentDiscovery {

@@ -19,11 +19,11 @@ impl MockClipboardDriver {
 
 impl ClipboardDriver for MockClipboardDriver {
     fn get_clipboard(&self) -> Result<String> {
-        Ok(self.content.lock().unwrap().clone())
+        Ok(self.content.lock().unwrap_or_else(|e| e.into_inner()).clone())
     }
 
     fn set_clipboard(&self, text: &str) -> Result<()> {
-        *self.content.lock().unwrap() = text.to_string();
+        *self.content.lock().unwrap_or_else(|e| e.into_inner()) = text.to_string();
         Ok(())
     }
 }

@@ -12,7 +12,7 @@ pub struct InotifySource {
     watch_paths: Vec<PathBuf>,
     rx: mpsc::Receiver<PerceptionEvent>,
     tx: mpsc::Sender<PerceptionEvent>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Replace direct field access with next_id() for proper monotonic ID generation
     event_id_counter: u64,
 }
 
@@ -27,7 +27,7 @@ impl InotifySource {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Use this instead of direct field reads in start()
     fn next_id(&mut self) -> u64 {
         self.event_id_counter += 1;
         self.event_id_counter

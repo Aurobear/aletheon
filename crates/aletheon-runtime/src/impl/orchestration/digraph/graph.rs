@@ -1,10 +1,27 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 use tracing::{info, warn, debug};
 
 use super::node::{Node, NodeKind, NodeStatus, OnExhausted};
 use super::edge::Edge;
 use super::state::GraphState;
 use super::super::registry::AgentRegistry;
+
+/// Result of a human approval decision.
+#[derive(Debug, Clone)]
+pub struct ApprovalDecision {
+    pub approved: bool,
+    pub reason: String,
+}
+
+/// Callback for human approval in DiGraph execution.
+/// Takes a prompt string, returns (approved, reason).
+pub type ApprovalCallback = Box<
+    dyn Fn(String) -> Pin<Box<dyn Future<Output = ApprovalDecision> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Join strategy for parallel fan-out.
 #[derive(Debug, Clone)]
@@ -101,10 +118,29 @@ impl DiGraph {
     }
 
     /// Execute the graph with the given agent registry.
+    /// HumanApproval nodes are auto-approved (backward compatible).
     pub async fn execute(
         &self,
         registry: &AgentRegistry,
         initial_state: GraphState,
+    ) -> Result<GraphState, String> {
+        self.execute_with_approval(registry, initial_state, None).await
+    }
+
+    /// Execute the graph with an optional approval callback.
+    ///
+    /// When `approval_callback` is `Some`, HumanApproval nodes will:
+    /// 1. Set node status to `WaitingApproval`
+    /// 2. Send the prompt to the callback (which should notify the user)
+    /// 3. Wait for the decision
+    /// 4. Store the decision in state and proceed or fail
+    ///
+    /// When `approval_callback` is `None`, HumanApproval nodes auto-approve.
+    pub async fn execute_with_approval(
+        &self,
+        registry: &AgentRegistry,
+        initial_state: GraphState,
+        approval_callback: Option<&ApprovalCallback>,
     ) -> Result<GraphState, String> {
         let mut state = initial_state;
         let mut node_statuses: HashMap<String, NodeStatus> = HashMap::new();
@@ -141,7 +177,7 @@ impl DiGraph {
             info!(node = node_id.as_str(), kind = ?node.kind, "Executing node");
             node_statuses.insert(node_id.clone(), NodeStatus::Running);
 
-            let result = self.execute_node(node, registry, &mut state).await;
+            let result = self.execute_node(node, registry, &mut state, approval_callback).await;
 
             match result {
                 Ok(()) => {
@@ -151,7 +187,7 @@ impl DiGraph {
                 }
                 Err(e) => {
                     // Handle retry
-                    let retried = self.handle_retry(node, registry, &mut state, &e).await;
+                    let retried = self.handle_retry(node, registry, &mut state, &e, approval_callback).await;
                     if retried {
                         node_statuses.insert(node_id.clone(), NodeStatus::Completed);
                         state.record(node_id, "completed_after_retry");
@@ -186,6 +222,7 @@ impl DiGraph {
         node: &Node,
         registry: &AgentRegistry,
         state: &mut GraphState,
+        approval_callback: Option<&ApprovalCallback>,
     ) -> Result<(), String> {
         match &node.kind {
             NodeKind::Agent { agent_id } => {
@@ -213,10 +250,49 @@ impl DiGraph {
                 Ok(())
             }
             NodeKind::HumanApproval { prompt } => {
-                // In automated mode, auto-approve
-                warn!(node = node.id.as_str(), prompt = prompt.as_str(), "Auto-approving (human approval not implemented)");
-                state.set(&format!("{}_approved", node.id), serde_json::json!(true));
-                Ok(())
+                if let Some(callback) = approval_callback {
+                    // Real approval flow: notify human and wait for decision
+                    info!(
+                        node = node.id.as_str(),
+                        prompt = prompt.as_str(),
+                        "Requesting human approval"
+                    );
+                    let decision = callback(prompt.clone()).await;
+
+                    state.set(
+                        &format!("{}_approved", node.id),
+                        serde_json::json!(decision.approved),
+                    );
+                    state.set(
+                        &format!("{}_reason", node.id),
+                        serde_json::json!(decision.reason),
+                    );
+
+                    if decision.approved {
+                        info!(
+                            node = node.id.as_str(),
+                            reason = decision.reason.as_str(),
+                            "Human approved"
+                        );
+                        Ok(())
+                    } else {
+                        warn!(
+                            node = node.id.as_str(),
+                            reason = decision.reason.as_str(),
+                            "Human rejected"
+                        );
+                        Err(format!("Human rejected: {}", decision.reason))
+                    }
+                } else {
+                    // Fallback: auto-approve (backward compatible)
+                    warn!(
+                        node = node.id.as_str(),
+                        prompt = prompt.as_str(),
+                        "Auto-approving (no approval callback provided)"
+                    );
+                    state.set(&format!("{}_approved", node.id), serde_json::json!(true));
+                    Ok(())
+                }
             }
             NodeKind::SubGraph { graph_id } => {
                 // Sub-graph execution not implemented yet
@@ -232,6 +308,7 @@ impl DiGraph {
         registry: &AgentRegistry,
         state: &mut GraphState,
         _error: &str,
+        approval_callback: Option<&ApprovalCallback>,
     ) -> bool {
         for attempt in 0..node.retry_policy.max_retries {
             warn!(
@@ -245,7 +322,7 @@ impl DiGraph {
                 node.retry_policy.backoff_ms * (attempt as u64 + 1)
             )).await;
 
-            if self.execute_node(node, registry, state).await.is_ok() {
+            if self.execute_node(node, registry, state, approval_callback).await.is_ok() {
                 return true;
             }
         }

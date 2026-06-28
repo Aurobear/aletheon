@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::core::orchestrator::AletheonRuntime;
 use crate::core::config::RuntimeConfig;
 use crate::r#impl::orchestration::registry::AgentRegistry;
+use crate::r#impl::orchestration::digraph::{ApprovalCallback, ApprovalDecision};
 use crate::CoreMemory;
 use crate::RecallMemory;
 use crate::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
@@ -29,13 +30,17 @@ use aletheon_abi::hook::{HookPoint, HookContext, HookResult};
 use aletheon_memory::episodic::EpisodicMemory;
 use serde_json::json;
 use std::collections::HashMap;
-use tokio::sync::{mpsc, Mutex};
-use tracing::{info, warn};
+use tokio::sync::{mpsc, oneshot, Mutex};
+use tracing::{debug, info, warn};
 
 use crate::r#impl::hooks::registry::HookRegistry;
 use crate::r#impl::hooks::builtin::audit_hook;
 use crate::r#impl::skills::loader::SkillLoader;
 use crate::r#impl::skills::plugin::register_skill;
+use aletheon_self::r#impl::hook::dispatcher::HookDispatcher;
+use aletheon_self::r#impl::hook::types::{
+    HandlerResult as DispatcherResult, HookContext as DispatcherContext, HookEventName,
+};
 
 use super::prefix_builder::PrefixBuilder;
 use super::DaemonConfig;
@@ -53,6 +58,12 @@ struct SessionState {
     pending_input: Option<String>,
 }
 
+/// A pending approval request waiting for client response.
+struct PendingApproval {
+    prompt: String,
+    sender: oneshot::Sender<ApprovalDecision>,
+}
+
 #[derive(Clone)]
 pub struct RequestHandler {
     state: Arc<Mutex<SessionState>>,
@@ -60,7 +71,7 @@ pub struct RequestHandler {
     session_manager: Arc<Mutex<SessionManager>>,
     recall_memory: Arc<Mutex<RecallMemory>>,
     data_dir: PathBuf,
-    /// Retained for future use; currently unused after Engine removal.
+    /// TODO: Re-wire agent_registry once the new agent dispatch loop lands (P7 design).
     #[allow(dead_code)]
     agent_registry: Arc<AgentRegistry>,
     reflector: Reflector,
@@ -82,6 +93,12 @@ pub struct RequestHandler {
     core_memory: Arc<Mutex<CoreMemory>>,
     /// Lifecycle hook registry.
     hook_registry: Arc<Mutex<HookRegistry>>,
+    /// TOML-configured hook dispatcher (from system/user/project layers).
+    /// Fires alongside HookRegistry hooks so hook authors only need one config style.
+    hook_dispatcher: Option<HookDispatcher>,
+    /// Pending approval requests awaiting client response.
+    /// Keyed by approval_id (UUID string).
+    pending_approvals: Arc<Mutex<HashMap<String, PendingApproval>>>,
 }
 
 impl RequestHandler {
@@ -198,6 +215,9 @@ impl RequestHandler {
         }
         let hook_registry = Arc::new(Mutex::new(hook_registry));
 
+        // Load TOML-configured hook dispatcher (gracefully degrades to None)
+        let hook_dispatcher = HookDispatcher::try_load();
+
         // Build the cache-stable prefix once at boot.
         // Same inputs = same bytes = cache hit on DeepSeek/Mimo.
         let cm = core_memory.lock().await;
@@ -228,6 +248,8 @@ impl RequestHandler {
             config_prompt: config.system_prompt.clone(),
             core_memory,
             hook_registry,
+            hook_dispatcher,
+            pending_approvals: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -251,6 +273,87 @@ impl RequestHandler {
         }
         xml.push_str("</memory-update>");
         xml
+    }
+
+    /// Create an ApprovalCallback that routes approval requests through
+    /// the pending_approvals map. The callback:
+    /// 1. Generates a UUID approval_id
+    /// 2. Creates a oneshot channel for the response
+    /// 3. Stores the PendingApproval in the map
+    /// 4. Returns the approval_id (caller should notify the client)
+    /// 5. Waits on the oneshot for the client's decision
+    ///
+    /// The client responds via the "approval_response" RPC method.
+    pub fn create_approval_callback(&self) -> ApprovalCallback {
+        let pending = self.pending_approvals.clone();
+        Box::new(move |prompt: String| {
+            let pending = pending.clone();
+            Box::pin(async move {
+                let approval_id = uuid::Uuid::new_v4().to_string();
+                let (tx, rx) = oneshot::channel();
+
+                // Store the pending approval
+                {
+                    let mut map = pending.lock().await;
+                    map.insert(
+                        approval_id.clone(),
+                        PendingApproval {
+                            prompt: prompt.clone(),
+                            sender: tx,
+                        },
+                    );
+                }
+
+                info!(
+                    approval_id = approval_id.as_str(),
+                    prompt = prompt.as_str(),
+                    "Approval request created, waiting for client response"
+                );
+
+                // Wait for client response with 120s timeout
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    rx,
+                )
+                .await
+                {
+                    Ok(Ok(decision)) => {
+                        info!(
+                            approval_id = approval_id.as_str(),
+                            approved = decision.approved,
+                            "Approval decision received"
+                        );
+                        decision
+                    }
+                    Ok(Err(_)) => {
+                        // Channel dropped — client disconnected
+                        warn!(
+                            approval_id = approval_id.as_str(),
+                            "Approval channel dropped, denying"
+                        );
+                        // Clean up
+                        pending.lock().await.remove(&approval_id);
+                        ApprovalDecision {
+                            approved: false,
+                            reason: "Client disconnected".to_string(),
+                        }
+                    }
+                    Err(_) => {
+                        // Timeout
+                        warn!(
+                            approval_id = approval_id.as_str(),
+                            "Approval timeout (120s), denying"
+                        );
+                        // Clean up
+                        pending.lock().await.remove(&approval_id);
+                        ApprovalDecision {
+                            approved: false,
+                            reason: "Approval timeout (120s)".to_string(),
+                        }
+                    }
+                }
+            })
+        })
     }
 
     pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value {
@@ -310,13 +413,10 @@ impl RequestHandler {
                     effective_message.push_str("\n\n");
                 }
 
-                // SelfField SandboxFirst note (if flagged) — injected into user turn
+                // SandboxFirst verdict: not enforced at this time (no sandbox wired).
+                // Log for observability but do not inject into user message.
                 if let Ok(Verdict::SandboxFirst { ref reason }) = verdict {
-                    info!(reason = %reason, "SelfField flagged chat for sandbox");
-                    effective_message.push_str(&format!(
-                        "<selffield-note>SandboxFirst: This interaction has been flagged for sandbox review. Reason: {}</selffield-note>\n\n",
-                        reason
-                    ));
+                    info!(reason = %reason, "SelfField flagged chat for sandbox (not enforced)");
                 } else if let Err(ref e) = verdict {
                     warn!(error = %e, "SelfField review error, proceeding with caution");
                 }
@@ -350,6 +450,52 @@ impl RequestHandler {
                             });
                         }
                         HookResult::Inject(text) => {
+                            effective_message.push_str(&text);
+                            effective_message.push('\n');
+                        }
+                        _ => {}
+                    }
+                }
+
+                // --- PreTurn HookDispatcher (TOML-configured hooks) ---
+                if let Some(ref hd) = self.hook_dispatcher {
+                    let dctx = DispatcherContext {
+                        tool: None,
+                        args: None,
+                        risk: None,
+                        message: Some(message.to_string()),
+                    };
+                    // Fire UserPromptSubmit (user just submitted a prompt)
+                    match hd.fire(HookEventName::UserPromptSubmit, &dctx).await {
+                        DispatcherResult::Block(reason) => {
+                            warn!(reason = %reason, "UserPromptSubmit hook blocked");
+                            return json!({
+                                "jsonrpc": "2.0", "id": id,
+                                "error": {"code": -32015, "message": format!("Blocked by hook: {}", reason)}
+                            });
+                        }
+                        DispatcherResult::InjectContext(text) => {
+                            effective_message.push_str(&text);
+                            effective_message.push('\n');
+                        }
+                        _ => {}
+                    }
+                    // Fire PreLLMCall (about to call the LLM)
+                    let dctx = DispatcherContext {
+                        tool: None,
+                        args: None,
+                        risk: None,
+                        message: None,
+                    };
+                    match hd.fire(HookEventName::PreLLMCall, &dctx).await {
+                        DispatcherResult::Block(reason) => {
+                            warn!(reason = %reason, "PreLLMCall hook blocked");
+                            return json!({
+                                "jsonrpc": "2.0", "id": id,
+                                "error": {"code": -32015, "message": format!("Blocked by hook: {}", reason)}
+                            });
+                        }
+                        DispatcherResult::InjectContext(text) => {
                             effective_message.push_str(&text);
                             effective_message.push('\n');
                         }
@@ -423,7 +569,48 @@ impl RequestHandler {
                             hr.execute(&ctx).await;
                         }
 
-                        // Push assistant response and compact if needed
+                        // --- PostTurn HookDispatcher (TOML-configured hooks) ---
+                        if let Some(ref hd) = self.hook_dispatcher {
+                            let dctx = DispatcherContext {
+                                tool: None,
+                                args: None,
+                                risk: None,
+                                message: None,
+                            };
+                            // Fire PostLLMCall (LLM just responded)
+                            match hd.fire(HookEventName::PostLLMCall, &dctx).await {
+                                DispatcherResult::Block(reason) => {
+                                    warn!(reason = %reason, "PostLLMCall hook blocked");
+                                    return json!({
+                                        "jsonrpc": "2.0", "id": id,
+                                        "error": {"code": -32015, "message": format!("Blocked by hook: {}", reason)}
+                                    });
+                                }
+                                DispatcherResult::InjectContext(text) => {
+                                    debug!(len = text.len(), "PostLLMCall hook injected context");
+                                    // Injected context after LLM response is informational only;
+                                    // log it but do not alter the response already generated.
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // Push assistant response and compact if needed.
+                        //
+                        // Compaction coordination note: There are two independent
+                        // compaction paths in the system:
+                        //
+                        // 1. AdvancedCompressor (Engine/cognitive_loop path):
+                        //    - Operates on Engine::messages (the ReAct loop message store)
+                        //    - Threshold: ~8K tokens, iterative summarization with tail protection
+                        //
+                        // 2. SessionManager::compact_if_needed (this daemon handler path):
+                        //    - Operates on SessionManager::messages (the handler message store)
+                        //    - Threshold: ~80K tokens (80% of max_tokens), simple single-pass summary
+                        //
+                        // These are separate message stores serving different purposes, so
+                        // they do not conflict. The SessionManager compaction acts as a
+                        // safety net for the handler's larger context window.
                         let turn = {
                             let mut sm = self.session_manager.lock().await;
                             sm.push_assistant(&text).await;
@@ -875,6 +1062,58 @@ impl RequestHandler {
                     "id": id,
                     "result": { "skills_loaded": count }
                 })
+            }
+            "approval_response" => {
+                // Client responds to a HumanApproval request from DiGraph.
+                // Params: { approval_id: string, approved: bool, reason?: string }
+                let approval_id = request["params"]["approval_id"]
+                    .as_str()
+                    .unwrap_or("");
+                let approved = request["params"]["approved"]
+                    .as_bool()
+                    .unwrap_or(false);
+                let reason = request["params"]["reason"]
+                    .as_str()
+                    .unwrap_or(if approved { "Approved" } else { "Rejected" })
+                    .to_string();
+
+                if approval_id.is_empty() {
+                    return json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32030, "message": "Missing approval_id" }
+                    });
+                }
+
+                let mut map = self.pending_approvals.lock().await;
+                match map.remove(approval_id) {
+                    Some(pending) => {
+                        let decision = ApprovalDecision {
+                            approved,
+                            reason: reason.clone(),
+                        };
+                        let _ = pending.sender.send(decision);
+                        info!(
+                            approval_id = approval_id,
+                            approved = approved,
+                            reason = reason.as_str(),
+                            "Approval response delivered"
+                        );
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "result": { "status": "ok", "approval_id": approval_id }
+                        })
+                    }
+                    None => {
+                        warn!(approval_id = approval_id, "Approval ID not found or already resolved");
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32031, "message": format!("Unknown or expired approval_id: {}", approval_id) }
+                        })
+                    }
+                }
             }
             _ => json!({
                 "jsonrpc": "2.0",

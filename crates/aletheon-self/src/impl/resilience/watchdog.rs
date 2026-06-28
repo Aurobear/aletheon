@@ -11,7 +11,7 @@ pub struct HeartbeatLayer {
     name: &'static str,
     timeout: Duration,
     tx: watch::Sender<()>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Use rx to expose a subscribe() method for external heartbeat consumers
     rx: watch::Receiver<()>,
     last_beat: Arc<std::sync::Mutex<Instant>>,
     alive: Arc<AtomicBool>,
@@ -169,7 +169,10 @@ mod tests {
         let wd = WatchdogTimer::new();
         // Artificially expire L2 by setting its last_beat far in the past.
         {
-            let mut t = wd.l2_runtime.last_beat.lock().unwrap();
+            let mut t = wd.l2_runtime.last_beat.lock().unwrap_or_else(|e| {
+                tracing::warn!("mutex poisoned, recovering: {}", e);
+                e.into_inner()
+            });
             *t = Instant::now() - Duration::from_secs(60);
         }
         let expired = wd.expired_layers();

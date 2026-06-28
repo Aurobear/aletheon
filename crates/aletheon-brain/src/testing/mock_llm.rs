@@ -33,7 +33,7 @@ impl MockLlmProvider {
 
     /// Enqueue a canned text response.
     pub fn push_text_response(&self, text: impl Into<String>, stop: StopReason) {
-        let mut q = self.responses.lock().unwrap();
+        let mut q = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         q.push_back(LlmResponse {
             content: vec![ContentBlock::Text { text: text.into() }],
             stop_reason: stop,
@@ -48,7 +48,7 @@ impl MockLlmProvider {
 
     /// Enqueue a raw `LlmResponse`.
     pub fn push_response(&self, response: LlmResponse) {
-        let mut q = self.responses.lock().unwrap();
+        let mut q = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         q.push_back(response);
     }
 
@@ -60,7 +60,7 @@ impl MockLlmProvider {
 
     /// Number of canned responses remaining.
     pub fn remaining(&self) -> usize {
-        self.responses.lock().unwrap().len()
+        self.responses.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 
@@ -71,9 +71,9 @@ impl LlmProvider for MockLlmProvider {
         messages: &[Message],
         _tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmResponse> {
-        self.call_log.lock().unwrap().push(messages.to_vec());
+        self.call_log.lock().unwrap_or_else(|e| e.into_inner()).push(messages.to_vec());
 
-        let mut q = self.responses.lock().unwrap();
+        let mut q = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         q.pop_front()
             .ok_or_else(|| anyhow::anyhow!("MockLlmProvider: no more canned responses"))
     }
@@ -83,9 +83,9 @@ impl LlmProvider for MockLlmProvider {
         messages: &[Message],
         _tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmStream> {
-        self.call_log.lock().unwrap().push(messages.to_vec());
+        self.call_log.lock().unwrap_or_else(|e| e.into_inner()).push(messages.to_vec());
 
-        let mut q = self.responses.lock().unwrap();
+        let mut q = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         let response = q
             .pop_front()
             .ok_or_else(|| anyhow::anyhow!("MockLlmProvider: no more canned responses"))?;
@@ -181,7 +181,7 @@ mod tests {
         let msg = Message::user("question");
         mock.complete(&[msg.clone()], &[]).await.unwrap();
 
-        let log = mock.call_log.lock().unwrap();
+        let log = mock.call_log.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].len(), 1);
     }

@@ -352,8 +352,6 @@ mod tests {
         TermCaps {
             true_color: true,
             unicode: true,
-            width: 80,
-            height: 24,
         }
     }
 

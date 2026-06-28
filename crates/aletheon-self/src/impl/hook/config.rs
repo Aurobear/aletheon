@@ -4,6 +4,7 @@ use tracing::{info, warn};
 
 use super::types::*;
 
+#[derive(Clone)]
 pub struct HookConfig {
     hooks: Vec<Hook>,
 }

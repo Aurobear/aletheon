@@ -42,7 +42,10 @@ impl LearningBridge {
     pub fn extract_and_update(&self) -> Result<Vec<LearnRule>> {
         let outcomes = self.outcome_recorder.get_recent(100)?;
         let new_rules = self.pattern_extractor.extract(&outcomes);
-        let mut store = self.rule_store.lock().unwrap();
+        let mut store = self.rule_store.lock().unwrap_or_else(|e| {
+            tracing::warn!("learning bridge mutex poisoned: {}", e);
+            e.into_inner()
+        });
         for rule in &new_rules {
             store.add(rule.clone());
         }
@@ -51,13 +54,19 @@ impl LearningBridge {
 
     /// Get learned rules formatted for LLM context injection
     pub fn rules_for_context(&self) -> String {
-        let store = self.rule_store.lock().unwrap();
+        let store = self.rule_store.lock().unwrap_or_else(|e| {
+            tracing::warn!("learning bridge mutex poisoned: {}", e);
+            e.into_inner()
+        });
         store.format_for_context()
     }
 
     /// Get rules relevant to a specific tool
     pub fn rules_for_tool(&self, tool_name: &str) -> Vec<LearnRule> {
-        let store = self.rule_store.lock().unwrap();
+        let store = self.rule_store.lock().unwrap_or_else(|e| {
+            tracing::warn!("learning bridge mutex poisoned: {}", e);
+            e.into_inner()
+        });
         store.get_for_tool(tool_name).into_iter().cloned().collect()
     }
 

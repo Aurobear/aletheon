@@ -93,7 +93,7 @@ impl<T> ManagedResource<T> {
                 AgentError::already_exists(&format!("resource '{}'", self.name))
             })?;
         debug_assert_eq!(prev, ResourceState::Uninit as u8);
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(value);
         Ok(())
     }
@@ -107,7 +107,7 @@ impl<T> ManagedResource<T> {
                 self.state()
             )));
         }
-        Ok(self.inner.lock().unwrap())
+        Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Transition to `Shutting` then `Dead`. Returns the inner value if it was `Ready`.
@@ -129,7 +129,7 @@ impl<T> ManagedResource<T> {
             })?;
         debug_assert_eq!(prev, ResourceState::Ready as u8);
         // Drop the inner value.
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         *guard = None;
         self.state.store(ResourceState::Dead as u8, Ordering::Release);
         Ok(())

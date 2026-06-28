@@ -4,6 +4,7 @@ use tracing::{warn, debug};
 
 use super::types::*;
 
+#[derive(Clone)]
 pub struct HookDispatcher {
     config: super::config::HookConfig,
 }

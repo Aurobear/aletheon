@@ -206,6 +206,83 @@ impl VectorStore for QdrantVectorStore {
     }
 }
 
+// === In-Memory Implementation ===
+
+/// Simple in-memory vector store using cosine similarity.
+/// Serves as the fallback when Qdrant is unavailable.
+pub struct InMemoryVectorStore {
+    entries: parking_lot::RwLock<std::collections::HashMap<String, (Vec<f32>, Value)>>,
+}
+
+impl InMemoryVectorStore {
+    pub fn new() -> Self {
+        Self {
+            entries: parking_lot::RwLock::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+impl Default for InMemoryVectorStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl VectorStore for InMemoryVectorStore {
+    async fn upsert(&self, id: &str, embedding: &[f32], metadata: Value) -> Result<()> {
+        self.entries
+            .write()
+            .insert(id.to_string(), (embedding.to_vec(), metadata));
+        Ok(())
+    }
+
+    async fn search(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        _filter: Option<Value>,
+    ) -> Result<Vec<ScoredEntry>> {
+        let entries = self.entries.read();
+        let q_norm = l2_norm(query);
+        let mut scored: Vec<ScoredEntry> = entries
+            .iter()
+            .map(|(id, (vec, meta))| {
+                let sim = cosine_similarity(query, vec, q_norm, l2_norm(vec));
+                ScoredEntry {
+                    id: id.clone(),
+                    score: sim,
+                    metadata: meta.clone(),
+                }
+            })
+            .collect();
+        scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top_k);
+        Ok(scored)
+    }
+
+    async fn delete(&self, id: &str) -> Result<()> {
+        self.entries.write().remove(id);
+        Ok(())
+    }
+
+    async fn count(&self) -> Result<usize> {
+        Ok(self.entries.read().len())
+    }
+}
+
+fn l2_norm(v: &[f32]) -> f32 {
+    v.iter().map(|x| x * x).sum::<f32>().sqrt()
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32], a_norm: f32, b_norm: f32) -> f32 {
+    if a_norm == 0.0 || b_norm == 0.0 {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    dot / (a_norm * b_norm)
+}
+
 // === LanceDB Implementation ===
 
 #[cfg(feature = "vector-lance")]
@@ -342,6 +419,7 @@ pub async fn create_vector_store(config: &VectorStoreConfig) -> Result<Box<dyn V
             anyhow::bail!("Qdrant backend requested but 'vector-qdrant' feature not enabled")
         }
         VectorBackend::Lance => {
+            tracing::warn!("LanceDB vector backend is not yet implemented; operations will fail");
             #[cfg(feature = "vector-lance")]
             {
                 let store = LanceVectorStore::new(config).await?;
@@ -351,19 +429,14 @@ pub async fn create_vector_store(config: &VectorStoreConfig) -> Result<Box<dyn V
             anyhow::bail!("LanceDB backend requested but 'vector-lance' feature not enabled")
         }
         VectorBackend::Auto => {
-            // Try Qdrant first, fall back to LanceDB
+            // Try Qdrant first, fall back to InMemory (LanceDB is not yet implemented)
             #[cfg(feature = "vector-qdrant")]
             {
                 if let Ok(store) = QdrantVectorStore::new(config).await {
                     return Ok(Box::new(store));
                 }
             }
-            #[cfg(feature = "vector-lance")]
-            {
-                let store = LanceVectorStore::new(config).await?;
-                return Ok(Box::new(store));
-            }
-            anyhow::bail!("No vector store backend available. Enable 'vector-qdrant' or 'vector-lance' feature.")
+            Ok(Box::new(InMemoryVectorStore::new()))
         }
     }
 }

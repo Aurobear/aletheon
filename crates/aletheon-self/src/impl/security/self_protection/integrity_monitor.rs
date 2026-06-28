@@ -213,7 +213,10 @@ impl IntegrityMonitor {
 
                 // Trigger killswitch if attached
                 if let Some(killswitch) = &self.killswitch {
-                    let ks = killswitch.lock().unwrap();
+                    let ks = killswitch.lock().unwrap_or_else(|e| {
+                        tracing::warn!("mutex poisoned, recovering: {}", e);
+                        e.into_inner()
+                    });
                     ks.report_violation(&format!(
                         "Integrity violation: {} (expected {}, got {})",
                         name, violation.expected_hash, violation.actual_hash
@@ -393,7 +396,10 @@ mod tests {
         monitor.set_baseline("security-policy", original_hash);
 
         // Verify killswitch is not active initially
-        assert!(!killswitch.lock().unwrap().is_active());
+        assert!(!killswitch.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        }).is_active());
 
         // Tamper with the file
         {
@@ -405,7 +411,10 @@ mod tests {
         assert_eq!(violations, 1);
 
         // Verify killswitch was triggered
-        assert!(killswitch.lock().unwrap().is_active());
+        assert!(killswitch.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        }).is_active());
     }
 
     #[test]

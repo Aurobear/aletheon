@@ -34,12 +34,12 @@ impl RollbackManager {
 
     /// Save a genome snapshot before migration (call before applying changes).
     pub fn save_snapshot(&self, version: &str, genome: &Genome) {
-        let mut snapshots = self.snapshots.lock().unwrap();
+        let mut snapshots = self.snapshots.lock().unwrap_or_else(|e| e.into_inner());
         snapshots.push(GenomeSnapshot {
             version: version.to_string(),
             genome: genome.clone(),
         });
-        let mut current = self.current_version.lock().unwrap();
+        let mut current = self.current_version.lock().unwrap_or_else(|e| e.into_inner());
         *current = Some(version.to_string());
     }
 
@@ -48,10 +48,10 @@ impl RollbackManager {
     /// Pops the most recent snapshot and returns it.
     /// Fails if there are no previous versions to roll back to.
     pub async fn rollback(&self) -> Result<Genome> {
-        let mut snapshots = self.snapshots.lock().unwrap();
+        let mut snapshots = self.snapshots.lock().unwrap_or_else(|e| e.into_inner());
         match snapshots.pop() {
             Some(snapshot) => {
-                let mut current = self.current_version.lock().unwrap();
+                let mut current = self.current_version.lock().unwrap_or_else(|e| e.into_inner());
                 *current = Some(snapshot.version.clone());
                 tracing::info!("Rolled back to genome version {}", snapshot.version);
                 Ok(snapshot.genome)
@@ -64,12 +64,12 @@ impl RollbackManager {
 
     /// Get the current version string, if set.
     pub fn current_version(&self) -> Option<String> {
-        self.current_version.lock().unwrap().clone()
+        self.current_version.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Get the number of snapshots available for rollback.
     pub fn snapshot_count(&self) -> usize {
-        self.snapshots.lock().unwrap().len()
+        self.snapshots.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 

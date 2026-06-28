@@ -53,12 +53,12 @@ impl MockMemoryBackend {
 
     /// Number of entries currently stored.
     pub fn entry_count(&self) -> usize {
-        self.entries.lock().unwrap().len()
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Get all entries (for assertion).
     pub fn all_entries(&self) -> Vec<MemoryEntry> {
-        self.entries.lock().unwrap().clone()
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Create a MemoryEntry with the correct memory type.
@@ -90,12 +90,12 @@ impl Subsystem for MockMemoryBackend {
     }
 
     async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
-        *self.initialized.lock().unwrap() = true;
+        *self.initialized.lock().unwrap_or_else(|e| e.into_inner()) = true;
         Ok(())
     }
 
     async fn health(&self) -> SubsystemHealth {
-        if *self.initialized.lock().unwrap() {
+        if *self.initialized.lock().unwrap_or_else(|e| e.into_inner()) {
             SubsystemHealth::Healthy
         } else {
             SubsystemHealth::Degraded {
@@ -105,7 +105,7 @@ impl Subsystem for MockMemoryBackend {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        *self.initialized.lock().unwrap() = false;
+        *self.initialized.lock().unwrap_or_else(|e| e.into_inner()) = false;
         Ok(())
     }
 
@@ -121,12 +121,12 @@ impl MemoryBackend for MockMemoryBackend {
             id: entry.id,
             memory_type: entry.memory_type,
         };
-        self.entries.lock().unwrap().push(entry);
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).push(entry);
         Ok(handle)
     }
 
     async fn recall(&self, query: &MemoryQuery) -> Result<Vec<MemoryEntry>> {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let mut results: Vec<MemoryEntry> = entries
             .iter()
             .filter(|e| {
@@ -170,7 +170,7 @@ impl MemoryBackend for MockMemoryBackend {
     }
 
     async fn list(&self, filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let mut results: Vec<MemoryEntry> = entries
             .iter()
             .filter(|e| {
@@ -192,13 +192,13 @@ impl MemoryBackend for MockMemoryBackend {
     }
 
     async fn forget(&self, handle: &MemoryHandle) -> Result<()> {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.retain(|e| e.id != handle.id);
         Ok(())
     }
 
     async fn compact(&self, strategy: CompactStrategy) -> Result<CompactResult> {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let before = entries.len();
 
         match strategy {
@@ -235,7 +235,7 @@ impl MemoryBackend for MockMemoryBackend {
     }
 
     async fn stats(&self) -> Result<MemoryStats> {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let total_size = entries.iter().map(|e| e.content.len() as u64).sum();
         let oldest = entries.iter().map(|e| e.created_at).min();
         let newest = entries.iter().map(|e| e.created_at).max();

@@ -534,16 +534,13 @@ struct AnthropicToolState {
 
 struct ActiveToolBlock {
     id: String,
-    #[allow(dead_code)]
-    name: String,
     json_buffer: String,
 }
 
 impl AnthropicToolState {
-    fn start_block(&mut self, index: usize, id: String, name: String) {
+    fn start_block(&mut self, index: usize, id: String, _name: String) {
         self.blocks.insert(index, ActiveToolBlock {
             id,
-            name,
             json_buffer: String::new(),
         });
     }

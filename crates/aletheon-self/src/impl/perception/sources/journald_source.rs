@@ -9,7 +9,7 @@ use crate::r#impl::perception::event::*;
 pub struct JournaldSource {
     rx: mpsc::Receiver<PerceptionEvent>,
     tx: mpsc::Sender<PerceptionEvent>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Wire into event generation for monotonic ID assignment
     event_id_counter: u64,
     min_priority: u8,  // 0=emerg .. 7=debug, lower = more important
 }

@@ -250,7 +250,7 @@ impl UinputDriver {
                 std::mem::size_of::<InputEvent>(),
             )
         };
-        let mut file = self.file.lock().unwrap();
+        let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
         file.write_all(bytes).context("Failed to write input event")?;
         Ok(())
     }

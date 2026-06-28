@@ -190,7 +190,9 @@ pub struct DaemonConfig {
     pub log_level: String,
 }
 
-fn default_daemon_socket_path() -> String { "/run/aletheon/aletheon.sock".to_string() }
+fn default_daemon_socket_path() -> String {
+    aletheon_abi::paths::default_socket_path().to_string_lossy().to_string()
+}
 fn default_daemon_log_level() -> String { "info".to_string() }
 
 impl Default for DaemonConfig {

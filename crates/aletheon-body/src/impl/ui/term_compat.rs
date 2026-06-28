@@ -72,12 +72,7 @@ pub struct TermCaps {
     pub true_color: bool,
     /// Supports Unicode characters (emoji, box drawing, braille).
     pub unicode: bool,
-    /// Terminal width (columns).
-    #[allow(dead_code)]
-    pub width: u16,
-    /// Terminal height (rows).
-    #[allow(dead_code)]
-    pub height: u16,
+    // NOTE: width/height removed — callers use ratatui Rect dimensions instead
 }
 
 impl TermCaps {
@@ -85,13 +80,9 @@ impl TermCaps {
     pub fn detect() -> Self {
         let true_color = detect_true_color();
         let unicode = detect_unicode();
-        let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
-
         Self {
             true_color,
             unicode,
-            width,
-            height,
         }
     }
 
@@ -291,8 +282,6 @@ mod tests {
         let caps = TermCaps {
             true_color: false,
             unicode: false,
-            width: 80,
-            height: 24,
         };
         assert_eq!(caps.icon_user(), ">> ");
         assert_eq!(caps.icon_assistant(), "## ");

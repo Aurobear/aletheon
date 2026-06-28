@@ -126,8 +126,9 @@ impl ToolRunnerWithGuard {
             }
         }
 
-        // 3. Execute tool (with optional sandbox for L1+)
-        let result = if tool.permission_level() >= PermissionLevel::L1 {
+        // 3. Execute tool (with optional sandbox for bash_exec L1+)
+        let result = if tool.permission_level() >= PermissionLevel::L1 && tool.name() == "bash_exec" {
+            // bash_exec: route through sandbox with the command field
             let cmd = input.get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -157,6 +158,10 @@ impl ToolRunnerWithGuard {
                     },
                 },
             }
+        } else if tool.permission_level() >= PermissionLevel::L1 {
+            // Non-bash L1+ tools: call their own execute() method
+            // The tool handles its own logic (file I/O, patching, etc.)
+            tool.execute(input.clone(), ctx).await
         } else {
             // Direct execution for L0 tools
             tool.execute(input.clone(), ctx).await

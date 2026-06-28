@@ -36,10 +36,6 @@ struct ToolCallRecord {
     tool_name: String,
     args_hash: u64,
     is_error: bool,
-    #[allow(dead_code)]
-    token_cost: usize,
-    #[allow(dead_code)]
-    turn_id: String,
 }
 
 #[derive(Debug, Default)]
@@ -145,8 +141,6 @@ impl LoopDetector {
             tool_name: tool_name.to_string(),
             args_hash: hash_args(args),
             is_error: result.is_error,
-            token_cost: result.content.len(),
-            turn_id: turn_id.to_string(),
         });
 
         // Trim window

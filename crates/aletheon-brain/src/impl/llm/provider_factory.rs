@@ -11,12 +11,12 @@ use super::provider::LlmProvider;
 /// Auto-detect provider kind from base_url when transport is `Auto`.
 ///
 /// Heuristics:
-/// - URL ending with `/anthropic` -> "anthropic"
+/// - URL containing `anthropic.com` or ending with `/anthropic` -> "anthropic"
 /// - URL containing `localhost:11434` or `127.0.0.1:11434` -> "ollama"
 /// - Everything else -> "openai"
 fn detect_provider_kind(base_url: &str) -> &str {
     let normalized = base_url.trim().to_lowercase();
-    if normalized.ends_with("/anthropic") {
+    if normalized.contains("anthropic.com") || normalized.ends_with("/anthropic") {
         "anthropic"
     } else if normalized.contains("localhost:11434") || normalized.contains("127.0.0.1:11434") {
         "ollama"
@@ -35,7 +35,7 @@ fn detect_provider_kind(base_url: &str) -> &str {
 ///   - `localhost:11434` -> `OllamaProvider` (native Ollama `/api/chat` endpoint)
 ///   - Everything else -> `OpenAiProvider`
 pub fn create_provider(config: &ProviderConfig, model: &str) -> Result<Arc<dyn LlmProvider>> {
-    let api_key = resolve_api_key(config);
+    let api_key = resolve_api_key(config)?;
 
     match &config.transport {
         Transport::Anthropic => {
@@ -77,7 +77,7 @@ pub fn create_provider_by_kind(
     config: &ProviderConfig,
     model: &str,
 ) -> Result<Arc<dyn LlmProvider>> {
-    let api_key = resolve_api_key(config);
+    let api_key = resolve_api_key(config)?;
 
     match kind {
         "anthropic" => {
@@ -102,15 +102,34 @@ pub fn create_provider_by_kind(
 }
 
 /// Resolve API key: config value first, then env var `<NAME>_API_KEY`.
-fn resolve_api_key(config: &ProviderConfig) -> String {
+///
+/// Returns an error if no key is found and the provider requires one.
+/// Ollama (local) is exempt — it doesn't need an API key.
+fn resolve_api_key(config: &ProviderConfig) -> Result<String> {
     if !config.api_key.is_empty() {
-        return config.api_key.clone();
+        return Ok(config.api_key.clone());
     }
     let env_name = format!(
         "{}_API_KEY",
         config.name.to_uppercase().replace('-', "_")
     );
-    std::env::var(&env_name).unwrap_or_default()
+    match std::env::var(&env_name) {
+        Ok(key) if !key.is_empty() => Ok(key),
+        _ => {
+            // Ollama doesn't need an API key
+            let base_lower = config.base_url.to_lowercase();
+            if base_lower.contains("localhost:11434") || base_lower.contains("127.0.0.1:11434") {
+                Ok(String::new())
+            } else {
+                anyhow::bail!(
+                    "API key not found for provider '{}'. \
+                     Set {} in your environment or add api_key to config.",
+                    config.name,
+                    env_name
+                )
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -119,6 +138,22 @@ mod tests {
 
     #[test]
     fn test_detect_provider_kind_anthropic() {
+        assert_eq!(
+            detect_provider_kind("https://api.example.com/anthropic"),
+            "anthropic"
+        );
+    }
+
+    #[test]
+    fn test_detect_provider_kind_anthropic_official_url() {
+        assert_eq!(
+            detect_provider_kind("https://api.anthropic.com"),
+            "anthropic"
+        );
+    }
+
+    #[test]
+    fn test_detect_provider_kind_anthropic_with_path() {
         assert_eq!(
             detect_provider_kind("https://api.example.com/anthropic"),
             "anthropic"
@@ -226,6 +261,37 @@ mod tests {
             transport: Transport::Auto,
             models: vec![],
         };
-        assert_eq!(resolve_api_key(&config), "sk-secret");
+        assert_eq!(resolve_api_key(&config).unwrap(), "sk-secret");
+    }
+
+    #[test]
+    fn test_resolve_api_key_missing_returns_error() {
+        let config = ProviderConfig {
+            name: "anthropic".to_string(),
+            base_url: "https://api.anthropic.com".to_string(),
+            api_key: String::new(),
+            transport: Transport::Auto,
+            models: vec![],
+        };
+        // Remove env var if set
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let result = resolve_api_key(&config);
+        assert!(result.is_err(), "should fail when API key is missing");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("ANTHROPIC_API_KEY"), "error should mention the env var name: {}", err_msg);
+    }
+
+    #[test]
+    fn test_resolve_api_key_ollama_no_key_ok() {
+        let config = ProviderConfig {
+            name: "ollama".to_string(),
+            base_url: "http://localhost:11434".to_string(),
+            api_key: String::new(),
+            transport: Transport::Auto,
+            models: vec![],
+        };
+        let result = resolve_api_key(&config);
+        assert!(result.is_ok(), "ollama should not require API key");
+        assert_eq!(result.unwrap(), "");
     }
 }

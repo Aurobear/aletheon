@@ -76,7 +76,7 @@ impl SkillLoader {
     }
 
     /// Get a skill by name.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Public API used in tests; may be needed for skill hot-reload
     pub fn get(&self, name: &str) -> Option<&Skill> {
         self.skills.get(name)
     }
@@ -87,7 +87,7 @@ impl SkillLoader {
     }
 
     /// Build system context string listing available skills (for auto-trigger).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Public API used in tests; will be wired into system prompt construction
     pub fn build_system_context(&self) -> String {
         if self.skills.is_empty() {
             return String::new();

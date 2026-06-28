@@ -29,7 +29,7 @@ impl ProceduralMemory {
     }
 
     fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
-        let guard = self.conn.lock().unwrap();
+        let guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let conn = guard.as_ref().expect("ProceduralMemory not initialized");
         f(conn)
     }
@@ -64,7 +64,7 @@ impl Subsystem for ProceduralMemory {
     }
 
     async fn health(&self) -> SubsystemHealth {
-        let guard = self.conn.lock().unwrap();
+        let guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
             SubsystemHealth::Healthy
         } else {
@@ -75,7 +75,7 @@ impl Subsystem for ProceduralMemory {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        let mut guard = self.conn.lock().unwrap();
+        let mut guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         *guard = None;
         Ok(())
     }

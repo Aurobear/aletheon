@@ -552,16 +552,13 @@ struct ToolCallState {
 
 struct ActiveToolCall {
     id: String,
-    #[allow(dead_code)]
-    name: String,
     arguments: String,
 }
 
 impl ToolCallState {
-    fn start_call(&mut self, index: usize, id: String, name: String) {
+    fn start_call(&mut self, index: usize, id: String, _name: String) {
         self.calls.insert(index, ActiveToolCall {
             id,
-            name,
             arguments: String::new(),
         });
     }

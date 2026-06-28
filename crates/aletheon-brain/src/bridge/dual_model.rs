@@ -46,7 +46,7 @@ impl Default for DualModelConfig {
 pub struct DualModelBridge {
     planner: LlmBridge,
     executor: LlmBridge,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: config retained for future model-switching heuristics (e.g. cost-aware routing)
     config: DualModelConfig,
 }
 

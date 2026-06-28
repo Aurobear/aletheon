@@ -8,7 +8,7 @@ use crate::r#impl::perception::event::*;
 pub struct ProcSource {
     last_load: Option<(f64, f64, f64)>,
     last_mem: Option<(u64, u64)>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Wire into PerceptionSource::poll() for CPU spike events
     high_cpu_threshold: f64,
     event_id_counter: u64,
 }

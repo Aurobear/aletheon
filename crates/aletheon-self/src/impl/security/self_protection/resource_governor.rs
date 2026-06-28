@@ -206,7 +206,10 @@ impl ResourceGovernor {
 
     /// Check if a resource request can be fulfilled.
     pub fn check_allow(&self, request: &ResourceRequest) -> Result<(), ResourceViolation> {
-        let mut usage = self.usage.lock().unwrap();
+        let mut usage = self.usage.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        });
         usage.maybe_reset_hourly();
 
         match request {
@@ -262,7 +265,10 @@ impl ResourceGovernor {
 
     /// Release a concurrent tool slot.
     pub fn release_concurrent_tool(&self) {
-        let mut usage = self.usage.lock().unwrap();
+        let mut usage = self.usage.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        });
         if usage.active_tools > 0 {
             usage.active_tools -= 1;
         }
@@ -270,13 +276,19 @@ impl ResourceGovernor {
 
     /// Reset per-turn counters (call at turn boundary).
     pub fn reset_turn(&self) {
-        let mut usage = self.usage.lock().unwrap();
+        let mut usage = self.usage.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        });
         usage.reset_turn();
     }
 
     /// Determine throttle action based on current usage ratios.
     pub fn emergency_throttle(&self) -> ThrottleAction {
-        let usage = self.usage.lock().unwrap();
+        let usage = self.usage.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        });
 
         let token_ratio = usage.tokens_this_hour as f32 / self.limits.max_tokens_per_hour as f32;
         let memory_ratio = usage.memory_mb as f32 / self.limits.max_memory_mb as f32;
@@ -296,7 +308,10 @@ impl ResourceGovernor {
 
     /// Get current usage snapshot.
     pub fn current_usage(&self) -> ResourceUsage {
-        self.usage.lock().unwrap().clone()
+        self.usage.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        }).clone()
     }
 }
 

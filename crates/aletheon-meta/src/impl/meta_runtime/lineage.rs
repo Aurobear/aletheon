@@ -37,38 +37,38 @@ impl LineageTracker {
             description: description.to_string(),
             timestamp: chrono::Utc::now(),
         };
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.push(entry);
     }
 
     /// Record a pre-built lineage entry (async, for pipeline use).
     pub async fn record_entry(&self, entry: &LineageEntry) -> Result<()> {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.push(entry.clone());
         Ok(())
     }
 
     /// Get the full lineage history (sync).
     pub fn history(&self) -> Vec<LineageEntry> {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.clone()
     }
 
     /// Get the full lineage history (async, for pipeline use).
     pub async fn history_async(&self) -> Result<Vec<LineageEntry>> {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         Ok(entries.clone())
     }
 
     /// Get the latest version in the lineage, if any.
     pub fn latest(&self) -> Option<LineageEntry> {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.last().cloned()
     }
 
     /// Get the number of lineage entries.
     pub fn count(&self) -> usize {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.len()
     }
 }

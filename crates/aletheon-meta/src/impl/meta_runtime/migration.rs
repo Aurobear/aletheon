@@ -33,7 +33,7 @@ impl MigrationManager {
 
     /// Set the path where the genome is persisted.
     pub fn set_genome_path(&self, path: PathBuf) {
-        let mut gp = self.genome_path.lock().unwrap();
+        let mut gp = self.genome_path.lock().unwrap_or_else(|e| e.into_inner());
         *gp = Some(path);
     }
 
@@ -55,7 +55,7 @@ impl MigrationManager {
         changes: &[GenomeChange],
     ) -> Result<MigrationResult> {
         let from_version = {
-            let prev = self.previous_version.lock().unwrap();
+            let prev = self.previous_version.lock().unwrap_or_else(|e| e.into_inner());
             prev.clone().unwrap_or_else(|| "0.0.0".to_string())
         };
 
@@ -94,7 +94,7 @@ impl MigrationManager {
 
         // Save new genome to disk if path is configured
         let saved = {
-            let gp = self.genome_path.lock().unwrap();
+            let gp = self.genome_path.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(ref path) = *gp {
                 let loader = GenomeLoader::new();
                 loader.save(new_genome, path)?;
@@ -106,7 +106,7 @@ impl MigrationManager {
 
         // Record in lineage
         {
-            let lineage = self.lineage.lock().unwrap();
+            let lineage = self.lineage.lock().unwrap_or_else(|e| e.into_inner());
             lineage.record(
                 &to_version,
                 Some(&from_version),
@@ -119,7 +119,7 @@ impl MigrationManager {
 
         // Update stored version
         {
-            let mut prev = self.previous_version.lock().unwrap();
+            let mut prev = self.previous_version.lock().unwrap_or_else(|e| e.into_inner());
             *prev = Some(to_version.clone());
         }
 
@@ -144,7 +144,7 @@ impl MigrationManager {
     /// Records the version transition and returns a MigrationResult.
     pub async fn migrate(&self, candidate: &RuntimeCandidate) -> Result<MigrationResult> {
         let from_version = {
-            let prev = self.previous_version.lock().unwrap();
+            let prev = self.previous_version.lock().unwrap_or_else(|e| e.into_inner());
             prev.clone().unwrap_or_else(|| "0.0.0".to_string())
         };
 
@@ -157,7 +157,7 @@ impl MigrationManager {
 
         // Record in lineage
         {
-            let lineage = self.lineage.lock().unwrap();
+            let lineage = self.lineage.lock().unwrap_or_else(|e| e.into_inner());
             lineage.record(
                 &to_version,
                 Some(&from_version),
@@ -166,7 +166,7 @@ impl MigrationManager {
         }
 
         {
-            let mut prev = self.previous_version.lock().unwrap();
+            let mut prev = self.previous_version.lock().unwrap_or_else(|e| e.into_inner());
             *prev = Some(to_version.clone());
         }
 

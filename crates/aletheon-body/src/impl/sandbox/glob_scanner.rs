@@ -172,9 +172,6 @@ impl GlobScanner {
 
 /// A simple glob pattern supporting `*` (single segment) and `**` (recursive).
 struct SimpleGlob {
-    /// The original pattern string, kept for debugging.
-    #[allow(dead_code)]
-    pattern: String,
     /// Tokenized segments after splitting on `/`.
     segments: Vec<GlobSegment>,
 }
@@ -210,7 +207,6 @@ impl SimpleGlob {
         }
 
         Ok(Self {
-            pattern: pattern.to_string(),
             segments,
         })
     }

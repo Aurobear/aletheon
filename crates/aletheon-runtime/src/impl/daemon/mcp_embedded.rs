@@ -159,7 +159,7 @@ impl McpEmbedded {
 
         let ctx = aletheon_abi::tool::ToolContext {
             working_dir: std::env::current_dir().unwrap_or_default(),
-            session_id: "mcp-session".into(),
+            session_id: format!("mcp-{}", uuid::Uuid::new_v4()),
         };
 
         let result = tool.execute(arguments, &ctx).await;

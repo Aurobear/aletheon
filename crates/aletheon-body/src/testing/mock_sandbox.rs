@@ -32,7 +32,7 @@ impl MockSandbox {
 
     /// Register a canned response for a specific command.
     pub fn register_command(&self, cmd: impl Into<String>, stdout: impl Into<String>) {
-        let mut map = self.responses.lock().unwrap();
+        let mut map = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         map.insert(
             cmd.into(),
             SandboxResult {
@@ -54,7 +54,7 @@ impl MockSandbox {
         stderr: impl Into<String>,
         exit_code: i32,
     ) {
-        let mut map = self.responses.lock().unwrap();
+        let mut map = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         map.insert(
             cmd.into(),
             SandboxResult {
@@ -72,18 +72,18 @@ impl MockSandbox {
     pub fn write_file(&self, path: impl Into<String>, content: impl Into<String>) {
         self.fs
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(path.into(), content.into());
     }
 
     /// Read a file from the in-memory filesystem.
     pub fn read_file(&self, path: &str) -> Option<String> {
-        self.fs.lock().unwrap().get(path).cloned()
+        self.fs.lock().unwrap_or_else(|e| e.into_inner()).get(path).cloned()
     }
 
     /// List all files in the in-memory filesystem.
     pub fn list_files(&self) -> Vec<String> {
-        self.fs.lock().unwrap().keys().cloned().collect()
+        self.fs.lock().unwrap_or_else(|e| e.into_inner()).keys().cloned().collect()
     }
 }
 
@@ -125,13 +125,13 @@ impl SandboxBackend for MockSandbox {
     ) -> Result<SandboxResult> {
         self.execution_log
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .push((cmd.to_string(), config.clone()));
 
         // Handle built-in cat command for in-memory FS
         if let Some(path) = cmd.strip_prefix("cat ") {
             let path = path.trim();
-            if let Some(content) = self.fs.lock().unwrap().get(path) {
+            if let Some(content) = self.fs.lock().unwrap_or_else(|e| e.into_inner()).get(path) {
                 return Ok(SandboxResult {
                     stdout: content.clone(),
                     stderr: String::new(),
@@ -165,7 +165,7 @@ impl SandboxBackend for MockSandbox {
         }
 
         // Look up canned response
-        let map = self.responses.lock().unwrap();
+        let map = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(result) = map.get(cmd) {
             return Ok(result.clone());
         }
@@ -241,7 +241,7 @@ mod tests {
             .await
             .unwrap();
 
-        let log = mock.execution_log.lock().unwrap();
+        let log = mock.execution_log.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].0, "ls");
         assert_eq!(log[0].1.working_dir, "/home");

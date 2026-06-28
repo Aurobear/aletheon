@@ -26,8 +26,6 @@ pub enum PolicyVerdict {
 
 pub struct PolicyEngine {
     rules: Vec<PolicyRule>,
-    #[allow(dead_code)]
-    default_level: PermissionLevel,
 }
 
 impl PolicyEngine {
@@ -61,7 +59,6 @@ impl PolicyEngine {
                     action: PolicyAction::RequireApproval,
                 },
             ],
-            default_level: PermissionLevel::L1,
         }
     }
 

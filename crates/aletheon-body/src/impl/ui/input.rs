@@ -214,7 +214,7 @@ impl InputArea {
     }
 
     /// Get the current buffer content (for display).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Public API method; will be needed when input preview is added to TUI
     pub fn buffer(&self) -> &str {
         &self.buffer
     }

@@ -97,13 +97,13 @@ impl MetaRuntimeOps for DefaultMetaRuntime {
         if let Some(ref path) = self.genome_path {
             let loader = GenomeLoader::new();
             let genome = loader.load(path)?;
-            let mut cached = self.current_genome.lock().unwrap();
+            let mut cached = self.current_genome.lock().unwrap_or_else(|e| e.into_inner());
             *cached = Some(genome.clone());
             return Ok(genome);
         }
 
         // Fall back to cached genome
-        let cached = self.current_genome.lock().unwrap();
+        let cached = self.current_genome.lock().unwrap_or_else(|e| e.into_inner());
         match cached.as_ref() {
             Some(genome) => Ok(genome.clone()),
             None => {
@@ -150,7 +150,7 @@ impl MetaRuntimeOps for DefaultMetaRuntime {
 
         // Update cached genome
         {
-            let mut cached = self.current_genome.lock().unwrap();
+            let mut cached = self.current_genome.lock().unwrap_or_else(|e| e.into_inner());
             *cached = Some(candidate.genome.clone());
         }
 
@@ -163,7 +163,7 @@ impl MetaRuntimeOps for DefaultMetaRuntime {
 
         // Update cached genome to the rolled-back version
         {
-            let mut cached = self.current_genome.lock().unwrap();
+            let mut cached = self.current_genome.lock().unwrap_or_else(|e| e.into_inner());
             *cached = Some(genome);
         }
 

@@ -278,6 +278,16 @@ impl ReActLoop {
         self.goal_tracker.set_goal(goal);
     }
 
+    /// Load a spec file into the goal tracker.
+    pub fn load_spec(&mut self, path: &str) -> Result<(), String> {
+        self.goal_tracker.load_spec_from_file(path)
+    }
+
+    /// Get the current constraints from the loaded spec.
+    pub fn get_constraints(&self) -> &[String] {
+        self.goal_tracker.get_constraints()
+    }
+
     /// Get the current goal context for LLM prompting.
     pub fn get_goal_context(&self) -> String {
         self.goal_tracker.get_context()

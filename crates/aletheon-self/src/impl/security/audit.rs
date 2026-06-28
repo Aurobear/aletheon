@@ -3,7 +3,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
 use aletheon_abi::tool::PermissionLevel;
 use super::risk_classifier::RiskCategory;
@@ -75,6 +75,8 @@ impl AuditLogger {
     }
 
     pub fn log_sync(&self, record: AuditRecord) {
-        let _ = self.tx.try_send(record);
+        if self.tx.try_send(record).is_err() {
+            warn!("audit channel full, record dropped");
+        }
     }
 }

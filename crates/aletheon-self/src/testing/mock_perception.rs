@@ -30,12 +30,18 @@ impl MockPerceptionSource {
 
     /// Enqueue a single event to be returned on the next `poll()`.
     pub fn push_event(&self, event: PerceptionEvent) {
-        self.events.lock().unwrap().push_back(event);
+        self.events.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        }).push_back(event);
     }
 
     /// Enqueue multiple events.
     pub fn push_events(&self, events: impl IntoIterator<Item = PerceptionEvent>) {
-        let mut q = self.events.lock().unwrap();
+        let mut q = self.events.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        });
         for e in events {
             q.push_back(e);
         }
@@ -48,7 +54,10 @@ impl MockPerceptionSource {
 
     /// Number of canned events remaining.
     pub fn remaining(&self) -> usize {
-        self.events.lock().unwrap().len()
+        self.events.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        }).len()
     }
 }
 
@@ -59,10 +68,16 @@ impl PerceptionSource for MockPerceptionSource {
     }
 
     async fn poll(&mut self) -> anyhow::Result<Vec<PerceptionEvent>> {
-        *self.poll_count.lock().unwrap() += 1;
+        *self.poll_count.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        }) += 1;
 
         // Drain all currently queued events in one batch
-        let mut q = self.events.lock().unwrap();
+        let mut q = self.events.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        });
         let events: Vec<PerceptionEvent> = q.drain(..).collect();
         Ok(events)
     }
@@ -122,7 +137,10 @@ mod tests {
         source.poll().await.unwrap();
         source.poll().await.unwrap();
 
-        assert_eq!(*source.poll_count.lock().unwrap(), 2);
+        assert_eq!(*source.poll_count.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned, recovering: {}", e);
+            e.into_inner()
+        }), 2);
     }
 
     #[tokio::test]
