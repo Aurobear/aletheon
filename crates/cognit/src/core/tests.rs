@@ -1,6 +1,7 @@
 use super::*;
+use async_trait::async_trait;
 use base::body::{Action, ActionResult};
-use base::brain::{ExecutionResult, Experience, ReflectionEntry, ReflectionOutcome};
+use base::brain::{ExecutionResult, Experience, Observation, ReflectionEntry, ReflectionOutcome};
 use base::context::Context;
 use base::self_field::Intent;
 use base::{IntentSource, SubsystemHealth};

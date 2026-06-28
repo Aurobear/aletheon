@@ -7,11 +7,11 @@
 
 use std::path::PathBuf;
 use anyhow::Result;
-use aletheon_abi::context::Context;
-use aletheon_abi::self_field::{Intent, Verdict, RiskLevel};
-use aletheon_abi::body::{Action, ActionResult};
-use aletheon_abi::brain::{Plan, PlanStep, CostEstimate};
-use aletheon_runtime::{AletheonRuntime, RuntimeConfig};
+use base::context::Context;
+use base::self_field::{Intent, Verdict, RiskLevel};
+use base::body::{Action, ActionResult};
+use base::brain::{Plan, PlanStep, CostEstimate};
+use runtime::{AletheonRuntime, RuntimeConfig};
 
 /// Stub: policy review -- always approves in this example.
 fn review(_intent: &Intent, _ctx: &Context) -> Result<Verdict> {

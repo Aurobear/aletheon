@@ -1,17 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/binaries/aletheond",
-    "crates/binaries/aletheon-exec",
-    "crates/binaries/aletheon-cli",
-    "crates/aletheon-abi",
-    "crates/aletheon-comm",
-    "crates/aletheon-memory",
-    "crates/aletheon-self",
-    "crates/aletheon-brain",
-    "crates/aletheon-body",
-    "crates/aletheon-runtime",
-    "crates/aletheon-meta",
+    "crates/base",
+    "crates/cognit",
+    "crates/corpus",
+    "crates/dasein",
+    "crates/interact",
+    "crates/memory",
+    "crates/metacog",
+    "crates/runtime",
     "examples/basic-agent",
     "examples/self-evolution-loop",
 ]

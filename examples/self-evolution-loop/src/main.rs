@@ -15,14 +15,14 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 
-use aletheon_abi::evolution::*;
-use aletheon_abi::EventBus;
-use aletheon_brain::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
-use aletheon_brain::r#impl::llm::scheduler::{
+use base::evolution::*;
+use base::EventBus;
+use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
+use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
-use aletheon_comm::core::event::{ConcreteEvent, EventType, Priority};
-use aletheon_comm::KernelEventBus;
+use base::events::event::{ConcreteEvent, EventType, Priority};
+use base::KernelEventBus;
 
 // ---------------------------------------------------------------------------
 // Helpers

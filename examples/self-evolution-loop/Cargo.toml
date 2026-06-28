@@ -5,14 +5,13 @@ edition = "2021"
 publish = false
 
 [dependencies]
-aletheon-abi = { path = "../../crates/aletheon-abi" }
-aletheon-comm = { path = "../../crates/aletheon-comm" }
-aletheon-brain = { path = "../../crates/aletheon-brain" }
-aletheon-self = { path = "../../crates/aletheon-self" }
-aletheon-meta = { path = "../../crates/aletheon-meta" }
-aletheon-body = { path = "../../crates/aletheon-body" }
-aletheon-memory = { path = "../../crates/aletheon-memory" }
-aletheon-runtime = { path = "../../crates/aletheon-runtime" }
+base = { path = "../../crates/base" }
+cognit = { path = "../../crates/cognit" }
+corpus = { path = "../../crates/corpus" }
+dasein = { path = "../../crates/dasein" }
+memory = { path = "../../crates/memory" }
+metacog = { path = "../../crates/metacog" }
+runtime = { path = "../../crates/runtime" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

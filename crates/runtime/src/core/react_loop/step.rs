@@ -178,6 +178,9 @@ impl ReActLoop {
                         current_state: if is_error { "error" } else { "ok" }.to_string(),
                         tool_calls_made,
                         errors: tool_errors,
+                        constraints: Vec::new(),
+                        test_failures: Vec::new(),
+                        unexpected_outputs: Vec::new(),
                     };
                     let result = self.reflection_engine.reflect(&ctx);
                     // Store for injection after all tool results
