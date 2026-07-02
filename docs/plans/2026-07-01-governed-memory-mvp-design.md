@@ -7,6 +7,53 @@
 
 ---
 
+## 0. Reality correction (post-audit, 2026-07-01) — SUPERSEDES router-specific details below
+
+An audit of the *live* daemon chat path found this spec's original target was
+wrong. There are **two parallel memory subsystems**:
+
+- **Cognitive `memory` crate** — `MemoryRouter` + 4 backends
+  (episodic/semantic/procedural/self). `MemoryRouter` is referenced **only** by
+  `runtime/src/core/orchestrator.rs:34` as an `Option`, and the daemon chat path
+  does **not** use it (only `EpisodicMemory` is wired in directly).
+- **Runtime daemon memory** (`crates/runtime/src/impl/memory/`) — the store the
+  daemon actually uses per turn: **`FactStore`** (`fact_store/mod.rs:91`),
+  `RecallMemory`, `CoreMemory`, `AutoMemory`. Held on `RequestHandler`
+  (`handler/mod.rs:90-167`).
+
+**Therefore the Governed Memory target is `FactStore`, not `MemoryRouter`.** Good
+news: `FactStore` already implements most of the governed schema. Spec-vs-code diff:
+
+| Doc-3 governance field | FactStore reality (`fact_store/mod.rs`) | Action |
+|---|---|---|
+| confidence | `trust_score REAL DEFAULT 0.5` (mod.rs:113) + `record_feedback`/`decay_stale` | **reuse** (rename concept to confidence in CLI) |
+| ttl | `ttl_days INTEGER DEFAULT 0` (mod.rs:117) | **reuse** |
+| type/domain | `category` + `tier` (mod.rs:110,116) + `tags` (mod.rs:111) | **reuse** (domain = tag/category) |
+| source | — | **add** `source TEXT` |
+| scope | — | **add** `scope TEXT DEFAULT 'session'` |
+| status (archive) | — | **add** `status TEXT DEFAULT 'active'` |
+| pinned | — | **add** `pinned INTEGER DEFAULT 0` |
+| subject | `content` is UNIQUE; no separate subject | **add** `subject TEXT` (optional; dedup already via UNIQUE content) |
+| FTS search | `facts_fts` FTS5 + triggers (mod.rs:127-145) | **reuse** |
+| retrieval/access | `retrieval_count` (mod.rs:114) | **reuse** |
+| user CLI | absent | **add** (via daemon JSON-RPC) |
+
+**Net effect on this MVP:** the schema work shrinks to adding
+`scope/source/status/pinned/subject` columns to the `facts` table (idempotent
+`ALTER TABLE` guarded by `PRAGMA table_info(facts)`); trust/ttl/tags/FTS/decay
+are already there. The **CLI is the largest remaining piece**. The daemon
+protocol is untyped **JSON-RPC over the Unix socket dispatched by a `method`
+string** (`handler/mod.rs:883`, arms in `handler/rpc.rs`), so `memory.*` methods
+are new match arms + a new `interact` subcommand — no shared enum to extend.
+
+The router/`MemoryEntry`/`MemoryType` details in §2–§9 below are retained for
+context but are **superseded by this section** wherever they conflict. The
+bifurcation itself (which subsystem should survive long-term) is tracked as
+roadmap item **M-H** — this MVP does not resolve it; it governs the live store
+(`FactStore`) and leaves the cognitive crate alone.
+
+---
+
 ## 1. Problem & motivation
 
 Aletheon already has a working memory subsystem (SQLite-backed, four cognitive backends behind a `MemoryBackend` trait), but it is **passively accumulated and ungoverned**:
@@ -117,14 +164,26 @@ RECALL: turn start / `memory search`
           → touch last_used_at
 ```
 
-## 9. Affected files (for the future implementation — not touched by this spec)
+## 9. Affected files (CORRECTED target — `FactStore`; not touched by this spec)
 
-- `crates/base/src/include/memory.rs` — new enums (`MemoryScope`, `MemorySource`, `MemoryStatus`), extend `MemoryEntry`, extend `MemoryQuery`.
-- `crates/memory/src/ops/schema.rs` — add columns + `migrate_base_table`.
-- `crates/memory/src/ops/router.rs` — ranking, scope filter, layered injection, `last_used_at` touch.
-- `crates/memory/src/` (four backends) — persist/read new columns.
-- `crates/runtime/src/impl/daemon/` — protocol variants + handlers for memory ops; wire safety/dedup on the write path.
-- `crates/interact/` — `memory` subcommand surface.
+Per §0, the target is the live `FactStore`, not the cognitive `memory` crate.
+
+- `crates/runtime/src/impl/memory/fact_store/mod.rs` — add `scope/source/status/pinned/subject`
+  columns to the `facts` table + an idempotent `migrate_facts_table` (guarded by
+  `PRAGMA table_info(facts)`); extend `FactRow` with the new fields; add
+  `pin/unpin/archive` methods; add scope-aware safety check on the insert path.
+- `crates/runtime/src/impl/memory/fact_store/query.rs` — scope/status filters in
+  `search_facts`; exclude archived/expired; pinned ranking boost.
+- `crates/runtime/src/impl/daemon/handler/rpc.rs` — new `memory.add/list/search/show/forget/pin/unpin`
+  match arms (JSON-RPC, following the existing `reflect`/`compact` arm pattern).
+- `crates/runtime/src/impl/daemon/handler/chat.rs` — safety/scope on the auto-memory
+  write path (`chat.rs:632`); scope-filtered injection where FactStore is recalled
+  (`chat.rs:113-146`).
+- `crates/interact/src/tui/cli.rs` — new `Memory { action: MemoryAction }` subcommand
+  (variant in `Command` enum `cli.rs:69`, arm in `handle_command` `cli.rs:155`), using
+  the `send_rpc` helper pattern (`debug.rs:1194`).
+
+Deliberately **not** touched: `crates/memory/` (cognitive crate) — see M-H.
 
 ## 10. Testing strategy
 

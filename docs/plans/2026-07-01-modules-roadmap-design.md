@@ -430,6 +430,43 @@ deferred.
 **Risk.** Low-medium; deployment-only. Test: `systemctl --user start` brings the
 daemon up; graceful shutdown on stop.
 
+## M-H. Unify the bifurcated memory subsystem  *(found during Tier 1 planning)*
+
+**Problem.** There are **two parallel memory subsystems**, and the "designed" one
+is largely unused by the live daemon:
+- Cognitive `memory` crate — `MemoryRouter` + episodic/semantic/procedural/self
+  backends. `MemoryRouter` is referenced only by `runtime/src/core/orchestrator.rs:34`
+  (an `Option`); the daemon chat path uses only `EpisodicMemory` directly.
+- Runtime daemon memory (`crates/runtime/src/impl/memory/`) — `FactStore`
+  (`fact_store/mod.rs:91`, trust-scored, FTS5, entity graph, episodes, knowledge),
+  `RecallMemory`, `CoreMemory`, `AutoMemory` — the store actually used per turn.
+
+This is the same "two divergent implementations" smell as the compaction split
+(M-A). It causes confusion (which store is authoritative?), wasted code, and
+makes the doc-3 memory model ambiguous.
+
+**Design (decision-first).** Decide the survivor, then converge:
+- **Option A (recommended):** make `FactStore` + friends the canonical governed
+  store (it's what runs and already has trust/ttl/FTS/entities); retire or
+  demote the cognitive `MemoryRouter`/semantic/procedural/self backends to an
+  optional plugin behind the Memory SDK (doc 2). Keep `EpisodicMemory` only if
+  still used.
+- **Option B:** invest in the cognitive crate as the canonical store and route
+  the daemon through `MemoryRouter`, migrating `FactStore` data into it.
+
+Option A is less work and matches reality. Either way, this is a **follow-up** to
+the Tier 1 Governed-Memory MVP (which governs `FactStore` without resolving the
+bifurcation).
+
+**Non-goals.** Not resolved by the Tier 1 MVP. Requires an explicit owner
+decision (A vs B) before implementation.
+
+**Affected files.** `crates/memory/**`, `crates/runtime/src/impl/memory/**`,
+`crates/runtime/src/core/orchestrator.rs`.
+
+**Risk.** Medium-high (data migration if Option B). Test: no regression in
+daemon recall/injection; migrated data round-trips.
+
 ## M-G. Positioning / rebrand — Aletheon → "Auro Runtime"  *(doc 1 & 2 titles)*
 
 **Problem/decision (not a code task yet).** All four docs title the project
@@ -461,4 +498,5 @@ designed in detail pending the owner's decision.
 | M-D | Self-Evolution loop wiring | High | needs 2a | High | Med |
 | M-E | SubAgent lifecycle | Low | — | Med | Med |
 | M-F | Additional Hosts | Low-Med | needs 2b | Med | Med |
+| M-H | Unify bifurcated memory (FactStore vs MemoryRouter) | Med-High | follows Tier 1; needs A/B decision | Med | Med |
 | M-G | Rebrand Aletheon→Auro (decision) | — | needs 0–2 | High | — |
