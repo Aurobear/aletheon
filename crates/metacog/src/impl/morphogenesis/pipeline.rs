@@ -35,8 +35,14 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
             candidate.changes.len()
         );
 
-        // Step 2: Sandbox test
-        let test_result = self.meta_runtime.sandbox_test(&candidate).await?;
+        // Step 2: Sandbox test -- rollback on error (candidate was already generated)
+        let test_result = match self.meta_runtime.sandbox_test(&candidate).await {
+            Ok(t) => t,
+            Err(e) => {
+                let _ = self.meta_runtime.rollback().await;
+                return Err(e);
+            }
+        };
         tracing::info!(
             "Sandbox test: {} passed, {} failed ({}ms)",
             test_result.tests_passed,
@@ -44,16 +50,22 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
             test_result.elapsed_ms
         );
 
-        // Step 3: Evaluate
-        let evaluation = self.meta_runtime.evaluate(&candidate, &test_result).await?;
+        // Step 3: Evaluate -- rollback on error
+        let evaluation = match self.meta_runtime.evaluate(&candidate, &test_result).await {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = self.meta_runtime.rollback().await;
+                return Err(e);
+            }
+        };
         tracing::info!(
             "Evaluation score: {:.2}, recommendation: {:?}",
             evaluation.score,
             evaluation.recommendation
         );
 
-        // Step 4: Migrate if recommended
-        let migration = match &evaluation.recommendation {
+        // Step 4: Migrate if recommended, otherwise roll back the pre-generation snapshot.
+        let (migration, rolled_back) = match &evaluation.recommendation {
             base::meta::Recommendation::Adopt => {
                 let result = self.meta_runtime.migrate(&candidate).await?;
                 tracing::info!(
@@ -61,19 +73,24 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
                     result.from_version,
                     result.to_version
                 );
-                Some(result)
+                (Some(result), false)
             }
             base::meta::Recommendation::PartialAdopt { changes } => {
                 tracing::info!("Partial adopt with {} changes — migrating", changes.len());
                 let result = self.meta_runtime.migrate(&candidate).await?;
-                Some(result)
+                (Some(result), false)
             }
-            _ => {
-                tracing::info!(
-                    "Skipping migration — recommendation: {:?}",
-                    evaluation.recommendation
-                );
-                None
+            other => {
+                // Candidate was generated (snapshot saved by generate_candidate); undo it.
+                tracing::info!("Not adopting ({:?}) — rolling back candidate {}", other, candidate.id);
+                let rolled_back = match self.meta_runtime.rollback().await {
+                    Ok(()) => true,
+                    Err(e) => {
+                        tracing::warn!("rollback after non-adopt failed: {e}");
+                        false
+                    }
+                };
+                (None, rolled_back)
             }
         };
 
@@ -96,6 +113,7 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
             evaluation: Some(evaluation),
             migration,
             message,
+            rolled_back,
         })
     }
 }
@@ -107,4 +125,6 @@ pub struct PipelineResult {
     pub evaluation: Option<Evaluation>,
     pub migration: Option<MigrationResult>,
     pub message: String,
+    /// Whether a rollback was performed (candidate was generated but not adopted).
+    pub rolled_back: bool,
 }
