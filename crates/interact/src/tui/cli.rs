@@ -257,23 +257,6 @@ async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
 
 /// Handle memory subcommands by sending JSON-RPC to the daemon.
 async fn memory_cmd(socket: &PathBuf, action: MemoryAction) -> Result<()> {
-    let send_rpc = |request: serde_json::Value| async move {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-        use tokio::net::UnixStream;
-        let mut stream = UnixStream::connect(socket)
-            .await
-            .with_context(|| format!("Cannot connect to daemon socket: {}", socket.display()))?;
-        let req_str = serde_json::to_string(&request)?;
-        stream.write_all(req_str.as_bytes()).await?;
-        stream.write_all(b"\n").await?;
-        let (reader, _) = stream.split();
-        let mut reader = BufReader::new(reader);
-        let mut response = String::new();
-        reader.read_line(&mut response).await?;
-        serde_json::from_str::<serde_json::Value>(&response)
-            .context("Failed to parse daemon response")
-    };
-
     let req = match &action {
         MemoryAction::Add { text, scope, subject } => serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "method": "memory.add",
@@ -305,7 +288,7 @@ async fn memory_cmd(socket: &PathBuf, action: MemoryAction) -> Result<()> {
         }),
     };
 
-    let resp = send_rpc(req).await?;
+    let resp = super::rpc_client::send_rpc(socket, &req).await?;
 
     if let Some(err) = resp.get("error") {
         eprintln!("Error: {}", err["message"].as_str().unwrap_or("unknown"));

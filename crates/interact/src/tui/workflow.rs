@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use clap::Subcommand;
 use std::path::PathBuf;
 
-use super::debug::send_rpc;
+use super::rpc_client::send_rpc;
 
 // ---------------------------------------------------------------------------
 // Subcommand definitions

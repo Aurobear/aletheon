@@ -18,6 +18,8 @@ use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
+use super::rpc_client::send_rpc;
+
 // ---------------------------------------------------------------------------
 // Subcommand definitions
 // ---------------------------------------------------------------------------
@@ -1184,29 +1186,4 @@ async fn log_stream(
     }
 
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// JSON-RPC helper
-// ---------------------------------------------------------------------------
-
-/// Send a single JSON-RPC request over the Unix socket and return the response.
-pub(crate) async fn send_rpc(socket: &std::path::Path, request: &serde_json::Value) -> Result<serde_json::Value> {
-    let mut stream = UnixStream::connect(socket)
-        .await
-        .with_context(|| format!("Cannot connect to daemon socket: {}", socket.display()))?;
-
-    let req_str = serde_json::to_string(request)?;
-    stream.write_all(req_str.as_bytes()).await?;
-    stream.write_all(b"\n").await?;
-
-    let (reader, _) = stream.split();
-    let mut reader = BufReader::new(reader);
-    let mut response = String::new();
-    reader.read_line(&mut response).await?;
-
-    let resp: serde_json::Value = serde_json::from_str(&response)
-        .context("Failed to parse daemon response")?;
-
-    Ok(resp)
 }

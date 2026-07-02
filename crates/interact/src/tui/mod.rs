@@ -31,6 +31,7 @@ pub mod toolcard;
 pub mod cli;
 pub mod debug;
 pub mod goal;
+pub(crate) mod rpc_client;
 pub mod workflow;
 
 // Re-export the main entry point
