@@ -50,11 +50,11 @@ impl UnixServer {
     /// client and also writes out-of-band notifications (e.g. approval_request)
     /// from the handler's notification channel, and debug subscriber events.
     async fn handle_connection(
-        stream: UnixStream,
+        stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         handler: RequestHandler,
         mut notify_rx: mpsc::Receiver<String>,
     ) -> Result<()> {
-        let (reader, mut writer) = stream.into_split();
+        let (reader, mut writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);
         let mut line = String::new();
 
