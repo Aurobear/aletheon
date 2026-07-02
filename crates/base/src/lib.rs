@@ -51,6 +51,7 @@ pub use types::hook;
 pub use types::hook_ext;
 pub use types::llm_types;
 pub use types::message;
+pub use types::objective;
 pub use types::paths;
 pub use types::permission;
 pub use types::resource;
@@ -119,6 +120,7 @@ pub use types::llm_types::ToolDefinition;
 pub use types::message::{ContentBlock, ImageSource, Message, Priority as MessagePriority, Role};
 pub use types::permission::{ModeConfig, PermissionBehavior, PermissionContext, PermissionMode, PermissionRule};
 pub use types::resource::{ManagedResource, ResourceState};
+pub use types::objective::{Objective, ObjectiveStatus, ObjectiveSummary};
 pub use types::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
 };

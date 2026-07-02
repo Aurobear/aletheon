@@ -8,6 +8,7 @@ pub mod hook;
 pub mod hook_ext;
 pub mod llm_types;
 pub mod message;
+pub mod objective;
 pub mod paths;
 pub mod permission;
 pub mod resource;
