@@ -791,3 +791,75 @@ fn format_status(status: &serde_json::Value) -> String {
 
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod workflow_cli_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parses_workflow_list() {
+        let args = Args::try_parse_from(["aletheon", "workflow", "list"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::Workflow { action: workflow::WorkflowAction::List })
+        ));
+    }
+
+    #[test]
+    fn parses_workflow_run_with_name() {
+        let args = Args::try_parse_from(["aletheon", "workflow", "run", "deploy"]).unwrap();
+        match args.command {
+            Some(Command::Workflow { action: workflow::WorkflowAction::Run { name } }) => {
+                assert_eq!(name, "deploy")
+            }
+            _ => panic!("unexpected parse for workflow run"),
+        }
+    }
+
+    #[test]
+    fn parses_workflow_save_with_name_and_path() {
+        let args = Args::try_parse_from([
+            "aletheon", "workflow", "save", "mywf", "/tmp/wf.json",
+        ])
+        .unwrap();
+        match args.command {
+            Some(Command::Workflow { action: workflow::WorkflowAction::Save { name, path } }) => {
+                assert_eq!(name, "mywf");
+                assert_eq!(path, std::path::PathBuf::from("/tmp/wf.json"));
+            }
+            _ => panic!("unexpected parse for workflow save"),
+        }
+    }
+
+    #[test]
+    fn parses_workflow_load_with_name() {
+        let args = Args::try_parse_from(["aletheon", "workflow", "load", "mywf"]).unwrap();
+        match args.command {
+            Some(Command::Workflow { action: workflow::WorkflowAction::Load { name } }) => {
+                assert_eq!(name, "mywf")
+            }
+            _ => panic!("unexpected parse for workflow load"),
+        }
+    }
+
+    #[test]
+    fn parses_workflow_delete_with_name() {
+        let args = Args::try_parse_from(["aletheon", "workflow", "delete", "mywf"]).unwrap();
+        match args.command {
+            Some(Command::Workflow { action: workflow::WorkflowAction::Delete { name } }) => {
+                assert_eq!(name, "mywf")
+            }
+            _ => panic!("unexpected parse for workflow delete"),
+        }
+    }
+
+    #[test]
+    fn parses_workflow_wf_alias() {
+        let args = Args::try_parse_from(["aletheon", "wf", "list"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::Workflow { action: workflow::WorkflowAction::List })
+        ));
+    }
+}

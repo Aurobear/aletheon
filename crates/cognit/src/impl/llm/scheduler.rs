@@ -230,7 +230,7 @@ impl LlmScheduler {
         let mut seen = HashSet::new();
         let mut out = Vec::with_capacity(self.providers.len());
 
-        let mut push = |name: String, out: &mut Vec<String>, seen: &mut HashSet<String>| {
+        let push = |name: String, out: &mut Vec<String>, seen: &mut HashSet<String>| {
             if self.providers.contains_key(&name) && self.is_healthy(&name) && seen.insert(name.clone()) {
                 out.push(name);
             }

@@ -139,6 +139,7 @@ mod tests {
             transport: Transport::Anthropic,
             models: vec!["claude-sonnet-4-20250514".to_string()],
             max_context_length: None,
+            pricing: None,
         };
         let provider = create_provider(&config, "claude-sonnet-4-20250514");
         assert!(provider.is_ok());
@@ -154,6 +155,7 @@ mod tests {
             transport: Transport::Openai,
             models: vec!["gpt-4o".to_string()],
             max_context_length: None,
+            pricing: None,
         };
         let provider = create_provider(&config, "gpt-4o");
         assert!(provider.is_ok());
@@ -169,6 +171,7 @@ mod tests {
             transport: Transport::Auto,
             models: vec!["qwen3:8b".to_string()],
             max_context_length: None,
+            pricing: None,
         };
         let provider = create_provider(&config, "qwen3:8b");
         assert!(provider.is_ok());
@@ -184,6 +187,7 @@ mod tests {
             transport: Transport::Auto,
             models: vec![],
             max_context_length: None,
+            pricing: None,
         };
         let result = create_provider_by_kind("unknown", &config, "model");
         assert!(result.is_err());
@@ -198,6 +202,7 @@ mod tests {
             transport: Transport::Auto,
             models: vec!["llama3".to_string()],
             max_context_length: None,
+            pricing: None,
         };
         let provider = create_provider_by_kind("ollama", &config, "llama3");
         assert!(provider.is_ok());
@@ -212,6 +217,7 @@ mod tests {
             transport: Transport::Auto,
             models: vec![],
             max_context_length: None,
+            pricing: None,
         };
         assert_eq!(resolve_api_key(&config), "sk-secret");
     }
