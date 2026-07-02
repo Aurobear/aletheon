@@ -22,6 +22,7 @@ use base::{
     SubsystemContext, SubsystemHealth, Verdict, Version,
 };
 use anyhow::Result;
+use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Duration;
 use tracing::info;
@@ -100,6 +101,9 @@ pub struct SelfField {
     // DaseinModule (optional, opt-in via config)
     dasein: Option<DaseinModule>,
     dasein_event_tx: Option<tokio::sync::mpsc::Sender<DaseinEvent>>,
+    /// Optional Runtime permission authority. When set, `review()` delegates
+    /// the confirmation verdict to it instead of using the inline rule.
+    permission_authority: Option<Arc<dyn base::policy::permission_authority::PermissionAuthority>>,
 }
 
 impl SelfField {
@@ -146,6 +150,7 @@ impl SelfField {
             loop_bridge: LoopBridge::new(),
             hook_bridge: HookBridge::new(),
             dasein,
+            permission_authority: None,
             dasein_event_tx,
         }
     }
@@ -158,6 +163,18 @@ impl SelfField {
     /// Access the boundary layer (immutable).
     pub fn boundary(&self) -> &BoundaryLayer {
         &self.boundary
+    }
+
+    /// Install the Runtime's permission authority.
+    ///
+    /// Without it, the inline fallback rule at `review()` lines 389-398
+    /// is used (behavior-preserving). This is called by the Runtime
+    /// daemon handler after constructing SelfField.
+    pub fn set_permission_authority(
+        &mut self,
+        authority: Arc<dyn base::policy::permission_authority::PermissionAuthority>,
+    ) {
+        self.permission_authority = Some(authority);
     }
 
     /// Access the care layer.
@@ -384,10 +401,20 @@ impl base::SelfFieldOps for SelfField {
         // 4. Care scoring
         let care_score = self.care.score_action(&intent.description);
 
-        // 5. Permission check — if the action requires a capability the context doesn't have,
-        //    require confirmation for high care scores.
-        if care_score > 0.8 {
-            // High care relevance — check if context has sufficient permissions
+        // 5. Permission check -- delegate to the Runtime authority if installed,
+        //    otherwise fall back to the historical inline rule (behavior-preserving).
+        if let Some(authority) = &self.permission_authority {
+            if let Some(verdict) = authority.confirmation_verdict(ctx, care_score, &intent.action) {
+                self.narrative.record(
+                    "permission_check",
+                    "Runtime permission authority required confirmation",
+                    Some(&intent.action),
+                    &verdict,
+                );
+                return Ok(verdict);
+            }
+        } else if care_score > 0.8 {
+            // Fallback: historical inline rule (exact port, line-for-line).
             if ctx.permissions.max_level() < base::PermissionLevel::SystemChange {
                 let verdict = Verdict::RequireConfirmation {
                     reason: format!(
@@ -639,5 +666,49 @@ mod tests {
             sf.health().await,
             SubsystemHealth::Degraded { .. }
         ));
+    }
+
+    use base::policy::permission_authority::PermissionAuthority;
+    use std::sync::Arc;
+
+    struct StubAuthority;
+    impl PermissionAuthority for StubAuthority {
+        fn confirmation_verdict(
+            &self,
+            _ctx: &base::Context,
+            _care: f64,
+            action: &str,
+        ) -> Option<Verdict> {
+            Some(Verdict::RequireConfirmation {
+                reason: format!("stub gate for {action}"),
+                risk_level: RiskLevel::Medium,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn review_delegates_permission_verdict_to_authority() {
+        let mut sf = SelfField::new(default_config());
+        sf.set_permission_authority(Arc::new(StubAuthority));
+        let intent = make_intent("settings.update", "update a setting");
+        let ctx = minimal_ctx();
+        let verdict = sf.review(&intent, &ctx).await.unwrap();
+        assert!(
+            matches!(verdict, Verdict::RequireConfirmation { .. }),
+            "authority verdict must be honored, got {verdict:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn review_falls_back_to_inline_when_no_authority_installed() {
+        let sf = SelfField::new(default_config());
+        // Low-care action -- shouldn't trigger confirmation
+        let intent = make_intent("ls", "list files");
+        let ctx = minimal_ctx();
+        let verdict = sf.review(&intent, &ctx).await.unwrap();
+        assert!(
+            matches!(verdict, Verdict::Allow),
+            "no authority + low care = allow, got {verdict:?}"
+        );
     }
 }

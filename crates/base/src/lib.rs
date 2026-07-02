@@ -81,6 +81,7 @@ pub use kernel::registry;
 // Policy modules (from policy/)
 pub use policy::execpolicy;
 pub use policy::verifier;
+pub use policy::permission_authority;
 
 // === Re-exports for backward compatibility ===
 // These preserve the flat API surface so external consumers don't need to change.

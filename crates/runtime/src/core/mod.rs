@@ -7,6 +7,7 @@ pub mod evolution_coordinator;
 pub mod interrupt;
 pub mod mode_router;
 pub mod orchestrator;
+pub mod permission_manager;
 pub mod react_loop;
 pub mod session;
 pub mod storm_breaker;
