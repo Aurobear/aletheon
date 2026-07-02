@@ -4,6 +4,7 @@ use super::tool_budget;
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
 
 use base::message::{ContentBlock, Message, Role};
+use base::policy::verifier::Verdict;
 use base::ToolDefinition;
 use cognit::r#impl::llm::provider::{LlmProvider, StopReason};
 use std::future::Future;
@@ -28,6 +29,7 @@ impl ReActLoop {
         let start = std::time::Instant::now();
         let mut tool_calls_made: usize = 0;
         let mut tool_errors: usize = 0;
+        self.verify_attempts = 0;
 
         self.messages.push(Message::user(user_input));
 
@@ -68,6 +70,26 @@ impl ReActLoop {
             // We must check tool_calls first — only exit if there are no tools to run.
             if tool_calls.is_empty() {
                 let final_text = text_parts.join("\n");
+
+                // M-C: optional verification seam. Default (None) = unchanged behavior.
+                if let Some(verifier) = self.verifier.clone() {
+                    if self.verify_attempts < self.max_verify_attempts {
+                        if let Verdict::Reject { reason } =
+                            verifier.verify(&final_text, &self.messages).await
+                        {
+                            self.verify_attempts += 1;
+                            // Record the rejected answer, then request a revision and re-loop.
+                            self.messages.push(Message::assistant(&final_text));
+                            self.messages.push(Message::user(&format!(
+                                "[verification] Your previous answer was rejected: {reason}\n\
+                                 Please correct it and provide a better final answer."
+                            )));
+                            warn!(reason = reason.as_str(), "verifier rejected final answer; retrying");
+                            continue;
+                        }
+                    }
+                }
+
                 // Emit awareness: uncertainty from response + final response signal
                 self.emit_thinking_complete("thinking", &final_text);
                 self.emit_final_response("final_response");

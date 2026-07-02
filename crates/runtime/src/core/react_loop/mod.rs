@@ -15,6 +15,8 @@ use crate::core::interrupt::InterruptFlag;
 use crate::r#impl::memory::compressor::AdvancedCompressor;
 use base::tool::ConcurrencyClass;
 use base::ui_event::AwarenessLevel;
+use base::policy::verifier::{Verdict, Verifier};
+use std::sync::Arc;
 use cognit::core::awareness_signal::{self, AwarenessSignal, StepType};
 
 /// Marker injected into user messages when plan mode is active.
@@ -148,6 +150,12 @@ pub struct ReActLoop {
     goal_tracker: GoalTracker,
     /// Periodic reflection engine.
     reflection_engine: ReflectionEngine,
+    /// Optional result verifier (M-C). None = no-op (unchanged behavior).
+    verifier: Option<Arc<dyn Verifier>>,
+    /// Verify attempts used this turn (reset at the start of run()).
+    verify_attempts: usize,
+    /// Max verify-reject retries per turn before returning as-is.
+    max_verify_attempts: usize,
 }
 
 impl ReActLoop {
@@ -187,6 +195,9 @@ impl ReActLoop {
             circuit_breaker,
             goal_tracker,
             reflection_engine,
+            verifier: None,
+            verify_attempts: 0,
+            max_verify_attempts: 2,
         }
     }
 
@@ -271,6 +282,11 @@ impl ReActLoop {
     /// Set the interrupt flag for external cancellation.
     pub fn set_interrupt_flag(&mut self, flag: InterruptFlag) {
         self.interrupt_flag = Some(flag);
+    }
+
+    /// Install a result verifier. Without this, verification is a no-op.
+    pub fn set_verifier(&mut self, verifier: Arc<dyn Verifier>) {
+        self.verifier = Some(verifier);
     }
 
     /// Set the goal for this turn.
@@ -1042,5 +1058,86 @@ mod tests {
     fn partition_empty() {
         let batches = partition_tool_calls(&[]);
         assert!(batches.is_empty());
+    }
+
+    // ── M-C Verifier tests ─────────────────────────────────────────────────
+
+    use base::policy::verifier::{Verdict, Verifier};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Rejects the first candidate answer, accepts all subsequent ones.
+    struct RejectOnce {
+        seen: AtomicUsize,
+    }
+    #[async_trait]
+    impl Verifier for RejectOnce {
+        async fn verify(&self, _text: &str, _msgs: &[Message]) -> Verdict {
+            if self.seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                Verdict::Reject { reason: "first try rejected".into() }
+            } else {
+                Verdict::Accept
+            }
+        }
+    }
+
+    /// An LLM that always returns plain text (no tool calls), counting its calls.
+    struct TextLlm {
+        calls: Mutex<usize>,
+    }
+    #[async_trait]
+    impl LlmProvider for TextLlm {
+        async fn complete(&self, _m: &[Message], _t: &[ToolDefinition]) -> anyhow::Result<LlmResponse> {
+            let mut n = self.calls.lock().unwrap();
+            *n += 1;
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text { text: format!("answer {n}") }],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+        async fn complete_stream(&self, _m: &[Message], _t: &[ToolDefinition]) -> anyhow::Result<LlmStream> {
+            unimplemented!("not used in test")
+        }
+        fn name(&self) -> &str { "text" }
+        fn max_context_length(&self) -> usize { 100_000 }
+    }
+
+    #[tokio::test]
+    async fn verifier_rejection_triggers_one_retry() {
+        let cfg = RuntimeConfig {
+            max_iterations: 5,
+            session_id: "t".into(),
+            learning_enabled: false,
+            compaction_enabled: false,
+            ..RuntimeConfig::default()
+        };
+        let mut lp = ReActLoop::new(cfg);
+        lp.set_verifier(std::sync::Arc::new(RejectOnce { seen: AtomicUsize::new(0) }));
+        let llm = TextLlm { calls: Mutex::new(0) };
+        let tool_defs: Vec<ToolDefinition> = vec![];
+        let (out, _m) = lp
+            .run("go", &llm, &tool_defs, |_id: &str, name: &str, _in: &serde_json::Value| {
+                let name = name.to_string();
+                async move { (format!("ran {name}"), false) }
+            })
+            .await
+            .unwrap();
+        // First answer rejected -> loop retried -> second answer accepted.
+        assert_eq!(out, "answer 2", "rejected answer should be revised, got: {out}");
+    }
+
+    #[tokio::test]
+    async fn no_verifier_returns_first_answer_unchanged() {
+        let cfg = RuntimeConfig { max_iterations: 5, session_id: "t".into(),
+            learning_enabled: false, compaction_enabled: false, ..RuntimeConfig::default() };
+        let mut lp = ReActLoop::new(cfg); // no set_verifier -> None
+        let llm = TextLlm { calls: Mutex::new(0) };
+        let tool_defs: Vec<ToolDefinition> = vec![];
+        let (out, _m) = lp.run("go", &llm, &tool_defs,
+            |_i: &str, n: &str, _in: &serde_json::Value| { let n = n.to_string(); async move { (n, false) } })
+            .await.unwrap();
+        assert_eq!(out, "answer 1", "no verifier = unchanged behavior");
     }
 }
