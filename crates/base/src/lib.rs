@@ -55,6 +55,8 @@ pub use types::permission;
 pub use types::resource;
 pub use types::sandbox;
 pub use types::tool;
+pub use types::vision;
+pub use types::grounding;
 
 // Event modules (from events/)
 pub use events::event;
@@ -127,7 +129,7 @@ pub use events::event_bridge::EventBridge;
 pub use events::event_log::{EventLog, LogEntry};
 pub use events::ui_event::{
     AwarenessLevel, CollaborationMode, EvolutionStage, InterruptReason,
-    PlanUpdate, SubAgentHandle, SubAgentStatus, UiEvent,
+    PlanUpdate, SubAgentHandle, SubAgentState, SubAgentStatus, UiEvent,
 };
 
 // IPC types (from ipc/)

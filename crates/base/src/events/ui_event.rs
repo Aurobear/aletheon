@@ -120,6 +120,46 @@ pub enum SubAgentStatus {
     Failed { error: String },
 }
 
+/// Explicit sub-agent lifecycle state (control-plane; distinct from the
+/// UI-facing `SubAgentStatus`). Roadmap M-E: Created -> Running -> Waiting ->
+/// Completed -> Destroyed, with Failed as an alternate terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubAgentState {
+    Created,
+    Running,
+    Waiting,
+    Completed,
+    Failed,
+    Destroyed,
+}
+
+impl SubAgentState {
+    /// Whether a transition from `self` to `next` is legal.
+    ///
+    /// `Destroyed` is reachable from any non-terminal state (teardown may run at
+    /// any time) but is itself terminal. `Completed`/`Failed` only advance to
+    /// `Destroyed`.
+    pub fn can_transition_to(&self, next: &SubAgentState) -> bool {
+        use SubAgentState::*;
+        matches!(
+            (self, next),
+            (Created, Running)
+                | (Created, Failed)
+                | (Created, Destroyed)
+                | (Running, Waiting)
+                | (Running, Completed)
+                | (Running, Failed)
+                | (Running, Destroyed)
+                | (Waiting, Running)
+                | (Waiting, Completed)
+                | (Waiting, Failed)
+                | (Waiting, Destroyed)
+                | (Completed, Destroyed)
+                | (Failed, Destroyed)
+        )
+    }
+}
+
 /// Sub-agent handle for tracking spawned agents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubAgentHandle {
@@ -208,4 +248,36 @@ pub enum UiEvent {
     CompactionStarted,
     /// Compaction completed.
     CompactionDone { summary_chars: usize },
+}
+
+#[cfg(test)]
+mod subagent_state_tests {
+    use super::SubAgentState;
+
+    #[test]
+    fn legal_forward_path_is_allowed() {
+        use SubAgentState::*;
+        assert!(Created.can_transition_to(&Running));
+        assert!(Running.can_transition_to(&Waiting));
+        assert!(Waiting.can_transition_to(&Running));
+        assert!(Running.can_transition_to(&Completed));
+        assert!(Completed.can_transition_to(&Destroyed));
+    }
+
+    #[test]
+    fn destroy_is_reachable_from_every_non_terminal_state() {
+        use SubAgentState::*;
+        for s in [Created, Running, Waiting, Completed, Failed] {
+            assert!(s.can_transition_to(&Destroyed), "{s:?} -> Destroyed must be legal");
+        }
+    }
+
+    #[test]
+    fn illegal_transitions_are_rejected() {
+        use SubAgentState::*;
+        assert!(!Created.can_transition_to(&Completed), "must run before completing");
+        assert!(!Completed.can_transition_to(&Running), "terminal-forward: no resurrection");
+        assert!(!Destroyed.can_transition_to(&Running), "Destroyed is terminal");
+        assert!(!Destroyed.can_transition_to(&Destroyed), "no self-loop on Destroyed");
+    }
 }
