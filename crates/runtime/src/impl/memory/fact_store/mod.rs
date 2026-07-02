@@ -33,6 +33,12 @@ pub struct FactRow {
     pub ttl_days: i64,
     pub created_at: String,
     pub updated_at: String,
+    // ── governance fields (indices 12..=16) ──
+    pub scope: String,
+    pub source: String,
+    pub status: String,
+    pub pinned: bool,
+    pub subject: String,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +104,7 @@ impl FactStore {
         let db = Connection::open(path).context("opening fact store DB")?;
         db.execute_batch("PRAGMA journal_mode=WAL;")?;
         Self::create_schema(&db)?;
+        Self::migrate_facts_table(&db)?;
         Ok(Self { db })
     }
 
@@ -245,6 +252,29 @@ impl FactStore {
         Ok(())
     }
 
+    /// Idempotent migration: add governance columns if missing.
+    /// Guards each ALTER TABLE with PRAGMA table_info so repeated opens are safe.
+    fn migrate_facts_table(db: &Connection) -> Result<()> {
+        let existing: Vec<String> = db
+            .prepare("PRAGMA table_info(facts)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<std::result::Result<_, _>>()?;
+        let add = |name: &str, ddl: &str| -> Result<()> {
+            if !existing.iter().any(|c| c == name) {
+                db.execute_batch(ddl)?;
+            }
+            Ok(())
+        };
+        add("scope",   "ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'session';")?;
+        add("source",  "ALTER TABLE facts ADD COLUMN source TEXT NOT NULL DEFAULT 'conversation';")?;
+        add("status",  "ALTER TABLE facts ADD COLUMN status TEXT NOT NULL DEFAULT 'active';")?;
+        add("pinned",  "ALTER TABLE facts ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;")?;
+        add("subject", "ALTER TABLE facts ADD COLUMN subject TEXT NOT NULL DEFAULT '';")?;
+        db.execute_batch("CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(scope);")?;
+        db.execute_batch("CREATE INDEX IF NOT EXISTS idx_facts_status ON facts(status);")?;
+        Ok(())
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     pub(crate) fn map_fact_row(row: &rusqlite::Row) -> rusqlite::Result<FactRow> {
@@ -261,8 +291,26 @@ impl FactStore {
             ttl_days: row.get(9)?,
             created_at: row.get(10)?,
             updated_at: row.get(11)?,
+            scope: row.get(12)?,
+            source: row.get(13)?,
+            status: row.get(14)?,
+            pinned: row.get::<_, i64>(15)? != 0,
+            subject: row.get(16)?,
         })
     }
+}
+
+/// Check if content contains likely secrets (API keys, passwords, tokens).
+pub(crate) fn is_sensitive(content: &str) -> bool {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)(sk-[a-z0-9]{16,}|api[_-]?key\s*[:=]\s*[a-z0-9_-]{8,}|password\s*[:=]\s*\S{4,}|bearer\s+[a-z0-9._-]{16,}|-----BEGIN [A-Z ]+PRIVATE KEY-----)",
+        )
+        .unwrap()
+    });
+    re.is_match(content)
 }
 
 /// Sanitize a user query for FTS5 MATCH.
@@ -728,5 +776,144 @@ mod tests {
         let last = store.get_last_consolidation().unwrap().unwrap();
         assert_eq!(last.episodes_processed, 3);
         assert_eq!(last.errors, "timeout");
+    }
+
+    #[test]
+    fn migration_is_idempotent_and_adds_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("migrate.db");
+        // Open twice -- migration must not error on second run
+        { let _fs = FactStore::open(&path).unwrap(); }
+        let fs = FactStore::open(&path).unwrap();
+        let mut stmt = fs.db.prepare("PRAGMA table_info(facts)").unwrap();
+        let cols: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(1)).unwrap()
+            .map(|c| c.unwrap()).collect();
+        for c in ["scope", "source", "status", "pinned", "subject"] {
+            assert!(cols.contains(&c.to_string()), "missing column '{c}'");
+        }
+    }
+
+    #[test]
+    fn migration_preserves_existing_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preserve.db");
+        // Open, add a fact, close
+        {
+            let fs = FactStore::open(&path).unwrap();
+            let id = fs.add_fact("preserved fact", "general", "", "", 0.5, "episodic", 0).unwrap();
+            assert!(id > 0);
+        }
+        // Re-open (triggers migration again), verify fact still there
+        let fs = FactStore::open(&path).unwrap();
+        let row = fs.get_fact(1).unwrap().unwrap();
+        assert_eq!(row.content, "preserved fact");
+    }
+
+    #[test]
+    fn get_fact_returns_governance_defaults() {
+        let (store, _tmp) = setup();
+        let id = store
+            .add_fact("the sky is blue", "general", "", "", 0.5, "episodic", 0)
+            .unwrap();
+        let row = store.get_fact(id).unwrap().unwrap();
+        assert_eq!(row.scope, "session");
+        assert_eq!(row.source, "conversation");
+        assert_eq!(row.status, "active");
+        assert!(!row.pinned);
+        assert_eq!(row.subject, "");
+    }
+
+    #[test]
+    fn rejects_secrets_unless_explicit_source() {
+        let (store, _tmp) = setup();
+        let err = store.add_fact_governed(
+            "my key is sk-abcdefghijklmnopqrstuvwx", "general", "", "project",
+            "conversation", "", 0.5, "episodic", 0,
+        );
+        assert!(err.is_err(), "should reject secret from conversation source");
+        let ok = store.add_fact_governed(
+            "my key is sk-abcdefghijklmnopqrstuvwx", "general", "", "project",
+            "explicit", "", 0.5, "episodic", 0,
+        );
+        assert!(ok.is_ok(), "should allow secret from explicit source");
+    }
+
+    #[test]
+    fn add_fact_governed_sets_fields_correctly() {
+        let (store, _tmp) = setup();
+        let id = store.add_fact_governed(
+            "rust is memory safe", "tech", "lang", "project",
+            "explicit", "rust memory model", 0.9, "semantic", 30,
+        ).unwrap();
+        let row = store.get_fact(id).unwrap().unwrap();
+        assert_eq!(row.content, "rust is memory safe");
+        assert_eq!(row.scope, "project");
+        assert_eq!(row.source, "explicit");
+        assert_eq!(row.subject, "rust memory model");
+        assert_eq!(row.tier, "semantic");
+        assert_eq!(row.ttl_days, 30);
+        assert!((row.trust_score - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn governed_search_excludes_archived() {
+        let (store, _tmp) = setup();
+        let keep = store.add_fact_governed(
+            "rust is fast", "general", "", "project", "explicit", "", 0.9, "semantic", 0,
+        ).unwrap();
+        let arch = store.add_fact_governed(
+            "rust is slow", "general", "", "project", "explicit", "", 0.9, "semantic", 0,
+        ).unwrap();
+        store.set_status(arch, "archived").unwrap();
+        let hits = store.search_facts_governed("rust", Some("project"), false, 0.15, 10).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|f| f.fact_id).collect();
+        assert!(ids.contains(&keep));
+        assert!(!ids.contains(&arch));
+    }
+
+    #[test]
+    fn governed_search_respects_scope_filter() {
+        let (store, _tmp) = setup();
+        let s1 = store.add_fact_governed(
+            "project fact xyz", "general", "", "project", "explicit", "", 0.5, "episodic", 0,
+        ).unwrap();
+        let s2 = store.add_fact_governed(
+            "global fact xyz", "general", "", "global", "explicit", "", 0.5, "episodic", 0,
+        ).unwrap();
+        let hits = store.search_facts_governed("fact", Some("project"), false, 0.0, 10).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|f| f.fact_id).collect();
+        assert!(ids.contains(&s1));
+        assert!(!ids.contains(&s2));
+    }
+
+    #[test]
+    fn pin_and_list_roundtrip() {
+        let (store, _tmp) = setup();
+        let id = store.add_fact_governed(
+            "pin me", "general", "", "global", "explicit", "", 0.5, "semantic", 0,
+        ).unwrap();
+        assert!(store.set_pinned(id, true).unwrap());
+        let all = store.list_facts(None, false, 50).unwrap();
+        let pinned = all.iter().find(|f| f.fact_id == id).unwrap();
+        assert!(pinned.pinned);
+        assert!(store.set_pinned(id, false).unwrap());
+        let all2 = store.list_facts(None, false, 50).unwrap();
+        let unpinned = all2.iter().find(|f| f.fact_id == id).unwrap();
+        assert!(!unpinned.pinned);
+    }
+
+    #[test]
+    fn pinned_sorts_first_in_list() {
+        let (store, _tmp) = setup();
+        let id1 = store.add_fact_governed(
+            "first fact", "general", "", "global", "explicit", "", 0.5, "episodic", 0,
+        ).unwrap();
+        let id2 = store.add_fact_governed(
+            "second fact", "general", "", "global", "explicit", "", 0.5, "episodic", 0,
+        ).unwrap();
+        store.set_pinned(id2, true).unwrap();
+        let all = store.list_facts(None, false, 50).unwrap();
+        assert_eq!(all[0].fact_id, id2, "pinned fact must sort first");
     }
 }

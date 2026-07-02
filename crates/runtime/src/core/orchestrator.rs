@@ -13,7 +13,6 @@ use base::brain::Plan;
 use base::context::Context;
 use base::runtime::StepResult;
 use base::self_field::{Intent, Verdict, VerdictAction, VerdictHandler};
-use memory::MemoryRouter;
 use anyhow::Result;
 use tracing::{debug, warn};
 
@@ -31,7 +30,6 @@ pub struct AletheonRuntime {
     react_loop: ReActLoop,
     evolution: Option<EvolutionCoordinator>,
     genome_config: GenomeConfig,
-    memory: Option<Arc<MemoryRouter>>,
     verdict_handler: Arc<dyn VerdictHandler>,
     mode_router: ModeRouter,
     interrupt_flag: InterruptFlag,
@@ -46,7 +44,6 @@ impl AletheonRuntime {
             react_loop,
             evolution: None,
             genome_config: GenomeConfig::default(),
-            memory: None,
             verdict_handler: Arc::new(DefaultVerdictHandler::new()),
             mode_router: ModeRouter::new(),
             interrupt_flag: InterruptFlag::new(),
@@ -83,12 +80,6 @@ impl AletheonRuntime {
     pub fn with_evolution(mut self, evo_config: EvolutionConfig) -> Result<Self> {
         self.evolution = Some(EvolutionCoordinator::new(evo_config)?);
         Ok(self)
-    }
-
-    /// Attach a MemoryRouter for prompt-time memory recall.
-    pub fn with_memory(mut self, memory: Arc<MemoryRouter>) -> Self {
-        self.memory = Some(memory);
-        self
     }
 
     /// Run post-turn evolution if a coordinator is attached.
@@ -339,17 +330,6 @@ impl AletheonRuntime {
             let current = self.react_loop.system_prompt().to_string();
             self.react_loop
                 .set_system_prompt(format!("{}\n\n{}", current, care_prompt));
-        }
-
-        // Inject memory context into system prompt
-        if let Some(ref memory) = self.memory {
-            let mem_ctx = memory.recall_for_prompt(&effective_input, 3).await;
-            let mem_section = mem_ctx.to_prompt_section();
-            if !mem_section.is_empty() {
-                let current = self.react_loop.system_prompt().to_string();
-                self.react_loop
-                    .set_system_prompt(format!("{}\n\n{}", current, mem_section));
-            }
         }
 
         self.react_loop

@@ -1,31 +1,40 @@
 //! # Aletheon Memory
 //!
-//! SQLite-backed implementations of the `MemoryBackend` trait for all 4
-//! memory types: Episodic, Semantic, Procedural, and Self.
-//!
-//! Each backend has its own SQLite file (no lock contention).
-//! `MemoryRouter` dispatches by `MemoryType`.
+//! SQLite-backed implementations of the `MemoryBackend` trait.
+//! EpisodicMemory is always available (used by the daemon for reflections).
+//! Cognitive backends (MemoryRouter + semantic/procedural/self) are behind the
+//! off-by-default `cognitive-memory` feature (M-H Option A).
 
 pub mod backends;
 pub mod ops;
 
-// Backward-compatible re-exports (flat API)
-pub use backends::{EpisodicMemory, ProceduralMemory, SelfMemory, SemanticMemory};
-pub use ops::{ConsolidationConfig, ConsolidationResult, MemoryContext, MemoryRouter, ReflectionSummary, SkillSummary};
+// Always-available exports
+pub use backends::EpisodicMemory;
 pub use ops::{compute_activation, ActivationEntry};
 pub use ops::{apply_access_boost, compute_strength, should_forget};
 
-// Sub-module re-exports for direct path access (e.g. `memory::episodic::EpisodicMemory`)
-pub use backends::episodic;
-pub use backends::procedural;
-pub use backends::self_memory;
-pub use backends::semantic;
+// Cognitive exports (off by default)
+#[cfg(feature = "cognitive-memory")]
+pub use backends::{ProceduralMemory, SelfMemory, SemanticMemory};
+#[cfg(feature = "cognitive-memory")]
+pub use ops::{ConsolidationConfig, ConsolidationResult, MemoryContext, MemoryRouter, ReflectionSummary, SkillSummary};
 
-pub use ops::router;
-pub use ops::consolidation;
+// Sub-module re-exports for direct path access
+pub use backends::episodic;
 pub use ops::decay;
 pub use ops::activation;
 pub use ops::schema;
+
+#[cfg(feature = "cognitive-memory")]
+pub use backends::procedural;
+#[cfg(feature = "cognitive-memory")]
+pub use backends::self_memory;
+#[cfg(feature = "cognitive-memory")]
+pub use backends::semantic;
+#[cfg(feature = "cognitive-memory")]
+pub use ops::router;
+#[cfg(feature = "cognitive-memory")]
+pub use ops::consolidation;
 
 #[cfg(test)]
 pub mod testing;

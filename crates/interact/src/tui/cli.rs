@@ -8,7 +8,7 @@ use super::debug;
 use std::io;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -102,6 +102,12 @@ pub enum Command {
         #[command(subcommand)]
         action: debug::DebugCommand,
     },
+
+    /// Governed memory management
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -118,6 +124,43 @@ pub enum DaemonAction {
 
     /// Show daemon status
     Status,
+}
+
+#[derive(Subcommand)]
+pub enum MemoryAction {
+    /// Save a fact: memory add "text" [--scope project] [--subject ...]
+    Add {
+        text: String,
+        #[arg(long, default_value = "session")]
+        scope: String,
+        #[arg(long, default_value = "")]
+        subject: String,
+    },
+    /// List facts [--scope S] [--all]
+    List {
+        #[arg(long)]
+        scope: Option<String>,
+        #[arg(long)]
+        all: bool,
+    },
+    /// Search facts: memory search "query" [--scope S]
+    Search {
+        query: String,
+        #[arg(long)]
+        scope: Option<String>,
+    },
+    /// Show one fact by id
+    Show { id: i64 },
+    /// Forget (archive; --hard to delete)
+    Forget {
+        id: i64,
+        #[arg(long)]
+        hard: bool,
+    },
+    /// Pin a fact
+    Pin { id: i64 },
+    /// Unpin a fact
+    Unpin { id: i64 },
 }
 
 /// CLI entry point — parses args and dispatches to the appropriate mode.
@@ -166,7 +209,101 @@ async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
             Ok(())
         }
         Command::Debug { action } => debug::run(socket, action).await,
+        Command::Memory { action } => memory_cmd(socket, action).await,
     }
+}
+
+/// Handle memory subcommands by sending JSON-RPC to the daemon.
+async fn memory_cmd(socket: &PathBuf, action: MemoryAction) -> Result<()> {
+    let send_rpc = |request: serde_json::Value| async move {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixStream;
+        let mut stream = UnixStream::connect(socket)
+            .await
+            .with_context(|| format!("Cannot connect to daemon socket: {}", socket.display()))?;
+        let req_str = serde_json::to_string(&request)?;
+        stream.write_all(req_str.as_bytes()).await?;
+        stream.write_all(b"\n").await?;
+        let (reader, _) = stream.split();
+        let mut reader = BufReader::new(reader);
+        let mut response = String::new();
+        reader.read_line(&mut response).await?;
+        serde_json::from_str::<serde_json::Value>(&response)
+            .context("Failed to parse daemon response")
+    };
+
+    let req = match &action {
+        MemoryAction::Add { text, scope, subject } => serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "memory.add",
+            "params": { "content": text, "scope": scope, "subject": subject }
+        }),
+        MemoryAction::List { scope, all } => serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "memory.list",
+            "params": { "scope": scope, "all": all }
+        }),
+        MemoryAction::Search { query, scope } => serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "memory.search",
+            "params": { "query": query, "scope": scope }
+        }),
+        MemoryAction::Show { id } => serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "memory.show",
+            "params": { "id": id }
+        }),
+        MemoryAction::Forget { id, hard } => serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "memory.forget",
+            "params": { "id": id, "hard": hard }
+        }),
+        MemoryAction::Pin { id } => serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "memory.pin",
+            "params": { "id": id }
+        }),
+        MemoryAction::Unpin { id } => serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "memory.unpin",
+            "params": { "id": id }
+        }),
+    };
+
+    let resp = send_rpc(req).await?;
+
+    if let Some(err) = resp.get("error") {
+        eprintln!("Error: {}", err["message"].as_str().unwrap_or("unknown"));
+    } else if let Some(facts) = resp["result"]["facts"].as_array() {
+        for f in facts {
+            let pinned = if f["pinned"].as_bool().unwrap_or(false) { " [PINNED]" } else { "" };
+            println!(
+                "[{}] ({}/{}){} {}",
+                f["fact_id"].as_i64().unwrap_or(0),
+                f["scope"].as_str().unwrap_or("?"),
+                f["status"].as_str().unwrap_or("?"),
+                pinned,
+                f["content"].as_str().unwrap_or(""),
+            );
+        }
+    } else if let Some(fact) = resp["result"]["fact"].as_object() {
+        println!("ID:      {}", fact.get("fact_id").map(|v| v.to_string()).unwrap_or_default());
+        println!("Content: {}", fact.get("content").and_then(|v| v.as_str()).unwrap_or(""));
+        println!("Scope:   {}  Source: {}  Status: {}",
+            fact.get("scope").and_then(|v| v.as_str()).unwrap_or("?"),
+            fact.get("source").and_then(|v| v.as_str()).unwrap_or("?"),
+            fact.get("status").and_then(|v| v.as_str()).unwrap_or("?"),
+        );
+        println!("Trust:   {}  Tier: {}  TTL: {}d",
+            fact.get("trust_score").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            fact.get("tier").and_then(|v| v.as_str()).unwrap_or("?"),
+            fact.get("ttl_days").and_then(|v| v.as_i64()).unwrap_or(0),
+        );
+        println!("Pinned:  {}  Retrievals: {}",
+            fact.get("pinned").and_then(|v| v.as_bool()).unwrap_or(false),
+            fact.get("retrieval_count").and_then(|v| v.as_i64()).unwrap_or(0),
+        );
+        println!("Created: {}  Updated: {}",
+            fact.get("created_at").and_then(|v| v.as_str()).unwrap_or(""),
+            fact.get("updated_at").and_then(|v| v.as_str()).unwrap_or(""),
+        );
+    } else {
+        println!("{}", serde_json::to_string_pretty(&resp["result"]).unwrap_or_default());
+    }
+    Ok(())
 }
 
 /// Find the aletheond binary.

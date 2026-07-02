@@ -165,7 +165,8 @@ impl FactStore {
         let mut stmt = self.db.prepare(
             "SELECT f.fact_id, f.content, f.category, f.tags, f.source_path,
                     f.trust_score, f.retrieval_count, f.helpful_count,
-                    f.tier, f.ttl_days, f.created_at, f.updated_at
+                    f.tier, f.ttl_days, f.created_at, f.updated_at,
+                    f.scope, f.source, f.status, f.pinned, f.subject
              FROM facts f
              JOIN fact_entities fe ON f.fact_id = fe.fact_id
              WHERE fe.entity_id = ?1

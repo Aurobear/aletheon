@@ -65,7 +65,8 @@ impl FactStore {
             Some(_) => {
                 "SELECT f.fact_id, f.content, f.category, f.tags, f.source_path,
                         f.trust_score, f.retrieval_count, f.helpful_count,
-                        f.tier, f.ttl_days, f.created_at, f.updated_at
+                        f.tier, f.ttl_days, f.created_at, f.updated_at,
+                        f.scope, f.source, f.status, f.pinned, f.subject
                  FROM facts f
                  INNER JOIN facts_fts fts ON f.fact_id = fts.rowid
                  WHERE facts_fts MATCH ?1
@@ -77,7 +78,8 @@ impl FactStore {
             None => {
                 "SELECT f.fact_id, f.content, f.category, f.tags, f.source_path,
                         f.trust_score, f.retrieval_count, f.helpful_count,
-                        f.tier, f.ttl_days, f.created_at, f.updated_at
+                        f.tier, f.ttl_days, f.created_at, f.updated_at,
+                        f.scope, f.source, f.status, f.pinned, f.subject
                  FROM facts f
                  INNER JOIN facts_fts fts ON f.fact_id = fts.rowid
                  WHERE facts_fts MATCH ?1
@@ -167,7 +169,8 @@ impl FactStore {
         let mut stmt = self.db.prepare(
             "SELECT fact_id, content, category, tags, source_path,
                     trust_score, retrieval_count, helpful_count,
-                    tier, ttl_days, created_at, updated_at
+                    tier, ttl_days, created_at, updated_at,
+                    scope, source, status, pinned, subject
              FROM facts WHERE fact_id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![fact_id], Self::map_fact_row)?;
@@ -184,6 +187,155 @@ impl FactStore {
             rusqlite::params![fact_id],
         )?;
         Ok(affected > 0)
+    }
+
+    // ── Governed Write Path ──────────────────────────────────────────────────
+
+    /// Add a fact with governance fields. Delegates to the same INSERT
+    /// but includes scope/source/subject. Checks secret-safety unless
+    /// source == "explicit" (user deliberately storing it).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_fact_governed(
+        &self,
+        content: &str,
+        category: &str,
+        tags: &str,
+        scope: &str,
+        source: &str,
+        subject: &str,
+        trust: f64,
+        tier: &str,
+        ttl_days: i64,
+    ) -> Result<i64> {
+        if source != "explicit" && super::is_sensitive(content) {
+            anyhow::bail!("refused to store likely-sensitive content (source={source})");
+        }
+        self.db.execute(
+            "INSERT OR IGNORE INTO facts
+               (content, category, tags, source_path, trust_score, tier, ttl_days, scope, source, subject)
+             VALUES (?1, ?2, ?3, '', ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![content, category, tags, trust, tier, ttl_days, scope, source, subject],
+        )?;
+        let fact_id: i64 = self.db.query_row(
+            "SELECT fact_id FROM facts WHERE content = ?1",
+            rusqlite::params![content],
+            |r| r.get(0),
+        )?;
+        // Extract and link entities (same as legacy add_fact)
+        let entities = Self::extract_entities(content);
+        for entity_name in entities {
+            let eid = self.resolve_entity(&entity_name)?;
+            self.link_fact_entity(fact_id, eid)?;
+        }
+        Ok(fact_id)
+    }
+
+    /// Scope/status/ttl-aware search with pinned boost.
+    pub fn search_facts_governed(
+        &self,
+        query: &str,
+        scope: Option<&str>,
+        include_archived: bool,
+        min_trust: f64,
+        limit: usize,
+    ) -> Result<Vec<FactRow>> {
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let fts = super::sanitize_fts_query(query);
+        let min_trust = if min_trust <= 0.0 {
+            super::DEFAULT_MIN_TRUST
+        } else {
+            min_trust
+        };
+        let mut sql = String::from(
+            "SELECT f.fact_id, f.content, f.category, f.tags, f.source_path,
+                    f.trust_score, f.retrieval_count, f.helpful_count,
+                    f.tier, f.ttl_days, f.created_at, f.updated_at,
+                    f.scope, f.source, f.status, f.pinned, f.subject
+             FROM facts f INNER JOIN facts_fts fts ON f.fact_id = fts.rowid
+             WHERE facts_fts MATCH ?1 AND f.trust_score >= ?2
+               AND (f.ttl_days = 0 OR f.created_at >= datetime('now', '-' || f.ttl_days || ' days'))",
+        );
+        if !include_archived {
+            sql.push_str(" AND f.status = 'active'");
+        }
+        if scope.is_some() {
+            sql.push_str(" AND f.scope = ?3");
+        }
+        sql.push_str(" ORDER BY f.pinned DESC, rank LIMIT ?LIM");
+        let sql = sql.replace("?LIM", if scope.is_some() { "?4" } else { "?3" });
+
+        let mut stmt = self.db.prepare(&sql)?;
+        let rows = if let Some(s) = scope {
+            stmt.query_map(
+                rusqlite::params![fts, min_trust, s, limit as i64],
+                Self::map_fact_row,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(
+                rusqlite::params![fts, min_trust, limit as i64],
+                Self::map_fact_row,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        for f in &rows {
+            self.db.execute(
+                "UPDATE facts SET retrieval_count = retrieval_count + 1 WHERE fact_id = ?1",
+                rusqlite::params![f.fact_id],
+            )?;
+        }
+        Ok(rows)
+    }
+
+    pub fn set_pinned(&self, fact_id: i64, pinned: bool) -> Result<bool> {
+        Ok(self.db.execute(
+            "UPDATE facts SET pinned = ?1, updated_at = datetime('now') WHERE fact_id = ?2",
+            rusqlite::params![pinned as i64, fact_id],
+        )? > 0)
+    }
+
+    pub fn set_status(&self, fact_id: i64, status: &str) -> Result<bool> {
+        Ok(self.db.execute(
+            "UPDATE facts SET status = ?1, updated_at = datetime('now') WHERE fact_id = ?2",
+            rusqlite::params![status, fact_id],
+        )? > 0)
+    }
+
+    pub fn list_facts(
+        &self,
+        scope: Option<&str>,
+        include_archived: bool,
+        limit: usize,
+    ) -> Result<Vec<FactRow>> {
+        let mut sql = String::from(
+            "SELECT fact_id, content, category, tags, source_path,
+                    trust_score, retrieval_count, helpful_count,
+                    tier, ttl_days, created_at, updated_at,
+                    scope, source, status, pinned, subject
+             FROM facts WHERE 1=1",
+        );
+        if !include_archived {
+            sql.push_str(" AND status = 'active'");
+        }
+        if scope.is_some() {
+            sql.push_str(" AND scope = ?1");
+        }
+        sql.push_str(&format!(
+            " ORDER BY pinned DESC, updated_at DESC LIMIT {}",
+            limit as i64
+        ));
+        let mut stmt = self.db.prepare(&sql)?;
+        let rows = if let Some(s) = scope {
+            stmt.query_map(rusqlite::params![s], Self::map_fact_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map([], Self::map_fact_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        Ok(rows)
     }
 
     // ── Episodes ─────────────────────────────────────────────────────────────
