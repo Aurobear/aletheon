@@ -196,6 +196,7 @@ impl RequestHandler {
         config: &DaemonConfig,
         registry: &ProviderRegistry,
         model_routing: crate::core::config::ModelRoutingConfig,
+        evolution_enabled: bool,
         _perception_rx: mpsc::Receiver<PerceptionInjection>,
         event_bus: Option<Arc<dyn base::EventBus>>,
     ) -> anyhow::Result<Self> {
@@ -334,8 +335,11 @@ impl RequestHandler {
 
         let mut runtime = AletheonRuntime::new(runtime_config);
 
-        // Wire EvolutionCoordinator for post-turn self-evolution
+        // Wire EvolutionCoordinator for post-turn self-evolution.
+        // HIGH-risk autonomy: OFF unless config.evolution.enabled is true.
+        // TODO(Tier 2a): additionally gate migrations behind PermissionManager.
         let evo_config = EvolutionConfig {
+            enabled: evolution_enabled,
             trigger_every_n_turns: 10,
             trigger_on_failure: true,
             window_size: 20,

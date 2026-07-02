@@ -260,7 +260,7 @@ pub async fn run(
     });
 
     info!("Creating request handler...");
-    let request_handler = handler::RequestHandler::new(&config, &registry, app_config.model_routing.clone(), injection_rx, Some(bus.clone())).await?;
+    let request_handler = handler::RequestHandler::new(&config, &registry, app_config.model_routing.clone(), app_config.evolution.enabled, injection_rx, Some(bus.clone())).await?;
 
     // Start MCP embedded server on a separate socket
     let mcp_socket = socket

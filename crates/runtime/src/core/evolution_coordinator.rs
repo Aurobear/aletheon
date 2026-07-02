@@ -25,6 +25,9 @@ use uuid::Uuid;
 /// Configuration for when to trigger the evolution pipeline.
 #[derive(Debug, Clone)]
 pub struct EvolutionConfig {
+    /// Master switch. When false, the whole loop is inert (default).
+    /// HIGH-risk autonomy -- OFF unless explicitly enabled by the operator.
+    pub enabled: bool,
     /// Trigger evolution every N turns (0 = disabled).
     pub trigger_every_n_turns: usize,
     /// Also trigger evolution after any failed turn.
@@ -38,6 +41,7 @@ pub struct EvolutionConfig {
 impl Default for EvolutionConfig {
     fn default() -> Self {
         Self {
+            enabled: false, // HIGH-risk autonomy: OFF unless explicitly enabled
             trigger_every_n_turns: 5,
             trigger_on_failure: true,
             window_size: 20,
@@ -153,6 +157,18 @@ impl EvolutionCoordinator {
             },
             elapsed_ms,
         };
+
+        // HIGH-risk autonomy gate. TODO(Tier 2a): also require PermissionManager approval.
+        if !self.config.enabled {
+            return Ok(EvolutionSummary {
+                reflected: false,
+                reflection_id: None,
+                evolution_triggered: false,
+                pipeline_results: Vec::new(),
+                lineage_entries_added: 0,
+                awareness_entries: signals_to_awareness(&awareness_signals),
+            });
+        }
 
         // Reflect on the turn
         let trigger = if success {
