@@ -32,7 +32,8 @@ engine, a subagent spawner, and a plugin manager. Remaining work is
   5. **Tier 3 — Provider Manager** (independent)
   6. **M-B / M-C / M-E** (small additive: plugin trait, verify seam, subagent)
   7. **Tier 4 — Workflow persist + multi-repo split** (needs Tier 2)
-  8. **M-D — Self-Evolution loop** (needs 2a), **M-F — Hosts** (needs 2b)
+  8. **M-D — Self-Evolution loop** (needs 2a), **M-I — Goal Layer** (persist
+     slice after Tier 1; loop needs 2a), **M-F — Hosts** (needs 2b)
   9. **M-G — Rebrand** (decision, deferred)
 
 ## Ordering & dependencies
@@ -467,6 +468,57 @@ decision (A vs B) before implementation.
 **Risk.** Medium-high (data migration if Option B). Test: no regression in
 daemon recall/injection; migrated data round-trips.
 
+## M-I. Goal Layer / Persistent Objectives  *(doc 1 "Goal Layer", "Runtime Goal", 阶段三 "Persistent Goal")*
+
+**Problem.** Doc 1 places **Goal** as its own architectural layer
+(`Conversation → Goal → Workflow → Planner`) and 阶段三 is *Persistent Goal* — a
+long-running objective the runtime pursues, decomposes, resumes across sessions,
+and drives the `Goal → Planning → Execution → Verification → Reflection → Memory
+→ Next Goal` loop. Today goals are **ephemeral and mislayered**:
+- `runtime/src/core/react_loop/goal_tracker.rs:55` `Goal` / `:70` `GoalTracker` /
+  `:46` `GoalStatus` are **in-memory and react-loop-scoped** — a goal lives only
+  for one loop run; nothing persists it across turns or sessions.
+- Goal **decomposition** lives in the **Interface** crate
+  (`interact/src/acix/task.rs:204` `decompose(goal)`), i.e. the wrong layer per
+  doc 4 (decomposition is Runtime/Brain work, not Interface).
+- There is **no Goal store** and no resume: restarting the daemon forgets any
+  in-progress objective.
+
+**Distinction from M-D.** M-D (Self-Evolution) improves *workflows/memory/policy*
+from accumulated traces. M-I is orthogonal: it owns *what the agent is trying to
+achieve* — objective persistence, decomposition, progress tracking, and
+cross-session resumption. M-D can consume M-I's traces later, but they are
+separate subsystems.
+
+**Design.** Introduce a `runtime`-owned **Goal Layer**: a persisted `Objective`
+(id, description, status, parent, created/updated, linked session/scope) backed by
+the same SQLite pattern as `FactStore`; move decomposition out of `interact` into
+Runtime/Brain (reuse `cognit/src/core/planner.rs`); wire the persistent
+`Goal → … → Next Goal` loop behind a config flag and the Runtime
+`PermissionManager` (Tier 2a). Start minimal: persist a single active objective +
+its sub-goals, expose `goal set/show/status/resume` over JSON-RPC, resume the
+active objective on daemon start. Ties into Governed Memory's `Workflow`/`Trace`
+scopes (Tier 1) for storing objective history.
+
+**Non-goals.** No autonomous goal *generation* (objectives are user-set in the
+MVP); no multi-objective scheduling/prioritization (single active objective
+first); no goal-driven proactivity without an explicit enable flag.
+
+**Affected files.** New `runtime/src/core/goal/` (persisted `Objective` store +
+loop), `runtime/src/core/react_loop/goal_tracker.rs` (back the tracker with the
+persisted store), `interact/src/acix/task.rs` (move `decompose` out / call
+Runtime), `cognit/src/core/planner.rs` (decomposition entry), daemon
+`handler/rpc.rs` (`goal.*` arms), `interact/src/tui/cli.rs` (`goal` subcommand).
+
+**Risk.** Medium-high (autonomy + hot-path wiring). Default-off for any
+proactive behavior; the persistence + resume slice alone is Medium. Test: an
+objective survives a daemon restart and resumes; decomposition produces the same
+sub-goals from Runtime as it did from Interface; loop advances only when enabled.
+
+**Sequence note.** Depends on Tier 2a (PermissionManager) for the gated loop and
+benefits from Tier 1 (Trace/Workflow scopes) for history; the bare persist+resume
+slice can land after Tier 1 independently.
+
 ## M-G. Positioning / rebrand — Aletheon → "Auro Runtime"  *(doc 1 & 2 titles)*
 
 **Problem/decision (not a code task yet).** All four docs title the project
@@ -499,4 +551,5 @@ designed in detail pending the owner's decision.
 | M-E | SubAgent lifecycle | Low | — | Med | Med |
 | M-F | Additional Hosts | Low-Med | needs 2b | Med | Med |
 | M-H | Unify bifurcated memory (FactStore vs MemoryRouter) | Med-High | follows Tier 1; needs A/B decision | Med | Med |
+| M-I | Goal Layer / Persistent Objectives | Med-High | persist slice after Tier 1; loop needs 2a | High | Med |
 | M-G | Rebrand Aletheon→Auro (decision) | — | needs 0–2 | High | — |
