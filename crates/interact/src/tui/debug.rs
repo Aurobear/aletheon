@@ -1191,7 +1191,7 @@ async fn log_stream(
 // ---------------------------------------------------------------------------
 
 /// Send a single JSON-RPC request over the Unix socket and return the response.
-async fn send_rpc(socket: &std::path::Path, request: &serde_json::Value) -> Result<serde_json::Value> {
+pub(crate) async fn send_rpc(socket: &std::path::Path, request: &serde_json::Value) -> Result<serde_json::Value> {
     let mut stream = UnixStream::connect(socket)
         .await
         .with_context(|| format!("Cannot connect to daemon socket: {}", socket.display()))?;

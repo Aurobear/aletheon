@@ -143,6 +143,16 @@ pub struct ProviderConfig {
     /// If not set, the provider uses its built-in default (128K for OpenAI, 200K for Anthropic).
     #[serde(default)]
     pub max_context_length: Option<usize>,
+    /// Optional static pricing for per-provider cost accounting. `None` = unpriced.
+    #[serde(default)]
+    pub pricing: Option<ProviderPricing>,
+}
+
+/// Optional static per-provider pricing (USD per 1K tokens) for cost accounting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderPricing {
+    pub input_per_1k: f64,
+    pub output_per_1k: f64,
 }
 
 // ---------------------------------------------------------------------------
