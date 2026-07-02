@@ -4,6 +4,7 @@
 //! JSON-RPC request over the daemon socket and exits.
 
 use super::debug;
+use super::goal;
 use super::workflow;
 
 use std::io;
@@ -104,6 +105,12 @@ pub enum Command {
         action: debug::DebugCommand,
     },
 
+    /// Persistent goal / objective management
+    Goal {
+        #[command(subcommand)]
+        action: GoalAction,
+    },
+
     /// Governed memory management
     Memory {
         #[command(subcommand)]
@@ -171,6 +178,31 @@ pub enum MemoryAction {
     Unpin { id: i64 },
 }
 
+#[derive(Subcommand)]
+pub enum GoalAction {
+    /// Set the active objective
+    Set {
+        description: String,
+        #[arg(long, default_value = "session")]
+        scope: String,
+    },
+    /// Show one objective (with its sub-goals) by id
+    Show {
+        id: i64,
+    },
+    /// List objectives, or update one
+    Status {
+        #[arg(long)]
+        id: Option<i64>,
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        filter: Option<String>,
+    },
+    /// Resume the active objective
+    Resume,
+}
+
 /// CLI entry point — parses args and dispatches to the appropriate mode.
 pub async fn run() -> Result<()> {
     let args = Args::parse();
@@ -217,6 +249,7 @@ async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
             Ok(())
         }
         Command::Debug { action } => debug::run(socket, action).await,
+        Command::Goal { action } => goal::run(socket, action).await,
         Command::Memory { action } => memory_cmd(socket, action).await,
         Command::Workflow { action } => workflow::run(socket, action).await,
     }

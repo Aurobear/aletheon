@@ -61,6 +61,7 @@ use crate::r#impl::hooks::builtin::audit_hook;
 use crate::r#impl::hooks::registry::HookRegistry;
 use crate::r#impl::memory::auto_memory::AutoMemory;
 use crate::r#impl::memory::fact_store::FactStore;
+use crate::r#impl::goal::ObjectiveStore;
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::core::config::HooksConfig;
 use crate::r#impl::skill_router::SkillRouter;
@@ -137,6 +138,11 @@ pub struct RequestHandler {
     notify_tx: Option<mpsc::Sender<String>>,
     /// SQLite-backed fact store with trust scoring and FTS5 search.
     fact_store: Arc<Mutex<FactStore>>,
+    /// SQLite-backed objective store for persistent goal tracking.
+    objective_store: Arc<Mutex<ObjectiveStore>>,
+    /// Cached active objective + sub-goals for resume-on-start.
+    /// Applied once to GoalTracker before the first chat turn.
+    resumed_objective: Option<(String, Vec<String>)>,
     /// Loop detector: tracks consecutive tool failures/successes.
     storm_breaker: Arc<Mutex<StormBreaker>>,
     /// Per-session checkpoint store for file-edit rewind.
@@ -224,6 +230,37 @@ impl RequestHandler {
         let fact_store = FactStore::open(&aletheon_dir.join("fact_store.db"))
             .context("opening fact store")?;
         let fact_store = Arc::new(Mutex::new(fact_store));
+
+        // ObjectiveStore — persisted goals with resume-on-start support
+        let objective_store = ObjectiveStore::open(&aletheon_dir.join("objectives.db"))
+            .context("opening objective store")?;
+        let objective_store = Arc::new(Mutex::new(objective_store));
+
+        // Resume active objective for session continuity
+        let resumed_objective = {
+            let store = objective_store.lock().await;
+            match store.resume() {
+                Ok(Some((obj, subs))) => {
+                    let sub_desc: Vec<String> =
+                        subs.iter().map(|s| s.description.clone()).collect();
+                    info!(
+                        objective_id = obj.objective_id,
+                        description = %obj.description,
+                        sub_goals = sub_desc.len(),
+                        "Resuming persisted objective on start"
+                    );
+                    Some((obj.description.clone(), sub_desc))
+                }
+                Ok(None) => {
+                    info!("No active objective to resume — fresh start");
+                    None
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to read active objective on start");
+                    None
+                }
+            }
+        };
 
         // Use the LLM provider's actual context window size for session management.
         // This replaces the hardcoded 100_000 with the real model limit.
@@ -346,6 +383,11 @@ impl RequestHandler {
             lineage_dir: data_dir.join("lineage"),
         };
         runtime = runtime.with_evolution(evo_config)?;
+
+        // Resume persisted objective into the goal tracker (resume-on-start)
+        if let Some((ref desc, ref subs)) = resumed_objective {
+            runtime.seed_goal(desc, subs);
+        }
 
         // Create morphogenesis pipeline for evolution coordinator
         let meta_runtime = DefaultMetaRuntime::new(Version::new(0, 1, 0));
@@ -678,6 +720,8 @@ impl RequestHandler {
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
             notify_tx: None,
             fact_store,
+            objective_store,
+            resumed_objective,
             storm_breaker,
             checkpoint_store,
             skill_router,

@@ -30,6 +30,7 @@ pub mod toolcard;
 // CLI modules (formerly cli/)
 pub mod cli;
 pub mod debug;
+pub mod goal;
 pub mod workflow;
 
 // Re-export the main entry point

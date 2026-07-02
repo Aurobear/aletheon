@@ -260,6 +260,19 @@ impl GoalTracker {
         self.constraints.clear();
         // Note: spec_source is preserved across turns
     }
+
+    /// Seed the tracker from a persisted objective.
+    ///
+    /// Used to resume a cross-session objective on daemon start.
+    /// Call exactly once, before the first turn. `reset()` semantics
+    /// (clearing goal/sub-goals/criteria/constraints, preserving spec_source)
+    /// are unchanged for subsequent turns.
+    pub fn hydrate_from(&mut self, description: &str, sub_goals: &[String]) {
+        self.set_goal(description.to_string());
+        for sg in sub_goals {
+            self.add_sub_goal(sg.clone());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -433,5 +446,25 @@ metadata:
         tracker.reset();
         assert!(tracker.spec_source.is_some());
         assert!(tracker.constraints.is_empty()); // cleared on reset
+    }
+
+    #[test]
+    fn hydrate_from_persisted_objective() {
+        let mut tracker = GoalTracker::new();
+        tracker.hydrate_from(
+            "ship goal layer",
+            &["persist store".to_string(), "wire rpc".to_string()],
+        );
+        assert_eq!(
+            tracker.current_goal_description(),
+            Some("ship goal layer".into())
+        );
+        let ctx = tracker.get_context();
+        assert!(ctx.contains("persist store"));
+        assert!(ctx.contains("wire rpc"));
+
+        // reset clears the hydrated goal
+        tracker.reset();
+        assert!(tracker.current_goal_description().is_none());
     }
 }

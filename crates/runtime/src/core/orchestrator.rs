@@ -266,6 +266,12 @@ impl AletheonRuntime {
         self.react_loop.iteration()
     }
 
+    /// Seed the goal tracker from persisted state (resume-on-start).
+    /// Must be called before the first turn.
+    pub fn seed_goal(&mut self, description: &str, sub_goals: &[String]) {
+        self.react_loop.seed_goal(description, sub_goals);
+    }
+
     /// Process input via the interleaved ReAct loop.
     pub async fn process_react<L, R, F, Fut>(
         &mut self,

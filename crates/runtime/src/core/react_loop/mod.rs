@@ -234,6 +234,12 @@ impl ReActLoop {
         self.messages = messages;
     }
 
+    /// Seed the goal tracker from persisted state (resume-on-start).
+    /// Must be called before the first turn; subsequent turns' reset() is unaffected.
+    pub fn seed_goal(&mut self, description: &str, sub_goals: &[String]) {
+        self.goal_tracker.hydrate_from(description, sub_goals);
+    }
+
     /// Check if we've hit the max iterations
     pub fn should_continue(&self) -> bool {
         self.iteration < self.config.max_iterations
