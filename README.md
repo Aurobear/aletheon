@@ -175,41 +175,33 @@ See [docs/Aletheon.md](docs/Aletheon.md) and [docs/arch.md](docs/arch.md) for fu
 
 ## 5. Crate Architecture
 
-Aletheon is organized as a Cargo workspace with 10 crates:
+Aletheon is organized as a Cargo workspace with 8 crates:
 
-```
-aletheon/
-+-- Cargo.toml                   # Workspace root
-|
-+-- crates/
-|   +-- aletheon-abi/            # ABI types: IPC, tool, message, sandbox, LLM types
-|   +-- aletheon-comm/           # IPC layer: Unix socket, priority queue
-|   +-- aletheon-memory/         # Memory system: self-memory, episodic/semantic
-|   +-- aletheon-self/           # SelfField: identity, boundary, care, narrative
-|   +-- aletheon-brain/          # BrainCore: reasoning, planning, reflection
-|   +-- aletheon-body/           # BodyRuntime: tools, sandbox, perception, MCP, TUI
-|   +-- aletheon-runtime/        # Runtime engine: cognitive loop, orchestration, daemon
-|   +-- aletheon-meta/           # MetaRuntime: self-update, self-generation
-|   +-- aletheond/               # Daemon entry point
-|   +-- aletheon-cli/            # CLI + TUI client
-|
-+-- agents/                      # Agent definitions (TOML + Markdown)
-+-- config/                      # Default configuration
-+-- docs/                        # Design documents and plans
-```
+| Crate | Concept | Role |
+|---|---|---|
+| `base` | ABI | IPC, tool/message/sandbox/LLM types, `paths` |
+| `dasein` | Self | identity, boundary, care, narrative |
+| `cognit` | Brain | reasoning, planning, reflection, provider routing |
+| `corpus` | Body | tools, sandbox, perception, MCP, drivers |
+| `runtime` | Runtime | cognitive loop, orchestration, daemon (`aletheond`, `aletheon-exec` bins) |
+| `interact` | Interface | CLI + TUI client (`aletheon` bin) |
+| `memory` | Memory | cognitive memory backends (episodic/semantic/procedural/self) |
+| `metacog` | Meta | self-evolution scaffolding |
+
+Real binaries:
+- `aletheond` + `aletheon-exec` — `crates/runtime/Cargo.toml:8-14`
+- `aletheon` — `crates/interact/Cargo.toml:8-10`
 
 ### Crate Dependency Graph
 
 ```
-aletheon-cli  --->  aletheon-comm  --->  aletheon-abi
-aletheond    --->  aletheon-runtime ---> aletheon-body
-                                      +-> aletheon-brain
-                                      +-> aletheon-self
-                                      +-> aletheon-memory
-                                      +-> aletheon-comm
-                                      +-> aletheon-abi
-aletheon-meta --->  aletheon-abi
+aletheon (bin)  --->  interact  --->  base, corpus
+aletheond (bin) --->  runtime   --->  base, cognit, corpus, dasein, memory, metacog
+aletheon-exec    ---/
+cognit           --->  base, corpus, interact        (* see note)
 ```
+
+> **Note:** `cognit` currently depends on `corpus` and `interact` (an inversion; Tier 2c on the roadmap will fix this by moving the shared contract into `base`). This diagram describes the *current* state of the repo.
 
 ---
 
