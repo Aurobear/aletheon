@@ -165,6 +165,7 @@ impl MetaRuntimeOps for MockMetaRuntime {
 async fn failure_triggers_evolution() {
     let tmp = tempfile::tempdir().unwrap();
     let config = EvolutionConfig {
+        enabled: true,
         trigger_every_n_turns: 0, // disable periodic
         trigger_on_failure: true,
         window_size: 20,
@@ -221,6 +222,7 @@ async fn failure_triggers_evolution() {
 async fn periodic_trigger_at_n_turns() {
     let tmp = tempfile::tempdir().unwrap();
     let config = EvolutionConfig {
+        enabled: true,
         trigger_every_n_turns: 3, // trigger every 3rd turn
         trigger_on_failure: false,
         window_size: 20,
@@ -278,6 +280,7 @@ async fn periodic_trigger_at_n_turns() {
 async fn sliding_window_eviction() {
     let tmp = tempfile::tempdir().unwrap();
     let config = EvolutionConfig {
+        enabled: true,
         trigger_every_n_turns: 0, // disable periodic
         trigger_on_failure: false,
         window_size: 5,
