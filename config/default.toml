@@ -1,15 +1,21 @@
 [agent]
+# Pick a model your provider serves; override in your local config.
 default_model = "claude-sonnet-4-20250514"
+default_provider = "anthropic"
 max_iterations = 50
+
+# At least one provider is required for the daemon to start.
+# Fill in api_key (or set it via your local override config), then run the daemon.
+[[providers]]
+name = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key = ""            # REQUIRED: set before first run (or override locally)
+transport = "anthropic" # openai | anthropic | auto
+models = ["claude-sonnet-4-20250514"]
 
 [sandbox]
 preference = "auto"
 # bubblewrap_path = "/usr/bin/bwrap"
-
-# [[mcp_servers]]
-# name = "filesystem"
-# transport = "stdio"
-# command = "mcp-fs"
 
 [plugins]
 directories = []
@@ -19,5 +25,6 @@ backend = "sqlite"
 data_dir = "~/.aletheon/memory"
 
 [daemon]
-socket_path = "/run/aletheon/aletheon.sock"
+# Canonical socket dir is base::paths::SOCKET_DIR = /var/run/aletheon
+socket_path = "/var/run/aletheon/aletheon.sock"
 log_level = "info"

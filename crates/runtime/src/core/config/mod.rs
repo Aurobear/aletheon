@@ -269,6 +269,25 @@ sonnet = "anthropic/claude-sonnet-4-20250514"
     }
 
     #[test]
+    fn shipped_default_config_is_startable_shaped() {
+        // repo-root config/default.toml relative to this crate (crates/runtime)
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
+        let text = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let cfg: AppConfig = toml::from_str(&text).expect("default.toml must parse");
+        assert!(!cfg.providers.is_empty(), "default.toml must define >=1 provider");
+        let dp = cfg
+            .agent
+            .default_provider
+            .as_deref()
+            .expect("default.toml must set agent.default_provider");
+        assert!(
+            cfg.providers.iter().any(|p| p.name == dp),
+            "default_provider '{dp}' must match a [[providers]] name"
+        );
+    }
+
+    #[test]
     fn test_parse_full_config_with_new_sections() {
         let toml = r#"
 [agent]
