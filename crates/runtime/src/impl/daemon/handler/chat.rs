@@ -118,7 +118,7 @@ impl RequestHandler {
                 .collect();
             let query = keywords.join(" ");
             if query.len() >= 8 {
-                if let Ok(facts) = fs.search_facts(&query, None, 0.15, 4) {
+                if let Ok(facts) = fs.search_facts_governed(&query, None, false, 0.15, 4) {
                     if !facts.is_empty() {
                         let mut recall_block = String::from("\n[Recalled memories]\n");
                         for fact in &facts {
@@ -455,6 +455,12 @@ impl RequestHandler {
         let tool_defs_clone = tool_defs.clone();
         let goal_message = message.to_string();
 
+        // Pre-turn proactive compaction: compact the persisted history before
+        // seeding the ReAct loop so the seed is already within token budget.
+        {
+            let mut sm = self.session_manager.lock().await;
+            let _ = sm.compact_if_needed(&*self.llm).await;
+        }
         // Get existing messages from session manager for context continuity
         let existing_messages = {
             let sm = self.session_manager.lock().await;
