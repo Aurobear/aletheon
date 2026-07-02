@@ -33,18 +33,42 @@ impl AdvancedCompressor {
         }
     }
 
-    /// Check if compaction is needed and perform it.
-    /// Returns true if compaction was performed.
+    /// Check if compaction is needed and perform it. Returns true if performed.
     pub async fn maybe_compact<L: LlmProvider + ?Sized>(
         &mut self,
         messages: &mut Vec<Message>,
         llm: &L,
     ) -> Result<bool> {
+        self.compact_impl(messages, llm, false).await
+    }
+
+    /// Compact regardless of the token threshold (still tool-boundary-safe).
+    pub async fn force_compact<L: LlmProvider + ?Sized>(
+        &mut self,
+        messages: &mut Vec<Message>,
+        llm: &L,
+    ) -> Result<bool> {
+        self.compact_impl(messages, llm, true).await
+    }
+
+    /// The most recent summary produced by a compaction, if any.
+    pub fn last_summary(&self) -> Option<&str> {
+        self.previous_summary.as_deref()
+    }
+
+    async fn compact_impl<L: LlmProvider + ?Sized>(
+        &mut self,
+        messages: &mut Vec<Message>,
+        llm: &L,
+        force: bool,
+    ) -> Result<bool> {
         let total_tokens: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
 
-        let threshold = (self.context_window_tokens as f64 * 0.8) as usize;
-        if total_tokens < threshold {
-            return Ok(false);
+        if !force {
+            let threshold = (self.context_window_tokens as f64 * 0.8) as usize;
+            if total_tokens < threshold {
+                return Ok(false);
+            }
         }
 
         let cut = find_tail_cut(messages, &self.tail_config);
@@ -197,5 +221,23 @@ mod tests {
             before,
             messages.len()
         );
+    }
+
+    #[tokio::test]
+    async fn force_compact_ignores_threshold_and_exposes_summary() {
+        // context window huge so the normal threshold is NOT exceeded
+        let mut c = AdvancedCompressor::new(50, 200, 10_000_000);
+        let llm = SimpleLlm;
+        let mut messages = vec![Message::user("start")];
+        for i in 0..8 {
+            messages.push(Message::assistant(&format!("a{i} {}", "x".repeat(400))));
+            messages.push(Message::user(&format!("u{i} {}", "y".repeat(400))));
+        }
+        // maybe_compact would be a no-op (under threshold)
+        assert!(!c.maybe_compact(&mut messages.clone(), &llm).await.unwrap());
+        // force_compact compacts anyway and records the summary
+        let did = c.force_compact(&mut messages, &llm).await.unwrap();
+        assert!(did, "force_compact should compact regardless of threshold");
+        assert_eq!(c.last_summary(), Some("this is a summary"));
     }
 }
