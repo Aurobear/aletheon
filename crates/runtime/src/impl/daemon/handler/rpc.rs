@@ -25,6 +25,16 @@ impl RequestHandler {
         request: serde_json::Value,
     ) -> serde_json::Value {
         match method {
+            "daemon.shutdown" => {
+                if let Some(ref token) = self.daemon_cancel_token {
+                    token.cancel();
+                }
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "status": "shutting_down" }
+                })
+            }
             "clear" => {
                 // Fire OnSessionEnd hook before clearing
                 {

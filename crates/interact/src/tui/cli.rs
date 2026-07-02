@@ -237,7 +237,7 @@ pub async fn run() -> Result<()> {
 /// Handle subcommands.
 async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
     match cmd {
-        Command::Daemon { action } => handle_daemon_action(action).await,
+        Command::Daemon { action } => handle_daemon_action(socket, action).await,
         Command::Reflect => single_message(socket, "/reflect").await,
         Command::ReflectNow => single_message(socket, "/reflect_now").await,
         Command::Evolution => single_message(socket, "/evolution").await,
@@ -350,7 +350,7 @@ fn find_aletheond() -> Result<std::path::PathBuf> {
 }
 
 /// Handle daemon subcommands.
-async fn handle_daemon_action(action: DaemonAction) -> Result<()> {
+async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<()> {
     match action {
         DaemonAction::Start { detach } => {
             let exe = find_aletheond()?;
@@ -376,18 +376,15 @@ async fn handle_daemon_action(action: DaemonAction) -> Result<()> {
             }
         }
         DaemonAction::Stop => {
-            // Send SIGTERM to daemon
-            let pid_file = std::path::Path::new("/tmp/aletheon/aletheond.pid");
-            if pid_file.exists() {
-                let pid_str = std::fs::read_to_string(pid_file)?;
-                let pid: i32 = pid_str.trim().parse()?;
-                unsafe {
-                    libc::kill(pid, libc::SIGTERM);
-                }
-                println!("Sent SIGTERM to daemon (PID: {})", pid);
-                std::fs::remove_file(pid_file).ok();
+            let req = serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "daemon.shutdown",
+                "params": {}
+            });
+            let resp = super::rpc_client::send_rpc(socket, &req).await?;
+            if let Some(err) = resp.get("error") {
+                eprintln!("Error: {}", err["message"].as_str().unwrap_or("unknown"));
             } else {
-                println!("No daemon PID file found");
+                println!("Daemon shutdown requested.");
             }
         }
         DaemonAction::Status => {

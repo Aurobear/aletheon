@@ -171,6 +171,8 @@ pub struct RequestHandler {
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     /// EventBus for cross-subsystem event routing (DaseinEventBridge, etc.).
     event_bus: Option<Arc<dyn base::EventBus>>,
+    /// Daemon-level cancellation token for graceful shutdown via daemon.shutdown RPC.
+    daemon_cancel_token: Option<CancellationToken>,
 }
 
 impl RequestHandler {
@@ -205,6 +207,7 @@ impl RequestHandler {
         evolution_enabled: bool,
         _perception_rx: mpsc::Receiver<PerceptionInjection>,
         event_bus: Option<Arc<dyn base::EventBus>>,
+        cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
         let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create("")?);
         info!(provider = llm.name(), "LLM provider initialized");
@@ -734,6 +737,7 @@ impl RequestHandler {
             debug_perf,
             cancel_token: Arc::new(Mutex::new(None)),
             event_bus,
+            daemon_cancel_token: Some(cancel_token),
         };
 
         // Fire OnSessionStart hook

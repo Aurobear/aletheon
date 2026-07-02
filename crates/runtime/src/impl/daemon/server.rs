@@ -5,6 +5,7 @@ use anyhow::Result;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use super::handler::RequestHandler;
@@ -12,10 +13,11 @@ use super::handler::RequestHandler;
 pub struct UnixServer {
     listener: UnixListener,
     handler: RequestHandler,
+    cancel_token: CancellationToken,
 }
 
 impl UnixServer {
-    pub async fn new(socket_path: &Path, handler: RequestHandler) -> Result<Self> {
+    pub async fn new(socket_path: &Path, handler: RequestHandler, cancel_token: CancellationToken) -> Result<Self> {
         // Remove stale socket
         if socket_path.exists() {
             tokio::fs::remove_file(socket_path).await?;
@@ -24,26 +26,35 @@ impl UnixServer {
         let listener = UnixListener::bind(socket_path)?;
         info!(path = %socket_path.display(), "Unix socket listening");
 
-        Ok(Self { listener, handler })
+        Ok(Self { listener, handler, cancel_token })
     }
 
     pub async fn run(&mut self) -> Result<()> {
         loop {
-            let (stream, _addr) = self.listener.accept().await?;
-            let mut handler = self.handler.clone();
+            tokio::select! {
+                accept_result = self.listener.accept() => {
+                    let (stream, _addr) = accept_result?;
+                    let mut handler = self.handler.clone();
 
-            // Create a per-connection notify channel so each client receives
-            // its own events independently (shared channels would cause events
-            // to be consumed by whichever connection reads first).
-            let (notify_tx, notify_rx) = mpsc::channel::<String>(64);
-            handler.set_notify_channel(notify_tx);
+                    // Create a per-connection notify channel so each client receives
+                    // its own events independently (shared channels would cause events
+                    // to be consumed by whichever connection reads first).
+                    let (notify_tx, notify_rx) = mpsc::channel::<String>(64);
+                    handler.set_notify_channel(notify_tx);
 
-            tokio::spawn(async move {
-                if let Err(e) = Self::handle_connection(stream, handler, notify_rx).await {
-                    error!(error = %e, "Connection error");
+                    tokio::spawn(async move {
+                        if let Err(e) = Self::handle_connection(stream, handler, notify_rx).await {
+                            error!(error = %e, "Connection error");
+                        }
+                    });
                 }
-            });
+                _ = self.cancel_token.cancelled() => {
+                    info!("Shutdown signal received, stopping accept loop");
+                    break;
+                }
+            }
         }
+        Ok(())
     }
 
     /// Handle a single client connection. Reads JSON-RPC requests from the

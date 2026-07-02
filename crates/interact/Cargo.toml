@@ -27,7 +27,6 @@ atty = "0.2"
 dirs = "5"
 dirs-next = "2"
 which = "7"
-libc = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 ctrlc = "3"
 
