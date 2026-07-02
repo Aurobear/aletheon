@@ -39,6 +39,9 @@ pub enum SessionEvent {
         before_count: usize,
         after_count: usize,
     },
+    Summary {
+        text: String,
+    },
     SessionEnded {
         reason: String,
     },
@@ -111,6 +114,7 @@ impl EventJournal {
                     SessionEvent::ToolCallCompleted { .. } => "tool_call_completed",
                     SessionEvent::CheckpointBoundary { .. } => "checkpoint_boundary",
                     SessionEvent::Compacted { .. } => "compacted",
+                    SessionEvent::Summary { .. } => "summary",
                     SessionEvent::SessionEnded { .. } => "session_ended",
                 };
 
