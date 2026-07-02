@@ -344,17 +344,45 @@ impl LlmScheduler {
         })
     }
 
-    /// Check health of the default provider.
-    ///
-    /// Phase 1: returns basic status (always available).
-    /// Phase 2: actually ping providers and measure latency.
-    pub async fn health_check(&self) -> ProviderHealth {
-        ProviderHealth {
-            name: self.default_provider.clone(),
-            available: true,
-            latency_ms: 0,
+    /// Expose the default provider name.
+    pub fn default_provider_name(&self) -> &str {
+        &self.default_provider
+    }
+
+    /// Lightweight liveness probe: a tiny `complete` call, recording latency
+    /// and availability into `self.health`. Circuit-breaks on failure.
+    pub async fn probe_provider(&self, name: &str) -> ProviderHealth {
+        let started = Instant::now();
+        let result = match self.providers.get(name) {
+            Some(p) => p
+                .complete(&[Message::user("ping")], &[])
+                .await
+                .map(|_| ()),
+            None => Err(anyhow::anyhow!("unknown provider '{}'", name)),
+        };
+        let latency_ms = started.elapsed().as_millis() as u64;
+        let health = ProviderHealth {
+            name: name.to_string(),
+            available: result.is_ok(),
+            latency_ms,
             tokens_remaining: None,
+        };
+        self.health
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), health.clone());
+        health
+    }
+
+    /// Aggregate health of the default provider. Returns cached state if
+    /// available; probes on first call (cold start).
+    pub async fn health_check(&self) -> ProviderHealth {
+        let name = self.default_provider.clone();
+        // Serve cached state if we have it.
+        if let Some(h) = self.health.lock().unwrap().get(&name).cloned() {
+            return h;
         }
+        self.probe_provider(&name).await
     }
 }
 
@@ -588,5 +616,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(text_of(&resp), "ok-b");
+    }
+
+    #[tokio::test]
+    async fn probe_records_availability_and_circuit_breaks() {
+        let mut providers: HashMap<String, Arc<dyn LlmProvider>> = HashMap::new();
+        providers.insert(
+            "ok".into(),
+            Arc::new(FlakyProvider { name: "ok".into(), fail_n: 0, calls: AtomicUsize::new(0) }),
+        );
+        providers.insert("bad".into(), Arc::new(DeadProvider { name: "bad".into() }));
+        let sched = LlmScheduler::from_providers(providers, HashMap::new());
+
+        let good = sched.probe_provider("ok").await;
+        assert!(good.available, "reachable provider is available");
+        assert_eq!(good.name, "ok");
+
+        let bad = sched.probe_provider("bad").await;
+        assert!(!bad.available, "erroring provider is unavailable");
+        assert!(!sched.is_healthy("bad"), "failed probe circuit-breaks");
+
+        let agg = sched.health_check().await;
+        assert_eq!(agg.name, sched.default_provider_name());
     }
 }
