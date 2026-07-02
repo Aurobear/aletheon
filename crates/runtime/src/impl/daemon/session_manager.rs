@@ -1,11 +1,12 @@
 use std::path::Path;
 
 use anyhow::Result;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use base::{ContentBlock, Message, Role};
 use cognit::r#impl::llm::LlmProvider;
 
+use crate::r#impl::memory::compressor::AdvancedCompressor;
 use crate::r#impl::session::journal::{EventJournal, SessionEvent};
 
 /// SessionManager: persists conversation history, journals events, and
@@ -20,6 +21,7 @@ pub struct SessionManager {
     journal: EventJournal,
     max_tokens: usize,
     compaction_threshold: f64,
+    compressor: AdvancedCompressor,
 }
 
 impl SessionManager {
@@ -47,6 +49,11 @@ impl SessionManager {
             journal,
             max_tokens,
             compaction_threshold: 0.8,
+            compressor: AdvancedCompressor::new(
+                (max_tokens as f64 * 0.25) as usize, // tail token budget
+                4_000,                                // target summary chars
+                max_tokens,                           // context window
+            ),
         })
     }
 
@@ -105,61 +112,84 @@ impl SessionManager {
         self.messages.iter().map(|m| m.estimate_tokens()).sum()
     }
 
-    /// Compact the context window if we exceed the threshold.
-    ///
-    /// Strategy: keep system messages, summarize everything except the
-    /// last 6 non-system messages, and prepend the summary as a system message.
-    /// Returns `true` if compaction was performed.
+    /// Compact the context window if we exceed the threshold, using the
+    /// tool-boundary-safe compressor. Returns true if compaction happened.
     pub async fn compact_if_needed(&mut self, llm: &dyn LlmProvider) -> bool {
-        let estimated = self.estimate_tokens();
-        let threshold = (self.max_tokens as f64 * self.compaction_threshold) as usize;
+        self.run_compaction(llm, false).await
+    }
 
-        if estimated <= threshold {
+    /// Force compaction regardless of token estimate.
+    pub async fn force_compact(&mut self, llm: &dyn LlmProvider) -> bool {
+        if self.messages.len() <= 2 {
             return false;
         }
+        self.run_compaction(llm, true).await
+    }
 
-        info!(
-            estimated = estimated,
-            threshold = threshold,
-            "Context window exceeded threshold, compacting"
-        );
-
+    async fn run_compaction(&mut self, llm: &dyn LlmProvider, force: bool) -> bool {
         let before_count = self.messages.len();
+        let did = if force {
+            self.compressor
+                .force_compact(&mut self.messages, llm)
+                .await
+        } else {
+            self.compressor
+                .maybe_compact(&mut self.messages, llm)
+                .await
+        }
+        .unwrap_or(false);
+        if !did {
+            return false;
+        }
+        let after_count = self.messages.len();
+        let summary = self.compressor.last_summary().unwrap_or("").to_string();
+        self.persist_compaction(before_count, after_count, summary).await;
+        info!(
+            before = before_count,
+            after = after_count,
+            "Context compaction complete"
+        );
+        true
+    }
 
-        // Split: system messages, middle (to summarize), tail (keep)
-        let system_msgs: Vec<Message> = self
-            .messages
-            .iter()
-            .filter(|m| matches!(m.role, Role::System))
-            .cloned()
-            .collect();
-
-        let non_system: Vec<Message> = self
+    async fn persist_compaction(
+        &mut self,
+        before_count: usize,
+        after_count: usize,
+        summary: String,
+    ) {
+        // Marker (keeps existing observability), then a fresh checkpoint so
+        // recover starts from the compacted state, then the summary + surviving tail.
+        let _ = self
+            .journal
+            .append(SessionEvent::Compacted {
+                before_count,
+                after_count,
+            })
+            .await;
+        let iteration = self.turn_count();
+        let _ = self
+            .journal
+            .append(SessionEvent::CheckpointBoundary { iteration })
+            .await;
+        if !summary.is_empty() {
+            let _ = self
+                .journal
+                .append(SessionEvent::Summary {
+                    text: summary,
+                })
+                .await;
+        }
+        // Re-journal the surviving tail (text content) after the checkpoint so a
+        // reopen reconstructs [summary] ++ tail. System summary is emitted above.
+        let tail: Vec<Message> = self
             .messages
             .iter()
             .filter(|m| !matches!(m.role, Role::System))
             .cloned()
             .collect();
-
-        let keep_count = 6.min(non_system.len());
-        let split_idx = non_system.len().saturating_sub(keep_count);
-
-        if split_idx == 0 {
-            return false;
-        }
-
-        let to_summarize = &non_system[..split_idx];
-        let tail = &non_system[split_idx..];
-
-        // Build summarization prompt
-        let mut summary_parts = Vec::new();
-        for msg in to_summarize {
-            let role_str = match msg.role {
-                Role::User => "User",
-                Role::Assistant => "Assistant",
-                Role::System => "System",
-            };
-            let text: String = msg
+        for m in &tail {
+            let text: String = m
                 .content
                 .iter()
                 .filter_map(|b| match b {
@@ -168,71 +198,22 @@ impl SessionManager {
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
-            summary_parts.push(format!("{}: {}", role_str, text));
-        }
-
-        let summarize_messages = vec![
-            Message::system(
-                "Summarize the following conversation history concisely. \
-                 Preserve key facts, decisions, and context needed for \
-                 continuation. Output only the summary, no preamble.",
-            ),
-            Message::user(summary_parts.join("\n")),
-        ];
-
-        let summary_text = match llm.complete(&summarize_messages, &[]).await {
-            Ok(resp) => resp
-                .content
-                .iter()
-                .filter_map(|b| match b {
-                    ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join(""),
-            Err(e) => {
-                warn!(error = %e, "LLM summarization failed, using truncation fallback");
-                summary_parts
-                    .iter()
-                    .map(|s| {
-                        if s.len() > 200 {
-                            let end = s.char_indices().nth(200).map(|(i, _)| i).unwrap_or(s.len());
-                            format!("{}...", &s[..end])
-                        } else {
-                            s.clone()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
+            match m.role {
+                Role::User => {
+                    let _ = self
+                        .journal
+                        .append(SessionEvent::UserMessage { content: text })
+                        .await;
+                }
+                Role::Assistant => {
+                    let _ = self
+                        .journal
+                        .append(SessionEvent::AssistantMessage { content: text })
+                        .await;
+                }
+                Role::System => {}
             }
-        };
-
-        // Rebuild: system messages + summary + tail
-        let mut new_messages = system_msgs;
-        new_messages.push(Message::system(format!(
-            "[Conversation summary]\n{}",
-            summary_text
-        )));
-        new_messages.extend(tail.iter().cloned());
-
-        let after_count = new_messages.len();
-        self.messages = new_messages;
-
-        let _ = self
-            .journal
-            .append(SessionEvent::Compacted {
-                before_count,
-                after_count,
-            })
-            .await;
-
-        info!(
-            before = before_count,
-            after = after_count,
-            "Context compaction complete"
-        );
-
-        true
+        }
     }
 
     /// Write a checkpoint boundary to the journal.
@@ -243,19 +224,6 @@ impl SessionManager {
             .append(SessionEvent::CheckpointBoundary { iteration })
             .await;
         info!(iteration, "Checkpoint saved");
-    }
-
-    /// Force compaction regardless of token estimate.
-    pub async fn force_compact(&mut self, llm: &dyn LlmProvider) -> bool {
-        if self.messages.len() <= 2 {
-            return false;
-        }
-
-        let saved = self.compaction_threshold;
-        self.compaction_threshold = 0.0;
-        let result = self.compact_if_needed(llm).await;
-        self.compaction_threshold = saved;
-        result
     }
 
     /// Recover message history from a journal on disk.
@@ -275,6 +243,12 @@ impl SessionManager {
         let mut messages = Vec::new();
         for event in &state.events_after_checkpoint {
             match event {
+                SessionEvent::Summary { text } => {
+                    messages.push(Message::system(format!(
+                        "[Conversation summary]\n{}",
+                        text
+                    )));
+                }
                 SessionEvent::UserMessage { content } => {
                     messages.push(Message::user(content));
                 }
@@ -282,13 +256,123 @@ impl SessionManager {
                     messages.push(Message::assistant(content));
                 }
                 SessionEvent::Compacted { .. } => {
-                    // After a compaction, the in-memory state is the source of truth.
-                    messages.clear();
+                    // Superseded by the checkpoint written right after compaction.
+                    // The summary and tail are in subsequent events after the checkpoint.
                 }
                 _ => {}
             }
         }
 
         Some(messages)
+    }
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+    use base::message::is_tool_message;
+    use base::ToolDefinition;
+    use cognit::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
+    use async_trait::async_trait;
+
+    struct StubLlm;
+
+    #[async_trait]
+    impl LlmProvider for StubLlm {
+        async fn complete(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "SUMMARY".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+        async fn complete_stream(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unimplemented!()
+        }
+        fn name(&self) -> &str {
+            "stub"
+        }
+        fn max_context_length(&self) -> usize {
+            1_000
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_tail_never_starts_with_tool_result() {
+        let dir = tempfile::tempdir().unwrap();
+        // small max_tokens so the threshold trips easily
+        let mut sm = SessionManager::new(dir.path(), "s1".into(), 1_000)
+            .await
+            .unwrap();
+        // build a long history that interleaves tool_use/tool_result pairs
+        for i in 0..12 {
+            sm.push_assistant(&format!("assistant turn {i} {}", "x".repeat(400)))
+                .await;
+            sm.push_message(Message::tool_result(
+                &format!("t{i}"),
+                &"y".repeat(400),
+                false,
+            ));
+            sm.push_user(&format!("user {i} {}", "z".repeat(400)))
+                .await;
+        }
+        let did = sm.compact_if_needed(&StubLlm).await;
+        assert!(did, "should compact");
+        let hist = sm.history();
+        // first non-system message after the summary must not be a bare tool_result
+        let first_non_system = hist
+            .iter()
+            .find(|m| !matches!(m.role, Role::System));
+        if let Some(m) = first_non_system {
+            assert!(
+                !is_tool_message(m),
+                "tail must not start with an orphan tool message"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn compacted_history_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut sm = SessionManager::new(dir.path(), "s2".into(), 1_000)
+                .await
+                .unwrap();
+            for i in 0..12 {
+                sm.push_assistant(&format!("assistant {i} {}", "x".repeat(400)))
+                    .await;
+                sm.push_user(&format!("user {i} {}", "z".repeat(400)))
+                    .await;
+            }
+            assert!(sm.compact_if_needed(&StubLlm).await);
+        }
+        // Reopen: recover must include the summary system message
+        let sm2 = SessionManager::new(dir.path(), "s2".into(), 1_000)
+            .await
+            .unwrap();
+        let hist = sm2.history();
+        assert!(
+            !hist.is_empty(),
+            "recovered history must not be empty after compaction"
+        );
+        assert!(
+            hist.iter().any(|m| matches!(m.role, Role::System)
+                && m.content
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("SUMMARY")))),
+            "recovered history must contain the persisted summary"
+        );
     }
 }
