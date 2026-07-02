@@ -404,4 +404,189 @@ mod tests {
         assert_eq!(config.providers.len(), 1);
         assert_eq!(config.routing.len(), 1);
     }
+
+    #[test]
+    fn classify_transient_errors() {
+        for s in [
+            "Anthropic API error 429 Too Many Requests: rate limited",
+            "OpenAI API error 503 Service Unavailable: overloaded",
+            "Anthropic API error 529: {\"error\":\"overloaded_error\"}",
+            "error sending request for url (...): connection reset",
+            "request timed out",
+        ] {
+            assert_eq!(
+                classify_error(&anyhow::anyhow!(s.to_string())),
+                ErrorClass::Transient,
+                "should classify as transient: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_context_overflow_errors() {
+        for s in [
+            "OpenAI API error 400: This model's maximum context length is 128000 tokens",
+            "Anthropic API error 400: prompt is too long: 250000 tokens > 200000",
+            "Anthropic API error 400: context_length_exceeded",
+        ] {
+            assert_eq!(
+                classify_error(&anyhow::anyhow!(s.to_string())),
+                ErrorClass::ContextOverflow,
+                "should classify as context-overflow: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_terminal_errors() {
+        for s in [
+            "Anthropic API error 401 Unauthorized: invalid x-api-key",
+            "OpenAI API error 403 Forbidden",
+            "some unknown error string",
+        ] {
+            assert_eq!(
+                classify_error(&anyhow::anyhow!(s.to_string())),
+                ErrorClass::Terminal,
+                "should classify as terminal: {s}"
+            );
+        }
+    }
+
+    // --- Mocks for retry/failover tests ---
+
+    struct FlakyProvider {
+        name: String,
+        fail_n: usize,
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for FlakyProvider {
+        async fn complete(&self, _m: &[Message], _t: &[ToolDefinition]) -> Result<LlmResponse> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.fail_n {
+                anyhow::bail!("Anthropic API error 429 Too Many Requests: slow down");
+            }
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: format!("ok-{}", self.name),
+                }],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+        async fn complete_stream(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> Result<LlmStream> {
+            unimplemented!()
+        }
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn max_context_length(&self) -> usize {
+            200_000
+        }
+    }
+
+    struct DeadProvider {
+        name: String,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for DeadProvider {
+        async fn complete(&self, _m: &[Message], _t: &[ToolDefinition]) -> Result<LlmResponse> {
+            anyhow::bail!("Anthropic API error 401 Unauthorized: invalid x-api-key");
+        }
+        async fn complete_stream(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> Result<LlmStream> {
+            unimplemented!()
+        }
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn max_context_length(&self) -> usize {
+            200_000
+        }
+    }
+
+    fn text_of(r: &LlmResponse) -> String {
+        r.content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn transient_error_retries_then_succeeds() {
+        let mut providers: HashMap<String, Arc<dyn LlmProvider>> = HashMap::new();
+        let flaky = Arc::new(FlakyProvider {
+            name: "a".into(),
+            fail_n: 2,
+            calls: AtomicUsize::new(0),
+        });
+        providers.insert("a".into(), flaky.clone());
+        let mut routing = HashMap::new();
+        routing.insert(LlmPurpose::Execute, "a".to_string());
+        let sched = LlmScheduler::from_providers(providers, routing)
+            .with_retry_policy(RetryPolicy { max_retries: 3, base_backoff_ms: 0, max_backoff_ms: 0 });
+        let resp = sched
+            .complete(&LlmPurpose::Execute, &[Message::user("hi")], &[])
+            .await
+            .unwrap();
+        assert_eq!(text_of(&resp), "ok-a");
+        assert_eq!(flaky.calls.load(Ordering::SeqCst), 3, "2 fails + 1 success");
+    }
+
+    #[tokio::test]
+    async fn terminal_error_fails_over_to_next_provider() {
+        let mut providers: HashMap<String, Arc<dyn LlmProvider>> = HashMap::new();
+        providers.insert("a".into(), Arc::new(DeadProvider { name: "a".into() }));
+        providers.insert(
+            "b".into(),
+            Arc::new(FlakyProvider { name: "b".into(), fail_n: 0, calls: AtomicUsize::new(0) }),
+        );
+        let mut routing = HashMap::new();
+        routing.insert(LlmPurpose::Execute, "a".to_string());
+        let sched = LlmScheduler::from_providers(providers, routing)
+            .with_failover_order(vec!["a".into(), "b".into()])
+            .with_retry_policy(RetryPolicy { max_retries: 1, base_backoff_ms: 0, max_backoff_ms: 0 });
+        let resp = sched
+            .complete(&LlmPurpose::Execute, &[Message::user("hi")], &[])
+            .await
+            .unwrap();
+        assert_eq!(text_of(&resp), "ok-b");
+    }
+
+    #[tokio::test]
+    async fn unhealthy_provider_is_skipped() {
+        let mut providers: HashMap<String, Arc<dyn LlmProvider>> = HashMap::new();
+        providers.insert(
+            "a".into(),
+            Arc::new(FlakyProvider { name: "a".into(), fail_n: 0, calls: AtomicUsize::new(0) }),
+        );
+        providers.insert(
+            "b".into(),
+            Arc::new(FlakyProvider { name: "b".into(), fail_n: 0, calls: AtomicUsize::new(0) }),
+        );
+        let mut routing = HashMap::new();
+        routing.insert(LlmPurpose::Execute, "a".to_string());
+        let sched = LlmScheduler::from_providers(providers, routing)
+            .with_failover_order(vec!["a".into(), "b".into()]);
+        sched.mark_unhealthy("a");
+        let resp = sched
+            .complete(&LlmPurpose::Execute, &[Message::user("hi")], &[])
+            .await
+            .unwrap();
+        assert_eq!(text_of(&resp), "ok-b");
+    }
 }
