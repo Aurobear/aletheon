@@ -266,12 +266,183 @@ builds against the others as path/registry deps.
 
 ---
 
+# Additional Modules (M-A … M-G)
+
+A second pass over the four docs surfaced doc-prescribed parts not covered by
+Tiers 0–4. They are lettered to keep them distinct from the tiers; each still
+graduates to its own spec + plan when picked up.
+
+## M-A. Context Manager — unify conversation compaction  *(doc 1 "Context Manager")*
+
+**Problem.** Doc 1: *Context belongs to Runtime; Runtime decides what to send.*
+Two compaction implementations coexist and diverge:
+- `runtime/src/impl/memory/compressor/mod.rs:14` — `AdvancedCompressor` is
+  **tool-boundary-safe** (`find_tail_cut`, prunes tool outputs before
+  summarizing) but is used **only inside the ReAct loop** (`react_loop/step.rs:42,216`).
+- `runtime/src/impl/daemon/session_manager.rs:113` — `compact_if_needed()` keeps
+  the **last 6 non-system messages** and summarizes the rest with **no
+  tool_use/tool_result pairing protection**. This is what governs the persisted
+  multi-turn history.
+
+Consequence: a blind cut can orphan a `tool_result` (its `tool_use` was
+summarized away) → malformed provider request → the long-conversation
+"报错/卡住/失忆" failure mode.
+
+**Design.** Make the multi-turn path reuse the **tool-boundary-safe** compactor:
+`SessionManager::compact_if_needed` delegates to the same
+`find_tail_cut`/boundary-aligned logic (or a shared `ContextManager` that both
+the ReAct loop and the session manager call). Run compaction **proactively
+before** the turn's first LLM call (on the seeded history), not only post-turn,
+and persist the compacted history so it stops regrowing unbounded.
+
+**Scope / non-goals.** Unify + proactive-trigger + persist. No new summarization
+model; no semantic memory offload (that's Governed Memory's job).
+
+**Affected files.** `runtime/src/impl/daemon/session_manager.rs`,
+`runtime/src/impl/memory/compressor/` (extract shared entry point),
+`runtime/src/impl/daemon/handler/chat.rs` (pre-turn trigger + persist).
+
+**Risk / testing.** Medium-high (touches the hot path). Test: a synthesized
+history that orphans a tool_result is repaired before send; a long multi-turn
+run stays under budget without malformed requests; summaries preserve the last
+user turn.
+
+## M-B. Plugin lifecycle trait  *(doc 2 "Plugin SDK" / kernel-driver)*
+
+**Problem.** Doc 2's seam is `trait Plugin { init/run/shutdown }`. Today plugins
+have a `PluginState` machine (`plugin/manager.rs:15`) and a manifest with
+`cmd:`/`native:`/`wasm:` entries (`plugin/manifest.rs:47`), but capability
+plugins are surfaced only as **execute-only `Tool`s** (`PluginTool`,
+`manager.rs:184`) — there is no long-lived `init/run/shutdown` lifecycle a plugin
+can hook.
+
+**Design.** Add a `Plugin` trait in `base` (`init/run/shutdown` + capability
+registration) that a plugin *may* implement for long-lived behavior, while
+`Tool`-only plugins keep working (the trait is additive; `PluginRuntime` calls
+`init` on load, `shutdown` on unload, tracked by the existing `PluginState`).
+
+**Scope / non-goals.** Trait + lifecycle wiring only; no WASM host work; no new
+plugins shipped.
+
+**Affected files.** `base/src/` (trait), `runtime/src/impl/plugin/manager.rs`
+(call init/run/shutdown around `PluginState` transitions).
+
+**Risk.** Low-medium; additive. Test: a sample plugin's init/shutdown fire on
+load/unload; Tool-only plugins unaffected.
+
+## M-C. Result / Verification pipeline  *(doc 1 "Result Pipeline")*
+
+**Problem.** Doc 1: *the model's output is not the final answer* — it should pass
+Runtime Verify → (execute) → Observation → Memory Update → Final Response. Today
+`react_loop/step.rs:74` returns the assistant text **directly** when there are no
+tool calls; there is no verification/critique seam.
+
+**Design.** Add an **optional, pluggable verification step** between "LLM produced
+final text" and "return": a `Verifier` trait (`base`) with a default no-op impl,
+so behavior is unchanged unless a verifier is configured. Candidate verifiers
+(later): self-critique via `cognit`, schema/goal checks, tool-result consistency.
+Wire the hook at the `step.rs` return site.
+
+**Scope / non-goals.** The seam + no-op default only. Concrete verifiers are
+follow-ups. Keep latency opt-in.
+
+**Affected files.** `base/src/` (Verifier trait), `runtime/src/core/react_loop/step.rs`,
+`runtime/src/core/react_loop/mod.rs` (config).
+
+**Risk.** Low if default is no-op. Test: no-op verifier reproduces current
+behavior; a rejecting verifier forces a re-try/annotation path.
+
+## M-D. Self-Evolution loop wiring  *(doc 1 "Runtime Goal", doc 2 "Self Evolution", doc 3 §20)*
+
+**Problem.** The project's identity is a *self-evolving* runtime, but `metacog` is
+**scaffolding not wired in**: `metacog/src/core/meta_cognition.rs:58` `decide()`
+returns `EvolutionAction`s and `traits.rs:39` `DefaultMetaRuntime` has
+`generate_candidate/sandbox_test/evaluate/migrate/rollback`, yet `runtime` never
+calls `metacog`, and there is no closed loop.
+
+**Design.** Define the evolution loop as *runtime state accumulation* (doc 2's
+framing — NOT model self-training): after a task completes, `runtime` invokes
+`metacog.decide()` on accumulated trace/metrics; `TriggerEvolution` runs the
+existing `generate_candidate → sandbox_test → evaluate → migrate|rollback`
+sequence against **workflow/memory/policy** artifacts (not code). Start with the
+smallest safe loop: observe → evaluate → refine-workflow, gated behind a config
+flag and the Runtime `PermissionManager` (Tier 2a).
+
+**Scope / non-goals.** Wire the existing metacog steps into a bounded,
+config-gated loop over workflow/memory artifacts. No genome/code self-mutation
+in this spec; `migrate` limited to declarative artifacts.
+
+**Affected files.** `runtime/src/core/orchestrator.rs` (post-task hook),
+`metacog/src/core/` (expose a callable loop), config flag in `runtime`.
+
+**Risk.** High (autonomy). Must be default-off, sandboxed, rollback-able,
+permission-gated. Test: loop triggers only when enabled; every migration has a
+rollback; sandbox failure aborts cleanly.
+
+## M-E. SubAgent lifecycle  *(doc 1 "SubAgent")*
+
+**Problem.** Doc 1 prescribes Created→Running→Waiting→Completed→Destroyed. Today
+`sub_agent.rs` has `spawn/update_status/remove` with no explicit state machine or
+teardown guarantees.
+
+**Design.** Introduce an explicit `SubAgentState` enum + transitions and a
+`destroy()` that guarantees resource cleanup (cancel tasks, drop handles). Small,
+self-contained.
+
+**Scope / non-goals.** State machine + teardown; no new scheduling policy.
+
+**Affected files.** `runtime/src/core/sub_agent.rs`, status enum in `base`.
+
+**Risk.** Low. Test: lifecycle transitions are legal-only; destroy cancels
+in-flight work and frees the map slot.
+
+## M-F. Additional Hosts (systemd / user-service / container)  *(doc 4 §5–§8)*
+
+**Problem.** Tier 2b delivers the `RuntimeHost` trait + `DaemonHost`. Doc 4 wants
+`systemctl --user` and system-level deployment plus container. These are the
+follow-on host implementations.
+
+**Design.** Implement `SystemdHost` (user + system units) and a container entry
+on the Tier-2b trait; ship unit files (`aletheond.service`, `--user` variant).
+Depends entirely on Tier 2b landing first.
+
+**Scope / non-goals.** systemd + container hosts + unit files. Cloud/robot hosts
+deferred.
+
+**Affected files.** `runtime/src/host/` (new hosts), packaging (`*.service`).
+
+**Risk.** Low-medium; deployment-only. Test: `systemctl --user start` brings the
+daemon up; graceful shutdown on stop.
+
+## M-G. Positioning / rebrand — Aletheon → "Auro Runtime"  *(doc 1 & 2 titles)*
+
+**Problem/decision (not a code task yet).** All four docs title the project
+**"Auro Runtime"** and prescribe an `auro-*` crate/org naming. The code is
+`aletheon`/`aletheon-*`. Before open-sourcing, this is a naming + org-structure
+**decision** the owner must make: keep `aletheon`, rename to `auro`, or brand the
+product "Auro" while keeping internal crate names. Rename touches every crate,
+binary, config path, and doc.
+
+**Recommendation.** Defer the rename until after Tier 0–2 (don't rename a moving
+target); decide it explicitly as its own change with a mechanical, scripted
+crate-rename + a compatibility note. Flagged here so it isn't forgotten, not
+designed in detail pending the owner's decision.
+
+---
+
 ## Summary table
 
-| Tier | Module | Effort | Blocks / depends | Open-source value | Daily-use value |
+| Tier/ID | Module | Effort | Blocks / depends | Open-source value | Daily-use value |
 |---|---|---|---|---|---|
 | 0 | Hygiene & Truth | Low | — | High | Low |
 | 1 | Governed Memory (own spec) | Med | — | Med | **High** |
 | 2 | Boundary corrections | Med | needs 0; blocks 4 | High | Low |
 | 3 | Provider Manager | Med | independent | Med | **High** |
 | 4 | Workflow + multi-repo | High | needs 2 | High | Med |
+| M-A | Context Manager (compaction unify) | Med | independent | Med | **High** |
+| M-B | Plugin lifecycle trait | Low-Med | — | High | Low |
+| M-C | Result/Verification pipeline | Low (seam) | — | Med | Med |
+| M-D | Self-Evolution loop wiring | High | needs 2a | High | Med |
+| M-E | SubAgent lifecycle | Low | — | Med | Med |
+| M-F | Additional Hosts | Low-Med | needs 2b | Med | Med |
+| M-G | Rebrand Aletheon→Auro (decision) | — | needs 0–2 | High | — |
