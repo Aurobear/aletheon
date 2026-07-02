@@ -5,6 +5,7 @@ pub mod automation;
 pub mod coordinator;
 pub mod daemon;
 pub mod engine;
+pub mod goal;
 pub mod hooks;
 pub mod kernel;
 pub mod memory;
