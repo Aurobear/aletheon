@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -16,6 +18,13 @@ impl TokenUsageBreakdown {
     }
 }
 
+/// USD price per 1K tokens for a provider (mirrors `ProviderPricing` from config).
+#[derive(Debug, Clone, Copy)]
+pub struct PricingRate {
+    pub input_per_1k: f64,
+    pub output_per_1k: f64,
+}
+
 /// Aggregated metrics for a session.
 #[derive(Debug, Clone, Default)]
 struct MetricsState {
@@ -26,6 +35,10 @@ struct MetricsState {
     hook_execution_count: u64,
     total_hook_latency_ms: u64,
     token_usage: TokenUsageBreakdown,
+    /// Per-provider token attribution.
+    per_provider: HashMap<String, TokenUsageBreakdown>,
+    /// Static pricing table (populated from config at init).
+    pricing: HashMap<String, PricingRate>,
 }
 
 /// Exporter that accumulates session metrics.
@@ -76,6 +89,51 @@ impl MetricsExporter {
     /// Get the current token usage breakdown.
     pub fn token_usage(&self) -> &TokenUsageBreakdown {
         &self.state.token_usage
+    }
+
+    /// Record inference attributed to a specific provider (also updates globals).
+    pub fn record_inference_for(&mut self, provider: &str, input_tokens: u64, output_tokens: u64, latency_ms: u64) {
+        self.record_inference(input_tokens, output_tokens, latency_ms);
+        let e = self.state.per_provider.entry(provider.to_string()).or_default();
+        e.input_tokens += input_tokens;
+        e.output_tokens += output_tokens;
+    }
+
+    /// Record cache usage attributed to a specific provider (also updates globals).
+    pub fn record_cache_usage_for(&mut self, provider: &str, read_tokens: u64, write_tokens: u64) {
+        self.record_cache_usage(read_tokens, write_tokens);
+        let e = self.state.per_provider.entry(provider.to_string()).or_default();
+        e.cache_read_tokens += read_tokens;
+        e.cache_write_tokens += write_tokens;
+    }
+
+    /// Token usage for one provider, if any was recorded.
+    pub fn provider_usage(&self, provider: &str) -> Option<&TokenUsageBreakdown> {
+        self.state.per_provider.get(provider)
+    }
+
+    /// Install a static pricing rate for a provider.
+    pub fn set_pricing(&mut self, provider: &str, rate: PricingRate) {
+        self.state.pricing.insert(provider.to_string(), rate);
+    }
+
+    /// Cost in USD for one provider (tracked + priced). Returns `None` if unpriced.
+    pub fn cost_for(&self, provider: &str) -> Option<f64> {
+        let usage = self.state.per_provider.get(provider)?;
+        let rate = self.state.pricing.get(provider)?;
+        Some(
+            (usage.input_tokens as f64 / 1000.0) * rate.input_per_1k
+                + (usage.output_tokens as f64 / 1000.0) * rate.output_per_1k,
+        )
+    }
+
+    /// Total cost across all priced+tracked providers.
+    pub fn total_cost(&self) -> f64 {
+        self.state
+            .per_provider
+            .keys()
+            .filter_map(|p| self.cost_for(p))
+            .sum()
     }
 
     /// Get the number of LLM calls.
@@ -159,5 +217,45 @@ mod tests {
         assert_eq!(exporter.token_usage().cache_read_tokens, 1000);
         assert_eq!(exporter.token_usage().cache_write_tokens, 500);
         assert_eq!(exporter.token_usage().total(), 1500);
+    }
+
+    #[test]
+    fn per_provider_attribution_and_cost() {
+        let mut ex = MetricsExporter::new();
+        ex.record_inference_for("anthropic", 1_000, 500, 300);
+        ex.record_inference_for("openai", 2_000, 1_000, 400);
+        ex.record_cache_usage_for("anthropic", 800, 0);
+
+        // Per-provider attribution
+        let a = ex.provider_usage("anthropic").expect("anthropic tracked");
+        assert_eq!(a.input_tokens, 1_000);
+        assert_eq!(a.output_tokens, 500);
+        assert_eq!(a.cache_read_tokens, 800);
+        let o = ex.provider_usage("openai").expect("openai tracked");
+        assert_eq!(o.input_tokens, 2_000);
+
+        // Global aggregate still correct
+        assert_eq!(ex.token_usage().input_tokens, 3_000);
+        assert_eq!(ex.token_usage().output_tokens, 1_500);
+        assert_eq!(ex.llm_call_count(), 2);
+
+        // Cost: only anthropic priced -> 1.0k*$3 + 0.5k*$15 = $10.50
+        ex.set_pricing(
+            "anthropic",
+            PricingRate { input_per_1k: 3.0, output_per_1k: 15.0 },
+        );
+        assert!((ex.cost_for("anthropic").unwrap() - 10.5).abs() < 1e-9);
+        assert!(ex.cost_for("openai").is_none(), "unpriced provider has no cost");
+        assert!((ex.total_cost() - 10.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn existing_global_tests_still_pass() {
+        // Verify existing global methods still work without per-provider data.
+        let mut ex = MetricsExporter::new();
+        ex.record_inference(100, 50, 300);
+        assert_eq!(ex.llm_call_count(), 1);
+        assert_eq!(ex.token_usage().input_tokens, 100);
+        assert!(ex.provider_usage("any").is_none());
     }
 }
