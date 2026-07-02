@@ -41,39 +41,30 @@
 
 ---
 
-## Phase 1 — Delete the dead `binaries/` crate
+## Phase 1 — Delete the dead `binaries/` crate  ✅ DONE (2026-07-01)
+
+> **Status:** `crates/binaries/` has already been removed by the owner. Verified
+> `ls crates/binaries` → "No such file or directory", and the workspace
+> `Cargo.toml` members list contains no `binaries` entry (only base, cognit,
+> corpus, dasein, interact, memory, metacog, runtime, examples/*). The tasks
+> below are retained as a record; **only Step 3 (build-verify) remains actionable**
+> as a sanity check.
 
 ### Task 1: Remove `crates/binaries/` and prove the workspace still builds
 
 **Files:**
-- Delete: `crates/binaries/` (subdirs `aletheond/`, `aletheon-cli/`, `aletheon-exec/`)
+- Delete: `crates/binaries/` (subdirs `aletheond/`, `aletheon-cli/`, `aletheon-exec/`) — **already deleted**
 
-- [ ] **Step 1: Pre-check — confirm nothing references it**
+- [x] **Step 1: Pre-check — confirm nothing references it** (done implicitly: not a workspace member)
 
-Run:
-```bash
-cd /home/rj001/Bear-ws/work/aletheon
-grep -n '"crates/binaries' Cargo.toml || echo "OK: not a workspace member"
-grep -rn "binaries/" --include=*.toml --include=*.sh --include=*.yml --include=*.yaml . | grep -v "crates/binaries/" || echo "OK: no external refs"
-```
-Expected: both print `OK:`.
+- [x] **Step 2: Delete the crate** — already removed by the owner.
 
-- [ ] **Step 2: Delete the crate**
-
-```bash
-git rm -r crates/binaries
-```
-
-- [ ] **Step 3: Verify the workspace still builds**
+- [ ] **Step 3: Verify the workspace still builds** (only remaining action)
 
 Run: `cargo build --workspace`
-Expected: builds; the real binaries (`aletheond`, `aletheon-exec`, `aletheon`) still resolve from `runtime`/`interact`. (`cargo build -p aletheond -p aletheon-exec -p aletheon` also succeeds.)
+Expected: builds; the real binaries (`aletheond`, `aletheon-exec`, `aletheon`) still resolve from `runtime`/`interact`. (`cargo build -p aletheond -p aletheon-exec -p aletheon` also succeeds.) If this fails, something still referenced `binaries/` — stop and investigate.
 
-- [ ] **Step 4: Commit**
-
-```bash
-git commit -m "chore(hygiene): delete dead crates/binaries (not a workspace member; broken deps)"
-```
+- [x] **Step 4: Commit** — deletion already committed by the owner; no action.
 
 ---
 

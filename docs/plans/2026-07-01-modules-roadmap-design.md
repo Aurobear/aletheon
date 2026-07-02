@@ -22,7 +22,13 @@ engine, a subagent spawner, and a plugin manager. Remaining work is
 ## Decisions (2026-07-01)
 
 - **Do all modules, one step at a time** (owner directive "都做吧,一步一步来").
-- **Rebrand deferred** (M-G) until Tier 0–2 stabilize.
+- **Write plans for all reasonable modules** (owner directive 2026-07-01:
+  "将认为合理的计划都写一下").
+- **Rebrand CANCELLED (M-G dropped).** Owner directive 2026-07-01: "不要改变
+  brand名字,保留目前仓库名字" — keep the `aletheon` brand, crate names, and repo
+  name as-is. M-G is removed from the roadmap; any doc "Auro Runtime" references
+  are treated as the *conceptual model*, not a rename target.
+- **`crates/binaries/` already deleted** by the owner (Tier 0 Phase 1 done).
 - **Recommended implementation sequence** (each step: spec if needed → `plans` →
   implement → validate, on its own `auro/feat/*` branch):
   1. **Tier 1 — Governed Memory** (specced; highest daily value) ← first
@@ -34,7 +40,7 @@ engine, a subagent spawner, and a plugin manager. Remaining work is
   7. **Tier 4 — Workflow persist + multi-repo split** (needs Tier 2)
   8. **M-D — Self-Evolution loop** (needs 2a), **M-I — Goal Layer** (persist
      slice after Tier 1; loop needs 2a), **M-F — Hosts** (needs 2b)
-  9. **M-G — Rebrand** (decision, deferred)
+  9. ~~M-G — Rebrand~~ **CANCELLED** (owner keeps `aletheon` brand + repo name)
 
 ## Ordering & dependencies
 
@@ -519,19 +525,14 @@ sub-goals from Runtime as it did from Interface; loop advances only when enabled
 benefits from Tier 1 (Trace/Workflow scopes) for history; the bare persist+resume
 slice can land after Tier 1 independently.
 
-## M-G. Positioning / rebrand — Aletheon → "Auro Runtime"  *(doc 1 & 2 titles)*
+## M-G. Positioning / rebrand — ~~Aletheon → "Auro Runtime"~~ **CANCELLED**
 
-**Problem/decision (not a code task yet).** All four docs title the project
-**"Auro Runtime"** and prescribe an `auro-*` crate/org naming. The code is
-`aletheon`/`aletheon-*`. Before open-sourcing, this is a naming + org-structure
-**decision** the owner must make: keep `aletheon`, rename to `auro`, or brand the
-product "Auro" while keeping internal crate names. Rename touches every crate,
-binary, config path, and doc.
-
-**Recommendation.** Defer the rename until after Tier 0–2 (don't rename a moving
-target); decide it explicitly as its own change with a mechanical, scripted
-crate-rename + a compatibility note. Flagged here so it isn't forgotten, not
-designed in detail pending the owner's decision.
+**Decision (2026-07-01):** The owner has decided to **keep the `aletheon` brand,
+crate names, binary names, and repository name unchanged** ("不要改变brand名字,
+保留目前仓库名字"). No rename will occur. The four docs' "Auro Runtime" title is
+adopted only as the *conceptual/architectural model* (Runtime > Provider, etc.),
+not as a naming directive. This module is removed from the roadmap; no plan will
+be written for it.
 
 ---
 
@@ -552,4 +553,4 @@ designed in detail pending the owner's decision.
 | M-F | Additional Hosts | Low-Med | needs 2b | Med | Med |
 | M-H | Unify bifurcated memory (FactStore vs MemoryRouter) | Med-High | follows Tier 1; needs A/B decision | Med | Med |
 | M-I | Goal Layer / Persistent Objectives | Med-High | persist slice after Tier 1; loop needs 2a | High | Med |
-| M-G | Rebrand Aletheon→Auro (decision) | — | needs 0–2 | High | — |
+| ~~M-G~~ | ~~Rebrand~~ **CANCELLED** (keep `aletheon` brand + repo) | — | — | — | — |
