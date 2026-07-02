@@ -367,6 +367,15 @@ impl RequestHandler {
         };
         let self_field = Arc::new(Mutex::new(SelfField::new(self_field_config)));
 
+        // Tier 2a: install the Runtime PermissionManager as the permission authority.
+        // This delegates the confirmation verdict from dasein's inline rule to the
+        // Runtime's policy manager (behavior-identical port).
+        {
+            use crate::core::permission_manager::PermissionManager;
+            let mut sf = self_field.lock().await;
+            sf.set_permission_authority(std::sync::Arc::new(PermissionManager::new()));
+        }
+
         // Wire DaseinEventBridge to EventBus if available
         if let Some(ref eb) = event_bus {
             let sf = self_field.lock().await;
