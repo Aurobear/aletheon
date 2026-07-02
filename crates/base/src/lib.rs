@@ -40,6 +40,7 @@ pub use include::meta;
 pub use include::runtime;
 pub use include::self_field;
 pub use include::subsystem;
+pub use include::plugin;
 
 // Shared type modules (from types/)
 pub use types::agent;
@@ -104,6 +105,7 @@ pub use include::self_field::{
     SelfAwareness, SelfFieldOps, SelfState, Verdict, VerdictAction, VerdictHandler,
 };
 pub use include::subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
+pub use include::plugin::{Plugin, PluginContext};
 
 // Shared types (from types/)
 pub use types::agent::Pid;

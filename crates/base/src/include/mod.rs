@@ -10,3 +10,4 @@ pub mod meta;
 pub mod runtime;
 pub mod self_field;
 pub mod subsystem;
+pub mod plugin;
