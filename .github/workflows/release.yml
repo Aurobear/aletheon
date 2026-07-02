@@ -45,7 +45,7 @@ jobs:
 
       - name: Build binaries
         run: |
-          cargo build --release \
+          cargo +stable build --release \
             --target ${{ matrix.target }} \
             -p aletheond -p aletheon-exec -p aletheon-cli
 

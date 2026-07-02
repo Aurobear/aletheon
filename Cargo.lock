@@ -1671,7 +1671,6 @@ dependencies = [
  "ctrlc",
  "dirs",
  "dirs-next",
- "libc",
  "pulldown-cmark",
  "ratatui",
  "serde",

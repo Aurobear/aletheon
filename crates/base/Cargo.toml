@@ -2,6 +2,7 @@
 name = "base"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Aletheon ABI layer - public API interfaces for agent runtime"
 

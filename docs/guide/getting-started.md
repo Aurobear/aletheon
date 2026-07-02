@@ -7,7 +7,7 @@ Get from zero to a running Aletheon agent in 5 minutes.
 ## Prerequisites
 
 - Linux system (Ubuntu 22.04+ or Arch Linux recommended)
-- Rust toolchain 1.75.0+
+- Rust 1.85 or newer. The repository pins Rust 1.85 for reproducible local builds; newer stable toolchains, including Arch Linux's rolling Rust package, are verified separately in CI.
 - At least 4 GB RAM, 2 GB disk space
 
 ---

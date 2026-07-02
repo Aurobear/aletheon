@@ -410,6 +410,16 @@ User Request / System Event
 | **eBPF** | libbpf + BPF CO-RE | Kernel-level perception |
 | **Build** | Cargo workspace | Rust ecosystem |
 
+The minimum supported Rust version is **1.85**. The repository pins that
+toolchain for reproducible builds, while CI also verifies the current stable
+release used by rolling distributions such as Arch Linux.
+
+```bash
+rustup show
+cargo +1.85.0 check --workspace
+cargo +stable check --workspace
+```
+
 ---
 
 ## 17. Open Questions
