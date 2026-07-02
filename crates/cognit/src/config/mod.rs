@@ -443,3 +443,27 @@ impl Default for AppConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_pricing_parses_and_defaults_to_none() {
+        let with = r#"
+            name = "anthropic"
+            base_url = "https://api.anthropic.com"
+            [pricing]
+            input_per_1k = 3.0
+            output_per_1k = 15.0
+        "#;
+        let p: ProviderConfig = toml::from_str(with).unwrap();
+        let pr = p.pricing.expect("pricing present");
+        assert_eq!(pr.input_per_1k, 3.0);
+        assert_eq!(pr.output_per_1k, 15.0);
+
+        let without = "name = \"local\"\nbase_url = \"http://localhost:11434\"\n";
+        let p2: ProviderConfig = toml::from_str(without).unwrap();
+        assert!(p2.pricing.is_none(), "pricing is optional");
+    }
+}

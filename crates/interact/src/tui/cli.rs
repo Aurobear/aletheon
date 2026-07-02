@@ -4,6 +4,7 @@
 //! JSON-RPC request over the daemon socket and exits.
 
 use super::debug;
+use super::workflow;
 
 use std::io;
 use std::path::PathBuf;
@@ -108,6 +109,13 @@ pub enum Command {
         #[command(subcommand)]
         action: MemoryAction,
     },
+
+    /// Saved workflow management
+    #[command(alias = "wf")]
+    Workflow {
+        #[command(subcommand)]
+        action: workflow::WorkflowAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -210,6 +218,7 @@ async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
         }
         Command::Debug { action } => debug::run(socket, action).await,
         Command::Memory { action } => memory_cmd(socket, action).await,
+        Command::Workflow { action } => workflow::run(socket, action).await,
     }
 }
 
