@@ -128,3 +128,169 @@ pub struct PipelineResult {
     /// Whether a rollback was performed (candidate was generated but not adopted).
     pub rolled_back: bool,
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base::genome::*;
+    use base::meta::Recommendation;
+    use base::{Subsystem, SubsystemHealth, TestResult, Version};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use async_trait::async_trait;
+
+    fn genome() -> Genome {
+        Genome {
+            topology: Topology { subsystems: vec![] },
+            identity: IdentitySpec {
+                name: "t".into(),
+                description: "t".into(),
+                self_model: "t".into(),
+            },
+            boundary: BoundarySpec { rules: vec![] },
+            care: CareSpec { priorities: vec![] },
+            memory: MemorySpec {
+                backends: vec![],
+                compaction_strategy: "none".into(),
+            },
+            mutation: MutationSpec {
+                allowed_targets: vec!["care.priorities".into()],
+                require_sandbox: false,
+                require_self_field_approval: false,
+            },
+            lifecycle: LifecycleSpec {
+                auto_compact: false,
+                health_check_interval_secs: 60,
+                max_idle_time_secs: 3600,
+            },
+        }
+    }
+
+    struct RejectingMeta {
+        rollbacks: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Subsystem for RejectingMeta {
+        fn name(&self) -> &str { "reject-meta" }
+        fn version(&self) -> Version { Version::new(0, 1, 0) }
+        async fn init(&mut self, _c: &base::SubsystemContext) -> anyhow::Result<()> { Ok(()) }
+        async fn shutdown(&mut self) -> anyhow::Result<()> { Ok(()) }
+        async fn health(&self) -> SubsystemHealth { SubsystemHealth::Healthy }
+    }
+
+    #[async_trait]
+    impl MetaRuntimeOps for RejectingMeta {
+        async fn read_genome(&self) -> anyhow::Result<Genome> { Ok(genome()) }
+        async fn generate_candidate(&self, _i: &MutationIntent) -> anyhow::Result<RuntimeCandidate> {
+            Ok(RuntimeCandidate {
+                id: uuid::Uuid::new_v4(),
+                genome: genome(),
+                changes: vec!["c".into()],
+                generated_at: chrono::Utc::now(),
+            })
+        }
+        async fn sandbox_test(&self, _c: &RuntimeCandidate) -> anyhow::Result<TestResult> {
+            Ok(TestResult {
+                passed: false,
+                tests_run: 1,
+                tests_passed: 0,
+                tests_failed: 1,
+                failures: vec!["boom".into()],
+                elapsed_ms: 1,
+            })
+        }
+        async fn evaluate(&self, _c: &RuntimeCandidate, _t: &TestResult) -> anyhow::Result<Evaluation> {
+            Ok(Evaluation {
+                score: 0.0,
+                strengths: vec![],
+                weaknesses: vec!["failed".into()],
+                recommendation: Recommendation::Reject,
+            })
+        }
+        async fn migrate(&self, _c: &RuntimeCandidate) -> anyhow::Result<MigrationResult> {
+            panic!("migrate must not be called on a rejected candidate")
+        }
+        async fn rollback(&self) -> anyhow::Result<()> {
+            self.rollbacks.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn current_version(&self) -> Version { Version::new(0, 1, 0) }
+    }
+
+    #[tokio::test]
+    async fn rejected_candidate_is_rolled_back() {
+        let rollbacks = Arc::new(AtomicUsize::new(0));
+        let meta = RejectingMeta { rollbacks: rollbacks.clone() };
+        let pipeline = MorphogenesisPipeline::new(meta);
+        let intent = MutationIntent {
+            target: "care.priorities".into(),
+            change: serde_json::json!({ "action": "adjust" }),
+            reason: "test".into(),
+            reversible: true,
+        };
+        let result = pipeline.run(&intent).await.unwrap();
+        assert!(!result.success, "rejected candidate must not count as success");
+        assert!(result.rolled_back, "rejected candidate must be rolled back");
+        assert_eq!(rollbacks.load(Ordering::SeqCst), 1, "rollback() must fire exactly once");
+    }
+
+    #[tokio::test]
+    async fn sandbox_error_rolls_back() {
+        use std::sync::atomic::AtomicBool;
+
+        struct SandboxFailingMeta {
+            rolled_back: Arc<AtomicBool>,
+        }
+
+        #[async_trait]
+        impl Subsystem for SandboxFailingMeta {
+            fn name(&self) -> &str { "sandbox-fail" }
+            fn version(&self) -> Version { Version::new(0, 1, 0) }
+            async fn init(&mut self, _c: &base::SubsystemContext) -> anyhow::Result<()> { Ok(()) }
+            async fn shutdown(&mut self) -> anyhow::Result<()> { Ok(()) }
+            async fn health(&self) -> SubsystemHealth { SubsystemHealth::Healthy }
+        }
+
+        #[async_trait]
+        impl MetaRuntimeOps for SandboxFailingMeta {
+            async fn read_genome(&self) -> anyhow::Result<Genome> { Ok(genome()) }
+            async fn generate_candidate(&self, _i: &MutationIntent) -> anyhow::Result<RuntimeCandidate> {
+                Ok(RuntimeCandidate {
+                    id: uuid::Uuid::new_v4(),
+                    genome: genome(),
+                    changes: vec!["c".into()],
+                    generated_at: chrono::Utc::now(),
+                })
+            }
+            async fn sandbox_test(&self, _c: &RuntimeCandidate) -> anyhow::Result<TestResult> {
+                anyhow::bail!("sandbox crashed")
+            }
+            async fn evaluate(&self, _c: &RuntimeCandidate, _t: &TestResult) -> anyhow::Result<Evaluation> {
+                unimplemented!()
+            }
+            async fn migrate(&self, _c: &RuntimeCandidate) -> anyhow::Result<MigrationResult> {
+                unimplemented!()
+            }
+            async fn rollback(&self) -> anyhow::Result<()> {
+                self.rolled_back.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            fn current_version(&self) -> Version { Version::new(0, 1, 0) }
+        }
+
+        let rolled_back = Arc::new(AtomicBool::new(false));
+        let meta = SandboxFailingMeta { rolled_back: rolled_back.clone() };
+        let pipeline = MorphogenesisPipeline::new(meta);
+        let intent = MutationIntent {
+            target: "care.priorities".into(),
+            change: serde_json::json!({}),
+            reason: "test".into(),
+            reversible: true,
+        };
+        let result = pipeline.run(&intent).await;
+        assert!(result.is_err(), "sandbox crash must error");
+        assert!(rolled_back.load(Ordering::SeqCst), "sandbox crash must trigger rollback");
+    }
+}

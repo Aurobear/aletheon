@@ -334,3 +334,44 @@ async fn sliding_window_eviction() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Test: Disabled coordinator never touches the pipeline
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn disabled_coordinator_is_a_noop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = EvolutionConfig {
+        enabled: false,          // default-off gate
+        trigger_every_n_turns: 1, // would trigger every turn if enabled
+        trigger_on_failure: true,
+        window_size: 20,
+        lineage_dir: tmp.path().to_path_buf(),
+    };
+    let coordinator = EvolutionCoordinator::new(config).unwrap();
+    let (mock, gen_calls, mig_calls) = MockMetaRuntime::new();
+    let pipeline = MorphogenesisPipeline::new(mock);
+
+    let summary = coordinator
+        .post_turn(
+            "task", "error output", false, 5, 2, 1000, 1,
+            &pipeline,
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    assert!(!summary.evolution_triggered, "disabled loop must not trigger");
+    assert_eq!(
+        gen_calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no candidate generated"
+    );
+    assert_eq!(
+        mig_calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no migration"
+    );
+    assert!(!summary.reflected, "disabled loop skips reflection too");
+}
