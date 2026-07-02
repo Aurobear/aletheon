@@ -5,7 +5,7 @@ mod provider;
 mod infra;
 mod genome;
 
-pub use agent::{AgentConfig, AgentLoopConfig, CircuitBreakerConfig, HooksConfig, PerceptionConfig, RuntimeConfig};
+pub use agent::{AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, HooksConfig, PerceptionConfig, RuntimeConfig};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
 pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig};
 pub use genome::GenomeConfig;
@@ -46,6 +46,8 @@ pub struct AppConfig {
     pub hooks: HooksConfig,
     #[serde(default)]
     pub perception: PerceptionConfig,
+    #[serde(default)]
+    pub evolution: EvolutionSettings,
 }
 
 impl AppConfig {
@@ -201,6 +203,7 @@ impl Default for AppConfig {
             daemon: DaemonConfig::default(),
             hooks: HooksConfig::default(),
             perception: PerceptionConfig::default(),
+            evolution: EvolutionSettings::default(),
         }
     }
 }

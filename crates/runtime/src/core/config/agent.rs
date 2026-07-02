@@ -160,6 +160,35 @@ impl Default for PerceptionConfig {
 }
 
 // ---------------------------------------------------------------------------
+// EvolutionSettings
+// ---------------------------------------------------------------------------
+
+/// Self-evolution loop settings. Default OFF (HIGH-risk autonomy).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionSettings {
+    /// Master switch for the self-evolution loop.
+    /// When false (default), the loop is inert regardless of other settings.
+    #[serde(default)] // bool default = false
+    pub enabled: bool,
+    /// Trigger evolution every N turns.
+    #[serde(default = "default_evolution_trigger_every_n_turns")]
+    pub trigger_every_n_turns: usize,
+}
+
+fn default_evolution_trigger_every_n_turns() -> usize {
+    10
+}
+
+impl Default for EvolutionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            trigger_every_n_turns: 10,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // AgentLoopConfig
 // ---------------------------------------------------------------------------
 

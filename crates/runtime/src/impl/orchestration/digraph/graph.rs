@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Duration;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use super::super::registry::AgentRegistry;
@@ -17,6 +19,60 @@ pub enum JoinStrategy {
     FirstN(usize),
     /// Wait for all with timeout.
     TimeoutAll(std::time::Duration),
+}
+
+// ---------------------------------------------------------------------------
+// Serde mirror types — JoinStrategy holds Duration (non-serde), so we
+// provide a serializable mirror for filesystem persistence.
+// ---------------------------------------------------------------------------
+
+/// Serde-friendly mirror of [`JoinStrategy`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum JoinStrategyDef {
+    All,
+    Any,
+    FirstN(usize),
+    /// Timeout in milliseconds (avoids `Duration` in the serialized form).
+    TimeoutAll { millis: u64 },
+}
+
+impl From<&JoinStrategy> for JoinStrategyDef {
+    fn from(j: &JoinStrategy) -> Self {
+        match j {
+            JoinStrategy::All => JoinStrategyDef::All,
+            JoinStrategy::Any => JoinStrategyDef::Any,
+            JoinStrategy::FirstN(n) => JoinStrategyDef::FirstN(*n),
+            JoinStrategy::TimeoutAll(d) => JoinStrategyDef::TimeoutAll {
+                millis: d.as_millis() as u64,
+            },
+        }
+    }
+}
+
+impl From<&JoinStrategyDef> for JoinStrategy {
+    fn from(j: &JoinStrategyDef) -> Self {
+        match j {
+            JoinStrategyDef::All => JoinStrategy::All,
+            JoinStrategyDef::Any => JoinStrategy::Any,
+            JoinStrategyDef::FirstN(n) => JoinStrategy::FirstN(*n),
+            JoinStrategyDef::TimeoutAll { millis } => {
+                JoinStrategy::TimeoutAll(Duration::from_millis(*millis))
+            }
+        }
+    }
+}
+
+/// A serializable, on-disk representation of a [`DiGraph`] workflow.
+///
+/// Nodes are stored as a sorted `Vec` (not the runtime `HashMap`) so JSON is
+/// deterministic. `Node` / `Edge` already derive serde.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowDef {
+    pub id: String,
+    pub entry_node: String,
+    pub join_strategy: JoinStrategyDef,
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
 }
 
 /// A directed acyclic graph workflow.
@@ -189,6 +245,32 @@ impl DiGraph {
         }
 
         Ok(state)
+    }
+
+    /// Capture this graph into a serializable definition for persistence.
+    pub fn to_def(&self) -> WorkflowDef {
+        let mut nodes: Vec<Node> = self.nodes.values().cloned().collect();
+        nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        WorkflowDef {
+            id: self.id.clone(),
+            entry_node: self.entry_node.clone(),
+            join_strategy: JoinStrategyDef::from(&self.join_strategy),
+            nodes,
+            edges: self.edges.clone(),
+        }
+    }
+
+    /// Reconstruct an executable graph from a serialized definition.
+    pub fn from_def(def: &WorkflowDef) -> Self {
+        let mut g = DiGraph::new(&def.id, &def.entry_node);
+        g.join_strategy = JoinStrategy::from(&def.join_strategy);
+        for n in &def.nodes {
+            g.add_node(n.clone());
+        }
+        for e in &def.edges {
+            g.add_edge(e.clone());
+        }
+        g
     }
 
     async fn execute_node(
@@ -400,5 +482,96 @@ mod tests {
 
         let outgoing = graph.outgoing("a");
         assert_eq!(outgoing.len(), 2);
+    }
+
+    // --- WorkflowDef round-trip tests ---
+
+    fn sample_graph() -> DiGraph {
+        let mut g = DiGraph::new("wf-1", "a");
+        g.join_strategy = JoinStrategy::FirstN(2);
+        g.add_node(make_node(
+            "a",
+            NodeKind::Branch {
+                condition: "x".into(),
+            },
+        ));
+        g.add_node(make_node(
+            "b",
+            NodeKind::Branch {
+                condition: "y".into(),
+            },
+        ));
+        g.add_edge(Edge {
+            from: "a".into(),
+            to: "b".into(),
+            condition: ConditionExpr::Always,
+        });
+        g
+    }
+
+    #[test]
+    fn workflow_def_round_trips_through_json() {
+        let g = sample_graph();
+        let def = WorkflowDef {
+            id: g.id.clone(),
+            entry_node: g.entry_node.clone(),
+            join_strategy: JoinStrategyDef::from(&g.join_strategy),
+            nodes: g.nodes.values().cloned().collect(),
+            edges: g.edges.clone(),
+        };
+        let json = serde_json::to_string_pretty(&def).unwrap();
+        let back: WorkflowDef = serde_json::from_str(&json).unwrap();
+        let g2 = DiGraph::from_def(&back);
+
+        assert_eq!(g2.id, "wf-1");
+        assert_eq!(g2.entry_node, "a");
+        assert_eq!(g2.nodes.len(), 2);
+        assert_eq!(g2.edges.len(), 1);
+        assert_eq!(g2.edges[0].from, "a");
+        assert!(matches!(g2.join_strategy, JoinStrategy::FirstN(2)));
+        assert_eq!(g2.topological_sort().unwrap(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn workflow_def_round_trips_via_to_from_def() {
+        let g = sample_graph();
+        let def = g.to_def();
+        let g2 = DiGraph::from_def(&def);
+
+        assert_eq!(g2.id, g.id);
+        assert_eq!(g2.entry_node, g.entry_node);
+        assert_eq!(g2.nodes.len(), g.nodes.len());
+        assert_eq!(g2.edges.len(), g.edges.len());
+        assert_eq!(
+            g2.topological_sort().unwrap(),
+            g.topological_sort().unwrap()
+        );
+    }
+
+    #[test]
+    fn join_strategy_def_round_trip_all_variants() {
+        // All
+        let js = JoinStrategy::All;
+        let def = JoinStrategyDef::from(&js);
+        let back = JoinStrategy::from(&def);
+        assert!(matches!(back, JoinStrategy::All));
+
+        // Any
+        let js = JoinStrategy::Any;
+        let def = JoinStrategyDef::from(&js);
+        let back = JoinStrategy::from(&def);
+        assert!(matches!(back, JoinStrategy::Any));
+
+        // FirstN
+        let js = JoinStrategy::FirstN(3);
+        let def = JoinStrategyDef::from(&js);
+        let back = JoinStrategy::from(&def);
+        assert!(matches!(back, JoinStrategy::FirstN(3)));
+
+        // TimeoutAll
+        let js = JoinStrategy::TimeoutAll(Duration::from_millis(5000));
+        let def = JoinStrategyDef::from(&js);
+        let back = JoinStrategy::from(&def);
+        assert!(matches!(back, JoinStrategy::TimeoutAll(d) if d == Duration::from_millis(5000)));
     }
 }

@@ -4,6 +4,6 @@ pub mod node;
 pub mod state;
 
 pub use edge::{ConditionExpr, Edge};
-pub use graph::DiGraph;
+pub use graph::{DiGraph, JoinStrategy, JoinStrategyDef, WorkflowDef};
 pub use node::{Node, NodeKind, NodeStatus};
 pub use state::GraphState;
