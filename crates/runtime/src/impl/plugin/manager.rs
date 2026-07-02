@@ -8,6 +8,7 @@ use tracing::{info, warn};
 use super::loader::PluginLoader;
 use super::manifest::PluginManifest;
 use super::runtime::PluginRuntime;
+use base::plugin::{Plugin, PluginContext};
 use base::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 /// Plugin lifecycle state.
@@ -25,6 +26,7 @@ pub struct ManagedPlugin {
     pub manifest: PluginManifest,
     pub state: PluginState,
     pub tools: Vec<Arc<dyn Tool>>,
+    pub plugin: Option<Box<dyn Plugin>>,
 }
 
 /// Plugin manager — manages plugin lifecycle.
@@ -72,6 +74,7 @@ impl PluginManager {
                                 manifest: manifest.clone(),
                                 state: PluginState::Error(e.to_string()),
                                 tools: Vec::new(),
+                                plugin: None,
                             },
                         );
                         continue;
@@ -87,6 +90,7 @@ impl PluginManager {
                         manifest: manifest.clone(),
                         state: PluginState::Loaded,
                         tools,
+                        plugin: None,
                     },
                 );
 
@@ -96,6 +100,66 @@ impl PluginManager {
 
         info!(count = loaded, "Plugins loaded");
         Ok(loaded)
+    }
+
+    /// Load an in-process plugin that implements the `Plugin` lifecycle trait.
+    /// Calls `init` and, on success, tracks it as `PluginState::Active`, merging
+    /// any capabilities it registers into its tool set. `Tool`-only plugins keep
+    /// using `load_all` and are unaffected.
+    pub async fn load_native(
+        &self,
+        manifest: PluginManifest,
+        mut plugin: Box<dyn Plugin>,
+    ) -> Result<(), anyhow::Error> {
+        let plugin_dir = self.resolve_plugin_dir(&manifest);
+
+        // Manifest-declared execute-only tools still work (best-effort; a missing
+        // command only warns inside from_entry). Native/unsupported runtimes just
+        // yield no manifest tools -- the plugin's capabilities() still apply.
+        let mut tools: Vec<Arc<dyn Tool>> =
+            match PluginRuntime::from_entry(&manifest.entry, &plugin_dir) {
+                Ok(rt) => self.create_plugin_tools(&manifest, rt),
+                Err(_) => Vec::new(),
+            };
+
+        let ctx = PluginContext {
+            plugin_id: manifest.id.clone(),
+            working_dir: plugin_dir,
+            config: serde_json::Value::Null,
+        };
+
+        let id = manifest.id.clone();
+        let mut plugins = self.plugins.write().await;
+
+        match plugin.init(&ctx).await {
+            Ok(()) => {
+                tools.extend(plugin.capabilities());
+                info!(id = id.as_str(), "Plugin init complete; activating");
+                plugins.insert(
+                    id,
+                    ManagedPlugin {
+                        manifest,
+                        state: PluginState::Active,
+                        tools,
+                        plugin: Some(plugin),
+                    },
+                );
+                Ok(())
+            }
+            Err(e) => {
+                warn!(id = id.as_str(), error = %e, "Plugin init failed");
+                plugins.insert(
+                    id,
+                    ManagedPlugin {
+                        manifest,
+                        state: PluginState::Error(e.to_string()),
+                        tools: Vec::new(),
+                        plugin: None,
+                    },
+                );
+                Err(e)
+            }
+        }
     }
 
     /// Get all active plugin tools.
@@ -118,6 +182,11 @@ impl PluginManager {
     pub async fn unload(&self, plugin_id: &str) -> Result<(), String> {
         let mut plugins = self.plugins.write().await;
         if let Some(plugin) = plugins.get_mut(plugin_id) {
+            if let Some(mut lifecycle) = plugin.plugin.take() {
+                if let Err(e) = lifecycle.shutdown().await {
+                    warn!(id = plugin_id, error = %e, "Plugin shutdown failed");
+                }
+            }
             plugin.state = PluginState::Unloaded;
             plugin.tools.clear();
             info!(id = plugin_id, "Plugin unloaded");
@@ -251,5 +320,116 @@ impl Tool for PluginTool {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use base::plugin::{Plugin, PluginContext};
+    use base::include::subsystem::Version;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc as StdArc;
+
+    struct SamplePlugin {
+        init_calls: StdArc<AtomicUsize>,
+        shutdown_calls: StdArc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Plugin for SamplePlugin {
+        fn id(&self) -> &str {
+            "sample"
+        }
+        fn version(&self) -> Version {
+            Version::new(0, 1, 0)
+        }
+        async fn init(&mut self, _ctx: &PluginContext) -> anyhow::Result<()> {
+            self.init_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn shutdown(&mut self) -> anyhow::Result<()> {
+            self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn sample_manifest() -> PluginManifest {
+        PluginManifest {
+            id: "sample".into(),
+            name: "Sample".into(),
+            version: "0.1.0".into(),
+            description: String::new(),
+            author: String::new(),
+            entry: "cmd:./noop.sh".into(),
+            tools: vec![],
+            hooks: vec![],
+            dependencies: vec![],
+            min_agent_version: None,
+            permissions: vec![],
+            plugin_permissions: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn load_native_fires_init_and_activates() {
+        let mgr = PluginManager::new(vec![std::env::temp_dir()]);
+        let init = StdArc::new(AtomicUsize::new(0));
+        let down = StdArc::new(AtomicUsize::new(0));
+        let plugin = Box::new(SamplePlugin {
+            init_calls: init.clone(),
+            shutdown_calls: down.clone(),
+        });
+        mgr.load_native(sample_manifest(), plugin).await.unwrap();
+        assert_eq!(init.load(Ordering::SeqCst), 1, "init must fire once on load");
+        assert_eq!(mgr.get_state("sample").await, Some(PluginState::Active));
+    }
+
+    #[tokio::test]
+    async fn unload_fires_shutdown_and_unloads() {
+        let mgr = PluginManager::new(vec![std::env::temp_dir()]);
+        let init = StdArc::new(AtomicUsize::new(0));
+        let down = StdArc::new(AtomicUsize::new(0));
+        let plugin = Box::new(SamplePlugin {
+            init_calls: init.clone(),
+            shutdown_calls: down.clone(),
+        });
+        mgr.load_native(sample_manifest(), plugin).await.unwrap();
+        mgr.unload("sample").await.unwrap();
+        assert_eq!(down.load(Ordering::SeqCst), 1, "shutdown must fire once on unload");
+        assert_eq!(mgr.get_state("sample").await, Some(PluginState::Unloaded));
+    }
+
+    #[tokio::test]
+    async fn tool_only_plugin_unaffected_by_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let pdir = dir.path().join("tool-only");
+        std::fs::create_dir_all(&pdir).unwrap();
+        std::fs::write(
+            pdir.join("plugin.toml"),
+            r#"
+id = "tool-only"
+name = "Tool Only"
+version = "0.1.0"
+entry = "cmd:./run.sh"
+
+[[tools]]
+name = "echo"
+description = "echo tool"
+input_schema = {}
+permission_level = "L0"
+"#,
+        )
+        .unwrap();
+
+        let mgr = PluginManager::new(vec![dir.path().to_path_buf()]);
+        mgr.load_all().await.unwrap();
+        assert_eq!(mgr.get_state("tool-only").await, Some(PluginState::Loaded));
+        assert!(
+            mgr.get_tools().await.iter().any(|t| t.name() == "echo"),
+            "Tool-only plugin's tool must still surface"
+        );
+        mgr.unload("tool-only").await.unwrap();
+        assert_eq!(mgr.get_state("tool-only").await, Some(PluginState::Unloaded));
     }
 }
