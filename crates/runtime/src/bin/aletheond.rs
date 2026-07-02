@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
+use runtime::host::RuntimeHost;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -32,5 +33,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    runtime::r#impl::daemon::run(args.config, args.env, args.socket).await
+    let mut host = runtime::host::DaemonHost::new(args.config, args.env, args.socket);
+    host.init().await?;
+    Box::new(host).serve().await
 }

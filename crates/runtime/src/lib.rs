@@ -3,6 +3,8 @@ pub mod core;
 pub mod r#impl;
 pub mod tools;
 
+pub mod host;
+
 // Re-export from core for backward compatibility
 pub use core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use core::config::{
