@@ -19,6 +19,22 @@ The Provider trait is clean, there is a `MemoryBackend` trait, a DAG workflow
 engine, a subagent spawner, and a plugin manager. Remaining work is
 **completion, boundary correction, and hygiene** — not a rebuild.
 
+## Decisions (2026-07-01)
+
+- **Do all modules, one step at a time** (owner directive "都做吧,一步一步来").
+- **Rebrand deferred** (M-G) until Tier 0–2 stabilize.
+- **Recommended implementation sequence** (each step: spec if needed → `plans` →
+  implement → validate, on its own `auro/feat/*` branch):
+  1. **Tier 1 — Governed Memory** (specced; highest daily value) ← first
+  2. **Tier 0 — Hygiene** (cheap, unblocks, needed for OSS)
+  3. **M-A — Context Manager** (fixes long-conversation break)
+  4. **Tier 2 — Boundary corrections** (blocks Tier 4)
+  5. **Tier 3 — Provider Manager** (independent)
+  6. **M-B / M-C / M-E** (small additive: plugin trait, verify seam, subagent)
+  7. **Tier 4 — Workflow persist + multi-repo split** (needs Tier 2)
+  8. **M-D — Self-Evolution loop** (needs 2a), **M-F — Hosts** (needs 2b)
+  9. **M-G — Rebrand** (decision, deferred)
+
 ## Ordering & dependencies
 
 ```
