@@ -7,8 +7,6 @@ description = "Aletheon Brain core - reasoning, planning, and reflection"
 
 [dependencies]
 base = { path = "../base" }
-corpus = { path = "../corpus", features = ["input", "display", "a11y", "ocr"] }
-interact = { path = "../interact" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }

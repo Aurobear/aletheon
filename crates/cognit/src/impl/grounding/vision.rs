@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use base::message::{ContentBlock, ImageSource, Message, Role};
-use interact::acix::grounding::{GroundingProvider, GroundingResult};
-use corpus::drivers::driver::types::Image;
+use base::types::grounding::{GroundingProvider, GroundingResult};
+use base::types::vision::Image;
 
 use crate::r#impl::llm::provider::LlmProvider;
 

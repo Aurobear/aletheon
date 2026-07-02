@@ -88,36 +88,8 @@ pub enum Key {
     Super,
 }
 
-/// RGB image
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Image {
-    pub width: u32,
-    pub height: u32,
-    pub data: Vec<u8>, // RGB bytes, row-major
-}
-
-impl Image {
-    /// Convert raw RGB image data to base64-encoded PNG.
-    /// Returns (media_type, base64_data) suitable for LLM vision APIs.
-    pub fn to_base64_png(&self) -> anyhow::Result<(String, String)> {
-        use std::io::Cursor;
-
-        let mut png_buf = Vec::new();
-        {
-            let mut cursor = Cursor::new(&mut png_buf);
-            let mut encoder = png::Encoder::new(&mut cursor, self.width, self.height);
-            encoder.set_color(png::ColorType::Rgb);
-            encoder.set_depth(png::BitDepth::Eight);
-            let mut writer = encoder.write_header()?;
-            writer.write_image_data(&self.data)?;
-            writer.finish()?;
-        }
-
-        use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&png_buf);
-        Ok(("image/png".to_string(), b64))
-    }
-}
+// Re-exported from base (Tier 2c) for backward compatibility.
+pub use base::types::vision::{Bounds, Image};
 
 /// UI element
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,15 +101,6 @@ pub struct Element {
     pub state: Vec<String>,
     pub actions: Vec<String>,
     pub children: Vec<Element>,
-}
-
-/// Screen bounds
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct Bounds {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
 }
 
 /// UI tree

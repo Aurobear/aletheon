@@ -13,3 +13,5 @@ pub mod permission;
 pub mod resource;
 pub mod sandbox;
 pub mod tool;
+pub mod vision;
+pub mod grounding;
