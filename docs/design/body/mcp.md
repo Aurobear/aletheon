@@ -1,4 +1,4 @@
-> Migrated from docs/design/execution/mcp-integration.md — code paths updated to aletheon-* crate structure
+> Migrated from docs/design/execution/mcp-integration.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # MCP 集成 (Model Context Protocol Integration)
 
@@ -273,7 +273,7 @@ enum McpError {
 | **工具适配** | `mcp/wrapper.rs` — McpToolWrapper 适配 Tool trait，权限基于信任等级 |
 | **配置** | `mcp/config.rs` — McpConfig + McpServerConfig + McpTransportConfig + McpTrustLevel |
 
-**已实现的文件:** `crates/aletheon-body/src/impl/mcp/` (mod.rs, client.rs, config.rs, transport.rs, wrapper.rs)
+**已实现的文件:** `crates/corpus/src/impl/mcp/` (mod.rs, client.rs, config.rs, transport.rs, wrapper.rs)
 
 **未实现的设计规格（本文档保留）:**
 - 资源/提示词 API
@@ -320,4 +320,4 @@ enum McpError {
 | McpNotification | ✅ 已实现 | `mcp/transport.rs` | `notifications/tools/list_changed` |
 | McpConfig | ✅ 已实现 | `mcp/config.rs` | 服务器配置 + 信任等级 |
 
-**代码路径:** `crates/aletheon-body/src/impl/mcp/` (6 files: mod.rs, client.rs, config.rs, transport.rs, wrapper.rs, auth.rs)
+**代码路径:** `crates/corpus/src/impl/mcp/` (6 files: mod.rs, client.rs, config.rs, transport.rs, wrapper.rs, auth.rs)

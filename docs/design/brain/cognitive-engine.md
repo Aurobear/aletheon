@@ -1,6 +1,6 @@
 # 认知引擎 (Cognitive Engine)
 
-> Migrated from docs/design/core/cognitive-engine.md — code paths updated to aletheon-* crate structure
+> Migrated from docs/design/core/cognitive-engine.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 > Note: Context compaction/compression moved to runtime/memory; LoopDetector integration moved to self/loop-detector.md
 
 > 驱动 Agent 推理与决策的核心循环，采用 ReAct 工具循环 + content-block 消息协议。主动行为引擎。

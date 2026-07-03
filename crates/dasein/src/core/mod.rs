@@ -74,7 +74,7 @@ impl Default for SelfFieldConfig {
             attention_decay_rate: 0.001,
             continuity_max_gap: Duration::hours(24),
             db_path: None,
-            enable_dasein: false,
+            enable_dasein: true,
             dasein_retention_depth: 50,
             dasein_decay_rate: 0.8,
         }

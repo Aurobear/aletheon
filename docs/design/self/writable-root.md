@@ -1,4 +1,4 @@
-> Merged from docs/design/security/writable-root.md + docs/design/security/security-model.md §4.4-4.8 — code paths updated to aletheon-* crate structure
+> Merged from docs/design/security/writable-root.md + docs/design/security/security-model.md §4.4-4.8 — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # WritableRoot 路径隔离
 
@@ -268,7 +268,7 @@ WritableRoot 作为 PolicyEngine 的子组件，在工具调用链中介入路�
 ## Implementation Summary
 
 **Code Locations:**
-- `crates/aletheon-body/src/impl/sandbox/mod.rs` — WritableRoot (planned, not yet implemented)
+- `crates/corpus/src/impl/sandbox/mod.rs` — WritableRoot (planned, not yet implemented)
 
 **Key Types/Traits to Implement:**
 - `WritableRoot` — root path, read_only_subpaths, protected_metadata_names, system_readonly

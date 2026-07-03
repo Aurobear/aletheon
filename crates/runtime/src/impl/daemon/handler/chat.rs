@@ -288,9 +288,14 @@ impl RequestHandler {
         let session_approvals_arc = self.session_approvals.clone();
         let notify_tx_arc = self.notify_tx.clone();
         let debug_perf_arc = self.debug_perf.clone();
+        let self_field_arc = self.self_field.clone();
         let working_dir = std::env::current_dir().unwrap_or_default();
         let session_id = self.session_manager.lock().await.session_id.clone();
         let turn_count = self.session_manager.lock().await.turn_count();
+
+        // Clone self_field_arc before the execute_tool closure moves it,
+        // so the tokio::spawn block below can also use it for per-turn Dasein injections.
+        let self_field_arc_for_react = self_field_arc.clone();
 
         let execute_tool = move |id: &str, name: &str, input: &serde_json::Value| {
             let runner = runner.clone();
@@ -301,6 +306,7 @@ impl RequestHandler {
             let session_approvals_arc = session_approvals_arc.clone();
             let notify_tx_arc = notify_tx_arc.clone();
             let debug_perf = debug_perf_arc.clone();
+            let self_field_arc = self_field_arc.clone();
             let call_id = id.to_string();
             let name = name.to_string();
             let input = input.clone();
@@ -352,6 +358,37 @@ impl RequestHandler {
                         if approved {
                             info!(tool = %name, "Auto-approving tool from session approval cache");
                         }
+                    }
+                }
+
+                // SelfField review per-tool
+                {
+                    let tool_intent = Intent {
+                        action: name.clone(),
+                        parameters: input.clone(),
+                        source: IntentSource::Body,
+                        description: format!("Tool call: {}", name),
+                    };
+                    let sf_ctx = AbiContext::new(&session_id, working_dir.clone());
+                    let sf = self_field_arc.lock().await;
+                    match sf.review(&tool_intent, &sf_ctx).await {
+                        Ok(Verdict::Deny { reason }) => {
+                            let _ = sf
+                                .narrate("tool_blocked", &format!("{}: {}", name, reason))
+                                .await;
+                            return (
+                                format!("Tool blocked by SelfField: {}", reason),
+                                true,
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                tool = %name,
+                                "SelfField review error, proceeding"
+                            );
+                        }
+                        _ => {}
                     }
                 }
 
@@ -454,6 +491,7 @@ impl RequestHandler {
         let llm_clone = llm.clone();
         let tool_defs_clone = tool_defs.clone();
         let goal_message = message.to_string();
+        let goal_message_for_gw = goal_message.clone();
 
         // Pre-turn proactive compaction: compact the persisted history before
         // seeding the ReAct loop so the seed is already within token budget.
@@ -472,6 +510,13 @@ impl RequestHandler {
             // Seed with existing conversation history for context continuity
             react_loop.seed_messages(existing_messages);
             react_loop.set_goal(goal_message.clone());
+            let sf_for_ctx = self_field_arc_for_react.clone();
+            react_loop.set_dasein_context_provider(Box::new(move || {
+                sf_for_ctx
+                    .try_lock()
+                    .ok()
+                    .and_then(|sf| sf.dasein_prompt_injection())
+            }));
             event_sink.emit(Event::GoalSet {
                 goal: goal_message,
                 sub_goals: vec![],
@@ -594,6 +639,25 @@ impl RequestHandler {
             completed_normally: false,
         }));
         info!(len = text.len(), "ReAct loop completed");
+
+        // Update SessionGateway state with current turn metrics for external debug access.
+        {
+            let tool_names: Vec<String> = tool_calls_for_session
+                .iter()
+                .map(|(_, name, _)| name.clone())
+                .collect();
+            let sb = self.storm_breaker.lock().await;
+            self.session_gateway
+                .update_turn_state(
+                    turn_count,
+                    metrics.tool_errors,
+                    metrics.tool_calls_made,
+                    tool_names,
+                    sb.failure_count(),
+                    Some(goal_message_for_gw.clone()),
+                )
+                .await;
+        }
 
         // Coordinate: quick mood update after the turn (Task 23)
         self.coordinate(&turn_count, &text).await;

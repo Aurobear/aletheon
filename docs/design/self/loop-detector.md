@@ -1,4 +1,4 @@
-> Merged from docs/design/security/loop-detector.md + docs/design/security/security-model.md §4.1-4.3, §4.13 — code paths updated to aletheon-* crate structure
+> Merged from docs/design/security/loop-detector.md + docs/design/security/security-model.md §4.1-4.3, §4.13 — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # 循环检测器 (LoopDetector)
 

@@ -1,9 +1,9 @@
-# Brain Crate (`aletheon-brain`)
+# Brain Crate (`cognit`)
 
 > The reasoning and inference layer — cognitive engine, hybrid inference routing, and LLM provider management.
 
-**Crate:** `aletheon-brain`
-**Source:** `crates/aletheon-brain/`
+**Crate:** `cognit`
+**Source:** `crates/cognit/`
 **Last updated:** 2026-06-14
 
 ---
@@ -11,7 +11,7 @@
 ## Crate Structure
 
 ```
-crates/aletheon-brain/
+crates/cognit/
 ├── core/           — Shared types and traits
 ├── bridge/         — Cross-crate integration points
 ├── impl/

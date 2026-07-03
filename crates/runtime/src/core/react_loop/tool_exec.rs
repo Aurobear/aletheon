@@ -340,6 +340,18 @@ impl ReActLoop {
                 self.messages.push(Message::user(format!("[Reflection]\n{}", summary)));
             }
 
+            // Inject Dasein context after tool results for per-turn SelfField state refresh
+            if let Some(ref provider) = &self.dasein_ctx_provider {
+                if let Some(dasein_ctx) = provider() {
+                    if !dasein_ctx.is_empty() {
+                        self.messages.push(Message::user(format!(
+                            "<dasein-state-update>\n{}\n</dasein-state-update>",
+                            dasein_ctx
+                        )));
+                    }
+                }
+            }
+
             // Check if reflection recommended stopping
             if self.reflection_engine.should_stop() {
                 let fallback = text_parts.join("\n");

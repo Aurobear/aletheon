@@ -3,6 +3,13 @@
 //! The policy engine that reviews intents, enforces boundaries, resolves conflicts,
 //! and maintains identity continuity. Like Linux kernel's LSM / SELinux.
 //!
+//! ## First Principle
+//!
+//! **Everything is interpreted by the Self.** SelfField is not a module -- it is the
+//! field through which every event, intent, memory, and action passes. Just as Linux
+//! organizes around the process primitive and Unix around the file primitive, Aletheon
+//! organizes around the Self primitive. See [docs/design/self/first-principle.md].
+//!
 //! ## Architecture
 //!
 //! 8 internal layers wired into a `SelfField` struct that implements `SelfFieldOps`:

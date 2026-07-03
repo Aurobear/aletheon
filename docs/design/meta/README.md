@@ -1,8 +1,8 @@
 # Meta Crate — Self-Modification Engine
 
-> Code paths updated to aletheon-* crate structure
+> Code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
-**Crate:** `aletheon-meta`
+**Crate:** `metacog`
 **Purpose:** The self-modification engine. Reads its own genome, generates candidate runtime modifications, tests them in sandbox, evaluates results, and migrates to improved versions. No direct production updates.
 
 ---
@@ -10,7 +10,7 @@
 ## Internal Structure
 
 ```
-aletheon-meta/src/
+metacog/src/
   lib.rs                          # Crate root
   core/                           # Core trait implementations
     traits.rs                     # DefaultMetaRuntime (design skeleton)
@@ -41,8 +41,8 @@ aletheon-meta/src/
 
 ## Key Concepts
 
-- **Genome** — Complete agent architecture specification (topology, identity, boundary, care, memory, mutation, lifecycle). Defined in `aletheon-abi/src/genome.rs`.
-- **MetaRuntime** — The engine that reads, modifies, tests, and migrates. Implements `MetaRuntimeOps` trait from `aletheon-abi/src/meta.rs`.
+- **Genome** — Complete agent architecture specification (topology, identity, boundary, care, memory, mutation, lifecycle). Defined in `base/src/genome.rs`.
+- **MetaRuntime** — The engine that reads, modifies, tests, and migrates. Implements `MetaRuntimeOps` trait from `base/src/meta.rs`.
 - **Morphogenesis** — The self-evolution pipeline: run -> reflect -> mutate -> generate -> evaluate -> migrate -> become.
 - **Continuity Anchor** — The minimal invariant preserved across all mutations: lineage, memory relation, user relation, migration history.
 

@@ -726,6 +726,7 @@ impl RequestHandler {
             core_memory.clone(),
             recall_memory.clone(),
             self_field.clone(),
+            llm.clone(),
         ));
         info!("SessionGateway initialized");
 

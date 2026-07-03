@@ -33,6 +33,10 @@ fn builtin_tracepoints() -> Vec<Value> {
         json!({"name": "llm.response", "module": "brain", "level": "debug", "description": "LLM API response received"}),
         json!({"name": "selffield.review", "module": "self", "level": "debug", "description": "SelfField intent review"}),
         json!({"name": "hook.execute", "module": "runtime", "level": "debug", "description": "Lifecycle hook executed"}),
+        // Session Gateway tracepoints (Phase D)
+        json!({"name": "session.query", "module": "gateway", "level": "info", "description": "Session Gateway state query"}),
+        json!({"name": "session.ask", "module": "gateway", "level": "info", "description": "External agent ask via Session Gateway"}),
+        json!({"name": "session.journal", "module": "gateway", "level": "info", "description": "Event journal query via Session Gateway"}),
     ]
 }
 

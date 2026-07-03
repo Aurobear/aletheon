@@ -1,8 +1,8 @@
 # Runtime Crate — Core Runtime Infrastructure
 
-> Code paths updated to aletheon-* crate structure
+> Code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
-**Crate:** `aletheon-runtime`
+**Crate:** `runtime`
 **Purpose:** The core runtime that drives agent reasoning, manages sessions, orchestrates multi-agent collaboration, and hosts plugins and automations.
 
 ---
@@ -10,7 +10,7 @@
 ## Internal Structure
 
 ```
-aletheon-runtime/src/
+runtime/src/
   impl/
     mod.rs
     coordinator.rs              # Runtime coordinator
@@ -106,10 +106,10 @@ aletheon-runtime/src/
 
 ## Related Crates
 
-- `aletheon-abi` — Trait definitions and shared types
-- `aletheon-memory` — Backend memory storage (episodic, semantic, procedural)
-- `aletheon-comm` — IPC and inter-process communication
-- `aletheon-body` — Tools, sandbox, security, platform adapters
-- `aletheon-brain` — LLM inference
-- `aletheon-self` — Perception, hooks
-- `aletheon-meta` — Self-modification engine (MetaRuntime, morphogenesis)
+- `base` — Trait definitions and shared types
+- `memory` — Backend memory storage (episodic, semantic, procedural)
+- `base` — IPC and inter-process communication
+- `corpus` — Tools, sandbox, security, platform adapters
+- `cognit` — LLM inference
+- `dasein` — Perception, hooks
+- `metacog` — Self-modification engine (MetaRuntime, morphogenesis)

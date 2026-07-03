@@ -1,4 +1,4 @@
-> Migrated from docs/design/perception/fuse-interface.md — code paths updated to aletheon-* crate structure
+> Migrated from docs/design/perception/fuse-interface.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # FUSE 虚拟文件系统接口
 
@@ -14,15 +14,15 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| AgentFs (in-memory API) | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/filesystem.rs` | In-memory virtual filesystem with read/write/readdir, pause support |
-| FsNode types | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/filesystem.rs` | Directory/File/DynamicFile node types |
-| FUSE module | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/mod.rs` | Module entry point |
-| FuseMount | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/mount.rs` | `fuse3::path::PathFileSystem` integration behind `fuse` feature flag; stub mode when feature disabled |
-| PathFileSystem impl | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/mount.rs` | `AgentFs` implements `fuse3::path::PathFileSystem` (lookup, getattr, read, write, readdir) behind `#[cfg(feature = "fuse")]` |
-| StateProvider trait | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/provider.rs` | Abstraction for data sources (`get_sensor_data`, `get_context`, `get_log`, `get_agent_status`) |
-| LiveStateProvider | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/provider.rs` | Reads live system state from `/proc` (loadavg, meminfo, diskstats, net/dev) |
-| MockStateProvider | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/provider.rs` | In-memory mock with pre-settable responses and call recording for testing |
-| ControlsValidator | ✅ Implemented | `crates/aletheon-self/src/impl/perception/fuse/controls.rs` | Write validation for `/controls/` (toggle "0"/"1", TOML syntax check, allowlist) |
+| AgentFs (in-memory API) | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/filesystem.rs` | In-memory virtual filesystem with read/write/readdir, pause support |
+| FsNode types | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/filesystem.rs` | Directory/File/DynamicFile node types |
+| FUSE module | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/mod.rs` | Module entry point |
+| FuseMount | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/mount.rs` | `fuse3::path::PathFileSystem` integration behind `fuse` feature flag; stub mode when feature disabled |
+| PathFileSystem impl | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/mount.rs` | `AgentFs` implements `fuse3::path::PathFileSystem` (lookup, getattr, read, write, readdir) behind `#[cfg(feature = "fuse")]` |
+| StateProvider trait | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/provider.rs` | Abstraction for data sources (`get_sensor_data`, `get_context`, `get_log`, `get_agent_status`) |
+| LiveStateProvider | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/provider.rs` | Reads live system state from `/proc` (loadavg, meminfo, diskstats, net/dev) |
+| MockStateProvider | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/provider.rs` | In-memory mock with pre-settable responses and call recording for testing |
+| ControlsValidator | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/controls.rs` | Write validation for `/controls/` (toggle "0"/"1", TOML syntax check, allowlist) |
 
 > **Note:** The real FUSE mount is implemented behind the `fuse` feature flag. When `fuse` is enabled, `AgentFs` implements `fuse3::path::PathFileSystem` and `FuseMount` performs an actual mount via `fuse3::Session`. Without the feature, `FuseMount` operates in stub mode (always reports unmounted). The directory structure `/context/`, `/controls/`, `/sensors/`, `/logs/`, `/agents/` is fully wired.
 
@@ -212,7 +212,7 @@ FUSE 层自动选择：运行时用 Live，离线用 Checkpoint。
 
 ## Implementation Summary
 
-**Code location:** `crates/aletheon-self/src/impl/perception/fuse/` (5 files: mod.rs, filesystem.rs, mount.rs, provider.rs, controls.rs)
+**Code location:** `crates/dasein/src/impl/perception/fuse/` (5 files: mod.rs, filesystem.rs, mount.rs, provider.rs, controls.rs)
 
 **What IS implemented:**
 - `FsNode` enum (`filesystem.rs`) — Directory/File/DynamicFile node types

@@ -1,11 +1,11 @@
-> Merged from docs/design/resilience/ — code paths updated to aletheon-* crate structure
+> Merged from docs/design/resilience/ — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # Resilience
 
 > Error handling, panic recovery, rate limiting, and backpressure — the agent's fault tolerance layer.
 
-**Crate:** `aletheon-self`
-**Module:** `crates/aletheon-self/src/impl/resilience/`
+**Crate:** `dasein`
+**Module:** `crates/dasein/src/impl/resilience/`
 
 ---
 
@@ -23,9 +23,9 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| AgentError enum | ✅ Implemented | `crates/aletheon-runtime/src/impl/error.rs` | Error severity, categories, degradation chain |
-| ErrorSeverity | ✅ Implemented | `crates/aletheon-runtime/src/impl/error.rs` | Recoverable / Degraded / Unrecoverable / SecurityViolation |
-| DegradationChain | ✅ Implemented | `crates/aletheon-runtime/src/impl/error.rs` | Retry with backoff, fallback strategies |
+| AgentError enum | ✅ Implemented | `crates/runtime/src/impl/error.rs` | Error severity, categories, degradation chain |
+| ErrorSeverity | ✅ Implemented | `crates/runtime/src/impl/error.rs` | Recoverable / Degraded / Unrecoverable / SecurityViolation |
+| DegradationChain | ✅ Implemented | `crates/runtime/src/impl/error.rs` | Retry with backoff, fallback strategies |
 | RecoveryEngine | ⬜ Planned | — | Session restore from checkpoint not yet built |
 
 ---
@@ -236,7 +236,7 @@ struct RecoveryEngine {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| AgentError enum | ✅ Implemented | `crates/aletheon-runtime/src/impl/error.rs` |
+| AgentError enum | ✅ Implemented | `crates/runtime/src/impl/error.rs` |
 | ErrorSeverity | ✅ Implemented | Recoverable / Degraded / Unrecoverable / SecurityViolation |
 | DegradationChain | ✅ Implemented | Retry with exponential backoff + jitter |
 | ToolErrorAction | ✅ Implemented | Error-driven action selection |
@@ -259,9 +259,9 @@ struct RecoveryEngine {
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| DaemonGuardian + PanicPolicy | ✅ Implemented | `crates/aletheon-self/src/impl/resilience/guardian.rs` | Crash dump, policy dispatch |
-| WatchdogTimer (3-layer) | ✅ Implemented | `crates/aletheon-self/src/impl/resilience/watchdog.rs` | L1 30s, L2 10s, L3 5min |
-| SafeMode | ✅ Implemented | `crates/aletheon-self/src/impl/resilience/safe_mode.rs` | Auto-exit with cooldown |
+| DaemonGuardian + PanicPolicy | ✅ Implemented | `crates/dasein/src/impl/resilience/guardian.rs` | Crash dump, policy dispatch |
+| WatchdogTimer (3-layer) | ✅ Implemented | `crates/dasein/src/impl/resilience/watchdog.rs` | L1 30s, L2 10s, L3 5min |
+| SafeMode | ✅ Implemented | `crates/dasein/src/impl/resilience/safe_mode.rs` | Auto-exit with cooldown |
 | Crash dump | ✅ Implemented | `guardian.rs` | `{crash_dir}/{timestamp}/` with panic_info.json, state_snapshot.json, version.txt |
 | RecoveryEngine | ⬜ Planned | — | Full state restore from snapshot |
 
@@ -434,7 +434,7 @@ crash/{timestamp}/
 | 能力 | 安全模式下 | 说明 |
 |------|-----------|------|
 | 对话 | ❌ | 新对话不可用 |
-| 诊断查询 | ✅ | `aletheon-cli debug status` 等诊断命令 |
+| 诊断查询 | ✅ | `interact debug status` 等诊断命令 |
 | 工具执行 | ❌ | 不执行任何工具 |
 | 感知事件 | ❌ | 不采集/不处理 |
 | 崩溃恢复 | ✅ | 持续尝试恢复 |
@@ -462,9 +462,9 @@ crash/{timestamp}/
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| DaemonGuardian + PanicPolicy | ✅ Implemented | `crates/aletheon-self/src/impl/resilience/guardian.rs` |
-| WatchdogTimer (3-layer) | ✅ Implemented | `crates/aletheon-self/src/impl/resilience/watchdog.rs` — L1 30s, L2 10s, L3 5min |
-| SafeMode | ✅ Implemented | `crates/aletheon-self/src/impl/resilience/safe_mode.rs` — auto-exit with cooldown |
+| DaemonGuardian + PanicPolicy | ✅ Implemented | `crates/dasein/src/impl/resilience/guardian.rs` |
+| WatchdogTimer (3-layer) | ✅ Implemented | `crates/dasein/src/impl/resilience/watchdog.rs` — L1 30s, L2 10s, L3 5min |
+| SafeMode | ✅ Implemented | `crates/dasein/src/impl/resilience/safe_mode.rs` — auto-exit with cooldown |
 | Crash dump | ✅ Implemented | `{crash_dir}/{timestamp}/` — panic_info.json, state_snapshot.json, version.txt |
 | RecoveryEngine | ⬜ Planned | Full state restore from snapshot |
 
@@ -485,10 +485,10 @@ crash/{timestamp}/
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| TokenRateLimiter | ✅ Implemented | `crates/aletheon-body/src/impl/security/rate_limiting/token_limiter.rs` | Multi-tier token quota |
-| ToolCallLimiter | ✅ Implemented | `crates/aletheon-body/src/impl/security/rate_limiting/tool_limiter.rs` | Per-tool and concurrency limits |
-| FloodProtector | ✅ Implemented | `crates/aletheon-body/src/impl/security/rate_limiting/flood_protector.rs` | Per-source sliding window |
-| BackpressureController | ✅ Implemented | `crates/aletheon-body/src/impl/security/rate_limiting/backpressure.rs` | Signal propagation |
+| TokenRateLimiter | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/token_limiter.rs` | Multi-tier token quota |
+| ToolCallLimiter | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/tool_limiter.rs` | Per-tool and concurrency limits |
+| FloodProtector | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/flood_protector.rs` | Per-source sliding window |
+| BackpressureController | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/backpressure.rs` | Signal propagation |
 
 ---
 
@@ -707,10 +707,10 @@ enum BackpressureSignal {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| TokenRateLimiter | ✅ Implemented | `crates/aletheon-body/src/impl/security/rate_limiting/token_limiter.rs` |
-| ToolCallLimiter | ✅ Implemented | `crates/aletheon-body/src/impl/security/rate_limiting/tool_limiter.rs` |
-| FloodProtector | ✅ Implemented | `crates/aletheon-body/src/impl/security/rate_limiting/flood_protector.rs` |
-| BackpressureController | ✅ Implemented | `crates/aletheon-body/src/impl/security/rate_limiting/backpressure.rs` |
+| TokenRateLimiter | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/token_limiter.rs` |
+| ToolCallLimiter | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/tool_limiter.rs` |
+| FloodProtector | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/flood_protector.rs` |
+| BackpressureController | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/backpressure.rs` |
 
 
 ---
