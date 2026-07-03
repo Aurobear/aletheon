@@ -80,7 +80,7 @@ The daemon starts a Unix socket listener at `/tmp/aletheon.sock`.
 In a separate terminal:
 
 ```bash
-./target/release/aletheon-cli "What files are in the current directory?"
+./target/release/interact "What files are in the current directory?"
 ```
 
 The agent will reason, call the `bash` tool with `ls`, and return a structured response.
@@ -94,7 +94,7 @@ Self-Evolution is Aletheon's distinguishing feature. The agent reflects on compl
 Try giving it a repetitive task across multiple sessions, then ask it to reflect:
 
 ```bash
-./target/release/aletheon-cli "/reflect"
+./target/release/interact "/reflect"
 ```
 
 The agent produces a structured `ReflectionEntry` analyzing what worked, what failed, and what it learned. Over time, these reflections accumulate in episodic memory and drive behavior adjustments.

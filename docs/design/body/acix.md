@@ -1,11 +1,11 @@
-> New document — code paths reflect aletheon-* crate structure
+> New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # ACIX (Agent-Computer Interface)
 
 > High-level perception, action grounding, experience memory, and task management for computer-use agents.
 
-**Crate:** `aletheon-body`
-**Module:** `crates/aletheon-body/src/impl/acix/`
+**Crate:** `corpus`
+**Module:** `crates/corpus/src/impl/acix/`
 **Last updated:** 2026-06-14
 
 ---
@@ -167,7 +167,7 @@ enum TaskStatus {
 
 ## 7. Implementation Notes
 
-**Code location:** `crates/aletheon-body/src/impl/acix/` (5 files: `mod.rs`, `aci.rs`, `experience.rs`, `grounding.rs`, `task.rs`)
+**Code location:** `crates/corpus/src/impl/acix/` (5 files: `mod.rs`, `aci.rs`, `experience.rs`, `grounding.rs`, `task.rs`)
 
 **Key design decisions:**
 - Trait-based grounding allows multiple strategies (AT-SPI, OCR, coordinate)

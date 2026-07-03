@@ -1,11 +1,11 @@
-> New document — code paths reflect aletheon-* crate structure
+> New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # UI Subsystem (TUI)
 
 > Terminal user interface — chat, commands, computer view, event handling, input, markdown rendering, skills, status.
 
-**Crate:** `aletheon-body`
-**Module:** `crates/aletheon-body/src/impl/ui/`
+**Crate:** `corpus`
+**Module:** `crates/corpus/src/impl/ui/`
 **Last updated:** 2026-06-14
 
 ---
@@ -32,7 +32,7 @@
 The TUI is a ratatui-based terminal application connecting to the aletheond daemon via Unix socket (JSON-RPC 2.0).
 
 ```
-aletheon-cli (TUI)
+interact (TUI)
     ├── ratatui + crossterm
     ├── UnixStream → aletheond
     └── Modules:
@@ -156,7 +156,7 @@ When stdin is not a TTY (piped input), the TUI falls back to simple line mode:
 
 ## 12. Implementation Notes
 
-**Code location:** `crates/aletheon-body/src/impl/ui/` (11 files)
+**Code location:** `crates/corpus/src/impl/ui/` (11 files)
 
 **Key design decisions:**
 - ratatui + crossterm for cross-platform terminal rendering

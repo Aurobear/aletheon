@@ -57,10 +57,10 @@ pub struct ReflectionEntry {
 Reflection is not freeform commentary. It produces structured data that the next phase can consume programmatically.
 
 **Components involved:**
-- `aletheon-brain` -- `Reflector` produces `ReflectionEntry`
-- `aletheon-memory` -- `reflection_events` table stores entries
-- `aletheon-self` -- `Narrative` layer persists to self-memory
-- `aletheon-runtime` -- triggers reflection after each chat response
+- `cognit` -- `Reflector` produces `ReflectionEntry`
+- `memory` -- `reflection_events` table stores entries
+- `dasein` -- `Narrative` layer persists to self-memory
+- `runtime` -- triggers reflection after each chat response
 
 ---
 
@@ -85,10 +85,10 @@ Periodically, the agent summarizes accumulated reflections and adjusts its SelfF
 The agent does not rewrite its own code at this stage. It adjusts internal weights and rules -- analogous to how a person changes priorities based on experience without becoming a different person.
 
 **Components involved:**
-- `aletheon-brain` -- `ExperienceSummarizer` aggregates reflections
-- `aletheon-self` -- `CareLayer::adjust_weight()`, `BoundaryLayer::add_rule()`, `AttentionLayer::auto_focus()`
-- `aletheon-memory` -- `EvolutionLog` records each adjustment
-- `aletheon-runtime` -- `EvolutionScheduler` manages trigger timing
+- `cognit` -- `ExperienceSummarizer` aggregates reflections
+- `dasein` -- `CareLayer::adjust_weight()`, `BoundaryLayer::add_rule()`, `AttentionLayer::auto_focus()`
+- `memory` -- `EvolutionLog` records each adjustment
+- `runtime` -- `EvolutionScheduler` manages trigger timing
 
 ---
 
@@ -159,7 +159,7 @@ Become (agent restarts with new genome)
 
 **Key safety constraint:** The candidate must pass all existing tests plus a behavioral regression suite before migration. The sandbox isolates candidate execution from the production agent.
 
-**Implementation:** `crates/aletheon-meta/` -- `MetaRuntime`, `Morphogenesis`, `Genome`
+**Implementation:** `crates/metacog/` -- `MetaRuntime`, `Morphogenesis`, `Genome`
 
 ---
 
@@ -208,7 +208,7 @@ sandbox_evaluation = true      # test candidates before migration
 |-------|--------|-------|
 | Phase 1: Reflection | Implemented | `ReflectionEntry`, episodic storage, `/reflect` command |
 | Phase 2: Behavior Evolution | In Progress | ExperienceSummarizer designed, Care/Boundary adjustment partially wired |
-| Phase 3: Genome + Morphogenesis | Skeleton | `aletheon-meta` crate exists with trait definitions, implementations are `todo!()` |
+| Phase 3: Genome + Morphogenesis | Skeleton | `metacog` crate exists with trait definitions, implementations are `todo!()` |
 
 See the [Self-Evolution Design](../plans/2026-06-14-self-evolution-design.md) for the full implementation plan.
 

@@ -72,6 +72,17 @@ impl StormBreaker {
         self.success_counts.clear();
     }
 
+    /// Total number of unique failure patterns being tracked.
+    pub fn failure_count(&self) -> usize {
+        self.failure_counts.len()
+    }
+
+    /// Check if any pattern has reached the loop threshold.
+    pub fn has_triggered(&self) -> bool {
+        self.failure_counts.values().any(|&c| c >= self.threshold)
+            || self.success_counts.values().any(|&c| c >= self.threshold)
+    }
+
     /// Extract a normalized error signature for comparison.
     fn extract_error_signature(content: &str) -> String {
         // Take first 100 chars, lowercase, collapse whitespace

@@ -1,4 +1,4 @@
-> Migrated from docs/design/platform/ — code paths updated to aletheon-* crate structure
+> Migrated from docs/design/platform/ — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # Platform Subsystem
 
@@ -96,14 +96,14 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 
 | 来源 | 借鉴内容 |
 |------|----------|
-| **原始设计文档** (`aletheon-cleanup-design.md` §2.4) | PlatformAdapter 抽象定义、跨平台架构图、方法对照表 |
-| **设计总纲** (`aletheon-cleanup-design.md` §2.3) | 跨平台架构图（Linux/Android/嵌入式三层） |
+| **原始设计文档** (`cleanup-design.md` §2.4) | PlatformAdapter 抽象定义、跨平台架构图、方法对照表 |
+| **设计总纲** (`cleanup-design.md` §2.3) | 跨平台架构图（Linux/Android/嵌入式三层） |
 
 ---
 
 ## Implementation Summary
 
-**Code location:** `crates/aletheon-body/src/impl/platform/`
+**Code location:** `crates/corpus/src/impl/platform/`
 
 **Key types/traits implemented:**
 - `PlatformAdapter` trait (`adapter.rs`) — cross-platform abstraction with send/recv, process spawn/kill, fs read/write/watch, permission check/elevate
@@ -146,7 +146,7 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 
 ```
 GRUB/UEFI → initramfs → systemd init → services → user session → aletheond
-              [Phase 6]    [Phase 1-3]    [...services]     [aletheon-cli]
+              [Phase 6]    [Phase 1-3]    [...services]     [interact]
 ```
 
 | 阶段 | Agent 参与方式 | 功能 |
@@ -154,7 +154,7 @@ GRUB/UEFI → initramfs → systemd init → services → user session → aleth
 | initramfs | ❌ 未参与 | 挂载根文件系统前 Agent 不可用 |
 | systemd early | ❌ 未参与 | basic.target 前依赖缺失 |
 | systemd services | ✅ systemd service | aletheond 在 network.target 后启动 |
-| user session | ✅ systemd --user / 桌面启动 | aletheon-cli 提供用户交互 |
+| user session | ✅ systemd --user / 桌面启动 | interact 提供用户交互 |
 
 ---
 
@@ -300,11 +300,11 @@ Agent 检测到服务启动失败
 
 | Component | Code Location | Notes |
 |-----------|---------------|-------|
-| BootMonitor | `crates/aletheon-body/src/impl/platform/boot.rs` | Boot phase FSM + dependency tracking + lazy stages |
-| BootPhase | `crates/aletheon-body/src/impl/platform/boot.rs` | Initializing → Monitoring → Ready / Degraded |
-| ServiceDependencyGraph | `crates/aletheon-body/src/impl/platform/boot.rs` | Topological sort + `would_create_cycle()` cycle detection |
-| LazyLoadStage | `crates/aletheon-body/src/impl/platform/boot.rs` | 5 stages: immediate / 500ms / 2s / 5s / on-demand |
-| BootDiagnosis | `crates/aletheon-body/src/impl/platform/boot.rs` | Resource/service/historical checks |
+| BootMonitor | `crates/corpus/src/impl/platform/boot.rs` | Boot phase FSM + dependency tracking + lazy stages |
+| BootPhase | `crates/corpus/src/impl/platform/boot.rs` | Initializing → Monitoring → Ready / Degraded |
+| ServiceDependencyGraph | `crates/corpus/src/impl/platform/boot.rs` | Topological sort + `would_create_cycle()` cycle detection |
+| LazyLoadStage | `crates/corpus/src/impl/platform/boot.rs` | 5 stages: immediate / 500ms / 2s / 5s / on-demand |
+| BootDiagnosis | `crates/corpus/src/impl/platform/boot.rs` | Resource/service/historical checks |
 | systemd service | `systemd/aletheond.service` | Service file exists |
 
 
@@ -492,11 +492,11 @@ Registered → Active ↔ Idle ↔ Busy → Degraded → Offline
 
 | Component | Code Location | Notes |
 |-----------|---------------|-------|
-| Core types (AgentId, AgentInfo, etc.) | `crates/aletheon-body/src/impl/platform/awareness/mod.rs` | AgentId, AgentKind, TrustLevel, Capability, Endpoint, AgentInfo |
-| AgentDiscovery | `crates/aletheon-body/src/impl/platform/awareness/discovery.rs` | Unix socket scan, L2 local discovery |
-| ConflictDetector | `crates/aletheon-body/src/impl/platform/awareness/conflict.rs` | File/service/resource/memory conflicts |
-| AgentLifecycle | `crates/aletheon-body/src/impl/platform/awareness/lifecycle.rs` | FSM: Starting→Running→Paused/Degraded→Stopped/Crashed |
-| AgentCommunication trait | `crates/aletheon-body/src/impl/platform/awareness/communication.rs` | JSON-RPC 2.0 over Unix socket |
+| Core types (AgentId, AgentInfo, etc.) | `crates/corpus/src/impl/platform/awareness/mod.rs` | AgentId, AgentKind, TrustLevel, Capability, Endpoint, AgentInfo |
+| AgentDiscovery | `crates/corpus/src/impl/platform/awareness/discovery.rs` | Unix socket scan, L2 local discovery |
+| ConflictDetector | `crates/corpus/src/impl/platform/awareness/conflict.rs` | File/service/resource/memory conflicts |
+| AgentLifecycle | `crates/corpus/src/impl/platform/awareness/lifecycle.rs` | FSM: Starting→Running→Paused/Degraded→Stopped/Crashed |
+| AgentCommunication trait | `crates/corpus/src/impl/platform/awareness/communication.rs` | JSON-RPC 2.0 over Unix socket |
 | L3 mDNS discovery | — | 未实现 |
 | L4 WAN discovery | — | 未实现 |
 
@@ -956,7 +956,7 @@ io_uring 混合架构        可选内核模块            自定义 syscall
 
 ## Implementation Summary
 
-**Code location:** `crates/aletheon-body/src/impl/platform/ipc/`
+**Code location:** `crates/corpus/src/impl/platform/ipc/`
 
 **Key types/traits implemented:**
 - `IpcBackend` trait (`backend.rs`) — unified backend interface with send/recv/probe

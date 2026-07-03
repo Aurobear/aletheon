@@ -1,12 +1,12 @@
 # User-Space IPC (User-Space IPC)
 
-> Migrated from `docs/design/execution/ipc.md` — code paths updated to aletheon-* crate structure
+> Migrated from `docs/design/execution/ipc.md` — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 > Agent-to-agent communication user-space layer design, including Unix socket message protocol, priority queue, and progressive degradation strategy.
 > Kernel-level IPC (agent_ring, io_uring, syscall extensions) see [platform/kernel-ipc.md](../platform/kernel-ipc.md).
 
 **Module:** 07 (User-Space part)
-**Crate:** aletheon-comm
+**Crate:** base
 **Related modules:** [orchestration-engine](../runtime/orchestration.md), [platform/kernel-ipc.md](../platform/kernel-ipc.md)
 **Last Updated:** 2026-06-14
 
@@ -16,11 +16,11 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| UnixSocketBackend | Implemented | `aletheon-comm/src/impl/ipc/unix_socket.rs` | Full Unix socket server/client |
-| IoUringBackend | Partial | `aletheon-comm/src/impl/ipc/io_uring.rs` | Simulated, not real io_uring |
-| SharedMemBackend | Partial | `aletheon-comm/src/impl/ipc/shared_mem.rs` | Low-level impl exists, not wired to IpcManager |
-| PriorityQueue | Implemented | `aletheon-comm/src/impl/ipc/priority_queue.rs` | Priority-based message routing |
-| IpcManager | Implemented | `aletheon-comm/src/impl/ipc/manager.rs` | Unified IPC management |
+| UnixSocketBackend | Implemented | `base/src/impl/ipc/unix_socket.rs` | Full Unix socket server/client |
+| IoUringBackend | Partial | `base/src/impl/ipc/io_uring.rs` | Simulated, not real io_uring |
+| SharedMemBackend | Partial | `base/src/impl/ipc/shared_mem.rs` | Low-level impl exists, not wired to IpcManager |
+| PriorityQueue | Implemented | `base/src/impl/ipc/priority_queue.rs` | Priority-based message routing |
+| IpcManager | Implemented | `base/src/impl/ipc/manager.rs` | Unified IPC management |
 | Agent ring (kernel) | Planned | — | Kernel module not started |
 
 **NOTE:** `aletheond` uses its own `UnixServer`, NOT `IpcManager`. These are disconnected subsystems.
@@ -84,7 +84,7 @@ enum MessageType {
 }
 ```
 
-Code location: `aletheon-abi/src/ipc_types.rs`
+Code location: `base/src/ipc_types.rs`
 
 ### 2.3 Priority Queue
 
@@ -99,7 +99,7 @@ PQ 5-7: Low priority/batch
 Kernel guarantee: higher priority messages are always consumed first
 ```
 
-Code location: `aletheon-comm/src/impl/ipc/priority_queue.rs`
+Code location: `base/src/impl/ipc/priority_queue.rs`
 
 ### 2.4 User-Space API
 
@@ -120,7 +120,7 @@ pub enum IpcBackend {
 }
 ```
 
-Code location: `aletheon-comm/src/impl/ipc/mod.rs`
+Code location: `base/src/impl/ipc/mod.rs`
 
 ---
 
@@ -179,7 +179,7 @@ Phase 5 should be explicitly an **optional performance acceleration layer**, not
 | Require(backend) | Hard requirement for specified backend, error if unavailable |
 | Forbid(backend) | Disable specified backend |
 
-Code location: `aletheon-abi/src/ipc_types.rs`
+Code location: `base/src/ipc_types.rs`
 
 **IpcProbeError — typed probe errors:**
 
@@ -285,12 +285,12 @@ io_uring hybrid           optional kernel module    custom syscall
 ## Implementation Summary
 
 **Code Locations:**
-- `aletheon-comm/src/impl/ipc/mod.rs` — IpcBackend enum, IpcManager, auto-detect logic
-- `aletheon-comm/src/impl/ipc/unix_socket.rs` — UnixSocketBackend (full server/client)
-- `aletheon-comm/src/impl/ipc/io_uring.rs` — IoUringBackend (simulated, not real io_uring)
-- `aletheon-comm/src/impl/ipc/priority_queue.rs` — PriorityQueue for message routing
-- `aletheon-comm/src/impl/ipc/manager.rs` — Unified IPC management
-- `aletheon-abi/src/ipc_types.rs` — Shared IPC type definitions (IpcBackend, IpcPreference, IpcProbeError, AgentMessage)
+- `base/src/impl/ipc/mod.rs` — IpcBackend enum, IpcManager, auto-detect logic
+- `base/src/impl/ipc/unix_socket.rs` — UnixSocketBackend (full server/client)
+- `base/src/impl/ipc/io_uring.rs` — IoUringBackend (simulated, not real io_uring)
+- `base/src/impl/ipc/priority_queue.rs` — PriorityQueue for message routing
+- `base/src/impl/ipc/manager.rs` — Unified IPC management
+- `base/src/ipc_types.rs` — Shared IPC type definitions (IpcBackend, IpcPreference, IpcProbeError, AgentMessage)
 
 **Key Types/Traits Implemented:**
 - `IpcBackend` enum — AgentRing / IoUring / UnixSocket

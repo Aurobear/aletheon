@@ -1,8 +1,8 @@
 # ABI: Shared Types, Traits, and Interfaces
 
-> Migrated from `docs/design/shared/types.md`, `docs/design/shared/traits.md`, `docs/design/shared/interfaces.md` — code paths updated to aletheon-* crate structure
+> Migrated from `docs/design/shared/types.md`, `docs/design/shared/traits.md`, `docs/design/shared/interfaces.md` — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
-**Module:** aletheon-abi
+**Module:** base
 **Last Updated:** 2026-06-14
 
 ---
@@ -13,18 +13,18 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| ContentBlock | Implemented | `aletheon-abi/src/message.rs` | Text, ToolUse, ToolResult, Image |
-| Message | Implemented | `aletheon-abi/src/message.rs` | Conversation message wrapper |
-| ToolCall | Implemented | `aletheon-abi/src/message.rs` | Tool invocation request |
-| ToolResult | Implemented | `aletheon-abi/src/tool.rs` | Tool execution result |
-| PerceptionEvent | Implemented | `aletheon-self/src/impl/perception/event.rs` | System event type |
-| AgentError | Implemented | `aletheon-abi/src/error.rs` | Typed error with severity/category |
+| ContentBlock | Implemented | `base/src/message.rs` | Text, ToolUse, ToolResult, Image |
+| Message | Implemented | `base/src/message.rs` | Conversation message wrapper |
+| ToolCall | Implemented | `base/src/message.rs` | Tool invocation request |
+| ToolResult | Implemented | `base/src/tool.rs` | Tool execution result |
+| PerceptionEvent | Implemented | `dasein/src/impl/perception/event.rs` | System event type |
+| AgentError | Implemented | `base/src/error.rs` | Typed error with severity/category |
 
 ### 1.1 Message Types
 
 - **ContentBlock** — Content-block message protocol (Anthropic SDK compatible), with Text, ToolUse, ToolResult, Image variants
 - **Message** — Conversation message wrapper (role: System/User/Assistant + content: Vec<ContentBlock>)
-- Code location: `aletheon-abi/src/message.rs`
+- Code location: `base/src/message.rs`
 
 ### 1.2 Tool Calls
 
@@ -34,29 +34,29 @@
 - **ToolResult** — Tool execution result (tool_call_id, content: Vec<ToolContent>, is_error, exit_code, metadata)
 - **ToolContent** — Output content variant: Text / Image / Binary
 - **ToolResultMeta** — Metadata (execution_time_ms, tokens_used, truncated)
-- Code location: `aletheon-abi/src/message.rs`, `aletheon-abi/src/tool.rs`
+- Code location: `base/src/message.rs`, `base/src/tool.rs`
 
 ### 1.3 Perception Events
 
 - **PerceptionEvent** — System event (id, source, kind, payload, priority, timestamp)
 - **EventSource** — Ebpf / Proc / Sys / Journald / Inotify / Udev / DBus
 - **EventKind** — FileCreated/Modified/Deleted, ProcessStarted/Exited, NetworkConnect/Disconnect, ServiceStarted/Failed, DeviceAdded/Removed, CpuPressure/MemoryPressure/DiskPressure
-- Code location: `aletheon-self/src/impl/perception/event.rs`
+- Code location: `dasein/src/impl/perception/event.rs`
 
 ### 1.4 Error Types
 
 - **AgentError** — Typed error (category, severity, message, source, context)
 - **ErrorSeverity** — Warning / Error / Critical / Fatal
 - **ErrorCategory** — Tool / Llm / Session / Memory / Permission / System
-- Code location: `aletheon-abi/src/error.rs`
+- Code location: `base/src/error.rs`
 
 ### Implementation Summary
 
 | Component | Code Location | Key Types |
 |-----------|---------------|-----------|
-| ContentBlock / Message / ToolCall | `aletheon-abi/src/message.rs` | `ContentBlock`, `Message`, `ToolCall` |
-| ToolResult / ToolContent | `aletheon-abi/src/tool.rs` | `ToolResult`, `ToolContent`, `ToolResultMeta` |
-| PerceptionEvent | `aletheon-self/src/impl/perception/event.rs` | `PerceptionEvent`, `EventSource`, `EventKind` |
+| ContentBlock / Message / ToolCall | `base/src/message.rs` | `ContentBlock`, `Message`, `ToolCall` |
+| ToolResult / ToolContent | `base/src/tool.rs` | `ToolResult`, `ToolContent`, `ToolResultMeta` |
+| PerceptionEvent | `dasein/src/impl/perception/event.rs` | `PerceptionEvent`, `EventSource`, `EventKind` |
 
 ---
 
@@ -68,15 +68,15 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| LlmProvider | Implemented | `aletheon-brain/src/impl/inference/provider.rs` | Provider trait with complete/complete_stream |
-| Tool | Implemented | `aletheon-abi/src/tool.rs` | Includes permission_level(), exposure(), concurrency_class() |
-| PlatformAdapter | Implemented | `aletheon-body/src/impl/platform/adapter.rs`, `aletheon-body/src/impl/platform/linux.rs`, `aletheon-body/src/impl/platform/android.rs` | Linux (systemd/D-Bus) + Android (getprop/dumpsys) |
+| LlmProvider | Implemented | `cognit/src/impl/inference/provider.rs` | Provider trait with complete/complete_stream |
+| Tool | Implemented | `base/src/tool.rs` | Includes permission_level(), exposure(), concurrency_class() |
+| PlatformAdapter | Implemented | `corpus/src/impl/platform/adapter.rs`, `corpus/src/impl/platform/linux.rs`, `corpus/src/impl/platform/android.rs` | Linux (systemd/D-Bus) + Android (getprop/dumpsys) |
 | MemoryStore | Planned | — | Memory uses different API than this trait |
 
 ### 2.1 LLM Provider
 
 **LlmProvider** — LLM provider interface, supporting complete (sync) and complete_stream (streaming) inference modes.
-- Code location: `aletheon-brain/src/impl/inference/provider.rs`
+- Code location: `cognit/src/impl/inference/provider.rs`
 - Methods: complete, complete_stream, name, max_context_length
 
 ### 2.2 Tool
@@ -84,15 +84,15 @@
 > **Canonical definition** — superset of all fields from tool-system, platform-adapter, and loop-detector docs.
 
 **Tool** — Unified tool interface, including name, description, input_schema, permission_level (L0-L3), needs_sandbox, exposure (ToolExposure), concurrency_class (ConcurrencyClass), execute.
-- Code location: `aletheon-abi/src/tool.rs`
-- `ToolExposure` and `ConcurrencyClass` enums defined in `aletheon-body/src/impl/tools/`
+- Code location: `base/src/tool.rs`
+- `ToolExposure` and `ConcurrencyClass` enums defined in `corpus/src/impl/tools/`
 
 ### 2.3 PlatformAdapter
 
 > Implemented — Linux and Android adapters complete.
 
 **PlatformAdapter** — Platform adapter interface, covering IPC (send/recv), process lifecycle (spawn/kill), filesystem (read/write/watch), permissions (check/elevate).
-- Code location: `aletheon-body/src/impl/platform/adapter.rs` (trait), `aletheon-body/src/impl/platform/linux.rs` (Linux/D-Bus), `aletheon-body/src/impl/platform/android.rs` (Android stub)
+- Code location: `corpus/src/impl/platform/adapter.rs` (trait), `corpus/src/impl/platform/linux.rs` (Linux/D-Bus), `corpus/src/impl/platform/android.rs` (Android stub)
 
 ### 2.4 MemoryStore
 
@@ -105,11 +105,11 @@
 
 | Component | Code Location | Key Types |
 |-----------|---------------|-----------|
-| LlmProvider trait | `aletheon-brain/src/impl/inference/provider.rs` | `LlmProvider`, `LlmRequest`, `LlmResponse` |
-| Tool trait | `aletheon-abi/src/tool.rs` | `Tool`, `ToolExposure`, `ConcurrencyClass` |
-| PlatformAdapter trait | `aletheon-body/src/impl/platform/adapter.rs` | `PlatformAdapter` |
-| Linux adapter | `aletheon-body/src/impl/platform/linux.rs` | `LinuxPlatformAdapter` (systemd/D-Bus) |
-| Android adapter | `aletheon-body/src/impl/platform/android.rs` | `AndroidPlatformAdapter` (getprop/dumpsys) |
+| LlmProvider trait | `cognit/src/impl/inference/provider.rs` | `LlmProvider`, `LlmRequest`, `LlmResponse` |
+| Tool trait | `base/src/tool.rs` | `Tool`, `ToolExposure`, `ConcurrencyClass` |
+| PlatformAdapter trait | `corpus/src/impl/platform/adapter.rs` | `PlatformAdapter` |
+| Linux adapter | `corpus/src/impl/platform/linux.rs` | `LinuxPlatformAdapter` (systemd/D-Bus) |
+| Android adapter | `corpus/src/impl/platform/android.rs` | `AndroidPlatformAdapter` (getprop/dumpsys) |
 
 ---
 
@@ -197,7 +197,7 @@ ToolResult + UserFeedback -> OutcomeRecorder.record()
 
 | Interface | Code Location | Notes |
 |-----------|---------------|-------|
-| Engine -> ToolRegistry | `aletheon-runtime/src/impl/engine/cognitive_loop.rs`, `aletheon-body/src/impl/tools/` | Engine calls tools via `ToolRegistry::execute()` |
-| Security -> ToolRunner | `aletheon-body/src/impl/security/policy.rs`, `aletheon-body/src/impl/security/runner.rs` | Policy + LoopDetector checks before execution |
-| DelegateTool | `aletheon-runtime/src/impl/orchestration/` | Delegation as tool call |
-| Perception -> Engine | `aletheon-self/src/impl/perception/bridge.rs`, `aletheon-runtime/src/impl/engine/cognitive_loop.rs` | PerceptionBridge wired via injection_tx |
+| Engine -> ToolRegistry | `runtime/src/impl/engine/cognitive_loop.rs`, `corpus/src/impl/tools/` | Engine calls tools via `ToolRegistry::execute()` |
+| Security -> ToolRunner | `corpus/src/impl/security/policy.rs`, `corpus/src/impl/security/runner.rs` | Policy + LoopDetector checks before execution |
+| DelegateTool | `runtime/src/impl/orchestration/` | Delegation as tool call |
+| Perception -> Engine | `dasein/src/impl/perception/bridge.rs`, `runtime/src/impl/engine/cognitive_loop.rs` | PerceptionBridge wired via injection_tx |

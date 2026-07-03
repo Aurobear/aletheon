@@ -1,4 +1,4 @@
-> Migrated from docs/design/core/hook-system.md — code paths updated to aletheon-* crate structure
+> Migrated from docs/design/core/hook-system.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # Hook 系统 (Hook System)
 

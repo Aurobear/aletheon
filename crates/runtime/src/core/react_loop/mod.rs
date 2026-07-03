@@ -156,6 +156,8 @@ pub struct ReActLoop {
     verify_attempts: usize,
     /// Max verify-reject retries per turn before returning as-is.
     max_verify_attempts: usize,
+    /// Optional Dasein context provider — called each turn to inject SelfField state.
+    dasein_ctx_provider: Option<Box<dyn Fn() -> Option<String> + Send + Sync>>,
 }
 
 impl ReActLoop {
@@ -198,6 +200,7 @@ impl ReActLoop {
             verifier: None,
             verify_attempts: 0,
             max_verify_attempts: 2,
+            dasein_ctx_provider: None,
         }
     }
 
@@ -318,6 +321,14 @@ impl ReActLoop {
     /// Enable/disable plan mode. Injected into user message, NOT system prompt.
     pub fn set_plan_mode(&mut self, enabled: bool) {
         self.plan_mode = enabled;
+    }
+
+    /// Set the Dasein context provider for per-turn SelfField state injection.
+    pub fn set_dasein_context_provider(
+        &mut self,
+        provider: Box<dyn Fn() -> Option<String> + Send + Sync>,
+    ) {
+        self.dasein_ctx_provider = Some(provider);
     }
 
     /// Queue a memory update for the next user message.

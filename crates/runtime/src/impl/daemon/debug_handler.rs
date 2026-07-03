@@ -33,6 +33,10 @@ fn builtin_tracepoints() -> Vec<Value> {
         json!({"name": "llm.response", "module": "brain", "level": "debug", "description": "LLM API response received"}),
         json!({"name": "selffield.review", "module": "self", "level": "debug", "description": "SelfField intent review"}),
         json!({"name": "hook.execute", "module": "runtime", "level": "debug", "description": "Lifecycle hook executed"}),
+        // Session Gateway tracepoints (Phase D)
+        json!({"name": "session.query", "module": "gateway", "level": "info", "description": "Session Gateway state query"}),
+        json!({"name": "session.ask", "module": "gateway", "level": "info", "description": "External agent ask via Session Gateway"}),
+        json!({"name": "session.journal", "module": "gateway", "level": "info", "description": "Event journal query via Session Gateway"}),
     ]
 }
 
@@ -82,6 +86,11 @@ impl DebugHandler {
     /// Returns `Some(rx)` if `debug.subscribe` was just called, `None` otherwise.
     pub async fn take_pending_subscriber_rx(&self) -> Option<mpsc::Receiver<DebugEvent>> {
         self.pending_subscriber_rx.lock().await.take()
+    }
+
+    /// Get a reference to the performance counter (shared with SessionGateway).
+    pub fn perf_counter(&self) -> &PerfCounter {
+        &self.perf
     }
 
     /// Handle a debug.* JSON-RPC method.

@@ -38,7 +38,7 @@ eBPF allows Aletheon to attach lightweight programs to kernel tracepoints and co
 
 ### Current Implementation
 
-The eBPF perception source exists in `crates/aletheon-self/src/impl/perception/sources/ebpf_source.rs`.
+The eBPF perception source exists in `crates/dasein/src/impl/perception/sources/ebpf_source.rs`.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -156,7 +156,7 @@ Aletheon mounts a virtual filesystem that exposes agent state, perception data, 
 
 ### Implementation Details
 
-The FUSE filesystem is implemented behind a `fuse` feature flag in `crates/aletheon-self/src/impl/perception/fuse/`:
+The FUSE filesystem is implemented behind a `fuse` feature flag in `crates/dasein/src/impl/perception/fuse/`:
 
 | Component | File | Purpose |
 |-----------|------|---------|

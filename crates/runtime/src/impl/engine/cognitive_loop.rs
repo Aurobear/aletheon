@@ -66,6 +66,7 @@ impl TurnResult {
 }
 
 /// The ReAct cognitive engine.
+#[deprecated(since = "0.1.0", note = "Use ReActLoop in core/react_loop/ instead")]
 pub struct Engine {
     pub(super) llm: Box<dyn LlmProvider>,
     pub(super) tools: ToolRegistry,

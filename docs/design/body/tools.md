@@ -1,4 +1,4 @@
-> Migrated from docs/design/execution/tool-system.md — code paths updated to aletheon-* crate structure
+> Migrated from docs/design/execution/tool-system.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # 工具系统与沙箱执行 (Tool System & Sandbox Execution)
 
@@ -562,30 +562,30 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 
 | 项目 | 说明 |
 |------|------|
-| **工具 Trait** | `aletheon-runtime/src/impl/tool.rs` — Tool trait + ToolRegistry + `ToolOutput` trait |
-| **输出处理** | `aletheon-body/src/impl/tools/output/` — 三层防御: `capture.rs` (Layer 1), `persistence.rs` (Layer 2), `turn_budget.rs` (Layer 3) |
-| **截断策略** | `aletheon-body/src/impl/tools/output/truncation.rs` — `TruncationPolicy` + UTF-8 安全的 head/tail 切分 |
-| **多模态输出** | `aletheon-runtime/src/impl/tool_result.rs` — `ToolContent` enum + `ToolResult` |
-| **ToolExposure** | `aletheon-runtime/src/impl/tool.rs` — 4 级枚举 + `visible_tools()` |
-| **阈值门控** | `aletheon-runtime/src/impl/tool_search/config.rs` — `ToolSearchConfig`, `should_activate_tool_search()` |
-| **三工具桥接** | `aletheon-runtime/src/impl/tool_search/bridge.rs` — `ToolSearchTool` + `ToolDescribeTool` + `ToolCallBridge` |
-| **BM25 搜索** | `aletheon-runtime/src/impl/tool_search/catalog.rs` — `CatalogEntry`, `ToolCatalog` |
-| **工具集** | `aletheon-runtime/src/impl/toolset.rs` — `Toolset`, `ToolsetRegistry` |
-| **注册增强** | `aletheon-runtime/src/impl/tool.rs` — shadow 保护, `check_fn` TTL 缓存, `dynamic_schema_overrides` |
-| **工具循环防护** | `aletheon-runtime/src/impl/tool_guardrails.rs` — `ToolGuardrailController` |
-| **并行执行** | `aletheon-runtime/src/impl/tool_runner.rs` — ToolCallExecutor (RwLock gate + JoinSet + CancellationToken) |
-| **回合预算** | `aletheon-body/src/impl/tools/output/turn_budget.rs` — `enforce_turn_budget()` |
-| **溢出清理** | `aletheon-body/src/impl/tools/output/persistence.rs` — `cleanup_overflow_dir()` 7 天保留 |
-| **MCP 客户端** | `aletheon-body/src/impl/mcp/client.rs` — McpClient + 三种 Transport |
-| **MCP 连接管理器** | `aletheon-body/src/impl/mcp/manager.rs` — McpConnectionManager |
-| **MCP 工具适配** | `aletheon-body/src/impl/mcp/tool_adapter.rs` — McpToolWrapper + normalize_tool_name |
-| **MCP 配置** | `aletheon-body/src/impl/mcp/config.rs` — McpServerConfig |
-| **MCP 错误** | `aletheon-body/src/impl/mcp/error.rs` — McpError enum |
-| **MCP 资源/提示词** | `aletheon-body/src/impl/mcp/resources.rs` — list_all_resources + read_resource |
-| **沙箱执行器** | `aletheon-runtime/src/impl/sandbox.rs` — SandboxExecutor + `CaptureConfig` + `SandboxResult` |
-| **MCP OAuth** | `aletheon-body/src/impl/mcp/auth.rs` — `McpAuthProvider` trait + BearerTokenAuth + OAuthAuth 骨架 |
-| **沙箱后端** | `aletheon-body/src/impl/sandbox/backend.rs` — `SandboxBackend` trait + 三后端 |
-| **工具名配置** | `aletheon-body/src/impl/mcp/tool_name.rs` — `ToolNameConfig` + `CollisionStrategy` |
+| **工具 Trait** | `runtime/src/impl/tool.rs` — Tool trait + ToolRegistry + `ToolOutput` trait |
+| **输出处理** | `corpus/src/impl/tools/output/` — 三层防御: `capture.rs` (Layer 1), `persistence.rs` (Layer 2), `turn_budget.rs` (Layer 3) |
+| **截断策略** | `corpus/src/impl/tools/output/truncation.rs` — `TruncationPolicy` + UTF-8 安全的 head/tail 切分 |
+| **多模态输出** | `runtime/src/impl/tool_result.rs` — `ToolContent` enum + `ToolResult` |
+| **ToolExposure** | `runtime/src/impl/tool.rs` — 4 级枚举 + `visible_tools()` |
+| **阈值门控** | `runtime/src/impl/tool_search/config.rs` — `ToolSearchConfig`, `should_activate_tool_search()` |
+| **三工具桥接** | `runtime/src/impl/tool_search/bridge.rs` — `ToolSearchTool` + `ToolDescribeTool` + `ToolCallBridge` |
+| **BM25 搜索** | `runtime/src/impl/tool_search/catalog.rs` — `CatalogEntry`, `ToolCatalog` |
+| **工具集** | `runtime/src/impl/toolset.rs` — `Toolset`, `ToolsetRegistry` |
+| **注册增强** | `runtime/src/impl/tool.rs` — shadow 保护, `check_fn` TTL 缓存, `dynamic_schema_overrides` |
+| **工具循环防护** | `runtime/src/impl/tool_guardrails.rs` — `ToolGuardrailController` |
+| **并行执行** | `runtime/src/impl/tool_runner.rs` — ToolCallExecutor (RwLock gate + JoinSet + CancellationToken) |
+| **回合预算** | `corpus/src/impl/tools/output/turn_budget.rs` — `enforce_turn_budget()` |
+| **溢出清理** | `corpus/src/impl/tools/output/persistence.rs` — `cleanup_overflow_dir()` 7 天保留 |
+| **MCP 客户端** | `corpus/src/impl/mcp/client.rs` — McpClient + 三种 Transport |
+| **MCP 连接管理器** | `corpus/src/impl/mcp/manager.rs` — McpConnectionManager |
+| **MCP 工具适配** | `corpus/src/impl/mcp/tool_adapter.rs` — McpToolWrapper + normalize_tool_name |
+| **MCP 配置** | `corpus/src/impl/mcp/config.rs` — McpServerConfig |
+| **MCP 错误** | `corpus/src/impl/mcp/error.rs` — McpError enum |
+| **MCP 资源/提示词** | `corpus/src/impl/mcp/resources.rs` — list_all_resources + read_resource |
+| **沙箱执行器** | `runtime/src/impl/sandbox.rs` — SandboxExecutor + `CaptureConfig` + `SandboxResult` |
+| **MCP OAuth** | `corpus/src/impl/mcp/auth.rs` — `McpAuthProvider` trait + BearerTokenAuth + OAuthAuth 骨架 |
+| **沙箱后端** | `corpus/src/impl/sandbox/backend.rs` — `SandboxBackend` trait + 三后端 |
+| **工具名配置** | `corpus/src/impl/mcp/tool_name.rs` — `ToolNameConfig` + `CollisionStrategy` |
 | **内置工具** | `agent-tools/src/` — bash, file_ops, system, memory_tools, delegate, file_search |
 
 ---
@@ -617,10 +617,10 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 ## Implementation Summary
 
 **Code Locations:**
-- `crates/aletheon-body/src/impl/tools/mod.rs` — Tool trait definition, ToolRegistry, ToolOutput trait
-- `crates/aletheon-body/src/impl/tools/registry.rs` — Registration, lookup, visibility filtering
-- `crates/aletheon-body/src/impl/tools/bash_exec.rs`, `file_read.rs`, `file_write.rs`, `process_list.rs`, `system_status.rs` — 5 built-in tools
-- `crates/aletheon-body/src/impl/tools/output/` — Three-layer output defense: `capture.rs`, `persistence.rs`, `turn_budget.rs`, `truncation.rs`, `pruner.rs`, `config.rs`
+- `crates/corpus/src/impl/tools/mod.rs` — Tool trait definition, ToolRegistry, ToolOutput trait
+- `crates/corpus/src/impl/tools/registry.rs` — Registration, lookup, visibility filtering
+- `crates/corpus/src/impl/tools/bash_exec.rs`, `file_read.rs`, `file_write.rs`, `process_list.rs`, `system_status.rs` — 5 built-in tools
+- `crates/corpus/src/impl/tools/output/` — Three-layer output defense: `capture.rs`, `persistence.rs`, `turn_budget.rs`, `truncation.rs`, `pruner.rs`, `config.rs`
 
 **Key Types/Traits Implemented:**
 - `Tool` trait — unified tool interface with `input_schema()`, `permission_level()`, `needs_sandbox()`, `exposure()`, `concurrency_class()`

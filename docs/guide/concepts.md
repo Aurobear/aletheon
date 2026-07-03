@@ -47,7 +47,7 @@ SelfField is not a static identity object. It is a dynamic field that maintains 
 | Continuity | "How do I persist?" | Maintains lineage across restarts and evolution cycles |
 | Mutation | "How do I change?" | Policy updates, memory schema changes, topology updates |
 
-**Implementation:** `crates/aletheon-self/` -- see [SelfField design](../design/self/self-field.md).
+**Implementation:** `crates/dasein/` -- see [SelfField design](../design/self/self-field.md).
 
 ---
 
@@ -73,7 +73,7 @@ User request / Perception event
   --> loop until done or max iterations
 ```
 
-**Implementation:** `crates/aletheon-brain/` -- see [Cognitive Engine](../design/brain/cognitive-engine.md).
+**Implementation:** `crates/cognit/` -- see [Cognitive Engine](../design/brain/cognitive-engine.md).
 
 ---
 
@@ -91,7 +91,7 @@ BodyRuntime is the agent's embodied execution layer. It interacts with the opera
 
 BodyRuntime can **refuse** actions flagged by SelfField's boundary layer and can **observe** system state that feeds into BrainCore's reasoning.
 
-**Implementation:** `crates/aletheon-body/` -- see [Body design](../design/body/tools.md).
+**Implementation:** `crates/corpus/` -- see [Body design](../design/body/tools.md).
 
 ---
 
@@ -107,7 +107,7 @@ Aletheon's memory is modeled after OS virtual memory (cache -> RAM -> disk):
 
 The agent manages its own memory through explicit tools (`core_memory_append`, `core_memory_replace`, `recall_search`). This is not a passive store -- the agent actively decides what to remember and what to forget.
 
-**Implementation:** `crates/aletheon-memory/` + `crates/aletheon-runtime/src/impl/memory/` -- see [Memory System](../design/memory/memory-system.md).
+**Implementation:** `crates/memory/` + `crates/runtime/src/impl/memory/` -- see [Memory System](../design/memory/memory-system.md).
 
 ---
 
@@ -123,7 +123,7 @@ Run --> Reflect --> Mutate Spec --> Generate Candidate --> Evaluate --> Migrate 
 
 This is the foundation of true self-evolution: not just learning patterns, but regenerating the runtime itself.
 
-**Implementation:** `crates/aletheon-meta/` -- see [MetaRuntime design](../design/meta/meta-runtime.md).
+**Implementation:** `crates/metacog/` -- see [MetaRuntime design](../design/meta/meta-runtime.md).
 
 ---
 

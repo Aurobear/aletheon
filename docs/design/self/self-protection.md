@@ -1,4 +1,4 @@
-> Migrated from docs/design/security/self-protection.md — code paths updated to aletheon-* crate structure
+> Migrated from docs/design/security/self-protection.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # Agent 自我保护 (Agent Self-Protection)
 
@@ -13,10 +13,10 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| InputSanitizer | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/input_sanitizer.rs` | Prompt injection detection + sanitization |
-| ResourceGovernor | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/resource_governor.rs` | Multi-resource limits + throttling |
-| EmergencyKillswitch | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/emergency_killswitch.rs` | Multi-trigger emergency stop |
-| IntegrityMonitor | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/integrity_monitor.rs` | FNV-1a hash checking, baseline tracking, killswitch integration |
+| InputSanitizer | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/input_sanitizer.rs` | Prompt injection detection + sanitization |
+| ResourceGovernor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/resource_governor.rs` | Multi-resource limits + throttling |
+| EmergencyKillswitch | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/emergency_killswitch.rs` | Multi-trigger emergency stop |
+| IntegrityMonitor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/integrity_monitor.rs` | FNV-1a hash checking, baseline tracking, killswitch integration |
 
 ---
 
@@ -229,8 +229,8 @@ struct IntegrityMonitor {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| InputSanitizer | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/input_sanitizer.rs` |
-| ResourceGovernor | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/resource_governor.rs` |
-| EmergencyKillswitch | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/emergency_killswitch.rs` |
-| IntegrityMonitor | ✅ Implemented | `crates/aletheon-self/src/impl/security/self_protection/integrity_monitor.rs` — FNV-1a, baseline, killswitch integration |
+| InputSanitizer | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/input_sanitizer.rs` |
+| ResourceGovernor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/resource_governor.rs` |
+| EmergencyKillswitch | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/emergency_killswitch.rs` |
+| IntegrityMonitor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/integrity_monitor.rs` — FNV-1a, baseline, killswitch integration |
 | SelfUpdateManager | ⬜ Planned | Update + rollback designed |

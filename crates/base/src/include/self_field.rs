@@ -282,7 +282,16 @@ pub trait VerdictHandler: Send + Sync {
     fn handle(&self, verdict: &Verdict, intent: &Intent, ctx: &Context) -> VerdictAction;
 }
 
-/// SelfField trait — the LSM policy engine.
+/// SelfField trait — the architectural center of Aletheon.
+///
+/// SelfField is not a module alongside Brain, Body, and Memory. It is the field
+/// through which everything is interpreted -- the gate between the world and the
+/// agent's action space. This is the first principle: **everything is interpreted
+/// by the Self.** See [docs/design/self/first-principle.md].
+///
+/// `review()` IS the agent's self-awareness in operation. Every intent passes
+/// through this single method, and the Verdict it returns determines what the
+/// agent can do. There is no bypass.
 ///
 /// SelfField reviews intents, enforces boundaries, resolves conflicts,
 /// and maintains identity continuity. It is the "should I?" layer.

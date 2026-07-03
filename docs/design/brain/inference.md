@@ -1,4 +1,4 @@
-> Migrated from docs/design/orchestration/hybrid-inference.md — code paths updated to aletheon-* crate structure
+> Migrated from docs/design/orchestration/hybrid-inference.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # 混合推理架构
 
@@ -175,7 +175,7 @@ agent "自动判断的任务"                  # 使用分类器
 
 ## 6. 参考来源
 
-- **原始设计文档:** `docs/plans/2026-06-14-aletheon-cleanup-design.md` §12 (historical reference, file has been removed)
+- **原始设计文档:** `docs/plans/2026-06-14-cleanup-design.md` §12 (historical reference, file has been removed)
 - **llama.cpp:** 本地推理引擎，GGUF 格式模型加载，GPU offload 支持
 - **Anthropic SDK:** content-block 协议、工具循环、上下文压缩（`lib/tools/_beta_runner.py`）
 - **OpenCode:** run coordinator 的 demand coalescing 模式（参考其多 provider 调度逻辑）
@@ -184,7 +184,7 @@ agent "自动判断的任务"                  # 使用分类器
 
 ## Implementation Summary
 
-**Code location:** `crates/aletheon-brain/src/impl/inference/`
+**Code location:** `crates/cognit/src/impl/inference/`
 
 **Key types/traits implemented:**
 - `Complexity` enum (`classifier.rs`) — Simple/Medium/Complex intent categories

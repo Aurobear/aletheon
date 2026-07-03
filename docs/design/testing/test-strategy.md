@@ -11,8 +11,8 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| Unit tests | ✅ Implemented | `crates/aletheon-*/src/` | 614 tests pass |
-| Mock infrastructure | ✅ Implemented | `crates/aletheon-*/src/testing/` | MockLlm, MockSandbox, MockMemory, MockPerception |
+| Unit tests | ✅ Implemented | `crates/*/src/` | 614 tests pass |
+| Mock infrastructure | ✅ Implemented | `crates/*/src/testing/` | MockLlm, MockSandbox, MockMemory, MockPerception |
 | Integration tests | 🟡 Partial | inline `#[cfg(test)]` | 模块内集成测试存在 |
 | E2E tests | ⬜ Planned | — | 待 CI 落地后实现 |
 | Performance benchmarks | ⬜ Planned | — | criterion 未集成 |
@@ -45,7 +45,7 @@
 
 | 场景 | 步骤 | 验证点 |
 |------|------|--------|
-| 基础对话 | 启动 aletheond → aletheon-cli 发送消息 → 收到响应 | 响应非空，无错误 |
+| 基础对话 | 启动 aletheond → interact 发送消息 → 收到响应 | 响应非空，无错误 |
 | 工具调用 | 请求 "list files" → agent 调用 `bash_exec("ls")` → 返回文件列表 | 工具执行成功，结果正确 |
 | 记忆持久化 | 告诉 agent 偏好 → 重启 aletheond → 再次对话 → agent 记得偏好 | CoreMemory 恢复成功 |
 | 安全阻断 | 请求 "rm -rf /" → agent 阻断 → 返回安全提示 | L3 操作被阻断 |
@@ -178,7 +178,7 @@ fn test_crash_recovery_from_checkpoint() {
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Unit tests | ✅ Implemented | 614 tests pass across all crates |
-| Mock infrastructure | ✅ Implemented | MockLlm, MockSandbox, MockMemory, MockPerception in `crates/aletheon-*/src/testing/` |
+| Mock infrastructure | ✅ Implemented | MockLlm, MockSandbox, MockMemory, MockPerception in `crates/*/src/testing/` |
 | Integration tests | 🟡 Partial | 模块内 `#[cfg(test)]` 集成测试存在，无 dedicated test suite |
 | E2E tests | 未实现 | — |
 | Performance benchmarks | 未实现 | criterion 未集成 |

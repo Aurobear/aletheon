@@ -107,6 +107,16 @@ impl SessionManager {
             .count()
     }
 
+    /// Return total message count (all roles: user, assistant, system).
+    pub fn message_count(&self) -> usize {
+        self.messages.len()
+    }
+
+    /// Get a reference to the event journal for query access.
+    pub fn journal(&self) -> &EventJournal {
+        &self.journal
+    }
+
     /// Rough token estimate: 4 chars per token.
     pub fn estimate_tokens(&self) -> usize {
         self.messages.iter().map(|m| m.estimate_tokens()).sum()
@@ -214,6 +224,7 @@ impl SessionManager {
                 Role::System => {}
             }
         }
+        let _ = self.journal.flush().await;
     }
 
     /// Write a checkpoint boundary to the journal.

@@ -392,9 +392,9 @@ session_id: "mcp-session".into(),
 
 **File:** `.github/workflows/release.yml`
 
-**Problem:** Builds `-p aletheond -p aletheon-exec -p aletheon-cli`, but:
+**Problem:** Builds `-p aletheond -p aletheon-exec -p interact`, but:
 - The daemon binary is in the `runtime` crate (package name `runtime`), not `aletheond`
-- The CLI binary is in the `interact` crate (package name `interact`), not `aletheon-cli`
+- The CLI binary is in the `interact` crate (package name `interact`), not `interact`
 
 **Impact:** Release builds will fail.
 

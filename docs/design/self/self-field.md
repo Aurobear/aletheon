@@ -1,11 +1,11 @@
-> New document — code paths reflect aletheon-* crate structure
+> New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 # SelfField Architecture
 
 > The self-awareness layer — 8 internal layers for identity, boundary, care, narrative, conflict, attention, continuity, and mutation.
 
-**Crate:** `aletheon-self`
-**Source:** `crates/aletheon-self/`
+**Crate:** `dasein`
+**Source:** `crates/dasein/`
 **Last updated:** 2026-06-14
 
 ---
@@ -25,7 +25,7 @@
 
 ## 1. Overview
 
-The `aletheon-self` crate implements the agent's self-awareness and self-protection capabilities. It contains 8 conceptual internal layers organized around the agent's sense of self:
+The `dasein` crate implements the agent's self-awareness and self-protection capabilities. It contains 8 conceptual internal layers organized around the agent's sense of self:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -151,7 +151,7 @@ Action Request
 ## 4. Crate Structure
 
 ```
-crates/aletheon-self/
+crates/dasein/
 ├── core/           — Shared types and traits
 ├── bridge/         — Cross-crate integration points
 ├── impl/
