@@ -84,6 +84,11 @@ impl DebugHandler {
         self.pending_subscriber_rx.lock().await.take()
     }
 
+    /// Get a reference to the performance counter (shared with SessionGateway).
+    pub fn perf_counter(&self) -> &PerfCounter {
+        &self.perf
+    }
+
     /// Handle a debug.* JSON-RPC method.
     ///
     /// Returns `None` if the method is not a debug method (caller should handle it).

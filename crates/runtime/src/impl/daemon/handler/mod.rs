@@ -72,6 +72,8 @@ use super::debug_handler::DebugHandler;
 use super::prefix_builder::PrefixBuilder;
 use super::DaemonConfig;
 use base::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
+use crate::core::session_gateway::{ParamRegistry, SessionGateway};
+use crate::core::session_gateway::gateway::SessionStateRef;
 
 pub(crate) use format::event_to_json;
 
@@ -173,6 +175,8 @@ pub struct RequestHandler {
     event_bus: Option<Arc<dyn base::EventBus>>,
     /// Daemon-level cancellation token for graceful shutdown via daemon.shutdown RPC.
     daemon_cancel_token: Option<CancellationToken>,
+    /// Session Gateway — unified facade for external agent debug access.
+    session_gateway: Arc<SessionGateway>,
 }
 
 impl RequestHandler {
@@ -219,6 +223,28 @@ impl RequestHandler {
         session_store.create_session(&session_id)?;
 
         info!(session_id = %session_id, "Created new session");
+
+        // Create SelfField for genome reads and policy engine
+        let self_field_config = SelfFieldConfig {
+            db_path: Some(data_dir.join("self_field.db")),
+            ..Default::default()
+        };
+        let self_field = Arc::new(Mutex::new(SelfField::new(self_field_config)));
+
+        // Tier 2a: install the Runtime PermissionManager as the permission authority.
+        // This delegates the confirmation verdict from dasein's inline rule to the
+        // Runtime's policy manager (behavior-identical port).
+        {
+            use crate::core::permission_manager::PermissionManager;
+            let mut sf = self_field.lock().await;
+            sf.set_permission_authority(std::sync::Arc::new(PermissionManager::new()));
+        }
+
+        // Wire DaseinEventBridge to EventBus if available
+        if let Some(ref eb) = event_bus {
+            let sf = self_field.lock().await;
+            sf.wire_dasein_event_bridge(&**eb).await?;
+        }
 
         // Create memory instances
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
@@ -275,6 +301,7 @@ impl RequestHandler {
         )
         .await?;
         info!(context_window = context_window, "Session context window configured");
+        let session_manager = Arc::new(Mutex::new(session_manager));
 
         // Register tools including memory tools
         let mut tools = ToolRegistry::default();
@@ -334,6 +361,7 @@ impl RequestHandler {
             context_window_tokens: context_window,
             ..Default::default()
         };
+        let runtime_config_snapshot = runtime_config.clone();
 
         // Create agent registry: try config-based loading first, fall back to builtins
         let agents_dir = PathBuf::from("agents");
@@ -408,28 +436,6 @@ impl RequestHandler {
         };
         episodic_memory.init(&ctx).await?;
         let episodic_memory = Arc::new(Mutex::new(episodic_memory));
-
-        // Create SelfField for genome reads and policy engine
-        let self_field_config = SelfFieldConfig {
-            db_path: Some(data_dir.join("self_field.db")),
-            ..Default::default()
-        };
-        let self_field = Arc::new(Mutex::new(SelfField::new(self_field_config)));
-
-        // Tier 2a: install the Runtime PermissionManager as the permission authority.
-        // This delegates the confirmation verdict from dasein's inline rule to the
-        // Runtime's policy manager (behavior-identical port).
-        {
-            use crate::core::permission_manager::PermissionManager;
-            let mut sf = self_field.lock().await;
-            sf.set_permission_authority(std::sync::Arc::new(PermissionManager::new()));
-        }
-
-        // Wire DaseinEventBridge to EventBus if available
-        if let Some(ref eb) = event_bus {
-            let sf = self_field.lock().await;
-            sf.wire_dasein_event_bridge(&**eb).await?;
-        }
 
         // Initialize skill loader from the default skills directory
         let skills_dir = base::paths::skills_dir();
@@ -695,6 +701,31 @@ impl RequestHandler {
         let debug_handler = Arc::new(DebugHandler::new(debug_hook, debug_perf.clone()));
         info!("DebugHandler initialized");
 
+        // ── Session Gateway ─────────────────────────────────────────────
+        let param_registry = Arc::new(ParamRegistry::new());
+        let gw_state = Arc::new(Mutex::new(SessionStateRef {
+            iteration: 0,
+            plan_mode: false,
+            consecutive_errors: 0,
+            circuit_breaker_status: crate::core::react_loop::circuit_breaker::CircuitBreakerStatus::Ok,
+            tool_budget_remaining: runtime_config_snapshot.agent_loop.max_tool_calls,
+            tool_budget_max: runtime_config_snapshot.agent_loop.max_tool_calls,
+            recent_tools: Vec::new(),
+            storm_breaker_failure_count: 0,
+            goal_tracker: crate::core::react_loop::goal_tracker::GoalTracker::new(),
+        }));
+        let gw_started_at = std::time::Instant::now();
+        let session_gateway = Arc::new(SessionGateway::new(
+            param_registry.clone(),
+            debug_handler.clone(),
+            session_id.clone(),
+            gw_state.clone(),
+            session_manager.clone(),
+            gw_started_at,
+            runtime_config_snapshot,
+        ));
+        info!("SessionGateway initialized");
+
         let handler = Self {
             state: Arc::new(Mutex::new(SessionState {
                 runtime,
@@ -702,7 +733,7 @@ impl RequestHandler {
             })),
             llm,
             model_router,
-            session_manager: Arc::new(Mutex::new(session_manager)),
+            session_manager: session_manager.clone(),
             recall_memory,
             data_dir,
             context_window,
@@ -738,7 +769,62 @@ impl RequestHandler {
             cancel_token: Arc::new(Mutex::new(None)),
             event_bus,
             daemon_cancel_token: Some(cancel_token),
+            session_gateway,
         };
+
+        // ── Register initial params ──────────────────────────────────────
+        {
+            let data_dir_clone = handler.data_dir.clone();
+            let started_at = std::time::Instant::now();
+            param_registry.declare(
+                "session.uptime_secs",
+                "session",
+                "Daemon uptime in seconds",
+                move || json!(started_at.elapsed().as_secs()),
+            ).await;
+            param_registry.declare(
+                "session.data_dir",
+                "session",
+                "Data directory path",
+                move || json!(data_dir_clone.to_string_lossy()),
+            ).await;
+            let model = config.model.clone();
+            param_registry.declare(
+                "llm.model",
+                "llm",
+                "Current LLM model in use",
+                move || json!(model),
+            ).await;
+            let provider_name = handler.llm.name().to_string();
+            param_registry.declare(
+                "llm.provider",
+                "llm",
+                "Current LLM provider name",
+                move || json!(provider_name),
+            ).await;
+            let sandbox_pref = config.sandbox_preference.clone();
+            param_registry.declare(
+                "sandbox.preference",
+                "sandbox",
+                "Current sandbox mode",
+                move || json!(sandbox_pref),
+            ).await;
+            param_registry.declare(
+                "session.rss_kb",
+                "session",
+                "Resident memory in KB",
+                || {
+                    let status = std::fs::read_to_string("/proc/self/status").ok();
+                    let rss = status.and_then(|s| {
+                        s.lines()
+                            .find(|l| l.starts_with("VmRSS:"))
+                            .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
+                    });
+                    json!(rss.unwrap_or(0))
+                },
+            ).await;
+            info!("Registered {} initial params", 6);
+        }
 
         // Fire OnSessionStart hook
         {
@@ -947,10 +1033,17 @@ impl RequestHandler {
             .get("id")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
+        let params = request.get("params").cloned().unwrap_or(serde_json::Value::Null);
 
-        // Route debug.* methods to the debug handler (non-blocking for other methods).
+        // Route session.* methods to the Session Gateway (new unified facade).
+        if method.starts_with("session.") {
+            if let Some(response) = self.session_gateway.handle_method(&method, &id, &params).await {
+                return response;
+            }
+        }
+
+        // Route debug.* methods to the debug handler (backward compat).
         if method.starts_with("debug.") {
-            let params = request.get("params").cloned().unwrap_or(serde_json::Value::Null);
             if let Some(response) = self.debug_handler.handle_method(&method, &id, &params).await {
                 return response;
             }
