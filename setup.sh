@@ -124,8 +124,8 @@ install_deps
 # ── 3. Build ─────────────────────────────────────────────────────────────
 
 # Clean stale build artifacts from old binaries (removed [[bin]] entries)
-for stale_bin in aletheond aletheon-exec aletheon-systemd aletheon-container; do
-    rm -f "target/release/$stale_bin" "target/debug/$stale_bin"
+for stale_bin in aletheond aletheon-exec aletheon-systemd aletheon-container aletheon-body-cli; do
+    rm -f "target/release/$stale_bin" "target/debug/$stale_bin" "target/release/$stale_bin.d" "target/debug/$stale_bin.d"
 done
 log "Cleaned stale build artifacts"
 
