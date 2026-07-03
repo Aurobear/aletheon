@@ -723,6 +723,9 @@ impl RequestHandler {
             session_manager.clone(),
             gw_started_at,
             runtime_config_snapshot,
+            core_memory.clone(),
+            recall_memory.clone(),
+            self_field.clone(),
         ));
         info!("SessionGateway initialized");
 

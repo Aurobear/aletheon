@@ -39,6 +39,9 @@ use crate::core::react_loop::goal_tracker::GoalTracker;
 use crate::core::config::RuntimeConfig;
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use crate::r#impl::daemon::session_manager::SessionManager;
+use crate::CoreMemory;
+use crate::RecallMemory;
+use dasein::SelfField;
 
 /// Session Gateway — unified facade for external debug access.
 ///
@@ -59,6 +62,11 @@ pub struct SessionGateway {
     session_manager: Arc<Mutex<SessionManager>>,
     started_at: Instant,
     runtime_config: RuntimeConfig,
+
+    /// Memory and SelfField refs (Phase C).
+    core_memory: Arc<Mutex<CoreMemory>>,
+    recall_memory: Arc<Mutex<RecallMemory>>,
+    self_field: Arc<Mutex<SelfField>>,
 }
 
 /// Lightweight reference to SessionState internals for snapshot queries.
@@ -85,6 +93,9 @@ impl SessionGateway {
         session_manager: Arc<Mutex<SessionManager>>,
         started_at: Instant,
         runtime_config: RuntimeConfig,
+        core_memory: Arc<Mutex<CoreMemory>>,
+        recall_memory: Arc<Mutex<RecallMemory>>,
+        self_field: Arc<Mutex<SelfField>>,
     ) -> Self {
         Self {
             param_registry,
@@ -95,6 +106,9 @@ impl SessionGateway {
             session_manager,
             started_at,
             runtime_config,
+            core_memory,
+            recall_memory,
+            self_field,
         }
     }
 
@@ -242,63 +256,215 @@ impl SessionGateway {
         })
     }
 
-    // ── Phase C: Subsystem queries (stubs) ───────────────────────────────
+    // ── Phase C: Subsystem queries ─────────────────────────────────────
 
     async fn handle_memory(&self, id: &Value, params: &Value) -> Value {
         let memory_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("all");
-        let reg = self.subsystem_registry.lock().await;
-        let exact_id = format!("memory.{}", memory_type);
-        match reg.query(&exact_id, params) {
-            Ok(markdown) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "memory_type": memory_type, "content": markdown }
-            }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": e.code, "message": e.message }
-            }),
-        }
-    }
 
-    async fn handle_self(&self, id: &Value, params: &Value) -> Value {
-        let reg = self.subsystem_registry.lock().await;
-        match reg.query("self", params) {
-            Ok(markdown) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "content": markdown }
-            }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": e.code, "message": e.message }
-            }),
-        }
-    }
+        let mut md = String::from("# Memory\n\n");
 
-    async fn handle_dasein(&self, id: &Value) -> Value {
-        let reg = self.subsystem_registry.lock().await;
-        match reg.query("dasein", &Value::Null) {
-            Ok(markdown) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "content": markdown }
-            }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": e.code, "message": e.message }
-            }),
+        if memory_type == "all" || memory_type == "core" {
+            let cm = self.core_memory.lock().await;
+            md.push_str("## Core Memory Blocks\n\n");
+            for (label, block) in cm.blocks() {
+                md.push_str(&format!(
+                    "### {}\n- char_limit: {}\n- read_only: {}\n\n{}\n\n",
+                    label, block.char_limit, block.read_only, block.value
+                ));
+            }
         }
-    }
 
-    async fn handle_state(&self, id: &Value) -> Value {
+        if memory_type == "all" || memory_type == "recall" {
+            let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+            let rm = self.recall_memory.lock().await;
+            md.push_str("## Recall Memory (Recent)\n\n");
+            match rm.recent(limit) {
+                Ok(entries) if !entries.is_empty() => {
+                    for entry in &entries {
+                        md.push_str(&format!(
+                            "- **[{}]** {}\n",
+                            entry.entry_type, entry.content
+                        ));
+                    }
+                }
+                _ => {
+                    md.push_str("*(no entries)*\n");
+                }
+            }
+            md.push('\n');
+        }
+
         json!({
             "jsonrpc": "2.0",
             "id": id,
-            "error": { "code": -32052, "message": "session.state not yet implemented (Phase C)" }
+            "result": { "memory_type": memory_type, "content": md }
+        })
+    }
+
+    async fn handle_self(&self, id: &Value, params: &Value) -> Value {
+        let layer = params.get("layer").and_then(|v| v.as_str()).unwrap_or("all");
+        let sf = self.self_field.lock().await;
+
+        let mut md = String::from("# SelfField State\n\n");
+
+        if layer == "all" || layer == "identity" {
+            md.push_str("## Identity\n");
+            use base::Subsystem;
+            md.push_str(&format!("- Name: {}\n", sf.name()));
+            md.push_str(&format!("- Version: {}\n\n", sf.version()));
+        }
+
+        if layer == "all" || layer == "boundary" {
+            md.push_str("## Boundary\n");
+            let _boundary = sf.boundary();
+            md.push_str("- Boundary layer active\n\n");
+        }
+
+        if layer == "all" || layer == "dasein" {
+            md.push_str("## DaseinModule\n");
+            if let Some(ref d) = sf.dasein() {
+                let m = d.mood();
+                md.push_str(&format!("- Mood: {:?}\n", m));
+                md.push_str(&format!("- Sorge alive: {}\n", d.is_alive()));
+
+                let ts = d.temporality();
+                let tss = ts.to_snapshot();
+                md.push_str(&format!("- Retention depth: {}\n", tss.recent_retentions.len()));
+                md.push_str(&format!("- Tempo: {:.2}\n", tss.tempo));
+
+                let w = d.world();
+                md.push_str(&format!("- Bewandtnis nodes: {} nodes, {} edges\n",
+                    w.node_count(), w.edge_count()));
+
+                let sm = d.self_model();
+                md.push_str(&format!("- Self-assertions: {}\n", sm.assertion_count()));
+
+                let cs = d.care();
+                let css = cs.to_snapshot();
+                md.push_str(&format!("- Concerns: {}\n", css.concerns.len()));
+                md.push_str(&format!("- Rhythm interval: {}ms\n", css.rhythm_interval_ms));
+            } else {
+                md.push_str("*(DaseinModule not enabled)*\n");
+            }
+            md.push('\n');
+        }
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": { "layer": layer, "content": md }
+        })
+    }
+
+    async fn handle_dasein(&self, id: &Value) -> Value {
+        let sf = self.self_field.lock().await;
+        let mut md = String::from("# DaseinModule State\n\n");
+
+        if let Some(ref d) = sf.dasein() {
+            md.push_str("## Stimmung (Mood)\n");
+            md.push_str(&format!("- {:?}\n\n", d.mood()));
+
+            md.push_str("## TemporalStream\n");
+            let tss = d.temporality().to_snapshot();
+            md.push_str(&format!("- Recent retentions: {}\n", tss.recent_retentions.len()));
+            md.push_str(&format!(
+                "- Present: action={:?}, mood_tone={:?}\n",
+                tss.present.action, tss.present.mood_tone
+            ));
+            md.push_str(&format!("- Protentions: {}\n", tss.protentions.len()));
+            md.push_str(&format!("- Tempo: {:.2}\n\n", tss.tempo));
+
+            md.push_str("## Bewandtnisganzheit (World)\n");
+            let ws = d.world().to_snapshot();
+            md.push_str(&format!(
+                "- Ready-to-hand: {} | Present-at-hand: {} | Unavailable: {}\n",
+                ws.ready_to_hand.len(), ws.present_at_hand.len(), ws.unavailable.len()
+            ));
+            md.push_str(&format!("- Ultimate concern: {:?}\n\n", ws.ultimate_concern));
+
+            md.push_str("## MutableSelfModel\n");
+            let sms = d.self_model().to_snapshot();
+            md.push_str(&format!("- Current assertions: {}\n", sms.current_assertions.len()));
+            for a in &sms.current_assertions {
+                md.push_str(&format!("  - \"{}\" (stability: {:.2})\n", a.content, a.stability));
+            }
+            md.push_str(&format!("- Negated assertions: {}\n", sms.negated_assertions.len()));
+            md.push_str(&format!("- Possibilities: {}\n\n", sms.possibilities.len()));
+
+            md.push_str("## CareStructure\n");
+            let css = d.care().to_snapshot();
+            md.push_str(&format!("- Projection: {:?}\n", css.projection));
+            md.push_str(&format!("- Concerns: {}\n", css.concerns.len()));
+            for c in &css.concerns {
+                md.push_str(&format!(
+                    "  - \"{}\" (urgency: {:.2})\n", c.purpose, c.urgency
+                ));
+            }
+            md.push_str(&format!("- Rhythm interval: {}ms\n", css.rhythm_interval_ms));
+            md.push_str(&format!("- Fallenness depth: {:.2}\n\n", css.fallenness_depth));
+
+            md.push_str("## SorgeLoop\n");
+            md.push_str(&format!("- Alive: {}\n", d.is_alive()));
+        } else {
+            md.push_str("*(DaseinModule not enabled)*\n");
+        }
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": { "content": md }
+        })
+    }
+
+    async fn handle_state(&self, id: &Value) -> Value {
+        let state = self.state.lock().await;
+        let messages = self.session_manager.lock().await;
+
+        let mut md = String::from("# ReActLoop State\n\n");
+
+        md.push_str("## Loop State\n");
+        md.push_str(&format!("- Iteration: {}\n", state.iteration));
+        md.push_str(&format!(
+            "- Max iterations: {}\n",
+            self.runtime_config.max_iterations
+        ));
+        md.push_str(&format!(
+            "- Plan mode: {}\n",
+            if state.plan_mode { "yes" } else { "no" }
+        ));
+        md.push_str(&format!("- Consecutive errors: {}\n", state.consecutive_errors));
+
+        md.push_str("\n## Tool Budget\n");
+        md.push_str(&format!(
+            "- Used: {} / {}\n",
+            state.tool_budget_max - state.tool_budget_remaining,
+            state.tool_budget_max
+        ));
+        if !state.recent_tools.is_empty() {
+            md.push_str("- Recent tools:\n");
+            for t in state.recent_tools.iter().rev().take(10) {
+                md.push_str(&format!("  - {}\n", t));
+            }
+        }
+
+        md.push_str("\n## Circuit Breaker\n");
+        md.push_str(&format!("- Status: {:?}\n", state.circuit_breaker_status));
+
+        md.push_str("\n## Goal Tracker\n");
+        md.push_str(&state.goal_tracker.get_context());
+        md.push('\n');
+
+        md.push_str("## Session\n");
+        md.push_str(&format!("- Messages: {}\n", messages.message_count()));
+        md.push_str(&format!(
+            "- Estimated tokens: {}\n\n",
+            messages.estimate_tokens()
+        ));
+
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": { "content": md }
         })
     }
 
@@ -343,11 +509,18 @@ mod tests {
             storm_breaker_failure_count: 0,
             goal_tracker: GoalTracker::new(),
         }));
-        // SessionManager — use temp dir, create asynchronously
         let tmp = tempfile::tempdir().unwrap();
         let sm = SessionManager::new(tmp.path(), "test-session".into(), 100000)
             .await
             .unwrap();
+
+        // Create test CoreMemory, RecallMemory, SelfField
+        let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
+        let recall_db = tmp.path().join("recall.db");
+        let recall_memory = Arc::new(Mutex::new(
+            RecallMemory::new(&recall_db).unwrap(),
+        ));
+        let self_field = Arc::new(Mutex::new(SelfField::new(Default::default())));
 
         SessionGateway::new(
             param_registry,
@@ -357,6 +530,9 @@ mod tests {
             Arc::new(Mutex::new(sm)),
             Instant::now(),
             RuntimeConfig::default(),
+            core_memory,
+            recall_memory,
+            self_field,
         )
     }
 
@@ -428,7 +604,8 @@ mod tests {
     #[tokio::test]
     async fn stub_methods_return_not_implemented() {
         let gw = make_gateway().await;
-        for method in &["session.state", "session.ask", "session.journal"] {
+        // Only ask + journal are still stubbed
+        for method in &["session.ask", "session.journal"] {
             let resp = gw
                 .handle_method(method, &json!("1"), &Value::Null)
                 .await
@@ -452,5 +629,52 @@ mod tests {
             .await
             .unwrap();
         assert!(resp["result"]["perf"].is_object());
+    }
+
+    #[tokio::test]
+    async fn memory_query_returns_blocks() {
+        let gw = make_gateway().await;
+        let resp = gw
+            .handle_method("session.memory", &json!("1"), &json!({"type": "core"}))
+            .await
+            .unwrap();
+        assert!(resp["result"]["content"].as_str().unwrap().contains("Core Memory"));
+    }
+
+    #[tokio::test]
+    async fn self_query_returns_identity() {
+        let gw = make_gateway().await;
+        let resp = gw
+            .handle_method("session.self", &json!("1"), &json!({"layer": "identity"}))
+            .await
+            .unwrap();
+        let content = resp["result"]["content"].as_str().unwrap();
+        assert!(content.contains("Identity"));
+        assert!(content.contains("Name:"));
+    }
+
+    #[tokio::test]
+    async fn dasein_query_handles_disabled() {
+        let gw = make_gateway().await;
+        let resp = gw
+            .handle_method("session.dasein", &json!("1"), &Value::Null)
+            .await
+            .unwrap();
+        let content = resp["result"]["content"].as_str().unwrap();
+        // DaseinModule may or may not be enabled; both cases should produce valid output
+        assert!(content.contains("DaseinModule"));
+    }
+
+    #[tokio::test]
+    async fn state_query_returns_loop_state() {
+        let gw = make_gateway().await;
+        let resp = gw
+            .handle_method("session.state", &json!("1"), &Value::Null)
+            .await
+            .unwrap();
+        let content = resp["result"]["content"].as_str().unwrap();
+        assert!(content.contains("ReActLoop"));
+        assert!(content.contains("Iteration"));
+        assert!(content.contains("Tool Budget"));
     }
 }
