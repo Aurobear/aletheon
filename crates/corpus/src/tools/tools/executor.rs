@@ -150,6 +150,7 @@ impl ToolCallExecutor {
     /// across all calls.
     ///
     /// Returns results ordered by the original `PendingToolCall::index`.
+    #[allow(clippy::redundant_locals)]
     pub async fn execute_batch(
         &self,
         calls: Vec<PendingToolCall>,
@@ -329,6 +330,7 @@ mod tests {
         delay_ms: u64,
         invocation_counter: Arc<AtomicUsize>,
         invocation_log: Arc<std::sync::Mutex<Vec<(String, usize)>>>,
+        #[allow(dead_code)]
         concurrency: ConcurrencyClass,
     }
 

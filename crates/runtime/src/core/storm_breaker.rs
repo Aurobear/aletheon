@@ -49,7 +49,10 @@ impl StormBreaker {
                 ));
             }
         } else {
-            let count = self.success_counts.entry(tool_name.to_string()).or_insert(0);
+            let count = self
+                .success_counts
+                .entry(tool_name.to_string())
+                .or_insert(0);
             *count += 1;
 
             // Reset failure counters for this tool

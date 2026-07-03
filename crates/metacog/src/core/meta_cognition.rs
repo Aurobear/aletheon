@@ -1,12 +1,13 @@
-use std::sync::RwLock;
-use base::dasein::{DaseinContext, DaseinEvent, Stimmung, BoredomDepth};
+use base::dasein::{BoredomDepth, DaseinContext, DaseinEvent, Stimmung};
 use base::self_field::MutationIntent;
+use std::sync::RwLock;
 use tokio::sync::mpsc;
 
 pub struct MetaCognition {
     system_state: RwLock<SystemState>,
     decisions: RwLock<Vec<EvolutionDecision>>,
     thresholds: MetaCognitionThresholds,
+    #[allow(dead_code)]
     dasein_tx: Option<mpsc::Sender<DaseinEvent>>,
 }
 
@@ -38,7 +39,11 @@ pub struct MetaCognitionThresholds {
 }
 
 impl Default for MetaCognitionThresholds {
-    fn default() -> Self { Self { evolution_interval: 20 } }
+    fn default() -> Self {
+        Self {
+            evolution_interval: 20,
+        }
+    }
 }
 
 impl MetaCognition {
@@ -69,7 +74,9 @@ impl MetaCognition {
                     reversible: true,
                 }],
             },
-            Stimmung::Langeweile { depth: BoredomDepth::Deep } => EvolutionAction::AdjustDasein {
+            Stimmung::Langeweile {
+                depth: BoredomDepth::Deep,
+            } => EvolutionAction::AdjustDasein {
                 parameter: "curiosity_weight".to_string(),
                 value: 0.8,
             },

@@ -49,10 +49,16 @@ impl Reflector {
             // Extract specific success signals from output
             for line in execution.output.lines() {
                 let lower = line.to_lowercase();
-                if lower.contains("created") || lower.contains("deployed") || lower.contains("installed") {
+                if lower.contains("created")
+                    || lower.contains("deployed")
+                    || lower.contains("installed")
+                {
                     what_worked.push(format!("Output indicates: {}", line.trim()));
                 }
-                if lower.contains("warning") || lower.contains("degraded") || lower.contains("partial") {
+                if lower.contains("warning")
+                    || lower.contains("degraded")
+                    || lower.contains("partial")
+                {
                     what_to_improve.push(format!("Output warning: {}", line.trim()));
                 }
             }
@@ -84,17 +90,25 @@ impl Reflector {
                     what_to_improve
                         .push("Verify resource exists and path/identifier is correct.".to_string());
                 } else if lower.contains("timeout") || lower.contains("timed out") {
-                    what_to_improve
-                        .push("Increase timeout or check network/service availability.".to_string());
+                    what_to_improve.push(
+                        "Increase timeout or check network/service availability.".to_string(),
+                    );
                 } else if lower.contains("connection") || lower.contains("refused") {
-                    what_to_improve
-                        .push("Verify service is running and network connectivity is available.".to_string());
-                } else if lower.contains("parse") || lower.contains("syntax") || lower.contains("invalid") {
-                    what_to_improve
-                        .push("Validate input format and fix syntax errors before retrying.".to_string());
+                    what_to_improve.push(
+                        "Verify service is running and network connectivity is available."
+                            .to_string(),
+                    );
+                } else if lower.contains("parse")
+                    || lower.contains("syntax")
+                    || lower.contains("invalid")
+                {
+                    what_to_improve.push(
+                        "Validate input format and fix syntax errors before retrying.".to_string(),
+                    );
                 } else {
-                    what_to_improve
-                        .push("Add error handling and retry logic for this failure mode.".to_string());
+                    what_to_improve.push(
+                        "Add error handling and retry logic for this failure mode.".to_string(),
+                    );
                 }
             } else {
                 what_to_improve
@@ -171,11 +185,7 @@ impl Reflector {
         };
 
         // Derive learned lessons from what_to_improve
-        let learned: Vec<String> = reflection
-            .what_to_improve
-            .iter()
-            .map(|s| s.clone())
-            .collect();
+        let learned: Vec<String> = reflection.what_to_improve.to_vec();
 
         ReflectionEntry {
             id: format!("reflect-{}", Uuid::new_v4()),

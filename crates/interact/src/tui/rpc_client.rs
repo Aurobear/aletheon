@@ -24,8 +24,8 @@ pub(crate) async fn send_rpc(
     let mut response = String::new();
     reader.read_line(&mut response).await?;
 
-    let resp: serde_json::Value = serde_json::from_str(&response)
-        .context("Failed to parse daemon response")?;
+    let resp: serde_json::Value =
+        serde_json::from_str(&response).context("Failed to parse daemon response")?;
 
     Ok(resp)
 }

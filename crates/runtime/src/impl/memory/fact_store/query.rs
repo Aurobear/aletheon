@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 
 use super::{
     sanitize_fts_query, ConsolidationLogRow, EpisodeRow, FactRow, FactStore, FeedbackResult,
-    KnowledgeRow, DEFAULT_MIN_TRUST, HELPFUL_DELTA, STALE_DECAY_DELTA, STALE_DAYS, TRUST_MAX,
+    KnowledgeRow, DEFAULT_MIN_TRUST, HELPFUL_DELTA, STALE_DAYS, STALE_DECAY_DELTA, TRUST_MAX,
     TRUST_MIN, UNHELPFUL_DELTA,
 };
 
@@ -159,7 +159,11 @@ impl FactStore {
             "UPDATE facts SET trust_score = MAX(?1, trust_score + ?2), updated_at = datetime('now')
              WHERE trust_score > ?1
                AND updated_at < datetime('now', ?3)",
-            rusqlite::params![TRUST_MIN, STALE_DECAY_DELTA, format!("-{} days", STALE_DAYS)],
+            rusqlite::params![
+                TRUST_MIN,
+                STALE_DECAY_DELTA,
+                format!("-{} days", STALE_DAYS)
+            ],
         )?;
         Ok(affected)
     }

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Dynamic model routing — maps task types to model specs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelRoutingConfig {
     /// Default model for general chat (e.g., "mimo/mimo-v2.5-pro").
     pub default: Option<String>,
@@ -22,20 +22,8 @@ pub struct ModelRoutingConfig {
     pub auto_memory: Option<String>,
 }
 
-impl Default for ModelRoutingConfig {
-    fn default() -> Self {
-        Self {
-            default: None,
-            multimodal: None,
-            cheap: None,
-            reasoning: None,
-            auto_memory: None,
-        }
-    }
-}
-
 /// Top-level application config (loaded from TOML).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub agent: AgentConfig,
@@ -112,22 +100,19 @@ fn default_compaction_threshold() -> usize {
 }
 
 fn default_system_prompt() -> String {
-    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user.".to_string()
+    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user."
+        .to_string()
 }
 
 /// Wire protocol between client and LLM server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Transport {
     Openai,
     Anthropic,
+    #[default]
     Auto,
-}
-
-impl Default for Transport {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Per-provider configuration.
@@ -215,18 +200,10 @@ impl Default for McpServerConfig {
 }
 
 /// Plugin directories.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginsConfig {
     #[serde(default)]
     pub directories: Vec<String>,
-}
-
-impl Default for PluginsConfig {
-    fn default() -> Self {
-        Self {
-            directories: Vec::new(),
-        }
-    }
 }
 
 /// Memory backend configuration.
@@ -461,24 +438,6 @@ impl AppConfig {
         }
 
         config
-    }
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            agent: AgentConfig::default(),
-            providers: Vec::new(),
-            model_aliases: HashMap::new(),
-            model_routing: ModelRoutingConfig::default(),
-            sandbox: SandboxConfig::default(),
-            mcp_servers: Vec::new(),
-            plugins: PluginsConfig::default(),
-            memory: MemoryConfig::default(),
-            daemon: DaemonConfig::default(),
-            perception: PerceptionConfig::default(),
-            evolution: EvolutionSettings::default(),
-        }
     }
 }
 

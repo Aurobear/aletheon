@@ -11,6 +11,12 @@ use std::path::Path;
 /// Loads and saves genomes from YAML files.
 pub struct GenomeLoader;
 
+impl Default for GenomeLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GenomeLoader {
     pub fn new() -> Self {
         Self

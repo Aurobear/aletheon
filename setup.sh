@@ -1,35 +1,65 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Aletheon setup script
-# Usage: ./setup.sh [--dev]
+# Aletheon one-click setup
+# Usage:
+#   ./setup.sh              # System install (needs sudo)
+#   ./setup.sh --user       # User install (~/.local/bin)
+#
+# Flow:
+#   1. Check/install Rust
+#   2. Check/install system deps (sqlite, bubblewrap)
+#   3. Build release binary
+#   4. Install binary to system path
+#   5. Write config + .env (never overwrites existing)
+#   6. Install + enable systemd service
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log()   { echo -e "${GREEN}[aletheon]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
-err()   { echo -e "${RED}[error]${NC} $*" >&2; }
+log()    { echo -e "${GREEN}[aletheon]${NC} $*"; }
+warn()   { echo -e "${YELLOW}[warn]${NC} $*"; }
+die()    { echo -e "${RED}[error]${NC} $*" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-DEV_MODE=false
-[[ "${1:-}" == "--dev" ]] && DEV_MODE=true
+# ── Parse args ────────────────────────────────────────────────────────────
 
-if $DEV_MODE; then
-    PROFILE="debug"
-    CARGO_FLAGS=""
-else
-    PROFILE="release"
-    CARGO_FLAGS="--release"
+MODE="system"; USE_SUDO="sudo"
+if [[ "${1:-}" == "--user" ]]; then
+    MODE="user"; USE_SUDO=""
+    shift
 fi
 
-# ─── 1. Rust toolchain ───────────────────────────────────────────────
+log "Install mode: $MODE"
+
+# ── Paths ─────────────────────────────────────────────────────────────────
+
+if [[ "$MODE" == "system" ]]; then
+    BIN_DIR="/usr/bin"
+    CFG_DIR="/etc/aletheon"
+    SYS_SVC="/etc/systemd/system/aletheon.service"
+    SYS_SCOPE="system"
+    SOCKET_PATH="/run/aletheon/aletheon.sock"
+    DATA_DIR="/var/lib/aletheon"
+else
+    BIN_DIR="$HOME/.local/bin"
+    CFG_DIR="$HOME/.config/aletheon"
+    SYS_SVC="$HOME/.config/systemd/user/aletheon.service"
+    SYS_SCOPE="user"
+    SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/aletheon/aletheon.sock"
+    DATA_DIR="$HOME/.local/share/aletheon"
+fi
+
+export RUST_LOG="${RUST_LOG:-info}"
+
+# ── 1. Rust toolchain ────────────────────────────────────────────────────
+
 check_rust() {
-    if command -v rustc &>/dev/null; then
+    if command -v rustc &>/dev/null && command -v cargo &>/dev/null; then
         log "Rust $(rustc --version) found"
         return 0
     fi
@@ -38,7 +68,7 @@ check_rust() {
 
 install_rust() {
     log "Installing Rust via rustup..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
     source "$HOME/.cargo/env"
     log "Rust $(rustc --version) installed"
 }
@@ -47,20 +77,21 @@ if ! check_rust; then
     install_rust
 fi
 
-# ─── 2. System dependencies ──────────────────────────────────────────
+# Ensure rustup target dir is in PATH
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# ── 2. System dependencies ───────────────────────────────────────────────
+
 install_deps() {
-    local pkg_mgr=""
     local pkgs=""
+    local pkg_mgr=""
 
     if command -v pacman &>/dev/null; then
-        pkg_mgr="pacman"
-        pkgs="bubblewrap sqlite"
+        pkg_mgr="pacman"; pkgs="bubblewrap sqlite"
     elif command -v apt-get &>/dev/null; then
-        pkg_mgr="apt"
-        pkgs="bubblewrap libsqlite3-dev"
+        pkg_mgr="apt"; pkgs="bubblewrap libsqlite3-dev"
     elif command -v dnf &>/dev/null; then
-        pkg_mgr="dnf"
-        pkgs="bubblewrap sqlite-devel"
+        pkg_mgr="dnf"; pkgs="bubblewrap sqlite-devel"
     else
         warn "Unknown package manager — install bubblewrap and sqlite manually"
         return
@@ -71,7 +102,7 @@ install_deps() {
         case $pkg_mgr in
             pacman) pacman -Qi "$p" &>/dev/null || missing+=("$p") ;;
             apt)    dpkg -s "$p" &>/dev/null    || missing+=("$p") ;;
-            dnf)    rpm -q "$p" &>/dev/null      || missing+=("$p") ;;
+            dnf)    rpm -q "$p" &>/dev/null     || missing+=("$p") ;;
         esac
     done
 
@@ -90,43 +121,57 @@ install_deps() {
 
 install_deps
 
-# ─── 3. Build ────────────────────────────────────────────────────────
-build() {
-    log "Building ($PROFILE)..."
-    cargo build $CARGO_FLAGS 2>&1
+# ── 3. Build ─────────────────────────────────────────────────────────────
 
-    log "Running tests..."
-    cargo test 2>&1
+log "Building release binary (cargo build --release)..."
+cargo build -p aletheon --release 2>&1
 
-    log "Build complete: target/$PROFILE/"
-}
+BINARY_PATH="target/release/aletheon"
+if [[ ! -f "$BINARY_PATH" ]]; then
+    die "Build failed — binary not found at $BINARY_PATH"
+fi
+log "Build complete: $BINARY_PATH"
 
-build
+# ── 4. Install binary ────────────────────────────────────────────────────
 
-# ─── 4. Config ───────────────────────────────────────────────────────
-CONFIG_DIR="$HOME/.aletheon"
-CONFIG_FILE="$CONFIG_DIR/config.toml"
-ENV_FILE="$CONFIG_DIR/.env"
+mkdir -p "$BIN_DIR"
+$USE_SUDO cp "$BINARY_PATH" "$BIN_DIR/aletheon"
+$USE_SUDO chmod +x "$BIN_DIR/aletheon"
+log "Binary installed: $BIN_DIR/aletheon"
+
+# ── 5. Config ────────────────────────────────────────────────────────────
 
 setup_config() {
-    mkdir -p "$CONFIG_DIR"
+    $USE_SUDO mkdir -p "$CFG_DIR" "$DATA_DIR"
+    if [[ "$MODE" == "system" ]]; then
+        $USE_SUDO chown -R "$(whoami):$(whoami)" "$DATA_DIR" 2>/dev/null || true
+    fi
 
-    if [[ -f "$CONFIG_FILE" ]]; then
-        log "Config exists at $CONFIG_FILE"
+    local cfg="$CFG_DIR/config.toml"
+    local env="$CFG_DIR/.env"
+
+    if [[ -f "$cfg" ]]; then
+        log "Config exists at $cfg (not overwriting)"
     else
         log "Creating default config..."
-        cat > "$CONFIG_FILE" <<'TOML'
+        $USE_SUDO tee "$cfg" > /dev/null <<'TOML'
 # Aletheon configuration
-# API keys: set in ~/.aletheon/.env or environment variables
+# API keys: set in .env (same directory) or environment variables
 
 [agent]
-default_provider = "mimo"
-default_model = "mimo-v2.5-pro"
-max_iterations = 25
+default_provider = "leju"
+default_model = "deepseek/deepseek-v4-pro"
+max_iterations = 50
 max_tokens = 100000
 
-# ─── Providers ─────────────────────────────────────────────────────────
-# transport: "auto" (detect from URL) | "openai" | "anthropic"
+# ── Providers ───────────────────────────────────────────────────
+
+[[providers]]
+name = "leju"
+base_url = "https://aiapi.lejurobot.com"
+api_key = ""
+transport = "anthropic"
+models = ["deepseek/deepseek-v4-pro"]
 
 [[providers]]
 name = "mimo"
@@ -163,211 +208,89 @@ api_key = ""
 transport = "openai"
 models = ["qwen3:8b", "llama3:8b"]
 
-# ─── Model Aliases ─────────────────────────────────────────────────────
+# ── Model Aliases ────────────────────────────────────────────────
+
 [model_aliases]
-pro = "mimo/mimo-v2.5-pro"
+pro = "leju/deepseek/deepseek-v4-pro"
 flash = "mimo/mimo-v2.5-flash"
 deepseek = "deepseek/deepseek-v4-pro"
 local = "ollama/qwen3:8b"
 TOML
-        log "Config written to $CONFIG_FILE"
+        log "Config written to $cfg"
     fi
 
-    if [[ -f "$ENV_FILE" ]]; then
-        log "Env file exists at $ENV_FILE"
+    if [[ -f "$env" ]]; then
+        log "Env file exists at $env (not overwriting)"
     else
         log "Creating placeholder .env..."
-        cat > "$ENV_FILE" <<'ENV'
+        $USE_SUDO tee "$env" > /dev/null <<'ENV'
 # Aletheon provider API keys
 # Uncomment and fill in the keys you want to use
 
-# Xiaomi MiMo Token Plan
+ANTHROPIC_API_KEY=sk-pmqmj7SvcCpSxORyFMKEhOaTPijdzfk2dPPQMwzbYAwzhcYq
 # MIMO_API_KEY=tp-...
-
-# DeepSeek
 # DEEPSEEK_API_KEY=sk-...
-
-# OpenAI
 # OPENAI_API_KEY=sk-...
-
-# Anthropic
-# ANTHROPIC_API_KEY=sk-ant-...
 ENV
-        log "Env file written to $ENV_FILE"
+        $USE_SUDO chmod 600 "$env"
+        log "Env file written to $env"
     fi
 }
 
 setup_config
 
-# ─── 5. Create convenience wrapper ──────────────────────────────────
-BIN_DIR="$HOME/.local/bin"
-mkdir -p "$BIN_DIR"
+# ── 6. Systemd service ───────────────────────────────────────────────────
 
-WRAPPER="$BIN_DIR/aletheon"
-TARGET_DIR="target/$PROFILE"
-
-cat > "$WRAPPER" <<WRAPPER_EOF
-#!/usr/bin/env bash
-# Aletheon wrapper — generated by setup.sh
-ALETHEON_ROOT="$SCRIPT_DIR"
-ALETHEON_CONFIG="\$HOME/.aletheon/config.toml"
-ALETHEON_ENV="\$HOME/.aletheon/.env"
-ALETHEON_SOCKET="/tmp/aletheon/aletheon.sock"
-
-export RUST_LOG="\${RUST_LOG:-info}"
-
-usage() {
-    cat <<EOF
-Aletheon — AI agent with sandbox, multi-agent, IPC
-
-Usage:
-    aletheon run                 Start daemon + TUI (recommended)
-    aletheon daemon              Start daemon (foreground, for debugging)
-    aletheon start               Start daemon via systemd
-    aletheon stop                Stop daemon
-    aletheon restart             Restart daemon
-    aletheon status              Show daemon status
-    aletheon logs                Follow daemon logs
-    aletheon -m <message>        Send a single message
-    aletheon                     Interactive mode (TUI if terminal)
-    aletheon --help              Show this help
-
-Config:  \$ALETHEON_CONFIG
-Env:     \$ALETHEON_ENV
-Socket:  \$ALETHEON_SOCKET
-EOF
-}
-
-case "\${1:-}" in
-    daemon)
-        mkdir -p "\$(dirname "\$ALETHEON_SOCKET")"
-        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheond" \\
-            --config "\$ALETHEON_CONFIG" \\
-            --env "\$ALETHEON_ENV" \\
-            --socket "\$ALETHEON_SOCKET" \\
-            "\${@:2}"
-        ;;
-    run)
-        LOG_FILE="\${XDG_STATE_HOME:-\$HOME/.local/state}/aletheon/daemon.log"
-        mkdir -p "\$(dirname "\$LOG_FILE")"
-        mkdir -p "\$(dirname "\$ALETHEON_SOCKET")"
-
-        if [ -S "\$ALETHEON_SOCKET" ]; then
-            if ! lsof "\$ALETHEON_SOCKET" >/dev/null 2>&1; then
-                rm -f "\$ALETHEON_SOCKET"
-            fi
-        fi
-
-        if [ ! -S "\$ALETHEON_SOCKET" ]; then
-            "\$ALETHEON_ROOT/$TARGET_DIR/aletheond" \\
-                --config "\$ALETHEON_CONFIG" \\
-                --env "\$ALETHEON_ENV" \\
-                --socket "\$ALETHEON_SOCKET" \\
-                >> "\$LOG_FILE" 2>&1 &
-            DAEMON_PID=\$!
-            echo "Daemon started (pid: \$DAEMON_PID, log: \$LOG_FILE)"
-            for i in {1..10}; do
-                [ -S "\$ALETHEON_SOCKET" ] && break
-                sleep 0.5
-            done
-        fi
-
-        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon-cli" \\
-            --socket "\$ALETHEON_SOCKET" \\
-            "\${@:2}"
-        ;;
-    start)
-        systemctl --user start aletheon
-        systemctl --user status aletheon --no-pager
-        ;;
-    stop)
-        systemctl --user stop aletheon
-        ;;
-    restart)
-        systemctl --user restart aletheon
-        systemctl --user status aletheon --no-pager
-        ;;
-    status)
-        systemctl --user status aletheon --no-pager
-        ;;
-    logs)
-        journalctl --user -u aletheon -f
-        ;;
-    -m|--message)
-        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon-cli" \\
-            --socket "\$ALETHEON_SOCKET" \\
-            -m "\${@:2}"
-        ;;
-    --help|-h|help)
-        usage
-        ;;
-    *)
-        exec "\$ALETHEON_ROOT/$TARGET_DIR/aletheon-cli" \\
-            --socket "\$ALETHEON_SOCKET"
-        ;;
-esac
-WRAPPER_EOF
-
-chmod +x "$WRAPPER"
-log "Wrapper installed: $WRAPPER"
-
-# ─── 6. Systemd service ──────────────────────────────────────────────
 setup_systemd() {
-    local service_dir="$HOME/.config/systemd/user"
-    local service_file="$service_dir/aletheon.service"
-    local socket_path="/tmp/aletheon/aletheon.sock"
-
-    mkdir -p "$service_dir"
-
-    cat > "$service_file" <<SERVICE_EOF
-[Unit]
-Description=Aletheon AI agent daemon
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=$SCRIPT_DIR/$TARGET_DIR/aletheond \\
-    --config $CONFIG_FILE \\
-    --env $ENV_FILE \\
-    --socket $socket_path
-Restart=on-failure
-RestartSec=5
-Environment=RUST_LOG=info
-
-[Install]
-WantedBy=default.target
-SERVICE_EOF
-
-    log "Systemd service created: $service_file"
-
-    systemctl --user daemon-reload 2>/dev/null || true
-    systemctl --user enable aletheon.service 2>/dev/null || true
-
-    echo ""
-    echo "  Systemd commands:"
-    echo "    systemctl --user start aletheon     # start"
-    echo "    systemctl --user stop aletheon      # stop"
-    echo "    systemctl --user status aletheon    # status"
-    echo "    journalctl --user -u aletheon -f    # logs"
+    if [[ "$MODE" == "system" ]]; then
+        $USE_SUDO cp "$SCRIPT_DIR/config/aletheon.service" "$SYS_SVC"
+        $USE_SUDO systemctl daemon-reload
+        $USE_SUDO systemctl enable aletheon.service
+        log "Systemd service installed: $SYS_SVC"
+        echo ""
+        echo "  Commands:"
+        echo "    sudo systemctl start aletheon    # start daemon"
+        echo "    sudo systemctl status aletheon   # check status"
+        echo "    journalctl -u aletheon -f        # follow logs"
+    else
+        mkdir -p "$(dirname "$SYS_SVC")"
+        sed "s|ExecStart=/usr/bin/aletheon daemon|ExecStart=$BIN_DIR/aletheon daemon|" \
+            "$SCRIPT_DIR/config/aletheon.user.service" > "$SYS_SVC"
+        systemctl --user daemon-reload
+        systemctl --user enable aletheon.service
+        log "Systemd user service installed: $SYS_SVC"
+        echo ""
+        echo "  Commands:"
+        echo "    systemctl --user start aletheon    # start daemon"
+        echo "    systemctl --user status aletheon   # check status"
+        echo "    journalctl --user -u aletheon -f   # follow logs"
+    fi
 }
 
 setup_systemd
 
-# ─── Done ─────────────────────────────────────────────────────────────
+# ── Done ─────────────────────────────────────────────────────────────────
+
 echo ""
 log "Setup complete!"
 echo ""
-echo "  Config:    $CONFIG_FILE"
-echo "  Env:       $ENV_FILE"
-echo "  Binaries:  $SCRIPT_DIR/$TARGET_DIR/"
-echo "  Wrapper:   $WRAPPER"
+echo "  Binary:    $BIN_DIR/aletheon"
+echo "  Config:    $CFG_DIR/config.toml"
+echo "  Env:       $CFG_DIR/.env"
+echo "  Socket:    $SOCKET_PATH"
+echo "  Data:      $DATA_DIR"
 echo ""
-echo "  Quick start:"
-echo "    export MIMO_API_KEY='tp-...'"
-echo "    aletheon run              # start daemon + TUI"
-echo "    aletheon -m 'hello'       # single message"
-echo ""
-echo "  Or without wrapper:"
-echo "    ./target/${PROFILE}/aletheond --config $CONFIG_FILE --env $ENV_FILE --socket /tmp/aletheon/aletheon.sock"
-echo "    ./target/${PROFILE}/aletheon-cli --socket /tmp/aletheon/aletheon.sock -m 'hello'"
+if [[ "$MODE" == "system" ]]; then
+    echo "  Quick start:"
+    echo "    sudo systemctl start aletheon"
+    echo "    aletheon                     # launch TUI"
+    echo "    aletheon daemon              # foreground debug"
+    echo "    aletheon exec -p 'hello'     # non-interactive run"
+else
+    echo "  Quick start:"
+    echo "    systemctl --user start aletheon"
+    echo "    aletheon                     # launch TUI"
+    echo "    aletheon daemon              # foreground debug"
+    echo "    aletheon exec -p 'hello'     # non-interactive run"
+fi
 echo ""

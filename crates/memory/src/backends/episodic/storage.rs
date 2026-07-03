@@ -1,10 +1,10 @@
 //! EpisodicMemory storage (write) operations and MemoryBackend trait impl.
 
+use anyhow::Result;
 use base::{
     CompactResult, CompactStrategy, EvolutionLogEntry, MemoryBackend, MemoryEntry, MemoryFilter,
     MemoryHandle, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, SelfAwareness,
 };
-use anyhow::Result;
 use chrono::Utc;
 use rusqlite::params;
 use uuid::Uuid;

@@ -7,6 +7,7 @@
 //! 4. Records successful migrations to the lineage tracker
 
 use crate::core::config::GenomeConfig;
+use anyhow::Result;
 use base::brain::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
 use base::dasein::Stimmung;
 use base::meta::MetaRuntimeOps;
@@ -16,7 +17,6 @@ use cognit::core::reflector::Reflector;
 use metacog::r#impl::meta_runtime::lineage::LineageTracker;
 use metacog::r#impl::morphogenesis::mutation_intent::MutationIntentGenerator;
 use metacog::r#impl::morphogenesis::pipeline::{MorphogenesisPipeline, PipelineResult};
-use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -266,8 +266,7 @@ impl EvolutionCoordinator {
                     signal.source,
                     signal.depth
                 );
-                let (triggered, pipeline_results, lineage_added) =
-                    self.run_evolution(meta).await?;
+                let (triggered, pipeline_results, lineage_added) = self.run_evolution(meta).await?;
                 summary.evolution_triggered = triggered;
                 summary.pipeline_results = pipeline_results;
                 summary.lineage_entries_added += lineage_added;
@@ -368,10 +367,7 @@ impl EvolutionCoordinator {
             return;
         };
         let mut gc = self.genome_config.lock().await;
-        let entry = gc
-            .care_weights
-            .entry(topic.to_string())
-            .or_insert(0.0);
+        let entry = gc.care_weights.entry(topic.to_string()).or_insert(0.0);
         *entry = (*entry + delta).clamp(0.0, 2.0);
         tracing::debug!(
             "Evolution adjusted care weight: {} += {:.3} -> {:.3}",

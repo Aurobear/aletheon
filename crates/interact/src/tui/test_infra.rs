@@ -109,10 +109,7 @@ impl TestInputReader {
     pub fn new(path: &std::path::Path, auto_submit: bool) -> anyhow::Result<Self> {
         let file = fs::File::open(path)?;
         let reader = io::BufReader::new(file);
-        let lines: Vec<String> = reader
-            .lines()
-            .map_while(Result::ok)
-            .collect();
+        let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
         Ok(Self {
             lines,
             index: 0,

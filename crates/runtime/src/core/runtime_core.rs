@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use base::evolution::LlmPurpose;
+use base::CommunicationBus;
 use base::KernelEventBus;
 use cognit::r#impl::llm::pulse::{LlmPulse, PulseConfig};
 use cognit::r#impl::llm::scheduler::{
@@ -36,7 +37,7 @@ pub struct RuntimeCore {
     pub app_config: cognit::config::AppConfig,
     pub registry: ProviderRegistry,
     pub daemon_config: DaemonConfig,
-    pub event_bus: Arc<dyn base::EventBus>,
+    pub event_bus: Arc<CommunicationBus>,
     pub pulse_handle: Option<(watch::Sender<bool>, JoinHandle<()>)>,
     pub request_handler: RequestHandler,
     pub cancel_token: CancellationToken,
@@ -70,11 +71,8 @@ impl RuntimeCore {
             api_url: default_provider_config.base_url.clone(),
             model: default_model.clone(),
             working_dir: std::env::var("AGENT_WORKING_DIR").unwrap_or_else(|_| "/tmp".to_string()),
-            data_dir: std::env::var("AGENT_DATA_DIR").unwrap_or_else(|_| {
-                base::paths::xdg_data_dir()
-                    .to_string_lossy()
-                    .to_string()
-            }),
+            data_dir: std::env::var("AGENT_DATA_DIR")
+                .unwrap_or_else(|_| base::paths::xdg_data_dir().to_string_lossy().to_string()),
             system_prompt: std::env::var("AGENT_SYSTEM_PROMPT")
                 .unwrap_or_else(|_| app_config.agent.system_prompt.clone()),
             sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
@@ -89,11 +87,9 @@ impl RuntimeCore {
                             command: s.command.clone().unwrap_or_default(),
                             args: Vec::new(),
                         },
-                        "http" => {
-                            corpus::tools::mcp::config::McpTransportConfig::StreamableHttp {
-                                url: s.url.clone().unwrap_or_default(),
-                            }
-                        }
+                        "http" => corpus::tools::mcp::config::McpTransportConfig::StreamableHttp {
+                            url: s.url.clone().unwrap_or_default(),
+                        },
                         "sse" => corpus::tools::mcp::config::McpTransportConfig::Sse {
                             url: s.url.clone().unwrap_or_default(),
                         },
@@ -113,7 +109,9 @@ impl RuntimeCore {
         };
 
         // ── Event bus ───────────────────────────────────────────────
-        let bus: Arc<dyn base::EventBus> = Arc::new(KernelEventBus::new(4096));
+        let kernel_bus = Arc::new(KernelEventBus::new(4096));
+        let bus: Arc<CommunicationBus> =
+            Arc::new(CommunicationBus::from_event_bus(kernel_bus.clone()));
 
         let cancel_token = CancellationToken::new();
 
@@ -172,10 +170,8 @@ impl RuntimeCore {
         };
 
         // ── Perception manager + bridge ─────────────────────────────
-        let (event_tx, event_rx) =
-            mpsc::channel::<PerceptionEvent>(256);
-        let (injection_tx, injection_rx) =
-            mpsc::channel::<PerceptionInjection>(64);
+        let (event_tx, event_rx) = mpsc::channel::<PerceptionEvent>(256);
+        let (injection_tx, injection_rx) = mpsc::channel::<PerceptionInjection>(64);
 
         let perception_config = &app_config.perception;
         let watch_paths: Vec<PathBuf> = perception_config
@@ -209,7 +205,7 @@ impl RuntimeCore {
             app_config.model_routing.clone(),
             app_config.evolution.enabled,
             injection_rx,
-            Some(bus.clone()),
+            Some(kernel_bus),
             cancel_token.clone(),
         )
         .await?;

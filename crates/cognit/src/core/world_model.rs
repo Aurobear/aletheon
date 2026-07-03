@@ -135,7 +135,10 @@ impl WorldModel {
 
         // Categorize by confidence
         let healthy = entities.values().filter(|e| e.confidence >= 0.7).count();
-        let degraded = entities.values().filter(|e| e.confidence < 0.7 && e.confidence >= 0.3).count();
+        let degraded = entities
+            .values()
+            .filter(|e| e.confidence < 0.7 && e.confidence >= 0.3)
+            .count();
         let lost = entities.values().filter(|e| e.confidence < 0.3).count();
 
         if degraded > 0 || lost > 0 {

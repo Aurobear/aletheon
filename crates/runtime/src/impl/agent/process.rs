@@ -4,15 +4,15 @@
 //! Can spawn child processes. Consumes LlmPulse energy to think and act.
 
 use super::budget::TokenBudget;
-use crate::r#impl::engine::cognitive_loop::{Engine, TurnResult};
+use anyhow::Result;
 use base::agent::Pid;
 use base::envelope::Envelope;
 use base::evolution::{
     AgentSpawnedPayload, AgentStartedPayload, AgentStoppedPayload, CognitivePulseEvent,
 };
-use base::{EventBus, EventType, Priority};
+use base::CommunicationBus;
 use base::ConcreteEvent;
-use anyhow::Result;
+use base::{EventType, Priority};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -76,9 +76,8 @@ pub struct AgentProcess {
     parent: Option<Pid>,
     children: RwLock<Vec<Pid>>,
     energy: TokenBudget,
-    engine: Option<Engine>,
     task: String,
-    bus: Option<Arc<dyn EventBus>>,
+    bus: Option<Arc<CommunicationBus>>,
     config: AgentProcessConfig,
     pub inbox: Option<mpsc::Receiver<Envelope>>,
     pub last_heartbeat_ms: AtomicU64,
@@ -89,7 +88,7 @@ impl AgentProcess {
     pub fn new(
         parent: Option<Pid>,
         task: String,
-        bus: Arc<dyn EventBus>,
+        bus: Arc<CommunicationBus>,
         config: AgentProcessConfig,
     ) -> Self {
         Self {
@@ -98,7 +97,6 @@ impl AgentProcess {
             parent,
             children: RwLock::new(Vec::new()),
             energy: TokenBudget::new(config.max_tokens_per_pulse),
-            engine: None,
             task,
             bus: Some(bus),
             config,
@@ -115,7 +113,6 @@ impl AgentProcess {
             parent: None,
             children: RwLock::new(Vec::new()),
             energy: TokenBudget::new(config.max_tokens_per_pulse),
-            engine: None,
             task: String::new(),
             bus: None,
             config,
@@ -129,7 +126,7 @@ impl AgentProcess {
         self.state = AgentState::Idle;
 
         if let Some(bus) = &self.bus {
-            bus.publish(Box::new(ConcreteEvent::new(
+            bus.publish_event(Box::new(ConcreteEvent::new(
                 EventType::AgentStarted,
                 Priority::Normal,
                 format!("agent:{}", self.pid),
@@ -154,25 +151,7 @@ impl AgentProcess {
             return Ok(());
         }
 
-        let budget = self.energy.claim(pulse.available_tokens);
-        if budget == 0 {
-            return Ok(());
-        }
-
-        if let Some(engine) = &mut self.engine {
-            self.state = AgentState::Thinking;
-
-            let result = engine.run_turn_with_budget(&self.task, budget).await;
-            self.state = match result {
-                TurnResult::Complete(_) => AgentState::Idle,
-                TurnResult::NeedTool { .. } => AgentState::Acting,
-                TurnResult::NeedReflection => AgentState::Reflecting,
-                TurnResult::Error(ref e) => {
-                    tracing::warn!("Agent {} turn error: {}", self.pid, e);
-                    AgentState::Idle
-                }
-            };
-        }
+        let _budget = self.energy.claim(pulse.available_tokens);
 
         Ok(())
     }
@@ -203,7 +182,7 @@ impl AgentProcess {
         let bus = self
             .bus
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No EventBus attached"))?
+            .ok_or_else(|| anyhow::anyhow!("No CommunicationBus attached"))?
             .clone();
         let mut child = AgentProcess::new(Some(self.pid), child_task, bus.clone(), child_config);
         child.start().await?;
@@ -211,7 +190,7 @@ impl AgentProcess {
 
         self.children.write().await.push(child_pid);
 
-        bus.publish(Box::new(ConcreteEvent::new(
+        bus.publish_event(Box::new(ConcreteEvent::new(
             EventType::AgentSpawned,
             Priority::Normal,
             format!("agent:{}", self.pid),
@@ -230,7 +209,7 @@ impl AgentProcess {
         self.state = AgentState::Terminated;
 
         if let Some(bus) = &self.bus {
-            bus.publish(Box::new(ConcreteEvent::new(
+            bus.publish_event(Box::new(ConcreteEvent::new(
                 EventType::AgentStopped,
                 Priority::Normal,
                 format!("agent:{}", self.pid),
@@ -261,11 +240,6 @@ impl AgentProcess {
     }
     pub fn energy(&self) -> &TokenBudget {
         &self.energy
-    }
-
-    /// Attach an Engine to this agent.
-    pub fn set_engine(&mut self, engine: Engine) {
-        self.engine = Some(engine);
     }
 
     // -- Accessors (HEAD-side, backward compat) ------------------------------

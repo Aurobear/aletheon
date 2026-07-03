@@ -48,9 +48,8 @@ impl SandboxEnvironment {
     pub fn recommended_preference(&self) -> SandboxPreference {
         if self.has_user_namespace && !self.is_docker {
             SandboxPreference::Auto
-        } else if self.is_docker || self.is_wsl2 {
-            SandboxPreference::BestEffort
         } else {
+            // Docker, WSL2, or any other environment
             SandboxPreference::BestEffort
         }
     }

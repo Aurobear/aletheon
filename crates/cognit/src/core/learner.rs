@@ -139,15 +139,12 @@ impl Learner {
             .filter(|r| {
                 let pattern_lower = r.pattern.to_lowercase();
                 // Direct substring match
-                if context_lower.contains(&pattern_lower)
-                    || pattern_lower.contains(&context_lower)
+                if context_lower.contains(&pattern_lower) || pattern_lower.contains(&context_lower)
                 {
                     return true;
                 }
                 // Word-level match: any context word appears in pattern
-                context_words
-                    .iter()
-                    .any(|w| pattern_lower.contains(w))
+                context_words.iter().any(|w| pattern_lower.contains(w))
             })
             .collect();
 

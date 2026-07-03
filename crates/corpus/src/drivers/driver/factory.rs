@@ -59,9 +59,7 @@ impl DriverFactory {
     pub fn try_window() -> Option<Box<dyn crate::driver::display::WindowManager>> {
         // Check for DISPLAY (X11) or WAYLAND_DISPLAY
         if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
-            return Some(Box::new(
-                crate::driver::display::EwmhWindowManager::new(),
-            ));
+            return Some(Box::new(crate::driver::display::EwmhWindowManager::new()));
         }
         None
     }
@@ -70,9 +68,7 @@ impl DriverFactory {
     #[cfg(feature = "display")]
     pub fn try_clipboard() -> Option<Box<dyn crate::driver::display::ClipboardDriver>> {
         if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
-            return Some(Box::new(
-                crate::driver::display::X11ClipboardDriver::new(),
-            ));
+            return Some(Box::new(crate::driver::display::X11ClipboardDriver::new()));
         }
         None
     }

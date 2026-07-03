@@ -119,7 +119,10 @@ impl Planner {
         // Add mood context to the plan's reasoning
         let mood_note = match mood {
             Stimmung::Angst { facing } => {
-                format!(" [Stimmung: Angst/{:?} — risk elevated, proceed with caution]", facing)
+                format!(
+                    " [Stimmung: Angst/{:?} — risk elevated, proceed with caution]",
+                    facing
+                )
             }
             Stimmung::Gelassenheit => {
                 " [Stimmung: Gelassenheit — calm, standard risk assessment]".to_string()
@@ -184,10 +187,7 @@ impl Planner {
     /// Looks for a JSON array in `llm_output` (between ```json and ```, or raw `[...]`).
     /// Each element must have "action" (string) and "params" (object) fields.
     /// Returns `Some(vec)` if parsing succeeds, `None` otherwise.
-    pub fn parse_subtasks(
-        &self,
-        llm_output: &str,
-    ) -> Option<Vec<(String, serde_json::Value)>> {
+    pub fn parse_subtasks(&self, llm_output: &str) -> Option<Vec<(String, serde_json::Value)>> {
         // Try fenced JSON block first
         let json_str = if let Some(start) = llm_output.find("```json") {
             let after_fence = &llm_output[start + 7..];
@@ -260,6 +260,7 @@ impl Planner {
     }
 
     /// Estimate risk level of an intent.
+    #[allow(clippy::if_same_then_else)]
     fn estimate_risk(&self, intent: &Intent) -> RiskLevel {
         let action = intent.action.to_lowercase();
         if action.contains("delete") || action.contains("rm") || action.contains("destroy") {
@@ -424,7 +425,9 @@ mod tests {
     #[test]
     fn parse_subtasks_returns_none_for_no_json() {
         let planner = Planner::new();
-        assert!(planner.parse_subtasks("just plain text with no JSON").is_none());
+        assert!(planner
+            .parse_subtasks("just plain text with no JSON")
+            .is_none());
     }
 
     #[test]

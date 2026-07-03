@@ -3,8 +3,8 @@
 //! Tracks previous genome versions in memory and restores from the
 //! lineage when rollback is requested.
 
-use base::Genome;
 use anyhow::{bail, Result};
+use base::Genome;
 use std::sync::Mutex;
 
 /// A snapshot of a genome version for rollback.

@@ -5,8 +5,8 @@ use ratatui::{
     Terminal,
 };
 
+use super::super::test_infra::{buffer_to_text, now_ms, FrameRecorder, FrameSnapshot};
 use super::super::App;
-use super::super::test_infra::{FrameRecorder, FrameSnapshot, buffer_to_text, now_ms};
 use super::header::render_header;
 use super::input_line::render_input;
 
@@ -67,11 +67,8 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
         f.render_widget(chat_block, chunks[1]);
 
         // Use render_with_active_tools to include inline tool cards during streaming
-        let chat_lines = chat_ref.render_with_active_tools(
-            active_tools_ref,
-            frame_counter,
-            caps_ref,
-        );
+        let chat_lines =
+            chat_ref.render_with_active_tools(active_tools_ref, frame_counter, caps_ref);
         let total_lines = chat_lines.len() as u16;
         let visible_height = chat_inner.height;
         let max_scroll = total_lines.saturating_sub(visible_height);

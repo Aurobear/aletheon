@@ -146,7 +146,8 @@ impl ProviderRegistry {
                 Box::new(provider)
             }
             ResolvedTransport::Anthropic => {
-                let mut provider = AnthropicProvider::new(&api_key, model).with_base_url(&config.base_url);
+                let mut provider =
+                    AnthropicProvider::new(&api_key, model).with_base_url(&config.base_url);
                 if let Some(ctx) = config.max_context_length {
                     provider = provider.with_max_context(ctx);
                 }

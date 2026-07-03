@@ -24,9 +24,9 @@ pub mod world_model;
 #[path = "tests.rs"]
 mod tests;
 
+use anyhow::Result;
 use base::message::ContentBlock;
 use base::self_field::Intent;
-use anyhow::Result;
 
 use self::awareness::{AwarenessContext, AwarenessGenerator};
 use self::critic::Critic;
@@ -40,12 +40,7 @@ use self::world_model::WorldModel;
 use crate::bridge::dual_model::{DualModelBridge, TaskComplexity};
 use crate::bridge::learning::LearningBridge;
 use crate::bridge::llm::LlmBridge;
-use base::{
-    brain::Plan,
-    context::Context,
-    self_field::AwarenessGrowthSuggestion,
-    SelfAwareness,
-};
+use base::{brain::Plan, context::Context, self_field::AwarenessGrowthSuggestion, SelfAwareness};
 
 /// Configuration for BrainCore construction.
 pub struct BrainCoreConfig {
@@ -220,13 +215,61 @@ impl BrainCore {
     /// Extract key terms from text — words >= 4 chars, excluding common stopwords.
     fn extract_key_terms(text: &str) -> Vec<String> {
         let stopwords: &[&str] = &[
-            "this", "that", "with", "from", "have", "been", "will", "would", "could",
-            "should", "into", "about", "also", "more", "some", "than", "them", "then",
-            "there", "these", "they", "very", "what", "when", "your", "each", "make",
-            "most", "only", "over", "such", "take", "well", "just", "like", "using",
-            "based", "after", "before", "does", "done", "ensure", "consider", "possible",
-            "potential", "recommended", "analysis", "approach", "best", "brief", "produce",
-            "generate", "above", "following", "result",
+            "this",
+            "that",
+            "with",
+            "from",
+            "have",
+            "been",
+            "will",
+            "would",
+            "could",
+            "should",
+            "into",
+            "about",
+            "also",
+            "more",
+            "some",
+            "than",
+            "them",
+            "then",
+            "there",
+            "these",
+            "they",
+            "very",
+            "what",
+            "when",
+            "your",
+            "each",
+            "make",
+            "most",
+            "only",
+            "over",
+            "such",
+            "take",
+            "well",
+            "just",
+            "like",
+            "using",
+            "based",
+            "after",
+            "before",
+            "does",
+            "done",
+            "ensure",
+            "consider",
+            "possible",
+            "potential",
+            "recommended",
+            "analysis",
+            "approach",
+            "best",
+            "brief",
+            "produce",
+            "generate",
+            "above",
+            "following",
+            "result",
         ];
 
         text.split(|c: char| !c.is_alphanumeric())

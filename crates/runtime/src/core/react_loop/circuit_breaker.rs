@@ -69,14 +69,18 @@ impl CircuitBreaker {
         if count >= self.max_repeats {
             let reason = format!(
                 "Loop detected: tool '{}' with same args called {} times in last {} calls",
-                call.tool_name, count + 1, self.window_size
+                call.tool_name,
+                count + 1,
+                self.window_size
             );
             warn!("{}", reason);
             CircuitBreakerStatus::Tripped(reason)
         } else if count >= self.max_repeats - 1 {
             let reason = format!(
                 "Warning: tool '{}' with same args called {} times, will trip at {}",
-                call.tool_name, count + 1, self.max_repeats
+                call.tool_name,
+                count + 1,
+                self.max_repeats
             );
             CircuitBreakerStatus::Warning(reason)
         } else {

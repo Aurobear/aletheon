@@ -160,8 +160,7 @@ mod tests {
     fn build_with_dasein_appends_context() {
         let mem = CoreMemory::with_defaults();
         let dasein = "## Existential State\nMood: calm";
-        let prefix =
-            PrefixBuilder::build_with_dasein("Base.", &[], &mem, Some(dasein));
+        let prefix = PrefixBuilder::build_with_dasein("Base.", &[], &mem, Some(dasein));
         assert!(prefix.contains("Base."));
         assert!(prefix.contains("## Existential State"));
         assert!(prefix.contains("Mood: calm"));

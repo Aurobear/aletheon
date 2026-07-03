@@ -255,7 +255,7 @@ impl KernelBuildTool {
         let jobs = input["jobs"]
             .as_u64()
             .map(|j| j.to_string())
-            .unwrap_or_else(|| num_cpus());
+            .unwrap_or_else(num_cpus);
 
         info!("Building kernel with {} jobs", jobs);
 

@@ -51,8 +51,8 @@ impl SessionManager {
             compaction_threshold: 0.8,
             compressor: AdvancedCompressor::new(
                 (max_tokens as f64 * 0.25) as usize, // tail token budget
-                4_000,                                // target summary chars
-                max_tokens,                           // context window
+                4_000,                               // target summary chars
+                max_tokens,                          // context window
             ),
         })
     }
@@ -139,13 +139,9 @@ impl SessionManager {
     async fn run_compaction(&mut self, llm: &dyn LlmProvider, force: bool) -> bool {
         let before_count = self.messages.len();
         let did = if force {
-            self.compressor
-                .force_compact(&mut self.messages, llm)
-                .await
+            self.compressor.force_compact(&mut self.messages, llm).await
         } else {
-            self.compressor
-                .maybe_compact(&mut self.messages, llm)
-                .await
+            self.compressor.maybe_compact(&mut self.messages, llm).await
         }
         .unwrap_or(false);
         if !did {
@@ -153,7 +149,8 @@ impl SessionManager {
         }
         let after_count = self.messages.len();
         let summary = self.compressor.last_summary().unwrap_or("").to_string();
-        self.persist_compaction(before_count, after_count, summary).await;
+        self.persist_compaction(before_count, after_count, summary)
+            .await;
         info!(
             before = before_count,
             after = after_count,
@@ -185,9 +182,7 @@ impl SessionManager {
         if !summary.is_empty() {
             let _ = self
                 .journal
-                .append(SessionEvent::Summary {
-                    text: summary,
-                })
+                .append(SessionEvent::Summary { text: summary })
                 .await;
         }
         // Re-journal the surviving tail (text content) after the checkpoint so a
@@ -255,10 +250,7 @@ impl SessionManager {
         for event in &state.events_after_checkpoint {
             match event {
                 SessionEvent::Summary { text } => {
-                    messages.push(Message::system(format!(
-                        "[Conversation summary]\n{}",
-                        text
-                    )));
+                    messages.push(Message::system(format!("[Conversation summary]\n{}", text)));
                 }
                 SessionEvent::UserMessage { content } => {
                     messages.push(Message::user(content));
@@ -281,10 +273,10 @@ impl SessionManager {
 #[cfg(test)]
 mod compaction_tests {
     use super::*;
+    use async_trait::async_trait;
     use base::message::is_tool_message;
     use base::ToolDefinition;
     use cognit::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
-    use async_trait::async_trait;
 
     struct StubLlm;
 
@@ -332,20 +324,17 @@ mod compaction_tests {
             sm.push_assistant(&format!("assistant turn {i} {}", "x".repeat(400)))
                 .await;
             sm.push_message(Message::tool_result(
-                &format!("t{i}"),
-                &"y".repeat(400),
+                format!("t{i}"),
+                "y".repeat(400),
                 false,
             ));
-            sm.push_user(&format!("user {i} {}", "z".repeat(400)))
-                .await;
+            sm.push_user(&format!("user {i} {}", "z".repeat(400))).await;
         }
         let did = sm.compact_if_needed(&StubLlm).await;
         assert!(did, "should compact");
         let hist = sm.history();
         // first non-system message after the summary must not be a bare tool_result
-        let first_non_system = hist
-            .iter()
-            .find(|m| !matches!(m.role, Role::System));
+        let first_non_system = hist.iter().find(|m| !matches!(m.role, Role::System));
         if let Some(m) = first_non_system {
             assert!(
                 !is_tool_message(m),
@@ -364,8 +353,7 @@ mod compaction_tests {
             for i in 0..12 {
                 sm.push_assistant(&format!("assistant {i} {}", "x".repeat(400)))
                     .await;
-                sm.push_user(&format!("user {i} {}", "z".repeat(400)))
-                    .await;
+                sm.push_user(&format!("user {i} {}", "z".repeat(400))).await;
             }
             assert!(sm.compact_if_needed(&StubLlm).await);
         }

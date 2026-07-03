@@ -21,6 +21,12 @@ pub trait WindowManager: Send + Sync {
 
 pub struct MockWindowManager;
 
+impl Default for MockWindowManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockWindowManager {
     pub fn new() -> Self {
         Self

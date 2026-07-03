@@ -1,19 +1,24 @@
+#![allow(deprecated)]
+
 //! Integration tests for AgentProcess lifecycle, pulse-driven execution,
 //! and child spawning.
 
 use std::sync::Arc;
 
 use base::evolution::{CognitivePulseEvent, ProviderHealth};
-use base::{EventBus, EventType};
+use base::CommunicationBus;
+use base::EventBus;
+use base::EventType;
 use base::KernelEventBus;
 use runtime::r#impl::agent::{AgentProcess, AgentProcessConfig, AgentState};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
-/// Helper: create a KernelEventBus wrapped in Arc<dyn EventBus>.
-fn make_bus() -> Arc<KernelEventBus> {
-    Arc::new(KernelEventBus::new(256))
+/// Helper: create a CommunicationBus wrapping a KernelEventBus.
+fn make_bus() -> Arc<CommunicationBus> {
+    let kernel = Arc::new(KernelEventBus::new(256));
+    Arc::new(CommunicationBus::from_event_bus(kernel))
 }
 
 /// Helper: create a default CognitivePulseEvent.
@@ -51,6 +56,7 @@ async fn test_agent_process_lifecycle() {
     let started_clone = started.clone();
     let sub_bus = make_bus();
     sub_bus
+        .event_bus()
         .subscribe(
             EventType::AgentStarted,
             Box::new(move |_| {
@@ -81,6 +87,7 @@ async fn test_agent_process_lifecycle() {
     let stopped = Arc::new(AtomicBool::new(false));
     let stopped_clone = stopped.clone();
     sub_bus
+        .event_bus()
         .subscribe(
             EventType::AgentStopped,
             Box::new(move |_| {
@@ -136,22 +143,23 @@ async fn test_pulse_drives_agent() {
 async fn test_spawn_child_agent() {
     let bus = make_bus();
     let config = AgentProcessConfig::default();
-    let parent_pid;
+
     let agent = AgentProcess::new(None, "parent-task".to_string(), bus.clone(), config);
-    parent_pid = agent.pid();
+    let parent_pid = agent.pid();
 
     // Subscribe to AgentSpawned to verify the event
     let spawned = Arc::new(AtomicBool::new(false));
     let spawned_clone = spawned.clone();
-    bus.subscribe(
-        EventType::AgentSpawned,
-        Box::new(move |_| {
-            spawned_clone.store(true, Ordering::SeqCst);
-            true
-        }),
-    )
-    .await
-    .unwrap();
+    bus.event_bus()
+        .subscribe(
+            EventType::AgentSpawned,
+            Box::new(move |_| {
+                spawned_clone.store(true, Ordering::SeqCst);
+                true
+            }),
+        )
+        .await
+        .unwrap();
 
     // Spawn a child
     let child_pid = agent.spawn_child("child-task".to_string()).await.unwrap();

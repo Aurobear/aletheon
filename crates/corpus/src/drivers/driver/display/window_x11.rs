@@ -7,6 +7,12 @@ use super::window::{WindowInfo, WindowManager};
 /// _NET_ACTIVE_WINDOW, and GetGeometry.
 pub struct EwmhWindowManager;
 
+impl Default for EwmhWindowManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EwmhWindowManager {
     pub fn new() -> Self {
         Self

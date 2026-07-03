@@ -51,6 +51,12 @@ pub struct UnixSocketTransport {
     max_pool_size: usize,
 }
 
+impl Default for UnixSocketTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UnixSocketTransport {
     /// Create a new transport with the default socket directory.
     pub fn new() -> Self {
@@ -322,8 +328,6 @@ impl Drop for UnixSocketTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::envelope::*;
-    use crate::events::event::Priority;
 
     #[tokio::test]
     async fn test_register_and_send_envelope() {

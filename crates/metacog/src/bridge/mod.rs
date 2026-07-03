@@ -2,8 +2,8 @@
 //!
 //! Provides adapters that bridge meta-runtime traits to their concrete implementations.
 
-pub mod genome_bridge;
 pub mod candidate_bridge;
+pub mod genome_bridge;
 
 pub use candidate_bridge::CandidateBridge;
 pub use genome_bridge::GenomeBridge;

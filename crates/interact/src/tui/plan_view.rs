@@ -3,10 +3,10 @@
 //! Renders the plan-critique-revise cycle during plan mode.
 //! Shows plan versions, critiques, and approval status.
 
-use ratatui::text::{Line, Span};
-use ratatui::style::{Color, Style};
-use base::brain::{Plan, Critique, CriticismSeverity};
 use super::term_compat::TermCaps;
+use base::brain::{CriticismSeverity, Critique, Plan};
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 
 /// A plan version with its critique history.
 #[derive(Debug, Clone)]
@@ -55,9 +55,11 @@ impl PlanViewWidget {
 
             // Plan steps
             for (i, step) in ver.plan.steps.iter().enumerate() {
-                lines.push(Line::from(Span::raw(
-                    format!("| {}. {}", i + 1, step.action.name),
-                )));
+                lines.push(Line::from(Span::raw(format!(
+                    "| {}. {}",
+                    i + 1,
+                    step.action.name
+                ))));
             }
 
             // Critique (if any)
@@ -75,7 +77,9 @@ impl PlanViewWidget {
                 } else {
                     for c in critiques {
                         let (icon, color) = match c.severity {
-                            CriticismSeverity::Fatal | CriticismSeverity::Error => ("x", Color::Red),
+                            CriticismSeverity::Fatal | CriticismSeverity::Error => {
+                                ("x", Color::Red)
+                            }
                             CriticismSeverity::Warning => ("!", Color::Yellow),
                             CriticismSeverity::Info => ("i", Color::Cyan),
                         };

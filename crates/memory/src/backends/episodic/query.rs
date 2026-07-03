@@ -3,12 +3,12 @@
 //! Contains standalone query methods on `EpisodicMemory` and the `row_to_entry`
 //! helper used by the `MemoryBackend` impl in `storage.rs`.
 
+use anyhow::Result;
 use base::{
     AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, EvolutionLogEntry, MemoryEntry,
     MemoryFilter, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, ReflectionTrigger,
     SelfAwareness,
 };
-use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::params;
 use uuid::Uuid;
@@ -73,7 +73,10 @@ impl EpisodicMemory {
     ///
     /// Returns (ReflectionEntry, access_count, importance) tuples, ordered
     /// by most recent first. Used by consolidation to evaluate promotion.
-    pub fn recall_reflections_with_access(&self, limit: usize) -> Result<Vec<(ReflectionEntry, u64, f64)>> {
+    pub fn recall_reflections_with_access(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(ReflectionEntry, u64, f64)>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT r.*, m.access_count, m.importance
@@ -305,10 +308,7 @@ pub(super) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry>
 
 /// Implementation of `recall` for the `MemoryBackend` trait.
 /// Called from `storage.rs` where the trait is implemented.
-pub(super) fn recall_impl(
-    mem: &EpisodicMemory,
-    query: &MemoryQuery,
-) -> Result<Vec<MemoryEntry>> {
+pub(super) fn recall_impl(mem: &EpisodicMemory, query: &MemoryQuery) -> Result<Vec<MemoryEntry>> {
     mem.with_conn(|conn| {
         let mut sql = String::from(
             "SELECT m.* FROM memory m WHERE m.memory_type = 'episodic'",
@@ -406,13 +406,9 @@ pub(super) fn recall_impl(
 }
 
 /// Implementation of `list` for the `MemoryBackend` trait.
-pub(super) fn list_impl(
-    mem: &EpisodicMemory,
-    filter: &MemoryFilter,
-) -> Result<Vec<MemoryEntry>> {
+pub(super) fn list_impl(mem: &EpisodicMemory, filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> {
     mem.with_conn(|conn| {
-        let mut sql =
-            String::from("SELECT * FROM memory WHERE memory_type = 'episodic'");
+        let mut sql = String::from("SELECT * FROM memory WHERE memory_type = 'episodic'");
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut param_idx = 1;
 

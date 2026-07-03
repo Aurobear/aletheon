@@ -1,14 +1,17 @@
 //! Application and runtime configuration.
 
 mod agent;
-mod provider;
-mod infra;
 mod genome;
+mod infra;
+mod provider;
 
-pub use agent::{AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, HooksConfig, PerceptionConfig, RuntimeConfig};
-pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
-pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig};
+pub use agent::{
+    AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, HooksConfig,
+    PerceptionConfig, RuntimeConfig,
+};
 pub use genome::GenomeConfig;
+pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig};
+pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
 
 use agent::{
     default_compaction_keep_recent, default_compaction_threshold, default_max_iterations,
@@ -22,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Top-level application config (loaded from TOML).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub agent: AgentConfig,
@@ -189,25 +192,6 @@ impl AppConfig {
     }
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            agent: AgentConfig::default(),
-            providers: Vec::new(),
-            model_aliases: std::collections::HashMap::new(),
-            model_routing: ModelRoutingConfig::default(),
-            sandbox: SandboxConfig::default(),
-            mcp_servers: Vec::new(),
-            plugins: PluginsConfig::default(),
-            memory: MemoryConfig::default(),
-            daemon: DaemonConfig::default(),
-            hooks: HooksConfig::default(),
-            perception: PerceptionConfig::default(),
-            evolution: EvolutionSettings::default(),
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -275,10 +259,12 @@ sonnet = "anthropic/claude-sonnet-4-20250514"
     fn shipped_default_config_is_startable_shaped() {
         // repo-root config/default.toml relative to this crate (crates/runtime)
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
-        let text = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         let cfg: AppConfig = toml::from_str(&text).expect("default.toml must parse");
-        assert!(!cfg.providers.is_empty(), "default.toml must define >=1 provider");
+        assert!(
+            !cfg.providers.is_empty(),
+            "default.toml must define >=1 provider"
+        );
         let dp = cfg
             .agent
             .default_provider
@@ -422,18 +408,12 @@ log_level = "debug"
 
         base.merge(other);
 
-        assert_eq!(
-            base.model_routing.default.as_deref(),
-            Some("other/default")
-        );
+        assert_eq!(base.model_routing.default.as_deref(), Some("other/default"));
         assert_eq!(
             base.model_routing.multimodal.as_deref(),
             Some("other/multimodal")
         );
-        assert_eq!(
-            base.model_routing.cheap.as_deref(),
-            Some("base/cheap")
-        );
+        assert_eq!(base.model_routing.cheap.as_deref(), Some("base/cheap"));
         assert_eq!(
             base.model_routing.reasoning.as_deref(),
             Some("other/reasoning")
@@ -565,10 +545,7 @@ base_url = "http://localhost"
 "#;
         let config: AppConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.hooks.pre_turn, vec!["~/.aletheon/hooks/pre_turn.sh"]);
-        assert_eq!(
-            config.hooks.post_tool,
-            vec!["/usr/local/bin/post_tool.sh"]
-        );
+        assert_eq!(config.hooks.post_tool, vec!["/usr/local/bin/post_tool.sh"]);
         assert_eq!(
             config.hooks.on_session_end,
             vec!["~/.aletheon/hooks/cleanup.sh"]

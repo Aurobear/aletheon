@@ -3,10 +3,10 @@
 //! Renders awareness state in the status bar and inline messages
 //! for notable state transitions.
 
-use ratatui::text::{Line, Span};
-use ratatui::style::{Color, Style};
 use super::state::AwarenessState;
 use super::term_compat::TermCaps;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 
 /// Renders awareness indicators.
 pub struct AwarenessWidget;

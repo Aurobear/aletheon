@@ -6,12 +6,14 @@
 //! **Migration path:** Use `CommunicationBus` directly for new code.
 //! This bridge converts Events to Envelopes for cross-process compatibility.
 
+#![allow(deprecated)]
+
 use crate::{Event, EventBus, EventType, Priority};
 use anyhow::Result;
 
-use crate::{Endpoint, Envelope, Payload, Target};
 use crate::ConcreteEvent;
 use crate::KernelEventBus;
+use crate::{Endpoint, Envelope, Payload, Target};
 
 /// Bridge between core event types and the KernelEventBus implementation.
 ///
@@ -26,7 +28,12 @@ impl EventBridge {
         source: impl Into<String>,
         payload: Box<dyn std::any::Any + Send + Sync>,
     ) -> Box<dyn Event> {
-        Box::new(ConcreteEvent::new(event_type, priority, source.into(), payload))
+        Box::new(ConcreteEvent::new(
+            event_type,
+            priority,
+            source.into(),
+            payload,
+        ))
     }
 
     /// Create a JSON-typed event (most common use case).
@@ -60,31 +67,18 @@ impl EventBridge {
     ///
     /// This is the migration path: Events are wrapped as Envelope payloads
     /// and can be sent through the unified Transport system.
-    pub fn event_to_envelope(
-        event: Box<dyn Event>,
-        source: Endpoint,
-        target: Target,
-    ) -> Envelope {
+    pub fn event_to_envelope(event: Box<dyn Event>, source: Endpoint, target: Target) -> Envelope {
         let priority = event.priority();
         let json = event.to_json();
-        Envelope::new(
-            source,
-            target,
-            crate::Pattern::Publish,
-            Payload::Json(json),
-        )
-        .with_priority(priority)
+        Envelope::new(source, target, crate::Pattern::Publish, Payload::Json(json))
+            .with_priority(priority)
     }
 
     /// Publish an Event as an Envelope through the unified transport.
     ///
     /// Converts the Event to an Envelope and returns it for sending
     /// through CommunicationBus or Transport.
-    pub fn prepare_envelope(
-        event: Box<dyn Event>,
-        source: Endpoint,
-        target: Target,
-    ) -> Envelope {
+    pub fn prepare_envelope(event: Box<dyn Event>, source: Endpoint, target: Target) -> Envelope {
         Self::event_to_envelope(event, source, target)
     }
 }

@@ -53,13 +53,16 @@ impl NegativityEngine {
 
     /// Check if habits should be questioned this tick.
     pub fn should_question_habits(&self, current_tick: u64) -> bool {
-        let last = self.last_habit_question.load(std::sync::atomic::Ordering::Relaxed);
+        let last = self
+            .last_habit_question
+            .load(std::sync::atomic::Ordering::Relaxed);
         current_tick - last >= self.habit_question_interval
     }
 
     /// Mark that habits were questioned this tick.
     pub fn mark_habits_questioned(&self, tick: u64) {
-        self.last_habit_question.store(tick, std::sync::atomic::Ordering::Relaxed);
+        self.last_habit_question
+            .store(tick, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Check for negation triggers from mood.
@@ -68,11 +71,11 @@ impl NegativityEngine {
             Stimmung::Angst { facing } => {
                 Some(PendingNegation::AngstSignal(format!("{:?}", facing)))
             }
-            Stimmung::Langeweile { depth: base::dasein::BoredomDepth::Deep } => {
-                Some(PendingNegation::AngstSignal(
-                    "deep boredom — confronting meaninglessness".to_string()
-                ))
-            }
+            Stimmung::Langeweile {
+                depth: base::dasein::BoredomDepth::Deep,
+            } => Some(PendingNegation::AngstSignal(
+                "deep boredom — confronting meaninglessness".to_string(),
+            )),
             _ => None,
         }
     }
@@ -192,7 +195,8 @@ mod tests {
             bewandtnis: vec![],
         });
 
-        let possibilities = NegativityEngine::generate_possibilities(&negation, TemporalPosition(5));
+        let possibilities =
+            NegativityEngine::generate_possibilities(&negation, TemporalPosition(5));
         assert_eq!(possibilities.len(), 2);
         assert!(possibilities[0].content.contains("beyond"));
         assert!(possibilities[1].content.contains("rechoosing"));

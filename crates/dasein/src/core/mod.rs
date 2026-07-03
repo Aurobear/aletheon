@@ -16,15 +16,15 @@ pub mod mutation;
 pub mod narrative;
 pub mod store;
 
+use anyhow::Result;
+use async_trait::async_trait;
 use base::self_field::RiskLevel;
 use base::{
     Care, Conflict, Context, Identity, Intent, MutationIntent, Resolution, Subsystem,
     SubsystemContext, SubsystemHealth, Verdict, Version,
 };
-use anyhow::Result;
-use std::sync::Arc;
-use async_trait::async_trait;
 use chrono::Duration;
+use std::sync::Arc;
 use tracing::info;
 
 use crate::bridge::hook::HookBridge;
@@ -40,8 +40,8 @@ use crate::core::mutation::MutationLayer;
 use crate::core::narrative::NarrativeLayer;
 
 use crate::core::store::SelfFieldStore;
-use crate::dasein::DaseinModule;
 use crate::dasein::DaseinEventBridge;
+use crate::dasein::DaseinModule;
 use base::dasein::DaseinEvent;
 
 /// Configuration for SelfField construction.

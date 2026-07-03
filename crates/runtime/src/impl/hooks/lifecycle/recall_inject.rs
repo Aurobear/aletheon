@@ -99,7 +99,10 @@ impl Hook for RecallInjector {
         if !facts.is_empty() {
             let mut lines = Vec::new();
             for fact in &facts {
-                lines.push(format!("- [trust={:.2}] {}", fact.trust_score, fact.content));
+                lines.push(format!(
+                    "- [trust={:.2}] {}",
+                    fact.trust_score, fact.content
+                ));
                 // Trust recall boost
                 let _ = store.record_feedback(fact.fact_id, true);
             }
@@ -117,10 +120,7 @@ impl Hook for RecallInjector {
                         if facts.iter().any(|f| f.fact_id == ef.fact_id) {
                             continue;
                         }
-                        injected_parts.push(format!(
-                            "- [entity:{}] {}",
-                            entity, ef.content
-                        ));
+                        injected_parts.push(format!("- [entity:{}] {}", entity, ef.content));
                         entity_facts_count += 1;
                         if entity_facts_count >= MAX_ENTITIES {
                             break;
@@ -180,19 +180,16 @@ impl Hook for RecallInjector {
 /// Extract significant keywords from a prompt for FTS search.
 fn extract_keywords(prompt: &str) -> Vec<String> {
     let stop_words: &[&str] = &[
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "shall", "can", "need", "dare", "ought",
-        "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-        "as", "into", "through", "during", "before", "after", "above", "below",
-        "between", "out", "off", "over", "under", "again", "further", "then",
-        "once", "here", "there", "when", "where", "why", "how", "all", "both",
-        "each", "few", "more", "most", "other", "some", "such", "no", "nor",
-        "not", "only", "own", "same", "so", "than", "too", "very", "just",
-        "don", "now", "and", "but", "or", "if", "this", "that", "these",
-        "those", "i", "me", "my", "we", "our", "you", "your", "he", "him",
-        "his", "she", "her", "it", "its", "they", "them", "their", "what",
-        "which", "who", "whom",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
+        "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+        "as", "into", "through", "during", "before", "after", "above", "below", "between", "out",
+        "off", "over", "under", "again", "further", "then", "once", "here", "there", "when",
+        "where", "why", "how", "all", "both", "each", "few", "more", "most", "other", "some",
+        "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "just",
+        "don", "now", "and", "but", "or", "if", "this", "that", "these", "those", "i", "me", "my",
+        "we", "our", "you", "your", "he", "him", "his", "she", "her", "it", "its", "they", "them",
+        "their", "what", "which", "who", "whom",
     ];
 
     prompt
@@ -216,7 +213,7 @@ fn extract_entities_from_prompt(prompt: &str) -> Vec<String> {
             .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
             .collect();
         if clean.len() >= 2
-            && clean.chars().next().map_or(false, |c| c.is_uppercase())
+            && clean.chars().next().is_some_and(|c| c.is_uppercase())
             && !clean.chars().all(|c| c.is_uppercase())
         {
             entities.push(clean);

@@ -51,11 +51,16 @@ pub fn classify_error(err: &anyhow::Error) -> ErrorClass {
     // --- Transient (retryable HTTP statuses + network failure signatures) ---
     // Status codes matched with leading space to avoid false positives on
     // token counts / timestamps (e.g. avoid matching "50000" as "500").
-    if m.contains(" 429") || m.contains("429 too many requests")
-        || m.contains(" 500") || m.contains(" 502") || m.contains(" 503")
-        || m.contains(" 504") || m.contains(" 529")
+    if m.contains(" 429")
+        || m.contains("429 too many requests")
+        || m.contains(" 500")
+        || m.contains(" 502")
+        || m.contains(" 503")
+        || m.contains(" 504")
+        || m.contains(" 529")
         || m.contains("overloaded")
-        || m.contains("timed out") || m.contains("timeout")
+        || m.contains("timed out")
+        || m.contains("timeout")
         || m.contains("error sending request")
         || m.contains("connection reset")
         || m.contains("connection refused")
@@ -119,7 +124,11 @@ pub struct RetryPolicy {
 
 impl Default for RetryPolicy {
     fn default() -> Self {
-        Self { max_retries: 2, base_backoff_ms: 200, max_backoff_ms: 4_000 }
+        Self {
+            max_retries: 2,
+            base_backoff_ms: 200,
+            max_backoff_ms: 4_000,
+        }
     }
 }
 
@@ -176,9 +185,7 @@ impl LlmScheduler {
             .map(|p| p.name.clone())
             .unwrap_or_default();
 
-        let failover_order: Vec<String> = config.providers.iter()
-            .map(|p| p.name.clone())
-            .collect();
+        let failover_order: Vec<String> = config.providers.iter().map(|p| p.name.clone()).collect();
 
         Ok(Self {
             providers,
@@ -205,13 +212,12 @@ impl LlmScheduler {
     /// Circuit-break a provider (skipped while unhealthy until re-probed).
     pub fn mark_unhealthy(&self, name: &str) {
         let mut h = self.health.lock().unwrap();
-        h.entry(name.to_string())
-            .or_insert_with(|| ProviderHealth {
-                name: name.to_string(),
-                available: true,
-                latency_ms: 0,
-                tokens_remaining: None,
-            });
+        h.entry(name.to_string()).or_insert_with(|| ProviderHealth {
+            name: name.to_string(),
+            available: true,
+            latency_ms: 0,
+            tokens_remaining: None,
+        });
         h.get_mut(name).unwrap().available = false;
     }
 
@@ -231,7 +237,10 @@ impl LlmScheduler {
         let mut out = Vec::with_capacity(self.providers.len());
 
         let push = |name: String, out: &mut Vec<String>, seen: &mut HashSet<String>| {
-            if self.providers.contains_key(&name) && self.is_healthy(&name) && seen.insert(name.clone()) {
+            if self.providers.contains_key(&name)
+                && self.is_healthy(&name)
+                && seen.insert(name.clone())
+            {
                 out.push(name);
             }
         };
@@ -317,9 +326,8 @@ impl LlmScheduler {
             }
         }
 
-        Err(last_err.unwrap_or_else(|| {
-            anyhow::anyhow!("All providers failed for purpose {:?}", purpose)
-        }))
+        Err(last_err
+            .unwrap_or_else(|| anyhow::anyhow!("All providers failed for purpose {:?}", purpose)))
     }
 
     /// Get the provider for task execution (Engine use).
@@ -354,10 +362,7 @@ impl LlmScheduler {
     pub async fn probe_provider(&self, name: &str) -> ProviderHealth {
         let started = Instant::now();
         let result = match self.providers.get(name) {
-            Some(p) => p
-                .complete(&[Message::user("ping")], &[])
-                .await
-                .map(|_| ()),
+            Some(p) => p.complete(&[Message::user("ping")], &[]).await.map(|_| ()),
             None => Err(anyhow::anyhow!("unknown provider '{}'", name)),
         };
         let latency_ms = started.elapsed().as_millis() as u64;
@@ -397,10 +402,10 @@ fn resolve_api_key(api_key: &str, provider_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use base::message::ContentBlock;
     use super::super::provider::{LlmResponse, LlmStream, StopReason, Usage};
+    use super::*;
+    use base::message::ContentBlock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn test_resolve_api_key_from_config() {
@@ -565,8 +570,12 @@ mod tests {
         providers.insert("a".into(), flaky.clone());
         let mut routing = HashMap::new();
         routing.insert(LlmPurpose::Execute, "a".to_string());
-        let sched = LlmScheduler::from_providers(providers, routing)
-            .with_retry_policy(RetryPolicy { max_retries: 3, base_backoff_ms: 0, max_backoff_ms: 0 });
+        let sched =
+            LlmScheduler::from_providers(providers, routing).with_retry_policy(RetryPolicy {
+                max_retries: 3,
+                base_backoff_ms: 0,
+                max_backoff_ms: 0,
+            });
         let resp = sched
             .complete(&LlmPurpose::Execute, &[Message::user("hi")], &[])
             .await
@@ -581,13 +590,21 @@ mod tests {
         providers.insert("a".into(), Arc::new(DeadProvider { name: "a".into() }));
         providers.insert(
             "b".into(),
-            Arc::new(FlakyProvider { name: "b".into(), fail_n: 0, calls: AtomicUsize::new(0) }),
+            Arc::new(FlakyProvider {
+                name: "b".into(),
+                fail_n: 0,
+                calls: AtomicUsize::new(0),
+            }),
         );
         let mut routing = HashMap::new();
         routing.insert(LlmPurpose::Execute, "a".to_string());
         let sched = LlmScheduler::from_providers(providers, routing)
             .with_failover_order(vec!["a".into(), "b".into()])
-            .with_retry_policy(RetryPolicy { max_retries: 1, base_backoff_ms: 0, max_backoff_ms: 0 });
+            .with_retry_policy(RetryPolicy {
+                max_retries: 1,
+                base_backoff_ms: 0,
+                max_backoff_ms: 0,
+            });
         let resp = sched
             .complete(&LlmPurpose::Execute, &[Message::user("hi")], &[])
             .await
@@ -600,11 +617,19 @@ mod tests {
         let mut providers: HashMap<String, Arc<dyn LlmProvider>> = HashMap::new();
         providers.insert(
             "a".into(),
-            Arc::new(FlakyProvider { name: "a".into(), fail_n: 0, calls: AtomicUsize::new(0) }),
+            Arc::new(FlakyProvider {
+                name: "a".into(),
+                fail_n: 0,
+                calls: AtomicUsize::new(0),
+            }),
         );
         providers.insert(
             "b".into(),
-            Arc::new(FlakyProvider { name: "b".into(), fail_n: 0, calls: AtomicUsize::new(0) }),
+            Arc::new(FlakyProvider {
+                name: "b".into(),
+                fail_n: 0,
+                calls: AtomicUsize::new(0),
+            }),
         );
         let mut routing = HashMap::new();
         routing.insert(LlmPurpose::Execute, "a".to_string());
@@ -623,7 +648,11 @@ mod tests {
         let mut providers: HashMap<String, Arc<dyn LlmProvider>> = HashMap::new();
         providers.insert(
             "ok".into(),
-            Arc::new(FlakyProvider { name: "ok".into(), fail_n: 0, calls: AtomicUsize::new(0) }),
+            Arc::new(FlakyProvider {
+                name: "ok".into(),
+                fail_n: 0,
+                calls: AtomicUsize::new(0),
+            }),
         );
         providers.insert("bad".into(), Arc::new(DeadProvider { name: "bad".into() }));
         let sched = LlmScheduler::from_providers(providers, HashMap::new());

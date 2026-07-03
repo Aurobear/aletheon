@@ -110,9 +110,8 @@ impl MarkdownSkill {
             if let Some(list_key) = &in_list_key {
                 if let Some(item) = trimmed.strip_prefix("- ") {
                     let item = item.trim_matches('"').trim_matches('\'').to_string();
-                    match list_key.as_str() {
-                        "tools" => tools.push(item),
-                        _ => {}
+                    if list_key.as_str() == "tools" {
+                        tools.push(item)
                     }
                     continue;
                 } else {
@@ -170,11 +169,8 @@ impl MarkdownSkill {
                 current_key = Some(k_for_list.clone());
 
                 // Check if value is empty (list follows on next lines)
-                if v_is_empty {
-                    match k_for_list.as_str() {
-                        "tools" => in_list_key = Some("tools".to_string()),
-                        _ => {}
-                    }
+                if v_is_empty && k_for_list.as_str() == "tools" {
+                    in_list_key = Some("tools".to_string())
                 }
                 continue;
             }
@@ -183,9 +179,8 @@ impl MarkdownSkill {
             if let Some(item) = trimmed.strip_prefix("- ") {
                 let item = item.trim_matches('"').trim_matches('\'').to_string();
                 if let Some(ref key) = current_key {
-                    match key.as_str() {
-                        "tools" => tools.push(item),
-                        _ => {}
+                    if key.as_str() == "tools" {
+                        tools.push(item)
                     }
                 }
             }

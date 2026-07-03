@@ -17,15 +17,17 @@
 //! - `policy/` — Execution policy engine
 //! - `dasein/` — Phenomenological module
 
+#![allow(deprecated)]
+
 // === Module declarations ===
 
-pub mod include;
-pub mod types;
+pub mod dasein;
 pub mod events;
+pub mod include;
 pub mod ipc;
 pub mod kernel;
 pub mod policy;
-pub mod dasein;
+pub mod types;
 
 // === Backward-compatible module re-exports ===
 // These allow `base::genome::*`, `base::self_field::*`, etc. to continue working.
@@ -37,16 +39,17 @@ pub use include::brain;
 pub use include::event_bus;
 pub use include::memory;
 pub use include::meta;
+pub use include::plugin;
 pub use include::runtime;
 pub use include::self_field;
 pub use include::subsystem;
-pub use include::plugin;
 
 // Shared type modules (from types/)
 pub use types::agent;
 pub use types::capability;
 pub use types::context;
 pub use types::genome;
+pub use types::grounding;
 pub use types::hook;
 pub use types::hook_ext;
 pub use types::llm_types;
@@ -58,7 +61,6 @@ pub use types::resource;
 pub use types::sandbox;
 pub use types::tool;
 pub use types::vision;
-pub use types::grounding;
 
 // Event modules (from events/)
 pub use events::event;
@@ -81,8 +83,8 @@ pub use kernel::registry;
 
 // Policy modules (from policy/)
 pub use policy::execpolicy;
-pub use policy::verifier;
 pub use policy::permission_authority;
+pub use policy::verifier;
 
 // === Re-exports for backward compatibility ===
 // These preserve the flat API surface so external consumers don't need to change.
@@ -99,15 +101,19 @@ pub use include::memory::{
     CompactResult, CompactStrategy, EmbeddingProvider, MemoryBackend, MemoryEntry, MemoryFilter,
     MemoryHandle, MemoryQuery, MemoryStats, MemoryType,
 };
-pub use include::meta::{Evaluation, MetaRuntimeOps, MigrationResult, RuntimeCandidate, TestResult};
-pub use include::runtime::{AgentInfo, AgentStatus, RuntimeOps, ScheduleKind, ScheduledTask, StepResult};
+pub use include::meta::{
+    Evaluation, MetaRuntimeOps, MigrationResult, RuntimeCandidate, TestResult,
+};
+pub use include::plugin::{Plugin, PluginContext};
+pub use include::runtime::{
+    AgentInfo, AgentStatus, RuntimeOps, ScheduleKind, ScheduledTask, StepResult,
+};
 pub use include::self_field::{
     AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, AwarenessGrowthSuggestion, Care,
-    Conflict, Identity, Intent, IntentSource, MutationIntent, Resolution, RiskLevel,
-    SelfAwareness, SelfFieldOps, SelfState, Verdict, VerdictAction, VerdictHandler,
+    Conflict, Identity, Intent, IntentSource, MutationIntent, Resolution, RiskLevel, SelfAwareness,
+    SelfFieldOps, SelfState, Verdict, VerdictAction, VerdictHandler,
 };
 pub use include::subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
-pub use include::plugin::{Plugin, PluginContext};
 
 // Shared types (from types/)
 pub use types::agent::Pid;
@@ -118,9 +124,11 @@ pub use types::hook::{HookContext, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
 pub use types::llm_types::ToolDefinition;
 pub use types::message::{ContentBlock, ImageSource, Message, Priority as MessagePriority, Role};
-pub use types::permission::{ModeConfig, PermissionBehavior, PermissionContext, PermissionMode, PermissionRule};
-pub use types::resource::{ManagedResource, ResourceState};
 pub use types::objective::{Objective, ObjectiveStatus, ObjectiveSummary};
+pub use types::permission::{
+    ModeConfig, PermissionBehavior, PermissionContext, PermissionMode, PermissionRule,
+};
+pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
 };
@@ -129,24 +137,28 @@ pub use types::tool::{
 };
 
 // Event types (from events/)
-pub use events::event::{AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId};
+pub use events::event::{
+    AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
+};
 pub use events::event_bridge::EventBridge;
 pub use events::event_log::{EventLog, LogEntry};
 pub use events::ui_event::{
-    AwarenessLevel, CollaborationMode, EvolutionStage, InterruptReason,
-    PlanUpdate, SubAgentHandle, SubAgentState, SubAgentStatus, UiEvent,
+    AwarenessLevel, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate, SubAgentHandle,
+    SubAgentState, SubAgentStatus, UiEvent,
 };
 
 // IPC types (from ipc/)
+pub use ipc::bus::communication_bus::{BusConfig, CommunicationBus};
+pub use ipc::bus::kernel_bus::KernelEventBus;
 pub use ipc::envelope::{Endpoint, Envelope, EnvelopeId, ModuleId, Pattern, Payload, Target};
 pub use ipc::ipc_msg::{ForkDirective, ForkResult, GroupId, IpcMessage, MessageKind, Signal};
 pub use ipc::ipc_types::{
     AgentId, AgentMessage, IpcBackend, IpcPreference, IpcPriority, IpcProbeError, MessageType,
 };
 pub use ipc::protocol::Protocol;
-pub use ipc::transport::{HealthStatus, Transport as EnvelopeTransport, TransportHealth, TransportKind};
-pub use ipc::bus::communication_bus::{BusConfig, CommunicationBus};
-pub use ipc::bus::kernel_bus::KernelEventBus;
+pub use ipc::transport::{
+    HealthStatus, Transport as EnvelopeTransport, TransportHealth, TransportKind,
+};
 
 // Kernel foundations (from kernel/)
 pub use kernel::debug::{DebugEvent, DebugLevel, DebugSink, Tracepoint};
@@ -161,8 +173,8 @@ pub use kernel::registry::{RegistrationId, Registry};
 
 // Policy (from policy/)
 pub use policy::execpolicy::{
-    Decision, NetworkProtocol, NetworkRule, PatternToken, Policy, PrefixRule,
-    default_heuristics, load_policy_from_str, load_policy_layered,
+    default_heuristics, load_policy_from_str, load_policy_layered, Decision, NetworkProtocol,
+    NetworkRule, PatternToken, Policy, PrefixRule,
 };
 // Note: policy::execpolicy::Evaluation is not re-exported at crate root
 // to avoid conflict with include::meta::Evaluation.

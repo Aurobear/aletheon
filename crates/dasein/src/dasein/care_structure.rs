@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
+use super::types::*;
+use base::dasein::{CareStructureSnapshot, ConcernSnapshot, Stimmung};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use super::types::*;
-use base::dasein::{Stimmung, CareStructureSnapshot, ConcernSnapshot};
+use std::collections::BTreeMap;
 
 /// A concern — something Dasein cares about.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -85,12 +85,12 @@ impl CareRhythm {
     /// Adapt rhythm based on mood and concerns.
     pub fn adapt(&mut self, mood: &Stimmung, urgent_count: usize) {
         let mood_factor = match mood {
-            Stimmung::Angst { .. } => 0.3,        // anxious: check more often
+            Stimmung::Angst { .. } => 0.3,            // anxious: check more often
             Stimmung::Entschlossenheit { .. } => 0.5, // resolute: fairly often
-            Stimmung::Neugier { .. } => 0.7,       // curious: moderately often
-            Stimmung::Gelassenheit => 1.0,          // calm: normal pace
-            Stimmung::Langeweile { .. } => 2.0,    // bored: less often
-            Stimmung::Verfallenheit { .. } => 1.5,  // fallen: less aware
+            Stimmung::Neugier { .. } => 0.7,          // curious: moderately often
+            Stimmung::Gelassenheit => 1.0,            // calm: normal pace
+            Stimmung::Langeweile { .. } => 2.0,       // bored: less often
+            Stimmung::Verfallenheit { .. } => 1.5,    // fallen: less aware
             _ => 1.0,
         };
 
@@ -100,13 +100,12 @@ impl CareRhythm {
             1.0
         };
 
-        let new_interval = self.base_interval
+        let new_interval = self
+            .base_interval
             .mul_f64(mood_factor)
             .mul_f64(urgency_factor);
 
-        self.current_interval = new_interval
-            .max(self.min_interval)
-            .min(self.max_interval);
+        self.current_interval = new_interval.max(self.min_interval).min(self.max_interval);
     }
 
     pub fn next_interval(&self) -> std::time::Duration {
@@ -174,7 +173,8 @@ impl CareStructure {
     /// Get urgent concerns.
     pub fn urgent_concerns(&self, threshold: f64) -> Vec<Concern> {
         let concerns = self.concerns.read();
-        concerns.values()
+        concerns
+            .values()
             .filter(|c| c.urgency >= threshold)
             .cloned()
             .collect()
@@ -190,15 +190,14 @@ impl CareStructure {
         if fallenness.depth > 0.8 {
             if let Some(absorbed) = &fallenness.absorbed_in {
                 return CareAction::Negate(format!(
-                    "deeply absorbed in '{}', questioning this pattern", absorbed
+                    "deeply absorbed in '{}', questioning this pattern",
+                    absorbed
                 ));
             }
         }
 
         // If there are urgent concerns -> deliberate
-        let urgent: Vec<_> = concerns.values()
-            .filter(|c| c.urgency > 0.7)
-            .collect();
+        let urgent: Vec<_> = concerns.values().filter(|c| c.urgency > 0.7).collect();
 
         if let Some(most_urgent) = urgent.first() {
             return CareAction::Deliberate(most_urgent.purpose.clone());
@@ -247,9 +246,7 @@ impl CareStructure {
         }
 
         // Multiple urgent concerns -> Angst
-        let urgent_count = concerns.values()
-            .filter(|c| c.urgency > 0.7)
-            .count();
+        let urgent_count = concerns.values().filter(|c| c.urgency > 0.7).count();
 
         if urgent_count >= 3 {
             return Some(Stimmung::Angst {
@@ -270,14 +267,21 @@ impl CareStructure {
 
         CareStructureSnapshot {
             projection: proj.chosen.clone(),
-            constraints: thrown.constraints.iter().map(|c| c.description.clone()).collect(),
+            constraints: thrown
+                .constraints
+                .iter()
+                .map(|c| c.description.clone())
+                .collect(),
             absorbed_in: fallen.absorbed_in.clone(),
             fallenness_depth: fallen.depth,
-            concerns: concerns.values().map(|c| ConcernSnapshot {
-                purpose: c.purpose.clone(),
-                urgency: c.urgency,
-                mood_tone: c.mood_tone.clone(),
-            }).collect(),
+            concerns: concerns
+                .values()
+                .map(|c| ConcernSnapshot {
+                    purpose: c.purpose.clone(),
+                    urgency: c.urgency,
+                    mood_tone: c.mood_tone.clone(),
+                })
+                .collect(),
             rhythm_interval_ms: rhythm.current_interval.as_millis() as u64,
         }
     }
@@ -343,9 +347,12 @@ mod tests {
         let calm_interval = care.rhythm.read().current_interval;
 
         // Angst -> faster rhythm
-        care.rhythm.write().adapt(&Stimmung::Angst {
-            facing: base::dasein::AngstSource::Freedom,
-        }, 2);
+        care.rhythm.write().adapt(
+            &Stimmung::Angst {
+                facing: base::dasein::AngstSource::Freedom,
+            },
+            2,
+        );
         let angst_interval = care.rhythm.read().current_interval;
 
         assert!(angst_interval < calm_interval);

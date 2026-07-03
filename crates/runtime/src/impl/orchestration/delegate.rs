@@ -5,9 +5,7 @@ use tracing::{info, warn};
 
 use super::budget::IterationBudget;
 use super::registry::AgentRegistry;
-use corpus::tools::tools::{
-    PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
-};
+use corpus::tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 /// Maximum delegation depth (no grandchild agents).
 const MAX_DELEGATE_DEPTH: usize = 1;

@@ -1,7 +1,7 @@
 //! Episodic memory backend — stores events, actions, observations.
 
-mod schema;
 mod query;
+mod schema;
 mod storage;
 
 pub use schema::EpisodicMemory;
@@ -11,8 +11,7 @@ mod tests {
     use super::*;
     use base::{
         BehaviorAdjustment, CompactStrategy, EvolutionLogEntry, MemoryBackend, MemoryEntry,
-        MemoryFilter, MemoryQuery, MemoryType, ReflectionEntry, ReflectionTrigger, Subsystem,
-        SubsystemContext,
+        MemoryQuery, MemoryType, ReflectionEntry, ReflectionTrigger, Subsystem, SubsystemContext,
     };
     use chrono::Utc;
     use uuid::Uuid;
@@ -190,16 +189,10 @@ mod tests {
         assert_eq!(recalled.len(), 2);
         assert_eq!(recalled[0].task_summary, "stuck on parser bug");
         assert_eq!(recalled[0].trigger, ReflectionTrigger::Impasse);
-        assert_eq!(
-            recalled[0].outcome,
-            base::ReflectionOutcome::Failure
-        );
+        assert_eq!(recalled[0].outcome, base::ReflectionOutcome::Failure);
         assert_eq!(recalled[1].task_summary, "deployed feature X");
         assert_eq!(recalled[1].trigger, ReflectionTrigger::TaskComplete);
-        assert_eq!(
-            recalled[1].outcome,
-            base::ReflectionOutcome::Success
-        );
+        assert_eq!(recalled[1].outcome, base::ReflectionOutcome::Success);
     }
 
     #[tokio::test]

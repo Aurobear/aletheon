@@ -4,9 +4,9 @@
 //! then validates each against boundary rules and identity continuity.
 
 use crate::core::mutation::MutationLayer;
+use anyhow::Result;
 use base::evolution::EvolutionTriggeredPayload;
 use base::self_field::{MutationIntent, Verdict};
-use anyhow::Result;
 use std::sync::Arc;
 
 /// Validates evolution triggers and generates approved mutation intents.
@@ -101,7 +101,7 @@ impl MutationApprover {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::evolution::LearnedRule;
+
     use uuid::Uuid;
 
     fn make_trigger(reason: &str) -> EvolutionTriggeredPayload {

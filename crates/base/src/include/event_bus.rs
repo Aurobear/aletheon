@@ -6,6 +6,8 @@
 //! - Request-Response (synchronous wait for reply)
 //! - Fire-and-Forget (async, no wait)
 
+#![allow(deprecated)]
+
 use anyhow::Result;
 use async_trait::async_trait;
 use std::time::Duration;
@@ -20,7 +22,10 @@ use crate::{AsyncEventHandler, Event, EventHandler, EventType, SubscriptionId};
 ///
 /// **Deprecated:** Use `CommunicationBus` instead of `EventBus` for new code.
 /// The `EventBus` trait is kept for backward compatibility during migration.
-#[deprecated(since = "0.2.0", note = "Use CommunicationBus instead of EventBus for new code")]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use CommunicationBus instead of EventBus for new code"
+)]
 #[async_trait]
 pub trait EventBus: Send + Sync {
     /// Publish an event. All matching subscribers are notified.

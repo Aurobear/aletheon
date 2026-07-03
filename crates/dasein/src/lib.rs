@@ -9,6 +9,21 @@
 //! field through which every event, intent, memory, and action passes. Just as Linux
 //! organizes around the process primitive and Unix around the file primitive, Aletheon
 //! organizes around the Self primitive. See [docs/design/self/first-principle.md].
+
+#![allow(
+    clippy::if_same_then_else,
+    clippy::unnecessary_sort_by,
+    clippy::manual_clamp,
+    clippy::ptr_arg,
+    clippy::new_without_default,
+    clippy::vec_init_then_push,
+    clippy::manual_checked_ops,
+    clippy::module_inception,
+    clippy::too_many_arguments,
+    clippy::wrong_self_convention,
+    dead_code,
+    deprecated
+)]
 //!
 //! ## Architecture
 //!

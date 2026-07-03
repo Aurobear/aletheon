@@ -9,9 +9,7 @@ use base::tool::ToolResult;
 #[derive(Debug, Clone)]
 pub enum Event {
     /// A new turn started.
-    TurnStarted {
-        iteration: usize,
-    },
+    TurnStarted { iteration: usize },
     /// Streaming text from the LLM.
     Text { text: String },
     /// Streaming text delta (incremental token).
@@ -26,7 +24,11 @@ pub enum Event {
     /// A tool call has started (name + call_id for streaming).
     ToolCallStart { name: String, call_id: String },
     /// A tool call's arguments are now complete (after streaming accumulation).
-    ToolCallComplete { call_id: String, name: String, args: serde_json::Value },
+    ToolCallComplete {
+        call_id: String,
+        name: String,
+        args: serde_json::Value,
+    },
     /// A tool execution completed.
     ToolResult {
         name: String,
@@ -58,9 +60,7 @@ pub enum Event {
     /// Context compaction completed.
     CompactionDone { summary_chars: usize },
     /// The turn completed.
-    TurnDone {
-        result: Result<String, String>,
-    },
+    TurnDone { result: Result<String, String> },
     /// An error occurred.
     Error { message: String },
     /// Memory was updated (queued for next turn).
@@ -74,14 +74,9 @@ pub enum Event {
         hit_rate: f64,
     },
     /// Awareness level changed during reasoning.
-    AwarenessChanged {
-        level: String,
-        context: String,
-    },
+    AwarenessChanged { level: String, context: String },
     /// Mode was changed (default/plan/auto/sandbox).
-    ModeChanged {
-        mode: String,
-    },
+    ModeChanged { mode: String },
     /// Sub-agent status update.
     SubAgentStatusChanged {
         agent_id: String,
@@ -96,18 +91,11 @@ pub enum Event {
         ready_for_approval: bool,
     },
     /// Streaming was interrupted.
-    Interrupted {
-        reason: String,
-    },
+    Interrupted { reason: String },
     /// Context window usage update.
-    ContextUpdate {
-        used_tokens: u32,
-        max_tokens: u32,
-    },
+    ContextUpdate { used_tokens: u32, max_tokens: u32 },
     /// Model was switched.
-    ModelSwitch {
-        model_name: String,
-    },
+    ModelSwitch { model_name: String },
     /// Agent goal was set.
     GoalSet {
         goal: String,
@@ -119,14 +107,9 @@ pub enum Event {
         recommendation: String,
     },
     /// Tool budget exceeded.
-    BudgetExceeded {
-        used: usize,
-        max: usize,
-    },
+    BudgetExceeded { used: usize, max: usize },
     /// Circuit breaker tripped.
-    CircuitBreakerTripped {
-        reason: String,
-    },
+    CircuitBreakerTripped { reason: String },
     /// Compaction was triggered due to context usage.
     CompactionTriggered {
         used_tokens: usize,
@@ -300,12 +283,8 @@ mod tests {
     fn event_variants_constructible() {
         // Verify all variants can be constructed
         let _ = Event::TurnStarted { iteration: 0 };
-        let _ = Event::Text {
-            text: "t".into(),
-        };
-        let _ = Event::Reasoning {
-            text: "r".into(),
-        };
+        let _ = Event::Text { text: "t".into() };
+        let _ = Event::Reasoning { text: "r".into() };
         let _ = Event::ToolDispatch {
             name: "bash".into(),
             args: serde_json::json!({}),
@@ -337,18 +316,14 @@ mod tests {
             options: vec!["a".into()],
         };
         let _ = Event::CompactionStarted;
-        let _ = Event::CompactionDone {
-            summary_chars: 100,
-        };
+        let _ = Event::CompactionDone { summary_chars: 100 };
         let _ = Event::TurnDone {
             result: Ok("done".into()),
         };
         let _ = Event::Error {
             message: "err".into(),
         };
-        let _ = Event::MemoryUpdated {
-            fact: "f".into(),
-        };
+        let _ = Event::MemoryUpdated { fact: "f".into() };
         let _ = Event::PlanModeChanged { enabled: true };
         let _ = Event::CacheDiagnostics {
             hit_tokens: 100,

@@ -8,6 +8,12 @@ use anyhow::{bail, Result};
 
 pub struct SpecEditor;
 
+impl Default for SpecEditor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpecEditor {
     pub fn new() -> Self {
         Self

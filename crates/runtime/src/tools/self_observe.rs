@@ -8,7 +8,9 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use base::dasein::DaseinOps;
-use base::tool::{ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta, ToolExposure};
+use base::tool::{
+    ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult, ToolResultMeta,
+};
 
 /// Tool that exposes Dasein internal state to the LLM.
 ///
@@ -63,7 +65,9 @@ impl<T: DaseinOps + 'static> Tool for SelfObserveTool<T> {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         // Cannot clone a generic T easily; this tool is intended to be
         // constructed once and wrapped in Arc<dyn Tool> at registration time.
-        panic!("SelfObserveTool does not support boxed_clone; wrap in Arc<dyn Tool> at registration")
+        panic!(
+            "SelfObserveTool does not support boxed_clone; wrap in Arc<dyn Tool> at registration"
+        )
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
@@ -97,7 +101,10 @@ impl<T: DaseinOps + 'static> Tool for SelfObserveTool<T> {
                 ctx.care.rhythm_interval_ms
             ),
             "full" => format!("{:#?}", ctx),
-            other => format!("Unknown query: {}. Valid: mood, temporality, world, self_model, care, full", other),
+            other => format!(
+                "Unknown query: {}. Valid: mood, temporality, world, self_model, care, full",
+                other
+            ),
         };
 
         ToolResult {

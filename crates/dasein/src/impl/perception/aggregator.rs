@@ -47,10 +47,7 @@ impl EventAggregator {
             self.seen_hashes.insert(hash, now);
 
             // Rate limiting
-            let source_queue = self
-                .source_counts
-                .entry(event.source)
-                .or_insert_with(VecDeque::new);
+            let source_queue = self.source_counts.entry(event.source).or_default();
 
             // Remove old entries
             while let Some(front) = source_queue.front() {

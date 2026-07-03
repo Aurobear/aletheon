@@ -24,12 +24,8 @@ pub trait PermissionAuthority: Send + Sync {
     /// name, decide whether it should be confirmed or gated.
     ///
     /// Returns `None` to defer to the caller's inline fallback rule.
-    fn confirmation_verdict(
-        &self,
-        ctx: &Context,
-        care_score: f64,
-        action: &str,
-    ) -> Option<Verdict>;
+    fn confirmation_verdict(&self, ctx: &Context, care_score: f64, action: &str)
+        -> Option<Verdict>;
 }
 
 #[cfg(test)]
@@ -69,10 +65,7 @@ mod tests {
     fn authority_can_return_a_verdict() {
         let ctx = Context::new("t", PathBuf::from("/tmp"));
         let v = AlwaysConfirm.confirmation_verdict(&ctx, 0.9, "system.reboot");
-        assert!(matches!(
-            v,
-            Some(Verdict::RequireConfirmation { .. })
-        ));
+        assert!(matches!(v, Some(Verdict::RequireConfirmation { .. })));
     }
 
     #[test]

@@ -312,7 +312,10 @@ mod tests {
         };
 
         let result = engine.reflect(&ctx);
-        assert!(matches!(result.spec_verdict, SpecVerdict::SpecDeviation { .. }));
+        assert!(matches!(
+            result.spec_verdict,
+            SpecVerdict::SpecDeviation { .. }
+        ));
         assert!(matches!(
             result.recommendation,
             ReflectionRecommendation::AdjustStrategy(_)
@@ -335,7 +338,10 @@ mod tests {
         };
 
         let result = engine.reflect(&ctx);
-        assert!(matches!(result.spec_verdict, SpecVerdict::SpecDeviation { .. }));
+        assert!(matches!(
+            result.spec_verdict,
+            SpecVerdict::SpecDeviation { .. }
+        ));
     }
 
     #[test]
@@ -354,7 +360,10 @@ mod tests {
         };
 
         let result = engine.reflect(&ctx);
-        assert!(matches!(result.spec_verdict, SpecVerdict::AgentEnhancement { .. }));
+        assert!(matches!(
+            result.spec_verdict,
+            SpecVerdict::AgentEnhancement { .. }
+        ));
         assert!(matches!(
             result.recommendation,
             ReflectionRecommendation::AdjustStrategy(_)

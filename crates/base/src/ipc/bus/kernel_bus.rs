@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use anyhow::Result;
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -8,7 +10,7 @@ use tracing::{debug, warn};
 use crate::events::event_log::EventLog;
 use crate::events::routing_policy::{RouteAction, RoutingPolicy};
 use crate::events::subscription::SubscriptionRegistry;
-use crate::ipc::envelope::{Endpoint, Envelope, EventEnvelopeExt, Payload, Target};
+use crate::ipc::envelope::{Endpoint, Payload, Target};
 use crate::ipc::transport::Transport;
 use crate::{AsyncEventHandler, Event, EventBus, EventHandler, EventType, SubscriptionId};
 

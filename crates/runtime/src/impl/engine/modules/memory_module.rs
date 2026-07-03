@@ -8,8 +8,8 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 use tracing::{debug, error};
 
-use base::envelope::*;
 use base::envelope::Payload;
+use base::envelope::*;
 use base::CommunicationBus;
 
 use crate::r#impl::memory::recall_memory::RecallMemory;

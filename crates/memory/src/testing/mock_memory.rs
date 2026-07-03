@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use anyhow::Result;
+use async_trait::async_trait;
 use base::{
     CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
     MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext, SubsystemHealth, Version,
 };
-use anyhow::Result;
-use async_trait::async_trait;
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -161,6 +161,7 @@ impl MemoryBackend for MockMemoryBackend {
             .collect();
 
         // Sort by created_at descending
+        #[allow(clippy::unnecessary_sort_by)]
         results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         if query.limit > 0 {
@@ -184,6 +185,7 @@ impl MemoryBackend for MockMemoryBackend {
             .cloned()
             .collect();
 
+        #[allow(clippy::unnecessary_sort_by)]
         results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         if filter.limit > 0 {
             results.truncate(filter.limit);

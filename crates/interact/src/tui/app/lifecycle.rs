@@ -6,11 +6,14 @@ use crossterm::event::Event;
 use ratatui::Terminal;
 use tokio::net::UnixStream;
 
-use super::super::App;
 use super::super::chat::Role as ChatRole;
-use super::super::response::{try_read_socket_with_recorder, format_reflections, format_genome, format_evolution, format_status, format_sessions, format_models};
+use super::super::response::{
+    format_evolution, format_genome, format_models, format_reflections, format_sessions,
+    format_status, try_read_socket_with_recorder,
+};
 use super::super::term_compat::TermCaps;
 use super::super::test_infra::{EventRecorder, FrameRecorder, TestConfig, TestInputReader};
+use super::super::App;
 use super::key_handler::{handle_key, handle_mouse};
 use super::submit::submit_message;
 

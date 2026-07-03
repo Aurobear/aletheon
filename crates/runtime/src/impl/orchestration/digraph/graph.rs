@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use super::super::registry::AgentRegistry;
@@ -33,7 +33,9 @@ pub enum JoinStrategyDef {
     Any,
     FirstN(usize),
     /// Timeout in milliseconds (avoids `Duration` in the serialized form).
-    TimeoutAll { millis: u64 },
+    TimeoutAll {
+        millis: u64,
+    },
 }
 
 impl From<&JoinStrategy> for JoinStrategyDef {
@@ -287,7 +289,7 @@ impl DiGraph {
                     .ok_or_else(|| format!("Agent '{}' not found", agent_id))?;
 
                 let agent = agent.write().await;
-                let msg = base::Message::user(&format!(
+                let msg = base::Message::user(format!(
                     "Execute task for graph node '{}'. Current state: {:?}",
                     node.id, state.data
                 ));
@@ -305,7 +307,7 @@ impl DiGraph {
                 let result = state
                     .data
                     .get(condition)
-                    .map(|v| v.clone())
+                    .cloned()
                     .unwrap_or(serde_json::Value::Null);
                 state.set(&format!("{}_branch", node.id), result);
                 Ok(())

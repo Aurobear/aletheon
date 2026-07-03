@@ -23,9 +23,8 @@ impl FactStore {
         let single_re = Regex::new(r"\b([A-Z][a-z]+)\b").unwrap();
         for m in single_re.find_iter(content) {
             let before = &content[..m.start()];
-            let is_mid_sentence_start = before.ends_with(". ")
-                || before.ends_with("! ")
-                || before.ends_with("? ");
+            let is_mid_sentence_start =
+                before.ends_with(". ") || before.ends_with("! ") || before.ends_with("? ");
             if !is_mid_sentence_start {
                 entities.push(m.as_str().to_string());
             }

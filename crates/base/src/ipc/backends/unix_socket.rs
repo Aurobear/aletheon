@@ -5,6 +5,8 @@
 //! `unix_socket_transport::UnixSocketTransport`. The two intentionally serve
 //! different trait hierarchies and are not duplicates.
 
+#![allow(deprecated)]
+
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -35,6 +37,12 @@ pub struct UnixSocketBackend {
     listener_handle: Option<tokio::task::JoinHandle<()>>,
     /// Whether `init` has been called.
     initialized: bool,
+}
+
+impl Default for UnixSocketBackend {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl UnixSocketBackend {

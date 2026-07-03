@@ -194,7 +194,7 @@ pub fn filter_by_exposure(
         .filter(|name| {
             exposure_map
                 .get(*name)
-                .map_or(false, |e| e.is_visible_to_model())
+                .is_some_and(|e| e.is_visible_to_model())
         })
         .cloned()
         .collect()

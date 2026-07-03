@@ -1,18 +1,17 @@
 use std::io;
 
-use base::ui_event::{AwarenessLevel, CollaborationMode, PlanUpdate, SubAgentStatus, EvolutionStage};
+use base::ui_event::{
+    AwarenessLevel, CollaborationMode, EvolutionStage, PlanUpdate, SubAgentStatus,
+};
 
-use super::App;
 use super::chat::Role as ChatRole;
 use super::plan_view::PlanVersion;
 use super::test_infra::EventRecorder;
 use super::toolcard::ToolCard;
+use super::App;
 
 /// Variant of `try_read_socket` that records events via `EventRecorder`.
-pub fn try_read_socket_with_recorder(
-    app: &mut App,
-    event_recorder: &mut Option<EventRecorder>,
-) {
+pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<EventRecorder>) {
     loop {
         match app.stream.try_read(&mut app.read_buf) {
             Ok(0) => {
@@ -72,7 +71,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
     let event_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match event_type {
         "turn_start" => {
-            let iteration = params.get("iteration").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let iteration = params
+                .get("iteration")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
             app.stream_ctrl.start_turn();
             app.status.waiting = true;
             app.status.elapsed_secs = 0.0;
@@ -109,22 +111,46 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 .get("args")
                 .map(|v| v.to_string())
                 .unwrap_or_default();
+            // Compute summary before tool/args are moved into ToolCard
+            let cmd_summary = args_summary(&tool, &args);
             app.active_tools
                 .insert(call_id.clone(), ToolCard::new(call_id, tool, args));
             app.app_state.turn_tool_count = app.active_tools.len();
+            // Show tool execution start in chat area — prevents "frozen" perception
+            app.chat
+                .add_message(ChatRole::System, format!("🔧 {}", cmd_summary));
         }
         "tool_call_result" => {
             let call_id = params.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
             if let Some(card) = app.active_tools.get_mut(call_id) {
-                let output = params
-                    .get("output")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let output = params.get("output").and_then(|v| v.as_str()).unwrap_or("");
                 let is_error = params
                     .get("is_error")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 card.finish(output, is_error);
+                // Show completion status in chat area
+                let elapsed = params
+                    .get("elapsed_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let emoji = if is_error { "❌" } else { "✅" };
+                let output_preview: String = output.chars().take(120).collect();
+                let preview = if output_preview.len() < output.len() {
+                    format!("{}…", output_preview)
+                } else {
+                    output_preview
+                };
+                app.chat.add_message(
+                    ChatRole::System,
+                    format!(
+                        "{} {} ({:.1}s): {}",
+                        emoji,
+                        card.tool,
+                        elapsed as f64 / 1000.0,
+                        preview
+                    ),
+                );
             }
         }
         "usage" => {
@@ -171,7 +197,11 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         "awareness_changed" => {
             if let Some(level_val) = params.get("level") {
                 if let Ok(level) = serde_json::from_value::<AwarenessLevel>(level_val.clone()) {
-                    let context = params.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let context = params
+                        .get("context")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     app.app_state.awareness.update(level, context);
                 }
             }
@@ -187,14 +217,22 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             }
         }
         "sub_agent_status" => {
-            let agent_id = params.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let agent_id = params
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if let Some(status_val) = params.get("status") {
                 if let Ok(status) = serde_json::from_value::<SubAgentStatus>(status_val.clone()) {
                     if let Some(agent) = app.sub_agents.iter_mut().find(|a| a.id == agent_id) {
                         agent.status = status;
                     } else {
                         // If the agent is not yet tracked, add it with minimal info.
-                        let task = params.get("task").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let task = params
+                            .get("task")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         app.sub_agents.push(base::ui_event::SubAgentHandle {
                             id: agent_id,
                             task,
@@ -215,10 +253,14 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         "context_update" => {
             // Daemon sends "used_tokens" and "max_tokens"
-            let used = params.get("used_tokens").and_then(|v| v.as_u64())
+            let used = params
+                .get("used_tokens")
+                .and_then(|v| v.as_u64())
                 .or_else(|| params.get("used").and_then(|v| v.as_u64()))
                 .unwrap_or(0) as usize;
-            let max = params.get("max_tokens").and_then(|v| v.as_u64())
+            let max = params
+                .get("max_tokens")
+                .and_then(|v| v.as_u64())
                 .or_else(|| params.get("max").and_then(|v| v.as_u64()))
                 .unwrap_or(200_000) as usize;
             app.app_state.context.used = used;
@@ -227,7 +269,11 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.status.context_window = max as u32;
         }
         "model_switch" => {
-            let to = params.get("to").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let to = params
+                .get("to")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
             app.app_state.model_name = to.clone();
             app.model_name = to.clone();
             app.status.model_name = to;
@@ -236,7 +282,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             if let Some(stage_val) = params.get("stage") {
                 if let Ok(_stage) = serde_json::from_value::<EvolutionStage>(stage_val.clone()) {
                     // Evolution progress is informational; show inline message
-                    let msg = format!("Evolution: {}", serde_json::to_string(stage_val).unwrap_or_default());
+                    let msg = format!(
+                        "Evolution: {}",
+                        serde_json::to_string(stage_val).unwrap_or_default()
+                    );
                     app.chat.add_message(ChatRole::System, msg);
                 }
             }
@@ -267,13 +316,12 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        app.pending_approval =
-            Some(super::approval_dialog::ApprovalDialog::new(
-                approval_id,
-                tool,
-                action_summary,
-                risk_level,
-            ));
+        app.pending_approval = Some(super::approval_dialog::ApprovalDialog::new(
+            approval_id,
+            tool,
+            action_summary,
+            risk_level,
+        ));
     }
 }
 
@@ -510,8 +558,14 @@ pub fn format_sessions(sessions: &serde_json::Value) -> String {
 /// Format model list for display.
 pub fn format_models(result: &serde_json::Value) -> String {
     let empty = vec![];
-    let models = result.get("models").and_then(|v| v.as_array()).unwrap_or(&empty);
-    let current = result.get("current").and_then(|v| v.as_str()).unwrap_or("default");
+    let models = result
+        .get("models")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+    let current = result
+        .get("current")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
     if models.is_empty() {
         return "No models available.".to_string();
     }
@@ -519,7 +573,10 @@ pub fn format_models(result: &serde_json::Value) -> String {
     lines.push("=== Available Models ===".to_string());
     for entry in models {
         let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-        let desc = entry.get("description").and_then(|v| v.as_str()).unwrap_or("");
+        let desc = entry
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let marker = if name == current { " (current)" } else { "" };
         lines.push(format!("  {}{} - {}", name, marker, desc));
     }
@@ -608,7 +665,10 @@ pub fn format_hooks(hooks: &serde_json::Value) -> String {
         let point = h.get("point").and_then(|v| v.as_str()).unwrap_or("?");
         let source = h.get("source").and_then(|v| v.as_str()).unwrap_or("?");
         let priority = h.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
-        lines.push(format!("  {} [{}] (priority: {}, source: {})", name, point, priority, source));
+        lines.push(format!(
+            "  {} [{}] (priority: {}, source: {})",
+            name, point, priority, source
+        ));
     }
     lines.join("\n")
 }
@@ -645,4 +705,49 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
         lines.push(format!("  {} [{}] — {}", id, status, task));
     }
     lines.join("\n")
+}
+
+/// Extract a human-readable summary from tool args for chat display.
+fn args_summary(tool: &str, args: &str) -> String {
+    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(args) {
+        match tool {
+            "bash_exec" | "bash" => obj
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(|c| format!("bash: {}", truncate(c, 80)))
+                .unwrap_or_else(|| format!("{} executing…", tool)),
+            "file_read" => obj
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|p| format!("read: {}", truncate(p, 80)))
+                .unwrap_or_else(|| format!("{} …", tool)),
+            "file_write" => obj
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|p| format!("write: {}", truncate(p, 80)))
+                .unwrap_or_else(|| format!("{} …", tool)),
+            "grep" => obj
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .map(|p| format!("grep: {}", truncate(p, 80)))
+                .unwrap_or_else(|| format!("{} …", tool)),
+            "web_fetch" => obj
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(|u| format!("fetch: {}", truncate(u, 80)))
+                .unwrap_or_else(|| format!("{} …", tool)),
+            _ => format!("{} …", tool),
+        }
+    } else {
+        format!("{}: {}", tool, truncate(args, 60))
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max])
+    }
 }

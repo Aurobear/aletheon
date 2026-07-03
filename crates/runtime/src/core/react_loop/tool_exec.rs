@@ -1,6 +1,6 @@
-use super::{is_context_overflow, ReActLoop, TurnMetrics};
-use super::tool_budget;
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
+use super::tool_budget;
+use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::core::event_sink::{Event, EventSink, ToolResultEvent};
 
 use base::message::{ContentBlock, Message, Role};
@@ -36,7 +36,9 @@ impl ReActLoop {
 
         while self.should_continue() {
             self.advance();
-            event_sink.emit(Event::TurnStarted { iteration: self.iteration });
+            event_sink.emit(Event::TurnStarted {
+                iteration: self.iteration,
+            });
             self.emit_loop_start(&format!("iter_{}", self.iteration));
 
             // Check for interrupt
@@ -62,7 +64,9 @@ impl ReActLoop {
                 Ok(s) => s,
                 Err(e) if is_context_overflow(&e) => {
                     warn!("Context overflow detected, forcing compaction: {e}");
-                    self.compressor.maybe_compact(&mut self.messages, llm).await?;
+                    self.compressor
+                        .maybe_compact(&mut self.messages, llm)
+                        .await?;
                     llm.complete_stream(&self.messages, tool_defs).await?
                 }
                 Err(e) => return Err(e),
@@ -79,8 +83,9 @@ impl ReActLoop {
                     StreamChunk::TextDelta { text } => {
                         // Flush any pending thinking content first
                         if !pending_think.is_empty() {
-                            current_text.push_str(&pending_think);
-                            event_sink.emit(Event::TextDelta { delta: pending_think.clone() });
+                            event_sink.emit(Event::TextDelta {
+                                delta: pending_think.clone(),
+                            });
                             pending_think.clear();
                         }
                         current_text.push_str(&text);
@@ -89,8 +94,9 @@ impl ReActLoop {
                     StreamChunk::ToolUseStart { id, name } => {
                         // Flush any pending text/thinking
                         if !pending_think.is_empty() {
-                            current_text.push_str(&pending_think);
-                            event_sink.emit(Event::TextDelta { delta: pending_think.clone() });
+                            event_sink.emit(Event::TextDelta {
+                                delta: pending_think.clone(),
+                            });
                             pending_think.clear();
                         }
                         if !current_text.is_empty() {
@@ -135,7 +141,11 @@ impl ReActLoop {
                             cache_miss_tokens: 0,
                         });
                         // Emit context window usage so TUI can display it
-                        let total_estimate = self.messages.iter().map(|m| m.estimate_tokens()).sum::<usize>() as u32;
+                        let total_estimate = self
+                            .messages
+                            .iter()
+                            .map(|m| m.estimate_tokens())
+                            .sum::<usize>() as u32;
                         event_sink.emit(Event::ContextUpdate {
                             used_tokens: total_estimate,
                             max_tokens: self.config.context_window_tokens as u32,
@@ -150,7 +160,9 @@ impl ReActLoop {
 
             // Flush any remaining thinking content
             if !pending_think.is_empty() {
-                event_sink.emit(Event::TextDelta { delta: pending_think });
+                event_sink.emit(Event::TextDelta {
+                    delta: pending_think,
+                });
             }
             // Flush remaining text
             if !current_text.is_empty() {
@@ -205,7 +217,7 @@ impl ReActLoop {
             // OpenAI API message format (assistant(tool_use) → tool results only)
             let mut pending_reflection: Option<String> = None;
 
-            for (id, name, input) in &tool_calls {
+            for (tool_index, (id, name, input)) in tool_calls.iter().enumerate() {
                 // Check tool budget before executing
                 if !self.tool_budget.can_call() {
                     warn!("Tool budget exhausted, stopping loop");
@@ -218,6 +230,23 @@ impl ReActLoop {
                         used: self.tool_budget.total_calls(),
                         max: self.config.agent_loop.max_tool_calls,
                     });
+                    // The assistant tool-use message is already in history. Close every
+                    // unexecuted call with an error result so the next OpenAI request is
+                    // structurally valid instead of poisoning the whole session.
+                    for (pending_id, pending_name, _) in tool_calls.iter().skip(tool_index) {
+                        let content = "Tool call skipped: per-turn tool budget exhausted";
+                        self.messages
+                            .push(Message::tool_result(pending_id, content, true));
+                        event_sink.emit(Event::ToolResult {
+                            name: pending_name.clone(),
+                            call_id: pending_id.clone(),
+                            result: ToolResultEvent {
+                                content: content.to_string(),
+                                is_error: true,
+                                execution_time_ms: 0,
+                            },
+                        });
+                    }
                     event_sink.emit(Event::TurnDone {
                         result: Ok(msg.clone()),
                     });
@@ -240,6 +269,21 @@ impl ReActLoop {
                         event_sink.emit(Event::CircuitBreakerTripped {
                             reason: reason.clone(),
                         });
+                        for (pending_id, pending_name, _) in tool_calls.iter().skip(tool_index) {
+                            let content =
+                                format!("Tool call skipped: circuit breaker tripped: {reason}");
+                            self.messages
+                                .push(Message::tool_result(pending_id, &content, true));
+                            event_sink.emit(Event::ToolResult {
+                                name: pending_name.clone(),
+                                call_id: pending_id.clone(),
+                                result: ToolResultEvent {
+                                    content,
+                                    is_error: true,
+                                    execution_time_ms: 0,
+                                },
+                            });
+                        }
                         event_sink.emit(Event::TurnDone {
                             result: Ok(msg.clone()),
                         });
@@ -303,10 +347,23 @@ impl ReActLoop {
                 // to prevent context window bloat. Keep head + tail for visibility.
                 const MAX_TOOL_RESULT_CHARS: usize = 8000;
                 let truncated_content = if content.len() > MAX_TOOL_RESULT_CHARS {
-                    let head = &content[..content.char_indices().nth(3500).map(|(i, _)| i).unwrap_or(3500)];
-                    let tail_start = content.char_indices().nth(content.chars().count().saturating_sub(3500)).map(|(i, _)| i).unwrap_or(0);
+                    let head = &content[..content
+                        .char_indices()
+                        .nth(3500)
+                        .map(|(i, _)| i)
+                        .unwrap_or(3500)];
+                    let tail_start = content
+                        .char_indices()
+                        .nth(content.chars().count().saturating_sub(3500))
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
                     let tail = &content[tail_start..];
-                    format!("{}\n... ({} chars truncated) ...\n{}", head, content.len() - 7000, tail)
+                    format!(
+                        "{}\n... ({} chars truncated) ...\n{}",
+                        head,
+                        content.len() - 7000,
+                        tail
+                    )
                 } else {
                     content.clone()
                 };
@@ -337,7 +394,8 @@ impl ReActLoop {
 
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {
-                self.messages.push(Message::user(format!("[Reflection]\n{}", summary)));
+                self.messages
+                    .push(Message::user(format!("[Reflection]\n{}", summary)));
             }
 
             // Inject Dasein context after tool results for per-turn SelfField state refresh
@@ -360,7 +418,9 @@ impl ReActLoop {
                 } else {
                     fallback
                 };
-                event_sink.emit(Event::TurnDone { result: Ok(fallback.clone()) });
+                event_sink.emit(Event::TurnDone {
+                    result: Ok(fallback.clone()),
+                });
                 let metrics = TurnMetrics {
                     tool_calls_made,
                     tool_errors,

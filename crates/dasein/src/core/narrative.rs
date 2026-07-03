@@ -444,12 +444,7 @@ mod tests {
     fn analyze_trajectory_with_verdicts() {
         let layer = NarrativeLayer::new(100);
         // Record some entries with verdicts
-        layer.record(
-            "review",
-            "ok",
-            Some("ls"),
-            &Verdict::Allow,
-        );
+        layer.record("review", "ok", Some("ls"), &Verdict::Allow);
         layer.record(
             "boundary_check",
             "deny: rm",
@@ -458,12 +453,7 @@ mod tests {
                 reason: "bad".to_string(),
             },
         );
-        layer.record(
-            "review",
-            "ok again",
-            Some("cat"),
-            &Verdict::Allow,
-        );
+        layer.record("review", "ok again", Some("cat"), &Verdict::Allow);
 
         let analysis = layer.analyze_trajectory();
         assert!((analysis.allow_ratio - 2.0 / 3.0).abs() < 0.01);

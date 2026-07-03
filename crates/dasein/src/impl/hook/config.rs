@@ -59,7 +59,7 @@ fn load_hooks_from_dir(dir: &Path) -> Result<Vec<Hook>> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().map_or(false, |e| e == "toml") {
+        if path.extension().is_some_and(|e| e == "toml") {
             match load_hooks_from_file(&path) {
                 Ok(mut h) => {
                     info!(path = %path.display(), count = h.len(), "Loaded hook file");

@@ -33,9 +33,7 @@ pub struct SkillRouter {
 impl SkillRouter {
     /// Create an empty router.
     pub fn new() -> Self {
-        Self {
-            skills: Vec::new(),
-        }
+        Self { skills: Vec::new() }
     }
 
     /// Scan a directory recursively for SKILL.md files and parse their
@@ -55,7 +53,7 @@ impl SkillRouter {
             let path = entry.path();
             if path.is_dir() {
                 self.scan_dir(&path)?;
-            } else if path.file_name().map_or(false, |n| n == "SKILL.md") {
+            } else if path.file_name().is_some_and(|n| n == "SKILL.md") {
                 let content = fs::read_to_string(&path)
                     .with_context(|| format!("reading {}", path.display()))?;
                 if let Some(skill) = parse_skill_md(&content, &path) {
@@ -291,7 +289,6 @@ fn flush_list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     fn make_skill_md(frontmatter: &str) -> String {
         format!("---\n{}\n---\n\nSkill body here.", frontmatter)

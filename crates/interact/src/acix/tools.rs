@@ -9,11 +9,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
-use corpus::tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use crate::acix::Aci;
 use crate::acix::GroundingProvider;
-use corpus::drivers::driver::types::{Key, ScrollDirection};
 use base::Registry;
+use corpus::drivers::driver::types::{Key, ScrollDirection};
+use corpus::tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 // ---------------------------------------------------------------------------
 // Shared helpers

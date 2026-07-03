@@ -1,8 +1,8 @@
 //! Interrupt handling for canceling streaming and in-flight operations.
 
+use base::ui_event::InterruptReason;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use base::ui_event::InterruptReason;
 
 /// Shared cancel flag for interrupting the ReAct loop.
 #[derive(Debug, Clone)]

@@ -3,6 +3,8 @@
 //! **Migration path:** Use `CommunicationBus` with `Transport` implementations
 //! for new code. The `IpcManager` is kept for backward compatibility.
 
+#![allow(deprecated)]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};

@@ -5,6 +5,8 @@
 //!
 //! **Migration path:** Use `Transport` implementations directly for new code.
 
+#![allow(deprecated)]
+
 use anyhow::Result;
 use async_trait::async_trait;
 

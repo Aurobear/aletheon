@@ -73,8 +73,7 @@ impl OutcomeRecorder {
                 outcome
                     .user_feedback
                     .as_ref()
-                    .map(|f| serde_json::to_string(f).ok())
-                    .flatten(),
+                    .and_then(|f| serde_json::to_string(f).ok()),
                 outcome.timestamp.to_rfc3339(),
                 serde_json::to_string(&outcome.context)?,
             ],

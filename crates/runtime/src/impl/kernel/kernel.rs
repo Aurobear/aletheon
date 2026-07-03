@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use base::agent::Pid;
 use base::envelope::Envelope;
-use base::{ForkDirective, ForkResult};
 use base::CommunicationBus;
+use base::{ForkDirective, ForkResult};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::r#impl::agent::fork::AgentFork;
@@ -142,12 +142,7 @@ impl AgentKernel {
             }
         };
 
-        let mut fork = AgentFork::new(
-            parent_pid,
-            directive,
-            parent_remaining,
-            self.bus.event_bus().clone(),
-        );
+        let mut fork = AgentFork::new(parent_pid, directive, parent_remaining, self.bus.clone());
         let child_pid = fork.pid;
 
         // Register agent inbox on the communication bus and store the receiver.

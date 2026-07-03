@@ -160,10 +160,10 @@ impl AutomationScheduler {
         let mut matched = Vec::new();
         for auto in &self.automations {
             if let AutomationTrigger::Webhook { events, .. } = &auto.trigger {
-                if webhook::matches_event_type(&event.event_type, events) {
-                    if auto.daily_count < auto.daily_limit {
-                        matched.push(auto.id.clone());
-                    }
+                if webhook::matches_event_type(&event.event_type, events)
+                    && auto.daily_count < auto.daily_limit
+                {
+                    matched.push(auto.id.clone());
                 }
             }
         }

@@ -1,8 +1,8 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use corpus::drivers::driver::types::{Key, ScrollDirection};
 use async_trait::async_trait;
+use corpus::drivers::driver::types::{Key, ScrollDirection};
 use serde::{Deserialize, Serialize};
 
 use super::aci::Aci;
@@ -203,7 +203,7 @@ impl TaskManager {
     /// Decompose a natural language goal into a task graph (simplified, no LLM)
     pub fn decompose(goal: &str) -> TaskGraph {
         let mut graph = TaskGraph::new(goal);
-        for sentence in goal.split(|c: char| c == '.' || c == ',' || c == ';' || c == '\n') {
+        for sentence in goal.split(['.', ',', ';', '\n']) {
             let s = sentence.trim();
             if !s.is_empty() {
                 graph.add_node(s, TaskAction::Observe, vec![]);
@@ -245,7 +245,7 @@ impl TaskManager {
         // Strip markdown code fences if present
         let cleaned = strip_code_fences(&text);
 
-        let result: DecompositionResult = serde_json::from_str(cleaned.as_ref()).map_err(|e| {
+        let result: DecompositionResult = serde_json::from_str(cleaned).map_err(|e| {
             anyhow::anyhow!("Failed to parse LLM decomposition JSON: {e}\nRaw response: {text}")
         })?;
 

@@ -1,8 +1,8 @@
 //! SemanticMemory — knowledge, concepts, facts, with FTS5 keyword search
 //! and optional embedding-based vector search.
 
-mod schema;
 mod query;
+mod schema;
 mod storage;
 
 pub use schema::{HashEmbeddingProvider, SemanticMemory};
@@ -18,7 +18,7 @@ mod tests {
     use std::sync::Arc;
     use uuid::Uuid;
 
-    use schema::{hash_embedding, l2_norm, cosine_similarity, VectorIndex};
+    use schema::{cosine_similarity, hash_embedding, l2_norm, VectorIndex};
 
     fn setup() -> (tempfile::NamedTempFile, SemanticMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();

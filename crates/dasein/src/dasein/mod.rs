@@ -5,31 +5,31 @@
 //! Sartre (negativity/pour-soi),
 //! Merleau-Ponty (embodiment).
 
-pub mod types;
-pub mod temporality;
 pub mod bewandtnis;
-pub mod self_model;
-pub mod negativity;
 pub mod care_structure;
-pub mod sorge;
 pub mod context_injection;
 pub mod event_bridge;
+pub mod negativity;
 pub mod persistence;
+pub mod self_model;
+pub mod sorge;
+pub mod temporality;
+pub mod types;
 
 pub use base::dasein::*;
 
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use temporality::TemporalStream;
 use bewandtnis::Bewandtnisganzheit;
-use self_model::MutableSelfModel;
-use negativity::NegativityEngine;
 use care_structure::CareStructure;
-use sorge::SorgeLoop;
 use context_injection::format_dasein_context;
 pub use event_bridge::DaseinEventBridge;
+use negativity::NegativityEngine;
+use self_model::MutableSelfModel;
+use sorge::SorgeLoop;
+use temporality::TemporalStream;
 
 /// DaseinModule — the existential substrate of SelfField.
 ///
@@ -136,9 +136,13 @@ impl DaseinModule {
     pub fn quick_mood_update(&self, turn_text: &str) -> Stimmung {
         let mut mood = self.mood.write();
         let new_mood = if turn_text.contains("error") || turn_text.contains("failed") {
-            Stimmung::Geknickt { because: "turn had errors".to_string() }
+            Stimmung::Geknickt {
+                because: "turn had errors".to_string(),
+            }
         } else if turn_text.contains("success") || turn_text.contains("completed") {
-            Stimmung::Gelaunt { toward: "successful completion".to_string() }
+            Stimmung::Gelaunt {
+                toward: "successful completion".to_string(),
+            }
         } else {
             mood.clone()
         };

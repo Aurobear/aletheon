@@ -2,19 +2,19 @@
 
 use std::collections::HashMap;
 
+use anyhow::Result;
+use async_trait::async_trait;
 use base::{
     CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
     MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, Subsystem, SubsystemContext,
     SubsystemHealth, Version,
 };
-use anyhow::Result;
-use async_trait::async_trait;
 
-use crate::ops::activation::{compute_activation, ActivationEntry};
 use crate::backends::episodic::EpisodicMemory;
 use crate::backends::procedural::ProceduralMemory;
 use crate::backends::self_memory::SelfMemory;
 use crate::backends::semantic::SemanticMemory;
+use crate::ops::activation::{compute_activation, ActivationEntry};
 
 /// Summary of a past reflection, for injection into reasoning context.
 #[derive(Debug, Clone)]
@@ -81,7 +81,10 @@ impl MemoryContext {
             sections.push("### Matching Skills".to_string());
             for s in &self.matching_skills {
                 let rate = (s.success_rate * 100.0) as u32;
-                sections.push(format!("- {} ({}% success): {}", s.name, rate, s.description));
+                sections.push(format!(
+                    "- {} ({}% success): {}",
+                    s.name, rate, s.description
+                ));
             }
         }
 
@@ -654,7 +657,7 @@ mod tests {
         // For recall_for_prompt, we go through the generic MemoryBackend::recall()
         // which reads from memory table, so content is the serialized bytes.
         // We store a ReflectionEntry as JSON bytes.
-        use base::{ReflectionEntry, ReflectionTrigger, ReflectionOutcome};
+        use base::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
         let reflection = ReflectionEntry {
             id: "test-ref-1".into(),
@@ -674,8 +677,14 @@ mod tests {
 
         let ctx = router.recall_for_prompt("memory leak", 5).await;
         assert_eq!(ctx.recent_reflections.len(), 1);
-        assert_eq!(ctx.recent_reflections[0].task_summary, "fixed memory leak in router");
-        assert_eq!(ctx.recent_reflections[0].learned, vec!["always check for leaks"]);
+        assert_eq!(
+            ctx.recent_reflections[0].task_summary,
+            "fixed memory leak in router"
+        );
+        assert_eq!(
+            ctx.recent_reflections[0].learned,
+            vec!["always check for leaks"]
+        );
         assert_eq!(ctx.recent_reflections[0].what_worked, vec!["valgrind"]);
     }
 
@@ -684,12 +693,18 @@ mod tests {
         let (_dir, router) = setup_router().await;
 
         // Store a semantic entry with text content
-        let entry = make_entry(MemoryType::Semantic, b"Rust borrow checker prevents data races");
+        let entry = make_entry(
+            MemoryType::Semantic,
+            b"Rust borrow checker prevents data races",
+        );
         router.store(entry).await.unwrap();
 
         let ctx = router.recall_for_prompt("Rust borrow checker", 5).await;
         assert_eq!(ctx.relevant_knowledge.len(), 1);
-        assert_eq!(ctx.relevant_knowledge[0], "Rust borrow checker prevents data races");
+        assert_eq!(
+            ctx.relevant_knowledge[0],
+            "Rust borrow checker prevents data races"
+        );
     }
 
     #[tokio::test]
@@ -713,7 +728,7 @@ mod tests {
         let (_dir, router) = setup_router().await;
 
         // Store one of each type
-        use base::{ReflectionEntry, ReflectionTrigger, ReflectionOutcome};
+        use base::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
         let reflection = ReflectionEntry {
             id: "ref-full".into(),
@@ -728,12 +743,18 @@ mod tests {
             confidence: 0.95,
         };
         router
-            .store(make_entry(MemoryType::Episodic, &reflection.to_json_bytes()))
+            .store(make_entry(
+                MemoryType::Episodic,
+                &reflection.to_json_bytes(),
+            ))
             .await
             .unwrap();
 
         router
-            .store(make_entry(MemoryType::Semantic, b"Rust borrow checker prevents data races"))
+            .store(make_entry(
+                MemoryType::Semantic,
+                b"Rust borrow checker prevents data races",
+            ))
             .await
             .unwrap();
 
@@ -763,7 +784,10 @@ mod tests {
         // Store 5 semantic entries
         for i in 0..5 {
             router
-                .store(make_entry(MemoryType::Semantic, format!("fact {}", i).as_bytes()))
+                .store(make_entry(
+                    MemoryType::Semantic,
+                    format!("fact {}", i).as_bytes(),
+                ))
                 .await
                 .unwrap();
         }

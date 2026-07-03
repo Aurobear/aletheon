@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use super::types::*;
 use base::dasein::{
-    BewandtnisSnapshot, EntitySnapshot, ReadinessState as AbiReadinessState,
-    Stimmung,
+    BewandtnisSnapshot, EntitySnapshot, ReadinessState as AbiReadinessState, Stimmung,
 };
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// The involvement network — a meaningful relational whole.
 /// Heidegger: the world is not a collection of things,
@@ -61,7 +60,11 @@ impl Bewandtnisganzheit {
     }
 
     /// Update the readiness state of an entity.
-    pub fn update_readiness(&self, id: &EntityId, new_state: ReadinessState) -> Option<ReadinessState> {
+    pub fn update_readiness(
+        &self,
+        id: &EntityId,
+        new_state: ReadinessState,
+    ) -> Option<ReadinessState> {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(id) {
             let old = std::mem::replace(&mut node.readiness, new_state);
@@ -74,7 +77,8 @@ impl Bewandtnisganzheit {
     /// Get all entities with a given readiness state.
     pub fn entities_by_readiness(&self, readiness: &ReadinessState) -> Vec<BewandtnisNode> {
         let nodes = self.nodes.read();
-        nodes.values()
+        nodes
+            .values()
             .filter(|n| n.readiness == *readiness)
             .cloned()
             .collect()
@@ -119,7 +123,8 @@ impl Bewandtnisganzheit {
         let nodes = self.nodes.read();
 
         // If many entities are present-at-hand (broken), that's a signal
-        let broken_count = nodes.values()
+        let broken_count = nodes
+            .values()
             .filter(|n| n.readiness == ReadinessState::PresentAtHand)
             .count();
 
@@ -130,7 +135,8 @@ impl Bewandtnisganzheit {
         }
 
         // If everything is ready-to-hand, calm
-        let ready_count = nodes.values()
+        let ready_count = nodes
+            .values()
             .filter(|n| n.readiness == ReadinessState::ReadyToHand)
             .count();
 
@@ -164,8 +170,14 @@ impl Bewandtnisganzheit {
             for j in (i + 1)..edges.len() {
                 if edges[i].from == edges[j].from && edges[i].to == edges[j].to {
                     match (&edges[i].relation, &edges[j].relation) {
-                        (InvolvementRelation::Instrumental(_), InvolvementRelation::Adversarial(_))
-                        | (InvolvementRelation::Adversarial(_), InvolvementRelation::Instrumental(_)) => {
+                        (
+                            InvolvementRelation::Instrumental(_),
+                            InvolvementRelation::Adversarial(_),
+                        )
+                        | (
+                            InvolvementRelation::Adversarial(_),
+                            InvolvementRelation::Instrumental(_),
+                        ) => {
                             contradictions.push(Contradiction {
                                 entity_a: edges[i].from.clone(),
                                 entity_b: edges[i].to.clone(),
@@ -197,7 +209,11 @@ impl Bewandtnisganzheit {
             let snap = EntitySnapshot {
                 id: node.id.to_string(),
                 what_it_is: node.what_it_is.clone(),
-                for_the_sake_of: node.for_the_sake_of.iter().map(|id| id.to_string()).collect(),
+                for_the_sake_of: node
+                    .for_the_sake_of
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect(),
                 readiness: match node.readiness {
                     ReadinessState::ReadyToHand => AbiReadinessState::ReadyToHand,
                     ReadinessState::PresentAtHand => AbiReadinessState::PresentAtHand,
@@ -209,7 +225,9 @@ impl Bewandtnisganzheit {
             match node.readiness {
                 ReadinessState::ReadyToHand => ready.push(snap),
                 ReadinessState::PresentAtHand => present.push(snap),
-                ReadinessState::Unavailable | ReadinessState::OutOfContext => unavailable.push(snap),
+                ReadinessState::Unavailable | ReadinessState::OutOfContext => {
+                    unavailable.push(snap)
+                }
             }
         }
 
@@ -294,10 +312,7 @@ mod tests {
         let world = Bewandtnisganzheit::new();
         world.add_entity(make_node("tool", "a tool"));
 
-        let old = world.update_readiness(
-            &EntityId::new("tool"),
-            ReadinessState::PresentAtHand,
-        );
+        let old = world.update_readiness(&EntityId::new("tool"), ReadinessState::PresentAtHand);
         assert_eq!(old, Some(ReadinessState::ReadyToHand));
 
         let broken = world.entities_by_readiness(&ReadinessState::PresentAtHand);
@@ -357,7 +372,10 @@ mod tests {
         let snapshot = world.to_snapshot();
         assert_eq!(snapshot.ready_to_hand.len(), 1);
         assert_eq!(snapshot.ready_to_hand[0].id, "tool");
-        assert_eq!(snapshot.ultimate_concern, Some("self-understanding".to_string()));
+        assert_eq!(
+            snapshot.ultimate_concern,
+            Some("self-understanding".to_string())
+        );
     }
 
     #[test]

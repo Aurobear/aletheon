@@ -6,14 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Aletheon Runtime - core agent runtime and orchestration"
 
-[[bin]]
-name = "aletheond"
-path = "src/bin/aletheond.rs"
-
-[[bin]]
-name = "aletheon-exec"
-path = "src/bin/aletheon-exec.rs"
-
 [dependencies]
 base = { path = "../base" }
 cognit = { path = "../cognit" }

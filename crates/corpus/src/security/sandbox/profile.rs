@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 /// A declarative profile that describes the access boundaries of a sandbox.
 ///
-/// This is additive metadata; it does **not** change [`SandboxExecutor`]'s
+/// This is additive metadata; it does **not** change `SandboxExecutor`'s
 /// existing behaviour.  Consumers can inspect a profile to decide whether
 /// an action is permitted before handing it to the executor.
 #[derive(Debug, Clone, Default)]

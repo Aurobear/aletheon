@@ -8,12 +8,12 @@ use crate::core::mode_router::ModeRouter;
 use crate::core::react_loop::ReActLoop;
 use crate::core::sub_agent::SubAgentSpawner;
 use crate::core::verdict_handler::DefaultVerdictHandler;
+use anyhow::Result;
 use base::body::{Action, ActionResult};
 use base::brain::Plan;
 use base::context::Context;
 use base::runtime::StepResult;
 use base::self_field::{Intent, Verdict, VerdictAction, VerdictHandler};
-use anyhow::Result;
 use tracing::{debug, warn};
 
 /// Top-level Aletheon runtime — decomposes Engine::run_turn() into 6 layers
@@ -179,7 +179,7 @@ impl AletheonRuntime {
                     timeout: None,
                 };
                 let result = execute_fn(&action, ctx)?;
-                return Ok(result.output);
+                Ok(result.output)
             }
             BehaviorPath::Cognitive | BehaviorPath::Volitional => {
                 // Normal path: think → plan → execute → reflect
@@ -226,7 +226,7 @@ impl AletheonRuntime {
                 // (BrainCore.reflect() and BrainCore.learn() are called externally)
 
                 let output = all_output.join("\n");
-                return Ok(output);
+                Ok(output)
             }
         }
     }
@@ -353,7 +353,9 @@ impl AletheonRuntime {
     /// Returns the signals and clears the internal buffer. The caller
     /// should convert these to `SelfAwareness` entries and store them
     /// via `EpisodicMemory::store_awareness()`.
-    pub fn take_awareness_signals(&mut self) -> Vec<cognit::core::awareness_signal::AwarenessSignal> {
+    pub fn take_awareness_signals(
+        &mut self,
+    ) -> Vec<cognit::core::awareness_signal::AwarenessSignal> {
         self.react_loop.take_signals()
     }
 

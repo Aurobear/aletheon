@@ -15,6 +15,12 @@ pub struct CompletionPopup {
     pub input_prefix: String,
 }
 
+impl Default for CompletionPopup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CompletionPopup {
     pub fn new() -> Self {
         Self {
@@ -26,7 +32,8 @@ impl CompletionPopup {
     }
 
     pub fn show(&mut self, prefix: &str, commands: &[String]) {
-        self.candidates = commands.iter()
+        self.candidates = commands
+            .iter()
             .filter(|c| c.starts_with(prefix))
             .cloned()
             .collect();
@@ -69,14 +76,19 @@ impl CompletionPopup {
             return;
         }
 
-        let items: Vec<ListItem> = self.candidates.iter().enumerate().map(|(i, cmd)| {
-            let style = if i == self.selected {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            ListItem::new(Line::from(Span::styled(format!("  {} ", cmd), style)))
-        }).collect();
+        let items: Vec<ListItem> = self
+            .candidates
+            .iter()
+            .enumerate()
+            .map(|(i, cmd)| {
+                let style = if i == self.selected {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                ListItem::new(Line::from(Span::styled(format!("  {} ", cmd), style)))
+            })
+            .collect();
 
         let height = (self.candidates.len() as u16 + 2).min(10);
         let popup = Rect {

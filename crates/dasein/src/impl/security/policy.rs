@@ -111,8 +111,7 @@ impl PolicyEngine {
 
     fn matches_pattern(&self, pattern: &str, tool_name: &str, input: &serde_json::Value) -> bool {
         // Simple pattern matching
-        if pattern.ends_with('*') {
-            let prefix = &pattern[..pattern.len() - 1];
+        if let Some(prefix) = pattern.strip_suffix('*') {
             // Check against tool name or command content
             if tool_name.starts_with(prefix) {
                 return true;

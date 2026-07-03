@@ -1,16 +1,16 @@
 //! SemanticMemory storage and query operations — full MemoryBackend impl.
 
+use anyhow::Result;
 use base::{
     CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
     MemoryQuery, MemoryStats, MemoryType,
 };
-use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::params;
 use uuid::Uuid;
 
-use super::schema::SemanticMemory;
 use super::query::row_to_entry;
+use super::schema::SemanticMemory;
 use crate::ops::activation::{compute_activation, ActivationEntry};
 
 #[async_trait::async_trait]
@@ -111,11 +111,7 @@ impl MemoryBackend for SemanticMemory {
             let mut entries;
             if let Some(ref text) = query.text {
                 // FTS path: keep BM25 rank as primary relevance filter.
-                let fetch_limit = if query.limit > 0 {
-                    query.limit * 2
-                } else {
-                    0
-                };
+                let fetch_limit = if query.limit > 0 { query.limit * 2 } else { 0 };
                 let sql = format!(
                     "SELECT m.* FROM memory m
                      INNER JOIN semantic_entries se ON se.memory_id = m.id
@@ -148,8 +144,7 @@ impl MemoryBackend for SemanticMemory {
                         )
                     })
                     .collect();
-                let mut indexed: Vec<(usize, &MemoryEntry)> =
-                    entries.iter().enumerate().collect();
+                let mut indexed: Vec<(usize, &MemoryEntry)> = entries.iter().enumerate().collect();
                 indexed.sort_by(|&(i, _), &(j, _)| {
                     let (si, sj) = (scores[i], scores[j]);
                     let max_s = si.max(sj);
@@ -162,8 +157,7 @@ impl MemoryBackend for SemanticMemory {
                 entries = indexed.into_iter().map(|(_, e)| e.clone()).collect();
             } else {
                 // Non-FTS path: activation-based sorting
-                let mut sql =
-                    String::from("SELECT * FROM memory WHERE memory_type = 'semantic'");
+                let mut sql = String::from("SELECT * FROM memory WHERE memory_type = 'semantic'");
                 let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
                 let mut param_idx = 1;
 
@@ -231,8 +225,7 @@ impl MemoryBackend for SemanticMemory {
 
     async fn list(&self, filter: &MemoryFilter) -> Result<Vec<MemoryEntry>> {
         self.with_conn(|conn| {
-            let mut sql =
-                String::from("SELECT * FROM memory WHERE memory_type = 'semantic'");
+            let mut sql = String::from("SELECT * FROM memory WHERE memory_type = 'semantic'");
             let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
             let mut param_idx = 1;
 

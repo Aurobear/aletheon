@@ -8,16 +8,12 @@ use serde::{Deserialize, Serialize};
 /// Policy decision, ordered by severity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Decision {
     Allow,
+    #[default]
     Prompt,
     Forbidden,
-}
-
-impl Default for Decision {
-    fn default() -> Self {
-        Decision::Prompt
-    }
 }
 
 /// Result of checking a command against the policy.
@@ -84,10 +80,7 @@ impl PrefixRule {
                     }
                 }
                 PatternToken::Alternatives(alts) => {
-                    let arg = match args.get(i) {
-                        Some(a) => a,
-                        None => return None,
-                    };
+                    let arg = args.get(i)?;
                     if !alts.iter().any(|a| a == arg) {
                         return None;
                     }

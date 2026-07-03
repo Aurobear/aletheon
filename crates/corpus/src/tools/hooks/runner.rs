@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn all_proceed() {
-        let hooks = vec![
+        let hooks = [
             Hook {
                 name: "h1".into(),
                 event: HookEvent::SessionStart,
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn stops_on_block() {
-        let hooks = vec![
+        let hooks = [
             Hook {
                 name: "blocker".into(),
                 event: HookEvent::PreToolUse,
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn crash_continues() {
-        let hooks = vec![
+        let hooks = [
             Hook {
                 name: "crasher".into(),
                 event: HookEvent::Stop,
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn stdin_passthrough() {
-        let hooks = vec![Hook {
+        let hooks = [Hook {
             name: "reader".into(),
             event: HookEvent::UserPromptSubmit,
             // Read stdin, echo it back — verifies payload is passed.

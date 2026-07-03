@@ -53,7 +53,7 @@ impl SkillLoader {
         let mut skills = Vec::new();
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(true, |ext| ext != "md") {
+            if path.extension().is_none_or(|ext| ext != "md") {
                 continue;
             }
             match Self::parse_skill_file(&path) {
@@ -134,7 +134,7 @@ impl SkillLoader {
                         }
                     }
                 }
-            } else if path.extension().map_or(false, |ext| ext == "md") {
+            } else if path.extension().is_some_and(|ext| ext == "md") {
                 // Legacy single .md file
                 match Self::parse_skill_file(&path) {
                     Ok(skill) => {

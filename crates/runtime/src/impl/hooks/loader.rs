@@ -50,7 +50,9 @@ impl HookLoader {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file()
-                && path.extension().map_or(false, |e| e.eq_ignore_ascii_case("toml"))
+                && path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("toml"))
             {
                 match load_hook_file(&path) {
                     Ok(hook) => hooks.push(hook),

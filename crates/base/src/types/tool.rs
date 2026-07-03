@@ -39,9 +39,10 @@ pub struct ToolResultMeta {
 }
 
 /// Visibility tier for tools.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ToolExposure {
     /// Always visible to model and searchable
+    #[default]
     Direct,
     /// Only visible after explicit user request
     Deferred,
@@ -49,12 +50,6 @@ pub enum ToolExposure {
     DirectModelOnly,
     /// Never exposed (internal-only)
     Hidden,
-}
-
-impl Default for ToolExposure {
-    fn default() -> Self {
-        ToolExposure::Direct
-    }
 }
 
 impl ToolExposure {
@@ -170,7 +165,7 @@ mod tests {
 
     #[test]
     fn filter_hidden_tools() {
-        let exposures = vec![
+        let exposures = [
             ToolExposure::Direct,
             ToolExposure::Hidden,
             ToolExposure::Deferred,
@@ -187,7 +182,7 @@ mod tests {
 
     #[test]
     fn keep_direct_tools() {
-        let exposures = vec![
+        let exposures = [
             ToolExposure::Direct,
             ToolExposure::Deferred,
             ToolExposure::Direct,

@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 //! Mock implementations to validate all traits compile and are object-safe.
 
 use anyhow::Result;

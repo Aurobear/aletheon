@@ -46,13 +46,20 @@ pub struct ContextDisplay {
 
 impl Default for ContextDisplay {
     fn default() -> Self {
-        Self { used: 0, max: 200_000 }
+        Self {
+            used: 0,
+            max: 200_000,
+        }
     }
 }
 
 impl ContextDisplay {
     pub fn usage_percent(&self) -> f64 {
-        if self.max == 0 { 0.0 } else { (self.used as f64 / self.max as f64) * 100.0 }
+        if self.max == 0 {
+            0.0
+        } else {
+            (self.used as f64 / self.max as f64) * 100.0
+        }
     }
 
     pub fn display(&self) -> String {
@@ -108,10 +115,16 @@ impl AppState {
         let mode_str = format!("{} {}", self.mode.icon(), self.mode.display_name());
         let ctx_str = self.context.display();
         let token_str = format!("tokens: {}k", self.total_tokens / 1000);
-        let aware_str = format!("{} {}", self.awareness.level.icon(), self.awareness.level.display_name());
+        let aware_str = format!(
+            "{} {}",
+            self.awareness.level.icon(),
+            self.awareness.level.display_name()
+        );
         let tools_str = format!("{} tools", self.turn_tool_count);
 
-        format!("{} | {} | {} | {} | {} | {}",
-            mode_str, self.model_name, ctx_str, token_str, aware_str, tools_str)
+        format!(
+            "{} | {} | {} | {} | {} | {}",
+            mode_str, self.model_name, ctx_str, token_str, aware_str, tools_str
+        )
     }
 }

@@ -1,7 +1,7 @@
 //! Genome-derived behavior parameters.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Lightweight genome config snapshot held by the runtime.
 /// Extracted from GenomeMeta — does not hold the full genome.
@@ -48,7 +48,9 @@ impl GenomeConfig {
         if self.care_weights.is_empty() {
             return String::new();
         }
-        let mut parts: Vec<String> = self.care_weights.iter()
+        let mut parts: Vec<String> = self
+            .care_weights
+            .iter()
             .map(|(k, v)| format!("  {}: {:.2}", k, v))
             .collect();
         parts.sort();

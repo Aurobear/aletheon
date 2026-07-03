@@ -20,6 +20,12 @@ pub struct MockInputDriver {
     pub log: std::sync::Mutex<Vec<String>>,
 }
 
+impl Default for MockInputDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockInputDriver {
     pub fn new() -> Self {
         Self {

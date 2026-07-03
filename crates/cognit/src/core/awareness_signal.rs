@@ -121,9 +121,7 @@ pub fn self_state_to_awareness_level(state: &SelfState) -> AwarenessLevel {
 ///
 /// Filters out signals with no detected state, then maps each to
 /// an `(AwarenessLevel, context_string)` pair.
-pub fn signals_to_ui_events(
-    signals: &[AwarenessSignal],
-) -> Vec<(AwarenessLevel, String)> {
+pub fn signals_to_ui_events(signals: &[AwarenessSignal]) -> Vec<(AwarenessLevel, String)> {
     signals
         .iter()
         .filter_map(|s| {
@@ -145,9 +143,7 @@ pub fn signals_to_ui_events(
 ///
 /// Each signal becomes a `(action, SelfAwareness)` pair suitable for
 /// `EpisodicMemory::store_awareness()`.
-pub fn signals_to_awareness(
-    signals: &[AwarenessSignal],
-) -> Vec<(String, SelfAwareness)> {
+pub fn signals_to_awareness(signals: &[AwarenessSignal]) -> Vec<(String, SelfAwareness)> {
     signals
         .iter()
         .map(|s| {
@@ -174,7 +170,12 @@ mod tests {
     // Helper to assert SelfState variant matches
     macro_rules! assert_state {
         ($expr:expr, $variant:pat) => {
-            assert!(matches!($expr, $variant), "expected {}, got {:?}", stringify!($variant), $expr);
+            assert!(
+                matches!($expr, $variant),
+                "expected {}, got {:?}",
+                stringify!($variant),
+                $expr
+            );
         };
     }
 
@@ -365,10 +366,14 @@ mod tests {
                 timestamp: Utc::now(),
             }];
             let result = signals_to_awareness(&signals);
-            assert!(matches!(
-                &result[0].1.extensions[0],
-                AwarenessExtension::SelfState { .. }
-            ), "expected SelfState extension for {}", expected_name);
+            assert!(
+                matches!(
+                    &result[0].1.extensions[0],
+                    AwarenessExtension::SelfState { .. }
+                ),
+                "expected SelfState extension for {}",
+                expected_name
+            );
         }
     }
 }

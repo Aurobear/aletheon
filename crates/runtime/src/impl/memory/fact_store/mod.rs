@@ -265,11 +265,26 @@ impl FactStore {
             }
             Ok(())
         };
-        add("scope",   "ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'session';")?;
-        add("source",  "ALTER TABLE facts ADD COLUMN source TEXT NOT NULL DEFAULT 'conversation';")?;
-        add("status",  "ALTER TABLE facts ADD COLUMN status TEXT NOT NULL DEFAULT 'active';")?;
-        add("pinned",  "ALTER TABLE facts ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;")?;
-        add("subject", "ALTER TABLE facts ADD COLUMN subject TEXT NOT NULL DEFAULT '';")?;
+        add(
+            "scope",
+            "ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'session';",
+        )?;
+        add(
+            "source",
+            "ALTER TABLE facts ADD COLUMN source TEXT NOT NULL DEFAULT 'conversation';",
+        )?;
+        add(
+            "status",
+            "ALTER TABLE facts ADD COLUMN status TEXT NOT NULL DEFAULT 'active';",
+        )?;
+        add(
+            "pinned",
+            "ALTER TABLE facts ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
+        )?;
+        add(
+            "subject",
+            "ALTER TABLE facts ADD COLUMN subject TEXT NOT NULL DEFAULT '';",
+        )?;
         db.execute_batch("CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(scope);")?;
         db.execute_batch("CREATE INDEX IF NOT EXISTS idx_facts_status ON facts(status);")?;
         Ok(())
@@ -358,9 +373,7 @@ mod tests {
         let tables: Vec<String> = {
             let mut stmt = store
                 .db
-                .prepare(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-                )
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
                 .unwrap();
             stmt.query_map([], |row| row.get(0))
                 .unwrap()
@@ -464,7 +477,15 @@ mod tests {
     fn test_add_fact_basic() {
         let (store, _tmp) = setup();
         let id = store
-            .add_fact("User prefers dark mode", "preference", "ui", "", 0.7, "semantic", 30)
+            .add_fact(
+                "User prefers dark mode",
+                "preference",
+                "ui",
+                "",
+                0.7,
+                "semantic",
+                30,
+            )
             .unwrap();
         assert!(id > 0);
     }
@@ -485,10 +506,26 @@ mod tests {
     fn test_search_facts_basic() {
         let (store, _tmp) = setup();
         store
-            .add_fact("Rust is a systems language", "tech", "lang", "", 0.8, "semantic", 0)
+            .add_fact(
+                "Rust is a systems language",
+                "tech",
+                "lang",
+                "",
+                0.8,
+                "semantic",
+                0,
+            )
             .unwrap();
         store
-            .add_fact("Python is great for scripting", "tech", "lang", "", 0.7, "semantic", 0)
+            .add_fact(
+                "Python is great for scripting",
+                "tech",
+                "lang",
+                "",
+                0.7,
+                "semantic",
+                0,
+            )
             .unwrap();
         let results = store.search_facts("Rust", None, 0.0, 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -630,10 +667,10 @@ mod tests {
     #[test]
     fn test_entity_neighbors() {
         let (store, _tmp) = setup();
-        let f1 = store
+        let _f1 = store
             .add_fact("Alice likes Rust", "test", "", "", 0.5, "episodic", 0)
             .unwrap();
-        let f2 = store
+        let _f2 = store
             .add_fact("Bob likes Rust", "test", "", "", 0.5, "episodic", 0)
             .unwrap();
         let alice_id = store.resolve_entity("Alice").unwrap();
@@ -673,15 +710,7 @@ mod tests {
             )
             .unwrap();
         store
-            .add_episode(
-                "s1",
-                "Add dark mode",
-                "{}",
-                "[]",
-                "success",
-                "",
-                0.5,
-            )
+            .add_episode("s1", "Add dark mode", "{}", "[]", "success", "", 0.5)
             .unwrap();
         let results = store.search_episodes("authentication", 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -783,12 +812,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("migrate.db");
         // Open twice -- migration must not error on second run
-        { let _fs = FactStore::open(&path).unwrap(); }
+        {
+            let _fs = FactStore::open(&path).unwrap();
+        }
         let fs = FactStore::open(&path).unwrap();
         let mut stmt = fs.db.prepare("PRAGMA table_info(facts)").unwrap();
         let cols: Vec<String> = stmt
-            .query_map([], |r| r.get::<_, String>(1)).unwrap()
-            .map(|c| c.unwrap()).collect();
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .map(|c| c.unwrap())
+            .collect();
         for c in ["scope", "source", "status", "pinned", "subject"] {
             assert!(cols.contains(&c.to_string()), "missing column '{c}'");
         }
@@ -801,7 +834,9 @@ mod tests {
         // Open, add a fact, close
         {
             let fs = FactStore::open(&path).unwrap();
-            let id = fs.add_fact("preserved fact", "general", "", "", 0.5, "episodic", 0).unwrap();
+            let id = fs
+                .add_fact("preserved fact", "general", "", "", 0.5, "episodic", 0)
+                .unwrap();
             assert!(id > 0);
         }
         // Re-open (triggers migration again), verify fact still there
@@ -828,13 +863,30 @@ mod tests {
     fn rejects_secrets_unless_explicit_source() {
         let (store, _tmp) = setup();
         let err = store.add_fact_governed(
-            "my key is sk-abcdefghijklmnopqrstuvwx", "general", "", "project",
-            "conversation", "", 0.5, "episodic", 0,
+            "my key is sk-abcdefghijklmnopqrstuvwx",
+            "general",
+            "",
+            "project",
+            "conversation",
+            "",
+            0.5,
+            "episodic",
+            0,
         );
-        assert!(err.is_err(), "should reject secret from conversation source");
+        assert!(
+            err.is_err(),
+            "should reject secret from conversation source"
+        );
         let ok = store.add_fact_governed(
-            "my key is sk-abcdefghijklmnopqrstuvwx", "general", "", "project",
-            "explicit", "", 0.5, "episodic", 0,
+            "my key is sk-abcdefghijklmnopqrstuvwx",
+            "general",
+            "",
+            "project",
+            "explicit",
+            "",
+            0.5,
+            "episodic",
+            0,
         );
         assert!(ok.is_ok(), "should allow secret from explicit source");
     }
@@ -842,10 +894,19 @@ mod tests {
     #[test]
     fn add_fact_governed_sets_fields_correctly() {
         let (store, _tmp) = setup();
-        let id = store.add_fact_governed(
-            "rust is memory safe", "tech", "lang", "project",
-            "explicit", "rust memory model", 0.9, "semantic", 30,
-        ).unwrap();
+        let id = store
+            .add_fact_governed(
+                "rust is memory safe",
+                "tech",
+                "lang",
+                "project",
+                "explicit",
+                "rust memory model",
+                0.9,
+                "semantic",
+                30,
+            )
+            .unwrap();
         let row = store.get_fact(id).unwrap().unwrap();
         assert_eq!(row.content, "rust is memory safe");
         assert_eq!(row.scope, "project");
@@ -859,14 +920,36 @@ mod tests {
     #[test]
     fn governed_search_excludes_archived() {
         let (store, _tmp) = setup();
-        let keep = store.add_fact_governed(
-            "rust is fast", "general", "", "project", "explicit", "", 0.9, "semantic", 0,
-        ).unwrap();
-        let arch = store.add_fact_governed(
-            "rust is slow", "general", "", "project", "explicit", "", 0.9, "semantic", 0,
-        ).unwrap();
+        let keep = store
+            .add_fact_governed(
+                "rust is fast",
+                "general",
+                "",
+                "project",
+                "explicit",
+                "",
+                0.9,
+                "semantic",
+                0,
+            )
+            .unwrap();
+        let arch = store
+            .add_fact_governed(
+                "rust is slow",
+                "general",
+                "",
+                "project",
+                "explicit",
+                "",
+                0.9,
+                "semantic",
+                0,
+            )
+            .unwrap();
         store.set_status(arch, "archived").unwrap();
-        let hits = store.search_facts_governed("rust", Some("project"), false, 0.15, 10).unwrap();
+        let hits = store
+            .search_facts_governed("rust", Some("project"), false, 0.15, 10)
+            .unwrap();
         let ids: Vec<i64> = hits.iter().map(|f| f.fact_id).collect();
         assert!(ids.contains(&keep));
         assert!(!ids.contains(&arch));
@@ -875,13 +958,35 @@ mod tests {
     #[test]
     fn governed_search_respects_scope_filter() {
         let (store, _tmp) = setup();
-        let s1 = store.add_fact_governed(
-            "project fact xyz", "general", "", "project", "explicit", "", 0.5, "episodic", 0,
-        ).unwrap();
-        let s2 = store.add_fact_governed(
-            "global fact xyz", "general", "", "global", "explicit", "", 0.5, "episodic", 0,
-        ).unwrap();
-        let hits = store.search_facts_governed("fact", Some("project"), false, 0.0, 10).unwrap();
+        let s1 = store
+            .add_fact_governed(
+                "project fact xyz",
+                "general",
+                "",
+                "project",
+                "explicit",
+                "",
+                0.5,
+                "episodic",
+                0,
+            )
+            .unwrap();
+        let s2 = store
+            .add_fact_governed(
+                "global fact xyz",
+                "general",
+                "",
+                "global",
+                "explicit",
+                "",
+                0.5,
+                "episodic",
+                0,
+            )
+            .unwrap();
+        let hits = store
+            .search_facts_governed("fact", Some("project"), false, 0.0, 10)
+            .unwrap();
         let ids: Vec<i64> = hits.iter().map(|f| f.fact_id).collect();
         assert!(ids.contains(&s1));
         assert!(!ids.contains(&s2));
@@ -890,9 +995,11 @@ mod tests {
     #[test]
     fn pin_and_list_roundtrip() {
         let (store, _tmp) = setup();
-        let id = store.add_fact_governed(
-            "pin me", "general", "", "global", "explicit", "", 0.5, "semantic", 0,
-        ).unwrap();
+        let id = store
+            .add_fact_governed(
+                "pin me", "general", "", "global", "explicit", "", 0.5, "semantic", 0,
+            )
+            .unwrap();
         assert!(store.set_pinned(id, true).unwrap());
         let all = store.list_facts(None, false, 50).unwrap();
         let pinned = all.iter().find(|f| f.fact_id == id).unwrap();
@@ -906,12 +1013,32 @@ mod tests {
     #[test]
     fn pinned_sorts_first_in_list() {
         let (store, _tmp) = setup();
-        let id1 = store.add_fact_governed(
-            "first fact", "general", "", "global", "explicit", "", 0.5, "episodic", 0,
-        ).unwrap();
-        let id2 = store.add_fact_governed(
-            "second fact", "general", "", "global", "explicit", "", 0.5, "episodic", 0,
-        ).unwrap();
+        let _id1 = store
+            .add_fact_governed(
+                "first fact",
+                "general",
+                "",
+                "global",
+                "explicit",
+                "",
+                0.5,
+                "episodic",
+                0,
+            )
+            .unwrap();
+        let id2 = store
+            .add_fact_governed(
+                "second fact",
+                "general",
+                "",
+                "global",
+                "explicit",
+                "",
+                0.5,
+                "episodic",
+                0,
+            )
+            .unwrap();
         store.set_pinned(id2, true).unwrap();
         let all = store.list_facts(None, false, 50).unwrap();
         assert_eq!(all[0].fact_id, id2, "pinned fact must sort first");

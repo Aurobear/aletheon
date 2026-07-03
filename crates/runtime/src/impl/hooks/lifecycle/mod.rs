@@ -12,9 +12,16 @@ use std::path::PathBuf;
 /// Events that trigger hooks.
 #[derive(Debug, Clone)]
 pub enum HookEvent {
-    UserPromptSubmit { prompt: String },
-    PreToolUse { tool_name: String, args: Value },
-    PostToolWrite { file_path: PathBuf },
+    UserPromptSubmit {
+        prompt: String,
+    },
+    PreToolUse {
+        tool_name: String,
+        args: Value,
+    },
+    PostToolWrite {
+        file_path: PathBuf,
+    },
     SessionStop {
         transcript_path: PathBuf,
         session_id: String,

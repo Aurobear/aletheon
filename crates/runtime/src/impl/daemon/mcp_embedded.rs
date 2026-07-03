@@ -142,7 +142,11 @@ impl McpEmbedded {
         })
     }
 
-    async fn handle_tools_call(id: Value, request: &Value, registry: &Arc<Mutex<ToolRegistry>>) -> Value {
+    async fn handle_tools_call(
+        id: Value,
+        request: &Value,
+        registry: &Arc<Mutex<ToolRegistry>>,
+    ) -> Value {
         let params = request.get("params").cloned().unwrap_or(json!({}));
         let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -212,9 +216,8 @@ mod tests {
         let reg = make_registry();
         {
             let mut r = reg.lock().await;
-            r.register(Arc::new(
-                corpus::tools::tools::bash_exec::BashExecTool,
-            )).unwrap();
+            r.register(Arc::new(corpus::tools::tools::bash_exec::BashExecTool))
+                .unwrap();
         }
 
         let request = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}});

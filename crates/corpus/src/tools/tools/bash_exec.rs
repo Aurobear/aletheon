@@ -27,8 +27,8 @@ impl Tool for BashExecTool {
                 },
                 "timeout_seconds": {
                     "type": "integer",
-                    "description": "Timeout in seconds (default: 30)",
-                    "default": 30
+                    "description": "Timeout in seconds (default: 10)",
+                    "default": 10
                 }
             },
             "required": ["command"]
@@ -45,7 +45,7 @@ impl Tool for BashExecTool {
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let command = input["command"].as_str().unwrap_or("");
-        let timeout_secs = input["timeout_seconds"].as_u64().unwrap_or(30);
+        let timeout_secs = input["timeout_seconds"].as_u64().unwrap_or(10);
 
         let start = std::time::Instant::now();
 

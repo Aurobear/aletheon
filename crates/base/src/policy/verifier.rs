@@ -42,7 +42,10 @@ mod tests {
     async fn noop_verifier_always_accepts() {
         let v = NoopVerifier;
         let msgs = vec![Message::user("hi")];
-        assert!(matches!(v.verify("any answer", &msgs).await, Verdict::Accept));
+        assert!(matches!(
+            v.verify("any answer", &msgs).await,
+            Verdict::Accept
+        ));
     }
 
     #[tokio::test]
@@ -51,7 +54,9 @@ mod tests {
         #[async_trait::async_trait]
         impl Verifier for Always {
             async fn verify(&self, _text: &str, _msgs: &[Message]) -> Verdict {
-                Verdict::Reject { reason: "nope".into() }
+                Verdict::Reject {
+                    reason: "nope".into(),
+                }
             }
         }
         match Always.verify("x", &[]).await {

@@ -3,12 +3,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use base::message::ContentBlock;
 use base::brain::{
-    BrainCoreOps, Critique, ExecutionResult, Experience, LearnedRule, Observation, Plan,
-    Reflection,
+    BrainCoreOps, Critique, ExecutionResult, Experience, LearnedRule, Observation, Plan, Reflection,
 };
 use base::context::Context;
+use base::message::ContentBlock;
 use base::self_field::Intent;
 
 use super::BrainCore;
@@ -88,13 +87,9 @@ impl BrainCoreOps for BrainCore {
 
             // Validate executor's plan against planner's analysis.
             // Extract key terms from analysis and check coverage in reasoning.
-            let reasoning = Self::validate_and_reprompt(
-                dm,
-                &planner_analysis,
-                &reasoning,
-                &executor_prompt,
-            )
-            .await;
+            let reasoning =
+                Self::validate_and_reprompt(dm, &planner_analysis, &reasoning, &executor_prompt)
+                    .await;
 
             let plan = self.planner.generate_plan(intent, &reasoning, ctx);
             Ok(plan)

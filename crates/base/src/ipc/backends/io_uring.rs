@@ -38,6 +38,12 @@ unsafe impl Send for IoUringRing {}
 #[cfg(feature = "io_uring")]
 unsafe impl Sync for IoUringRing {}
 
+impl Default for IoUringBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IoUringBackend {
     pub fn new() -> Self {
         let kernel_version = Self::get_kernel_version();

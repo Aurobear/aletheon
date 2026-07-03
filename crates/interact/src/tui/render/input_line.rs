@@ -13,7 +13,7 @@ pub fn render_input(
     caps: &TermCaps,
     buf: &str,
     cursor: usize,
-    has_cjk: bool,
+    _has_cjk: bool,
 ) {
     let border_h = caps.hline();
     let prompt = if caps.unicode { "❯ " } else { "> " };

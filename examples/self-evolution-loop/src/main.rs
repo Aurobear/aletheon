@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 //! Self-Evolution EventBus Loop Demo
 //!
 //! Demonstrates the full closed loop:
@@ -15,14 +17,14 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 
+use base::events::event::{ConcreteEvent, EventType, Priority};
 use base::evolution::*;
 use base::EventBus;
+use base::KernelEventBus;
 use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
 use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
-use base::events::event::{ConcreteEvent, EventType, Priority};
-use base::KernelEventBus;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -204,12 +206,14 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // 5. Simulate 4 tool observations (1 success + 3 failures)
     // -----------------------------------------------------------------------
-    let observations = vec![
+    let observations = [
         ToolObservationPayload {
             turn_id: Uuid::new_v4(),
             tool_name: "bash_exec".to_string(),
             input: serde_json::json!({"command": "cat /var/log/syslog | head -100"}),
-            output: serde_json::json!("Jan  1 00:00:01 host kernel: ...\nJan  1 00:00:02 host sshd[123]: ..."),
+            output: serde_json::json!(
+                "Jan  1 00:00:01 host kernel: ...\nJan  1 00:00:02 host sshd[123]: ..."
+            ),
             duration_ms: 150,
             error: None,
             rules_applied: vec![],

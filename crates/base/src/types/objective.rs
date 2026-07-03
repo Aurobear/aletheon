@@ -28,6 +28,7 @@ impl ObjectiveStatus {
     }
 
     /// Parse from a DB status string.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "in_progress" => Some(ObjectiveStatus::InProgress),

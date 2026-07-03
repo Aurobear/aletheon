@@ -34,7 +34,8 @@ impl MutationIntentGenerator {
                     "weight_delta": 0.05,
                     "action": "increase_weight"
                 }),
-                reason: "Failures detected in recent context — increasing safety priority".to_string(),
+                reason: "Failures detected in recent context — increasing safety priority"
+                    .to_string(),
                 reversible: true,
             });
         }
@@ -83,7 +84,8 @@ impl MutationIntentGenerator {
         let total = reflections.len() as f64;
 
         // --- 1. High failure rate → increase safety weight ---
-        let failures = reflections.iter()
+        let failures = reflections
+            .iter()
             .filter(|r| matches!(r.outcome, ReflectionOutcome::Failure))
             .count() as f64;
         let failure_rate = failures / total;
@@ -98,7 +100,8 @@ impl MutationIntentGenerator {
                 }),
                 reason: format!(
                     "Failure rate is {:.0}% across {} recent turns. Increasing safety care weight.",
-                    failure_rate * 100.0, reflections.len()
+                    failure_rate * 100.0,
+                    reflections.len()
                 ),
                 reversible: true,
             });
@@ -139,8 +142,15 @@ impl MutationIntentGenerator {
         }
 
         // --- 3. Timeout/slow patterns → efficiency mutation ---
-        let timeout_keywords = ["timeout", "slow", "latency", "deadline exceeded", "timed out"];
-        let has_timeout = reflections.iter()
+        let timeout_keywords = [
+            "timeout",
+            "slow",
+            "latency",
+            "deadline exceeded",
+            "timed out",
+        ];
+        let has_timeout = reflections
+            .iter()
             .flat_map(|r| r.what_failed.iter().chain(r.learned.iter()))
             .any(|text| {
                 let lower = text.to_lowercase();
@@ -189,7 +199,8 @@ impl MutationIntentGenerator {
                     }),
                     reason: format!(
                         "Success rate declining ({:.0}% -> {:.0}%). Correcting safety weight.",
-                        early_rate * 100.0, recent_rate * 100.0
+                        early_rate * 100.0,
+                        recent_rate * 100.0
                     ),
                     reversible: true,
                 });
@@ -204,7 +215,8 @@ impl MutationIntentGenerator {
                     }),
                     reason: format!(
                         "Success rate improving ({:.0}% -> {:.0}%). Reinforcing helpfulness.",
-                        early_rate * 100.0, recent_rate * 100.0
+                        early_rate * 100.0,
+                        recent_rate * 100.0
                     ),
                     reversible: true,
                 });
@@ -212,7 +224,8 @@ impl MutationIntentGenerator {
         }
 
         // --- 5. High success rate → reinforce helpfulness (existing) ---
-        let successes = reflections.iter()
+        let successes = reflections
+            .iter()
             .filter(|r| matches!(r.outcome, ReflectionOutcome::Success))
             .count() as f64;
         if successes / total > 0.8 {
@@ -324,11 +337,13 @@ mod tests {
     #[tokio::test]
     async fn test_high_success_reinforces_helpfulness() {
         let gen = MutationIntentGenerator::new();
-        let reflections = (0..5).map(|_| make_entry(ReflectionOutcome::Success, vec![])).collect::<Vec<_>>();
+        let reflections = (0..5)
+            .map(|_| make_entry(ReflectionOutcome::Success, vec![]))
+            .collect::<Vec<_>>();
         let intents = gen.from_reflections(&reflections).await;
-        assert!(intents.iter().any(|i|
-            i.change.get("topic").and_then(|v| v.as_str()) == Some("helpfulness")
-        ));
+        assert!(intents
+            .iter()
+            .any(|i| i.change.get("topic").and_then(|v| v.as_str()) == Some("helpfulness")));
     }
 
     #[tokio::test]
@@ -336,9 +351,18 @@ mod tests {
         let gen = MutationIntentGenerator::new();
         // Same failure pattern "tool x crashed" appears 3 times
         let reflections = vec![
-            make_entry(ReflectionOutcome::Failure, vec!["tool x crashed".to_string()]),
-            make_entry(ReflectionOutcome::Failure, vec!["tool x crashed".to_string()]),
-            make_entry(ReflectionOutcome::Failure, vec!["tool x crashed".to_string()]),
+            make_entry(
+                ReflectionOutcome::Failure,
+                vec!["tool x crashed".to_string()],
+            ),
+            make_entry(
+                ReflectionOutcome::Failure,
+                vec!["tool x crashed".to_string()],
+            ),
+            make_entry(
+                ReflectionOutcome::Failure,
+                vec!["tool x crashed".to_string()],
+            ),
             make_entry(ReflectionOutcome::Success, vec![]),
         ];
         let intents = gen.from_reflections(&reflections).await;
@@ -353,7 +377,10 @@ mod tests {
     async fn test_timeout_pattern_generates_efficiency_mutation() {
         let gen = MutationIntentGenerator::new();
         let reflections = vec![
-            make_entry(ReflectionOutcome::Failure, vec!["timeout waiting for response".to_string()]),
+            make_entry(
+                ReflectionOutcome::Failure,
+                vec!["timeout waiting for response".to_string()],
+            ),
             make_entry(ReflectionOutcome::Success, vec![]),
         ];
         let intents = gen.from_reflections(&reflections).await;
@@ -397,7 +424,10 @@ mod tests {
                 && i.change.get("topic").and_then(|v| v.as_str()) == Some("helpfulness")
                 && i.reason.contains("improving")
         });
-        assert!(reinforce.is_some(), "expected improving reinforcement intent");
+        assert!(
+            reinforce.is_some(),
+            "expected improving reinforcement intent"
+        );
     }
 
     #[tokio::test]

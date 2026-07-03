@@ -2,7 +2,7 @@ use super::config::{OutputConfig, TurnBudgetConfig};
 use super::persistence::{process_result, ProcessedOutput};
 
 pub async fn enforce_turn_budget(
-    results: &mut Vec<(String, ProcessedOutput)>,
+    results: &mut [(String, ProcessedOutput)],
     output_config: &OutputConfig,
     budget_config: &TurnBudgetConfig,
 ) -> anyhow::Result<()> {
@@ -26,7 +26,7 @@ pub async fn enforce_turn_budget(
             _ => None,
         })
         .collect();
-    inline_candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    inline_candidates.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     let mut current_total = total_inline;
     for (idx, _) in inline_candidates {

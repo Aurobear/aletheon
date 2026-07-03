@@ -10,6 +10,11 @@ pub fn config_dir() -> PathBuf {
 /// System socket directory: /var/run/aletheon/
 pub const SOCKET_DIR: &str = "/var/run/aletheon";
 
+/// Daemon socket path: /var/run/aletheon/aletheon.sock (symlinked as /run/aletheon/aletheon.sock)
+pub fn socket_path() -> PathBuf {
+    PathBuf::from(SOCKET_DIR).join("aletheon.sock")
+}
+
 /// System snapshot directory: /var/lib/aletheon/snapshots
 pub const SNAPSHOT_DIR: &str = "/var/lib/aletheon/snapshots";
 

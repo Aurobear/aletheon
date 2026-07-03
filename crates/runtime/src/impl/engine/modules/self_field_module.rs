@@ -8,10 +8,10 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 use tracing::{debug, error};
 
-use base::envelope::*;
-use base::SelfFieldOps;
 use base::envelope::Payload;
+use base::envelope::*;
 use base::CommunicationBus;
+use base::SelfFieldOps;
 
 use dasein::core::SelfField;
 

@@ -4,9 +4,9 @@
 //!   topic list            — list registered tracepoints
 //!   topic echo            — stream debug events in real time
 //!   node info             — show daemon PID, uptime, perf stats
-//!   bag record [-o path]  — record debug events to a bag file
-//!   bag play <path>       — replay a bag file
-//!   bag info <path>       — show bag file metadata
+//!   bag record [-o `path`]  — record debug events to a bag file
+//!   bag play `<path>`       — replay a bag file
+//!   bag info `<path>`       — show bag file metadata
 //!   perf [--interval N]   — show performance stats
 //!   trace start/stop/status — control runtime tracing
 //!
@@ -240,7 +240,11 @@ pub async fn run(socket: &std::path::Path, cmd: DebugCommand) -> Result<()> {
         },
         DebugCommand::Hz { tracepoint, window } => topic_hz(socket, &tracepoint, window).await,
         DebugCommand::Graph { format } => show_graph(socket, &format).await,
-        DebugCommand::Log { level, module, grep } => log_stream(socket, level, module, grep).await,
+        DebugCommand::Log {
+            level,
+            module,
+            grep,
+        } => log_stream(socket, level, module, grep).await,
     }
 }
 
@@ -268,8 +272,8 @@ async fn topic_list(socket: &std::path::Path) -> Result<()> {
 
     // Table header
     println!(
-        "{:<30} {:<12} {:<8} {}",
-        "TRACEPOINT", "MODULE", "LEVEL", "DESCRIPTION"
+        "{:<30} {:<12} {:<8} DESCRIPTION",
+        "TRACEPOINT", "MODULE", "LEVEL"
     );
     println!("{}", "-".repeat(80));
 
@@ -430,10 +434,19 @@ async fn node_info(socket: &std::path::Path) -> Result<()> {
     println!("=== Aletheon Daemon ===");
     println!("PID:       {}", pid);
     println!("Uptime:    {} ({}s)", uptime_human, uptime_secs);
-    println!("Memory:    {} KB RSS ({:.1} MB)", rss_kb, rss_kb as f64 / 1024.0);
+    println!(
+        "Memory:    {} KB RSS ({:.1} MB)",
+        rss_kb,
+        rss_kb as f64 / 1024.0
+    );
     println!();
     println!("=== Performance ===");
-    println!("Tokens:    {} in / {} out ({} total)", tokens_in, tokens_out, tokens_in + tokens_out);
+    println!(
+        "Tokens:    {} in / {} out ({} total)",
+        tokens_in,
+        tokens_out,
+        tokens_in + tokens_out
+    );
     println!("Turns:     {}", turn_count);
     println!("Errors:    {}", error_count);
 
@@ -469,9 +482,7 @@ async fn bag_record(
     let recording_id = response["result"]["recording_id"]
         .as_str()
         .context("No recording_id in response")?;
-    let bag_path = response["result"]["path"]
-        .as_str()
-        .unwrap_or("unknown");
+    let bag_path = response["result"]["path"].as_str().unwrap_or("unknown");
 
     println!("Recording started: {}", bag_path);
     println!("Recording ID: {}", recording_id);
@@ -501,9 +512,7 @@ async fn bag_record(
         let duration = stop_response["result"]["duration_secs"]
             .as_f64()
             .unwrap_or(0.0);
-        let path = stop_response["result"]["path"]
-            .as_str()
-            .unwrap_or(bag_path);
+        let path = stop_response["result"]["path"].as_str().unwrap_or(bag_path);
         println!("Recorded {} events in {:.1}s -> {}", events, duration, path);
     }
 
@@ -528,13 +537,18 @@ async fn bag_play(socket: &std::path::Path, path: PathBuf, speed: f64) -> Result
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
-        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        let msg = response["error"]["message"]
+            .as_str()
+            .unwrap_or("unknown error");
         anyhow::bail!("Replay failed: {}", msg);
     }
 
     let events = response["result"]["events"].as_u64().unwrap_or(0);
     let replay_path = response["result"]["path"].as_str().unwrap_or("?");
-    println!("Replayed {} events from {} (speed: {}x)", events, replay_path, speed);
+    println!(
+        "Replayed {} events from {} (speed: {}x)",
+        events, replay_path, speed
+    );
 
     Ok(())
 }
@@ -565,7 +579,8 @@ async fn bag_info(path: PathBuf) -> Result<()> {
     let duration_ms = last_ts.saturating_sub(first_ts);
 
     // Count events per module
-    let mut module_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut module_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for line in &lines {
         if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
             let module = event["module"].as_str().unwrap_or("unknown").to_string();
@@ -579,7 +594,11 @@ async fn bag_info(path: PathBuf) -> Result<()> {
     println!("=== Bag Info: {} ===", path.display());
     println!("Events:    {}", event_count);
     println!("Duration:  {:.1}s", duration_ms as f64 / 1000.0);
-    println!("Size:      {} bytes ({:.1} KB)", file_size, file_size as f64 / 1024.0);
+    println!(
+        "Size:      {} bytes ({:.1} KB)",
+        file_size,
+        file_size as f64 / 1024.0
+    );
     println!();
     println!("Modules:");
     let mut modules: Vec<_> = module_counts.iter().collect();
@@ -627,9 +646,7 @@ async fn perf_stats(socket: &std::path::Path, interval: Option<u64>) -> Result<(
                 if !obj.is_empty() {
                     println!("Tool Calls:");
                     let mut tools: Vec<_> = obj.iter().collect();
-                    tools.sort_by(|a, b| {
-                        b.1.as_u64().unwrap_or(0).cmp(&a.1.as_u64().unwrap_or(0))
-                    });
+                    tools.sort_by(|a, b| b.1.as_u64().unwrap_or(0).cmp(&a.1.as_u64().unwrap_or(0)));
                     for (name, count) in tools {
                         println!("  {}: {}", name, count);
                     }
@@ -676,7 +693,9 @@ async fn trace_start(
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
-        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        let msg = response["error"]["message"]
+            .as_str()
+            .unwrap_or("unknown error");
         anyhow::bail!("Trace start failed: {}", msg);
     }
 
@@ -707,7 +726,9 @@ async fn trace_stop(socket: &std::path::Path) -> Result<()> {
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
-        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        let msg = response["error"]["message"]
+            .as_str()
+            .unwrap_or("unknown error");
         anyhow::bail!("Trace stop failed: {}", msg);
     }
 
@@ -726,7 +747,9 @@ async fn trace_status(socket: &std::path::Path) -> Result<()> {
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
-        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        let msg = response["error"]["message"]
+            .as_str()
+            .unwrap_or("unknown error");
         anyhow::bail!("Trace status failed: {}", msg);
     }
 
@@ -735,7 +758,10 @@ async fn trace_status(socket: &std::path::Path) -> Result<()> {
     if tracing {
         let level = response["result"]["level"].as_str().unwrap_or("?");
         let module = response["result"]["module"].as_str().unwrap_or("all");
-        println!("Tracing: ON (level={}, module={}, subscribers={})", level, module, sub_count);
+        println!(
+            "Tracing: ON (level={}, module={}, subscribers={})",
+            level, module, sub_count
+        );
     } else {
         println!("Tracing: OFF (subscribers={})", sub_count);
     }
@@ -758,19 +784,31 @@ async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
-        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        let msg = response["error"]["message"]
+            .as_str()
+            .unwrap_or("unknown error");
         anyhow::bail!("Health check failed: {}", msg);
     }
 
     let h = &response["result"]["health"];
     let overall = h["overall"].as_str().unwrap_or("UNKNOWN");
-    let icon = if overall == "HEALTHY" { "✅" } else { "⚠️ " };
+    let icon = if overall == "HEALTHY" {
+        "✅"
+    } else {
+        "⚠️ "
+    };
 
     println!("{} Overall: {}", icon, overall);
     println!();
     println!("  PID:         {}", h["pid"].as_u64().unwrap_or(0));
-    println!("  Uptime:      {}", h["uptime_human"].as_str().unwrap_or("?"));
-    println!("  Memory:      {} MB", h["memory_rss_mb"].as_u64().unwrap_or(0));
+    println!(
+        "  Uptime:      {}",
+        h["uptime_human"].as_str().unwrap_or("?")
+    );
+    println!(
+        "  Memory:      {} MB",
+        h["memory_rss_mb"].as_u64().unwrap_or(0)
+    );
     println!(
         "  Tokens:      {} in / {} out",
         h["tokens_in"].as_u64().unwrap_or(0),
@@ -778,17 +816,21 @@ async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
     );
     println!("  Turns:       {}", h["turn_count"].as_u64().unwrap_or(0));
     println!("  Errors:      {}", h["error_count"].as_u64().unwrap_or(0));
-    println!("  Subscribers: {}", h["active_subscribers"].as_u64().unwrap_or(0));
-    println!("  Recordings:  {}", h["active_recordings"].as_u64().unwrap_or(0));
+    println!(
+        "  Subscribers: {}",
+        h["active_subscribers"].as_u64().unwrap_or(0)
+    );
+    println!(
+        "  Recordings:  {}",
+        h["active_recordings"].as_u64().unwrap_or(0)
+    );
 
     if let Some(tools) = h["tool_calls"].as_object() {
         if !tools.is_empty() {
             println!();
             println!("  Tool Calls:");
             let mut sorted: Vec<_> = tools.iter().collect();
-            sorted.sort_by(|a, b| {
-                b.1.as_u64().unwrap_or(0).cmp(&a.1.as_u64().unwrap_or(0))
-            });
+            sorted.sort_by(|a, b| b.1.as_u64().unwrap_or(0).cmp(&a.1.as_u64().unwrap_or(0)));
             for (name, count) in sorted {
                 println!("    {}: {}", name, count);
             }
@@ -823,7 +865,9 @@ async fn nodes_list(socket: &std::path::Path) -> Result<()> {
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
-        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        let msg = response["error"]["message"]
+            .as_str()
+            .unwrap_or("unknown error");
         anyhow::bail!("Nodes list failed: {}", msg);
     }
 
@@ -836,7 +880,7 @@ async fn nodes_list(socket: &std::path::Path) -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<20} {:<10} {}", "NAME", "STATUS", "DETAILS");
+    println!("{:<20} {:<10} DETAILS", "NAME", "STATUS");
     println!("{}", "-".repeat(60));
     for node in nodes {
         let name = node["name"].as_str().unwrap_or("?");
@@ -864,7 +908,9 @@ async fn param_get(socket: &std::path::Path, key: &str) -> Result<()> {
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
-        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        let msg = response["error"]["message"]
+            .as_str()
+            .unwrap_or("unknown error");
         anyhow::bail!("Param get failed: {}", msg);
     }
 
@@ -884,7 +930,9 @@ async fn param_list(socket: &std::path::Path) -> Result<()> {
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
-        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        let msg = response["error"]["message"]
+            .as_str()
+            .unwrap_or("unknown error");
         anyhow::bail!("Param list failed: {}", msg);
     }
 
@@ -912,7 +960,9 @@ async fn param_dump(socket: &std::path::Path) -> Result<()> {
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
-        let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+        let msg = response["error"]["message"]
+            .as_str()
+            .unwrap_or("unknown error");
         anyhow::bail!("Param dump failed: {}", msg);
     }
 
@@ -951,7 +1001,10 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
     let mut response_line = String::new();
     reader.read_line(&mut response_line).await?;
 
-    println!("Monitoring '{}' for {}s (Ctrl+C to stop)...", tracepoint, window_secs);
+    println!(
+        "Monitoring '{}' for {}s (Ctrl+C to stop)...",
+        tracepoint, window_secs
+    );
     println!();
 
     // Count events in the window
@@ -963,7 +1016,12 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
     let mut line = String::new();
     loop {
         line.clear();
-        match tokio::time::timeout(std::time::Duration::from_millis(100), reader.read_line(&mut line)).await {
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            reader.read_line(&mut line),
+        )
+        .await
+        {
             Ok(Ok(0)) => break, // Connection closed
             Ok(Ok(_)) => {
                 if !line.trim().is_empty() {
@@ -1005,7 +1063,9 @@ async fn show_graph(socket: &std::path::Path, format: &str) -> Result<()> {
         let response = send_rpc(socket, &request).await?;
 
         if response["error"].is_object() {
-            let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+            let msg = response["error"]["message"]
+                .as_str()
+                .unwrap_or("unknown error");
             anyhow::bail!("Topology failed: {}", msg);
         }
 
@@ -1023,7 +1083,9 @@ async fn show_graph(socket: &std::path::Path, format: &str) -> Result<()> {
         let response = send_rpc(socket, &request).await?;
 
         if response["error"].is_object() {
-            let msg = response["error"]["message"].as_str().unwrap_or("unknown error");
+            let msg = response["error"]["message"]
+                .as_str()
+                .unwrap_or("unknown error");
             anyhow::bail!("Graph failed: {}", msg);
         }
 
@@ -1107,8 +1169,8 @@ async fn log_stream(
     let mut response_line = String::new();
     reader.read_line(&mut response_line).await?;
 
-    let resp: serde_json::Value = serde_json::from_str(&response_line)
-        .unwrap_or(serde_json::json!({}));
+    let resp: serde_json::Value =
+        serde_json::from_str(&response_line).unwrap_or(serde_json::json!({}));
 
     if resp["error"].is_object() {
         let msg = resp["error"]["message"].as_str().unwrap_or("unknown error");
@@ -1179,7 +1241,11 @@ async fn log_stream(
                     level_icon,
                     event_level,
                     mod_name,
-                    if data.is_null() { tp.to_string() } else { format!("{} {}", tp, data) }
+                    if data.is_null() {
+                        tp.to_string()
+                    } else {
+                        format!("{} {}", tp, data)
+                    }
                 );
             }
         }

@@ -75,7 +75,7 @@ impl AgentLoader {
             if path.is_file()
                 && path
                     .extension()
-                    .map_or(false, |ext| ext.eq_ignore_ascii_case("md"))
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
             {
                 match load_agent_file(&path) {
                     Ok(agent) => {
@@ -235,7 +235,9 @@ You are a code execution agent...
         assert_eq!(agent.tools, vec!["bash_exec", "file_read", "file_write"]);
         assert_eq!(agent.model, Some("deepseek-v4-flash".to_string()));
         assert_eq!(agent.max_iterations, 15);
-        assert!(agent.system_prompt.contains("You are a code execution agent"));
+        assert!(agent
+            .system_prompt
+            .contains("You are a code execution agent"));
     }
 
     #[test]

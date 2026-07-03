@@ -25,7 +25,7 @@ pub struct DaemonConfig {
     pub sandbox_preference: String,
     /// MCP server definitions loaded from config (passed through to McpManager at handler init).
     pub mcp_servers: Vec<corpus::tools::mcp::config::McpServerConfig>,
-    /// Hook script configuration from the [hooks] config section.
+    /// Hook script configuration from the `hooks` config section.
     pub hooks: crate::core::config::HooksConfig,
 }
 

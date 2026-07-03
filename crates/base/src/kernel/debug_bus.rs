@@ -518,11 +518,14 @@ mod tests {
         let mut hook = DebugBusHook::new(filter).with_sink(sink);
 
         // Should pass (Info >= Info)
-        hook.on_event(&make_event(DebugLevel::Info, "m", "tp")).await;
+        hook.on_event(&make_event(DebugLevel::Info, "m", "tp"))
+            .await;
         // Should be filtered (Debug < Info)
-        hook.on_event(&make_event(DebugLevel::Debug, "m", "tp")).await;
+        hook.on_event(&make_event(DebugLevel::Debug, "m", "tp"))
+            .await;
         // Should pass
-        hook.on_event(&make_event(DebugLevel::Error, "m", "tp")).await;
+        hook.on_event(&make_event(DebugLevel::Error, "m", "tp"))
+            .await;
 
         let events = collected.lock().await;
         assert_eq!(events.len(), 2);
@@ -536,8 +539,10 @@ mod tests {
         let recorder = EventRecorder::new(path.clone(), 100);
         let mut hook = DebugBusHook::new(EventFilter::default()).with_recorder(recorder);
 
-        hook.on_event(&make_event(DebugLevel::Info, "m", "tp")).await;
-        hook.on_event(&make_event(DebugLevel::Debug, "m", "tp")).await;
+        hook.on_event(&make_event(DebugLevel::Info, "m", "tp"))
+            .await;
+        hook.on_event(&make_event(DebugLevel::Debug, "m", "tp"))
+            .await;
 
         let meta = hook.stop_recording().await.unwrap().unwrap();
         assert_eq!(meta.event_count, 2);

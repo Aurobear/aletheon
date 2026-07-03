@@ -141,12 +141,12 @@ impl PluginManifest {
 
     /// Get the entry type prefix (e.g. "cmd", "native", "wasm").
     pub fn entry_type(&self) -> &str {
-        self.entry.splitn(2, ':').next().unwrap_or("")
+        self.entry.split(':').next().unwrap_or("")
     }
 
     /// Get the entry path portion (after the type prefix colon).
     pub fn entry_path(&self) -> &str {
-        self.entry.splitn(2, ':').nth(1).unwrap_or("")
+        self.entry.split_once(':').map(|x| x.1).unwrap_or("")
     }
 }
 

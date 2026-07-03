@@ -1,12 +1,11 @@
-use super::{is_context_overflow, ReActLoop, TurnMetrics};
-use crate::core::event_sink::{Event, EventSink};
-use super::tool_budget;
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
+use super::tool_budget;
+use super::{is_context_overflow, ReActLoop, TurnMetrics};
 
 use base::message::{ContentBlock, Message, Role};
 use base::policy::verifier::Verdict;
 use base::ToolDefinition;
-use cognit::r#impl::llm::provider::{LlmProvider, StopReason};
+use cognit::r#impl::llm::provider::LlmProvider;
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -80,11 +79,14 @@ impl ReActLoop {
                             self.verify_attempts += 1;
                             // Record the rejected answer, then request a revision and re-loop.
                             self.messages.push(Message::assistant(&final_text));
-                            self.messages.push(Message::user(&format!(
+                            self.messages.push(Message::user(format!(
                                 "[verification] Your previous answer was rejected: {reason}\n\
                                  Please correct it and provide a better final answer."
                             )));
-                            warn!(reason = reason.as_str(), "verifier rejected final answer; retrying");
+                            warn!(
+                                reason = reason.as_str(),
+                                "verifier rejected final answer; retrying"
+                            );
                             continue;
                         }
                     }
@@ -115,7 +117,7 @@ impl ReActLoop {
             let mut pending_reflection: Option<String> = None;
 
             // Execute each requested tool and feed results back.
-            for (id, name, input) in &tool_calls {
+            for (tool_index, (id, name, input)) in tool_calls.iter().enumerate() {
                 // Check tool budget before executing
                 if !self.tool_budget.can_call() {
                     warn!("Tool budget exhausted, stopping loop");
@@ -131,6 +133,13 @@ impl ReActLoop {
                         iterations: self.iteration,
                         completed_normally: false,
                     };
+                    for (pending_id, _, _) in tool_calls.iter().skip(tool_index) {
+                        self.messages.push(Message::tool_result(
+                            pending_id,
+                            "Tool call skipped: per-turn tool budget exhausted",
+                            true,
+                        ));
+                    }
                     return Ok((msg, metrics));
                 }
 
@@ -147,6 +156,13 @@ impl ReActLoop {
                             iterations: self.iteration,
                             completed_normally: false,
                         };
+                        for (pending_id, _, _) in tool_calls.iter().skip(tool_index) {
+                            self.messages.push(Message::tool_result(
+                                pending_id,
+                                format!("Tool call skipped: circuit breaker tripped: {reason}"),
+                                true,
+                            ));
+                        }
                         return Ok((msg, metrics));
                     }
                     CircuitBreakerStatus::Warning(reason) => {
@@ -183,10 +199,23 @@ impl ReActLoop {
                 // Truncate large tool outputs before storing in conversation
                 const MAX_TOOL_RESULT_CHARS: usize = 8000;
                 let truncated_content = if content.len() > MAX_TOOL_RESULT_CHARS {
-                    let head = &content[..content.char_indices().nth(3500).map(|(i, _)| i).unwrap_or(3500)];
-                    let tail_start = content.char_indices().nth(content.chars().count().saturating_sub(3500)).map(|(i, _)| i).unwrap_or(0);
+                    let head = &content[..content
+                        .char_indices()
+                        .nth(3500)
+                        .map(|(i, _)| i)
+                        .unwrap_or(3500)];
+                    let tail_start = content
+                        .char_indices()
+                        .nth(content.chars().count().saturating_sub(3500))
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
                     let tail = &content[tail_start..];
-                    format!("{}\n... ({} chars truncated) ...\n{}", head, content.len() - 7000, tail)
+                    format!(
+                        "{}\n... ({} chars truncated) ...\n{}",
+                        head,
+                        content.len() - 7000,
+                        tail
+                    )
                 } else {
                     content.clone()
                 };
@@ -212,7 +241,8 @@ impl ReActLoop {
 
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {
-                self.messages.push(Message::user(format!("[Reflection]\n{}", summary)));
+                self.messages
+                    .push(Message::user(format!("[Reflection]\n{}", summary)));
             }
 
             // Check if reflection recommended stopping

@@ -134,10 +134,8 @@ async fn cleanup_old_logs(dir: &Path) {
         if let Ok(meta) = entry.metadata().await {
             if let Ok(modified) = meta.modified() {
                 let modified_dt: chrono::DateTime<Utc> = modified.into();
-                if modified_dt < cutoff {
-                    if fs::remove_file(entry.path()).await.is_ok() {
-                        warn!(file = %name_str, "Removed expired reasoning log");
-                    }
+                if modified_dt < cutoff && fs::remove_file(entry.path()).await.is_ok() {
+                    warn!(file = %name_str, "Removed expired reasoning log");
                 }
             }
         }

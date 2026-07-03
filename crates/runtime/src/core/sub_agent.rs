@@ -4,9 +4,9 @@
 //! Their status is tracked and emitted to the TUI via UiEvent, and their
 //! control-plane lifecycle is enforced via `SubAgentState`.
 
-use std::collections::HashMap;
 use base::ui_event::{SubAgentHandle, SubAgentStatus};
 use base::SubAgentState;
+use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
 /// Error returned when an illegal lifecycle transition is requested.
@@ -15,7 +15,10 @@ pub enum TransitionError {
     /// No agent with the given id is tracked.
     Unknown(String),
     /// The transition `from -> to` is not legal.
-    Illegal { from: SubAgentState, to: SubAgentState },
+    Illegal {
+        from: SubAgentState,
+        to: SubAgentState,
+    },
 }
 
 impl std::fmt::Display for TransitionError {
@@ -97,11 +100,7 @@ impl SubAgentSpawner {
     }
 
     /// Attempt a legal-only lifecycle transition.
-    pub fn transition(
-        &mut self,
-        id: &str,
-        next: SubAgentState,
-    ) -> Result<(), TransitionError> {
+    pub fn transition(&mut self, id: &str, next: SubAgentState) -> Result<(), TransitionError> {
         let entry = self
             .agents
             .get_mut(id)
@@ -233,10 +232,7 @@ mod lifecycle_tests {
             },
         );
         let got = s.get(&h.id).unwrap();
-        assert!(matches!(
-            got.status,
-            SubAgentStatus::Executing { .. }
-        ));
+        assert!(matches!(got.status, SubAgentStatus::Executing { .. }));
     }
 
     #[test]

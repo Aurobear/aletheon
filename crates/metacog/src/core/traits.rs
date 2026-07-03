@@ -2,12 +2,12 @@
 //!
 //! Wires together: SelfReader → CandidateGenerator → SandboxRunner → Evaluator → MigrationManager → RollbackManager
 
+use anyhow::Result;
+use async_trait::async_trait;
 use base::{
     Evaluation, Genome, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate,
     Subsystem, SubsystemContext, SubsystemHealth, TestResult, Version,
 };
-use anyhow::Result;
-use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Mutex;
 

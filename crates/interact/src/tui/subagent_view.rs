@@ -2,10 +2,10 @@
 //!
 //! Renders sub-agent status cards inline in the chat area.
 
-use ratatui::text::{Line, Span};
-use ratatui::style::{Color, Style};
-use base::ui_event::{SubAgentHandle, SubAgentStatus};
 use super::term_compat::TermCaps;
+use base::ui_event::{SubAgentHandle, SubAgentStatus};
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 
 /// Renders sub-agent status cards.
 pub struct SubAgentViewWidget;

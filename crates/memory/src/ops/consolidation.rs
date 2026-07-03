@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use base::{MemoryBackend, MemoryEntry, MemoryType};
 
-use crate::ops::activation::{compute_activation, ActivationEntry};
 use crate::backends::episodic::EpisodicMemory;
 use crate::backends::semantic::SemanticMemory;
+use crate::ops::activation::{compute_activation, ActivationEntry};
 
 /// Configuration for memory consolidation.
 pub struct ConsolidationConfig {
@@ -54,8 +54,7 @@ pub async fn consolidate(
 ) -> Result<ConsolidationResult> {
     // 1. Query recent reflections with access counts from episodic memory.
     //    We use the join helper to get (ReflectionEntry, access_count, importance).
-    let reflections_with_access =
-        episodic.recall_reflections_with_access(config.batch_size * 2)?;
+    let reflections_with_access = episodic.recall_reflections_with_access(config.batch_size * 2)?;
     if reflections_with_access.is_empty() {
         return Ok(ConsolidationResult {
             promoted: 0,
@@ -77,8 +76,7 @@ pub async fn consolidate(
             now,
         );
 
-        if activation >= config.min_activation
-            && *access_count as usize >= config.min_access_count
+        if activation >= config.min_activation && *access_count as usize >= config.min_access_count
         {
             // We need the memory_id for soft archival. Since recall_reflections_with_access
             // doesn't return it, we'll get it from the reflection_events table.
@@ -95,16 +93,14 @@ pub async fn consolidate(
     }
 
     // 3. Get memory_ids for soft archival by querying reflection_events.
-    let memory_ids = episodic.get_reflection_memory_ids(
-        qualified.iter().map(|(r, _, _)| r.id.as_str()).collect(),
-    )?;
+    let memory_ids = episodic
+        .get_reflection_memory_ids(qualified.iter().map(|(r, _, _)| r.id.as_str()).collect())?;
 
     // 4. Promote qualifying entries.
     let mut promoted = 0;
     let mut entries = Vec::new();
 
-    for (i, (reflection, _access_count, _)) in
-        qualified.iter().take(config.batch_size).enumerate()
+    for (i, (reflection, _access_count, _)) in qualified.iter().take(config.batch_size).enumerate()
     {
         // a. Extract knowledge from reflection.
         let knowledge = extract_knowledge(reflection);

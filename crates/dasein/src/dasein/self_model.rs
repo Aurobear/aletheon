@@ -3,14 +3,14 @@
 //! Sartre: the for-itself (pour-soi) is always in the process
 //! of nihilating what it was, in order to become what it is not.
 
-use std::collections::VecDeque;
-use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use super::types::*;
 use base::dasein::{
-    SelfModelSnapshot, AssertionSnapshot, AssertionSource as AbiAssertionSource,
-    NegatedAssertionSnapshot, PossibilitySnapshot, Stimmung,
+    AssertionSnapshot, AssertionSource as AbiAssertionSource, NegatedAssertionSnapshot,
+    PossibilitySnapshot, SelfModelSnapshot,
 };
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 /// Source of a self-assertion.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -103,14 +103,20 @@ impl MutableSelfModel {
     /// Get habitual assertions (candidates for negation).
     pub fn habitual_assertions(&self) -> Vec<SelfAssertion> {
         let current = self.current.read();
-        current.iter()
+        current
+            .iter()
             .filter(|a| a.source == AssertionSource::Habitual)
             .cloned()
             .collect()
     }
 
     /// Negate an assertion — move it from current to negated.
-    pub fn negate(&self, content: &str, reason: NegationReason, position: TemporalPosition) -> Option<SelfPossibility> {
+    pub fn negate(
+        &self,
+        content: &str,
+        reason: NegationReason,
+        position: TemporalPosition,
+    ) -> Option<SelfPossibility> {
         let mut current = self.current.write();
         let idx = current.iter().position(|a| a.content == content)?;
 
@@ -167,8 +173,13 @@ impl MutableSelfModel {
     /// Get the most attractive possibility.
     pub fn most_attractive_possibility(&self) -> Option<SelfPossibility> {
         let possibilities = self.possibilities.read();
-        possibilities.iter()
-            .max_by(|a, b| a.attraction.partial_cmp(&b.attraction).unwrap_or(std::cmp::Ordering::Equal))
+        possibilities
+            .iter()
+            .max_by(|a, b| {
+                a.attraction
+                    .partial_cmp(&b.attraction)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .cloned()
     }
 
@@ -179,26 +190,36 @@ impl MutableSelfModel {
         let possibilities = self.possibilities.read();
 
         SelfModelSnapshot {
-            current_assertions: current.iter().map(|a| AssertionSnapshot {
-                content: a.content.clone(),
-                source: match a.source {
-                    AssertionSource::Assigned => AbiAssertionSource::Assigned,
-                    AssertionSource::Chosen => AbiAssertionSource::Chosen,
-                    AssertionSource::Habitual => AbiAssertionSource::Habitual,
-                    AssertionSource::Discovered => AbiAssertionSource::Discovered,
-                },
-                stability: a.stability,
-            }).collect(),
-            negated_assertions: negated.iter().take(5).map(|n| NegatedAssertionSnapshot {
-                content: n.content.clone(),
-                reason: format!("{:?}", n.reason),
-                negated_at: n.negated_at.0,
-            }).collect(),
-            possibilities: possibilities.iter().map(|p| PossibilitySnapshot {
-                content: p.content.clone(),
-                attraction: p.attraction,
-                risk: p.risk,
-            }).collect(),
+            current_assertions: current
+                .iter()
+                .map(|a| AssertionSnapshot {
+                    content: a.content.clone(),
+                    source: match a.source {
+                        AssertionSource::Assigned => AbiAssertionSource::Assigned,
+                        AssertionSource::Chosen => AbiAssertionSource::Chosen,
+                        AssertionSource::Habitual => AbiAssertionSource::Habitual,
+                        AssertionSource::Discovered => AbiAssertionSource::Discovered,
+                    },
+                    stability: a.stability,
+                })
+                .collect(),
+            negated_assertions: negated
+                .iter()
+                .take(5)
+                .map(|n| NegatedAssertionSnapshot {
+                    content: n.content.clone(),
+                    reason: format!("{:?}", n.reason),
+                    negated_at: n.negated_at.0,
+                })
+                .collect(),
+            possibilities: possibilities
+                .iter()
+                .map(|p| PossibilitySnapshot {
+                    content: p.content.clone(),
+                    attraction: p.attraction,
+                    risk: p.risk,
+                })
+                .collect(),
         }
     }
 
@@ -231,7 +252,10 @@ mod tests {
     fn test_assert_and_negate() {
         let model = MutableSelfModel::new();
 
-        model.assert(make_assertion("I am a code assistant", AssertionSource::Assigned));
+        model.assert(make_assertion(
+            "I am a code assistant",
+            AssertionSource::Assigned,
+        ));
         assert_eq!(model.assertion_count(), 1);
 
         let poss = model.negate(
@@ -246,7 +270,10 @@ mod tests {
         let snapshot = model.to_snapshot();
         assert_eq!(snapshot.current_assertions.len(), 0);
         assert_eq!(snapshot.negated_assertions.len(), 1);
-        assert_eq!(snapshot.negated_assertions[0].content, "I am a code assistant");
+        assert_eq!(
+            snapshot.negated_assertions[0].content,
+            "I am a code assistant"
+        );
     }
 
     #[test]

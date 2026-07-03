@@ -593,7 +593,7 @@ fn matches_hunk_at(lines: &[String], hunk: &Hunk, start: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+
     use tempfile::TempDir;
 
     #[tokio::test]

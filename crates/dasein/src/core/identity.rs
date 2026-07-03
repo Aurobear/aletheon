@@ -3,8 +3,8 @@
 //! The identity is the agent's self-model. Every mutation preserves
 //! the previous state in a history chain.
 
-use base::Identity;
 use anyhow::Result;
+use base::Identity;
 use chrono::Utc;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};

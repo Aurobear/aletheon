@@ -18,7 +18,7 @@ use base::hook::{HookContext, HookPoint, HookResult};
 pub struct RegisteredHook {
     /// Unique name (e.g. "git-workflow:validate").
     pub name: String,
-    /// Origin: "skill:<name>" | "builtin" | "config".
+    /// Origin: `"skill:<name>"` | `"builtin"` | `"config"`.
     pub source: String,
     /// Path to executable script (None for builtin hooks).
     pub script_path: Option<PathBuf>,

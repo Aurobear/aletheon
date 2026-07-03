@@ -1,4 +1,5 @@
 //! Security pipeline and sandbox execution.
 
-pub mod security;
 pub mod sandbox;
+#[allow(clippy::module_inception)]
+pub mod security;

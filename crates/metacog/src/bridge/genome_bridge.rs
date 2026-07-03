@@ -3,8 +3,8 @@
 //! Provides helpers for genome loading, conversion, and config extraction.
 
 use crate::core::types::{CareExt, GenomeMeta, ReasoningConfig};
-use base::genome::Genome;
 use anyhow::Result;
+use base::genome::Genome;
 use std::path::Path;
 
 use crate::r#impl::genome::loader::GenomeLoader;
@@ -53,6 +53,7 @@ impl GenomeBridge {
 }
 
 // Default implementation for CareExt (not in types.rs yet)
+#[allow(clippy::derivable_impls)]
 impl Default for CareExt {
     fn default() -> Self {
         Self {

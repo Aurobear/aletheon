@@ -13,10 +13,10 @@ fn decision_ordering() {
 #[test]
 fn prefix_rule_matches_command() {
     // Pattern matches: first arg must be one of -rf or -r
-    let rule = PrefixRule::new("rm", Decision::Forbidden)
-        .with_pattern(vec![
-            PatternToken::Alternatives(vec!["-rf".into(), "-r".into()]),
-        ]);
+    let rule =
+        PrefixRule::new("rm", Decision::Forbidden).with_pattern(vec![PatternToken::Alternatives(
+            vec!["-rf".into(), "-r".into()],
+        )]);
 
     assert!(rule.matches(&strs(&["rm", "-rf", "/"])).is_some());
     assert!(rule.matches(&strs(&["rm", "-r", "dir"])).is_some());
@@ -124,14 +124,26 @@ fn empty_command_returns_prompt() {
 fn default_heuristics_safe_commands() {
     assert_eq!(default_heuristics(&strs(&["cat", "file"])), Decision::Allow);
     assert_eq!(default_heuristics(&strs(&["pwd"])), Decision::Allow);
-    assert_eq!(default_heuristics(&strs(&["echo", "hello"])), Decision::Allow);
+    assert_eq!(
+        default_heuristics(&strs(&["echo", "hello"])),
+        Decision::Allow
+    );
 }
 
 #[test]
 fn default_heuristics_dangerous_commands() {
-    assert_eq!(default_heuristics(&strs(&["rm", "-rf", "/"])), Decision::Forbidden);
-    assert_eq!(default_heuristics(&strs(&["mkfs", "/dev/sda"])), Decision::Forbidden);
-    assert_eq!(default_heuristics(&strs(&["shutdown", "now"])), Decision::Forbidden);
+    assert_eq!(
+        default_heuristics(&strs(&["rm", "-rf", "/"])),
+        Decision::Forbidden
+    );
+    assert_eq!(
+        default_heuristics(&strs(&["mkfs", "/dev/sda"])),
+        Decision::Forbidden
+    );
+    assert_eq!(
+        default_heuristics(&strs(&["shutdown", "now"])),
+        Decision::Forbidden
+    );
 }
 
 #[test]

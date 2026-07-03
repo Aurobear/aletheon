@@ -380,7 +380,10 @@ impl LlmProvider for OpenAiProvider {
 
         // Reasoning content — preserve as Thinking block
         if let Some(thinking) = choice.message.reasoning_content.filter(|s| !s.is_empty()) {
-            content.push(ContentBlock::Thinking { text: thinking, signature: None });
+            content.push(ContentBlock::Thinking {
+                text: thinking,
+                signature: None,
+            });
         }
 
         // Text content

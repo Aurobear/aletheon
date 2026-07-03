@@ -1,0 +1,14 @@
+[Unit]
+Description=Aletheon AI Agent Daemon (User)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/aletheon daemon
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+RuntimeDirectory=aletheon
+
+[Install]
+WantedBy=default.target

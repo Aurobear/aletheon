@@ -30,11 +30,11 @@ impl ConditionExpr {
     pub fn evaluate(&self, data: &HashMap<String, serde_json::Value>) -> bool {
         match self {
             ConditionExpr::Always => true,
-            ConditionExpr::Equals(key, expected) => data.get(key).map_or(false, |v| v == expected),
+            ConditionExpr::Equals(key, expected) => data.get(key) == Some(expected),
             ConditionExpr::Exists(key) => data.contains_key(key),
-            ConditionExpr::IsTruthy(key) => data.get(key).map_or(false, |v| match v {
+            ConditionExpr::IsTruthy(key) => data.get(key).is_some_and(|v| match v {
                 serde_json::Value::Bool(b) => *b,
-                serde_json::Value::Number(n) => n.as_f64().map_or(false, |f| f != 0.0),
+                serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
                 serde_json::Value::String(s) => !s.is_empty(),
                 serde_json::Value::Array(a) => !a.is_empty(),
                 serde_json::Value::Object(o) => !o.is_empty(),

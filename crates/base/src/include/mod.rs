@@ -7,7 +7,7 @@ pub mod brain;
 pub mod event_bus;
 pub mod memory;
 pub mod meta;
+pub mod plugin;
 pub mod runtime;
 pub mod self_field;
 pub mod subsystem;
-pub mod plugin;

@@ -2,11 +2,11 @@ use async_trait::async_trait;
 
 use super::super::agent::{Agent, AgentConfig, Capability};
 use base::message::{ContentBlock, Message};
+use cognit::r#impl::llm::{LlmProvider, ToolDefinition};
 use corpus::tools::tools::bash_exec::BashExecTool;
 use corpus::tools::tools::file_read::FileReadTool;
 use corpus::tools::tools::file_write::FileWriteTool;
 use corpus::tools::tools::Tool;
-use cognit::r#impl::llm::{LlmProvider, ToolDefinition};
 
 /// Code agent — handles code generation and editing.
 pub struct CodeAgent {

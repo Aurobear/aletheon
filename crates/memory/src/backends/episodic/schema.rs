@@ -3,11 +3,9 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use base::{
-    Subsystem, SubsystemContext, SubsystemHealth, Version,
-};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use base::{Subsystem, SubsystemContext, SubsystemHealth, Version};
 use rusqlite::Connection;
 
 use crate::ops::schema;

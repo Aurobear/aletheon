@@ -8,16 +8,16 @@
 //! 2. Periodic trigger (every N turns)
 //! 3. Sliding window eviction
 
+use anyhow::Result;
+use async_trait::async_trait;
 use base::genome::*;
 use base::meta::{
     Evaluation, MetaRuntimeOps, MigrationResult, Recommendation, RuntimeCandidate, TestResult,
 };
-use base::{Subsystem, SubsystemHealth, Version};
 use base::MutationIntent;
+use base::{Subsystem, SubsystemHealth, Version};
 use metacog::r#impl::morphogenesis::pipeline::MorphogenesisPipeline;
 use runtime::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator};
-use anyhow::Result;
-use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -240,11 +240,11 @@ async fn periodic_trigger_at_n_turns() {
             .post_turn(
                 &format!("task {}", i),
                 "ok output",
-                true,  // success
-                3,     // tool_calls
-                0,     // tool_errors
-                500,   // elapsed_ms
-                1,     // iterations
+                true, // success
+                3,    // tool_calls
+                0,    // tool_errors
+                500,  // elapsed_ms
+                1,    // iterations
                 &pipeline,
                 vec![], // awareness_signals
             )
@@ -265,11 +265,7 @@ async fn periodic_trigger_at_n_turns() {
         1,
         "generate_candidate called once"
     );
-    assert_eq!(
-        mig_calls.load(Ordering::SeqCst),
-        1,
-        "migrate called once"
-    );
+    assert_eq!(mig_calls.load(Ordering::SeqCst), 1, "migrate called once");
 }
 
 // ---------------------------------------------------------------------------
@@ -296,11 +292,11 @@ async fn sliding_window_eviction() {
             .post_turn(
                 &format!("task {}", i),
                 "ok",
-                true,  // success
-                1,     // tool_calls
-                0,     // tool_errors
-                100,   // elapsed_ms
-                1,     // iterations
+                true, // success
+                1,    // tool_calls
+                0,    // tool_errors
+                100,  // elapsed_ms
+                1,    // iterations
                 &pipeline,
                 vec![], // awareness_signals
             )
@@ -308,10 +304,7 @@ async fn sliding_window_eviction() {
             .unwrap();
 
         assert!(summary.reflected);
-        assert!(
-            !summary.evolution_triggered,
-            "no evolution should trigger"
-        );
+        assert!(!summary.evolution_triggered, "no evolution should trigger");
     }
 
     assert_eq!(coordinator.turn_count().await, 10);
@@ -343,7 +336,7 @@ async fn sliding_window_eviction() {
 async fn disabled_coordinator_is_a_noop() {
     let tmp = tempfile::tempdir().unwrap();
     let config = EvolutionConfig {
-        enabled: false,          // default-off gate
+        enabled: false,           // default-off gate
         trigger_every_n_turns: 1, // would trigger every turn if enabled
         trigger_on_failure: true,
         window_size: 20,
@@ -355,14 +348,23 @@ async fn disabled_coordinator_is_a_noop() {
 
     let summary = coordinator
         .post_turn(
-            "task", "error output", false, 5, 2, 1000, 1,
+            "task",
+            "error output",
+            false,
+            5,
+            2,
+            1000,
+            1,
             &pipeline,
             vec![],
         )
         .await
         .unwrap();
 
-    assert!(!summary.evolution_triggered, "disabled loop must not trigger");
+    assert!(
+        !summary.evolution_triggered,
+        "disabled loop must not trigger"
+    );
     assert_eq!(
         gen_calls.load(std::sync::atomic::Ordering::SeqCst),
         0,

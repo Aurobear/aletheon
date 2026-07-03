@@ -12,6 +12,12 @@ use super::clipboard::ClipboardDriver;
 /// to avoid Send/Sync issues with long-lived X11 connections.
 pub struct X11ClipboardDriver;
 
+impl Default for X11ClipboardDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl X11ClipboardDriver {
     pub fn new() -> Self {
         Self
@@ -88,31 +94,31 @@ impl ClipboardDriver for X11ClipboardDriver {
 
             match conn.poll_for_event().context("poll_for_event failed")? {
                 Some(event) => match event {
-                    x11rb::protocol::Event::SelectionNotify(ev) => {
-                        if ev.requestor == win && ev.property == result_atom {
-                            // The property was set (or set to NONE on refusal).
-                            if ev.property == x11rb::NONE {
-                                break; // owner refused — nothing to read
-                            }
-                            let prop_reply = conn
-                                .get_property(
-                                    false,
-                                    win,
-                                    result_atom,
-                                    utf8_atom,
-                                    0,
-                                    64 * 1024, // up to 64 KiB
-                                )
-                                .context("get_property failed")?
-                                .reply()
-                                .context("get_property reply failed")?;
-
-                            if let Some(bytes) = prop_reply.value8() {
-                                let collected: Vec<u8> = bytes.collect();
-                                result = String::from_utf8_lossy(&collected).to_string();
-                            }
-                            break;
+                    x11rb::protocol::Event::SelectionNotify(ev)
+                        if ev.requestor == win && ev.property == result_atom =>
+                    {
+                        // The property was set (or set to NONE on refusal).
+                        if ev.property == x11rb::NONE {
+                            break; // owner refused — nothing to read
                         }
+                        let prop_reply = conn
+                            .get_property(
+                                false,
+                                win,
+                                result_atom,
+                                utf8_atom,
+                                0,
+                                64 * 1024, // up to 64 KiB
+                            )
+                            .context("get_property failed")?
+                            .reply()
+                            .context("get_property reply failed")?;
+
+                        if let Some(bytes) = prop_reply.value8() {
+                            let collected: Vec<u8> = bytes.collect();
+                            result = String::from_utf8_lossy(&collected).to_string();
+                        }
+                        break;
                     }
                     _ => { /* ignore unrelated events */ }
                 },

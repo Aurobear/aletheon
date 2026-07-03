@@ -7,10 +7,10 @@
 //! Growth suggestions are grounded in observed patterns, not
 //! arbitrary additions.
 
+use anyhow::Result;
 use base::{
     AwarenessExtension, AwarenessExtensionCounts, AwarenessGrowthSuggestion, SelfAwareness,
 };
-use anyhow::Result;
 
 /// Analyzes awareness history to produce growth suggestions.
 ///

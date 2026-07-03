@@ -45,6 +45,12 @@ pub struct SubsystemRegistry {
     subsystems: HashMap<&'static str, Box<dyn SubsystemQuery>>,
 }
 
+impl Default for SubsystemRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubsystemRegistry {
     pub fn new() -> Self {
         Self {

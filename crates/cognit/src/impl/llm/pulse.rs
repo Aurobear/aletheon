@@ -12,8 +12,9 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use base::evolution::CognitivePulseEvent;
-use base::{EventBus, EventType, Priority};
+use base::CommunicationBus;
 use base::ConcreteEvent;
+use base::{EventType, Priority};
 
 use super::scheduler::LlmScheduler;
 
@@ -38,12 +39,16 @@ impl Default for PulseConfig {
 /// The heart — periodically broadcasts cognitive energy to EventBus.
 pub struct LlmPulse {
     scheduler: Arc<LlmScheduler>,
-    bus: Arc<dyn EventBus>,
+    bus: Arc<CommunicationBus>,
     config: PulseConfig,
 }
 
 impl LlmPulse {
-    pub fn new(scheduler: Arc<LlmScheduler>, bus: Arc<dyn EventBus>, config: PulseConfig) -> Self {
+    pub fn new(
+        scheduler: Arc<LlmScheduler>,
+        bus: Arc<CommunicationBus>,
+        config: PulseConfig,
+    ) -> Self {
         Self {
             scheduler,
             bus,
@@ -91,7 +96,7 @@ impl LlmPulse {
             Box::new(json_payload),
         );
 
-        self.bus.publish(Box::new(concrete)).await
+        self.bus.publish_event(Box::new(concrete)).await
     }
 
     /// Emit a single pulse (for testing).

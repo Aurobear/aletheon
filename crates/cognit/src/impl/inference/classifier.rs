@@ -13,6 +13,12 @@ pub struct IntentClassifier {
     token_threshold: usize,
 }
 
+impl Default for IntentClassifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IntentClassifier {
     pub fn new() -> Self {
         Self {

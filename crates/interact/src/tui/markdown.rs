@@ -256,7 +256,7 @@ fn render_markdown_with_theme(
                         table_row.clear();
                     }
                     TagEnd::TableCell => {
-                        let cell_spans: Vec<Span<'static>> = current_spans.drain(..).collect();
+                        let cell_spans: Vec<Span<'static>> = std::mem::take(&mut current_spans);
                         table_row.push(cell_spans);
                     }
                     TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link => {
@@ -327,9 +327,10 @@ fn render_markdown_with_theme(
     flush_spans(&mut current_spans, &mut lines);
 
     // Remove trailing empty lines
-    while lines.last().map_or(false, |l| {
-        l.spans.is_empty() || l.spans.iter().all(|s| s.content.is_empty())
-    }) {
+    while lines
+        .last()
+        .is_some_and(|l| l.spans.is_empty() || l.spans.iter().all(|s| s.content.is_empty()))
+    {
         lines.pop();
     }
 
@@ -338,7 +339,7 @@ fn render_markdown_with_theme(
 
 fn flush_spans(spans: &mut Vec<Span<'static>>, lines: &mut Vec<Line<'static>>) {
     if !spans.is_empty() {
-        let line_spans: Vec<Span<'static>> = spans.drain(..).collect();
+        let line_spans: Vec<Span<'static>> = std::mem::take(spans);
         lines.push(Line::from(line_spans));
     }
 }
@@ -409,7 +410,7 @@ mod tests {
     fn test_rule() {
         let caps = test_caps();
         let lines = render_markdown("---", 80, &caps);
-        assert!(lines.len() >= 1);
+        assert!(!lines.is_empty());
     }
 
     #[test]

@@ -24,6 +24,12 @@ pub struct StreamController {
     thinking_collapsed: bool,
 }
 
+impl Default for StreamController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamController {
     pub fn new() -> Self {
         Self {
@@ -103,7 +109,8 @@ impl StreamController {
         if let Some(start) = self.thinking_start {
             let elapsed = start.elapsed().as_secs_f64();
             if self.thinking_collapsed {
-                self.committed.push_str(&format!("✻ Thought for {:.1}s\n\n", elapsed));
+                self.committed
+                    .push_str(&format!("✻ Thought for {:.1}s\n\n", elapsed));
             } else {
                 self.committed.push_str(&self.format_thinking_expanded());
             }

@@ -1,10 +1,12 @@
 use std::path::Path;
+use std::time::Duration;
 
-use base::debug::DebugEvent;
 use anyhow::Result;
+use base::debug::DebugEvent;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixListener;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
@@ -14,10 +16,16 @@ pub struct UnixServer {
     listener: UnixListener,
     handler: RequestHandler,
     cancel_token: CancellationToken,
+    /// Tracks spawned connection tasks for graceful shutdown drain.
+    connections: JoinSet<()>,
 }
 
 impl UnixServer {
-    pub async fn new(socket_path: &Path, handler: RequestHandler, cancel_token: CancellationToken) -> Result<Self> {
+    pub async fn new(
+        socket_path: &Path,
+        handler: RequestHandler,
+        cancel_token: CancellationToken,
+    ) -> Result<Self> {
         // Remove stale socket
         if socket_path.exists() {
             tokio::fs::remove_file(socket_path).await?;
@@ -26,7 +34,18 @@ impl UnixServer {
         let listener = UnixListener::bind(socket_path)?;
         info!(path = %socket_path.display(), "Unix socket listening");
 
-        Ok(Self { listener, handler, cancel_token })
+        Ok(Self {
+            listener,
+            handler,
+            cancel_token,
+            connections: JoinSet::new(),
+        })
+    }
+
+    /// Return a reference to the handler so the host can interact with it
+    /// after the accept loop finishes (e.g., for graceful shutdown).
+    pub fn handler(&self) -> &RequestHandler {
+        &self.handler
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -41,8 +60,9 @@ impl UnixServer {
                     // to be consumed by whichever connection reads first).
                     let (notify_tx, notify_rx) = mpsc::channel::<String>(64);
                     handler.set_notify_channel(notify_tx);
+                    handler.increment_connections();
 
-                    tokio::spawn(async move {
+                    self.connections.spawn(async move {
                         if let Err(e) = Self::handle_connection(stream, handler, notify_rx).await {
                             error!(error = %e, "Connection error");
                         }
@@ -54,6 +74,35 @@ impl UnixServer {
                 }
             }
         }
+
+        // Drain in-flight connections with a 5-second timeout per task.
+        info!(
+            remaining = self.connections.len(),
+            "Draining in-flight connections..."
+        );
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), self.connections.join_next()).await {
+                Ok(Some(Ok(()))) => {
+                    // Connection completed normally.
+                }
+                Ok(Some(Err(e))) => {
+                    error!(error = %e, "Connection task panicked during drain");
+                }
+                Ok(None) => {
+                    info!("All connections drained");
+                    break;
+                }
+                Err(_elapsed) => {
+                    info!(
+                        remaining = self.connections.len(),
+                        "Drain timeout expired, aborting remaining connections"
+                    );
+                    self.connections.abort_all();
+                    break;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -154,6 +203,7 @@ impl UnixServer {
             }
         }
 
+        handler.decrement_connections();
         Ok(())
     }
 }

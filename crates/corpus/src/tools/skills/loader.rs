@@ -37,7 +37,7 @@ impl SkillLoader {
             let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
             let path = entry.path();
 
-            if path.extension().map_or(false, |ext| ext == "md") {
+            if path.extension().is_some_and(|ext| ext == "md") {
                 match self.load_skill(&path) {
                     Ok(skill) => {
                         self.skills.insert(skill.trigger.clone(), skill);

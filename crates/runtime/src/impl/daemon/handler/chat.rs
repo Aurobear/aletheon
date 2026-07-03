@@ -1,26 +1,36 @@
-use super::RequestHandler;
-use super::format::event_to_json;
+#![allow(deprecated)]
+// TODO(P1-A): See handler/mod.rs for migration notes. This file's allow(deprecated)
+// is inherited from mod.rs's event_bus field (Arc<dyn EventBus>) used for
+// DaseinEventBridge wiring. Once mod.rs is migrated, this file can drop the allow.
 
-use std::sync::Arc;
+use super::format::event_to_json;
+use super::RequestHandler;
+
 use serde_json::json;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 use base::hook::{HookContext, HookPoint, HookResult};
-use base::{
-    Context as AbiContext, Intent, IntentSource, ReflectionTrigger, SelfFieldOps, Verdict,
-};
-use base::ui_event::InterruptReason;
+use base::{Context as AbiContext, Intent, IntentSource, ReflectionTrigger, SelfFieldOps, Verdict};
 use std::collections::HashMap;
 
-use cognit::r#impl::llm::LlmProvider;
 use crate::core::event_sink::{ChannelEventSink, Event, EventSink};
 use crate::core::react_loop::ReActLoop;
 use crate::r#impl::memory::fact_store::FactStore;
+use cognit::r#impl::llm::LlmProvider;
 
 impl RequestHandler {
-    pub(super) async fn handle_chat(&self, id: serde_json::Value, request: serde_json::Value) -> serde_json::Value {
+    pub(super) async fn handle_chat(
+        &self,
+        id: serde_json::Value,
+        request: serde_json::Value,
+    ) -> serde_json::Value {
         let message = request["params"]["message"].as_str().unwrap_or("");
         info!(message = %message, "Chat request received");
+
+        // Create a fresh per-turn cancellation token so the daemon can
+        // cancel this turn during graceful shutdown.
+        let _turn_token = self.begin_turn_token().await;
 
         // --- SelfField review: gate the user message before LLM ---
         let intent = Intent {
@@ -28,7 +38,11 @@ impl RequestHandler {
             parameters: serde_json::json!({ "message": message }),
             source: IntentSource::User,
             description: {
-                let end = message.char_indices().nth(80).map(|(i, _)| i).unwrap_or(message.len());
+                let end = message
+                    .char_indices()
+                    .nth(80)
+                    .map(|(i, _)| i)
+                    .unwrap_or(message.len());
                 format!("User chat message: {}", &message[..end])
             },
         };
@@ -86,22 +100,19 @@ impl RequestHandler {
         // Gather loaded skills with keywords and match against user message.
         {
             let loader = self.skill_loader.lock().await;
-            let skill_keywords: Vec<crate::r#impl::skills::keyword_matcher::SkillKeywords> =
-                loader
-                    .plugins()
-                    .iter()
-                    .filter(|p| !p.keywords.is_empty())
-                    .map(|p| crate::r#impl::skills::keyword_matcher::SkillKeywords {
-                        name: p.name.clone(),
-                        keywords: p.keywords.clone(),
-                        body: p.system_prompt.clone(),
-                    })
-                    .collect();
+            let skill_keywords: Vec<crate::r#impl::skills::keyword_matcher::SkillKeywords> = loader
+                .plugins()
+                .iter()
+                .filter(|p| !p.keywords.is_empty())
+                .map(|p| crate::r#impl::skills::keyword_matcher::SkillKeywords {
+                    name: p.name.clone(),
+                    keywords: p.keywords.clone(),
+                    body: p.system_prompt.clone(),
+                })
+                .collect();
             drop(loader);
-            let matched = crate::r#impl::skills::keyword_matcher::match_skills(
-                message,
-                &skill_keywords,
-            );
+            let matched =
+                crate::r#impl::skills::keyword_matcher::match_skills(message, &skill_keywords);
             for body in matched {
                 effective_message.push_str("\n<activated-skill>\n");
                 effective_message.push_str(&body);
@@ -112,7 +123,8 @@ impl RequestHandler {
         // --- Fact recall from FactStore ---
         {
             let fs = self.fact_store.lock().await;
-            let keywords: Vec<String> = message.split_whitespace()
+            let keywords: Vec<String> = message
+                .split_whitespace()
                 .filter(|w| w.len() > 3)
                 .map(|w| w.to_lowercase())
                 .collect();
@@ -122,7 +134,10 @@ impl RequestHandler {
                     if !facts.is_empty() {
                         let mut recall_block = String::from("\n[Recalled memories]\n");
                         for fact in &facts {
-                            recall_block.push_str(&format!("- {} (trust: {:.2})\n", fact.content, fact.trust_score));
+                            recall_block.push_str(&format!(
+                                "- {} (trust: {:.2})\n",
+                                fact.content, fact.trust_score
+                            ));
                             let _ = fs.record_feedback(fact.fact_id, true);
                         }
                         // Entity graph boost
@@ -132,7 +147,10 @@ impl RequestHandler {
                                 if let Ok(related) = fs.get_entity_facts(eid) {
                                     for rf in related.iter().take(1) {
                                         if !facts.iter().any(|f| f.fact_id == rf.fact_id) {
-                                            recall_block.push_str(&format!("- {} (entity: {})\n", rf.content, entity));
+                                            recall_block.push_str(&format!(
+                                                "- {} (entity: {})\n",
+                                                rf.content, entity
+                                            ));
                                         }
                                     }
                                 }
@@ -193,7 +211,7 @@ impl RequestHandler {
 
         // --- Configured pre_turn hook scripts ---
         if !self.hooks_config.pre_turn.is_empty() {
-            let hook_session_id = self.session_manager.lock().await.session_id.clone();
+            let hook_session_id = self.get_or_create_session(None).await.0;
             let hook_input = serde_json::json!({
                 "prompt": message,
                 "session_id": hook_session_id
@@ -212,7 +230,8 @@ impl RequestHandler {
         {
             // Gather session info before locking hook_registry
             let (session_id, turn_count) = {
-                let sm = self.session_manager.lock().await;
+                let (_sid, sm_arc) = self.get_or_create_session(None).await;
+                let sm = sm_arc.lock().await;
                 (sm.session_id.clone(), sm.turn_count())
             };
             let hr = self.hook_registry.lock().await;
@@ -244,7 +263,8 @@ impl RequestHandler {
 
         // Push user message into session history
         {
-            let mut sm = self.session_manager.lock().await;
+            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let mut sm = sm_arc.lock().await;
             if sm.turn_count() == 0 {
                 sm.push_system(&system_prompt);
             }
@@ -252,16 +272,17 @@ impl RequestHandler {
         }
         // Persist user message to recall memory
         {
-            let session_id = self.session_manager.lock().await.session_id.clone();
+            let (session_id, sm_arc) = self.get_or_create_session(None).await;
             let rm = self.recall_memory.lock().await;
             let _ = rm.store(&session_id, "user_message", message, None);
             // Fire OnMemoryStore hook
             {
                 let hr = self.hook_registry.lock().await;
+                let turn_count = sm_arc.lock().await.turn_count();
                 let ctx = HookContext {
                     point: HookPoint::OnMemoryStore,
                     session_id: session_id.clone(),
-                    turn_count: self.session_manager.lock().await.turn_count(),
+                    turn_count,
                     tool_name: None,
                     tool_input: None,
                     tool_result: None,
@@ -290,8 +311,9 @@ impl RequestHandler {
         let debug_perf_arc = self.debug_perf.clone();
         let self_field_arc = self.self_field.clone();
         let working_dir = std::env::current_dir().unwrap_or_default();
-        let session_id = self.session_manager.lock().await.session_id.clone();
-        let turn_count = self.session_manager.lock().await.turn_count();
+        let (session_id, sm_arc) = self.get_or_create_session(None).await;
+        let turn_count = sm_arc.lock().await.turn_count();
+        drop(sm_arc);
 
         // Clone self_field_arc before the execute_tool closure moves it,
         // so the tokio::spawn block below can also use it for per-turn Dasein injections.
@@ -304,10 +326,10 @@ impl RequestHandler {
             let storm_breaker_arc = storm_breaker_arc.clone();
             let memory_queue_arc = memory_queue_arc.clone();
             let session_approvals_arc = session_approvals_arc.clone();
-            let notify_tx_arc = notify_tx_arc.clone();
+            let _notify_tx_arc = notify_tx_arc.clone();
             let debug_perf = debug_perf_arc.clone();
             let self_field_arc = self_field_arc.clone();
-            let call_id = id.to_string();
+            let _call_id = id.to_string();
             let name = name.to_string();
             let input = input.clone();
             let working_dir = working_dir.clone();
@@ -327,11 +349,8 @@ impl RequestHandler {
                         message: None,
                         metadata: HashMap::new(),
                     };
-                    match hr.execute(&ctx).await {
-                        HookResult::Block { reason } => {
-                            return (format!("Blocked by hook: {}", reason), true);
-                        }
-                        _ => {}
+                    if let HookResult::Block { reason } = hr.execute(&ctx).await {
+                        return (format!("Blocked by hook: {}", reason), true);
                     }
                 }
 
@@ -376,10 +395,7 @@ impl RequestHandler {
                             let _ = sf
                                 .narrate("tool_blocked", &format!("{}: {}", name, reason))
                                 .await;
-                            return (
-                                format!("Tool blocked by SelfField: {}", reason),
-                                true,
-                            );
+                            return (format!("Tool blocked by SelfField: {}", reason), true);
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -461,7 +477,7 @@ impl RequestHandler {
         let notify_tx = self.notify_tx.clone();
 
         // Dynamic model selection based on message content
-        let task_type = self.model_router.classify_message(&message);
+        let task_type = self.model_router.classify_message(message);
         let llm: Arc<dyn LlmProvider> = match self.model_router.create_provider(task_type) {
             Ok(provider) => {
                 info!(task = ?task_type, model = provider.name(), "Model selected by router");
@@ -495,13 +511,10 @@ impl RequestHandler {
 
         // Pre-turn proactive compaction: compact the persisted history before
         // seeding the ReAct loop so the seed is already within token budget.
-        {
-            let mut sm = self.session_manager.lock().await;
-            let _ = sm.compact_if_needed(&*self.llm).await;
-        }
-        // Get existing messages from session manager for context continuity
         let existing_messages = {
-            let sm = self.session_manager.lock().await;
+            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let mut sm = sm_arc.lock().await;
+            let _ = sm.compact_if_needed(&*self.llm).await;
             sm.history().to_vec()
         };
 
@@ -521,13 +534,15 @@ impl RequestHandler {
                 goal: goal_message,
                 sub_goals: vec![],
             });
-            react_loop.run_streaming(
-                &effective_message,
-                &*llm_clone,
-                &tool_defs_clone,
-                execute_tool,
-                &event_sink,
-            ).await
+            react_loop
+                .run_streaming(
+                    &effective_message,
+                    &*llm_clone,
+                    &tool_defs_clone,
+                    execute_tool,
+                    &event_sink,
+                )
+                .await
         });
 
         // Pump approval requests and streaming events while the ReAct loop is running.
@@ -623,21 +638,31 @@ impl RequestHandler {
         // so the TUI transitions out of the streaming state.
         if !had_turn_done {
             if let Some(ref tx) = notify_tx {
-                let _ = tx.send(json!({
-                    "jsonrpc": "2.0",
-                    "method": "event",
-                    "params": {"type": "turn_done"}
-                }).to_string()).await;
+                let _ = tx
+                    .send(
+                        json!({
+                            "jsonrpc": "2.0",
+                            "method": "event",
+                            "params": {"type": "turn_done"}
+                        })
+                        .to_string(),
+                    )
+                    .await;
             }
         }
 
-        let (text, metrics) = text.unwrap_or_else(|e| (format!("error: {e}"), crate::core::react_loop::TurnMetrics {
-            tool_calls_made: 0,
-            tool_errors: 0,
-            elapsed_ms: 0,
-            iterations: 0,
-            completed_normally: false,
-        }));
+        let (text, metrics) = text.unwrap_or_else(|e| {
+            (
+                format!("error: {e}"),
+                crate::core::react_loop::TurnMetrics {
+                    tool_calls_made: 0,
+                    tool_errors: 0,
+                    elapsed_ms: 0,
+                    iterations: 0,
+                    completed_normally: false,
+                },
+            )
+        });
         info!(len = text.len(), "ReAct loop completed");
 
         // Update SessionGateway state with current turn metrics for external debug access.
@@ -667,7 +692,11 @@ impl RequestHandler {
         self.debug_perf.record_turn(0, 0);
 
         // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
-        let msg_preview_end = message.char_indices().nth(60).map(|(i, _)| i).unwrap_or(message.len());
+        let msg_preview_end = message
+            .char_indices()
+            .nth(60)
+            .map(|(i, _)| i)
+            .unwrap_or(message.len());
         self.sf_narrate(
             "chat_completed",
             &format!(
@@ -682,7 +711,8 @@ impl RequestHandler {
         {
             // Gather session info before locking hook_registry
             let (session_id, turn_count) = {
-                let sm = self.session_manager.lock().await;
+                let (_sid, sm_arc) = self.get_or_create_session(None).await;
+                let sm = sm_arc.lock().await;
                 (sm.session_id.clone(), sm.turn_count())
             };
             let hr = self.hook_registry.lock().await;
@@ -704,7 +734,7 @@ impl RequestHandler {
         // Uses a cheap LLM to extract facts from the turn.
         {
             let mut am = self.auto_memory.lock().await;
-            if let Ok(facts) = am.analyze_and_store(&message, &text).await {
+            if let Ok(facts) = am.analyze_and_store(message, &text).await {
                 if !facts.is_empty() {
                     info!(count = facts.len(), "Auto-memory: stored facts");
                 }
@@ -714,7 +744,8 @@ impl RequestHandler {
         // Push tool call messages and assistant response to session manager
         // This ensures the session history has the correct structure for OpenAI API
         let turn = {
-            let mut sm = self.session_manager.lock().await;
+            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let mut sm = sm_arc.lock().await;
 
             // Push tool call messages if any
             if !tool_calls_for_session.is_empty() {
@@ -746,7 +777,7 @@ impl RequestHandler {
         };
         // Persist assistant response to recall memory
         {
-            let session_id = self.session_manager.lock().await.session_id.clone();
+            let session_id = self.get_or_create_session(None).await.0;
             let rm = self.recall_memory.lock().await;
             let _ = rm.store(&session_id, "assistant_message", &text, None);
             // Fire OnMemoryStore hook
@@ -768,7 +799,11 @@ impl RequestHandler {
 
         // Enhanced reflection: analyze question and response quality
         let task_summary = if message.len() > 100 {
-            let end = message.char_indices().nth(100).map(|(i, _)| i).unwrap_or(message.len());
+            let end = message
+                .char_indices()
+                .nth(100)
+                .map(|(i, _)| i)
+                .unwrap_or(message.len());
             format!("{}...", &message[..end])
         } else {
             message.to_string()
@@ -850,7 +885,9 @@ impl RequestHandler {
                         "Running ExperienceSummarizer (periodic trigger)"
                     );
                     if let Ok(recent) = mem.recall_reflections(20) {
-                        if let Some(evo_entry) = cognit::core::ExperienceSummarizer::summarize(&recent) {
+                        if let Some(evo_entry) =
+                            cognit::core::ExperienceSummarizer::summarize(&recent)
+                        {
                             if let Err(e) = mem.store_evolution_log(&evo_entry) {
                                 warn!(error = %e, "Failed to store evolution log");
                             } else {
@@ -866,16 +903,20 @@ impl RequestHandler {
         {
             let success = metrics.completed_normally && !text.starts_with("error:");
             let mut state = self.state.lock().await;
-            if let Err(e) = state.runtime.post_evolution(
-                &task_summary,
-                &text,
-                success,
-                metrics.tool_calls_made,
-                metrics.tool_errors,
-                metrics.elapsed_ms,
-                metrics.iterations,
-                &*self.pipeline,
-            ).await {
+            if let Err(e) = state
+                .runtime
+                .post_evolution(
+                    &task_summary,
+                    &text,
+                    success,
+                    metrics.tool_calls_made,
+                    metrics.tool_errors,
+                    metrics.elapsed_ms,
+                    metrics.iterations,
+                    &*self.pipeline,
+                )
+                .await
+            {
                 warn!(error = %e, "post_evolution failed");
             }
         }

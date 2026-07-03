@@ -1,7 +1,8 @@
+#![allow(deprecated)]
 // crates/aletheon-comm/src/impl/communication_bus.rs
 
 //! CommunicationBus — unified entry point for all communication.
-//! Replaces direct trait calls and Arc<Mutex> references.
+//! Replaces direct trait calls and `Arc<Mutex>` references.
 //!
 //! Phase 1: Wraps InProcessTransport + RequestResponseProtocol + PubSubProtocol.
 //! Future phases will add TransportRouter for automatic cross-process routing.
@@ -11,17 +12,17 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use crate::ipc::envelope::*;
 use crate::events::event::Event;
 use crate::include::event_bus::EventBus;
+use crate::ipc::envelope::*;
 use crate::ipc::protocol::Protocol;
 use crate::ipc::transport::Transport;
 
-use crate::kernel::debug_bus::DebugBusHook;
 use crate::ipc::bus::in_process::InProcessTransport;
 use crate::ipc::bus::kernel_bus::KernelEventBus;
 use crate::ipc::bus::pubsub::PubSubProtocol;
 use crate::ipc::bus::request_response::RequestResponseProtocol;
+use crate::kernel::debug_bus::DebugBusHook;
 
 /// Configuration for CommunicationBus.
 pub struct BusConfig {

@@ -179,7 +179,9 @@ mod tests {
         mock.push_text_response("ok", StopReason::EndTurn);
 
         let msg = Message::user("question");
-        mock.complete(&[msg.clone()], &[]).await.unwrap();
+        mock.complete(std::slice::from_ref(&msg), &[])
+            .await
+            .unwrap();
 
         let log = mock.call_log.lock().unwrap();
         assert_eq!(log.len(), 1);

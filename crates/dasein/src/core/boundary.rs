@@ -3,9 +3,9 @@
 //! Like SELinux type enforcement: rules are evaluated in order,
 //! first match wins. Uses glob patterns for action matching.
 
+use anyhow::Result;
 use base::self_field::RiskLevel;
 use base::{Intent, IntentSource, Verdict};
-use anyhow::Result;
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
 

@@ -14,13 +14,13 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::ipc::envelope::*;
 use crate::events::event::{Event, EventType, Priority};
+use crate::ipc::envelope::*;
 use crate::ipc::transport::{HealthStatus, Transport, TransportHealth, TransportKind};
 
 use crate::events::event_log::EventLog;
-use crate::ipc::bus::kernel_bus::KernelEventBus;
 use crate::events::routing_policy::{RouteAction, RoutingPolicy};
+use crate::ipc::bus::kernel_bus::KernelEventBus;
 
 /// Priority-aware channel wrapper for envelope delivery.
 ///
@@ -113,6 +113,7 @@ struct TransportMetrics {
     /// Total messages sent successfully.
     messages_sent: std::sync::atomic::AtomicU64,
     /// Total messages received.
+    #[allow(dead_code)]
     messages_received: std::sync::atomic::AtomicU64,
     /// Total errors encountered.
     errors: std::sync::atomic::AtomicU64,
@@ -187,10 +188,7 @@ impl InProcessTransport {
     /// Create a new InProcessTransport with cross-process transport bridging.
     ///
     /// The provided transport is passed to KernelEventBus for event bridging.
-    pub fn with_transport(
-        event_bus: Arc<KernelEventBus>,
-        transport: Arc<dyn Transport>,
-    ) -> Self {
+    pub fn with_transport(event_bus: Arc<KernelEventBus>, transport: Arc<dyn Transport>) -> Self {
         let event_log = event_bus.event_log();
         // Create a new KernelEventBus with the transport for bridging
         let bridged_bus = Arc::new(KernelEventBus::with_transport(
@@ -374,7 +372,7 @@ impl Transport for InProcessTransport {
                 HealthStatus::Unhealthy
             },
             latency_ms: self.metrics.avg_latency_us() / 1000, // Convert to ms
-            queue_depth: 0, // Not tracked for in-process
+            queue_depth: 0,                                   // Not tracked for in-process
             error_rate,
         }
     }

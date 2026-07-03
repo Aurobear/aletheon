@@ -15,6 +15,12 @@ struct TurnBreakerState {
     interrupted: bool,
 }
 
+impl Default for LoopCircuitBreaker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LoopCircuitBreaker {
     pub fn new() -> Self {
         Self {

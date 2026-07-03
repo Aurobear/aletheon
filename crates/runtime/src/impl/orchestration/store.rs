@@ -201,10 +201,7 @@ mod tests {
             .collect();
 
         store.save("wf", &sample_graph()).unwrap();
-        let replayed = store
-            .run("wf", &registry, GraphState::new())
-            .await
-            .unwrap();
+        let replayed = store.run("wf", &registry, GraphState::new()).await.unwrap();
         let replayed_trace: Vec<(String, String)> = replayed
             .log
             .iter()

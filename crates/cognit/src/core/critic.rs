@@ -201,15 +201,14 @@ impl Critic {
             String::new(),
         ];
         for (i, c) in critical.iter().enumerate() {
-            let suggestion = c
-                .suggestion
-                .as_deref()
-                .unwrap_or("no suggestion");
+            let suggestion = c.suggestion.as_deref().unwrap_or("no suggestion");
+            let severity_fmt = format!("{:?}", c.severity);
+            let dimension_fmt = format!("{:?}", c.dimension);
             lines.push(format!(
                 "{}. [{}] {}: {} (Suggestion: {})",
                 i + 1,
-                format!("{:?}", c.severity),
-                format!("{:?}", c.dimension),
+                severity_fmt,
+                dimension_fmt,
                 c.description,
                 suggestion
             ));
@@ -472,7 +471,9 @@ mod tests {
             .iter()
             .filter(|c| matches!(c.dimension, CriticismDimension::Risk))
             .collect();
-        assert!(risk_critiques.iter().any(|c| c.severity == CriticismSeverity::Fatal));
+        assert!(risk_critiques
+            .iter()
+            .any(|c| c.severity == CriticismSeverity::Fatal));
     }
 
     #[test]
@@ -494,7 +495,9 @@ mod tests {
             .iter()
             .filter(|c| matches!(c.dimension, CriticismDimension::Efficiency))
             .collect();
-        assert!(eff_critiques.iter().any(|c| c.severity == CriticismSeverity::Warning));
+        assert!(eff_critiques
+            .iter()
+            .any(|c| c.severity == CriticismSeverity::Warning));
     }
 
     #[test]
@@ -529,7 +532,9 @@ mod tests {
             .iter()
             .filter(|c| matches!(c.dimension, CriticismDimension::Reversibility))
             .collect();
-        assert!(rev_critiques.iter().any(|c| c.severity == CriticismSeverity::Warning));
+        assert!(rev_critiques
+            .iter()
+            .any(|c| c.severity == CriticismSeverity::Warning));
     }
 
     #[test]

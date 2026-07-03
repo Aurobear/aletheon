@@ -10,13 +10,13 @@ use super::workflow;
 use std::io;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 /// Default socket path for the aletheond daemon.
-pub const DEFAULT_SOCKET: &str = "/run/aletheond/aletheond.sock";
+pub const DEFAULT_SOCKET: &str = "/run/aletheon/aletheon.sock";
 
 #[derive(Parser)]
 #[command(
@@ -187,9 +187,7 @@ pub enum GoalAction {
         scope: String,
     },
     /// Show one objective (with its sub-goals) by id
-    Show {
-        id: i64,
-    },
+    Show { id: i64 },
     /// List objectives, or update one
     Status {
         #[arg(long)]
@@ -258,7 +256,11 @@ async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
 /// Handle memory subcommands by sending JSON-RPC to the daemon.
 async fn memory_cmd(socket: &PathBuf, action: MemoryAction) -> Result<()> {
     let req = match &action {
-        MemoryAction::Add { text, scope, subject } => serde_json::json!({
+        MemoryAction::Add {
+            text,
+            scope,
+            subject,
+        } => serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "method": "memory.add",
             "params": { "content": text, "scope": scope, "subject": subject }
         }),
@@ -294,7 +296,11 @@ async fn memory_cmd(socket: &PathBuf, action: MemoryAction) -> Result<()> {
         eprintln!("Error: {}", err["message"].as_str().unwrap_or("unknown"));
     } else if let Some(facts) = resp["result"]["facts"].as_array() {
         for f in facts {
-            let pinned = if f["pinned"].as_bool().unwrap_or(false) { " [PINNED]" } else { "" };
+            let pinned = if f["pinned"].as_bool().unwrap_or(false) {
+                " [PINNED]"
+            } else {
+                ""
+            };
             println!(
                 "[{}] ({}/{}){} {}",
                 f["fact_id"].as_i64().unwrap_or(0),
@@ -305,28 +311,53 @@ async fn memory_cmd(socket: &PathBuf, action: MemoryAction) -> Result<()> {
             );
         }
     } else if let Some(fact) = resp["result"]["fact"].as_object() {
-        println!("ID:      {}", fact.get("fact_id").map(|v| v.to_string()).unwrap_or_default());
-        println!("Content: {}", fact.get("content").and_then(|v| v.as_str()).unwrap_or(""));
-        println!("Scope:   {}  Source: {}  Status: {}",
+        println!(
+            "ID:      {}",
+            fact.get("fact_id")
+                .map(|v| v.to_string())
+                .unwrap_or_default()
+        );
+        println!(
+            "Content: {}",
+            fact.get("content").and_then(|v| v.as_str()).unwrap_or("")
+        );
+        println!(
+            "Scope:   {}  Source: {}  Status: {}",
             fact.get("scope").and_then(|v| v.as_str()).unwrap_or("?"),
             fact.get("source").and_then(|v| v.as_str()).unwrap_or("?"),
             fact.get("status").and_then(|v| v.as_str()).unwrap_or("?"),
         );
-        println!("Trust:   {}  Tier: {}  TTL: {}d",
-            fact.get("trust_score").and_then(|v| v.as_f64()).unwrap_or(0.0),
+        println!(
+            "Trust:   {}  Tier: {}  TTL: {}d",
+            fact.get("trust_score")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0),
             fact.get("tier").and_then(|v| v.as_str()).unwrap_or("?"),
             fact.get("ttl_days").and_then(|v| v.as_i64()).unwrap_or(0),
         );
-        println!("Pinned:  {}  Retrievals: {}",
-            fact.get("pinned").and_then(|v| v.as_bool()).unwrap_or(false),
-            fact.get("retrieval_count").and_then(|v| v.as_i64()).unwrap_or(0),
+        println!(
+            "Pinned:  {}  Retrievals: {}",
+            fact.get("pinned")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            fact.get("retrieval_count")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
         );
-        println!("Created: {}  Updated: {}",
-            fact.get("created_at").and_then(|v| v.as_str()).unwrap_or(""),
-            fact.get("updated_at").and_then(|v| v.as_str()).unwrap_or(""),
+        println!(
+            "Created: {}  Updated: {}",
+            fact.get("created_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            fact.get("updated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
         );
     } else {
-        println!("{}", serde_json::to_string_pretty(&resp["result"]).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&resp["result"]).unwrap_or_default()
+        );
     }
     Ok(())
 }
@@ -576,7 +607,10 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
     match result {
         Ok(inner) => inner?,
         Err(_) => {
-            eprintln!("\n⏰ Timeout: no response after {}s", SINGLE_MESSAGE_TIMEOUT_SECS);
+            eprintln!(
+                "\n⏰ Timeout: no response after {}s",
+                SINGLE_MESSAGE_TIMEOUT_SECS
+            );
         }
     }
     Ok(())
@@ -815,7 +849,9 @@ mod workflow_cli_tests {
         let args = Args::try_parse_from(["aletheon", "workflow", "list"]).unwrap();
         assert!(matches!(
             args.command,
-            Some(Command::Workflow { action: workflow::WorkflowAction::List })
+            Some(Command::Workflow {
+                action: workflow::WorkflowAction::List
+            })
         ));
     }
 
@@ -823,7 +859,9 @@ mod workflow_cli_tests {
     fn parses_workflow_run_with_name() {
         let args = Args::try_parse_from(["aletheon", "workflow", "run", "deploy"]).unwrap();
         match args.command {
-            Some(Command::Workflow { action: workflow::WorkflowAction::Run { name } }) => {
+            Some(Command::Workflow {
+                action: workflow::WorkflowAction::Run { name },
+            }) => {
                 assert_eq!(name, "deploy")
             }
             _ => panic!("unexpected parse for workflow run"),
@@ -832,12 +870,12 @@ mod workflow_cli_tests {
 
     #[test]
     fn parses_workflow_save_with_name_and_path() {
-        let args = Args::try_parse_from([
-            "aletheon", "workflow", "save", "mywf", "/tmp/wf.json",
-        ])
-        .unwrap();
+        let args =
+            Args::try_parse_from(["aletheon", "workflow", "save", "mywf", "/tmp/wf.json"]).unwrap();
         match args.command {
-            Some(Command::Workflow { action: workflow::WorkflowAction::Save { name, path } }) => {
+            Some(Command::Workflow {
+                action: workflow::WorkflowAction::Save { name, path },
+            }) => {
                 assert_eq!(name, "mywf");
                 assert_eq!(path, std::path::PathBuf::from("/tmp/wf.json"));
             }
@@ -849,7 +887,9 @@ mod workflow_cli_tests {
     fn parses_workflow_load_with_name() {
         let args = Args::try_parse_from(["aletheon", "workflow", "load", "mywf"]).unwrap();
         match args.command {
-            Some(Command::Workflow { action: workflow::WorkflowAction::Load { name } }) => {
+            Some(Command::Workflow {
+                action: workflow::WorkflowAction::Load { name },
+            }) => {
                 assert_eq!(name, "mywf")
             }
             _ => panic!("unexpected parse for workflow load"),
@@ -860,7 +900,9 @@ mod workflow_cli_tests {
     fn parses_workflow_delete_with_name() {
         let args = Args::try_parse_from(["aletheon", "workflow", "delete", "mywf"]).unwrap();
         match args.command {
-            Some(Command::Workflow { action: workflow::WorkflowAction::Delete { name } }) => {
+            Some(Command::Workflow {
+                action: workflow::WorkflowAction::Delete { name },
+            }) => {
                 assert_eq!(name, "mywf")
             }
             _ => panic!("unexpected parse for workflow delete"),
@@ -872,7 +914,9 @@ mod workflow_cli_tests {
         let args = Args::try_parse_from(["aletheon", "wf", "list"]).unwrap();
         assert!(matches!(
             args.command,
-            Some(Command::Workflow { action: workflow::WorkflowAction::List })
+            Some(Command::Workflow {
+                action: workflow::WorkflowAction::List
+            })
         ));
     }
 }

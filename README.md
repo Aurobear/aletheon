@@ -21,18 +21,23 @@
 - [3. How It Differs](#3-how-it-differs)
 - [4. Architecture Overview](#4-architecture-overview)
 - [5. Crate Architecture](#5-crate-architecture)
-- [6. Linux Platform Design](#6-linux-platform-design)
-- [7. Android Platform Design](#7-android-platform-design)
-- [8. Embedded/Board Design](#8-embeddedboard-design)
-- [9. Security Model](#9-security-model)
-- [10. Cognitive Engine](#10-cognitive-engine)
-- [11. Memory System](#11-memory-system)
-- [12. Perception Layer](#12-perception-layer)
-- [13. Execution Layer](#13-execution-layer)
-- [14. Hybrid Inference](#14-hybrid-inference)
-- [15. Implementation Roadmap](#15-implementation-roadmap)
-- [16. Technology Stack](#16-technology-stack)
-- [17. Open Questions](#17-open-questions)
+- [6. Current Capabilities](#6-current-capabilities)
+  - [6.1 Capability Matrix](#61-capability-matrix)
+  - [6.2 Stable](#62-stable-has-code--tests)
+  - [6.3 Experimental](#63-experimental-exists-behind-feature-flags-or-as-examples)
+  - [6.4 Planned](#64-planned-design-only-no-implementation)
+- [7. Linux Platform Design](#7-linux-platform-design)
+- [8. Android Platform Design](#8-android-platform-design)
+- [9. Embedded/Board Design](#9-embeddedboard-design)
+- [10. Security Model](#10-security-model)
+- [11. Cognitive Engine](#11-cognitive-engine)
+- [12. Memory System](#12-memory-system)
+- [13. Perception Layer](#13-perception-layer)
+- [14. Execution Layer](#14-execution-layer)
+- [15. Hybrid Inference](#15-hybrid-inference)
+- [16. Implementation Roadmap](#16-implementation-roadmap)
+- [17. Technology Stack](#17-technology-stack)
+- [18. Open Questions](#18-open-questions)
 
 ---
 
@@ -110,7 +115,7 @@ Linux has all the building blocks:
 | Memory         |  Context window   |  Persistent store   |
 | Autonomy       |  Human-triggered  |  Event-driven       |
 | Security       |  Platform-managed |  Local policy       |
-| Latency        |  100ms+ network   |  <1ms local         |
+| Latency        |  100ms+ network   |  Local (no network) |
 | Privacy        |  Data to cloud    |  Data stays local   |
 | Dependency     |  Online required  |  Offline capable    |
 | Role           |  "Tool"           |  "Part of the OS"   |
@@ -169,7 +174,7 @@ Aletheon follows a triune architecture inspired by the Nous framework:
                     +------------------------+
 ```
 
-See [docs/Aletheon.md](docs/Aletheon.md) and [docs/arch.md](docs/arch.md) for full architectural details.
+See [docs/design/architecture-overview.md](docs/design/architecture-overview.md) and [docs/architecture/](docs/architecture/) for full architectural details.
 
 ---
 
@@ -205,7 +210,65 @@ cognit           --->  base, corpus, interact        (* see note)
 
 ---
 
-## 6. Linux Platform Design
+## 6. Current Capabilities
+
+### 6.1 Capability Matrix
+
+| Capability | Status | Code Anchor | Tests |
+|---|---|---|---|
+| DaemonHost (Unix socket JSON-RPC) | Stable | `crates/runtime/src/host/mod.rs` | `crates/runtime/tests/` |
+| SystemdHost (sd_notify, watchdog) | Stable | `crates/runtime/src/host/systemd.rs` | `crates/runtime/tests/` |
+| ContainerHost (Docker/Podman) | Experimental | `crates/runtime/src/host/container.rs` | `crates/runtime/tests/` |
+| JSON-RPC server (line-delimited) | Stable | `crates/runtime/src/impl/daemon/server.rs` | `crates/runtime/tests/` |
+| TUI client (aletheon binary) | Stable | `crates/interact/src/tui/` | `crates/interact/src/tui/test_infra.rs` |
+| ReActLoop inference engine | Stable | `crates/runtime/src/core/react_loop/mod.rs` | `crates/runtime/tests/` |
+| Multi-session support | Stable | `crates/runtime/src/impl/daemon/session_manager.rs` | `crates/runtime/tests/` |
+| Health check endpoint | Stable | `crates/runtime/src/impl/daemon/handler/rpc.rs` | `crates/runtime/tests/` |
+| Bash/File/Grep tools | Stable | `crates/corpus/src/tools/tools/` | `crates/corpus/src/tools/` |
+| Provider abstraction (Leju API) | Stable | `crates/cognit/src/impl/provider_registry.rs` | `crates/runtime/tests/` |
+| Session persistence (SQLite) | Stable | `crates/runtime/src/impl/session/store.rs` | `crates/runtime/tests/` |
+| Hook system (lifecycle hooks) | Stable | `crates/runtime/src/impl/hooks/` | `crates/runtime/tests/` |
+| io_uring IPC backend | Experimental | `crates/base/src/ipc/backends/io_uring.rs` | `crates/base/tests/` |
+| Self-evolution loop example | Experimental | `examples/self-evolution-loop/` | `crates/runtime/tests/self_evolution_loop_test.rs` |
+| eBPF kernel probes | Experimental | `crates/base/src/ipc/bus/kernel_bus.rs` | — |
+
+### 6.2 Stable (has code + tests)
+
+These capabilities are implemented, tested, and used in production paths:
+
+- **DaemonHost + SystemdHost** — Daemon runs as a systemd service with sd_notify, watchdog, and SIGTERM graceful shutdown.
+- **JSON-RPC API** — Line-delimited JSON-RPC over Unix socket with concurrent connection handling and streaming notifications (TextDelta, ToolCallStart, etc.).
+- **TUI client** — Terminal UI via `aletheon` binary in `crates/interact/`, connecting to the daemon over Unix socket.
+- **ReActLoop inference** — Sole production inference engine (Legacy Engine removed). Think-Act-Observe loop with streaming, tool execution, circuit breaker, and goal tracking.
+- **Multi-session** — HashMap-based session registry with create/list/switch RPC methods.
+- **Health check** — RPC endpoint returning uptime, active connections, session count, and version.
+- **Bash/File/Grep tools** — Core tool set for filesystem interaction and command execution, with sandbox isolation.
+- **Provider abstraction** — LLM provider registry supporting Leju API (and other OpenAI-compatible endpoints) with model routing.
+- **Session persistence** — SQLite-backed session store with journaling and event logging.
+- **Hook system** — Lifecycle hooks (session distiller, recall injection) with config-based loading.
+
+### 6.3 Experimental (exists behind feature flags or as examples)
+
+These have code but are gated behind features, environment variables, or exist only as examples:
+
+- **ContainerHost** — Docker/Podman container lifecycle management. Code exists at `crates/runtime/src/host/container.rs` with a binary entrypoint `aletheon-container`.
+- **io_uring backend** — High-performance IPC backend using Linux io_uring. Code exists but not yet the default transport.
+- **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/self-evolution-loop/`.
+- **eBPF probes** — Kernel-level perception via eBPF. Partial implementation in `kernel_bus.rs`.
+
+### 6.4 Planned (design only, no implementation)
+
+These are documented in design docs but have no working code:
+
+- **FUSE filesystem** — Userland filesystem interface for agent state (`/mnt/aletheon/`). Design only.
+- **D-Bus IPC** — Desktop Bus integration for system service communication. Design only.
+- **Android target** — AccessibilityService + Foreground Service for Android. Design only.
+- **Embedded/Board targets** — RK3588, Jetson Orin Nano, ESP32. Design only.
+- **Vector database** — Long-term semantic memory with vector storage. Design only.
+
+---
+
+## 7. Linux Platform Design
 
 ### eBPF Perception
 
@@ -261,7 +324,7 @@ WantedBy=multi-user.target
 
 ---
 
-## 7. Android Platform Design
+## 8. Android Platform Design
 
 - AccessibilityService for screen perception
 - NotificationListenerService for notification capture
@@ -271,7 +334,7 @@ WantedBy=multi-user.target
 
 ---
 
-## 8. Embedded/Board Design
+## 9. Embedded/Board Design
 
 | Board | NPU | Use Case | Cost |
 |-------|-----|----------|------|
@@ -281,7 +344,7 @@ WantedBy=multi-user.target
 
 ---
 
-## 9. Security Model
+## 10. Security Model
 
 ```
 L0 - Auto-execute (no notification needed)
@@ -309,7 +372,7 @@ L3 - Forbidden (never execute)
 
 ---
 
-## 10. Cognitive Engine
+## 11. Cognitive Engine
 
 ReAct (Think-Act-Observe) loop with multiple reasoning modes:
 - **ReAct**: Reason -> Act -> Observe -> Reason -> ...
@@ -318,7 +381,7 @@ ReAct (Think-Act-Observe) loop with multiple reasoning modes:
 
 ---
 
-## 11. Memory System
+## 12. Memory System
 
 ```
 L1: Working Memory (RAM, context window)
@@ -335,7 +398,7 @@ L4: Shared Memory (Cloud/NAS, E2E encrypted)
 
 ---
 
-## 12. Perception Layer
+## 13. Perception Layer
 
 Four perception domains:
 - **System**: eBPF, /proc, /sys, journald, inotify, udev
@@ -345,7 +408,7 @@ Four perception domains:
 
 ---
 
-## 13. Execution Layer
+## 14. Execution Layer
 
 Execution sandbox per tool call:
 - bubblewrap namespace -- filesystem isolation
@@ -355,7 +418,7 @@ Execution sandbox per tool call:
 
 ---
 
-## 14. Hybrid Inference
+## 15. Hybrid Inference
 
 ```
 User Request / System Event
@@ -381,7 +444,7 @@ User Request / System Event
 
 ---
 
-## 15. Implementation Roadmap
+## 16. Implementation Roadmap
 
 | Phase | Focus | Status |
 |-------|-------|--------|
@@ -389,13 +452,19 @@ User Request / System Event
 | Phase 2 | Perception layer + memory system | Done |
 | Phase 3 | Sandbox + security + audit | Done |
 | Phase 3.5 | Hook + MCP + Plugin + Agent system | Done |
-| Phase 4 | Streaming + context compression + perception->engine | Done |
-| Phase 5 | eBPF perception (mock) + vector memory + FUSE | Partial |
-| Phase 6 | io_uring IPC + D-Bus + Android + DiGraph | Partial |
+| Phase 4 | Streaming + context compression + perception-to-engine | Done |
+| P0 (stabilization) | cargo check/clippy clean, all tests pass, Legacy Engine removal | Done |
+| P1 (stabilization) | EventBus to CommunicationBus partial migration, large file decomposition | Done |
+| P2 (stabilization) | ReActLoop circuit breaker, goal tracker, reflection, tool exec sub-modules | Done |
+| P3 (stabilization) | Docs alignment with codebase reality | Done |
+| Phase 5 | eBPF perception + vector memory + FUSE | Experimental/Planned |
+| Phase 6 | io_uring IPC + D-Bus + Android + DiGraph | Experimental/Planned |
+
+See [Section 6 (Current Capabilities)](#6-current-capabilities) for detailed Stable/Experimental/Planned breakdown.
 
 ---
 
-## 16. Technology Stack
+## 17. Technology Stack
 
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
@@ -422,7 +491,7 @@ cargo +stable check --workspace
 
 ---
 
-## 17. Open Questions
+## 18. Open Questions
 
 1. Where is the boundary of Agent "self-awareness"?
 2. Privacy vs. capability tradeoff

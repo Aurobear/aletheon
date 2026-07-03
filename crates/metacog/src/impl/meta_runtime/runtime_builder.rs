@@ -3,10 +3,16 @@
 //! Converts a Genome into a RuntimeCandidate that can be tested
 //! and potentially adopted by the morphogenesis pipeline.
 
-use base::{Genome, RuntimeCandidate};
 use anyhow::Result;
+use base::{Genome, RuntimeCandidate};
 
 pub struct RuntimeBuilder;
+
+impl Default for RuntimeBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl RuntimeBuilder {
     pub fn new() -> Self {

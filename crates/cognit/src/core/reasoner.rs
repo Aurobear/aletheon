@@ -116,7 +116,8 @@ impl Reasoner {
         }
 
         let care_section = {
-            let mut parts: Vec<String> = care_weights.iter()
+            let mut parts: Vec<String> = care_weights
+                .iter()
                 .map(|(k, v)| format!("  {}: {:.2}", k, v))
                 .collect();
             parts.sort();
@@ -201,7 +202,9 @@ impl Reasoner {
                 ));
             }
             Stimmung::Gelassenheit => {
-                result.push_str("\n[Stimmung: Gelassenheit — calm openness. Standard reasoning sufficient.]");
+                result.push_str(
+                    "\n[Stimmung: Gelassenheit — calm openness. Standard reasoning sufficient.]",
+                );
             }
         }
 
@@ -218,10 +221,9 @@ impl Reasoner {
             Stimmung::Angst { .. } => ReasoningStrategy::ChainOfThought,
             Stimmung::Verfallenheit { .. } => ReasoningStrategy::ChainOfThought,
             Stimmung::Entschlossenheit { .. } => ReasoningStrategy::ChainOfThought,
-            Stimmung::Langeweile { depth } => match depth {
-                base::dasein::BoredomDepth::Deep => ReasoningStrategy::ChainOfThought,
-                _ => ReasoningStrategy::Direct,
-            },
+            Stimmung::Langeweile {
+                depth: base::dasein::BoredomDepth::Deep,
+            } => ReasoningStrategy::ChainOfThought,
             _ => ReasoningStrategy::Direct,
         }
     }

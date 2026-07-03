@@ -20,7 +20,11 @@ pub struct AdvancedCompressor {
 }
 
 impl AdvancedCompressor {
-    pub fn new(tail_token_budget: usize, target_summary_chars: usize, context_window_tokens: usize) -> Self {
+    pub fn new(
+        tail_token_budget: usize,
+        target_summary_chars: usize,
+        context_window_tokens: usize,
+    ) -> Self {
         Self {
             tail_config: TailProtectionConfig {
                 tail_token_budget,
@@ -143,11 +147,9 @@ impl AdvancedCompressor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::ToolDefinition;
-    use cognit::r#impl::llm::provider::{
-        LlmProvider, LlmResponse, LlmStream, StopReason, Usage,
-    };
     use async_trait::async_trait;
+    use base::ToolDefinition;
+    use cognit::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
 
     #[test]
     fn test_new_compressor() {
@@ -200,13 +202,10 @@ mod tests {
         // Build many large messages to exceed threshold
         let mut messages = vec![Message::user("start")];
         for i in 0..10 {
-            messages.push(Message::assistant(&format!(
-                "response {}",
-                "x".repeat(5000)
-            )));
+            messages.push(Message::assistant(format!("response {}", "x".repeat(5000))));
             messages.push(Message::tool_result(
-                &format!("tool_{}", i),
-                &"y".repeat(5000),
+                format!("tool_{}", i),
+                "y".repeat(5000),
                 false,
             ));
         }
@@ -230,8 +229,8 @@ mod tests {
         let llm = SimpleLlm;
         let mut messages = vec![Message::user("start")];
         for i in 0..8 {
-            messages.push(Message::assistant(&format!("a{i} {}", "x".repeat(400))));
-            messages.push(Message::user(&format!("u{i} {}", "y".repeat(400))));
+            messages.push(Message::assistant(format!("a{i} {}", "x".repeat(400))));
+            messages.push(Message::user(format!("u{i} {}", "y".repeat(400))));
         }
         // maybe_compact would be a no-op (under threshold)
         assert!(!c.maybe_compact(&mut messages.clone(), &llm).await.unwrap());

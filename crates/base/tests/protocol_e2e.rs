@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 // crates/aletheon-comm/tests/protocol_e2e.rs
 
 //! End-to-end tests for the communication protocol stack.

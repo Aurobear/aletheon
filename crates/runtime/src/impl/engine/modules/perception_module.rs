@@ -10,8 +10,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use base::envelope::*;
 use base::envelope::Payload;
+use base::envelope::*;
 use base::CommunicationBus;
 
 use dasein::r#impl::perception::event::{PerceptionEvent, Priority as EventPriority};
@@ -132,7 +132,7 @@ async fn flush_buffer(bus: &CommunicationBus, buffer: &mut Vec<PerceptionEvent>)
     if buffer.is_empty() {
         return;
     }
-    let events: Vec<_> = buffer.drain(..).collect();
+    let events: Vec<_> = std::mem::take(buffer);
     debug!(count = events.len(), "Flushing buffered perception events");
     for event in &events {
         publish_event(bus, event).await;

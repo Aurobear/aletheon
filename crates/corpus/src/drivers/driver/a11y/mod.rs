@@ -18,6 +18,12 @@ pub struct MockA11yDriver {
     pub tree: UiTree,
 }
 
+impl Default for MockA11yDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockA11yDriver {
     pub fn new() -> Self {
         Self {

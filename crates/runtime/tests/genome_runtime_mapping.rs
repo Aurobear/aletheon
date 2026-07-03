@@ -1,3 +1,5 @@
+#![allow(deprecated, clippy::field_reassign_with_default)]
+
 //! Integration tests for Genome -> Runtime behavior mapping.
 
 use runtime::core::config::{GenomeConfig, RuntimeConfig};

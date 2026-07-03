@@ -1,11 +1,11 @@
 //! `aletheon workflow` subcommand — manage persisted workflow DAGs.
 //!
 //! Subcommands:
-//!   save <name> <path>  — save a WorkflowDef JSON file to the daemon store
-//!   load <name>         — load and display a saved workflow
+//!   save `<name>` `<path>`  — save a WorkflowDef JSON file to the daemon store
+//!   load `<name>`         — load and display a saved workflow
 //!   list                — list saved workflow names
-//!   delete <name>       — delete a saved workflow
-//!   run <name>          — run a saved workflow
+//!   delete `<name>`       — delete a saved workflow
+//!   run `<name>`          — run a saved workflow
 
 use anyhow::{Context, Result};
 use clap::Subcommand;

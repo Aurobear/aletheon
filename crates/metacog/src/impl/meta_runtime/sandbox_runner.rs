@@ -3,13 +3,19 @@
 //! Runs cargo test in the workspace and parses the output to produce
 //! a TestResult with pass/fail counts and failure details.
 
-use base::{RuntimeCandidate, TestResult};
 use anyhow::{Context, Result};
+use base::{RuntimeCandidate, TestResult};
 use std::process::Command;
 
 pub struct SandboxRunner {
     /// Working directory for running tests (defaults to current dir).
     work_dir: std::path::PathBuf,
+}
+
+impl Default for SandboxRunner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SandboxRunner {
@@ -103,7 +109,7 @@ impl SandboxRunner {
                     last_lines
                         .iter()
                         .rev()
-                        .map(|s| *s)
+                        .copied()
                         .collect::<Vec<_>>()
                         .join("; ")
                 ));

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::acix::{Aci, GroundingProvider, MockGroundingProvider};
+use anyhow::Result;
 use corpus::drivers::driver::{
     a11y::MockA11yDriver, display::MockDisplayDriver, factory::DriverFactory,
     input::MockInputDriver, ocr::MockOcrDriver,
 };
-use anyhow::Result;
 
 /// Computer operation command handler.
 pub struct ComputerCommands {

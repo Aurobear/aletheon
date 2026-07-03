@@ -44,21 +44,26 @@ pub trait DebugSink: Send + Sync {
     async fn emit(&self, event: DebugEvent);
     fn should_trace(&self, tp: &Tracepoint) -> bool;
     /// Unique identifier for this sink (used for removal).
-    fn sink_id(&self) -> &str { "" }
+    fn sink_id(&self) -> &str {
+        ""
+    }
     /// Per-sink event filter. If None, accepts all events.
-    fn sink_filter(&self) -> Option<&crate::kernel::debug_bus::EventFilter> { None }
+    fn sink_filter(&self) -> Option<&crate::kernel::debug_bus::EventFilter> {
+        None
+    }
 }
 
 /// Macro for declaring static tracepoints.
 #[macro_export]
 macro_rules! tracepoint {
     ($module:ident, $level:ident, $name:expr, $desc:expr) => {
-        static __TRACEPOINT: $crate::kernel::debug::Tracepoint = $crate::kernel::debug::Tracepoint {
-            name: $name,
-            module: stringify!($module),
-            level: $crate::kernel::debug::DebugLevel::$level,
-            description: $desc,
-        };
+        static __TRACEPOINT: $crate::kernel::debug::Tracepoint =
+            $crate::kernel::debug::Tracepoint {
+                name: $name,
+                module: stringify!($module),
+                level: $crate::kernel::debug::DebugLevel::$level,
+                description: $desc,
+            };
     };
 }
 
@@ -67,18 +72,20 @@ macro_rules! tracepoint {
 macro_rules! trace {
     ($sink:expr, $tp:expr, $data:expr) => {
         if $sink.should_trace($tp) {
-            $sink.emit($crate::kernel::debug::DebugEvent {
-                ts: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64,
-                tracepoint: $tp.name.to_string(),
-                module: $tp.module.to_string(),
-                level: $tp.level,
-                data: $data,
-                session_id: None,
-                agent_id: None,
-            }).await;
+            $sink
+                .emit($crate::kernel::debug::DebugEvent {
+                    ts: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                    tracepoint: $tp.name.to_string(),
+                    module: $tp.module.to_string(),
+                    level: $tp.level,
+                    data: $data,
+                    session_id: None,
+                    agent_id: None,
+                })
+                .await;
         }
     };
 }

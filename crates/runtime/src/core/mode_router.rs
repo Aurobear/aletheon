@@ -2,9 +2,9 @@
 //!
 //! Maps CollaborationMode to SelfField verdicts and tool filtering.
 
-use std::collections::HashSet;
+use base::self_field::{Intent, Verdict};
 use base::ui_event::CollaborationMode;
-use base::self_field::{Verdict, Intent};
+use std::collections::HashSet;
 
 /// Routes intents through different behavior paths based on collaboration mode.
 #[derive(Debug)]
@@ -17,7 +17,15 @@ pub struct ModeRouter {
 impl ModeRouter {
     pub fn new() -> Self {
         let mut read_only_tools = HashSet::new();
-        for name in &["glob", "grep", "read", "web_fetch", "web_search", "status", "file_read"] {
+        for name in &[
+            "glob",
+            "grep",
+            "read",
+            "web_fetch",
+            "web_search",
+            "status",
+            "file_read",
+        ] {
             read_only_tools.insert(name.to_string());
         }
         Self {
@@ -57,7 +65,9 @@ impl ModeRouter {
                 if self.read_only_tools.contains(&intent.action) {
                     None // Allow normal flow for read-only tools
                 } else {
-                    Some(Verdict::Deny { reason: "Plan mode: mutations not allowed".to_string() })
+                    Some(Verdict::Deny {
+                        reason: "Plan mode: mutations not allowed".to_string(),
+                    })
                 }
             }
             CollaborationMode::Auto => Some(Verdict::Allow), // Bypass all
@@ -66,7 +76,9 @@ impl ModeRouter {
                 if self.read_only_tools.contains(&intent.action) {
                     None
                 } else {
-                    Some(Verdict::SandboxFirst { reason: "Sandbox mode: side-effects sandboxed".to_string() })
+                    Some(Verdict::SandboxFirst {
+                        reason: "Sandbox mode: side-effects sandboxed".to_string(),
+                    })
                 }
             }
         }

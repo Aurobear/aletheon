@@ -92,9 +92,19 @@ impl MetricsExporter {
     }
 
     /// Record inference attributed to a specific provider (also updates globals).
-    pub fn record_inference_for(&mut self, provider: &str, input_tokens: u64, output_tokens: u64, latency_ms: u64) {
+    pub fn record_inference_for(
+        &mut self,
+        provider: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        latency_ms: u64,
+    ) {
         self.record_inference(input_tokens, output_tokens, latency_ms);
-        let e = self.state.per_provider.entry(provider.to_string()).or_default();
+        let e = self
+            .state
+            .per_provider
+            .entry(provider.to_string())
+            .or_default();
         e.input_tokens += input_tokens;
         e.output_tokens += output_tokens;
     }
@@ -102,7 +112,11 @@ impl MetricsExporter {
     /// Record cache usage attributed to a specific provider (also updates globals).
     pub fn record_cache_usage_for(&mut self, provider: &str, read_tokens: u64, write_tokens: u64) {
         self.record_cache_usage(read_tokens, write_tokens);
-        let e = self.state.per_provider.entry(provider.to_string()).or_default();
+        let e = self
+            .state
+            .per_provider
+            .entry(provider.to_string())
+            .or_default();
         e.cache_read_tokens += read_tokens;
         e.cache_write_tokens += write_tokens;
     }
@@ -242,10 +256,16 @@ mod tests {
         // Cost: only anthropic priced -> 1.0k*$3 + 0.5k*$15 = $10.50
         ex.set_pricing(
             "anthropic",
-            PricingRate { input_per_1k: 3.0, output_per_1k: 15.0 },
+            PricingRate {
+                input_per_1k: 3.0,
+                output_per_1k: 15.0,
+            },
         );
         assert!((ex.cost_for("anthropic").unwrap() - 10.5).abs() < 1e-9);
-        assert!(ex.cost_for("openai").is_none(), "unpriced provider has no cost");
+        assert!(
+            ex.cost_for("openai").is_none(),
+            "unpriced provider has no cost"
+        );
         assert!((ex.total_cost() - 10.5).abs() < 1e-9);
     }
 

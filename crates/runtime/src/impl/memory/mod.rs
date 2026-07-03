@@ -16,12 +16,12 @@ pub mod vector_store;
 pub use archival_memory::{ArchivalEntry, ArchivalMemory, InMemoryArchival, VectorArchival};
 pub use auto_memory::AutoMemory;
 pub use compaction::CompactionManager;
+pub use compressor::AdvancedCompressor;
+pub use core_memory::{CoreMemory, MemoryBlock};
 pub use fact_store::{
     ConsolidationLogRow, EntityNeighbor, EpisodeRow, FactRow, FactStore, FeedbackResult,
     KnowledgeRow,
 };
-pub use compressor::AdvancedCompressor;
-pub use core_memory::{CoreMemory, MemoryBlock};
 pub use memory_pipeline::{
     ExtractedFact, ExtractionResult as MemoryExtractionResult, FactCategory, MemoryPipeline,
     MemoryPipelineConfig,

@@ -142,12 +142,19 @@ impl DebugHandler {
 
     /// Subscribe to debug events. Returns (response_json, subscriber_receiver).
     /// The caller is responsible for draining the receiver to the client socket.
-    pub async fn subscribe(&self, id: &Value, params: &Value) -> (Value, mpsc::Receiver<DebugEvent>) {
+    pub async fn subscribe(
+        &self,
+        id: &Value,
+        params: &Value,
+    ) -> (Value, mpsc::Receiver<DebugEvent>) {
         let filter = parse_event_filter(params);
         let (tx, rx) = mpsc::channel::<DebugEvent>(256);
         let sub_id = uuid::Uuid::new_v4().to_string();
 
-        self.subscribers.lock().await.insert(sub_id.clone(), tx.clone());
+        self.subscribers
+            .lock()
+            .await
+            .insert(sub_id.clone(), tx.clone());
 
         // Register a SubscriberSink with its OWN filter (per-sink filtering)
         let sink = Arc::new(SubscriberSink::new(sub_id.clone(), tx, filter));
@@ -309,10 +316,7 @@ impl DebugHandler {
             }
         };
 
-        let speed = params
-            .get("speed")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1.0);
+        let speed = params.get("speed").and_then(|v| v.as_f64()).unwrap_or(1.0);
 
         let contents = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
@@ -473,7 +477,11 @@ impl DebugHandler {
         let rec_count = self.recordings.lock().await.len();
 
         // Determine overall status
-        let overall = if perf.error_count == 0 { "HEALTHY" } else { "DEGRADED" };
+        let overall = if perf.error_count == 0 {
+            "HEALTHY"
+        } else {
+            "DEGRADED"
+        };
 
         let mut warnings = Vec::new();
         if perf.error_count > 0 {
@@ -711,7 +719,10 @@ impl DebugHandler {
         let (tx, rx) = mpsc::channel::<DebugEvent>(512);
         let sub_id = uuid::Uuid::new_v4().to_string();
 
-        self.subscribers.lock().await.insert(sub_id.clone(), tx.clone());
+        self.subscribers
+            .lock()
+            .await
+            .insert(sub_id.clone(), tx.clone());
         let sink = Arc::new(SubscriberSink::new(sub_id.clone(), tx, filter));
         self.hook.lock().await.add_sink(sink);
 

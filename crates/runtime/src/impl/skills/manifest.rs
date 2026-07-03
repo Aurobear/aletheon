@@ -190,22 +190,13 @@ No tools or hooks.
 
     #[test]
     fn parse_exposure_levels() {
-        assert_eq!(
-            parse_exposure("direct"),
-            base::tool::ToolExposure::Direct
-        );
+        assert_eq!(parse_exposure("direct"), base::tool::ToolExposure::Direct);
         assert_eq!(
             parse_exposure("deferred"),
             base::tool::ToolExposure::Deferred
         );
-        assert_eq!(
-            parse_exposure("hidden"),
-            base::tool::ToolExposure::Hidden
-        );
-        assert_eq!(
-            parse_exposure("unknown"),
-            base::tool::ToolExposure::Direct
-        );
+        assert_eq!(parse_exposure("hidden"), base::tool::ToolExposure::Hidden);
+        assert_eq!(parse_exposure("unknown"), base::tool::ToolExposure::Direct);
     }
 
     #[test]

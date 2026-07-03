@@ -3,15 +3,13 @@
 //! Each test verifies that a specific SelfField verdict type is correctly
 //! dispatched through `process_react()`.
 
+use async_trait::async_trait;
 use base::context::Context;
 use base::message::{ContentBlock, Message};
 use base::self_field::{Intent, RiskLevel, Verdict};
 use base::ToolDefinition;
-use cognit::r#impl::llm::provider::{
-    LlmProvider, LlmResponse, LlmStream, StopReason, Usage,
-};
+use cognit::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
 use runtime::{AletheonRuntime, DefaultVerdictHandler, RuntimeConfig};
-use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -35,11 +33,7 @@ struct SimpleLlm;
 
 #[async_trait]
 impl LlmProvider for SimpleLlm {
-    async fn complete(
-        &self,
-        _m: &[Message],
-        _t: &[ToolDefinition],
-    ) -> anyhow::Result<LlmResponse> {
+    async fn complete(&self, _m: &[Message], _t: &[ToolDefinition]) -> anyhow::Result<LlmResponse> {
         Ok(LlmResponse {
             content: vec![ContentBlock::Text {
                 text: "LLM executed".into(),
@@ -116,7 +110,10 @@ async fn allow_with_modification_proceeds_to_llm() {
         .await
         .unwrap();
 
-    assert_eq!(output, "LLM executed", "AllowWithModification should proceed");
+    assert_eq!(
+        output, "LLM executed",
+        "AllowWithModification should proceed"
+    );
     assert!(metrics.completed_normally);
 }
 
@@ -147,7 +144,10 @@ async fn deny_verdict_short_circuits() {
         output
     );
     assert!(output.contains("forbidden action"));
-    assert!(!metrics.completed_normally, "Deny should not complete normally");
+    assert!(
+        !metrics.completed_normally,
+        "Deny should not complete normally"
+    );
 }
 
 #[tokio::test]

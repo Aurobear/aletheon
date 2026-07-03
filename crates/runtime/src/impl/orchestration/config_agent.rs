@@ -6,8 +6,8 @@ use tracing::info;
 
 use super::agent::{Agent, Capability};
 use base::message::{ContentBlock, Message};
-use corpus::tools::tools::Tool;
 use cognit::r#impl::llm::{LlmProvider, ToolDefinition};
+use corpus::tools::tools::Tool;
 
 /// TOML agent configuration (loaded from `agents/<id>.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,7 +220,6 @@ impl Agent for ConfigAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_parse_agent_toml() {

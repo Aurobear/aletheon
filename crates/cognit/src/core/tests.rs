@@ -1,12 +1,12 @@
 use super::*;
 use async_trait::async_trait;
 use base::body::{Action, ActionResult};
+use base::brain::BrainCoreOps;
 use base::brain::{ExecutionResult, Experience, Observation, ReflectionEntry, ReflectionOutcome};
 use base::context::Context;
 use base::self_field::Intent;
-use base::{IntentSource, SubsystemHealth};
-use base::brain::BrainCoreOps;
 use base::Subsystem;
+use base::{IntentSource, SubsystemHealth};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -322,9 +322,7 @@ fn summarizer_success_strategy_with_common_lessons() {
 // --- Dual-model tests ---
 
 use crate::bridge::dual_model::{DualModelBridge, DualModelConfig, TaskComplexity};
-use crate::r#impl::llm::{
-    LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage,
-};
+use crate::r#impl::llm::{LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage};
 use base::message::Message;
 use std::sync::Arc;
 
@@ -492,7 +490,10 @@ async fn think_with_refinement_stops_on_no_critical() {
         source: IntentSource::User,
         description: "Read a file".to_string(),
     };
-    let (plan, _) = bc.think_with_refinement(&intent, &make_ctx()).await.unwrap();
+    let (plan, _) = bc
+        .think_with_refinement(&intent, &make_ctx())
+        .await
+        .unwrap();
     // Should produce a valid plan
     assert!(!plan.steps.is_empty());
 }

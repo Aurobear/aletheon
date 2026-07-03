@@ -140,12 +140,10 @@ impl HistorySearchOverlay {
             KeyCode::End => self.cursor = self.query.len(),
 
             // Character input (skip control characters)
-            KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.query.insert(self.cursor, c);
-                    self.cursor += c.len_utf8();
-                    self.filter();
-                }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.query.insert(self.cursor, c);
+                self.cursor += c.len_utf8();
+                self.filter();
             }
 
             _ => {}
@@ -350,7 +348,11 @@ impl HistorySearchOverlay {
         if inner.height > 1 {
             let footer_y = inner.y + inner.height - 1;
             let footer_text = " \u{2191}/\u{2193}  Enter select  Esc cancel ";
-            let footer_x = inner.x + (inner.width.saturating_sub(footer_text.chars().count() as u16)) / 2;
+            let footer_x = inner.x
+                + (inner
+                    .width
+                    .saturating_sub(footer_text.chars().count() as u16))
+                    / 2;
             self.render_text(
                 buf,
                 footer_x,
@@ -371,46 +373,35 @@ impl HistorySearchOverlay {
 
         // Top and bottom edges
         for x in x0 + 1..x1 {
-            buf[(x, y0)]
-                .set_symbol("\u{2500}")
-                .set_style(border_style);
-            buf[(x, y1)]
-                .set_symbol("\u{2500}")
-                .set_style(border_style);
+            buf[(x, y0)].set_symbol("\u{2500}").set_style(border_style);
+            buf[(x, y1)].set_symbol("\u{2500}").set_style(border_style);
         }
         // Left and right edges
         for y in y0 + 1..y1 {
-            buf[(x0, y)]
-                .set_symbol("\u{2502}")
-                .set_style(border_style);
-            buf[(x1, y)]
-                .set_symbol("\u{2502}")
-                .set_style(border_style);
+            buf[(x0, y)].set_symbol("\u{2502}").set_style(border_style);
+            buf[(x1, y)].set_symbol("\u{2502}").set_style(border_style);
         }
         // Corners
-        buf[(x0, y0)]
-            .set_symbol("\u{256D}")
-            .set_style(border_style);
-        buf[(x1, y0)]
-            .set_symbol("\u{256E}")
-            .set_style(border_style);
-        buf[(x0, y1)]
-            .set_symbol("\u{2570}")
-            .set_style(border_style);
-        buf[(x1, y1)]
-            .set_symbol("\u{256F}")
-            .set_style(border_style);
+        buf[(x0, y0)].set_symbol("\u{256D}").set_style(border_style);
+        buf[(x1, y0)].set_symbol("\u{256E}").set_style(border_style);
+        buf[(x0, y1)].set_symbol("\u{2570}").set_style(border_style);
+        buf[(x1, y1)].set_symbol("\u{256F}").set_style(border_style);
     }
 
-    fn render_text(&self, buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, text: &str, style: Style) {
+    fn render_text(
+        &self,
+        buf: &mut ratatui::buffer::Buffer,
+        x: u16,
+        y: u16,
+        text: &str,
+        style: Style,
+    ) {
         let mut cx = x;
         for ch in text.chars() {
             if cx >= buf.area.x + buf.area.width {
                 break;
             }
-            buf[(cx, y)]
-                .set_symbol(&ch.to_string())
-                .set_style(style);
+            buf[(cx, y)].set_symbol(&ch.to_string()).set_style(style);
             cx += 1;
         }
     }
@@ -462,7 +453,11 @@ mod tests {
 
     #[test]
     fn test_filter_empty_query_shows_all() {
-        let history = vec!["first".to_string(), "second".to_string(), "third".to_string()];
+        let history = vec![
+            "first".to_string(),
+            "second".to_string(),
+            "third".to_string(),
+        ];
         let overlay = HistorySearchOverlay::new(history);
         assert_eq!(overlay.results.len(), 3);
         // Newest first
@@ -527,10 +522,7 @@ mod tests {
 
     #[test]
     fn test_backspace_refilters() {
-        let history = vec![
-            "git status".to_string(),
-            "ls -la".to_string(),
-        ];
+        let history = vec!["git status".to_string(), "ls -la".to_string()];
         let mut overlay = HistorySearchOverlay::new(history);
         overlay.handle_key(KeyEvent::from(KeyCode::Char('l')));
         assert_eq!(overlay.results.len(), 1); // "ls -la"

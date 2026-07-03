@@ -9,6 +9,12 @@ pub struct MockClipboardDriver {
     content: std::sync::Mutex<String>,
 }
 
+impl Default for MockClipboardDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockClipboardDriver {
     pub fn new() -> Self {
         Self {

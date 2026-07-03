@@ -26,7 +26,7 @@ impl McpManager {
     }
 
     /// Return discovered tools as boxed [`Tool`] trait objects, ready to be
-    /// inserted into a [`ToolRegistry`].
+    /// inserted into a `ToolRegistry`.
     pub fn tool_wrappers(&self) -> Vec<Box<dyn Tool>> {
         self.inner
             .get_all_tools()

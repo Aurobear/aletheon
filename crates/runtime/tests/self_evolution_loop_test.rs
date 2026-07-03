@@ -12,9 +12,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use base::evolution::*;
-use cognit::r#impl::event_handlers::{
-    EvolutionEvent, ObserverConfig, ToolObservationHandler,
-};
+use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
 use cognit::r#impl::llm::provider::{LlmProvider, StopReason};
 use cognit::r#impl::llm::scheduler::LlmScheduler;
 use cognit::testing::mock_llm::MockLlmProvider;
@@ -88,7 +86,7 @@ async fn test_reflection_emitted_after_tool_observation() -> Result<()> {
         "Expected a Reflection event, got: {:?}",
         events
             .iter()
-            .map(|e| std::mem::discriminant(e))
+            .map(std::mem::discriminant)
             .collect::<Vec<_>>(),
     );
 

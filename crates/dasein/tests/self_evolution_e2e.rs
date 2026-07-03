@@ -6,6 +6,7 @@
 
 use base::self_field::RiskLevel;
 use base::{MutationIntent, Verdict};
+use chrono::Duration;
 use dasein::core::attention::AttentionLayer;
 use dasein::core::boundary::{BoundaryAction, BoundaryLayer, BoundaryRule};
 use dasein::core::care::CareLayer;
@@ -14,7 +15,6 @@ use dasein::core::identity::IdentityLayer;
 use dasein::core::mutation::MutationLayer;
 use dasein::core::narrative::NarrativeLayer;
 use dasein::core::store::SelfFieldStore;
-use chrono::Duration;
 use serde_json::json;
 use tempfile::NamedTempFile;
 

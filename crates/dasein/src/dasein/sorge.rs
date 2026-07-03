@@ -1,15 +1,14 @@
+use super::bewandtnis::*;
+use super::care_structure::*;
+use super::negativity::*;
+use super::self_model::*;
+use super::temporality::*;
+use base::dasein::{DaseinEvent, Stimmung};
+use parking_lot::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use parking_lot::RwLock;
 use tokio::sync::mpsc;
-use super::care_structure::*;
-use super::temporality::*;
-use super::bewandtnis::*;
-use super::self_model::*;
-use super::negativity::*;
-use super::types::*;
-use base::dasein::{Stimmung, DaseinEvent};
 
 /// The sorge loop — the continuous heartbeat of Dasein.
 /// Not an event loop, but an existence loop:
@@ -79,30 +78,24 @@ impl SorgeLoop {
                 // 2. Ingest events into temporal stream
                 for event in &events {
                     let content = match event {
-                        DaseinEvent::UserInput { content } => {
-                            ExperientialContent {
-                                semantic: content.clone(),
-                                action: Some("user_interaction".to_string()),
-                                perception: None,
-                                negation: None,
-                            }
-                        }
-                        DaseinEvent::SystemEvent { source, content } => {
-                            ExperientialContent {
-                                semantic: format!("[{}] {}", source, content),
-                                action: None,
-                                perception: Some(content.clone()),
-                                negation: None,
-                            }
-                        }
-                        DaseinEvent::TimerTick => {
-                            ExperientialContent {
-                                semantic: "tick".to_string(),
-                                action: None,
-                                perception: None,
-                                negation: None,
-                            }
-                        }
+                        DaseinEvent::UserInput { content } => ExperientialContent {
+                            semantic: content.clone(),
+                            action: Some("user_interaction".to_string()),
+                            perception: None,
+                            negation: None,
+                        },
+                        DaseinEvent::SystemEvent { source, content } => ExperientialContent {
+                            semantic: format!("[{}] {}", source, content),
+                            action: None,
+                            perception: Some(content.clone()),
+                            negation: None,
+                        },
+                        DaseinEvent::TimerTick => ExperientialContent {
+                            semantic: "tick".to_string(),
+                            action: None,
+                            perception: None,
+                            negation: None,
+                        },
                         _ => continue,
                     };
                     temporality.ingest(content, mood.clone());
@@ -113,12 +106,7 @@ impl SorgeLoop {
                 let temporal_mood = temporality.determine_mood();
                 let care_mood = care.determine_mood();
 
-                let new_mood = Stimmung::synthesize(
-                    world_mood,
-                    temporal_mood,
-                    care_mood,
-                    &mood,
-                );
+                let new_mood = Stimmung::synthesize(world_mood, temporal_mood, care_mood, &mood);
                 if new_mood != mood {
                     mood = new_mood;
                     *shared_mood.write() = mood.clone();

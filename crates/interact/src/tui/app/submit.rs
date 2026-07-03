@@ -3,9 +3,9 @@ use std::io::Write;
 
 use base::ui_event::CollaborationMode;
 
-use super::super::App;
 use super::super::chat::{ChatWidget, Role as ChatRole};
 use super::super::command::{parse_command, BuiltinCommand, CommandType};
+use super::super::App;
 
 pub async fn submit_message(app: &mut App, text: String) {
     // Check for /commands
@@ -209,7 +209,10 @@ pub async fn submit_message(app: &mut App, text: String) {
                         CollaborationMode::Auto,
                         CollaborationMode::Sandbox,
                     ];
-                    let current = modes.iter().position(|m| *m == app.app_state.mode).unwrap_or(0);
+                    let current = modes
+                        .iter()
+                        .position(|m| *m == app.app_state.mode)
+                        .unwrap_or(0);
                     let next = modes[(current + 1) % modes.len()];
                     next.display_name().to_string()
                 } else {
@@ -221,7 +224,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, format!("Switching mode to: {}", mode_str));
+                app.chat
+                    .add_message(ChatRole::System, format!("Switching mode to: {}", mode_str));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Plan)) => {
@@ -236,7 +240,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, format!("Switching to {} mode", target));
+                app.chat
+                    .add_message(ChatRole::System, format!("Switching to {} mode", target));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Approve)) => {
@@ -246,27 +251,37 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, "Plan approved".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "Plan approved".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Agents)) => {
                 if app.sub_agents.is_empty() {
-                    app.chat.add_message(ChatRole::System, "No active sub-agents".to_string());
+                    app.chat
+                        .add_message(ChatRole::System, "No active sub-agents".to_string());
                 } else {
-                    let lines: Vec<String> = app.sub_agents.iter().map(|a| {
-                        format!("  {} - {:?}: {}", a.id, a.status, a.task)
-                    }).collect();
-                    app.chat.add_message(ChatRole::System, format!("Active sub-agents:\n{}", lines.join("\n")));
+                    let lines: Vec<String> = app
+                        .sub_agents
+                        .iter()
+                        .map(|a| format!("  {} - {:?}: {}", a.id, a.status, a.task))
+                        .collect();
+                    app.chat.add_message(
+                        ChatRole::System,
+                        format!("Active sub-agents:\n{}", lines.join("\n")),
+                    );
                 }
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::AgentDetail { id })) => {
                 if let Some(agent) = app.sub_agents.iter().find(|a| a.id == id) {
-                    let msg = format!("Agent: {}\nTask: {}\nStatus: {:?}\nParent: {}",
-                        agent.id, agent.task, agent.status, agent.parent_turn_id);
+                    let msg = format!(
+                        "Agent: {}\nTask: {}\nStatus: {:?}\nParent: {}",
+                        agent.id, agent.task, agent.status, agent.parent_turn_id
+                    );
                     app.chat.add_message(ChatRole::System, msg);
                 } else {
-                    app.chat.add_message(ChatRole::System, format!("Agent not found: {}", id));
+                    app.chat
+                        .add_message(ChatRole::System, format!("Agent not found: {}", id));
                 }
                 return;
             }
@@ -279,18 +294,24 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let _ = app.stream.flush().await;
                 app.streaming = true;
                 app.response_buf.clear();
-                app.chat.add_message(ChatRole::System, "Querying hooks...".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "Querying hooks...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
                 let skills = app.skill_loader.list();
                 if skills.is_empty() {
-                    app.chat.add_message(ChatRole::System, "No skills loaded".to_string());
+                    app.chat
+                        .add_message(ChatRole::System, "No skills loaded".to_string());
                 } else {
-                    let lines: Vec<String> = skills.iter().map(|s| {
-                        format!("  /{} - {}", s.name, s.description)
-                    }).collect();
-                    app.chat.add_message(ChatRole::System, format!("Available skills:\n{}", lines.join("\n")));
+                    let lines: Vec<String> = skills
+                        .iter()
+                        .map(|s| format!("  /{} - {}", s.name, s.description))
+                        .collect();
+                    app.chat.add_message(
+                        ChatRole::System,
+                        format!("Available skills:\n{}", lines.join("\n")),
+                    );
                 }
                 return;
             }
@@ -298,7 +319,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let skill = match app.skill_loader.get(&name) {
                     Some(s) => s.clone(),
                     None => {
-                        app.chat.add_message(ChatRole::System, format!("Unknown skill: /{}", name));
+                        app.chat
+                            .add_message(ChatRole::System, format!("Unknown skill: /{}", name));
                         return;
                     }
                 };
@@ -319,7 +341,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(ChatRole::System, "Interrupt sent".to_string());
+                app.chat
+                    .add_message(ChatRole::System, "Interrupt sent".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Context)) => {
@@ -328,10 +351,12 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let msg = format!(
                     "Context: {}\nMode: {} {}\nModel: {}\nTokens: {}k\nAwareness: {} {}",
                     ctx.display(),
-                    mode.icon(), mode.display_name(),
+                    mode.icon(),
+                    mode.display_name(),
                     app.app_state.model_name,
                     app.app_state.total_tokens / 1000,
-                    app.app_state.awareness.level.icon(), app.app_state.awareness.level.display_name(),
+                    app.app_state.awareness.level.icon(),
+                    app.app_state.awareness.level.display_name(),
                 );
                 app.chat.add_message(ChatRole::System, msg);
                 return;
@@ -398,7 +423,7 @@ pub async fn send_to_daemon(app: &mut App, text: &str) {
 fn base64_encode(input: &str) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let bytes = input.as_bytes();
-    let mut result = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = chunk.get(1).map(|&b| b as u32).unwrap_or(0);

@@ -91,11 +91,7 @@ impl LineageTracker {
                 .open(path)
             {
                 use std::io::Write;
-                let _ = writeln!(
-                    file,
-                    "{}",
-                    serde_json::to_string(entry).unwrap_or_default()
-                );
+                let _ = writeln!(file, "{}", serde_json::to_string(entry).unwrap_or_default());
             }
         }
     }

@@ -2,11 +2,17 @@
 //!
 //! Applies mutation intents to a genome to produce RuntimeCandidates.
 
-use base::{Genome, MutationIntent, RuntimeCandidate};
 use anyhow::Result;
+use base::{Genome, MutationIntent, RuntimeCandidate};
 
 /// Generates candidate runtimes from genome mutations.
 pub struct CandidateGenerator;
+
+impl Default for CandidateGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CandidateGenerator {
     pub fn new() -> Self {

@@ -195,9 +195,7 @@ impl EventJournal {
         limit: Option<usize>,
     ) -> Result<Vec<JournalEntry>> {
         let db = rusqlite::Connection::open(&self.db_path)?;
-        let mut sql = String::from(
-            "SELECT event_json FROM events WHERE session_id = ?1",
-        );
+        let mut sql = String::from("SELECT event_json FROM events WHERE session_id = ?1");
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         params.push(Box::new(self.session_id.clone()));
 
@@ -218,7 +216,8 @@ impl EventJournal {
             sql.push_str(&format!(" LIMIT {}", lim));
         }
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = db.prepare(&sql)?;
         let entries: Vec<JournalEntry> = stmt
             .query_map(param_refs.as_slice(), |row| {
@@ -284,7 +283,9 @@ mod tests {
     #[tokio::test]
     async fn journal_query_by_type() {
         let tmp = tempfile::tempdir().unwrap();
-        let journal = EventJournal::create("test-query", tmp.path()).await.unwrap();
+        let journal = EventJournal::create("test-query", tmp.path())
+            .await
+            .unwrap();
 
         // Append some events
         journal
@@ -312,7 +313,9 @@ mod tests {
         journal.flush().await.unwrap();
 
         // Query user messages
-        let results = journal.query(None, None, Some("user_message"), None).unwrap();
+        let results = journal
+            .query(None, None, Some("user_message"), None)
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert!(matches!(results[0].event, SessionEvent::UserMessage { .. }));
 
@@ -328,7 +331,9 @@ mod tests {
     #[tokio::test]
     async fn journal_query_empty_returns_empty() {
         let tmp = tempfile::tempdir().unwrap();
-        let journal = EventJournal::create("test-empty", tmp.path()).await.unwrap();
+        let journal = EventJournal::create("test-empty", tmp.path())
+            .await
+            .unwrap();
         let results = journal.query(None, None, None, None).unwrap();
         assert!(results.is_empty());
     }
@@ -338,7 +343,7 @@ mod tests {
         // Use a sync path to test db_path behavior
         let tmp = tempfile::tempdir().unwrap();
         let expected = tmp.path().join("test-path.db");
-        let mut db = rusqlite::Connection::open(&expected).unwrap();
+        let db = rusqlite::Connection::open(&expected).unwrap();
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

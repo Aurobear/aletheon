@@ -134,10 +134,7 @@ pub struct MemorySearchTool {
 
 impl MemorySearchTool {
     /// Search CoreMemory blocks by case-insensitive substring matching.
-    fn search_core_memory(
-        core: &CoreMemory,
-        query_lower: &str,
-    ) -> Vec<String> {
+    fn search_core_memory(core: &CoreMemory, query_lower: &str) -> Vec<String> {
         let mut results = Vec::new();
         for (label, block) in core.blocks() {
             if block.value.is_empty() {
@@ -147,7 +144,11 @@ impl MemorySearchTool {
             for line in block.value.lines() {
                 if line.to_lowercase().contains(query_lower) {
                     let preview = if line.len() > 200 {
-                        let end = line.char_indices().nth(200).map(|(i, _)| i).unwrap_or(line.len());
+                        let end = line
+                            .char_indices()
+                            .nth(200)
+                            .map(|(i, _)| i)
+                            .unwrap_or(line.len());
                         format!("{}...", &line[..end])
                     } else {
                         line.to_string()
@@ -160,17 +161,18 @@ impl MemorySearchTool {
     }
 
     /// Search FactStore by FTS5 query, formatted with trust scores.
-    fn search_fact_store(
-        fact_store: &FactStore,
-        query: &str,
-        limit: usize,
-    ) -> Vec<String> {
+    fn search_fact_store(fact_store: &FactStore, query: &str, limit: usize) -> Vec<String> {
         let mut results = Vec::new();
         match fact_store.search_facts(query, None, 0.1, limit) {
             Ok(facts) => {
                 for fact in facts {
                     let preview = if fact.content.len() > 200 {
-                        let end = fact.content.char_indices().nth(200).map(|(i, _)| i).unwrap_or(fact.content.len());
+                        let end = fact
+                            .content
+                            .char_indices()
+                            .nth(200)
+                            .map(|(i, _)| i)
+                            .unwrap_or(fact.content.len());
                         format!("{}...", &fact.content[..end])
                     } else {
                         fact.content.clone()
@@ -245,7 +247,12 @@ impl Tool for MemorySearchTool {
                 Ok(entries) => {
                     for e in entries {
                         let preview = if e.content.len() > 200 {
-                            let end = e.content.char_indices().nth(200).map(|(i, _)| i).unwrap_or(e.content.len());
+                            let end = e
+                                .content
+                                .char_indices()
+                                .nth(200)
+                                .map(|(i, _)| i)
+                                .unwrap_or(e.content.len());
                             format!("{}...", &e.content[..end])
                         } else {
                             e.content.clone()

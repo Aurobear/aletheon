@@ -3,12 +3,12 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use anyhow::{Context, Result};
+use async_trait::async_trait;
 use base::{
     CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
     MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext, SubsystemHealth, Version,
 };
-use anyhow::{Context, Result};
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
@@ -553,6 +553,9 @@ mod tests {
         // unless it's extremely old. At 60 days, recency decays but importance
         // still keeps it competitive.
         let first = &results[0];
-        assert!(first.importance > 0.0, "activation-sorted results should have positive importance");
+        assert!(
+            first.importance > 0.0,
+            "activation-sorted results should have positive importance"
+        );
     }
 }

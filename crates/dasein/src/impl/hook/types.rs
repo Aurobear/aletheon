@@ -82,17 +82,17 @@ pub struct HookMatcher {
 impl HookMatcher {
     pub fn matches(&self, tool: Option<&str>, args: Option<&str>, risk: Option<&str>) -> bool {
         if let Some(ref t) = self.tool {
-            if tool.map_or(true, |t2| t2 != *t) {
+            if tool.is_none_or(|t2| t2 != *t) {
                 return false;
             }
         }
         if let Some(ref pattern) = self.args_pattern {
-            if args.map_or(true, |a| !a.contains(pattern.as_str())) {
+            if args.is_none_or(|a| !a.contains(pattern.as_str())) {
                 return false;
             }
         }
         if let Some(ref r) = self.risk_category {
-            if risk.map_or(true, |r2| r2 != *r) {
+            if risk.is_none_or(|r2| r2 != *r) {
                 return false;
             }
         }

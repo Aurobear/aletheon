@@ -11,11 +11,12 @@
 //! - `shutdown`: release resources
 //! - Object-safe: `serve` takes `self: Box<Self>` for ownership transfer
 
+pub mod container;
+pub mod systemd;
+
 use anyhow::Result;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::core::runtime_core::RuntimeCore;
@@ -23,7 +24,7 @@ use crate::r#impl::daemon::mcp_embedded::McpEmbedded;
 use crate::r#impl::daemon::server;
 
 /// Load .env file (simple KEY=VALUE parser, no shell expansion).
-fn load_dotenv(path: &PathBuf) {
+pub fn load_dotenv(path: &PathBuf) {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => return,
@@ -165,6 +166,11 @@ impl RuntimeHost for DaemonHost {
         });
 
         unix_server.run().await?;
+
+        // ── Interrupt in-flight chat turns ────────────────────────────
+        // Any chat turn that was still running when the accept loop
+        // ended gets its interrupt flag set and per-turn token cancelled.
+        unix_server.handler().cancel_current_turn().await;
 
         // ── Graceful shutdown: stop LlmPulse ────────────────────────
         if let Some((shutdown_tx, handle)) = pulse_handle {

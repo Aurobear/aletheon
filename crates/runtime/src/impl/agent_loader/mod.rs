@@ -46,9 +46,7 @@ pub struct AgentLoader {
 impl AgentLoader {
     /// Create an empty loader.
     pub fn new() -> Self {
-        Self {
-            agents: Vec::new(),
-        }
+        Self { agents: Vec::new() }
     }
 
     /// Scan a directory for `*.md` files and parse their YAML frontmatter.
@@ -64,7 +62,7 @@ impl AgentLoader {
             if path.is_file()
                 && path
                     .extension()
-                    .map_or(false, |ext| ext.eq_ignore_ascii_case("md"))
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
             {
                 let content = fs::read_to_string(&path)
                     .with_context(|| format!("reading {}", path.display()))?;

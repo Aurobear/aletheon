@@ -55,8 +55,7 @@ impl ObjectiveStore {
     ///          4=session_id, 5=scope, 6=created_at, 7=updated_at
     pub(crate) fn map_objective_row(row: &rusqlite::Row) -> rusqlite::Result<Objective> {
         let status_str: String = row.get(2)?;
-        let status = ObjectiveStatus::from_str(&status_str)
-            .unwrap_or(ObjectiveStatus::InProgress);
+        let status = ObjectiveStatus::from_str(&status_str).unwrap_or(ObjectiveStatus::InProgress);
         Ok(Objective {
             objective_id: row.get(0)?,
             description: row.get(1)?,
@@ -101,9 +100,7 @@ mod tests {
         let (store, _tmp) = setup();
         let names: Vec<String> = store
             .db
-            .prepare(
-                "SELECT name FROM sqlite_master WHERE type IN ('table','index') ORDER BY name",
-            )
+            .prepare("SELECT name FROM sqlite_master WHERE type IN ('table','index') ORDER BY name")
             .unwrap()
             .query_map([], |r| r.get(0))
             .unwrap()
@@ -125,12 +122,8 @@ mod tests {
             .create("second objective", None, "s", "session")
             .unwrap();
         // sub-goals of `b`
-        store
-            .create("sub one", Some(b), "s", "session")
-            .unwrap();
-        store
-            .create("sub two", Some(b), "s", "session")
-            .unwrap();
+        store.create("sub one", Some(b), "s", "session").unwrap();
+        store.create("sub two", Some(b), "s", "session").unwrap();
         // finishing `b` makes `a` the active top-level objective
         assert!(store.set_status(b, "completed").unwrap());
         let active = store.active().unwrap().unwrap();
@@ -144,31 +137,19 @@ mod tests {
     #[test]
     fn resume_reconstructs_active_objective_and_subs() {
         let (store, _tmp) = setup();
-        let obj = store
-            .create("resume me", None, "s", "project")
-            .unwrap();
-        store
-            .create("child a", Some(obj), "s", "project")
-            .unwrap();
+        let obj = store.create("resume me", None, "s", "project").unwrap();
+        store.create("child a", Some(obj), "s", "project").unwrap();
         let (active, subs) = store.resume().unwrap().unwrap();
         assert_eq!(active.objective_id, obj);
         assert_eq!(subs.len(), 1);
-        assert_eq!(
-            store.list(None, 50).unwrap().len(),
-            2
-        );
-        assert_eq!(
-            store.list(Some("in_progress"), 50).unwrap().len(),
-            2
-        );
+        assert_eq!(store.list(None, 50).unwrap().len(), 2);
+        assert_eq!(store.list(Some("in_progress"), 50).unwrap().len(), 2);
     }
 
     #[test]
     fn status_filtering() {
         let (store, _tmp) = setup();
-        let id = store
-            .create("complete me", None, "s", "session")
-            .unwrap();
+        let id = store.create("complete me", None, "s", "session").unwrap();
         store.set_status(id, "completed").unwrap();
         let in_progress = store.list(Some("in_progress"), 50).unwrap();
         let completed = store.list(Some("completed"), 50).unwrap();
@@ -180,12 +161,8 @@ mod tests {
     #[test]
     fn parent_cascade_deletes_sub_goals() {
         let (store, _tmp) = setup();
-        let parent = store
-            .create("parent", None, "s", "session")
-            .unwrap();
-        let child = store
-            .create("child", Some(parent), "s", "session")
-            .unwrap();
+        let parent = store.create("parent", None, "s", "session").unwrap();
+        let child = store.create("child", Some(parent), "s", "session").unwrap();
         // Delete parent (using raw SQL since we don't expose delete in MVP API)
         store
             .db

@@ -30,7 +30,7 @@ impl GlobScanner {
 
     /// Scan `base_dir` for files matching any of the given glob patterns.
     ///
-    /// Returns at most [`self.max_results`] paths.  Paths are returned in the
+    /// Returns at most `self.max_results` paths.  Paths are returned in the
     /// order they are discovered.
     pub fn scan(&self, globs: &[String], base_dir: &Path) -> Vec<PathBuf> {
         if globs.is_empty() {

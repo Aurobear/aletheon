@@ -153,7 +153,7 @@ impl SkillExtractor {
 
         for r in reflections {
             // Combine what_failed and learned into a single key for matching
-            let mut items: Vec<String> = r.what_failed.iter().cloned().collect();
+            let mut items: Vec<String> = r.what_failed.to_vec();
             items.extend(r.learned.iter().cloned());
 
             for item in &items {

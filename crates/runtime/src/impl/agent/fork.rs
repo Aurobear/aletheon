@@ -4,12 +4,20 @@
 //! via a `ForkDirective`. It inherits a fraction of the parent's token budget
 //! and publishes an `AgentForkCompleted` event when done.
 
+#![allow(deprecated)]
+// TODO(P1-A): EventBus usage has been migrated to CommunicationBus::publish_event().
+// The remaining allow(deprecated) is for `impl Event for ForkCompletedEvent` because
+// the Event trait itself is deprecated (use Envelope instead). Migrating ForkCompletedEvent
+// to Envelope payload requires changing the downstream subscribers, which is out of scope
+// for this phase.
+
 use std::any::Any;
 use std::sync::Arc;
 
 use base::agent::Pid;
 use base::envelope::Envelope;
-use base::{Event, EventBus, EventType, ForkDirective, ForkResult, Priority};
+use base::CommunicationBus;
+use base::{Event, EventType, ForkDirective, ForkResult, Priority};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -40,7 +48,7 @@ pub struct AgentFork {
     pub state: ForkState,
     pub result: Option<ForkResult>,
     pub inbox: Option<mpsc::Receiver<Envelope>>,
-    bus: Arc<dyn EventBus>,
+    bus: Arc<CommunicationBus>,
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +103,7 @@ impl AgentFork {
         parent_pid: Pid,
         directive: ForkDirective,
         parent_remaining: u32,
-        bus: Arc<dyn EventBus>,
+        bus: Arc<CommunicationBus>,
     ) -> Self {
         let pid = Pid::new();
         let max_tokens = (parent_remaining as f64 * directive.budget_ratio) as u32;
@@ -154,7 +162,7 @@ impl AgentFork {
         let event = Box::new(ForkCompletedEvent { payload });
         let bus = self.bus.clone();
         tokio::spawn(async move {
-            if let Err(e) = bus.publish(event).await {
+            if let Err(e) = bus.publish_event(event).await {
                 tracing::warn!(
                     source = "agent_fork",
                     error = %e,

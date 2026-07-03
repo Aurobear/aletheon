@@ -11,9 +11,10 @@ use super::safe_mode::SafeMode;
 use super::watchdog::WatchdogTimer;
 
 /// Policy to apply when a panic is detected.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum PanicPolicy {
     /// Restart the agent, preserving in-flight state.
+    #[default]
     RestartWithState,
     /// Restart the agent from the last checkpoint (no state carry-over).
     RestartFromCheckpoint,
@@ -21,12 +22,6 @@ pub enum PanicPolicy {
     EnterSafeMode,
     /// Notify upstream and exit cleanly.
     NotifyAndExit,
-}
-
-impl Default for PanicPolicy {
-    fn default() -> Self {
-        Self::RestartWithState
-    }
 }
 
 /// Metadata captured for a single crash event.

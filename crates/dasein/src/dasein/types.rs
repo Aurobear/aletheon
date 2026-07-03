@@ -20,7 +20,9 @@ impl EntityId {
 }
 
 /// Position in the temporal stream — not wall clock, but flow position.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, Default,
+)]
 pub struct TemporalPosition(pub u64);
 
 impl TemporalPosition {
@@ -29,26 +31,15 @@ impl TemporalPosition {
     }
 }
 
-impl Default for TemporalPosition {
-    fn default() -> Self {
-        Self(0)
-    }
-}
-
 /// Affect tone of an experience moment.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub enum AffectTone {
     Positive,
     Negative,
+    #[default]
     Neutral,
     Anxious,
     Curious,
-}
-
-impl Default for AffectTone {
-    fn default() -> Self {
-        AffectTone::Neutral
-    }
 }
 
 /// Involvement — a "for-the-sake-of" relationship.

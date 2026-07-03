@@ -11,9 +11,9 @@
 //!   Engine acts on the result (execute, deny, delay, etc.)
 //!   Engine does NOT delegate control flow to Coordinator permanently.
 
+use anyhow::Result;
 use base::brain::Plan;
 use base::self_field::{RiskLevel, Verdict};
-use anyhow::Result;
 
 /// The outcome of arbitration — what the Engine should do next.
 #[derive(Debug, Clone)]
@@ -156,7 +156,7 @@ impl Coordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::brain::{CostEstimate, PlanStep};
+    use base::brain::CostEstimate;
 
     fn make_plan(risk: RiskLevel, reasoning: &str) -> Plan {
         Plan {

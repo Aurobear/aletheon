@@ -2,8 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::ExecutionResult;
 use crate::Context;
+use crate::ExecutionResult;
 use crate::Intent;
 use crate::{Subsystem, SubsystemHealth};
 

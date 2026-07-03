@@ -186,7 +186,7 @@ fn read_references(dir: &PathBuf) -> Vec<ReferenceFile> {
     let mut refs = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().map_or(true, |ext| ext != "md") {
+        if path.extension().is_none_or(|ext| ext != "md") {
             continue;
         }
         if let Ok(content) = std::fs::read_to_string(&path) {

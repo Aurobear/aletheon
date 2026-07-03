@@ -1,5 +1,5 @@
+pub mod meta_cognition;
 pub mod traits;
 pub mod types;
-pub mod meta_cognition;
 
-pub use meta_cognition::{MetaCognition, EvolutionAction, EvolutionDecision, SystemState};
+pub use meta_cognition::{EvolutionAction, EvolutionDecision, MetaCognition, SystemState};

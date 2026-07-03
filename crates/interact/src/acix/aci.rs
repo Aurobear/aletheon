@@ -1,4 +1,5 @@
 use super::grounding::{GroundingProvider, GroundingResult};
+use anyhow::Result;
 use corpus::drivers::driver::{
     a11y::A11yDriver,
     display::{ClipboardDriver, DisplayDriver, WindowInfo, WindowManager},
@@ -6,7 +7,6 @@ use corpus::drivers::driver::{
     ocr::OcrDriver,
     types::*,
 };
-use anyhow::Result;
 
 /// ACI — Agent-Computer Interface
 ///
@@ -168,14 +168,13 @@ impl Aci {
 
         // 2. Try OCR
         if let Some(ref ocr) = self.ocr {
-            match self.display.screenshot() {
-                Ok(img) => match ocr.recognize(&img) {
+            if let Ok(img) = self.display.screenshot() {
+                match ocr.recognize(&img) {
                     Ok(result) if !result.text.is_empty() => {
                         return Ok(Observation::OcrFallback(result));
                     }
                     _ => {}
-                },
-                _ => {}
+                }
             }
         }
 

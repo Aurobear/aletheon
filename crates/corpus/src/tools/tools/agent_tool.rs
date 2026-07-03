@@ -27,7 +27,11 @@ pub struct AgentDefinition {
 /// Function type for executing a sub-agent turn.
 /// Takes (system_prompt, user_prompt, allowed_tool_names) and returns the response.
 pub type ExecuteSubAgentFn = Arc<
-    dyn Fn(String, String, Vec<String>) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>>
+    dyn Fn(
+            String,
+            String,
+            Vec<String>,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>>
         + Send
         + Sync,
 >;
@@ -168,9 +172,8 @@ mod tests {
             },
         );
 
-        let execute_fn: ExecuteSubAgentFn = Arc::new(|_, _, _| {
-            Box::pin(async { Ok("test response".to_string()) })
-        });
+        let execute_fn: ExecuteSubAgentFn =
+            Arc::new(|_, _, _| Box::pin(async { Ok("test response".to_string()) }));
 
         let tool = AgentTool::new(agents, execute_fn);
         assert_eq!(tool.name(), "agent");

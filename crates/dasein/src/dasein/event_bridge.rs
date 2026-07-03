@@ -4,6 +4,12 @@
 //! This bridge subscribes to the central EventBus and translates
 //! system events into DaseinEvent messages on the DaseinModule's channel.
 
+#![allow(deprecated)]
+// TODO(P1-A): Migrate from EventBus::subscribe to CommunicationBus topic subscriptions.
+// The subscribe pattern (callback-per-EventType) does not map 1:1 to CommunicationBus
+// (topic-based broadcast/mpsc channels). Requires architectural change to convert
+// DaseinEventBridge from callback-based to channel-based event handling.
+// See: crates/runtime/src/impl/daemon/handler/mod.rs for the caller chain.
 use base::event::EventType;
 use base::EventBus;
 use tokio::sync::mpsc;
@@ -67,10 +73,7 @@ impl DaseinEventBridge {
                         .get("memory_type")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
-                    let content = json
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let content = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
                     let _ = tx.try_send(DaseinEvent::SystemEvent {
                         source: "memory".to_string(),
                         content: format!("[{}] {}", memory_type, content),

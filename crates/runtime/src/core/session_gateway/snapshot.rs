@@ -3,11 +3,11 @@
 //! Used by `SessionGateway::handle_snapshot()` to produce a human/Claude-readable
 //! overview of the agent's current "mental state".
 
-use base::kernel::debug_bus::PerfCounter;
-use std::time::Instant;
+use crate::core::config::RuntimeConfig;
 use crate::core::react_loop::circuit_breaker::CircuitBreakerStatus;
 use crate::core::react_loop::goal_tracker::GoalTracker;
-use crate::core::config::RuntimeConfig;
+use base::kernel::debug_bus::PerfCounter;
+use std::time::Instant;
 
 /// Builds a runtime snapshot as markdown.
 ///
@@ -36,7 +36,10 @@ impl SnapshotBuilder {
         let mut md = String::new();
 
         // Header
-        md.push_str(&format!("# Aletheon Runtime Snapshot — session: {}\n\n", session_id));
+        md.push_str(&format!(
+            "# Aletheon Runtime Snapshot — session: {}\n\n",
+            session_id
+        ));
 
         // Goal
         md.push_str("## Current Goal\n");
@@ -47,7 +50,7 @@ impl SnapshotBuilder {
         md.push('\n');
 
         // Plan (sub-goals)
-        if !goal_tracker.current_goal_description().is_none() {
+        if goal_tracker.current_goal_description().is_some() {
             let ctx = goal_tracker.get_context();
             if ctx.contains("Sub-goals") {
                 md.push_str("## Plan\n");
@@ -63,7 +66,10 @@ impl SnapshotBuilder {
 
         // Mode
         md.push_str("## Mode\n");
-        md.push_str(&format!("- {}\n\n", if plan_mode { "plan" } else { "auto" }));
+        md.push_str(&format!(
+            "- {}\n\n",
+            if plan_mode { "plan" } else { "auto" }
+        ));
 
         // Health
         let health_status = match &circuit_breaker_status {
@@ -77,7 +83,10 @@ impl SnapshotBuilder {
         md.push_str("## Health\n");
         md.push_str(&format!("- Status: {}\n", health_status));
         md.push_str(&format!("- Uptime: {}\n", format_duration(uptime)));
-        md.push_str(&format!("- Iteration: {}/{}\n", iteration, config.max_iterations));
+        md.push_str(&format!(
+            "- Iteration: {}/{}\n",
+            iteration, config.max_iterations
+        ));
         md.push_str(&format!("- Consecutive errors: {}\n", consecutive_errors));
 
         match &circuit_breaker_status {
@@ -92,7 +101,7 @@ impl SnapshotBuilder {
         if recent_tool_names.is_empty() {
             md.push_str("- *(no tool calls yet)*\n");
         } else {
-            for (i, name) in recent_tool_names.iter().rev().take(5).enumerate() {
+            for name in recent_tool_names.iter().rev().take(5) {
                 md.push_str(&format!("- [tool] {}\n", name));
             }
         }
@@ -147,10 +156,7 @@ impl SnapshotBuilder {
         // Config summary
         md.push_str("## Active Configuration\n");
         md.push_str(&format!("- Session: {}\n", session_id));
-        md.push_str(&format!(
-            "- Max iterations: {}\n",
-            config.max_iterations
-        ));
+        md.push_str(&format!("- Max iterations: {}\n", config.max_iterations));
         md.push_str(&format!(
             "- Context window: {} tokens\n",
             config.context_window_tokens
@@ -241,11 +247,14 @@ mod tests {
         goal_tracker.add_sub_goal("Find the bugs".into());
         goal_tracker.add_sub_goal("Fix the bugs".into());
 
-        let mut perf = PerfCounter::default();
+        let perf = PerfCounter::default();
         // Simulate some activity
-        perf.tokens_in.store(5000, std::sync::atomic::Ordering::SeqCst);
-        perf.tokens_out.store(3000, std::sync::atomic::Ordering::SeqCst);
-        perf.error_count.store(2, std::sync::atomic::Ordering::SeqCst);
+        perf.tokens_in
+            .store(5000, std::sync::atomic::Ordering::SeqCst);
+        perf.tokens_out
+            .store(3000, std::sync::atomic::Ordering::SeqCst);
+        perf.error_count
+            .store(2, std::sync::atomic::Ordering::SeqCst);
 
         let config = RuntimeConfig::default();
         let md = SnapshotBuilder::build(

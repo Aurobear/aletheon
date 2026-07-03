@@ -261,17 +261,11 @@ pub struct AwarenessGrowthSuggestion {
 #[derive(Debug, Clone)]
 pub enum VerdictAction {
     /// Proceed with execution (possibly with modified intent).
-    Proceed {
-        modified_intent: Option<Intent>,
-    },
+    Proceed { modified_intent: Option<Intent> },
     /// Short-circuit with a response (denial, confirmation-rejected, delay).
-    ShortCircuit {
-        response: String,
-    },
+    ShortCircuit { response: String },
     /// Run in sandbox first, then proceed if test passes.
-    SandboxThenProceed {
-        reason: String,
-    },
+    SandboxThenProceed { reason: String },
 }
 
 /// Handles a SelfField verdict before execution.

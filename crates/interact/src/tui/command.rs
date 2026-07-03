@@ -286,12 +286,18 @@ mod tests {
     #[test]
     fn test_parse_model() {
         let result = parse_command("/model").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Model)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Model)
+        ));
     }
 
     #[test]
     fn test_parse_model_alias() {
         let result = parse_command("/m").unwrap();
-        assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Model)));
+        assert!(matches!(
+            result,
+            CommandType::Builtin(BuiltinCommand::Model)
+        ));
     }
 }

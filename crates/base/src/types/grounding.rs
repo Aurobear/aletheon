@@ -51,11 +51,7 @@ pub trait GroundingProvider: Send + Sync {
 
     /// Locate multiple elements matching the description.
     /// Default implementation returns a single result.
-    async fn locate_all(
-        &self,
-        image: &Image,
-        description: &str,
-    ) -> Result<Vec<GroundingResult>> {
+    async fn locate_all(&self, image: &Image, description: &str) -> Result<Vec<GroundingResult>> {
         let result = self.locate(image, description).await?;
         Ok(vec![result])
     }
@@ -68,11 +64,7 @@ pub struct MockGroundingProvider;
 
 #[async_trait]
 impl GroundingProvider for MockGroundingProvider {
-    async fn locate(
-        &self,
-        image: &Image,
-        _description: &str,
-    ) -> Result<GroundingResult> {
+    async fn locate(&self, image: &Image, _description: &str) -> Result<GroundingResult> {
         Ok(GroundingResult {
             x: (image.width / 2) as i32,
             y: (image.height / 2) as i32,

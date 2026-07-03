@@ -3,10 +3,10 @@
 //! Each TUI connection creates a Session that tracks mode, context state,
 //! and sub-agents. Sessions persist to JSONL for resume.
 
+use base::permission::PermissionMode;
+use base::ui_event::CollaborationMode;
 use std::collections::HashMap;
 use std::time::Instant;
-use base::ui_event::CollaborationMode;
-use base::permission::PermissionMode;
 
 /// Context window usage tracking.
 #[derive(Debug, Clone)]
@@ -77,7 +77,10 @@ impl Session {
         match self.mode {
             CollaborationMode::Plan => {
                 // Only allow read-only tools in plan mode
-                matches!(tool_name, "glob" | "grep" | "read" | "web_fetch" | "web_search" | "status")
+                matches!(
+                    tool_name,
+                    "glob" | "grep" | "read" | "web_fetch" | "web_search" | "status"
+                )
             }
             _ => true,
         }
@@ -111,7 +114,9 @@ impl TuiSessionManager {
 
     /// Get the active session.
     pub fn active(&self) -> Option<&Session> {
-        self.active_session.as_ref().and_then(|id| self.sessions.get(id))
+        self.active_session
+            .as_ref()
+            .and_then(|id| self.sessions.get(id))
     }
 
     /// Get the active session (mutable).

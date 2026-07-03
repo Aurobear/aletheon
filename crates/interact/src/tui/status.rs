@@ -56,7 +56,10 @@ impl StatusBar {
 
     /// Render using AppState (new path).
     pub fn render_widget_from_state<'a>(&'a self, state: &'a AppState) -> StatusBarStateWidget<'a> {
-        StatusBarStateWidget { status: self, state }
+        StatusBarStateWidget {
+            status: self,
+            state,
+        }
     }
 
     /// Legacy render using internal fields (backward compat).
@@ -81,14 +84,21 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
         let y = area.y;
         let bg_color = self.status.caps.color(30, 30, 30);
 
-        let sep = if self.status.caps.unicode { " | " } else { " | " };
+        let sep = if self.status.caps.unicode {
+            " | "
+        } else {
+            " | "
+        };
 
         let mut spans = Vec::new();
 
         // Spinner (when streaming)
         if self.state.streaming {
             let spinner_chars: &[&str] = if self.status.caps.unicode {
-                &["\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}"]
+                &[
+                    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
+                    "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
+                ]
             } else {
                 &["|", "/", "-", "\\", "|", "/", "-", "\\", "|", "/"]
             };
@@ -101,7 +111,11 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
 
         // Mode
         spans.push(Span::styled(
-            format!("{} {}", self.state.mode.icon(), self.state.mode.display_name()),
+            format!(
+                "{} {}",
+                self.state.mode.icon(),
+                self.state.mode.display_name()
+            ),
             Style::default().fg(Color::Cyan),
         ));
 
@@ -116,7 +130,11 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
 
         // Context
-        let ctx_color = if self.state.context.usage_percent() > 80.0 { Color::Red } else { Color::DarkGray };
+        let ctx_color = if self.state.context.usage_percent() > 80.0 {
+            Color::Red
+        } else {
+            Color::DarkGray
+        };
         spans.push(Span::styled(
             self.state.context.display(),
             Style::default().fg(ctx_color),
@@ -148,7 +166,10 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
 
         // Awareness
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
-        spans.push(AwarenessWidget::render_status_bar(&self.state.awareness, &self.status.caps));
+        spans.push(AwarenessWidget::render_status_bar(
+            &self.state.awareness,
+            &self.status.caps,
+        ));
 
         // Elapsed (when waiting)
         if self.state.streaming && self.status.elapsed_secs > 0.1 {
@@ -217,11 +238,13 @@ impl<'a> Widget for StatusBarWidget<'a> {
         // ── Right section: tokens + context % + turn count ──
         let mut right_parts = Vec::new();
         if self.status.total_tokens > 0 {
-            right_parts.push(format!("{} tok", format_with_commas(self.status.total_tokens)));
+            right_parts.push(format!(
+                "{} tok",
+                format_with_commas(self.status.total_tokens)
+            ));
         }
         if self.status.context_window > 0 {
-            let pct = ((self.status.total_tokens as f64)
-                / (self.status.context_window as f64)
+            let pct = ((self.status.total_tokens as f64) / (self.status.context_window as f64)
                 * 100.0)
                 .clamp(0.0, 99.0) as u32;
             right_parts.push(format!("{}% ctx", pct));

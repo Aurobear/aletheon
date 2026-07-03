@@ -1,18 +1,13 @@
 use std::path::PathBuf;
 
 /// Default filesystem access mode for the sandbox root.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FsDefault {
     /// The entire filesystem is read-only; individual roots are made writable.
+    #[default]
     ReadOnly,
     /// The entire filesystem is writable; individual roots are made read-only.
     Writable,
-}
-
-impl Default for FsDefault {
-    fn default() -> Self {
-        Self::ReadOnly
-    }
 }
 
 /// A directory tree that should be writable inside the sandbox,

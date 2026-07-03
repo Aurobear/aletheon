@@ -6,12 +6,12 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use anyhow::{bail, Context, Result};
+use async_trait::async_trait;
 use base::{
     CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
     MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext, SubsystemHealth, Version,
 };
-use anyhow::{bail, Context, Result};
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;

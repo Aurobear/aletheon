@@ -5,6 +5,12 @@ use ratatui::widgets::Widget;
 
 pub struct HelpOverlay;
 
+impl Default for HelpOverlay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HelpOverlay {
     pub fn new() -> Self {
         Self
@@ -17,12 +23,16 @@ impl HelpOverlay {
             crossterm::event::KeyCode::Char('q')
                 | crossterm::event::KeyCode::Esc
                 | crossterm::event::KeyCode::Char('?')
-        ) || (key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+        ) || (key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
             && matches!(key.code, crossterm::event::KeyCode::Char('h')))
     }
 
     pub fn render(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        let header_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        let header_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
         let key_style = Style::default().fg(Color::Green);
         let desc_style = Style::default().fg(Color::White);
         let section_style = Style::default()
@@ -94,10 +104,7 @@ impl HelpOverlay {
         ]));
 
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Slash Commands",
-            section_style,
-        )));
+        lines.push(Line::from(Span::styled("  Slash Commands", section_style)));
         lines.push(Line::from(""));
 
         let commands: &[(&str, &str)] = &[

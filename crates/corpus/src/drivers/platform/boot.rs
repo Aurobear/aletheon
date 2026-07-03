@@ -110,12 +110,12 @@ impl ServiceDependencyGraph {
 
         self.dependencies
             .entry(service.clone())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(dependency.clone());
 
         self.dependents
             .entry(dependency)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(service);
     }
 

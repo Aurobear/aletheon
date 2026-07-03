@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use std::sync::Mutex;
 
-use crate::r#impl::memory::FactStore;
 use super::{Hook, HookEvent, HookResult};
+use crate::r#impl::memory::FactStore;
 
 const MAX_TRANSCRIPT_CHARS: usize = 12_000;
 const MAX_FACTS_PER_SESSION: usize = 5;
@@ -16,9 +16,9 @@ const MAX_FACTS_PER_SESSION: usize = 5;
 #[derive(Debug, Clone)]
 pub struct ExtractedFact {
     pub content: String,
-    pub category: String,   // "user" | "feedback" | "project" | "reference"
+    pub category: String, // "user" | "feedback" | "project" | "reference"
     pub tags: Vec<String>,
-    pub importance: String,  // "high" | "medium" | "low"
+    pub importance: String, // "high" | "medium" | "low"
 }
 
 // ── FactExtractor trait ──────────────────────────────────────────────────────
@@ -95,7 +95,11 @@ impl SessionDistiller {
 
         // Filter out low-importance and cap at MAX_FACTS_PER_SESSION
         let mut written = Vec::new();
-        for fact in facts.iter().filter(|f| f.importance != "low").take(MAX_FACTS_PER_SESSION) {
+        for fact in facts
+            .iter()
+            .filter(|f| f.importance != "low")
+            .take(MAX_FACTS_PER_SESSION)
+        {
             let tags_str = fact.tags.join(",");
             store.add_fact(
                 &fact.content,
@@ -286,9 +290,7 @@ mod tests {
 
         // Verify facts were written to the store
         let store = distiller.fact_store().lock().unwrap();
-        let results = store
-            .search_facts("Rust", None, 0.0, 10)
-            .unwrap();
+        let results = store.search_facts("Rust", None, 0.0, 10).unwrap();
         assert!(!results.is_empty());
     }
 

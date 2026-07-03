@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use base::{ContentBlock, Message, Role};
 use anyhow::Result;
+use base::{ContentBlock, Message, Role};
 use serde::{Deserialize, Serialize};
 
 /// Embedding provider trait

@@ -1,5 +1,5 @@
-use cognit::r#impl::provider_registry::ProviderRegistry;
 use cognit::llm::LlmProvider;
+use cognit::r#impl::provider_registry::ProviderRegistry;
 use std::sync::Arc;
 
 use crate::core::config::ModelRoutingConfig;
@@ -118,12 +118,29 @@ impl ModelRouter {
         // Long messages with reasoning keywords
         if word_count > 50 {
             let reasoning_keywords = [
-                "analyze", "分析", "reason", "推理", "explain why", "解释为什么",
-                "compare", "对比", "evaluate", "评估", "design", "设计",
-                "architecture", "架构", "trade-off", "权衡", "consider",
-                "think step by step", "逐步思考", "chain of thought",
+                "analyze",
+                "分析",
+                "reason",
+                "推理",
+                "explain why",
+                "解释为什么",
+                "compare",
+                "对比",
+                "evaluate",
+                "评估",
+                "design",
+                "设计",
+                "architecture",
+                "架构",
+                "trade-off",
+                "权衡",
+                "consider",
+                "think step by step",
+                "逐步思考",
+                "chain of thought",
             ];
-            let matches = reasoning_keywords.iter()
+            let matches = reasoning_keywords
+                .iter()
                 .filter(|kw| lower.contains(*kw))
                 .count();
             if matches >= 2 {
@@ -147,11 +164,28 @@ impl ModelRouter {
         if word_count <= 5 {
             let lower = message.to_lowercase();
             let simple_patterns = [
-                "hello", "hi", "hey", "thanks", "thank you", "ok", "okay",
-                "yes", "no", "sure", "好的", "谢谢", "你好", "嗨",
-                "再见", "bye", "goodbye",
+                "hello",
+                "hi",
+                "hey",
+                "thanks",
+                "thank you",
+                "ok",
+                "okay",
+                "yes",
+                "no",
+                "sure",
+                "好的",
+                "谢谢",
+                "你好",
+                "嗨",
+                "再见",
+                "bye",
+                "goodbye",
             ];
-            if simple_patterns.iter().any(|p| lower.trim() == *p || lower.trim().starts_with(p)) {
+            if simple_patterns
+                .iter()
+                .any(|p| lower.trim() == *p || lower.trim().starts_with(p))
+            {
                 return true;
             }
         }
@@ -164,6 +198,20 @@ impl ModelRouter {
         self.resolve_spec(task)
             .unwrap_or("(registry default)")
             .to_string()
+    }
+}
+
+// Static version for tests (no self needed)
+#[cfg(test)]
+impl ModelRouter {
+    fn classify_message_static(message: &str) -> TaskType {
+        if Self::has_multimodal_content(message) {
+            return TaskType::Multimodal;
+        }
+        if Self::is_simple_task(message) {
+            return TaskType::Simple;
+        }
+        TaskType::General
     }
 }
 
@@ -211,19 +259,5 @@ mod tests {
             ModelRouter::classify_message_static("帮我写一个 Rust 函数"),
             TaskType::General
         );
-    }
-}
-
-// Static version for tests (no self needed)
-#[cfg(test)]
-impl ModelRouter {
-    fn classify_message_static(message: &str) -> TaskType {
-        if Self::has_multimodal_content(message) {
-            return TaskType::Multimodal;
-        }
-        if Self::is_simple_task(message) {
-            return TaskType::Simple;
-        }
-        TaskType::General
     }
 }

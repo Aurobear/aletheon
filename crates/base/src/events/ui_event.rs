@@ -4,13 +4,14 @@
 //! They extend the existing `Event` enum in `event_sink.rs` with
 //! TUI-specific display events.
 
+use crate::{Critique, Plan};
 use serde::{Deserialize, Serialize};
-use crate::{Plan, Critique};
 
 /// Collaboration mode (user-facing).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum CollaborationMode {
     /// Normal operation: SelfField reviews, approval for destructive tools.
+    #[default]
     Default,
     /// Read-only explore + plan generation. User approves before execution.
     Plan,
@@ -18,12 +19,6 @@ pub enum CollaborationMode {
     Auto,
     /// All side-effect tools run in sandbox first.
     Sandbox,
-}
-
-impl Default for CollaborationMode {
-    fn default() -> Self {
-        Self::Default
-    }
 }
 
 impl CollaborationMode {
@@ -106,7 +101,10 @@ impl AwarenessLevel {
 
     /// Whether this level warrants an inline message in the chat.
     pub fn is_notable(&self) -> bool {
-        matches!(self, Self::Hesitant | Self::Confused | Self::Curious | Self::Evolving)
+        matches!(
+            self,
+            Self::Hesitant | Self::Confused | Self::Curious | Self::Evolving
+        )
     }
 }
 
@@ -215,27 +213,54 @@ pub enum UiEvent {
     /// Thinking/reasoning text delta.
     ThinkingDelta { text: String },
     /// Tool call started.
-    ToolCallStart { id: String, name: String, input: serde_json::Value },
+    ToolCallStart {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
     /// Tool call completed.
-    ToolCallResult { id: String, output: String, success: bool },
+    ToolCallResult {
+        id: String,
+        output: String,
+        success: bool,
+    },
     /// Token/cost usage update.
-    Usage { tokens_in: u32, tokens_out: u32, cache_hit_tokens: u32, cache_miss_tokens: u32 },
+    Usage {
+        tokens_in: u32,
+        tokens_out: u32,
+        cache_hit_tokens: u32,
+        cache_miss_tokens: u32,
+    },
     /// Turn completed.
     TurnDone { response: String, interrupted: bool },
     /// Error occurred.
     Error { message: String },
     /// Approval requested for a tool.
-    ApprovalRequest { id: String, tool: String, input: serde_json::Value, risk: String },
+    ApprovalRequest {
+        id: String,
+        tool: String,
+        input: serde_json::Value,
+        risk: String,
+    },
 
     // === NEW events for the overhaul ===
     /// Brain awareness signal changed.
-    AwarenessChanged { level: AwarenessLevel, context: String },
+    AwarenessChanged {
+        level: AwarenessLevel,
+        context: String,
+    },
     /// Plan mode update (new version or critique).
     PlanUpdate(PlanUpdate),
     /// Sub-agent status changed.
-    SubAgentStatusChanged { agent_id: String, status: SubAgentStatus },
+    SubAgentStatusChanged {
+        agent_id: String,
+        status: SubAgentStatus,
+    },
     /// Collaboration mode changed.
-    ModeChanged { old: CollaborationMode, new: CollaborationMode },
+    ModeChanged {
+        old: CollaborationMode,
+        new: CollaborationMode,
+    },
     /// Evolution progress update.
     EvolutionProgress { stage: EvolutionStage },
     /// Context usage update.
@@ -268,16 +293,31 @@ mod subagent_state_tests {
     fn destroy_is_reachable_from_every_non_terminal_state() {
         use SubAgentState::*;
         for s in [Created, Running, Waiting, Completed, Failed] {
-            assert!(s.can_transition_to(&Destroyed), "{s:?} -> Destroyed must be legal");
+            assert!(
+                s.can_transition_to(&Destroyed),
+                "{s:?} -> Destroyed must be legal"
+            );
         }
     }
 
     #[test]
     fn illegal_transitions_are_rejected() {
         use SubAgentState::*;
-        assert!(!Created.can_transition_to(&Completed), "must run before completing");
-        assert!(!Completed.can_transition_to(&Running), "terminal-forward: no resurrection");
-        assert!(!Destroyed.can_transition_to(&Running), "Destroyed is terminal");
-        assert!(!Destroyed.can_transition_to(&Destroyed), "no self-loop on Destroyed");
+        assert!(
+            !Created.can_transition_to(&Completed),
+            "must run before completing"
+        );
+        assert!(
+            !Completed.can_transition_to(&Running),
+            "terminal-forward: no resurrection"
+        );
+        assert!(
+            !Destroyed.can_transition_to(&Running),
+            "Destroyed is terminal"
+        );
+        assert!(
+            !Destroyed.can_transition_to(&Destroyed),
+            "no self-loop on Destroyed"
+        );
     }
 }

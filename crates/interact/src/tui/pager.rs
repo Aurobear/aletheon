@@ -94,10 +94,7 @@ impl PagerOverlay {
         for row in drawn..content_height as u16 {
             let y = content_area.y + row;
             if y < area.y + area.height.saturating_sub(1) {
-                ratatui::widgets::Clear.render(
-                    Rect::new(area.x, y, area.width, 1),
-                    buf,
-                );
+                ratatui::widgets::Clear.render(Rect::new(area.x, y, area.width, 1), buf);
                 let tilde = Line::from(Span::styled(
                     "~",
                     Style::default().add_modifier(Modifier::DIM),

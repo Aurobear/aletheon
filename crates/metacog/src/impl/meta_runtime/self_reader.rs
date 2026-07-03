@@ -3,6 +3,7 @@
 //! Reads identity, care, and boundary information from the SelfField
 //! and produces a Genome struct.
 
+use anyhow::Result;
 use base::{
     genome::{
         BoundaryRuleSpec, BoundarySpec, CarePriority, CareSpec, IdentitySpec, LifecycleSpec,
@@ -10,7 +11,6 @@ use base::{
     },
     SelfFieldOps, Version,
 };
-use anyhow::Result;
 
 use crate::core::types::Genome as MetaGenome;
 

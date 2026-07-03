@@ -1,3 +1,8 @@
+#![allow(deprecated)]
+// TODO(P1-A): Migrate from dyn Event to Envelope-based logging. The Event trait
+// is deprecated in favor of Envelope. EventLog::record() currently takes &dyn Event -
+// it should be updated to accept &Envelope once all callers use CommunicationBus.
+
 use crate::{EventType, Priority};
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;

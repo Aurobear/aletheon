@@ -4,9 +4,7 @@
 //! periodic intervals, and confidence drops. When triggered, delegates
 //! to `ExperienceSummarizer` to produce an `EvolutionLogEntry`.
 
-use base::brain::{
-    EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger,
-};
+use base::brain::{EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 use chrono::{DateTime, Duration, Utc};
 
 /// Configuration for the evolution trigger.

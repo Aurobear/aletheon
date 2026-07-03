@@ -30,6 +30,12 @@ pub struct ParamRegistry {
     params: RwLock<HashMap<String, ParamEntry>>,
 }
 
+impl Default for ParamRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParamRegistry {
     pub fn new() -> Self {
         Self {
@@ -107,7 +113,8 @@ mod tests {
     #[tokio::test]
     async fn declare_and_get() {
         let reg = ParamRegistry::new();
-        reg.declare("test.value", "test", "A test param", || json!(42)).await;
+        reg.declare("test.value", "test", "A test param", || json!(42))
+            .await;
 
         let val = reg.get("test.value").await;
         assert_eq!(val, Some(json!(42)));
@@ -122,9 +129,12 @@ mod tests {
     #[tokio::test]
     async fn list_all_and_filtered() {
         let reg = ParamRegistry::new();
-        reg.declare("a.x", "a", "param in namespace a", || json!(1)).await;
-        reg.declare("a.y", "a", "another a param", || json!(2)).await;
-        reg.declare("b.z", "b", "param in namespace b", || json!(3)).await;
+        reg.declare("a.x", "a", "param in namespace a", || json!(1))
+            .await;
+        reg.declare("a.y", "a", "another a param", || json!(2))
+            .await;
+        reg.declare("b.z", "b", "param in namespace b", || json!(3))
+            .await;
 
         let all = reg.list(None).await;
         assert_eq!(all.len(), 3);
@@ -171,7 +181,8 @@ mod tests {
         let reg = ParamRegistry::new();
         reg.declare("counter", "test", "incrementing counter", move || {
             json!(c.fetch_add(1, Ordering::SeqCst))
-        }).await;
+        })
+        .await;
 
         assert_eq!(reg.get("counter").await, Some(json!(0)));
         assert_eq!(reg.get("counter").await, Some(json!(1)));

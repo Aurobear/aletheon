@@ -111,8 +111,7 @@ impl RiskClassifier {
 }
 
 fn glob_match(pattern: &str, text: &str) -> bool {
-    if pattern.ends_with('*') {
-        let prefix = &pattern[..pattern.len() - 1];
+    if let Some(prefix) = pattern.strip_suffix('*') {
         text.starts_with(prefix)
     } else {
         pattern == text

@@ -13,9 +13,10 @@ use serde::{Deserialize, Serialize};
 
 /// Heidegger's Befindlichkeit — the way Dasein is always attuned.
 /// Not a psychological state, but the way the world discloses itself to Dasein.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub enum Stimmung {
     /// Calm — no pressing concerns, open to the world
+    #[default]
     Gelassenheit,
     /// Curious — new possibilities discovered
     Neugier { curiosity_about: String },
@@ -48,12 +49,6 @@ pub enum BoredomDepth {
     Deep,
 }
 
-impl Default for Stimmung {
-    fn default() -> Self {
-        Stimmung::Gelassenheit
-    }
-}
-
 impl Stimmung {
     /// Synthesize mood from three sources.
     /// Priority: Angst > Verfallenheit > Entschlossenheit > Neugier > others
@@ -67,9 +62,8 @@ impl Stimmung {
 
         // Priority order — Angst overrides everything
         for candidate in candidates.iter().copied().flatten() {
-            match candidate {
-                Stimmung::Angst { .. } => return candidate.clone(),
-                _ => {}
+            if let Stimmung::Angst { .. } = candidate {
+                return candidate.clone();
             }
         }
         for candidate in candidates.iter().copied().flatten() {
@@ -80,9 +74,8 @@ impl Stimmung {
             }
         }
         for candidate in candidates.iter().copied().flatten() {
-            match candidate {
-                Stimmung::Neugier { .. } => return candidate.clone(),
-                _ => {}
+            if let Stimmung::Neugier { .. } = candidate {
+                return candidate.clone();
             }
         }
         // Default: keep current
@@ -129,19 +122,14 @@ pub struct ProtentionSnapshot {
     pub consequence: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub enum AffectTone {
     Positive,
     Negative,
+    #[default]
     Neutral,
     Anxious,
     Curious,
-}
-
-impl Default for AffectTone {
-    fn default() -> Self {
-        AffectTone::Neutral
-    }
 }
 
 // ═══ Bewandtnisganzheit Snapshot ═══

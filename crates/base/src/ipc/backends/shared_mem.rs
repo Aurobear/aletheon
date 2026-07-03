@@ -162,7 +162,7 @@ impl SharedMemRegion {
         }
 
         // Write length prefix + payload (handles boundary crossing)
-        let len_bytes = (len as u64).to_le_bytes();
+        let len_bytes = len.to_le_bytes();
         let offset = (write_pos % self.size as u64) as usize;
 
         // Write length prefix (8 bytes)
@@ -228,6 +228,12 @@ impl Drop for SharedMemRegion {
 /// Shared memory based IPC backend (implements IpcBackend trait).
 pub struct SharedMemBackend {
     region: tokio::sync::RwLock<Option<SharedMemRegion>>,
+}
+
+impl Default for SharedMemBackend {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SharedMemBackend {

@@ -11,10 +11,10 @@ pub use harness::{
 };
 pub use process::{AgentProcess, AgentProcessConfig, AgentState};
 
-use base::runtime::{AgentInfo, AgentStatus, ScheduledTask};
-use base::subsystem::{Subsystem, SubsystemContext, SubsystemHealth, Version};
 use anyhow::Result;
 use async_trait::async_trait;
+use base::runtime::{AgentInfo, AgentStatus, ScheduledTask};
+use base::subsystem::{Subsystem, SubsystemContext, SubsystemHealth, Version};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 

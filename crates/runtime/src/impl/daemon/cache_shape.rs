@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn compaction_detected() {
-        let mut s1 = CacheShape::compute("sys", &["a"]);
+        let s1 = CacheShape::compute("sys", &["a"]);
         let mut s2 = CacheShape::compute("sys", &["a"]);
         s2.increment_rewrite();
         let comp = s2.compare(&s1);

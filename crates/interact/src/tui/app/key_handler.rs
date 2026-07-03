@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::super::App;
 use super::super::approval_dialog::{ApprovalDialog, DialogDecision};
 use super::super::chat::{ChatWidget, Role as ChatRole};
+use super::super::App;
 use super::submit::submit_message;
 
 use base::ui_event::CollaborationMode;
@@ -41,7 +41,10 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
     // Ctrl+T: open pager overlay
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('t') {
-        app.pager = Some(super::super::pager::PagerOverlay::from_chat(&app.chat, "Transcript"));
+        app.pager = Some(super::super::pager::PagerOverlay::from_chat(
+            &app.chat,
+            "Transcript",
+        ));
         return;
     }
 
@@ -117,11 +120,12 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     // Ctrl+D: quit
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
-        if app.input_buf.is_empty() {
-            app.running = false;
-            return;
-        }
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && key.code == KeyCode::Char('d')
+        && app.input_buf.is_empty()
+    {
+        app.running = false;
+        return;
     }
 
     // Ctrl+L: clear screen
@@ -152,7 +156,10 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             CollaborationMode::Auto,
             CollaborationMode::Sandbox,
         ];
-        let current = modes.iter().position(|m| *m == app.app_state.mode).unwrap_or(0);
+        let current = modes
+            .iter()
+            .position(|m| *m == app.app_state.mode)
+            .unwrap_or(0);
         let next = modes[(current + 1) % modes.len()];
         let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": next.display_name()}});
         let payload = serde_json::to_string(&msg).unwrap_or_default();
@@ -160,7 +167,10 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         let framed = format!("{}\n", payload);
         let _ = app.stream.write_all(framed.as_bytes()).await;
         let _ = app.stream.flush().await;
-        app.chat.add_message(ChatRole::System, format!("Switching to {} mode", next.display_name()));
+        app.chat.add_message(
+            ChatRole::System,
+            format!("Switching to {} mode", next.display_name()),
+        );
         return;
     }
 
@@ -177,7 +187,8 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         let framed = format!("{}\n", payload);
         let _ = app.stream.write_all(framed.as_bytes()).await;
         let _ = app.stream.flush().await;
-        app.chat.add_message(ChatRole::System, format!("Switching to {} mode", target));
+        app.chat
+            .add_message(ChatRole::System, format!("Switching to {} mode", target));
         return;
     }
 
@@ -196,7 +207,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
         let after = &app.input_buf[app.cursor..];
         if let Some(pos) = after.find('\n') {
-            app.cursor = app.cursor + pos;
+            app.cursor += pos;
         } else {
             app.cursor = app.input_buf.len();
         }
@@ -211,7 +222,8 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             let trimmed_end = before.trim_end().len();
             // Find start of word
             let trimmed = &before[..trimmed_end];
-            let word_start = trimmed.rfind(|c: char| c.is_whitespace())
+            let word_start = trimmed
+                .rfind(|c: char| c.is_whitespace())
                 .map(|p| p + 1)
                 .unwrap_or(0);
             app.input_buf.drain(word_start..app.cursor);
@@ -245,18 +257,35 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Tab => {
             if app.input_buf.starts_with('/') {
                 let commands: Vec<String> = vec![
-                    "/help", "/clear", "/copy", "/status", "/reflect",
-                    "/reflect_now", "/evolution", "/genome", "/sessions",
-                    "/resume", "/compact", "/model", "/quit",
-                    "/mode", "/plan", "/approve", "/agents", "/agent",
-                    "/hooks", "/skills", "/skill", "/interrupt", "/context",
+                    "/help",
+                    "/clear",
+                    "/copy",
+                    "/status",
+                    "/reflect",
+                    "/reflect_now",
+                    "/evolution",
+                    "/genome",
+                    "/sessions",
+                    "/resume",
+                    "/compact",
+                    "/model",
+                    "/quit",
+                    "/mode",
+                    "/plan",
+                    "/approve",
+                    "/agents",
+                    "/agent",
+                    "/hooks",
+                    "/skills",
+                    "/skill",
+                    "/interrupt",
+                    "/context",
                 ]
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
                 app.completion.show(&app.input_buf, &commands);
             }
-            return;
         }
 
         // Enter: submit (or accept completion, or Shift+Enter / Alt+Enter: newline)

@@ -231,7 +231,11 @@ impl GoalTracker {
                 .as_ref()
                 .map(|g| g.description.clone())
                 .unwrap_or_default(),
-            sub_goals: self.sub_goals.iter().map(|sg| sg.description.clone()).collect(),
+            sub_goals: self
+                .sub_goals
+                .iter()
+                .map(|sg| sg.description.clone())
+                .collect(),
             success_criteria: self.success_criteria.clone(),
             constraints: self.constraints.clone(),
             metadata: HashMap::new(),
@@ -382,10 +386,7 @@ metadata:
         };
 
         tracker.load_spec(spec, None);
-        assert_eq!(
-            tracker.current_goal_description(),
-            Some("Build API".into())
-        );
+        assert_eq!(tracker.current_goal_description(), Some("Build API".into()));
         assert_eq!(tracker.sub_goals.len(), 2);
         assert_eq!(tracker.success_criteria.len(), 1);
         assert_eq!(tracker.get_constraints().len(), 1);

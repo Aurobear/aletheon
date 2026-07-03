@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::cli::GoalAction;
 use super::rpc_client::send_rpc;
@@ -13,10 +13,7 @@ use super::rpc_client::send_rpc;
 /// Entry point dispatched from `handle_command`.
 pub async fn run(socket: &PathBuf, action: GoalAction) -> Result<()> {
     let req = match &action {
-        GoalAction::Set {
-            description,
-            scope,
-        } => serde_json::json!({
+        GoalAction::Set { description, scope } => serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "goal.set",
@@ -60,9 +57,7 @@ pub async fn run(socket: &PathBuf, action: GoalAction) -> Result<()> {
             obj.get("objective_id")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0),
-            obj.get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?"),
+            obj.get("status").and_then(|v| v.as_str()).unwrap_or("?"),
             obj.get("description")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")

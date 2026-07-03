@@ -89,12 +89,7 @@ impl SessionStore {
     }
 
     /// Save (INSERT OR REPLACE) a session with full data.
-    pub fn save(
-        &self,
-        session_id: &str,
-        messages_json: &str,
-        metadata_json: &str,
-    ) -> Result<()> {
+    pub fn save(&self, session_id: &str, messages_json: &str, metadata_json: &str) -> Result<()> {
         self.db.execute(
             "INSERT INTO sessions (session_id, messages_json, metadata_json, updated_at)
              VALUES (?1, ?2, ?3, datetime('now'))
@@ -145,7 +140,8 @@ impl SessionStore {
             ),
         };
         let mut stmt = self.db.prepare(sql)?;
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let records = stmt
             .query_map(params_ref.as_slice(), |row| {
                 Ok(SessionRecord {
@@ -163,14 +159,12 @@ impl SessionStore {
 
     /// Fork a session: copy messages from source into a new session with `new_id`.
     pub fn fork(&self, source_id: &str, new_id: &str) -> Result<SessionRecord> {
-        let source = self.load(source_id)?.ok_or_else(|| {
-            anyhow::anyhow!("source session not found: {}", source_id)
-        })?;
+        let source = self
+            .load(source_id)?
+            .ok_or_else(|| anyhow::anyhow!("source session not found: {}", source_id))?;
         self.save(new_id, &source.messages_json, &source.metadata_json)?;
         // Return the newly created record
-        Ok(self
-            .load(new_id)?
-            .expect("just inserted; must exist"))
+        Ok(self.load(new_id)?.expect("just inserted; must exist"))
     }
 
     /// Archive a session (set status to "archived").
@@ -220,7 +214,13 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let store = SessionStore::open(&db_path).unwrap();
 
-        store.save("s1", r#"[{"role":"user","content":"hi"}]"#, r#"{"key":"val"}"#).unwrap();
+        store
+            .save(
+                "s1",
+                r#"[{"role":"user","content":"hi"}]"#,
+                r#"{"key":"val"}"#,
+            )
+            .unwrap();
         let rec = store.load("s1").unwrap().expect("should exist");
 
         assert_eq!(rec.session_id, "s1");

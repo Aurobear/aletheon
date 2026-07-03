@@ -4,14 +4,14 @@
 //! retention (fading echo) -> primal impression (now) -> protention (expectation).
 //! Not clock time, but lived time.
 
-use std::collections::VecDeque;
-use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use super::types::*;
 use base::dasein::{
-    AffectTone, Stimmung, RentionalSnapshot, BoredomDepth,
-    TemporalStreamSnapshot, PresentSnapshot, ProtentionSnapshot, AngstSource,
+    AffectTone, AngstSource, BoredomDepth, PresentSnapshot, ProtentionSnapshot, RentionalSnapshot,
+    Stimmung, TemporalStreamSnapshot,
 };
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 // ═══ RetentionField (Task 2.1) ═══
 
@@ -82,19 +82,24 @@ impl RetentionField {
     /// Get recent retentional moments for snapshot.
     pub fn recent_snapshots(&self, max: usize) -> Vec<RentionalSnapshot> {
         let moments = self.moments.read();
-        moments.iter().take(max).map(|m| RentionalSnapshot {
-            semantic: m.content.semantic.clone(),
-            vividness: m.vividness,
-            significance: m.significance,
-            affect: m.affect.clone(),
-            position: m.position.0,
-        }).collect()
+        moments
+            .iter()
+            .take(max)
+            .map(|m| RentionalSnapshot {
+                semantic: m.content.semantic.clone(),
+                vividness: m.vividness,
+                significance: m.significance,
+                affect: m.affect.clone(),
+                position: m.position.0,
+            })
+            .collect()
     }
 
     /// Find moments with high vividness (still "alive" in retention).
     pub fn vivid_moments(&self, threshold: f64) -> Vec<RentionalMoment> {
         let moments = self.moments.read();
-        moments.iter()
+        moments
+            .iter()
             .filter(|m| m.vividness >= threshold)
             .cloned()
             .collect()
@@ -222,15 +227,20 @@ impl ProtentionField {
         }
 
         // Sort by probability descending
-        self.possibilities.sort_by(|a, b|
-            b.probability.partial_cmp(&a.probability).unwrap_or(std::cmp::Ordering::Equal)
-        );
+        self.possibilities.sort_by(|a, b| {
+            b.probability
+                .partial_cmp(&a.probability)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Update certainty as average probability
         if !self.possibilities.is_empty() {
-            self.certainty = self.possibilities.iter()
+            self.certainty = self
+                .possibilities
+                .iter()
                 .map(|p| p.probability)
-                .sum::<f64>() / self.possibilities.len() as f64;
+                .sum::<f64>()
+                / self.possibilities.len() as f64;
         } else {
             self.certainty = 0.0;
         }
@@ -340,7 +350,9 @@ impl PassiveSynthesizer {
             let b = &window[1].content.semantic;
 
             // Check if association already exists
-            if let Some(entry) = self.associations.iter_mut()
+            if let Some(entry) = self
+                .associations
+                .iter_mut()
                 .find(|(x, y, _)| (x == a && y == b) || (x == b && y == a))
             {
                 entry.2 = (entry.2 + 0.1).min(1.0); // strengthen
@@ -351,7 +363,9 @@ impl PassiveSynthesizer {
 
         // Detect habits: repeated patterns
         for moment in recent {
-            if let Some(habit) = self.habits.iter_mut()
+            if let Some(habit) = self
+                .habits
+                .iter_mut()
                 .find(|h| h.pattern == moment.content.semantic)
             {
                 habit.frequency += 1;
@@ -366,7 +380,8 @@ impl PassiveSynthesizer {
         }
 
         // Prune weak associations
-        self.associations.retain(|(_, _, strength)| *strength > 0.05);
+        self.associations
+            .retain(|(_, _, strength)| *strength > 0.05);
 
         // Derive temporal patterns from accumulated state
         let mut patterns = Vec::new();
@@ -471,11 +486,15 @@ impl TemporalStream {
                 perception: present.content.perception.clone(),
                 mood_tone: present.mood_tone.clone(),
             },
-            protentions: protention.possibilities.iter().map(|p| ProtentionSnapshot {
-                content: p.content.clone(),
-                probability: p.probability,
-                consequence: p.consequence.clone(),
-            }).collect(),
+            protentions: protention
+                .possibilities
+                .iter()
+                .map(|p| ProtentionSnapshot {
+                    content: p.content.clone(),
+                    probability: p.probability,
+                    consequence: p.consequence.clone(),
+                })
+                .collect(),
             tempo: tempo.speed,
         }
     }
@@ -598,7 +617,9 @@ mod tests {
                 perception: None,
                 negation: None,
             },
-            Stimmung::Neugier { curiosity_about: "test".to_string() },
+            Stimmung::Neugier {
+                curiosity_about: "test".to_string(),
+            },
         );
 
         let present = stream.present.read();
@@ -615,9 +636,15 @@ mod tests {
 
         assert_eq!(stream.current_position().0, 0);
 
-        stream.ingest(ExperientialContent {
-            semantic: "a".to_string(), action: None, perception: None, negation: None,
-        }, Stimmung::default());
+        stream.ingest(
+            ExperientialContent {
+                semantic: "a".to_string(),
+                action: None,
+                perception: None,
+                negation: None,
+            },
+            Stimmung::default(),
+        );
 
         assert_eq!(stream.current_position().0, 1);
     }
@@ -644,21 +671,33 @@ mod tests {
         let moments = vec![
             RentionalMoment {
                 content: ExperientialContent {
-                    semantic: "code".to_string(), action: None, perception: None, negation: None,
+                    semantic: "code".to_string(),
+                    action: None,
+                    perception: None,
+                    negation: None,
                 },
-                vividness: 0.8, significance: 0.5, affect: AffectTone::Neutral,
-                position: TemporalPosition(1), bewandtnis_links: vec![],
+                vividness: 0.8,
+                significance: 0.5,
+                affect: AffectTone::Neutral,
+                position: TemporalPosition(1),
+                bewandtnis_links: vec![],
             },
             RentionalMoment {
                 content: ExperientialContent {
-                    semantic: "test".to_string(), action: None, perception: None, negation: None,
+                    semantic: "test".to_string(),
+                    action: None,
+                    perception: None,
+                    negation: None,
                 },
-                vividness: 0.7, significance: 0.5, affect: AffectTone::Neutral,
-                position: TemporalPosition(2), bewandtnis_links: vec![],
+                vividness: 0.7,
+                significance: 0.5,
+                affect: AffectTone::Neutral,
+                position: TemporalPosition(2),
+                bewandtnis_links: vec![],
             },
         ];
 
-        let patterns = synth.synthesize(&moments);
+        let _patterns = synth.synthesize(&moments);
 
         assert_eq!(synth.associations.len(), 1);
         assert_eq!(synth.associations[0].0, "code");

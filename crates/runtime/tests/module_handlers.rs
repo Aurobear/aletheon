@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, Mutex};
 
+use base::envelope::Payload;
 use base::envelope::*;
 use base::self_field::{Intent, IntentSource};
-use base::envelope::Payload;
 use base::CommunicationBus;
 
 use runtime::r#impl::engine::modules::body_module::BodyModule;
@@ -23,11 +23,11 @@ use runtime::r#impl::engine::modules::{
 };
 
 use corpus::tools::tools::ToolRegistry;
-use runtime::CoreMemory;
 use dasein::core::{SelfField, SelfFieldConfig};
 use dasein::r#impl::perception::event::{
     EventCategory, EventData, EventSource, PerceptionEvent, Priority as EventPriority,
 };
+use runtime::CoreMemory;
 
 // ---------------------------------------------------------------------------
 // Helpers

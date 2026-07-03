@@ -56,7 +56,10 @@ impl ObjectiveStore {
         if status_filter.is_some() {
             sql.push_str(" WHERE status = ?1");
         }
-        sql.push_str(&format!(" ORDER BY objective_id DESC LIMIT {}", limit as i64));
+        sql.push_str(&format!(
+            " ORDER BY objective_id DESC LIMIT {}",
+            limit as i64
+        ));
         let mut stmt = self.db.prepare(&sql)?;
         let rows = if let Some(s) = status_filter {
             stmt.query_map(rusqlite::params![s], Self::map_objective_row)?
@@ -86,9 +89,8 @@ impl ObjectiveStore {
 
     /// Direct children of an objective, oldest first (milestone order).
     pub fn sub_goals(&self, parent: i64) -> Result<Vec<Objective>> {
-        let sql = format!(
-            "SELECT {COLS} FROM objectives WHERE parent_id = ?1 ORDER BY objective_id ASC"
-        );
+        let sql =
+            format!("SELECT {COLS} FROM objectives WHERE parent_id = ?1 ORDER BY objective_id ASC");
         let mut stmt = self.db.prepare(&sql)?;
         let rows = stmt
             .query_map(rusqlite::params![parent], Self::map_objective_row)?

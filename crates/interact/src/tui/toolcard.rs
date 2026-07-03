@@ -57,14 +57,17 @@ impl ToolCard {
             " ✓".to_string()
         };
 
-        let header = format!("⏺ {}({}){}", self.tool, truncate_args(&self.args, 60), status);
-        let mut lines = vec![
-            Line::from(vec![
-                Span::styled("  ", Style::default()),
-                Span::styled("● ", Style::default().fg(dot_color)),
-                Span::raw(header),
-            ]),
-        ];
+        let header = format!(
+            "⏺ {}({}){}",
+            self.tool,
+            truncate_args(&self.args, 60),
+            status
+        );
+        let mut lines = vec![Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled("● ", Style::default().fg(dot_color)),
+            Span::raw(header),
+        ])];
 
         if self.expanded {
             let output_lines: Vec<&str> = self.output.lines().collect();
@@ -82,7 +85,10 @@ impl ToolCard {
             if output_lines.len() > 200 {
                 lines.push(Line::from(vec![
                     Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("... ({} lines total)", output_lines.len()), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("... ({} lines total)", output_lines.len()),
+                        Style::default().fg(Color::DarkGray),
+                    ),
                 ]));
             }
         } else if self.finished {
@@ -90,7 +96,10 @@ impl ToolCard {
             if line_count > COLLAPSE_LINES {
                 lines.push(Line::from(vec![
                     Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("{} lines, Ctrl+B to expand", line_count), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("{} lines, Ctrl+B to expand", line_count),
+                        Style::default().fg(Color::DarkGray),
+                    ),
                 ]));
             } else {
                 for line in self.output.lines().take(COLLAPSE_LINES) {
@@ -188,7 +197,12 @@ impl ToolCard {
 
     pub fn to_summary(&self) -> String {
         let status = if self.is_error { "failed" } else { "done" };
-        format!("  ⏺ {}({}) — {}", self.tool, truncate_args(&self.args, 40), status)
+        format!(
+            "  ⏺ {}({}) — {}",
+            self.tool,
+            truncate_args(&self.args, 40),
+            status
+        )
     }
 }
 

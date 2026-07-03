@@ -9,9 +9,9 @@ use super::config_agent::ConfigAgent;
 use crate::r#impl::agent::{AgentProcess, AgentProcessConfig};
 use base::agent::Pid;
 use base::evolution::CognitivePulseEvent;
-use base::EventBus;
-use corpus::tools::tools::Tool;
+use base::CommunicationBus;
 use cognit::r#impl::llm::LlmProvider;
+use corpus::tools::tools::Tool;
 
 /// Registry of available agents and running processes.
 pub struct AgentRegistry {
@@ -97,7 +97,7 @@ impl AgentRegistry {
         &self,
         task: String,
         config: AgentProcessConfig,
-        bus: Arc<dyn EventBus>,
+        bus: Arc<CommunicationBus>,
     ) -> anyhow::Result<Pid> {
         let mut process = AgentProcess::new(None, task, bus, config);
         process.start().await?;
@@ -158,7 +158,7 @@ impl AgentRegistry {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "toml") {
+            if path.extension().is_some_and(|e| e == "toml") {
                 let llm = match llm_factory() {
                     Ok(l) => l,
                     Err(e) => {

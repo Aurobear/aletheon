@@ -14,9 +14,7 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 use tracing::warn;
 
-use base::tool::{
-    PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult, ToolResultMeta,
-};
+use base::tool::{PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult, ToolResultMeta};
 
 /// A tool backed by an external executable script.
 #[derive(Debug, Clone)]

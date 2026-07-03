@@ -5,8 +5,8 @@
 //! 2. ABI-level: evaluates RuntimeCandidate after sandbox testing
 
 use crate::core::types::{EvaluationResult, Genome, GenomeMeta};
-use base::{meta::Recommendation, Evaluation, RuntimeCandidate, TestResult};
 use anyhow::Result;
+use base::{meta::Recommendation, Evaluation, RuntimeCandidate, TestResult};
 
 /// Safety threshold below which a candidate is rejected.
 const SAFETY_THRESHOLD: f64 = 0.8;

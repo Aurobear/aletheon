@@ -378,7 +378,7 @@ impl RollbackBackend for FileBackupBackend {
                         .metadata()
                         .await?
                         .modified()
-                        .map(|t| chrono::DateTime::from(t))
+                        .map(chrono::DateTime::from)
                         .unwrap_or_else(|_| Utc::now()),
                 });
             }

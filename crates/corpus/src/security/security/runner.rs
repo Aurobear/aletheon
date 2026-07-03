@@ -105,10 +105,7 @@ impl ToolRunnerWithGuard {
             match eval.decision {
                 ExecDecision::Allow => PolicyVerdict::Allow,
                 ExecDecision::Forbidden => PolicyVerdict::Deny {
-                    reason: format!(
-                        "Policy forbids: {}",
-                        eval.matched_rules.join(", ")
-                    ),
+                    reason: format!("Policy forbids: {}", eval.matched_rules.join(", ")),
                 },
                 ExecDecision::Prompt => PolicyVerdict::RequireApproval {
                     reason: format!(
@@ -332,7 +329,9 @@ impl ToolRunnerWithGuard {
             match tokio::time::timeout(
                 Duration::from_secs(L0_TIMEOUT_SECS),
                 tool.execute(input.clone(), ctx),
-            ).await {
+            )
+            .await
+            {
                 Ok(result) => result,
                 Err(_) => ToolResult {
                     content: format!("Tool '{}' timed out after {}s", tool_name, L0_TIMEOUT_SECS),
@@ -403,6 +402,7 @@ impl ToolRunnerWithGuard {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn log_audit(
         &self,
         tool_name: &str,
@@ -440,13 +440,13 @@ impl ToolRunnerWithGuard {
 mod tests {
     use super::super::approval::{AutoApproveGate, AutoDenyGate};
     use super::*;
+    use async_trait::async_trait;
     use base::execpolicy::{Decision as ExecDecision, PrefixRule as ExecPrefixRule};
     use base::tool::{
         ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult,
         ToolResultMeta,
     };
     use base::{PermissionContext, PermissionMode};
-    use async_trait::async_trait;
 
     /// A dummy L2 tool used to exercise the approval gate path.
     /// Named "bash_exec" so the policy engine's `rm -rf *` rule triggers RequireApproval.
@@ -593,8 +593,8 @@ mod tests {
         policy.add_rule(ExecPrefixRule::new("bash_exec", ExecDecision::Forbidden));
 
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
-            .with_policy(policy);
+        let mut runner =
+            ToolRunnerWithGuard::with_default_sandbox(audit_logger).with_policy(policy);
 
         let tool = DummyL2Tool;
         let result = runner
@@ -603,11 +603,7 @@ mod tests {
         assert!(result.is_err(), "execpolicy should deny bash_exec");
         match result.unwrap_err() {
             ToolError::PolicyDenied { reason } => {
-                assert!(
-                    reason.contains("Policy forbids"),
-                    "reason: {}",
-                    reason
-                );
+                assert!(reason.contains("Policy forbids"), "reason: {}", reason);
             }
             other => panic!("Expected PolicyDenied, got: {:?}", other),
         }

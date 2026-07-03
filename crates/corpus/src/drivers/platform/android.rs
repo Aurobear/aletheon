@@ -19,6 +19,12 @@ use async_trait::async_trait;
 /// Currently a stub. Full implementation requires Android NDK compilation.
 pub struct AndroidPlatformAdapter;
 
+impl Default for AndroidPlatformAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AndroidPlatformAdapter {
     pub fn new() -> Self {
         Self

@@ -115,8 +115,8 @@ mod tests {
         let now = 1700000000;
         // Even with extreme inputs
         let s1 = compute_strength(100.0, 100.0, now - 100 * 86400, now);
-        assert!(s1 >= 0.0 && s1 <= 1.0);
+        assert!((0.0..=1.0).contains(&s1));
         let s2 = compute_strength(0.0, 0.0, now, now);
-        assert!(s2 >= 0.0 && s2 <= 1.0);
+        assert!((0.0..=1.0).contains(&s2));
     }
 }

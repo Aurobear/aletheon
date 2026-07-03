@@ -16,8 +16,8 @@ pub fn capture_output(stdout: &[u8], stderr: &[u8], config: &CaptureConfig) -> C
     let (stdout_capped, stdout_truncated) = cap_bytes(stdout, config.max_stdout_bytes);
     let (stderr_capped, stderr_truncated) = cap_bytes(stderr, config.max_stderr_bytes);
 
-    let stdout_str = String::from_utf8_lossy(&stdout_capped);
-    let stderr_str = String::from_utf8_lossy(&stderr_capped);
+    let stdout_str = String::from_utf8_lossy(stdout_capped);
+    let stderr_str = String::from_utf8_lossy(stderr_capped);
 
     let mut content = String::new();
     if !stdout_str.is_empty() {

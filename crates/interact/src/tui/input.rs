@@ -4,6 +4,12 @@ pub struct CommandHistory {
     max_size: usize,
 }
 
+impl Default for CommandHistory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommandHistory {
     pub fn new() -> Self {
         Self {
@@ -14,8 +20,12 @@ impl CommandHistory {
     }
 
     pub fn push(&mut self, entry: String) {
-        if entry.is_empty() { return; }
-        if self.entries.last() == Some(&entry) { return; }
+        if entry.is_empty() {
+            return;
+        }
+        if self.entries.last() == Some(&entry) {
+            return;
+        }
         self.entries.push(entry);
         if self.entries.len() > self.max_size {
             self.entries.remove(0);

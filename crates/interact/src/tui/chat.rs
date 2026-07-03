@@ -81,7 +81,7 @@ impl ChatMessage {
             }
             Role::Assistant => {
                 let md_lines = markdown::render_markdown(content, content_width as u16, caps);
-                for (_i, md_line) in md_lines.into_iter().enumerate() {
+                for md_line in md_lines.into_iter() {
                     let mut spans = vec![Span::styled(
                         border_prefix.clone(),
                         Style::default().fg(border_color),
@@ -248,10 +248,7 @@ impl ChatWidget {
         for card in active_tools.values() {
             let card_lines = card.render_chat_lines(frame_counter, card.expanded);
             for card_line in card_lines {
-                let mut spans = vec![Span::styled(
-                    border_prefix.to_string(),
-                    border_style,
-                )];
+                let mut spans = vec![Span::styled(border_prefix.to_string(), border_style)];
                 spans.extend(card_line.spans.into_iter().map(|s| {
                     let style = if s.style.fg.is_some() {
                         s.style

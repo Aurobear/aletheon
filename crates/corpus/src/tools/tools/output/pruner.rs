@@ -26,10 +26,10 @@ fn deduplicate_tool_results(messages: &mut [Message]) {
                 content.hash(&mut hasher);
                 let hash = hasher.finish();
 
-                if seen_hashes.contains_key(&hash) {
-                    to_clear.push((msg_idx, block_idx));
+                if let std::collections::hash_map::Entry::Vacant(e) = seen_hashes.entry(hash) {
+                    e.insert(msg_idx);
                 } else {
-                    seen_hashes.insert(hash, msg_idx);
+                    to_clear.push((msg_idx, block_idx));
                 }
             }
         }
@@ -77,6 +77,7 @@ fn truncate_tool_call_args(messages: &mut [Message]) {
             continue;
         }
         for block in msg.content.iter_mut() {
+            #[allow(clippy::collapsible_match)]
             if let ContentBlock::ToolUse { input, .. } = block {
                 if let serde_json::Value::Object(map) = input {
                     for (_key, value) in map.iter_mut() {

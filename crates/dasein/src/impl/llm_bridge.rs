@@ -1,10 +1,10 @@
 //! Thin adapter for SelfField to call LLM without directly depending on aletheon-brain internals.
 //!
-//! Wraps an Arc<dyn LlmProvider> behind a purpose-based interface.
+//! Wraps an `Arc<dyn LlmProvider>` behind a purpose-based interface.
 
+use anyhow::Result;
 use base::message::Message;
 use cognit::llm::provider::{LlmProvider, LlmResponse};
-use anyhow::Result;
 use std::sync::Arc;
 
 pub struct LlmBridge {

@@ -202,7 +202,7 @@ fn parse_facts(response: &str) -> Result<Vec<ExtractedFact>> {
     // Try to extract JSON array from response (handle markdown code blocks).
     let json_str = extract_json_array(response);
 
-    let raw: Vec<serde_json::Value> = serde_json::from_str(&json_str)?;
+    let raw: Vec<serde_json::Value> = serde_json::from_str(json_str)?;
 
     let mut facts = Vec::new();
     for item in raw {
@@ -245,7 +245,10 @@ fn normalize_label(label: &str) -> String {
         "system_state" | "system" | "system_observation" => "system_state".to_string(),
         other => {
             // Default to "learned" for unknown labels.
-            debug!(label = other, "AutoMemory: unknown label, defaulting to 'learned'");
+            debug!(
+                label = other,
+                "AutoMemory: unknown label, defaulting to 'learned'"
+            );
             "learned".to_string()
         }
     }
@@ -413,7 +416,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(facts2.is_empty(), "Duplicate fact should not be stored again");
+        assert!(
+            facts2.is_empty(),
+            "Duplicate fact should not be stored again"
+        );
     }
 
     #[tokio::test]

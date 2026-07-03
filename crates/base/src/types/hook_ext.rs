@@ -3,8 +3,8 @@
 //! Complements the existing `hook.rs` types with configuration
 //! and event bus integration types.
 
-use serde::{Deserialize, Serialize};
 use crate::types::hook::HookPoint;
+use serde::{Deserialize, Serialize};
 
 /// Hook execution type.
 #[derive(Debug, Clone, Serialize, Deserialize)]

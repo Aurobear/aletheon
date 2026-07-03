@@ -34,9 +34,7 @@ impl PermissionAuthority for PermissionManager {
         // Exact port of crates/dasein/src/core/mod.rs:389-398.
         // Behavior-preserving: same threshold (0.8), same comparison
         // (max_level < SystemChange), same message format.
-        if care_score > 0.8
-            && ctx.permissions.max_level() < PermissionLevel::SystemChange
-        {
+        if care_score > 0.8 && ctx.permissions.max_level() < PermissionLevel::SystemChange {
             return Some(Verdict::RequireConfirmation {
                 reason: format!(
                     "High care relevance ({care_score:.2}) with insufficient permissions for action '{action}'"
@@ -60,19 +58,14 @@ mod tests {
         // Default Context has CapabilitySet::new() => max_level = ReadOnly
         let ctx = Context::new("t", PathBuf::from("/tmp"));
         let v = mgr.confirmation_verdict(&ctx, 0.9, "settings.update");
-        assert!(matches!(
-            v,
-            Some(Verdict::RequireConfirmation { .. })
-        ));
+        assert!(matches!(v, Some(Verdict::RequireConfirmation { .. })));
     }
 
     #[test]
     fn low_care_no_opinion() {
         let mgr = PermissionManager::new();
         let ctx = Context::new("t", PathBuf::from("/tmp"));
-        assert!(mgr
-            .confirmation_verdict(&ctx, 0.1, "ls")
-            .is_none());
+        assert!(mgr.confirmation_verdict(&ctx, 0.1, "ls").is_none());
     }
 
     #[test]

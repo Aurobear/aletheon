@@ -161,10 +161,7 @@ pub fn merge_intent_deep(intent: &Intent, modifications: &Modifications) -> Inte
     if !modifications.parameter_merges.is_empty() {
         if let Some(existing) = merged.parameters.as_object_mut() {
             for (key, value) in &modifications.parameter_merges {
-                deep_merge_value(
-                    existing.entry(key).or_insert(Value::Null),
-                    value,
-                );
+                deep_merge_value(existing.entry(key).or_insert(Value::Null), value);
             }
         } else {
             let mut obj = serde_json::Map::new();
@@ -200,10 +197,7 @@ fn deep_merge_value(base: &mut Value, overlay: &Value) {
     match (base, overlay) {
         (Value::Object(base_map), Value::Object(overlay_map)) => {
             for (key, value) in overlay_map {
-                deep_merge_value(
-                    base_map.entry(key).or_insert(Value::Null),
-                    value,
-                );
+                deep_merge_value(base_map.entry(key).or_insert(Value::Null), value);
             }
         }
         (base, overlay) => {
@@ -250,10 +244,7 @@ impl VerdictHandler for DefaultVerdictHandler {
                     }
                 } else {
                     VerdictAction::ShortCircuit {
-                        response: format!(
-                            "Confirmation required (no handler): {}",
-                            reason
-                        ),
+                        response: format!("Confirmation required (no handler): {}", reason),
                     }
                 }
             }
@@ -425,10 +416,10 @@ mod tests {
         };
         let merged = merge_intent_deep(&intent, &mods);
         let params = merged.parameters.as_object().unwrap();
-        assert_eq!(params["a"], 1);     // untouched
-        assert_eq!(params["b"], 99);    // overridden
-        assert_eq!(params["c"], 3);     // untouched
-        assert_eq!(params["d"], 4);     // added
+        assert_eq!(params["a"], 1); // untouched
+        assert_eq!(params["b"], 99); // overridden
+        assert_eq!(params["c"], 3); // untouched
+        assert_eq!(params["d"], 4); // added
     }
 
     #[test]
@@ -440,16 +431,19 @@ mod tests {
             description: "desc".to_string(),
         };
         let mut merges = HashMap::new();
-        merges.insert("config".to_string(), json!({"debug": true, "verbose": true}));
+        merges.insert(
+            "config".to_string(),
+            json!({"debug": true, "verbose": true}),
+        );
         let mods = Modifications {
             parameter_merges: merges,
             ..Default::default()
         };
         let merged = merge_intent_deep(&intent, &mods);
         let config = &merged.parameters["config"];
-        assert_eq!(config["debug"], true);      // overridden
-        assert_eq!(config["level"], 1);         // preserved
-        assert_eq!(config["verbose"], true);    // added
+        assert_eq!(config["debug"], true); // overridden
+        assert_eq!(config["level"], 1); // preserved
+        assert_eq!(config["verbose"], true); // added
     }
 
     #[test]
@@ -510,7 +504,7 @@ mod tests {
         let merged = merge_intent_deep(&intent, &mods);
         assert_eq!(merged.action, "new_action");
         assert_eq!(merged.description, "new desc");
-        assert_eq!(merged.parameters["a"], 2);          // override
+        assert_eq!(merged.parameters["a"], 2); // override
         assert_eq!(merged.parameters["nested"]["x"], 10); // preserved
         assert_eq!(merged.parameters["nested"]["y"], 20); // merged
         let c = merged.parameters["_constraints"].as_array().unwrap();

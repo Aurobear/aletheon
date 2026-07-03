@@ -118,15 +118,14 @@ impl AwarenessGenerator {
                             });
                         }
                     }
-                    "significance" => {
+                    "significance"
                         if !extensions
                             .iter()
-                            .any(|e| matches!(e, AwarenessExtension::Significance { .. }))
-                        {
-                            extensions.push(AwarenessExtension::Significance {
-                                meaning: suggestion.reason.clone(),
-                            });
-                        }
+                            .any(|e| matches!(e, AwarenessExtension::Significance { .. })) =>
+                    {
+                        extensions.push(AwarenessExtension::Significance {
+                            meaning: suggestion.reason.clone(),
+                        });
                     }
                     _ => {}
                 }
@@ -142,6 +141,12 @@ impl AwarenessGenerator {
     /// produces new suggestions.
     pub fn update_suggestions(&mut self, suggestions: Vec<AwarenessGrowthSuggestion>) {
         self.suggestions = suggestions;
+    }
+}
+
+impl Default for AwarenessGenerator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

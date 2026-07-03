@@ -93,7 +93,8 @@ pub(crate) fn default_compaction_threshold() -> usize {
 }
 
 pub(crate) fn default_system_prompt() -> String {
-    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user.".to_string()
+    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user."
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +105,7 @@ pub(crate) fn default_system_prompt() -> String {
 ///
 /// Each field is a list of script paths to execute at the specified lifecycle point.
 /// Paths may use `~` for home directory expansion.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HooksConfig {
     /// Scripts to run before each turn (receives user prompt as JSON on stdin).
     #[serde(default)]
@@ -118,17 +119,6 @@ pub struct HooksConfig {
     /// Scripts to run before each tool call (can block execution).
     #[serde(default)]
     pub pre_tool: Vec<String>,
-}
-
-impl Default for HooksConfig {
-    fn default() -> Self {
-        Self {
-            pre_turn: Vec::new(),
-            post_tool: Vec::new(),
-            on_session_end: Vec::new(),
-            pre_tool: Vec::new(),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

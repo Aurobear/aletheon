@@ -7,8 +7,8 @@
 use crate::core::types::{ChangeType, Genome, GenomeChange};
 use crate::r#impl::genome::loader::GenomeLoader;
 use crate::r#impl::meta_runtime::lineage::LineageTracker;
-use base::{MigrationResult, RuntimeCandidate};
 use anyhow::Result;
+use base::{MigrationResult, RuntimeCandidate};
 use std::path::PathBuf;
 use std::sync::Mutex;
 

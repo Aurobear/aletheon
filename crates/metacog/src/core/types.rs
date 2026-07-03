@@ -115,7 +115,7 @@ impl Default for ReasoningConfig {
 /// A change between two genomes — produced by GenomeLoader::diff.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenomeChange {
-    /// What changed (e.g., "care.weights.safety", "boundary.rules[0].verdict").
+    /// What changed (e.g., "care.weights.safety", "boundary.rules\[0\].verdict").
     pub path: String,
     /// Type of change.
     pub change_type: ChangeType,

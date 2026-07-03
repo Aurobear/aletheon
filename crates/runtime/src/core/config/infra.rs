@@ -56,18 +56,10 @@ impl Default for McpServerConfig {
 }
 
 /// Plugin directories.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginsConfig {
     #[serde(default)]
     pub directories: Vec<String>,
-}
-
-impl Default for PluginsConfig {
-    fn default() -> Self {
-        Self {
-            directories: Vec::new(),
-        }
-    }
 }
 
 /// Memory backend configuration.

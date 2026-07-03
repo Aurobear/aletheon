@@ -8,19 +8,15 @@ pub use cognit::config::ModelRoutingConfig;
 /// Wire protocol between client and LLM server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Transport {
     /// OpenAI chat/completions API (also covers Ollama, LM Studio, vLLM, DeepSeek, etc.)
     Openai,
     /// Anthropic messages API (native)
     Anthropic,
     /// Auto-detect from base_url
+    #[default]
     Auto,
-}
-
-impl Default for Transport {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Per-provider configuration.

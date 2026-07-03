@@ -3,11 +3,9 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
-use base::{
-    EmbeddingProvider, Subsystem, SubsystemContext, SubsystemHealth, Version,
-};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use base::{EmbeddingProvider, Subsystem, SubsystemContext, SubsystemHealth, Version};
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -181,10 +179,7 @@ impl SemanticMemory {
     }
 
     /// Create a SemanticMemory with an embedding provider for vector search.
-    pub fn with_embedding_provider(
-        db_path: PathBuf,
-        provider: Arc<dyn EmbeddingProvider>,
-    ) -> Self {
+    pub fn with_embedding_provider(db_path: PathBuf, provider: Arc<dyn EmbeddingProvider>) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),

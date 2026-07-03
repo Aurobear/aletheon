@@ -326,8 +326,8 @@ impl Tool for PluginTool {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
-    use base::plugin::{Plugin, PluginContext};
     use base::include::subsystem::Version;
+    use base::plugin::{Plugin, PluginContext};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc as StdArc;
 
@@ -381,7 +381,11 @@ mod lifecycle_tests {
             shutdown_calls: down.clone(),
         });
         mgr.load_native(sample_manifest(), plugin).await.unwrap();
-        assert_eq!(init.load(Ordering::SeqCst), 1, "init must fire once on load");
+        assert_eq!(
+            init.load(Ordering::SeqCst),
+            1,
+            "init must fire once on load"
+        );
         assert_eq!(mgr.get_state("sample").await, Some(PluginState::Active));
     }
 
@@ -396,7 +400,11 @@ mod lifecycle_tests {
         });
         mgr.load_native(sample_manifest(), plugin).await.unwrap();
         mgr.unload("sample").await.unwrap();
-        assert_eq!(down.load(Ordering::SeqCst), 1, "shutdown must fire once on unload");
+        assert_eq!(
+            down.load(Ordering::SeqCst),
+            1,
+            "shutdown must fire once on unload"
+        );
         assert_eq!(mgr.get_state("sample").await, Some(PluginState::Unloaded));
     }
 
@@ -430,6 +438,9 @@ permission_level = "L0"
             "Tool-only plugin's tool must still surface"
         );
         mgr.unload("tool-only").await.unwrap();
-        assert_eq!(mgr.get_state("tool-only").await, Some(PluginState::Unloaded));
+        assert_eq!(
+            mgr.get_state("tool-only").await,
+            Some(PluginState::Unloaded)
+        );
     }
 }

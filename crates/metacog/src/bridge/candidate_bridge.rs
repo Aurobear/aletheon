@@ -1,7 +1,7 @@
 //! CandidateBridge — converts between CandidateGenerator outputs and ABI types.
 
-use base::{Genome, MutationIntent, RuntimeCandidate};
 use anyhow::Result;
+use base::{Genome, MutationIntent, RuntimeCandidate};
 
 use crate::r#impl::morphogenesis::candidate::CandidateGenerator;
 
@@ -47,7 +47,9 @@ mod tests {
             reversible: true,
         };
 
-        let candidate = CandidateBridge::generate_candidate(&genome, &intent).await.unwrap();
+        let candidate = CandidateBridge::generate_candidate(&genome, &intent)
+            .await
+            .unwrap();
         assert!(!candidate.changes.is_empty());
     }
 }

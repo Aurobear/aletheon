@@ -97,7 +97,7 @@ mod tests {
         let entry = ActivationEntry::new(1.0, 100, now());
         let score = compute_activation(&entry, now());
         assert!(
-            score >= 0.0 && score <= 1.0,
+            (0.0..=1.0).contains(&score),
             "score out of range: {}",
             score
         );
