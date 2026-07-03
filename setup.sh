@@ -123,6 +123,12 @@ install_deps
 
 # ── 3. Build ─────────────────────────────────────────────────────────────
 
+# Clean stale build artifacts from old binaries (removed [[bin]] entries)
+for stale_bin in aletheond aletheon-exec aletheon-systemd aletheon-container; do
+    rm -f "target/release/$stale_bin" "target/debug/$stale_bin"
+done
+log "Cleaned stale build artifacts"
+
 log "Building release binary (cargo build --release)..."
 cargo build -p aletheon --release 2>&1
 
@@ -138,6 +144,23 @@ mkdir -p "$BIN_DIR"
 $USE_SUDO cp "$BINARY_PATH" "$BIN_DIR/aletheon"
 $USE_SUDO chmod +x "$BIN_DIR/aletheon"
 log "Binary installed: $BIN_DIR/aletheon"
+
+# Clean up stale old binaries from previous installs (aletheond, aletheon-exec, etc.)
+for stale in aletheond aletheon-exec aletheon-systemd aletheon-container; do
+    if [[ -f "$BIN_DIR/$stale" ]]; then
+        $USE_SUDO rm -f "$BIN_DIR/$stale"
+        log "Removed stale binary: $BIN_DIR/$stale"
+    fi
+done
+# Also clean common alternative locations
+for stale in aletheond aletheon-exec aletheon-systemd aletheon-container aletheon; do
+    for dir in /usr/local/bin "$HOME/.local/bin"; do
+        if [[ "$dir/$stale" != "$BIN_DIR/$stale" ]] && [[ -f "$dir/$stale" ]]; then
+            rm -f "$dir/$stale" 2>/dev/null || sudo rm -f "$dir/$stale" 2>/dev/null || true
+            log "Removed stale binary: $dir/$stale"
+        fi
+    done
+done
 
 # ── 5. Config ────────────────────────────────────────────────────────────
 
