@@ -66,11 +66,16 @@ default:
     @just --list
 
 # ── 构建 ──
-build:
+# cargo 自带增量编译，只编译修改过的 crate。日常开发用 dev（秒级），部署用 release。
+dev:
+    cargo build
+
+build: dev test lint
     cargo build --release
 
-build-dev:
-    cargo build
+# 查看编译耗时分布（定位慢的 crate）
+timings:
+    cargo build --timings
 
 # ── 验证 ──
 test:
@@ -101,9 +106,35 @@ install: build
 # ── 清理 ──
 clean:
     cargo clean
+
+# ── 缓存优化（可选） ──
+# 安装 sccache 后跨构建共享编译缓存，clean 后重编译快 50%+
+setup-sccache:
+    cargo install sccache --locked
+    @echo 'export RUSTC_WRAPPER=sccache' >> ~/.bashrc
+    @echo "sccache installed. Restart shell or source ~/.bashrc."
 ```
 
 ## 5. `setup.sh` 一键部署
+
+### 5.0 编译策略
+
+cargo 自带增量编译（`target/` 目录缓存），只重新编译变更的 crate 及其下游依赖。
+
+| 场景 | 命令 | 耗时 |
+|------|------|------|
+| 日常开发（改几行代码） | `just dev` | 5-15s |
+| 改动核心 crate（base/cognit） | `just dev` | 30-60s |
+| 首次/new clone | `just build` | 2-5min |
+| 部署到系统 | `just install`（自动 build） | 同上 |
+
+**可选加速：`sccache`** — 跨 `cargo clean` 共享编译缓存，首次后重编译快 50%+：
+
+```bash
+just setup-sccache   # 安装 sccache + 写入 ~/.bashrc
+```
+
+`sccache` 对 CI 和频繁 clean 的场景效果显著；日常增量编译提升不大（cargo 自带增量已够用）。
 
 ### 5.1 安装路径
 
