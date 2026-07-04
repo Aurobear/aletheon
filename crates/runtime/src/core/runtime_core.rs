@@ -29,7 +29,6 @@ use crate::r#impl::daemon::handler::RequestHandler;
 use crate::r#impl::daemon::DaemonConfig;
 use crate::ProviderRegistry;
 
-use dasein::r#impl::perception::bridge::PerceptionInjection;
 use dasein::r#impl::perception::PerceptionEvent;
 
 /// The agent runtime core — all agent-level state, host-independent.
@@ -175,33 +174,36 @@ impl RuntimeCore {
             None
         };
 
-        // ── Perception manager + bridge ─────────────────────────────
-        let (event_tx, event_rx) = mpsc::channel::<PerceptionEvent>(256);
-        let (injection_tx, injection_rx) = mpsc::channel::<PerceptionInjection>(64);
-
-        let perception_config = &app_config.perception;
-        let watch_paths: Vec<PathBuf> = perception_config
-            .watch_paths
-            .iter()
-            .map(PathBuf::from)
-            .collect();
-        let enable_journald = perception_config.enable_journald;
-        tokio::spawn(async move {
-            let mut manager = dasein::r#impl::perception::manager::PerceptionManager::new(
-                event_tx,
-                watch_paths,
-                enable_journald,
-            );
-            if let Err(e) = manager.start().await {
-                tracing::error!(error = %e, "Perception manager failed");
-            }
-        });
-
-        let mut bridge =
-            dasein::r#impl::perception::bridge::PerceptionBridge::new(event_rx, injection_tx);
-        tokio::spawn(async move {
-            bridge.run().await;
-        });
+        // ── Perception manager (gated) ──────────────────────────────
+        // The old PerceptionBridge fed an "Engine" that was removed; its
+        // injection receiver was dropped, which caused endless
+        // "Engine receiver dropped" warnings and an unbounded buffer.
+        // Until the perception→behavior loop is rewired (roadmap §T3), only
+        // spawn the manager when explicitly enabled, and do not spawn the
+        // bridge at all.
+        if app_config.perception.enabled {
+            let (event_tx, mut event_rx) = mpsc::channel::<PerceptionEvent>(256);
+            let perception_config = &app_config.perception;
+            let watch_paths: Vec<PathBuf> = perception_config
+                .watch_paths
+                .iter()
+                .map(PathBuf::from)
+                .collect();
+            let enable_journald = perception_config.enable_journald;
+            tokio::spawn(async move {
+                let mut manager = dasein::r#impl::perception::manager::PerceptionManager::new(
+                    event_tx,
+                    watch_paths,
+                    enable_journald,
+                );
+                if let Err(e) = manager.start().await {
+                    tracing::error!(error = %e, "Perception manager failed");
+                }
+            });
+            // Drain-and-drop until §T3 wires a real consumer, so the manager's
+            // sender does not back-pressure. (No behavior injection yet.)
+            tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
+        }
 
         // ── RequestHandler ──────────────────────────────────────────
         info!("Creating request handler...");
@@ -210,7 +212,6 @@ impl RuntimeCore {
             &registry,
             app_config.model_routing.clone(),
             app_config.evolution.enabled,
-            injection_rx,
             Some(kernel_bus),
             cancel_token.clone(),
         )

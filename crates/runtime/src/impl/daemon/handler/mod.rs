@@ -65,8 +65,9 @@ use base::kernel::debug_bus::PerfCounter;
 /// Session state wrapping the new AletheonRuntime.
 ///
 /// NOTE: The old Engine god-object has been replaced by AletheonRuntime.
-/// Methods like `run_turn`, `messages`, `set_perception_rx` etc. no longer
-/// exist on the runtime.  This handler exposes a thin shim that delegates
+/// Methods like `run_turn`, `messages` etc. no longer exist on the runtime.
+/// Perception is gated behind `perception.enabled` (default off) pending
+/// roadmap §T3. This handler exposes a thin shim that delegates
 /// to `AletheonRuntime::process()`.  A full migration of the daemon to the
 /// new intent/plan/execute pipeline is tracked separately.
 struct SessionState {
@@ -94,7 +95,8 @@ pub struct RequestHandler {
     started_at: Instant,
     /// Active connection count.
     active_connections: Arc<AtomicUsize>,
-    /// Retained for future use; currently unused after Engine removal.
+    /// Parked — multi-agent orchestration is unwired after the Engine removal.
+    /// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5 (roadmap T3).
     #[allow(dead_code)]
     agent_registry: Arc<AgentRegistry>,
     reflector: Reflector,
@@ -141,12 +143,14 @@ pub struct RequestHandler {
     resumed_objective: Option<(String, Vec<String>)>,
     /// Loop detector: tracks consecutive tool failures/successes.
     storm_breaker: Arc<Mutex<StormBreaker>>,
-    /// Per-session checkpoint store for file-edit rewind.
+    /// Parked — future file-edit rewind.
+    /// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5.
     #[allow(dead_code)]
     checkpoint_store: Arc<Mutex<CheckpointStore>>,
     /// Keyword-based skill router for prompt-to-skill matching.
     skill_router: Arc<Mutex<SkillRouter>>,
-    /// Agent role loader — loads agent markdown definitions from ~/.aletheon/agents/.
+    /// Parked — multi-agent orchestration is unwired after the Engine removal.
+    /// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5 (roadmap T3).
     #[allow(dead_code)]
     agent_loader: Arc<Mutex<AgentLoader>>,
     /// Configured hook scripts from the [hooks] config section.

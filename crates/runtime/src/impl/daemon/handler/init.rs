@@ -40,7 +40,6 @@ use corpus::security::security::runner::ToolRunnerWithGuard;
 use corpus::security::security::socket_approval::SocketApprovalGate;
 use corpus::tools::tools::Tool;
 use corpus::tools::tools::ToolRegistry;
-use dasein::r#impl::perception::bridge::PerceptionInjection;
 use dasein::{SelfField, SelfFieldConfig};
 use memory::episodic::EpisodicMemory;
 use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
@@ -95,7 +94,6 @@ impl RequestHandler {
         registry: &ProviderRegistry,
         model_routing: crate::core::config::ModelRoutingConfig,
         evolution_enabled: bool,
-        _perception_rx: mpsc::Receiver<PerceptionInjection>,
         event_bus: Option<Arc<dyn base::EventBus>>,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
