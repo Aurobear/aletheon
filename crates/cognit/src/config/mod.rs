@@ -102,7 +102,10 @@ fn default_compaction_threshold() -> usize {
 }
 
 fn default_system_prompt() -> String {
-    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user."
+    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. \
+     Before stating any conclusion about your own runtime state, logs, or configuration, \
+     you MUST read the actual logs and the actually-effective config file first — never guess \
+     or invent an explanation."
         .to_string()
 }
 
@@ -439,14 +442,23 @@ impl AppConfig {
         }
     }
 
-    /// Load config with layer merging:
+    /// Load config with layer merging (low → high precedence):
     /// - Layer 0: compiled defaults
-    /// - Layer 1: user global (~/.aletheon/config.toml)
-    /// - Layer 2: project local (.aletheon/config.toml in `project_dir`)
+    /// - Layer 1: /etc/aletheon/config.toml   (system defaults)
+    /// - Layer 2: ~/.aletheon/config.toml     (user; authoritative for daily edits)
+    /// - Layer 3: <project>/.aletheon/config.toml (project-local)
     pub fn load_layered(project_dir: Option<&Path>) -> Self {
         let mut config = Self::default();
 
-        // Layer 1: user global
+        // Layer 1: system
+        let etc_path = Path::new("/etc/aletheon/config.toml");
+        if etc_path.exists() {
+            if let Ok(sys_config) = Self::from_file(etc_path) {
+                config.merge(sys_config);
+            }
+        }
+
+        // Layer 2: user global
         let global_path = dirs::home_dir()
             .map(|h| h.join(".aletheon/config.toml"))
             .filter(|p| p.exists());
@@ -456,7 +468,7 @@ impl AppConfig {
             }
         }
 
-        // Layer 2: project local
+        // Layer 3: project local
         if let Some(dir) = project_dir {
             let project_path = dir.join(".aletheon/config.toml");
             if project_path.exists() {
@@ -506,5 +518,20 @@ mod tests {
         assert!(base.perception.enabled, "perception must merge");
         assert_eq!(base.agent.system_prompt, "OVERRIDDEN");
         assert!(!base.agent.compaction_enabled);
+    }
+
+    #[test]
+    fn merge_precedence_user_over_system() {
+        // Unit-level proxy for layer precedence: later merge wins.
+        let mut config = AppConfig::default();
+        let mut system = AppConfig::default();
+        system.agent.default_model = Some("system-model".into());
+        let mut user = AppConfig::default();
+        user.agent.default_model = Some("user-model".into());
+
+        config.merge(system);
+        config.merge(user);
+
+        assert_eq!(config.agent.default_model.as_deref(), Some("user-model"));
     }
 }
