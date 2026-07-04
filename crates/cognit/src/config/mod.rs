@@ -287,6 +287,10 @@ impl Default for EvolutionSettings {
 /// Perception subsystem configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerceptionConfig {
+    /// Master switch. Off by default: the perception→behavior loop is not yet
+    /// wired (see roadmap §T3). When false, no watchers are spawned.
+    #[serde(default)]
+    pub enabled: bool,
     /// Filesystem paths to watch with inotify.
     #[serde(default = "default_perception_watch_paths")]
     pub watch_paths: Vec<String>,
@@ -302,6 +306,7 @@ fn default_perception_watch_paths() -> Vec<String> {
 impl Default for PerceptionConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             watch_paths: default_perception_watch_paths(),
             enable_journald: true,
         }
