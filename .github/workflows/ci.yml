@@ -37,7 +37,9 @@ jobs:
   test:
     name: cargo test
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 1
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
