@@ -161,14 +161,23 @@ impl AppConfig {
         self.hooks.pre_tool.extend(other.hooks.pre_tool);
     }
 
-    /// Load config with layer merging:
+    /// Load config with layer merging (low → high precedence):
     /// - Layer 0: compiled defaults
-    /// - Layer 1: user global (~/.aletheon/config.toml)
-    /// - Layer 2: project local (.aletheon/config.toml in `project_dir`)
+    /// - Layer 1: /etc/aletheon/config.toml   (system defaults)
+    /// - Layer 2: ~/.aletheon/config.toml     (user; authoritative for daily edits)
+    /// - Layer 3: <project>/.aletheon/config.toml (project-local)
     pub fn load_layered(project_dir: Option<&Path>) -> Self {
         let mut config = Self::default();
 
-        // Layer 1: user global
+        // Layer 1: system
+        let etc_path = Path::new("/etc/aletheon/config.toml");
+        if etc_path.exists() {
+            if let Ok(sys_config) = Self::from_file(etc_path) {
+                config.merge(sys_config);
+            }
+        }
+
+        // Layer 2: user global
         let global_path = dirs::home_dir()
             .map(|h| h.join(".aletheon/config.toml"))
             .filter(|p| p.exists());
@@ -178,7 +187,7 @@ impl AppConfig {
             }
         }
 
-        // Layer 2: project local
+        // Layer 3: project local
         if let Some(dir) = project_dir {
             let project_path = dir.join(".aletheon/config.toml");
             if project_path.exists() {
@@ -642,5 +651,16 @@ base_url = "http://localhost"
         let config: AppConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.perception.watch_paths, vec!["/etc", "/var/log"]);
         assert!(config.perception.enable_journald);
+        assert!(!config.perception.enabled, "perception disabled by default");
+    }
+
+    #[test]
+    fn hooks_merge_from_layers() {
+        let mut base = AppConfig::default();
+        let mut other = AppConfig::default();
+        other.hooks.pre_turn.push("/test/hook.sh".into());
+        let before = base.hooks.pre_turn.len();
+        base.merge(other);
+        assert!(base.hooks.pre_turn.len() > before, "hooks must merge across layers");
     }
 }
