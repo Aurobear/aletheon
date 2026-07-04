@@ -121,22 +121,114 @@ install_deps() {
 
 install_deps
 
+# ── 2.5 Pre-install cleanup ──────────────────────────────────────────────
+
+log "Stopping existing services and cleaning up..."
+
+# Stop systemd service if running
+if [[ "$MODE" == "system" ]]; then
+    if systemctl is-active --quiet aletheon.service 2>/dev/null; then
+        sudo systemctl stop aletheon.service
+        log "Stopped aletheon.service"
+    fi
+else
+    if systemctl --user is-active --quiet aletheon.service 2>/dev/null; then
+        systemctl --user stop aletheon.service
+        log "Stopped user aletheon.service"
+    fi
+fi
+
+# Kill any running aletheon/aletheond daemon processes
+for proc in aletheond aletheon-exec aletheon-systemd aletheon-container aletheon; do
+    pids=$(pgrep -f "$proc" 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+        echo "$pids" | while read pid; do
+            if [[ -n "$pid" ]]; then
+                kill "$pid" 2>/dev/null || true
+                log "Killed $proc (PID $pid)"
+            fi
+        done
+    fi
+done
+sleep 1
+
+# Force kill any remaining
+for proc in aletheond aletheon-exec aletheon-systemd aletheon-container; do
+    pids=$(pgrep -f "$proc" 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+        echo "$pids" | while read pid; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
+done
+
+# Clean stale socket files
+for sock in /run/aletheon/aletheon.sock /tmp/aletheon*.sock \
+    "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/aletheon/aletheon.sock"; do
+    if [[ -e "$sock" ]]; then
+        $USE_SUDO rm -f "$sock" 2>/dev/null || rm -f "$sock" 2>/dev/null || true
+        log "Removed stale socket: $sock"
+    fi
+done
+
+log "Pre-install cleanup complete"
+
 # ── 3. Build ─────────────────────────────────────────────────────────────
 
-# Clean stale build artifacts from old binaries (removed [[bin]] entries)
-for stale_bin in aletheond aletheon-exec aletheon-systemd aletheon-container aletheon-body-cli; do
-    rm -f "target/release/$stale_bin" "target/debug/$stale_bin" "target/release/$stale_bin.d" "target/debug/$stale_bin.d"
-done
-log "Cleaned stale build artifacts"
-
-log "Building release binary (cargo build --release)..."
-cargo build -p aletheon --release 2>&1
-
 BINARY_PATH="target/release/aletheon"
-if [[ ! -f "$BINARY_PATH" ]]; then
-    die "Build failed — binary not found at $BINARY_PATH"
+SKIP_BUILD=false
+if [[ "${1:-}" == "--no-build" ]]; then
+    SKIP_BUILD=true; shift
+elif [[ "${1:-}" == "--skip-build" ]]; then
+    SKIP_BUILD=true; shift
 fi
-log "Build complete: $BINARY_PATH"
+
+if $SKIP_BUILD; then
+    if [[ ! -f "$BINARY_PATH" ]]; then
+        die "--no-build specified but binary not found at $BINARY_PATH"
+    fi
+    log "Skipping build (--no-build)"
+else
+    # Auto-detect: skip if binary is newer than all source files
+    if [[ -f "$BINARY_PATH" ]]; then
+        NEWEST_SRC=$(find crates/ Cargo.toml Cargo.lock -name "*.rs" -o -name "*.toml" -o -name "*.lock" 2>/dev/null | xargs stat -c '%Y' 2>/dev/null | sort -rn | head -1)
+        BIN_MTIME=$(stat -c '%Y' "$BINARY_PATH" 2>/dev/null)
+        if [[ -n "$NEWEST_SRC" && -n "$BIN_MTIME" ]] && [[ "$BIN_MTIME" -ge "$NEWEST_SRC" ]]; then
+            log "Binary is up-to-date (skipping build, use --rebuild to force)"
+            SKIP_BUILD=true
+        fi
+    fi
+fi
+
+if [[ "${1:-}" == "--rebuild" ]]; then
+    SKIP_BUILD=false; shift
+fi
+
+if ! $SKIP_BUILD; then
+    # Clean stale build artifacts from old binaries (removed [[bin]] entries)
+    for stale_bin in aletheond aletheon-exec aletheon-systemd aletheon-container aletheon-body-cli; do
+        rm -f "target/release/$stale_bin" "target/debug/$stale_bin" "target/release/$stale_bin.d" "target/debug/$stale_bin.d"
+    done
+    log "Cleaned stale build artifacts"
+
+    # When running via sudo, cargo must run as the original user.
+    # Otherwise $HOME=/root and cargo has no registry cache → full rebuild every time.
+    if [[ -n "${SUDO_USER:-}" ]] && [[ "$(whoami)" == "root" ]]; then
+        log "Running as root (sudo) — building as $SUDO_USER to reuse cargo cache"
+        # ensure target/ is writable by the original user
+        chown -R "$SUDO_USER:$SUDO_USER" target/ 2>/dev/null || true
+        log "Building release binary (cargo build --release)..."
+        sudo -u "$SUDO_USER" cargo build -p aletheon --release 2>&1
+    else
+        log "Building release binary (cargo build --release)..."
+        cargo build -p aletheon --release 2>&1
+    fi
+
+    if [[ ! -f "$BINARY_PATH" ]]; then
+        die "Build failed — binary not found at $BINARY_PATH"
+    fi
+    log "Build complete: $BINARY_PATH"
+fi
 
 # ── 4. Install binary ────────────────────────────────────────────────────
 
@@ -165,9 +257,13 @@ done
 # ── 5. Config ────────────────────────────────────────────────────────────
 
 setup_config() {
-    $USE_SUDO mkdir -p "$CFG_DIR" "$DATA_DIR"
+    $USE_SUDO mkdir -p "$CFG_DIR" "$DATA_DIR" "$(dirname "$SOCKET_PATH")"
     if [[ "$MODE" == "system" ]]; then
         $USE_SUDO chown -R "$(whoami):$(whoami)" "$DATA_DIR" 2>/dev/null || true
+        # Also create root's data dir for systemd (daemon runs as root)
+        sudo mkdir -p /root/.local/share/aletheon /run/aletheon
+    else
+        mkdir -p "$(dirname "$SOCKET_PATH")"
     fi
 
     local cfg="$CFG_DIR/config.toml"
@@ -184,7 +280,7 @@ setup_config() {
 [agent]
 default_provider = "leju"
 default_model = "deepseek/deepseek-v4-pro"
-max_iterations = 50
+max_iterations = 0
 max_tokens = 100000
 
 # ── Providers ───────────────────────────────────────────────────
@@ -248,12 +344,14 @@ TOML
         log "Creating placeholder .env..."
         $USE_SUDO tee "$env" > /dev/null <<'ENV'
 # Aletheon provider API keys
-# Uncomment and fill in the keys you want to use
+# Each provider reads <NAME>_API_KEY. Uncomment and fill in your keys.
 
-ANTHROPIC_API_KEY=sk-pmqmj7SvcCpSxORyFMKEhOaTPijdzfk2dPPQMwzbYAwzhcYq
+LEJU_API_KEY=sk-pmqmj7SvcCpSxORyFMKEhOaTPijdzfk2dPPQMwzbYAwzhcYq
 # MIMO_API_KEY=tp-...
 # DEEPSEEK_API_KEY=sk-...
 # OPENAI_API_KEY=sk-...
+# ANTHROPIC_API_KEY=sk-ant-...
+# OLLAMA_API_KEY=ollama
 ENV
         $USE_SUDO chmod 600 "$env"
         log "Env file written to $env"
@@ -270,6 +368,9 @@ setup_systemd() {
         $USE_SUDO systemctl daemon-reload
         $USE_SUDO systemctl enable aletheon.service
         log "Systemd service installed: $SYS_SVC"
+        # Auto-start daemon now
+        $USE_SUDO systemctl start aletheon.service
+        log "Daemon started"
         echo ""
         echo "  Commands:"
         echo "    sudo systemctl start aletheon    # start daemon"
@@ -282,6 +383,9 @@ setup_systemd() {
         systemctl --user daemon-reload
         systemctl --user enable aletheon.service
         log "Systemd user service installed: $SYS_SVC"
+        # Auto-start daemon now
+        systemctl --user start aletheon.service
+        log "Daemon started"
         echo ""
         echo "  Commands:"
         echo "    systemctl --user start aletheon    # start daemon"

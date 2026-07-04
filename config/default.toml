@@ -1,17 +1,19 @@
 [agent]
-# Pick a model your provider serves; override in your local config.
-default_model = "claude-sonnet-4-20250514"
-default_provider = "anthropic"
-max_iterations = 50
+# Compiled defaults — override in /etc/aletheon, ~/.aletheon, or project config.
+# default_provider and default_model match the first configured provider below.
+default_provider = "leju"
+default_model = "deepseek/deepseek-v4-pro"
+# 0 = no iteration cap (termination via LLM stop, circuit breaker, tool budget)
+max_iterations = 0
 
 # At least one provider is required for the daemon to start.
 # Fill in api_key (or set it via your local override config), then run the daemon.
 [[providers]]
-name = "anthropic"
-base_url = "https://api.anthropic.com"
-api_key = ""            # REQUIRED: set before first run (or override locally)
-transport = "anthropic" # openai | anthropic | auto
-models = ["claude-sonnet-4-20250514"]
+name = "leju"
+base_url = "https://aiapi.lejurobot.com"
+api_key = ""
+transport = "anthropic"
+models = ["deepseek/deepseek-v4-pro"]
 
 [sandbox]
 preference = "auto"
