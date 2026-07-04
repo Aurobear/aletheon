@@ -156,9 +156,11 @@ impl ReActLoop {
         self.goal_tracker.hydrate_from(description, sub_goals);
     }
 
-    /// Check if we've hit the max iterations
+    /// Check if we've hit the max iterations.
+    /// `max_iterations == 0` means unlimited: the loop then terminates only via
+    /// LLM stop, circuit breaker, repeated-call detection, or the tool budget.
     pub fn should_continue(&self) -> bool {
-        self.iteration < self.config.max_iterations
+        self.config.max_iterations == 0 || self.iteration < self.config.max_iterations
     }
 
     /// Increment iteration counter
@@ -984,5 +986,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out, "answer 1", "no verifier = unchanged behavior");
+    }
+
+    #[test]
+    fn max_iterations_zero_means_unlimited() {
+        let cfg = RuntimeConfig {
+            max_iterations: 0,
+            session_id: "test".into(),
+            ..RuntimeConfig::default()
+        };
+        let loop_ = ReActLoop::new(cfg);
+        assert!(
+            loop_.should_continue(),
+            "max_iterations=0 must never stop on the iteration check"
+        );
+
+        let cfg = RuntimeConfig {
+            max_iterations: 5,
+            session_id: "test".into(),
+            ..RuntimeConfig::default()
+        };
+        let loop_ = ReActLoop::new(cfg);
+        // iteration starts at 0, so at iteration=5 we should stop
+        let mut loop_ = loop_;
+        loop_.iteration = 5;
+        assert!(
+            !loop_.should_continue(),
+            "finite cap still stops when reached"
+        );
     }
 }
