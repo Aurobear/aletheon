@@ -15,6 +15,8 @@ use tokio::sync::mpsc;
 /// perceive -> attune -> care -> act -> reflect -> repeat.
 pub struct SorgeLoop {
     running: Arc<AtomicBool>,
+    /// Parked roadmap item: internal sender for self-event loop (T3).
+    #[allow(dead_code)]
     event_tx: mpsc::Sender<DaseinEvent>,
     event_rx: Mutex<Option<mpsc::Receiver<DaseinEvent>>>,
 }

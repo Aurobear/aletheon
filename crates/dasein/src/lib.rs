@@ -21,7 +21,6 @@
     clippy::module_inception,
     clippy::too_many_arguments,
     clippy::wrong_self_convention,
-    dead_code,
     deprecated
 )]
 //!

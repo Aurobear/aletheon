@@ -13,6 +13,8 @@ pub struct Bewandtnisganzheit {
     nodes: RwLock<HashMap<EntityId, BewandtnisNode>>,
     edges: RwLock<Vec<BewandtnisEdge>>,
     ultimate_concern: RwLock<Option<String>>,
+    /// Parked roadmap item: network evolution history for continuity tracking (T3).
+    #[allow(dead_code)]
     history: RwLock<Vec<NetworkSnapshot>>,
 }
 
