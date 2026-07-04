@@ -80,17 +80,10 @@ impl Tool for GrepTool {
             .unwrap_or(50) as usize;
 
         // Try ripgrep first, fall back to grep
-        let result = try_ripgrep(&pattern, &path, max_results, &ctx.working_dir)
-            .await
-            .or_else(|| {
-                // Block on grep fallback
-                futures::executor::block_on(try_grep(
-                    &pattern,
-                    &path,
-                    max_results,
-                    &ctx.working_dir,
-                ))
-            });
+        let result = match try_ripgrep(&pattern, &path, max_results, &ctx.working_dir).await {
+            Some(r) => Some(r),
+            None => try_grep(&pattern, &path, max_results, &ctx.working_dir).await,
+        };
 
         let elapsed = start.elapsed().as_millis() as u64;
 
