@@ -10,9 +10,6 @@ const HELPFUL_DELTA: f64 = 0.05;
 const UNHELPFUL_DELTA: f64 = -0.10;
 const TRUST_MIN: f64 = 0.0;
 const TRUST_MAX: f64 = 1.0;
-/// Default trust score for new facts — reserved for future trust-weighted retrieval.
-#[allow(dead_code)]
-const DEFAULT_TRUST: f64 = 0.5;
 const DEFAULT_MIN_TRUST: f64 = 0.3;
 const STALE_DECAY_DELTA: f64 = -0.002;
 const STALE_DAYS: i64 = 7;
