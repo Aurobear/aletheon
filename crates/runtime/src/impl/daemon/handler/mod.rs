@@ -167,7 +167,7 @@ pub struct RequestHandler {
     /// Cancellation token for the current chat turn.
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     /// EventBus for cross-subsystem event routing (DaseinEventBridge, etc.).
-    /// Parked — TODO(P1-A): Migrate from Arc<dyn EventBus> to Arc<CommunicationBus>.
+    /// Parked — TODO(P1-A): Migrate from `Arc<dyn EventBus>` to `Arc<CommunicationBus>`.
     /// Used during boot (init.rs) to wire DaseinEventBridge, but the stored
     /// field is not read thereafter.
     #[allow(dead_code)]

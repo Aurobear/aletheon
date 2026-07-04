@@ -165,7 +165,7 @@ impl AppConfig {
     /// - Layer 0: compiled defaults
     /// - Layer 1: /etc/aletheon/config.toml   (system defaults)
     /// - Layer 2: ~/.aletheon/config.toml     (user; authoritative for daily edits)
-    /// - Layer 3: <project>/.aletheon/config.toml (project-local)
+    /// - Layer 3: `<project>/.aletheon/config.toml` (project-local)
     pub fn load_layered(project_dir: Option<&Path>) -> Self {
         let mut config = Self::default();
 
@@ -661,6 +661,9 @@ base_url = "http://localhost"
         other.hooks.pre_turn.push("/test/hook.sh".into());
         let before = base.hooks.pre_turn.len();
         base.merge(other);
-        assert!(base.hooks.pre_turn.len() > before, "hooks must merge across layers");
+        assert!(
+            base.hooks.pre_turn.len() > before,
+            "hooks must merge across layers"
+        );
     }
 }

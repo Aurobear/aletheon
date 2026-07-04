@@ -324,8 +324,7 @@ impl SessionManager {
             match event {
                 SessionEvent::Summary { text } => {
                     flush_tool_uses(&mut messages, &mut pending_tool_uses);
-                    messages
-                        .push(Message::system(format!("[Conversation summary]\n{}", text)));
+                    messages.push(Message::system(format!("[Conversation summary]\n{}", text)));
                 }
                 SessionEvent::ToolUseBlock {
                     tool_use_id,
@@ -412,9 +411,7 @@ fn is_session_corrupted(events: &[SessionEvent]) -> bool {
             }
             SessionEvent::AssistantMessage { content } => {
                 // Detect API error messages that were stored as assistant content.
-                if content.contains("tool_calls")
-                    && content.contains("must be followed")
-                {
+                if content.contains("tool_calls") && content.contains("must be followed") {
                     return true;
                 }
             }
@@ -543,10 +540,9 @@ mod compaction_tests {
 
         // Create session, push tool messages
         {
-            let mut sm =
-                SessionManager::new(dir.path(), session_id.clone(), 100_000)
-                    .await
-                    .unwrap();
+            let mut sm = SessionManager::new(dir.path(), session_id.clone(), 100_000)
+                .await
+                .unwrap();
             sm.push_user("Read a file").await;
             sm.push_message(Message {
                 role: Role::Assistant,
@@ -557,12 +553,8 @@ mod compaction_tests {
                 }],
             })
             .await;
-            sm.push_message(Message::tool_result(
-                "call_01",
-                "file contents here",
-                false,
-            ))
-            .await;
+            sm.push_message(Message::tool_result("call_01", "file contents here", false))
+                .await;
             sm.push_assistant("The file says: file contents here").await;
             // Flush so all events are persisted before recovery
             let _ = sm.journal().flush().await;
@@ -580,10 +572,7 @@ mod compaction_tests {
                 .iter()
                 .any(|b| matches!(b, ContentBlock::ToolUse { id, .. } if id == "call_01"))
         });
-        assert!(
-            has_tool_use,
-            "ToolUse message should survive recovery"
-        );
+        assert!(has_tool_use, "ToolUse message should survive recovery");
 
         // Find tool_result message
         let has_tool_result = hist.iter().any(|m| {

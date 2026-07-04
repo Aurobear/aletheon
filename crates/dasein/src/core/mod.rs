@@ -488,7 +488,7 @@ impl base::SelfFieldOps for SelfField {
 mod tests {
     use super::*;
     use base::self_field::{ConflictSource, RiskLevel};
-    use base::{CapabilitySet, IntentSource, SelfFieldOps};
+    use base::{IntentSource, SelfFieldOps};
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -503,12 +503,6 @@ mod tests {
             source: IntentSource::User,
             description: description.to_string(),
         }
-    }
-
-    fn make_ctx_with_perms(perms: CapabilitySet) -> Context {
-        let mut ctx = Context::new("test", PathBuf::from("/tmp"));
-        ctx.permissions = perms;
-        ctx
     }
 
     fn minimal_ctx() -> Context {

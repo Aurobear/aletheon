@@ -535,12 +535,7 @@ impl RequestHandler {
                 sub_goals: vec![],
             });
             react_loop
-                .run_streaming(
-                    &*llm_clone,
-                    &tool_defs_clone,
-                    execute_tool,
-                    &event_sink,
-                )
+                .run_streaming(&*llm_clone, &tool_defs_clone, execute_tool, &event_sink)
                 .await
         });
 
