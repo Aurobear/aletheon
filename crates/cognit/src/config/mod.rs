@@ -350,6 +350,12 @@ impl AppConfig {
         if other.agent.compaction_threshold != default_compaction_threshold() {
             self.agent.compaction_threshold = other.agent.compaction_threshold;
         }
+        if other.agent.system_prompt != default_system_prompt() {
+            self.agent.system_prompt = other.agent.system_prompt;
+        }
+        if !other.agent.compaction_enabled {
+            self.agent.compaction_enabled = other.agent.compaction_enabled;
+        }
 
         // Providers: merge by name, append new ones
         for other_provider in other.providers {
@@ -415,6 +421,22 @@ impl AppConfig {
         if other.daemon.log_level != default_daemon_log_level() {
             self.daemon.log_level = other.daemon.log_level;
         }
+
+        // Perception: override if non-default
+        if other.perception.enabled {
+            self.perception.enabled = other.perception.enabled;
+        }
+        if other.perception.watch_paths != default_perception_watch_paths() {
+            self.perception.watch_paths = other.perception.watch_paths;
+        }
+        if !other.perception.enable_journald {
+            self.perception.enable_journald = other.perception.enable_journald;
+        }
+
+        // Evolution: override if enabled downstream
+        if other.evolution.enabled {
+            self.evolution.enabled = other.evolution.enabled;
+        }
     }
 
     /// Load config with layer merging:
@@ -469,5 +491,20 @@ mod tests {
         let without = "name = \"local\"\nbase_url = \"http://localhost:11434\"\n";
         let p2: ProviderConfig = toml::from_str(without).unwrap();
         assert!(p2.pricing.is_none(), "pricing is optional");
+    }
+
+    #[test]
+    fn merge_covers_perception_evolution_and_prompt() {
+        let mut base = AppConfig::default();
+        let mut other = AppConfig::default();
+        other.perception.enabled = true;
+        other.agent.system_prompt = "OVERRIDDEN".into();
+        other.agent.compaction_enabled = false;
+
+        base.merge(other);
+
+        assert!(base.perception.enabled, "perception must merge");
+        assert_eq!(base.agent.system_prompt, "OVERRIDDEN");
+        assert!(!base.agent.compaction_enabled);
     }
 }
