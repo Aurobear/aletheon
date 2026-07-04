@@ -536,7 +536,6 @@ impl RequestHandler {
             });
             react_loop
                 .run_streaming(
-                    &effective_message,
                     &*llm_clone,
                     &tool_defs_clone,
                     execute_tool,
@@ -763,12 +762,25 @@ impl RequestHandler {
                 sm.push_message(Message {
                     role: Role::Assistant,
                     content: content_blocks,
-                });
+                })
+                .await;
 
-                // Push tool result messages
-                for (call_id, content, is_error) in &tool_results_for_session {
-                    sm.push_message(Message::tool_result(call_id, content, *is_error));
-                }
+                // Push tool result messages — ALL in ONE combined user message.
+                // Anthropic API requires all tool_result blocks for a given
+                // assistant(tool_use) message to be in a single subsequent message.
+                let result_blocks: Vec<ContentBlock> = tool_results_for_session
+                    .iter()
+                    .map(|(call_id, content, is_error)| ContentBlock::ToolResult {
+                        tool_use_id: call_id.clone(),
+                        content: content.clone(),
+                        is_error: *is_error,
+                    })
+                    .collect();
+                sm.push_message(Message {
+                    role: Role::User,
+                    content: result_blocks,
+                })
+                .await;
             }
 
             sm.push_assistant(&text).await;

@@ -116,6 +116,11 @@ impl ReActLoop {
             // OpenAI API message format (assistant(tool_use) → tool results only)
             let mut pending_reflection: Option<String> = None;
 
+            // Collect tool results into a single combined user message.
+            // Anthropic API requires ALL tool_result blocks for one assistant
+            // message to be in a SINGLE subsequent user message.
+            let mut tool_result_blocks: Vec<ContentBlock> = Vec::new();
+
             // Execute each requested tool and feed results back.
             for (tool_index, (id, name, input)) in tool_calls.iter().enumerate() {
                 // Check tool budget before executing
@@ -133,13 +138,25 @@ impl ReActLoop {
                         iterations: self.iteration,
                         completed_normally: false,
                     };
-                    for (pending_id, _, _) in tool_calls.iter().skip(tool_index) {
-                        self.messages.push(Message::tool_result(
-                            pending_id,
-                            "Tool call skipped: per-turn tool budget exhausted",
-                            true,
-                        ));
+                    // Push any already-collected results first, then error results.
+                    if !tool_result_blocks.is_empty() {
+                        self.messages.push(Message {
+                            role: Role::User,
+                            content: std::mem::take(&mut tool_result_blocks),
+                        });
                     }
+                    for (pending_id, _, _) in tool_calls.iter().skip(tool_index) {
+                        tool_result_blocks.push(ContentBlock::ToolResult {
+                            tool_use_id: pending_id.clone(),
+                            content: "Tool call skipped: per-turn tool budget exhausted"
+                                .to_string(),
+                            is_error: true,
+                        });
+                    }
+                    self.messages.push(Message {
+                        role: Role::User,
+                        content: tool_result_blocks,
+                    });
                     return Ok((msg, metrics));
                 }
 
@@ -156,13 +173,26 @@ impl ReActLoop {
                             iterations: self.iteration,
                             completed_normally: false,
                         };
-                        for (pending_id, _, _) in tool_calls.iter().skip(tool_index) {
-                            self.messages.push(Message::tool_result(
-                                pending_id,
-                                format!("Tool call skipped: circuit breaker tripped: {reason}"),
-                                true,
-                            ));
+                        // Push any already-collected results first, then error results.
+                        if !tool_result_blocks.is_empty() {
+                            self.messages.push(Message {
+                                role: Role::User,
+                                content: std::mem::take(&mut tool_result_blocks),
+                            });
                         }
+                        for (pending_id, _, _) in tool_calls.iter().skip(tool_index) {
+                            tool_result_blocks.push(ContentBlock::ToolResult {
+                                tool_use_id: pending_id.clone(),
+                                content: format!(
+                                    "Tool call skipped: circuit breaker tripped: {reason}"
+                                ),
+                                is_error: true,
+                            });
+                        }
+                        self.messages.push(Message {
+                            role: Role::User,
+                            content: tool_result_blocks,
+                        });
                         return Ok((msg, metrics));
                     }
                     CircuitBreakerStatus::Warning(reason) => {
@@ -219,8 +249,14 @@ impl ReActLoop {
                 } else {
                     content.clone()
                 };
-                self.messages
-                    .push(Message::tool_result(id, &truncated_content, is_error));
+                // Accumulate tool result block for combined push after loop.
+                // Anthropic API requires all tool_result blocks for one assistant
+                // message to be in a SINGLE subsequent user message.
+                tool_result_blocks.push(ContentBlock::ToolResult {
+                    tool_use_id: id.clone(),
+                    content: truncated_content,
+                    is_error,
+                });
                 // Defer reflection until after all tool results
                 if should_reflect {
                     let ctx = crate::core::react_loop::reflection::ReflectionContext {
@@ -237,6 +273,16 @@ impl ReActLoop {
                     // Store for injection after all tool results
                     pending_reflection = Some(result.summary);
                 }
+            }
+
+            // Push combined tool result message — ALL tool_results for the
+            // preceding assistant(tool_use) message MUST be in ONE user message
+            // for the Anthropic API (tool_result blocks immediately after tool_use).
+            if !tool_result_blocks.is_empty() {
+                self.messages.push(Message {
+                    role: Role::User,
+                    content: tool_result_blocks,
+                });
             }
 
             // Inject reflection AFTER all tool results to preserve API message format

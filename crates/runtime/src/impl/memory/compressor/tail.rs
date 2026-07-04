@@ -47,18 +47,51 @@ fn align_boundary_backward(messages: &[Message], cut: usize) -> usize {
     if cut == 0 || cut >= messages.len() {
         return cut;
     }
-    let original_cut = cut;
     let mut aligned = cut;
+
+    // Skip past tool messages to avoid starting the tail with an orphan
+    // tool_result (which requires a preceding tool_use).
     while aligned > 0 && base::message::is_tool_message(&messages[aligned]) {
         aligned -= 1;
     }
-    // If alignment collapsed to a non-useful position (all preceding messages
-    // are tool messages), use the original cut to ensure compaction still happens.
-    if aligned == 0 && original_cut > 1 {
-        original_cut
-    } else {
-        aligned
+
+    if aligned == 0 {
+        // All messages from 1..=cut are tool messages.  Walk backward from
+        // the original cut to find the last tool_use.  Starting the tail at a
+        // tool_use is safe because its tool_results follow in the tail.
+        for i in (1..=cut).rev() {
+            if messages[i].role == base::message::Role::Assistant
+                && messages[i]
+                    .content
+                    .iter()
+                    .any(|c| matches!(c, base::message::ContentBlock::ToolUse { .. }))
+            {
+                return i;
+            }
+        }
+        // No tool_use found — fall back to the original cut (degraded but
+        // allows compaction to proceed).
+        return cut;
     }
+
+    // Check for tool_use/tool_result pair splitting: if the last message in
+    // the old section has ToolUse blocks, its tool_results are in the tail.
+    // Include the tool_use in the tail to keep the pair together.
+    let prev = &messages[aligned - 1];
+    if prev.role == base::message::Role::Assistant
+        && prev
+            .content
+            .iter()
+            .any(|c| matches!(c, base::message::ContentBlock::ToolUse { .. }))
+    {
+        aligned -= 1;
+        // Also skip any preceding tool messages to maintain the chain.
+        while aligned > 0 && base::message::is_tool_message(&messages[aligned]) {
+            aligned -= 1;
+        }
+    }
+
+    aligned
 }
 
 fn ensure_last_user_message_in_tail(messages: &[Message], cut: usize) -> usize {

@@ -21,6 +21,20 @@ pub enum SessionEvent {
     AssistantMessage {
         content: String,
     },
+    /// A ContentBlock::ToolUse block within a message.
+    /// Used during recovery to reconstruct multi-block assistant messages.
+    ToolUseBlock {
+        tool_use_id: String,
+        tool_name: String,
+        input: serde_json::Value,
+    },
+    /// A ContentBlock::ToolResult block within a message.
+    /// Used during recovery to reconstruct tool_result user messages.
+    ToolResultBlock {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+    },
     ToolCallStarted {
         tool_call_id: String,
         tool_name: String,
@@ -125,6 +139,8 @@ impl EventJournal {
                             SessionEvent::SessionCreated { .. } => "session_created",
                             SessionEvent::UserMessage { .. } => "user_message",
                             SessionEvent::AssistantMessage { .. } => "assistant_message",
+                            SessionEvent::ToolUseBlock { .. } => "tool_use_block",
+                            SessionEvent::ToolResultBlock { .. } => "tool_result_block",
                             SessionEvent::ToolCallStarted { .. } => "tool_call_started",
                             SessionEvent::ToolCallCompleted { .. } => "tool_call_completed",
                             SessionEvent::CheckpointBoundary { .. } => "checkpoint_boundary",

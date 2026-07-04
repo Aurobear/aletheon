@@ -232,6 +232,13 @@ impl LlmProvider for AnthropicProvider {
             stream: None,
         };
 
+        // Debug: log the full request to diagnose tool_use/tool_result ordering issues
+        if std::env::var("ALETHEON_DEBUG_API").is_ok() {
+            if let Ok(json) = serde_json::to_string_pretty(&request) {
+                eprintln!("[API-DEBUG] Request to {}:{}\n{}", self.base_url, "/v1/messages", json);
+            }
+        }
+
         let response = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
@@ -307,6 +314,13 @@ impl LlmProvider for AnthropicProvider {
             tools: tools_to_api(tools),
             stream: Some(true),
         };
+
+        // Debug: log the full request to diagnose tool_use/tool_result ordering issues
+        if std::env::var("ALETHEON_DEBUG_API").is_ok() {
+            if let Ok(json) = serde_json::to_string_pretty(&request) {
+                eprintln!("[API-DEBUG-STREAM] Request to {}:{}\n{}", self.base_url, "/v1/messages", json);
+            }
+        }
 
         let response = self
             .client

@@ -14,7 +14,6 @@ impl ReActLoop {
     /// `llm.complete()` and emits granular events through `event_sink`.
     pub async fn run_streaming<L, F, Fut>(
         &mut self,
-        user_input: &str,
         llm: &L,
         tool_defs: &[ToolDefinition],
         execute_tool: F,
@@ -31,7 +30,6 @@ impl ReActLoop {
         let mut tool_calls_made: usize = 0;
         let mut tool_errors: usize = 0;
 
-        self.messages.push(Message::user(user_input));
         event_sink.emit(Event::TurnStarted { iteration: 0 });
 
         while self.should_continue() {
@@ -217,6 +215,11 @@ impl ReActLoop {
             // OpenAI API message format (assistant(tool_use) → tool results only)
             let mut pending_reflection: Option<String> = None;
 
+            // Collect tool results into a single combined user message.
+            // Anthropic API requires ALL tool_result blocks for a given
+            // assistant(tool_use) message to be in ONE subsequent user message.
+            let mut tool_result_blocks: Vec<ContentBlock> = Vec::new();
+
             for (tool_index, (id, name, input)) in tool_calls.iter().enumerate() {
                 // Check tool budget before executing
                 if !self.tool_budget.can_call() {
@@ -231,22 +234,37 @@ impl ReActLoop {
                         max: self.config.agent_loop.max_tool_calls,
                     });
                     // The assistant tool-use message is already in history. Close every
-                    // unexecuted call with an error result so the next OpenAI request is
+                    // unexecuted call with an error result so the next request is
                     // structurally valid instead of poisoning the whole session.
+                    // Push any already-collected results first, then the error results.
+                    if !tool_result_blocks.is_empty() {
+                        self.messages.push(Message {
+                            role: Role::User,
+                            content: std::mem::take(&mut tool_result_blocks),
+                        });
+                    }
                     for (pending_id, pending_name, _) in tool_calls.iter().skip(tool_index) {
-                        let content = "Tool call skipped: per-turn tool budget exhausted";
-                        self.messages
-                            .push(Message::tool_result(pending_id, content, true));
+                        tool_result_blocks.push(ContentBlock::ToolResult {
+                            tool_use_id: pending_id.clone(),
+                            content: "Tool call skipped: per-turn tool budget exhausted"
+                                .to_string(),
+                            is_error: true,
+                        });
                         event_sink.emit(Event::ToolResult {
                             name: pending_name.clone(),
                             call_id: pending_id.clone(),
                             result: ToolResultEvent {
-                                content: content.to_string(),
+                                content: "Tool call skipped: per-turn tool budget exhausted"
+                                    .to_string(),
                                 is_error: true,
                                 execution_time_ms: 0,
                             },
                         });
                     }
+                    self.messages.push(Message {
+                        role: Role::User,
+                        content: tool_result_blocks,
+                    });
                     event_sink.emit(Event::TurnDone {
                         result: Ok(msg.clone()),
                     });
@@ -269,11 +287,21 @@ impl ReActLoop {
                         event_sink.emit(Event::CircuitBreakerTripped {
                             reason: reason.clone(),
                         });
+                        // Push any already-collected results first, then error results.
+                        if !tool_result_blocks.is_empty() {
+                            self.messages.push(Message {
+                                role: Role::User,
+                                content: std::mem::take(&mut tool_result_blocks),
+                            });
+                        }
                         for (pending_id, pending_name, _) in tool_calls.iter().skip(tool_index) {
                             let content =
                                 format!("Tool call skipped: circuit breaker tripped: {reason}");
-                            self.messages
-                                .push(Message::tool_result(pending_id, &content, true));
+                            tool_result_blocks.push(ContentBlock::ToolResult {
+                                tool_use_id: pending_id.clone(),
+                                content: content.clone(),
+                                is_error: true,
+                            });
                             event_sink.emit(Event::ToolResult {
                                 name: pending_name.clone(),
                                 call_id: pending_id.clone(),
@@ -284,6 +312,10 @@ impl ReActLoop {
                                 },
                             });
                         }
+                        self.messages.push(Message {
+                            role: Role::User,
+                            content: tool_result_blocks,
+                        });
                         event_sink.emit(Event::TurnDone {
                             result: Ok(msg.clone()),
                         });
@@ -367,8 +399,14 @@ impl ReActLoop {
                 } else {
                     content.clone()
                 };
-                self.messages
-                    .push(Message::tool_result(id, &truncated_content, is_error));
+                // Accumulate tool result block for combined push after loop.
+                // Anthropic API requires all tool_result blocks for one assistant
+                // message to be in a SINGLE subsequent user message.
+                tool_result_blocks.push(ContentBlock::ToolResult {
+                    tool_use_id: id.clone(),
+                    content: truncated_content,
+                    is_error,
+                });
                 // Defer reflection: collect flag, will inject after all tool results
                 if should_reflect {
                     let ctx = crate::core::react_loop::reflection::ReflectionContext {
@@ -390,6 +428,16 @@ impl ReActLoop {
                     // Store for injection after all tool results
                     pending_reflection = Some(result.summary);
                 }
+            }
+
+            // Push combined tool result message — ALL tool_results for the
+            // preceding assistant(tool_use) message MUST be in ONE user message
+            // for the Anthropic API (tool_result blocks immediately after tool_use).
+            if !tool_result_blocks.is_empty() {
+                self.messages.push(Message {
+                    role: Role::User,
+                    content: tool_result_blocks,
+                });
             }
 
             // Inject reflection AFTER all tool results to preserve API message format

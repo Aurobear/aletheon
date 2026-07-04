@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use base::{ContentBlock, Message, Role};
 use cognit::r#impl::llm::LlmProvider;
@@ -87,10 +87,43 @@ impl SessionManager {
         debug!(len = content.len(), "Pushed system message");
     }
 
-    /// Push an arbitrary message into the conversation history (no journal).
-    /// Used for tool call/result messages that need to be preserved in session history.
-    pub fn push_message(&mut self, message: Message) {
+    /// Push an arbitrary message into the conversation history and journal.
+    /// Tool use/result blocks are journaled so session recovery can reconstruct
+    /// multi-block messages correctly.
+    pub async fn push_message(&mut self, message: Message) {
         debug!(role = ?message.role, blocks = message.content.len(), "Pushed message");
+
+        // Journal tool blocks so session recovery can reconstruct multi-block messages
+        for block in &message.content {
+            match block {
+                ContentBlock::ToolUse { id, name, input } => {
+                    let _ = self
+                        .journal
+                        .append(SessionEvent::ToolUseBlock {
+                            tool_use_id: id.clone(),
+                            tool_name: name.clone(),
+                            input: input.clone(),
+                        })
+                        .await;
+                }
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } => {
+                    let _ = self
+                        .journal
+                        .append(SessionEvent::ToolResultBlock {
+                            tool_use_id: tool_use_id.clone(),
+                            content: content.clone(),
+                            is_error: *is_error,
+                        })
+                        .await;
+                }
+                _ => {}
+            }
+        }
+
         self.messages.push(message);
     }
 
@@ -185,8 +218,8 @@ impl SessionManager {
                 .append(SessionEvent::Summary { text: summary })
                 .await;
         }
-        // Re-journal the surviving tail (text content) after the checkpoint so a
-        // reopen reconstructs [summary] ++ tail. System summary is emitted above.
+        // Re-journal the surviving tail (text + tool blocks) after the checkpoint
+        // so a reopen reconstructs [summary] ++ tail.  System messages are skipped.
         let tail: Vec<Message> = self
             .messages
             .iter()
@@ -194,6 +227,39 @@ impl SessionManager {
             .cloned()
             .collect();
         for m in &tail {
+            // Emit tool_use / tool_result blocks as dedicated events so recovery
+            // can reconstruct multi-block messages correctly.
+            for block in &m.content {
+                match block {
+                    ContentBlock::ToolUse { id, name, input } => {
+                        let _ = self
+                            .journal
+                            .append(SessionEvent::ToolUseBlock {
+                                tool_use_id: id.clone(),
+                                tool_name: name.clone(),
+                                input: input.clone(),
+                            })
+                            .await;
+                    }
+                    ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error,
+                    } => {
+                        let _ = self
+                            .journal
+                            .append(SessionEvent::ToolResultBlock {
+                                tool_use_id: tool_use_id.clone(),
+                                content: content.clone(),
+                                is_error: *is_error,
+                            })
+                            .await;
+                    }
+                    _ => {}
+                }
+            }
+            // Also emit a text-content event for the message role so recovery
+            // can reconstruct the text parts without losing message boundaries.
             let text: String = m
                 .content
                 .iter()
@@ -246,17 +312,67 @@ impl SessionManager {
             return None;
         }
 
+        // Detect corrupted sessions: orphan tool_use blocks, API error messages, etc.
+        if is_session_corrupted(&state.events_after_checkpoint) {
+            warn!(
+                session_id,
+                "Recovered session data is corrupted (orphan tool calls or API errors); starting fresh"
+            );
+            return None;
+        }
+
         let mut messages = Vec::new();
+        let mut pending_tool_uses: Vec<ContentBlock> = Vec::new();
+
         for event in &state.events_after_checkpoint {
             match event {
                 SessionEvent::Summary { text } => {
-                    messages.push(Message::system(format!("[Conversation summary]\n{}", text)));
+                    flush_tool_uses(&mut messages, &mut pending_tool_uses);
+                    messages
+                        .push(Message::system(format!("[Conversation summary]\n{}", text)));
+                }
+                SessionEvent::ToolUseBlock {
+                    tool_use_id,
+                    tool_name,
+                    input,
+                } => {
+                    pending_tool_uses.push(ContentBlock::ToolUse {
+                        id: tool_use_id.clone(),
+                        name: tool_name.clone(),
+                        input: input.clone(),
+                    });
+                }
+                SessionEvent::ToolResultBlock {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } => {
+                    // Flush any pending tool_uses from a prior assistant message
+                    // before emitting the tool_result.
+                    flush_tool_uses(&mut messages, &mut pending_tool_uses);
+                    messages.push(Message::tool_result(tool_use_id, content, *is_error));
                 }
                 SessionEvent::UserMessage { content } => {
+                    flush_tool_uses(&mut messages, &mut pending_tool_uses);
                     messages.push(Message::user(content));
                 }
                 SessionEvent::AssistantMessage { content } => {
-                    messages.push(Message::assistant(content));
+                    if pending_tool_uses.is_empty() {
+                        messages.push(Message::assistant(content));
+                    } else {
+                        // Assistant message follows accumulated tool_use blocks —
+                        // combine them into a single multi-block assistant message.
+                        let mut blocks = std::mem::take(&mut pending_tool_uses);
+                        if !content.is_empty() {
+                            blocks.push(ContentBlock::Text {
+                                text: content.clone(),
+                            });
+                        }
+                        messages.push(Message {
+                            role: Role::Assistant,
+                            content: blocks,
+                        });
+                    }
                 }
                 SessionEvent::Compacted { .. } => {
                     // Superseded by the checkpoint written right after compaction.
@@ -266,8 +382,56 @@ impl SessionManager {
             }
         }
 
+        // Flush any remaining pending tool_uses at end of stream.
+        flush_tool_uses(&mut messages, &mut pending_tool_uses);
+
         Some(messages)
     }
+}
+
+/// Flush accumulated tool_use blocks as an assistant message.
+fn flush_tool_uses(messages: &mut Vec<Message>, pending: &mut Vec<ContentBlock>) {
+    if !pending.is_empty() {
+        messages.push(Message {
+            role: Role::Assistant,
+            content: std::mem::take(pending),
+        });
+    }
+}
+
+/// Check whether the recovered session events contain corruption that would
+/// cause API errors on replay:
+/// - Orphan tool_use blocks (assistant requests tool calls but tool results
+///   are missing, creating an invalid `tool_calls`-without-response sequence).
+/// - API error messages stored as assistant text responses.
+fn is_session_corrupted(events: &[SessionEvent]) -> bool {
+    let mut pending_ids: Vec<String> = Vec::new();
+    for event in events {
+        match event {
+            SessionEvent::ToolUseBlock { tool_use_id, .. } => {
+                pending_ids.push(tool_use_id.clone());
+            }
+            SessionEvent::ToolResultBlock { tool_use_id, .. } => {
+                pending_ids.retain(|id| id != tool_use_id);
+            }
+            SessionEvent::AssistantMessage { content } => {
+                // Detect API error messages that were stored as assistant content.
+                if content.contains("tool_calls")
+                    && content.contains("must be followed")
+                {
+                    return true;
+                }
+            }
+            SessionEvent::UserMessage { .. } if !pending_ids.is_empty() => {
+                // A new user turn has started. Any unresolved tool_use blocks
+                // from the previous turn are orphans.
+                return true;
+            }
+            _ => {}
+        }
+    }
+    // Unresolved tool_use blocks at the end of the event stream.
+    !pending_ids.is_empty()
 }
 
 #[cfg(test)]
@@ -327,7 +491,8 @@ mod compaction_tests {
                 format!("t{i}"),
                 "y".repeat(400),
                 false,
-            ));
+            ))
+            .await;
             sm.push_user(&format!("user {i} {}", "z".repeat(400))).await;
         }
         let did = sm.compact_if_needed(&StubLlm).await;
@@ -372,6 +537,67 @@ mod compaction_tests {
                     .iter()
                     .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("SUMMARY")))),
             "recovered history must contain the persisted summary"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_messages_survive_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_id = "tool-test".to_string();
+
+        // Create session, push tool messages
+        {
+            let mut sm =
+                SessionManager::new(dir.path(), session_id.clone(), 100_000)
+                    .await
+                    .unwrap();
+            sm.push_user("Read a file").await;
+            sm.push_message(Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolUse {
+                    id: "call_01".to_string(),
+                    name: "file_read".to_string(),
+                    input: serde_json::json!({"path": "/tmp/test.txt"}),
+                }],
+            })
+            .await;
+            sm.push_message(Message::tool_result(
+                "call_01",
+                "file contents here",
+                false,
+            ))
+            .await;
+            sm.push_assistant("The file says: file contents here").await;
+            // Flush so all events are persisted before recovery
+            let _ = sm.journal().flush().await;
+        }
+
+        // Recover and verify tool messages are preserved
+        let sm2 = SessionManager::new(dir.path(), session_id, 100_000)
+            .await
+            .unwrap();
+        let hist = sm2.history();
+
+        // Find tool_use message
+        let has_tool_use = hist.iter().any(|m| {
+            m.content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { id, .. } if id == "call_01"))
+        });
+        assert!(
+            has_tool_use,
+            "ToolUse message should survive recovery"
+        );
+
+        // Find tool_result message
+        let has_tool_result = hist.iter().any(|m| {
+            m.content.iter().any(|b| {
+                matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "call_01")
+            })
+        });
+        assert!(
+            has_tool_result,
+            "ToolResult message should survive recovery"
         );
     }
 }

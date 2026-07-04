@@ -32,6 +32,12 @@ impl UnixServer {
         }
 
         let listener = UnixListener::bind(socket_path)?;
+        // Allow all users to connect (systemd runs as root, TUI runs as user)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o666))?;
+        }
         info!(path = %socket_path.display(), "Unix socket listening");
 
         Ok(Self {

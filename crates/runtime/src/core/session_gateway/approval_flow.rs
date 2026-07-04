@@ -66,6 +66,12 @@ impl SessionGateway {
                             crate::r#impl::session::journal::SessionEvent::AssistantMessage {
                                 ..
                             } => "assistant_message",
+                            crate::r#impl::session::journal::SessionEvent::ToolUseBlock {
+                                ..
+                            } => "tool_use_block",
+                            crate::r#impl::session::journal::SessionEvent::ToolResultBlock {
+                                ..
+                            } => "tool_result_block",
                             crate::r#impl::session::journal::SessionEvent::ToolCallStarted {
                                 ..
                             } => "tool_call_started",
