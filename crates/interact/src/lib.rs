@@ -16,7 +16,6 @@
     clippy::module_inception,
     private_interfaces,
     unexpected_cfgs,
-    dead_code,
     deprecated
 )]
 
