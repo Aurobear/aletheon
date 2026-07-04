@@ -54,11 +54,11 @@ impl RuntimeCore {
     ///                  discovery when `None`.
     pub async fn bootstrap(config_path: Option<PathBuf>) -> Result<Self> {
         // ── AppConfig ───────────────────────────────────────────────
-        let app_config = if let Some(ref path) = config_path {
-            cognit::config::AppConfig::load_or_default(path)
-        } else {
-            cognit::config::AppConfig::load_layered(None)
-        };
+        // Layered base (defaults → /etc → user → project), then --config on top.
+        let mut app_config = cognit::config::AppConfig::load_layered(None);
+        if let Some(ref path) = config_path {
+            app_config.merge(cognit::config::AppConfig::load_or_default(path));
+        }
         tracing::info!(providers = %app_config.providers.len(), "Loaded config");
 
         // ── ProviderRegistry ────────────────────────────────────────
@@ -103,7 +103,13 @@ impl RuntimeCore {
                 })
                 .collect(),
             hooks: {
-                let rt_config = crate::core::config::AppConfig::load_layered(None);
+                // Honor --config: hooks must come from the same file(s) as the
+                // main config, not always ~/.aletheon. (Fixes the hooks bug.)
+                let rt_config = if let Some(ref path) = config_path {
+                    crate::core::config::AppConfig::load_or_default(path)
+                } else {
+                    crate::core::config::AppConfig::load_layered(None)
+                };
                 rt_config.hooks
             },
         };
