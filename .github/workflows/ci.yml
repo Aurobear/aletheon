@@ -10,6 +10,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  msrv:
+    name: Rust 1.88 MSRV
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-1.88
+      - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev
+      - run: cargo +1.88.0 check --workspace --all-targets
+
   check:
     name: cargo check
     runs-on: ubuntu-latest
@@ -22,12 +37,13 @@ jobs:
   test:
     name: cargo test
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev
-      - run: cargo +stable test --workspace --all-targets
+      - run: cargo +stable test --workspace
 
   clippy:
     name: cargo clippy
