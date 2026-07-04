@@ -28,6 +28,8 @@ pub struct Checkpoint {
 
 /// Checkpoint store for a session.
 pub struct CheckpointStore {
+    /// Parked — future file-edit rewind.
+    /// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5.
     #[allow(dead_code)]
     session_dir: std::path::PathBuf,
     checkpoints: Vec<Checkpoint>,

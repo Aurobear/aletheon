@@ -41,6 +41,9 @@ impl Default for ControllerOptions {
 
 /// Transport-agnostic agent controller.
 ///
+/// Parked — future multi-frontend (TUI/HTTP).
+/// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5.
+///
 /// This is a scaffold for multi-frontend support (TUI, HTTP, desktop).
 /// It duplicates some state from `ReActLoop` and handler.rs so that each
 /// frontend can hold a shared `Controller` without coupling to internals.

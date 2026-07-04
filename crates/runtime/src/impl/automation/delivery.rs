@@ -9,7 +9,8 @@ use super::DeliveryTarget;
 /// Manages HTTP clients keyed by destination URL origin and delivers content
 /// to the appropriate channel.
 pub struct DeliveryManager {
-    /// Re-usable HTTP clients keyed by URL origin.
+    /// Parked — future automation/delivery.
+    /// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5.
     #[allow(dead_code)]
     clients: HashMap<String, reqwest::Client>,
 }
