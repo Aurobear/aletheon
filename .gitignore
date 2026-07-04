@@ -12,3 +12,9 @@ references/letta/
 references/opencode/
 references/OpenHands/
 references/claude-code/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/

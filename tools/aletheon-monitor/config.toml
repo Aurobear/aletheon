@@ -1,0 +1,3 @@
+[aletheon]
+socket_path = "/run/aletheon/aletheon.sock"
+timeout_seconds = 5.0
