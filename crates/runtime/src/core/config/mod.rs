@@ -250,7 +250,7 @@ sonnet = "anthropic/claude-sonnet-4-20250514"
     #[test]
     fn test_default_config() {
         let config = AppConfig::default();
-        assert_eq!(config.agent.max_iterations, 25);
+        assert_eq!(config.agent.max_iterations, 0);
         assert!(config.providers.is_empty());
         assert_eq!(config.sandbox.preference, "auto");
         assert_eq!(config.memory.backend, "sqlite");
@@ -487,7 +487,7 @@ log_level = "debug"
     #[test]
     fn test_load_layered_global_only() {
         let config = AppConfig::load_layered(None);
-        assert_eq!(config.agent.max_iterations, 25);
+        assert_eq!(config.agent.max_iterations, 0);
     }
 
     #[test]
@@ -518,7 +518,7 @@ preference = "require"
     fn test_load_layered_no_project_config() {
         let tmp = tempfile::tempdir().unwrap();
         let config = AppConfig::load_layered(Some(tmp.path()));
-        assert_eq!(config.agent.max_iterations, 25);
+        assert_eq!(config.agent.max_iterations, 0);
     }
 
     #[test]

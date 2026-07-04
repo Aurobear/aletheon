@@ -76,8 +76,10 @@ impl Default for AgentConfig {
     }
 }
 
+/// 0 means "no iteration cap" — termination then relies on the LLM stopping,
+/// the circuit breaker, repeated-call detection, and the tool budget.
 pub(crate) fn default_max_iterations() -> usize {
-    25
+    0
 }
 pub(crate) fn default_max_tokens() -> usize {
     100_000
