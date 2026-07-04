@@ -601,7 +601,6 @@ impl RequestHandler {
             notify_tx: None,
             fact_store,
             objective_store,
-            resumed_objective,
             storm_breaker,
             checkpoint_store,
             skill_router,

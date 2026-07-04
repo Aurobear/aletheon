@@ -138,9 +138,6 @@ pub struct RequestHandler {
     fact_store: Arc<Mutex<FactStore>>,
     /// SQLite-backed objective store for persistent goal tracking.
     objective_store: Arc<Mutex<ObjectiveStore>>,
-    /// Cached active objective + sub-goals for resume-on-start.
-    /// Applied once to GoalTracker before the first chat turn.
-    resumed_objective: Option<(String, Vec<String>)>,
     /// Loop detector: tracks consecutive tool failures/successes.
     storm_breaker: Arc<Mutex<StormBreaker>>,
     /// Parked — future file-edit rewind.
@@ -170,6 +167,10 @@ pub struct RequestHandler {
     /// Cancellation token for the current chat turn.
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     /// EventBus for cross-subsystem event routing (DaseinEventBridge, etc.).
+    /// Parked — TODO(P1-A): Migrate from Arc<dyn EventBus> to Arc<CommunicationBus>.
+    /// Used during boot (init.rs) to wire DaseinEventBridge, but the stored
+    /// field is not read thereafter.
+    #[allow(dead_code)]
     event_bus: Option<Arc<dyn base::EventBus>>,
     /// Daemon-level cancellation token for graceful shutdown via daemon.shutdown RPC.
     daemon_cancel_token: Option<CancellationToken>,

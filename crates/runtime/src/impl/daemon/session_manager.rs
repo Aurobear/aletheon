@@ -19,8 +19,6 @@ pub struct SessionManager {
     pub session_id: String,
     messages: Vec<Message>,
     journal: EventJournal,
-    max_tokens: usize,
-    compaction_threshold: f64,
     compressor: AdvancedCompressor,
 }
 
@@ -47,8 +45,6 @@ impl SessionManager {
             session_id,
             messages,
             journal,
-            max_tokens,
-            compaction_threshold: 0.8,
             compressor: AdvancedCompressor::new(
                 (max_tokens as f64 * 0.25) as usize, // tail token budget
                 4_000,                               // target summary chars

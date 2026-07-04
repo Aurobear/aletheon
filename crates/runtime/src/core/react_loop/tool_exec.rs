@@ -74,7 +74,7 @@ impl ReActLoop {
             let mut current_text = String::new();
             let mut pending_think = String::new();
             let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
-            let mut stop_reason = StopReason::EndTurn;
+            let mut _stop_reason = StopReason::EndTurn;
 
             while let Some(chunk) = stream.next().await {
                 match chunk? {
@@ -150,7 +150,7 @@ impl ReActLoop {
                         });
                     }
                     StreamChunk::Done { stop_reason: sr } => {
-                        stop_reason = sr;
+                        _stop_reason = sr;
                         break;
                     }
                 }

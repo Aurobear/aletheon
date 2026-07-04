@@ -102,6 +102,8 @@ impl Default for HookRunner {
 mod tests {
     use super::*;
 
+    // Parked — placeholder Hook impl for future lifecycle tests.
+    #[allow(dead_code)]
     struct AllowHook;
     impl Hook for AllowHook {
         fn name(&self) -> &str {

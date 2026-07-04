@@ -494,7 +494,7 @@ impl RequestHandler {
         let event_sink = ChannelEventSink::new(event_tx);
 
         // Inject Dasein context into user input (Task 17)
-        let effective_message = {
+        let _effective_message = {
             let sf = self.self_field.lock().await;
             if let Some(ctx) = sf.dasein_prompt_injection() {
                 format!("{}\n\n---\n\n{}", ctx, effective_message)

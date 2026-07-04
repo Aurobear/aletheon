@@ -109,15 +109,4 @@ impl ObjectiveStore {
             None => Ok(None),
         }
     }
-
-    /// Count objectives matching a status filter (for tests and health checks).
-    #[cfg(test)]
-    pub(crate) fn count_by_status(&self, status: &str) -> Result<usize> {
-        let count: i64 = self.db.query_row(
-            "SELECT COUNT(*) FROM objectives WHERE status = ?1",
-            rusqlite::params![status],
-            |r| r.get(0),
-        )?;
-        Ok(count as usize)
-    }
 }

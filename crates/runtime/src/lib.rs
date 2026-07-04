@@ -1,8 +1,5 @@
 #![allow(
     deprecated,
-    unused_variables,
-    unused_assignments,
-    dead_code,
     clippy::too_many_arguments,
     clippy::module_inception,
     clippy::new_without_default,
