@@ -33,7 +33,7 @@ impl Default for ControllerOptions {
             working_dir: "/tmp".into(),
             data_dir: "/tmp/aletheon".into(),
             system_prompt: "You are a helpful assistant.".into(),
-            max_iterations: 15,
+            max_iterations: 0,
             compaction_enabled: true,
         }
     }
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn controller_options_default() {
         let opts = ControllerOptions::default();
-        assert_eq!(opts.max_iterations, 15);
+        assert_eq!(opts.max_iterations, 0);
         assert!(opts.compaction_enabled);
         assert_eq!(opts.working_dir, "/tmp");
     }

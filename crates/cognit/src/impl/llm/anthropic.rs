@@ -235,7 +235,7 @@ impl LlmProvider for AnthropicProvider {
         // Debug: log the full request to diagnose tool_use/tool_result ordering issues
         if std::env::var("ALETHEON_DEBUG_API").is_ok() {
             if let Ok(json) = serde_json::to_string_pretty(&request) {
-                eprintln!("[API-DEBUG] Request to {}:{}\n{}", self.base_url, "/v1/messages", json);
+                eprintln!("[API-DEBUG] Request to {}:/v1/messages\n{}", self.base_url, json);
             }
         }
 
