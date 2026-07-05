@@ -155,6 +155,13 @@ impl PerfCounter {
         self.turn_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record token usage without incrementing the turn counter (for
+    /// non-turn LLM calls such as session.ask introspection).
+    pub fn record_tokens(&self, tokens_in: u64, tokens_out: u64) {
+        self.tokens_in.fetch_add(tokens_in, Ordering::Relaxed);
+        self.tokens_out.fetch_add(tokens_out, Ordering::Relaxed);
+    }
+
     pub async fn record_tool_call(&self, tool: &str) {
         let mut map = self.tool_calls.lock().await;
         *map.entry(tool.to_string()).or_insert(0) += 1;

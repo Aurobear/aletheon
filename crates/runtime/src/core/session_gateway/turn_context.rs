@@ -346,6 +346,14 @@ impl SessionGateway {
 
         match self.llm.complete(&messages, &[]).await {
             Ok(response) => {
+                // Record token usage from the introspection LLM call
+                self.debug_handler
+                    .perf_counter()
+                    .record_tokens(
+                        response.usage.input_tokens as u64,
+                        response.usage.output_tokens as u64,
+                    );
+
                 let answer = response
                     .content
                     .iter()

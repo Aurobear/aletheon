@@ -3,12 +3,17 @@
 FastMCP server exposing 9 tools for Claude Code to monitor and diagnose
 the Aletheon daemon through the existing Session Gateway JSON-RPC interface.
 
+Prerequisites: Run aletheon's setup.sh first. This server expects:
+  - $ALETHEON_SOCKET set (or /run/aletheon/aletheon.sock as default)
+  - The aletheon daemon running and listening on the socket
+
 Usage:
     python -m aletheon_monitor.server
 """
 
 import json
 import os
+import sys
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -29,6 +34,54 @@ from .tools import (
 
 # ── Global client (initialized once at startup) ──────────────────────────
 _client: AletheonClient | None = None
+_install_validated: bool = False
+
+
+def validate_installation() -> dict:
+    """Pre-flight check that aletheon was deployed via setup.sh.
+
+    Returns a dict with keys: ok (bool), message (str), socket_path (str|null).
+    This is the "constraint" that enforces setup.sh deployment.
+    """
+    global _install_validated
+    if _install_validated:
+        return {"ok": True, "message": "already validated", "socket_path": None}
+
+    client = AletheonClient()
+    socket_path = client.socket_path
+
+    # Check 1: Does the socket file exist?
+    if not os.path.exists(socket_path):
+        _install_validated = True  # Don't spam — validate once
+        return {
+            "ok": False,
+            "message": (
+                f"Aletheon socket not found at {socket_path}. "
+                "Run aletheon setup.sh to install and start the daemon, "
+                "or set ALETHEON_SOCKET to the correct path."
+            ),
+            "socket_path": socket_path,
+        }
+
+    # Check 2: Can we find the env file?
+    env_candidates = [
+        "/etc/aletheon/.env",
+        os.path.expanduser("~/.config/aletheon/.env"),
+    ]
+    env_found = any(os.path.isfile(p) for p in env_candidates)
+    if not env_found:
+        _install_validated = True
+        return {
+            "ok": False,
+            "message": (
+                "Aletheon env file not found at /etc/aletheon/.env or "
+                "~/.config/aletheon/.env. Run setup.sh to generate it."
+            ),
+            "socket_path": socket_path,
+        }
+
+    _install_validated = True
+    return {"ok": True, "message": "installation validated", "socket_path": socket_path}
 
 
 def get_client() -> AletheonClient:
@@ -42,6 +95,15 @@ def get_client() -> AletheonClient:
 # ── Tool definitions ─────────────────────────────────────────────────────
 
 TOOLS = [
+    Tool(
+        name="aletheon_check_install",
+        description="Pre-flight check: verifies Aletheon was deployed via setup.sh. Run this first before any other aletheon_* tools. Returns OK + socket path, or an error telling you to run setup.sh.",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    ),
     Tool(
         name="aletheon_health",
         description="Quick liveness check: daemon status, socket health, systemd state. Always the first call in any monitoring flow.",
@@ -189,6 +251,7 @@ TOOLS = [
 
 # Tool handler dispatch table
 _HANDLERS = {
+    "aletheon_check_install": lambda client, args: validate_installation(),
     "aletheon_health": lambda client, args: health_mod.health(client),
     "aletheon_snapshot": lambda client, args: snapshot_mod.snapshot(
         client, include_memory=args.get("include_memory", False)
@@ -262,7 +325,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 async def main():
     """Run the MCP server over stdio."""
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream)
+        await server.run(
+            read_stream,
+            write_stream,
+            server.create_initialization_options(),
+        )
 
 
 if __name__ == "__main__":

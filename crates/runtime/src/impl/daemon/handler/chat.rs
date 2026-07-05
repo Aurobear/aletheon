@@ -77,6 +77,14 @@ impl RequestHandler {
         // Memory updates are composed via compose_memory_block() — the same
         // pattern as ReActLoop::compose_user_message() / Controller::compose_user_message().
         let memory_block = self.compose_memory_block().await;
+
+        // Reset Storm Breaker counters at the start of each turn so that
+        // success/failure warnings don't accumulate across turns.
+        {
+            let mut sb = self.storm_breaker.lock().await;
+            sb.reset();
+        }
+
         let mut effective_message = String::new();
 
         // Memory updates first (if any)
@@ -511,11 +519,19 @@ impl RequestHandler {
 
         // Pre-turn proactive compaction: compact the persisted history before
         // seeding the ReAct loop so the seed is already within token budget.
+        // Take only the last 2 messages (last assistant + user pair) for
+        // context continuity — full history seeding blows context budget.
         let existing_messages = {
             let (_sid, sm_arc) = self.get_or_create_session(None).await;
             let mut sm = sm_arc.lock().await;
             let _ = sm.compact_if_needed(&*self.llm).await;
-            sm.history().to_vec()
+            let full_history = sm.history().to_vec();
+            full_history
+                .into_iter()
+                .rev()
+                .take(2)
+                .rev()
+                .collect::<Vec<_>>()
         };
 
         let mut react_task = tokio::spawn(async move {
@@ -546,6 +562,10 @@ impl RequestHandler {
         let mut tool_calls_for_session: Vec<(String, String, serde_json::Value)> = Vec::new();
         let mut tool_results_for_session: Vec<(String, String, bool)> = Vec::new();
 
+        // Accumulated token usage across this turn
+        let mut acc_tokens_in: u64 = 0;
+        let mut acc_tokens_out: u64 = 0;
+
         let text = loop {
             tokio::select! {
                 result = &mut react_task => {
@@ -567,6 +587,14 @@ impl RequestHandler {
                         }
                         Event::ToolResult { name: _, call_id, result } => {
                             tool_results_for_session.push((call_id.clone(), result.content.clone(), result.is_error));
+                        }
+                        Event::Usage {
+                            tokens_in,
+                            tokens_out,
+                            ..
+                        } => {
+                            acc_tokens_in += *tokens_in as u64;
+                            acc_tokens_out += *tokens_out as u64;
                         }
                         _ => {}
                     }
@@ -681,9 +709,8 @@ impl RequestHandler {
         // Coordinate: quick mood update after the turn (Task 23)
         self.coordinate(&turn_count, &text).await;
 
-        // Record turn in perf counter (token counts come from usage events
-        // which are not captured here; use 0 as placeholder).
-        self.debug_perf.record_turn(0, 0);
+        // Record turn in perf counter (token counts from accumulated Usage events).
+        self.debug_perf.record_turn(acc_tokens_in, acc_tokens_out);
 
         // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
         let msg_preview_end = message

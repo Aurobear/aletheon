@@ -23,10 +23,12 @@ impl BwrapBuilder {
 
     /// Build the complete `bwrap` argument list for executing `cmd`.
     ///
-    /// Argument order (critical):
+    /// Argument order (critical — bubblewrap applies mounts in order,
+    /// later mounts override earlier ones):
     /// 1. Base isolation flags (`--die-with-parent`, `--unshare-*`)
-    /// 2. Full read-only root bind (if default is `ReadOnly`)
-    /// 3. `--dev /dev`, `--proc /proc`
+    /// 2. Full read-only root bind (must come BEFORE dev/proc so the
+    ///    fresh devtmpfs isn't overwritten by the recursive root bind)
+    /// 3. `--dev /dev`, `--proc /proc` (fresh devtmpfs on top of RO root)
     /// 4. Mask unreadable ancestors of writable roots
     /// 5. Bind writable roots (`--bind <root> <root>`)
     /// 6. Re-protect sub-paths (`--ro-bind` for `.git`, etc.)
@@ -39,10 +41,10 @@ impl BwrapBuilder {
         // -- Step 1: Base isolation flags --
         self.push_base_flags(&mut args);
 
-        // -- Step 2: Full filesystem root --
+        // -- Step 2: Full filesystem root (must come BEFORE dev/proc) --
         self.push_root_bind(&mut args);
 
-        // -- Step 3: Device and proc --
+        // -- Step 3: Device and proc (fresh devtmpfs on top of RO root) --
         self.push_dev_and_proc(&mut args);
 
         // -- Step 4: Mask unreadable ancestors of writable roots --

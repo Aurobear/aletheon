@@ -92,7 +92,10 @@ impl ReActLoop {
             config.circuit_breaker.window_size,
         );
         let goal_tracker = GoalTracker::new();
-        let reflection_engine = ReflectionEngine::new(config.agent_loop.reflection_interval);
+        let reflection_engine = ReflectionEngine::new(
+            config.agent_loop.reflection_interval,
+            config.agent_loop.reflection_tool_call_limit,
+        );
 
         Self {
             config,

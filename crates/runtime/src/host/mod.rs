@@ -99,10 +99,17 @@ impl RuntimeHost for DaemonHost {
 
         // ── .env ────────────────────────────────────────────────────
         let env_path = self.env_path.take().unwrap_or_else(|| {
-            let path = base::paths::env_file();
-            if path.exists() {
-                return path;
+            // 1. ~/.aletheon/.env (user/session mode)
+            let user_path = base::paths::env_file();
+            if user_path.exists() {
+                return user_path;
             }
+            // 2. /etc/aletheon/.env (system mode)
+            let system_path = PathBuf::from("/etc/aletheon/.env");
+            if system_path.exists() {
+                return system_path;
+            }
+            // 3. ./.env (working directory)
             PathBuf::from(".env")
         });
         load_dotenv(&env_path);

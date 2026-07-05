@@ -14,6 +14,7 @@ pub struct OpenAiProvider {
     model: String,
     base_url: String,
     max_context: usize,
+    max_tokens: u32,
 }
 
 impl OpenAiProvider {
@@ -28,11 +29,17 @@ impl OpenAiProvider {
             model: model.into(),
             base_url: base_url.into(),
             max_context: 128_000,
+            max_tokens: 4096,
         }
     }
 
     pub fn with_max_context(mut self, max_context: usize) -> Self {
         self.max_context = max_context;
+        self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
         self
     }
 }
@@ -344,7 +351,7 @@ impl LlmProvider for OpenAiProvider {
             model: self.model.clone(),
             messages: messages_to_chat(messages),
             tools: tools_to_chat(tools),
-            max_tokens: Some(4096),
+            max_tokens: Some(self.max_tokens),
             stream: None,
         };
 
@@ -448,7 +455,7 @@ impl LlmProvider for OpenAiProvider {
             model: self.model.clone(),
             messages: messages_to_chat(messages),
             tools: tools_to_chat(tools),
-            max_tokens: Some(4096),
+            max_tokens: Some(self.max_tokens),
             stream: Some(true),
         };
 

@@ -198,6 +198,8 @@ pub struct AgentLoopConfig {
     pub reflection_interval: usize,
     /// Progress check interval (every N tool calls).
     pub progress_check_interval: usize,
+    /// Maximum tool calls before reflection recommends stopping.
+    pub reflection_tool_call_limit: usize,
 }
 
 impl Default for AgentLoopConfig {
@@ -206,6 +208,7 @@ impl Default for AgentLoopConfig {
             max_tool_calls: 0, // 0 = unlimited
             reflection_interval: 5,
             progress_check_interval: 3,
+            reflection_tool_call_limit: 20,
         }
     }
 }

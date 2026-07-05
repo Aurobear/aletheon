@@ -46,6 +46,9 @@ class AletheonClient:
             asyncio.open_unix_connection(self.socket_path),
             timeout=self.timeout,
         )
+        # Bump readline buffer limit (default 64KB) for large JSON-RPC responses
+        # like session.journal with full message history
+        self._reader._limit = 10 * 1024 * 1024  # 10 MB
 
     def _next_id(self) -> int:
         self._request_id += 1

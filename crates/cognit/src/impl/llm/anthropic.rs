@@ -12,6 +12,7 @@ pub struct AnthropicProvider {
     model: String,
     base_url: String,
     max_context: usize,
+    max_tokens: u32,
 }
 
 impl AnthropicProvider {
@@ -22,6 +23,7 @@ impl AnthropicProvider {
             model: model.into(),
             base_url: "https://api.anthropic.com".to_string(),
             max_context: 200_000,
+            max_tokens: 4096,
         }
     }
 
@@ -32,6 +34,11 @@ impl AnthropicProvider {
 
     pub fn with_max_context(mut self, max_context: usize) -> Self {
         self.max_context = max_context;
+        self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
         self
     }
 }
@@ -226,7 +233,8 @@ impl LlmProvider for AnthropicProvider {
     ) -> anyhow::Result<LlmResponse> {
         let request = ApiRequest {
             model: self.model.clone(),
-            max_tokens: 4096,
+            max_tokens: self.max_tokens,
+            // ... (line 236, complete())
             messages: messages_to_api(messages),
             tools: tools_to_api(tools),
             stream: None,
@@ -312,7 +320,8 @@ impl LlmProvider for AnthropicProvider {
     ) -> anyhow::Result<LlmStream> {
         let request = ApiRequest {
             model: self.model.clone(),
-            max_tokens: 4096,
+            max_tokens: self.max_tokens,
+            // ... (line 236, complete())
             messages: messages_to_api(messages),
             tools: tools_to_api(tools),
             stream: Some(true),

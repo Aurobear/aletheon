@@ -45,16 +45,19 @@ impl BubblewrapBackend {
             "--unshare-net".into(), // Default: no network
         ];
 
-        // Bind entire root read-only — handles usr-merge symlinks correctly
+        // Bind entire root read-only FIRST, then mount --dev and --proc
+        // on top so the fresh devtmpfs is NOT overwritten by the
+        // recursive --ro-bind of the host root (MS_REC crosses submount
+        // boundaries and would replace a previously-mounted devtmpfs).
         args.push("--ro-bind".into());
         args.push("/".into());
         args.push("/".into());
 
-        // Proc and dev
-        args.push("--proc".into());
-        args.push("/proc".into());
+        // Fresh devtmpfs and proc on top of the read-only root
         args.push("--dev".into());
         args.push("/dev".into());
+        args.push("--proc".into());
+        args.push("/proc".into());
 
         // Writable working directory
         args.push("--bind".into());

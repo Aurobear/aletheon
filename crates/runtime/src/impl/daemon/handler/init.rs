@@ -103,6 +103,8 @@ impl RequestHandler {
         // Create session and journal
         let session_id = uuid::Uuid::new_v4().to_string();
         let data_dir = PathBuf::from(&config.data_dir);
+        std::fs::create_dir_all(&data_dir)
+            .with_context(|| format!("creating data dir: {}", data_dir.display()))?;
         let session_store = SessionStore::new(&data_dir)?;
         session_store.create_session(&session_id)?;
 

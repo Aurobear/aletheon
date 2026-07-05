@@ -4,9 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=/usr/bin/mkdir -p /var/lib/aletheon /root/.local/share/aletheon /run/aletheon
 ExecStart=/usr/bin/aletheon daemon
 Restart=on-failure
 RestartSec=5
+EnvironmentFile=-/etc/aletheon/.env
+Environment=HOME=/root
+Environment=AGENT_DATA_DIR=/var/lib/aletheon
 Environment=RUST_LOG=info
 
 RuntimeDirectory=aletheon

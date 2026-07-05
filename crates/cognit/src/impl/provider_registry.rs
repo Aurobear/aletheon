@@ -33,6 +33,7 @@ pub struct ProviderRegistry {
     aliases: HashMap<String, (String, String)>, // alias → (provider_name, model)
     default_provider: String,
     default_model: String,
+    max_tokens: u32,
 }
 
 impl ProviderRegistry {
@@ -72,6 +73,7 @@ impl ProviderRegistry {
             aliases,
             default_provider,
             default_model,
+            max_tokens: config.agent.max_tokens as u32,
         })
     }
 
@@ -139,7 +141,8 @@ impl ProviderRegistry {
 
         match transport {
             ResolvedTransport::OpenAi => {
-                let mut provider = OpenAiProvider::new(&api_key, model, &config.base_url);
+                let mut provider = OpenAiProvider::new(&api_key, model, &config.base_url)
+                    .with_max_tokens(self.max_tokens);
                 if let Some(ctx) = config.max_context_length {
                     provider = provider.with_max_context(ctx);
                 }
@@ -147,7 +150,9 @@ impl ProviderRegistry {
             }
             ResolvedTransport::Anthropic => {
                 let mut provider =
-                    AnthropicProvider::new(&api_key, model).with_base_url(&config.base_url);
+                    AnthropicProvider::new(&api_key, model)
+                        .with_base_url(&config.base_url)
+                        .with_max_tokens(self.max_tokens);
                 if let Some(ctx) = config.max_context_length {
                     provider = provider.with_max_context(ctx);
                 }

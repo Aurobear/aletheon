@@ -74,16 +74,20 @@ pub struct ReflectionEngine {
     reflection_interval: usize,
     calls_since_reflection: usize,
     should_stop: bool,
+    /// Maximum tool calls before reflection recommends BudgetExhausted stop.
+    tool_call_limit: usize,
 }
 
 impl ReflectionEngine {
     /// Create a new reflection engine.
     /// - reflection_interval: reflect every N tool calls
-    pub fn new(reflection_interval: usize) -> Self {
+    /// - tool_call_limit: max tool calls before stopping (default 20)
+    pub fn new(reflection_interval: usize, tool_call_limit: usize) -> Self {
         Self {
             reflection_interval,
             calls_since_reflection: 0,
             should_stop: false,
+            tool_call_limit,
         }
     }
 
@@ -126,7 +130,7 @@ impl ReflectionEngine {
         let recommendation = if error_rate > 0.5 {
             self.should_stop = true;
             ReflectionRecommendation::Stop(TerminationReason::StuckInLoop)
-        } else if context.tool_calls_made >= 10 {
+        } else if context.tool_calls_made >= self.tool_call_limit {
             self.should_stop = true;
             ReflectionRecommendation::Stop(TerminationReason::BudgetExhausted)
         } else {
@@ -258,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_reflection_interval() {
-        let mut engine = ReflectionEngine::new(3);
+        let mut engine = ReflectionEngine::new(3, 10);
 
         assert!(!engine.should_reflect());
         engine.record_call();
@@ -271,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_reflection_resets_counter() {
-        let mut engine = ReflectionEngine::new(2);
+        let mut engine = ReflectionEngine::new(2, 10);
 
         engine.record_call();
         engine.record_call();
@@ -286,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_high_error_rate_stops() {
-        let mut engine = ReflectionEngine::new(5);
+        let mut engine = ReflectionEngine::new(5, 10);
 
         let ctx = make_ctx(10, 6);
         let result = engine.reflect(&ctx);
@@ -298,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_spec_deviation_on_constraint_violation() {
-        let mut engine = ReflectionEngine::new(5);
+        let mut engine = ReflectionEngine::new(5, 10);
 
         let ctx = ReflectionContext {
             goal: Some("Deploy service".into()),
@@ -324,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_spec_deviation_on_test_failures() {
-        let mut engine = ReflectionEngine::new(5);
+        let mut engine = ReflectionEngine::new(5, 10);
 
         let ctx = ReflectionContext {
             goal: Some("Build API".into()),
@@ -346,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_agent_enhancement() {
-        let mut engine = ReflectionEngine::new(5);
+        let mut engine = ReflectionEngine::new(5, 10);
 
         let ctx = ReflectionContext {
             goal: Some("Build API".into()),
@@ -372,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_on_track() {
-        let mut engine = ReflectionEngine::new(5);
+        let mut engine = ReflectionEngine::new(5, 10);
 
         let ctx = make_ctx(3, 0);
         let result = engine.reflect(&ctx);
