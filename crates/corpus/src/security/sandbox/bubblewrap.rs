@@ -59,6 +59,14 @@ impl BubblewrapBackend {
         args.push("--proc".into());
         args.push("/proc".into());
 
+        // bwrap's --dev creates a fresh devtmpfs, but the device nodes
+        // (including /dev/null) can be unwritable for non-root users.
+        // Explicitly dev-bind the host's /dev/null over the devtmpfs copy
+        // so the sandboxed process can redirect output to /dev/null.
+        args.push("--dev-bind".into());
+        args.push("/dev/null".into());
+        args.push("/dev/null".into());
+
         // Writable working directory
         args.push("--bind".into());
         args.push(config.working_dir.clone());
