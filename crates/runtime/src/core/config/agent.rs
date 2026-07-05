@@ -200,6 +200,10 @@ pub struct AgentLoopConfig {
     pub progress_check_interval: usize,
     /// Maximum tool calls before reflection recommends stopping.
     pub reflection_tool_call_limit: usize,
+    /// Storm breaker: consecutive identical failures before warning.
+    pub storm_breaker_failure_threshold: usize,
+    /// Storm breaker: consecutive successes before warning (higher to reduce noise).
+    pub storm_breaker_success_threshold: usize,
 }
 
 impl Default for AgentLoopConfig {
@@ -209,6 +213,8 @@ impl Default for AgentLoopConfig {
             reflection_interval: 5,
             progress_check_interval: 3,
             reflection_tool_call_limit: 100,
+            storm_breaker_failure_threshold: 3,
+            storm_breaker_success_threshold: 10,
         }
     }
 }

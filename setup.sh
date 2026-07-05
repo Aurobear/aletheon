@@ -259,9 +259,12 @@ done
 setup_config() {
     $USE_SUDO mkdir -p "$CFG_DIR" "$DATA_DIR" "$(dirname "$SOCKET_PATH")"
     if [[ "$MODE" == "system" ]]; then
-        $USE_SUDO chown -R "$(whoami):$(whoami)" "$DATA_DIR" 2>/dev/null || true
-        # Also create root's data/config dirs for systemd (daemon runs as root)
-        sudo mkdir -p /root/.local/share/aletheon /root/.aletheon /run/aletheon
+        $USE_SUDO chown -R "${SUDO_USER:-$(whoami)}:${SUDO_USER:-$(whoami)}" "$DATA_DIR" 2>/dev/null || true
+        # Create the real user's data dirs for the daemon (runs as $SUDO_USER, not root)
+        local real_user="${SUDO_USER:-$(whoami)}"
+        local real_home
+        real_home=$(getent passwd "$real_user" | cut -d: -f6)
+        sudo mkdir -p "$real_home/.local/share/aletheon" "$real_home/.aletheon" /run/aletheon
     else
         mkdir -p "$(dirname "$SOCKET_PATH")"
     fi
@@ -365,10 +368,14 @@ ENV
         log "Env file written to $env"
     fi
 
-    # Symlink .env to root's ~/.aletheon/ so the daemon finds it via env_file()
+    # Symlink .env to the daemon user's ~/.aletheon/ so it finds it via env_file()
     if [[ "$MODE" == "system" ]] && [[ -f "$env" ]]; then
-        sudo ln -sf "$env" /root/.aletheon/.env 2>/dev/null || true
-        log "Linked $env → /root/.aletheon/.env"
+        local real_user="${SUDO_USER:-$(whoami)}"
+        local real_home
+        real_home=$(getent passwd "$real_user" | cut -d: -f6)
+        sudo mkdir -p "$real_home/.aletheon"
+        sudo ln -sf "$env" "$real_home/.aletheon/.env" 2>/dev/null || true
+        log "Linked $env → $real_home/.aletheon/.env"
     fi
 }
 

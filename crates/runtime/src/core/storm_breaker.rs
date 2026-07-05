@@ -5,7 +5,8 @@
 
 use std::collections::HashMap;
 
-const DEFAULT_THRESHOLD: usize = 3;
+const DEFAULT_FAILURE_THRESHOLD: usize = 3;
+const DEFAULT_SUCCESS_THRESHOLD: usize = 10;
 
 /// Tracks tool call patterns to detect loops.
 pub struct StormBreaker {
@@ -13,21 +14,24 @@ pub struct StormBreaker {
     failure_counts: HashMap<(String, String), usize>,
     /// Key: tool_name, Value: consecutive success count
     success_counts: HashMap<String, usize>,
-    /// Threshold to trigger
-    threshold: usize,
+    /// Threshold for consecutive identical failures before warning
+    failure_threshold: usize,
+    /// Threshold for consecutive successes before warning
+    success_threshold: usize,
 }
 
 impl StormBreaker {
-    pub fn new(threshold: usize) -> Self {
+    pub fn new(failure_threshold: usize, success_threshold: usize) -> Self {
         Self {
             failure_counts: HashMap::new(),
             success_counts: HashMap::new(),
-            threshold,
+            failure_threshold,
+            success_threshold,
         }
     }
 
     pub fn with_defaults() -> Self {
-        Self::new(DEFAULT_THRESHOLD)
+        Self::new(DEFAULT_FAILURE_THRESHOLD, DEFAULT_SUCCESS_THRESHOLD)
     }
 
     /// Record a tool call result. Returns a directive if loop detected.
@@ -41,7 +45,7 @@ impl StormBreaker {
             // Reset success counter for this tool
             self.success_counts.remove(tool_name);
 
-            if *count >= self.threshold {
+            if *count >= self.failure_threshold {
                 return Some(format!(
                     "⚠️ Storm breaker: {} has failed {} times with the same error. \
                      Previous attempts did not work. Try a completely different approach.",
@@ -58,7 +62,7 @@ impl StormBreaker {
             // Reset failure counters for this tool
             self.failure_counts.retain(|k, _| k.0 != tool_name);
 
-            if *count >= self.threshold {
+            if *count >= self.success_threshold {
                 return Some(format!(
                     "⚠️ Storm breaker: {} has succeeded {} times in a row. \
                      Verify the result is correct before continuing.",
@@ -82,8 +86,8 @@ impl StormBreaker {
 
     /// Check if any pattern has reached the loop threshold.
     pub fn has_triggered(&self) -> bool {
-        self.failure_counts.values().any(|&c| c >= self.threshold)
-            || self.success_counts.values().any(|&c| c >= self.threshold)
+        self.failure_counts.values().any(|&c| c >= self.failure_threshold)
+            || self.success_counts.values().any(|&c| c >= self.success_threshold)
     }
 
     /// Extract a normalized error signature for comparison.
@@ -110,14 +114,14 @@ mod tests {
 
     #[test]
     fn no_trigger_below_threshold() {
-        let mut sb = StormBreaker::new(3);
+        let mut sb = StormBreaker::new(3, 10);
         assert!(sb.record("bash", true, "error: file not found").is_none());
         assert!(sb.record("bash", true, "error: file not found").is_none());
     }
 
     #[test]
     fn trigger_on_consecutive_failures() {
-        let mut sb = StormBreaker::new(3);
+        let mut sb = StormBreaker::new(3, 10);
         sb.record("bash", true, "error: file not found");
         sb.record("bash", true, "error: file not found");
         let directive = sb.record("bash", true, "error: file not found");
@@ -127,7 +131,7 @@ mod tests {
 
     #[test]
     fn reset_on_success() {
-        let mut sb = StormBreaker::new(3);
+        let mut sb = StormBreaker::new(3, 10);
         sb.record("bash", true, "error: file not found");
         sb.record("bash", false, "ok"); // success resets
         sb.record("bash", true, "error: file not found");
@@ -138,7 +142,7 @@ mod tests {
 
     #[test]
     fn different_errors_dont_trigger() {
-        let mut sb = StormBreaker::new(3);
+        let mut sb = StormBreaker::new(3, 10);
         sb.record("bash", true, "error: file not found");
         sb.record("bash", true, "error: permission denied");
         assert!(sb.record("bash", true, "error: timeout").is_none());
@@ -146,7 +150,7 @@ mod tests {
 
     #[test]
     fn trigger_on_consecutive_successes() {
-        let mut sb = StormBreaker::new(3);
+        let mut sb = StormBreaker::new(3, 3);
         sb.record("write_file", false, "ok");
         sb.record("write_file", false, "ok");
         let warning = sb.record("write_file", false, "ok");
@@ -155,8 +159,19 @@ mod tests {
     }
 
     #[test]
+    fn success_threshold_respected() {
+        let mut sb = StormBreaker::new(3, 10);
+        // 9 successes — should NOT trigger (threshold is 10)
+        for _ in 0..9 {
+            assert!(sb.record("bash_exec", false, "ok").is_none());
+        }
+        // 10th success — triggers
+        assert!(sb.record("bash_exec", false, "ok").is_some());
+    }
+
+    #[test]
     fn reset_clears_all() {
-        let mut sb = StormBreaker::new(2);
+        let mut sb = StormBreaker::new(2, 10);
         sb.record("bash", true, "error");
         sb.record("write_file", false, "ok");
         sb.reset();
@@ -166,7 +181,7 @@ mod tests {
 
     #[test]
     fn different_tools_independent() {
-        let mut sb = StormBreaker::new(3);
+        let mut sb = StormBreaker::new(3, 10);
         sb.record("bash", true, "error");
         sb.record("grep", true, "error");
         sb.record("bash", true, "error");
