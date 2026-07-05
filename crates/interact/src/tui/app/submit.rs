@@ -2,10 +2,23 @@ use std::io;
 use std::io::Write;
 
 use base::ui_event::CollaborationMode;
+use tokio::io::AsyncWriteExt;
 
 use super::super::chat::{ChatWidget, Role as ChatRole};
 use super::super::command::{parse_command, BuiltinCommand, CommandType};
 use super::super::App;
+
+/// Send a simple JSON-RPC method call to the daemon (no params).
+async fn send_jsonrpc_method(app: &mut App, method: &str) {
+    let request = serde_json::json!({"jsonrpc": "2.0", "method": method, "id": 1});
+    let payload = serde_json::to_string(&request).unwrap_or_default();
+    let framed = format!("{}\n", payload);
+    let _ = app.stream.write_all(framed.as_bytes()).await;
+    let _ = app.stream.flush().await;
+    app.streaming = true;
+    app.response_buf.clear();
+    app.status.waiting = true;
+}
 
 pub async fn submit_message(app: &mut App, text: String) {
     // Check for /commands
@@ -52,97 +65,37 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Status)) => {
-                let msg = serde_json::json!({
-                    "jsonrpc": "2.0", "method": "status", "id": 1
-                });
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
-                app.status.waiting = true;
+                send_jsonrpc_method(app, "status").await;
                 app.chat
                     .add_message(ChatRole::System, "查询状态中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Reflect)) => {
-                let msg = serde_json::json!({
-                    "jsonrpc": "2.0", "method": "reflect", "id": 1
-                });
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
-                app.status.waiting = true;
+                send_jsonrpc_method(app, "reflect").await;
                 app.chat
                     .add_message(ChatRole::System, "查询反思记录中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
-                let msg = serde_json::json!({
-                    "jsonrpc": "2.0", "method": "reflect_now", "id": 1
-                });
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
-                app.status.waiting = true;
+                send_jsonrpc_method(app, "reflect_now").await;
                 app.chat
                     .add_message(ChatRole::System, "执行即时反思中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Evolution)) => {
-                let msg = serde_json::json!({
-                    "jsonrpc": "2.0", "method": "evolution", "id": 1
-                });
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
-                app.status.waiting = true;
+                send_jsonrpc_method(app, "evolution").await;
                 app.chat
                     .add_message(ChatRole::System, "查询演化历史中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Genome)) => {
-                let msg = serde_json::json!({
-                    "jsonrpc": "2.0", "method": "genome", "id": 1
-                });
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
-                app.status.waiting = true;
+                send_jsonrpc_method(app, "genome").await;
                 app.chat
                     .add_message(ChatRole::System, "查询基因组中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
-                let msg = serde_json::json!({
-                    "jsonrpc": "2.0", "method": "sessions", "id": 1
-                });
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
-                app.status.waiting = true;
+                send_jsonrpc_method(app, "sessions").await;
                 app.chat
                     .add_message(ChatRole::System, "查询会话列表中...".to_string());
                 return;
@@ -158,7 +111,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                     "params": { "session_id": id }
                 });
                 let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
@@ -170,31 +122,13 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
-                let msg = serde_json::json!({
-                    "jsonrpc": "2.0", "method": "compact", "id": 1
-                });
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
-                app.status.waiting = true;
+                send_jsonrpc_method(app, "compact").await;
                 app.chat
                     .add_message(ChatRole::System, "压缩上下文中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Model)) => {
-                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "model_list", "id": 1});
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
-                app.status.waiting = true;
+                send_jsonrpc_method(app, "model_list").await;
                 app.chat
                     .add_message(ChatRole::System, "查询可用模型中...".to_string());
                 return;
@@ -220,7 +154,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 };
                 let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": mode_str}});
                 let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
@@ -236,7 +169,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 };
                 let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": target}});
                 let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
@@ -247,7 +179,6 @@ pub async fn submit_message(app: &mut App, text: String) {
             Some(CommandType::Builtin(BuiltinCommand::Approve)) => {
                 let msg = serde_json::json!({"jsonrpc": "2.0", "method": "plan_approve", "id": 1});
                 let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
@@ -286,14 +217,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Hooks)) => {
-                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "hooks_list", "id": 1});
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
+                send_jsonrpc_method(app, "hooks_list").await;
                 app.chat
                     .add_message(ChatRole::System, "Querying hooks...".to_string());
                 return;
@@ -337,7 +261,6 @@ pub async fn submit_message(app: &mut App, text: String) {
             Some(CommandType::Builtin(BuiltinCommand::Interrupt)) => {
                 let msg = serde_json::json!({"jsonrpc": "2.0", "method": "interrupt", "id": 1, "params": {"reason": "user_cancelled"}});
                 let payload = serde_json::to_string(&msg).unwrap_or_default();
-                use tokio::io::AsyncWriteExt;
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
@@ -406,7 +329,6 @@ pub async fn send_to_daemon(app: &mut App, text: &str) {
     let payload = serde_json::to_string(&msg).unwrap_or_default();
     let framed = format!("{}\n", payload);
 
-    use tokio::io::AsyncWriteExt;
     if app.stream.write_all(framed.as_bytes()).await.is_err() {
         app.chat
             .add_message(ChatRole::System, "发送失败，请检查 daemon".to_string());

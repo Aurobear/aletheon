@@ -1,7 +1,8 @@
 use std::io;
 
+use base::brain::{Critique, Plan};
 use base::ui_event::{
-    AwarenessLevel, CollaborationMode, EvolutionStage, PlanUpdate, SubAgentStatus,
+    AwarenessLevel, ClientEvent, CollaborationMode, SubAgentHandle, SubAgentStatus,
 };
 
 use super::chat::Role as ChatRole;
@@ -68,175 +69,120 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
 }
 
 pub fn handle_event(app: &mut App, params: &serde_json::Value) {
-    let event_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    match event_type {
-        "turn_start" => {
-            let iteration = params
-                .get("iteration")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as usize;
+    let event: ClientEvent = match serde_json::from_value(params.clone()) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to deserialize ClientEvent params");
+            return;
+        }
+    };
+
+    match event {
+        ClientEvent::TurnStarted { iteration } => {
             app.stream_ctrl.start_turn();
-            app.status.waiting = true;
+            app.status.waiting = false;
             app.status.elapsed_secs = 0.0;
             app.turn_active = true;
+            app.streaming = true;
             app.app_state.streaming = true;
-            app.app_state.turn_active = true;
             app.app_state.turn_tool_count = 0;
+            app.turn_tokens = None;
             app.current_iteration = iteration;
-            app.app_state.current_iteration = iteration;
         }
-        "thinking_delta" => {
-            if let Some(text) = params.get("text").and_then(|v| v.as_str()) {
-                app.stream_ctrl.push_thinking(text);
+        ClientEvent::ThinkingDelta { text } => {
+            app.stream_ctrl.push_thinking(&text);
+        }
+        ClientEvent::TextDelta { text } => {
+            app.stream_ctrl.push_text(&text);
+            app.chat.update_last_message(app.stream_ctrl.current_text());
+        }
+        ClientEvent::ToolCallStart { call_id, tool, args } => {
+            let args_str = args_summary(&tool, &args);
+            app.chat.add_message(ChatRole::System, format!("🔧 {}: {}", tool, args_str));
+            let mut card = ToolCard::new(
+                call_id.clone(),
+                tool.clone(),
+                serde_json::to_string(&args).unwrap_or_default(),
+            );
+            card.expanded = false;
+            app.active_tools.insert(call_id, card);
+            app.app_state.turn_tool_count += 1;
+        }
+        ClientEvent::ToolCallResult { call_id, tool, output, is_error, elapsed_ms } => {
+            if let Some(card) = app.active_tools.get_mut(&call_id) {
+                card.finish(&output, is_error);
             }
+            let emoji = if is_error { "❌" } else { "✅" };
+            let output_preview: String = output.chars().take(120).collect();
+            let more = if output.chars().count() > 120 { "..." } else { "" };
+            app.chat.add_message(
+                ChatRole::System,
+                format!(
+                    "{} {} ({:.1}s): {}{}",
+                    emoji, tool, elapsed_ms as f64 / 1000.0, output_preview, more,
+                ),
+            );
         }
-        "text_delta" => {
-            if let Some(text) = params.get("text").and_then(|v| v.as_str()) {
-                app.stream_ctrl.push_text(text);
-                app.chat.update_last_message(app.stream_ctrl.current_text());
-            }
-        }
-        "tool_call_start" => {
-            let call_id = params
-                .get("call_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let tool = params
-                .get("tool")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?")
-                .to_string();
-            let args = params
-                .get("args")
-                .map(|v| v.to_string())
-                .unwrap_or_default();
-            // Compute summary before tool/args are moved into ToolCard
-            let cmd_summary = args_summary(&tool, &args);
-            app.active_tools
-                .insert(call_id.clone(), ToolCard::new(call_id, tool, args));
-            app.app_state.turn_tool_count = app.active_tools.len();
-            // Show tool execution start in chat area — prevents "frozen" perception
-            app.chat
-                .add_message(ChatRole::System, format!("🔧 {}", cmd_summary));
-        }
-        "tool_call_result" => {
-            let call_id = params.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            if let Some(card) = app.active_tools.get_mut(call_id) {
-                let output = params.get("output").and_then(|v| v.as_str()).unwrap_or("");
-                let is_error = params
-                    .get("is_error")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                card.finish(output, is_error);
-                // Show completion status in chat area
-                let elapsed = params
-                    .get("elapsed_ms")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                let emoji = if is_error { "❌" } else { "✅" };
-                let output_preview: String = output.chars().take(120).collect();
-                let preview = if output_preview.len() < output.len() {
-                    format!("{}…", output_preview)
-                } else {
-                    output_preview
-                };
-                app.chat.add_message(
-                    ChatRole::System,
-                    format!(
-                        "{} {} ({:.1}s): {}",
-                        emoji,
-                        card.tool,
-                        elapsed as f64 / 1000.0,
-                        preview
-                    ),
-                );
-            }
-        }
-        "usage" => {
-            let tokens_in = params
-                .get("tokens_in")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
-            let tokens_out = params
-                .get("tokens_out")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
-            app.turn_tokens = Some((tokens_in, tokens_out));
-            app.status.token_count = Some(tokens_in + tokens_out);
-            app.total_tokens += tokens_in + tokens_out;
+        ClientEvent::Usage { tokens_in, tokens_out } => {
+            app.turn_tokens = Some((tokens_in as u32, tokens_out as u32));
+            app.total_tokens = app
+                .total_tokens
+                .saturating_add(tokens_in as u32)
+                .saturating_add(tokens_out as u32);
+            app.status.token_count = Some(tokens_in as u32 + tokens_out as u32);
             app.status.total_tokens = app.total_tokens;
-            app.status.context_window = 128_000;
-            app.app_state.total_tokens = app.total_tokens;
         }
-        "turn_done" => {
+        ClientEvent::TurnDone => {
             app.stream_ctrl.commit();
             app.streaming = false;
-            app.turn_active = false;
             app.status.waiting = false;
-            app.status.elapsed_secs = 0.0;
-            app.status.session_turns += 1;
             app.app_state.streaming = false;
-            app.app_state.turn_active = false;
-            // Clear active tool cards — they've been rendered inline and are
-            // no longer needed. Without this, finished tools persist on screen.
+            app.turn_active = false;
+            app.status.session_turns += 1;
             app.active_tools.clear();
-            app.app_state.turn_tool_count = 0;
         }
-        "error" => {
-            let msg = params
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown error");
+        ClientEvent::Error { message } => {
             app.chat
-                .add_message(ChatRole::System, format!("Error: {}", msg));
+                .add_message(ChatRole::System, format!("Error: {}", message));
             app.streaming = false;
             app.status.waiting = false;
+            app.app_state.streaming = false;
         }
-        // ── New P2 events ──
-        "awareness_changed" => {
-            if let Some(level_val) = params.get("level") {
-                if let Ok(level) = serde_json::from_value::<AwarenessLevel>(level_val.clone()) {
-                    let context = params
-                        .get("context")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    app.app_state.awareness.update(level, context);
-                }
+        ClientEvent::AwarenessChanged { level, context } => {
+            if let Ok(awareness_level) =
+                serde_json::from_str::<AwarenessLevel>(&format!("\"{}\"", level))
+            {
+                app.app_state.awareness.update(awareness_level, context);
             }
         }
-        "plan_update" => {
-            if let Ok(update) = serde_json::from_value::<PlanUpdate>(params.clone()) {
+        ClientEvent::PlanUpdate { version, plan, critique, ready_for_approval } => {
+            if let Ok(plan_obj) = serde_json::from_str::<Plan>(&plan) {
+                let critique_obj: Option<Vec<Critique>> = critique
+                    .as_ref()
+                    .and_then(|c| serde_json::from_str(c.as_str()).ok());
                 app.plan_view.add_version(PlanVersion {
-                    version: update.version,
-                    plan: update.plan,
-                    critique: update.critique,
+                    version: version as usize,
+                    plan: plan_obj,
+                    critique: critique_obj,
                 });
-                app.plan_view.set_ready(update.ready_for_approval);
+                app.plan_view.set_ready(ready_for_approval);
             }
         }
-        "sub_agent_status" => {
-            let agent_id = params
-                .get("agent_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if let Some(status_val) = params.get("status") {
-                if let Ok(status) = serde_json::from_value::<SubAgentStatus>(status_val.clone()) {
-                    if let Some(agent) = app.sub_agents.iter_mut().find(|a| a.id == agent_id) {
-                        agent.status = status;
-                    } else {
-                        // If the agent is not yet tracked, add it with minimal info.
-                        let task = params
-                            .get("task")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        app.sub_agents.push(base::ui_event::SubAgentHandle {
+        ClientEvent::SubAgentStatus { agent_id, task, status } => {
+            if let Ok(s) =
+                serde_json::from_str::<SubAgentStatus>(&format!("\"{}\"", status))
+            {
+                let existing = app.sub_agents.iter_mut().find(|a| a.id == agent_id);
+                match existing {
+                    Some(handle) => {
+                        handle.status = s;
+                        handle.task = task;
+                    }
+                    None => {
+                        app.sub_agents.push(SubAgentHandle {
                             id: agent_id,
                             task,
-                            status,
+                            status: s,
                             parent_turn_id: String::new(),
                             spawned_at_ms: 0,
                         });
@@ -244,53 +190,47 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 }
             }
         }
-        "mode_changed" => {
-            if let Some(new_val) = params.get("new") {
-                if let Ok(new_mode) = serde_json::from_value::<CollaborationMode>(new_val.clone()) {
-                    app.app_state.mode = new_mode;
-                }
+        ClientEvent::ModeChanged { new } => {
+            if let Ok(mode) =
+                serde_json::from_str::<CollaborationMode>(&format!("\"{}\"", new))
+            {
+                app.app_state.mode = mode;
             }
         }
-        "context_update" => {
-            // Daemon sends "used_tokens" and "max_tokens"
-            let used = params
-                .get("used_tokens")
-                .and_then(|v| v.as_u64())
-                .or_else(|| params.get("used").and_then(|v| v.as_u64()))
-                .unwrap_or(0) as usize;
-            let max = params
-                .get("max_tokens")
-                .and_then(|v| v.as_u64())
-                .or_else(|| params.get("max").and_then(|v| v.as_u64()))
-                .unwrap_or(200_000) as usize;
-            app.app_state.context.used = used;
-            app.app_state.context.max = max;
-            // Also update the legacy status bar context_window
-            app.status.context_window = max as u32;
+        ClientEvent::ContextUpdate { max_tokens, used_tokens } => {
+            app.app_state.context.used = used_tokens as usize;
+            app.app_state.context.max = max_tokens as usize;
+            app.status.context_window = max_tokens as u32;
         }
-        "model_switch" => {
-            let to = params
-                .get("to")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            app.app_state.model_name = to.clone();
-            app.model_name = to.clone();
-            app.status.model_name = to;
+        ClientEvent::ModelSwitch { model } => {
+            app.app_state.model_name = model.clone();
+            app.model_name = model.clone();
+            app.status.model_name = model;
         }
-        "evolution_progress" => {
-            if let Some(stage_val) = params.get("stage") {
-                if let Ok(_stage) = serde_json::from_value::<EvolutionStage>(stage_val.clone()) {
-                    // Evolution progress is informational; show inline message
-                    let msg = format!(
-                        "Evolution: {}",
-                        serde_json::to_string(stage_val).unwrap_or_default()
-                    );
-                    app.chat.add_message(ChatRole::System, msg);
-                }
-            }
+        ClientEvent::Interrupted => {
+            app.chat
+                .add_message(ChatRole::System, "Interrupted".to_string());
         }
-        _ => {}
+        ClientEvent::BudgetExceeded { limit } => {
+            app.chat.add_message(
+                ChatRole::System,
+                format!("Budget exceeded: {} tokens", limit),
+            );
+        }
+        ClientEvent::CircuitBreakerTripped { reason } => {
+            app.chat
+                .add_message(ChatRole::System, format!("Circuit breaker: {}", reason));
+        }
+        ClientEvent::CompactionTriggered => {
+            // compaction is internal, just note it
+        }
+        ClientEvent::Reflection { summary } => {
+            app.chat
+                .add_message(ChatRole::System, format!("Reflection: {}", summary));
+        }
+        ClientEvent::GoalSet { goal: _, sub_goals: _ } => {
+            // goal set — update app state
+        }
     }
 }
 
@@ -389,7 +329,7 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
 
 /// Deduplicate consecutive identical text blocks.
 /// Some models repeat thinking/reasoning text twice.
-fn deduplicate_consecutive_text(text: &str) -> String {
+pub fn deduplicate_consecutive_text(text: &str) -> String {
     let len = text.len();
 
     // Try to find the longest repeated prefix
@@ -708,38 +648,34 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
 }
 
 /// Extract a human-readable summary from tool args for chat display.
-fn args_summary(tool: &str, args: &str) -> String {
-    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(args) {
-        match tool {
-            "bash_exec" | "bash" => obj
-                .get("command")
-                .and_then(|v| v.as_str())
-                .map(|c| format!("bash: {}", truncate(c, 80)))
-                .unwrap_or_else(|| format!("{} executing…", tool)),
-            "file_read" => obj
-                .get("path")
-                .and_then(|v| v.as_str())
-                .map(|p| format!("read: {}", truncate(p, 80)))
-                .unwrap_or_else(|| format!("{} …", tool)),
-            "file_write" => obj
-                .get("path")
-                .and_then(|v| v.as_str())
-                .map(|p| format!("write: {}", truncate(p, 80)))
-                .unwrap_or_else(|| format!("{} …", tool)),
-            "grep" => obj
-                .get("pattern")
-                .and_then(|v| v.as_str())
-                .map(|p| format!("grep: {}", truncate(p, 80)))
-                .unwrap_or_else(|| format!("{} …", tool)),
-            "web_fetch" => obj
-                .get("url")
-                .and_then(|v| v.as_str())
-                .map(|u| format!("fetch: {}", truncate(u, 80)))
-                .unwrap_or_else(|| format!("{} …", tool)),
-            _ => format!("{} …", tool),
-        }
-    } else {
-        format!("{}: {}", tool, truncate(args, 60))
+fn args_summary(tool: &str, args: &serde_json::Value) -> String {
+    match tool {
+        "bash_exec" | "bash" => args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(|c| format!("bash: {}", truncate(c, 80)))
+            .unwrap_or_else(|| format!("{} executing…", tool)),
+        "file_read" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|p| format!("read: {}", truncate(p, 80)))
+            .unwrap_or_else(|| format!("{} …", tool)),
+        "file_write" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|p| format!("write: {}", truncate(p, 80)))
+            .unwrap_or_else(|| format!("{} …", tool)),
+        "grep" => args
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .map(|p| format!("grep: {}", truncate(p, 80)))
+            .unwrap_or_else(|| format!("{} …", tool)),
+        "web_fetch" => args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|u| format!("fetch: {}", truncate(u, 80)))
+            .unwrap_or_else(|| format!("{} …", tool)),
+        _ => format!("{} …", tool),
     }
 }
 

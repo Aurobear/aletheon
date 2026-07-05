@@ -7,6 +7,12 @@ use super::debug;
 use super::goal;
 use super::workflow;
 
+use base::ui_event::ClientEvent;
+use super::response::{
+    format_reflections, format_genome, format_evolution, format_status,
+};
+use super::response::deduplicate_consecutive_text as deduplicate_response;
+
 use std::io;
 use std::path::PathBuf;
 
@@ -553,31 +559,20 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
                 continue; // wait for the actual response
             }
 
-            // Skip streaming events (notifications have no "id" field).
-            // These are text_delta, tool_call_start, tool_call_result, usage,
-            // turn_done, awareness_changed, mode_changed, etc.
-            if resp.get("id").is_none() && resp.get("method").is_some() {
-                // Print tool_call_start for visibility, but skip text_delta
-                // since the final response contains the full text (avoids duplication).
+            // Handle streaming events via typed ClientEvent dispatch.
+            if resp.get("method").and_then(|v| v.as_str()) == Some("event") {
                 if let Some(params) = resp.get("params") {
-                    let event_method = resp["method"].as_str().unwrap_or("");
-                    if event_method == "event" {
-                        if let Some(event_type) = params.get("type").and_then(|v| v.as_str()) {
-                            match event_type {
-                                "tool_call_start" => {
-                                    if let Some(name) = params.get("tool").and_then(|v| v.as_str()) {
-                                        eprintln!("🔧 [{}]", name);
-                                    }
-                                }
-                                "tool_call_result" => {
-                                    // Show brief tool result
-                                }
-                                "text_delta" => {
-                                    had_streaming_text = true;
-                                    // Skip — final response has full text
-                                }
-                                _ => {}
+                    if let Ok(event) = serde_json::from_value::<ClientEvent>(params.clone()) {
+                        match event {
+                            ClientEvent::ToolCallStart { tool, args, .. } => {
+                                eprintln!("[tool] {} {}", tool, serde_json::to_string(&args).unwrap_or_default());
                             }
+                            ClientEvent::TextDelta { .. } => {
+                                had_streaming_text = true;
+                                // skip — result text comes in the final response
+                            }
+                            ClientEvent::TurnDone => { /* streaming done */ }
+                            _ => {}
                         }
                     }
                 }
@@ -614,229 +609,6 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// Deduplicate consecutive identical content in response text.
-/// Some models (especially with tool calls) repeat the same text twice.
-/// This function handles both line-level and sentence-level duplication.
-fn deduplicate_response(text: &str) -> String {
-    // First, try line-level deduplication
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.is_empty() {
-        return text.to_string();
-    }
-
-    let mut deduped_lines = Vec::new();
-    let mut prev_line = lines[0];
-    deduped_lines.push(prev_line);
-
-    for line in &lines[1..] {
-        // Skip consecutive identical lines (trimmed comparison)
-        if line.trim() == prev_line.trim() {
-            continue;
-        }
-        prev_line = line;
-        deduped_lines.push(line);
-    }
-
-    let result = deduped_lines.join("\n");
-
-    // Also handle sentence-level duplication (same sentence repeated on same line)
-    // This handles cases like "Sentence.Sentence." -> "Sentence."
-    deduplicate_sentences(&result)
-}
-
-/// Deduplicate consecutive identical text blocks within a string.
-/// Handles cases where the same text (one or more sentences) is repeated.
-fn deduplicate_sentences(text: &str) -> String {
-    // Try to find the longest repeated prefix
-    // This handles multi-sentence duplicates like "Sentence1. Sentence2.Sentence1. Sentence2."
-    let len = text.len();
-
-    // Try different split points to find the repeated block
-    for split_pos in (1..=len / 2).rev() {
-        // Ensure we split at a valid UTF-8 boundary
-        if !text.is_char_boundary(split_pos) {
-            continue;
-        }
-
-        let prefix = &text[..split_pos];
-        let suffix = &text[split_pos..];
-
-        // Check if the suffix starts with the same prefix
-        if suffix.starts_with(prefix) {
-            // Found a repeated block - return just the prefix
-            return prefix.to_string();
-        }
-    }
-
-    // No repeated block found, return original text
-    text.to_string()
-}
-
-/// Format reflection entries for display.
-fn format_reflections(entries: &serde_json::Value) -> String {
-    let empty = vec![];
-    let arr = entries.as_array().unwrap_or(&empty);
-    if arr.is_empty() {
-        return "No reflections found.".to_string();
-    }
-    let mut lines = Vec::new();
-    lines.push(format!("=== Reflections ({}) ===\n", arr.len()));
-    for (i, entry) in arr.iter().enumerate() {
-        let task = entry
-            .get("task_summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let outcome = entry
-            .get("outcome")
-            .and_then(|v| {
-                if let Some(s) = v.as_str() {
-                    Some(s.to_string())
-                } else {
-                    serde_json::to_string(v).ok()
-                }
-            })
-            .unwrap_or_else(|| "unknown".to_string());
-        let confidence = entry
-            .get("confidence")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let timestamp = entry
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        lines.push(format!(
-            "[{}] #{} {} ({}) conf={:.0}%",
-            timestamp,
-            i + 1,
-            task,
-            outcome,
-            confidence * 100.0
-        ));
-
-        if let Some(arr) = entry.get("learned").and_then(|v| v.as_array()) {
-            for l in arr {
-                if let Some(s) = l.as_str() {
-                    lines.push(format!("  learned: {}", s));
-                }
-            }
-        }
-        if let Some(arr) = entry.get("what_worked").and_then(|v| v.as_array()) {
-            for w in arr {
-                if let Some(s) = w.as_str() {
-                    lines.push(format!("  worked: {}", s));
-                }
-            }
-        }
-        if let Some(arr) = entry.get("what_failed").and_then(|v| v.as_array()) {
-            for f in arr {
-                if let Some(s) = f.as_str() {
-                    lines.push(format!("  failed: {}", s));
-                }
-            }
-        }
-        lines.push(String::new());
-    }
-    lines.join("\n")
-}
-
-/// Format genome for display.
-fn format_genome(genome: &serde_json::Value) -> String {
-    if let Some(s) = genome.as_str() {
-        return s.to_string();
-    }
-    serde_json::to_string_pretty(genome).unwrap_or_else(|_| format!("{:?}", genome))
-}
-
-/// Format evolution history for display.
-fn format_evolution(evo: &serde_json::Value) -> String {
-    if let Some(s) = evo.as_str() {
-        return s.to_string();
-    }
-    if let Some(arr) = evo.as_array() {
-        if arr.is_empty() {
-            return "No evolution history found.".to_string();
-        }
-        let mut lines = Vec::new();
-        lines.push(format!("=== Evolution History ({}) ===\n", arr.len()));
-        for entry in arr {
-            lines.push(
-                serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{:?}", entry)),
-            );
-            lines.push(String::new());
-        }
-        return lines.join("\n");
-    }
-    serde_json::to_string_pretty(evo).unwrap_or_else(|_| format!("{:?}", evo))
-}
-
-/// Format status response for display.
-fn format_status(status: &serde_json::Value) -> String {
-    let session_id = status
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let turn_count = status
-        .get("turn_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let reflection_count = status
-        .get("reflection_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let evolution_count = status
-        .get("evolution_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let boundary_rules = status
-        .get("boundary_rules")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let boundary_immutable = status
-        .get("boundary_immutable")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let attention_focus = status
-        .get("attention_focus")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let mut lines = Vec::new();
-    lines.push("=== Aletheon Status ===".to_string());
-    lines.push(format!(
-        "Session: {}",
-        &session_id[..8.min(session_id.len())]
-    ));
-    lines.push(format!("Turns: {}", turn_count));
-    lines.push(format!("Reflections: {}", reflection_count));
-    lines.push(format!("Evolutions: {}", evolution_count));
-    lines.push(String::new());
-    lines.push("Care Weights:".to_string());
-
-    if let Some(cares) = status.get("care_weights").and_then(|v| v.as_array()) {
-        for care in cares {
-            let topic = care.get("topic").and_then(|v| v.as_str()).unwrap_or("?");
-            let weight = care.get("weight").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            lines.push(format!("  {}: {:.2}", topic, weight));
-        }
-    }
-
-    lines.push(String::new());
-    lines.push(format!(
-        "Boundary Rules: {} (immutable: {})",
-        boundary_rules, boundary_immutable
-    ));
-
-    let focus_display = if attention_focus.is_empty() {
-        "none"
-    } else {
-        attention_focus
-    };
-    lines.push(format!("Attention Focus: {}", focus_display));
-
-    lines.join("\n")
 }
 
 #[cfg(test)]
