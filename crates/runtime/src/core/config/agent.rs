@@ -208,7 +208,7 @@ impl Default for AgentLoopConfig {
             max_tool_calls: 0, // 0 = unlimited
             reflection_interval: 5,
             progress_check_interval: 3,
-            reflection_tool_call_limit: 20,
+            reflection_tool_call_limit: 100,
         }
     }
 }
