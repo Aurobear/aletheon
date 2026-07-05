@@ -50,6 +50,9 @@ enum Commands {
         /// Container image name
         #[arg(long, default_value = "aletheon:latest")]
         image: String,
+        /// Enable self-evolution loop (HIGH-risk autonomy -- OFF by default)
+        #[arg(long, default_value_t = false)]
+        enable_evolution: bool,
     },
     /// Non-interactive execution
     Exec {
@@ -92,6 +95,7 @@ async fn main() -> Result<()> {
                 socket,
                 container,
                 image,
+                enable_evolution,
             }),
             _,
         ) => {
@@ -105,6 +109,7 @@ async fn main() -> Result<()> {
                         config.clone(),
                         env.clone(),
                         socket_path,
+                        *enable_evolution,
                     );
                     host.init().await?;
                     Box::new(host).serve().await
@@ -115,13 +120,14 @@ async fn main() -> Result<()> {
                         env.clone(),
                         runtime_name,
                         image.clone(),
+                        *enable_evolution,
                     );
                     host.init().await?;
                     Box::new(host).serve().await
                 }
                 DaemonMode::Foreground => {
                     let mut host =
-                        runtime::host::DaemonHost::new(config.clone(), env.clone(), socket_path);
+                        runtime::host::DaemonHost::new(config.clone(), env.clone(), socket_path, *enable_evolution);
                     host.init().await?;
                     Box::new(host).serve().await
                 }
@@ -207,6 +213,7 @@ use base::{ContentBlock, Message, Role};
 use cognit::r#impl::llm::LlmProvider;
 use cognit::r#impl::llm::StopReason;
 use cognit::r#impl::provider_registry::ProviderRegistry;
+use corpus::security::sandbox::executor::SandboxPreference;
 use corpus::security::security::approval::{ApprovalGate, TerminalApprovalGate};
 use corpus::security::security::audit::AuditLogger;
 use corpus::security::security::runner::ToolRunnerWithGuard;
@@ -217,7 +224,7 @@ async fn run_exec(
     prompt: &str,
     model: &str,
     max_turns: usize,
-    _sandbox: &str,
+    sandbox: &str,
     working_dir: &Path,
     config: &Option<PathBuf>,
     output: &str,
@@ -251,8 +258,11 @@ async fn run_exec(
     // Guarded runner with terminal approval for risky (L2+) tools.
     let audit_path = working_dir.join(".aletheon-audit.jsonl");
     let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
-    let mut runner = ToolRunnerWithGuard::with_default_sandbox(AuditLogger::new(audit_path)?)
-        .with_approval_gate(approval);
+    let sandbox_preference = SandboxPreference::from_str(sandbox);
+    info!(preference = ?sandbox_preference, "sandbox configured");
+    let mut runner =
+        ToolRunnerWithGuard::with_sandbox_preference(AuditLogger::new(audit_path)?, sandbox_preference)
+            .with_approval_gate(approval);
     let turn_id = uuid::Uuid::new_v4().to_string();
     runner.on_new_turn(&turn_id);
 

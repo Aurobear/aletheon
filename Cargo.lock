@@ -2502,6 +2502,7 @@ dependencies = [
  "hmac",
  "memory",
  "metacog",
+ "nix 0.29.0",
  "parking_lot",
  "regex",
  "reqwest",

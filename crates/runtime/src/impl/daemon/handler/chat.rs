@@ -1,9 +1,6 @@
-#![allow(deprecated)]
-// TODO(P1-A): See handler/mod.rs for migration notes. This file's allow(deprecated)
-// is inherited from mod.rs's event_bus field (Arc<dyn EventBus>) used for
-// DaseinEventBridge wiring. Once mod.rs is migrated, this file can drop the allow.
+// Handler module migrated to CommunicationBus — event_bus field is now Arc<CommunicationBus>.
 
-use super::format::event_to_json;
+use super::format::{event_to_client_event, event_to_json};
 use super::RequestHandler;
 
 use serde_json::json;
@@ -599,9 +596,11 @@ impl RequestHandler {
                         _ => {}
                     }
 
-                    if let Some(json_str) = event_to_json(&event) {
-                        if let Some(ref tx) = notify_tx {
-                            let _ = tx.send(json_str).await;
+                    if let Some(client_event) = event_to_client_event(&event) {
+                        if let Ok(json_str) = event_to_json(&client_event) {
+                            if let Some(ref tx) = notify_tx {
+                                let _ = tx.send(json_str).await;
+                            }
                         }
                     }
                 }
@@ -649,9 +648,11 @@ impl RequestHandler {
             if matches!(event, Event::TurnDone { .. }) {
                 had_turn_done = true;
             }
-            if let Some(json_str) = event_to_json(&event) {
-                if let Some(ref tx) = notify_tx {
-                    let _ = tx.send(json_str).await;
+            if let Some(client_event) = event_to_client_event(&event) {
+                if let Ok(json_str) = event_to_json(&client_event) {
+                    if let Some(ref tx) = notify_tx {
+                        let _ = tx.send(json_str).await;
+                    }
                 }
             }
         }

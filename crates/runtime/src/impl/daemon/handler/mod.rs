@@ -1,9 +1,10 @@
-#![allow(deprecated)]
+//! Daemon request handler — JSON-RPC dispatcher for the Unix socket server.
+//! Handles chat, RPC, session management, and lifecycle events.
+//!
 // TODO(P1-A): Migrate event_bus field from Arc<dyn EventBus> to Arc<CommunicationBus>.
-// Blocked by DaseinEventBridge (crates/dasein/src/dasein/event_bridge.rs) which uses
-// EventBus::subscribe callback pattern. The event_bus is passed through to
-// wire_dasein_event_bridge() at boot time. Once DaseinEventBridge is migrated to
-// channel-based CommunicationBus topic subscriptions, this field can be changed.
+// DONE: event_bus is now Arc<CommunicationBus>. DaseinEventBridge has been updated
+// to accept CommunicationBus. The underlying EventBus::subscribe calls remain
+// (accessible via communication_bus.event_bus()) until a true topic-based migration.
 //
 // Additionally, the file uses `use base::envelope::*;` which re-exports types
 // that use deprecated Event/Payload. These need to be migrated separately.
@@ -166,12 +167,11 @@ pub struct RequestHandler {
     debug_perf: Arc<PerfCounter>,
     /// Cancellation token for the current chat turn.
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
-    /// EventBus for cross-subsystem event routing (DaseinEventBridge, etc.).
-    /// Parked — TODO(P1-A): Migrate from `Arc<dyn EventBus>` to `Arc<CommunicationBus>`.
+    /// CommunicationBus for cross-subsystem event routing (DaseinEventBridge, etc.).
     /// Used during boot (init.rs) to wire DaseinEventBridge, but the stored
     /// field is not read thereafter.
     #[allow(dead_code)]
-    event_bus: Option<Arc<dyn base::EventBus>>,
+    event_bus: Option<Arc<CommunicationBus>>,
     /// Daemon-level cancellation token for graceful shutdown via daemon.shutdown RPC.
     daemon_cancel_token: Option<CancellationToken>,
     /// Session Gateway — unified facade for external agent debug access.

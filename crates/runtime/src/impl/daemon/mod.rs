@@ -23,6 +23,8 @@ pub struct DaemonConfig {
     pub data_dir: String,
     pub system_prompt: String,
     pub sandbox_preference: String,
+    /// Enable self-evolution loop (HIGH-risk autonomy — OFF by default).
+    pub enable_evolution: bool,
     /// MCP server definitions loaded from config (passed through to McpManager at handler init).
     pub mcp_servers: Vec<corpus::tools::mcp::config::McpServerConfig>,
     /// Hook script configuration from the `hooks` config section.
@@ -52,7 +54,7 @@ pub async fn run(
     env_path: Option<PathBuf>,
     socket: PathBuf,
 ) -> Result<()> {
-    let mut host = crate::host::DaemonHost::new(config_path, env_path, socket);
+    let mut host = crate::host::DaemonHost::new(config_path, env_path, socket, false);
     host.init().await?;
     Box::new(host).serve().await
 }

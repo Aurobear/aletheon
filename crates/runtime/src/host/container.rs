@@ -43,6 +43,7 @@ pub struct ContainerHost {
     runtime_cmd: String,
     /// Container image name.
     image: String,
+    enable_evolution: bool,
     core: Option<RuntimeCore>,
 }
 
@@ -52,12 +53,14 @@ impl ContainerHost {
         env_path: Option<PathBuf>,
         runtime_cmd: String,
         image: String,
+        enable_evolution: bool,
     ) -> Self {
         Self {
             config_path,
             env_path,
             runtime_cmd,
             image,
+            enable_evolution,
             core: None,
         }
     }
@@ -78,7 +81,7 @@ impl crate::host::RuntimeHost for ContainerHost {
 
         // ── Runtime core bootstrap ──────────────────────────────────
         let config_path = self.config_path.take();
-        self.core = Some(RuntimeCore::bootstrap(config_path).await?);
+        self.core = Some(RuntimeCore::bootstrap(config_path, self.enable_evolution).await?);
 
         // ── Verify container runtime CLI ────────────────────────────
         check_container_cli(&self.runtime_cmd)?;

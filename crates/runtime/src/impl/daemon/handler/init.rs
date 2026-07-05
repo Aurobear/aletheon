@@ -94,7 +94,7 @@ impl RequestHandler {
         registry: &ProviderRegistry,
         model_routing: crate::core::config::ModelRoutingConfig,
         evolution_enabled: bool,
-        event_bus: Option<Arc<dyn base::EventBus>>,
+        event_bus: Option<Arc<CommunicationBus>>,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
         let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create("")?);
@@ -124,10 +124,10 @@ impl RequestHandler {
             sf.set_permission_authority(std::sync::Arc::new(PermissionManager::new()));
         }
 
-        // Wire DaseinEventBridge to EventBus if available
-        if let Some(ref eb) = event_bus {
+        // Wire DaseinEventBridge to CommunicationBus if available
+        if let Some(ref bus) = event_bus {
             let sf = self_field.lock().await;
-            sf.wire_dasein_event_bridge(&**eb).await?;
+            sf.wire_dasein_event_bridge(&**bus).await?;
         }
 
         // Create memory instances
@@ -286,6 +286,7 @@ impl RequestHandler {
         let mut runtime = AletheonRuntime::new(runtime_config);
         let evo_config = EvolutionConfig {
             enabled: evolution_enabled,
+            evolution_permitted: false,
             trigger_every_n_turns: 10,
             trigger_on_failure: true,
             window_size: 20,

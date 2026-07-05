@@ -1,16 +1,16 @@
 //! DaseinEventBridge — bridges EventBus events to DaseinModule.
 //!
 //! DaseinModule must perceive real system events to exist meaningfully.
-//! This bridge subscribes to the central EventBus and translates
+//! This bridge subscribes to the central EventBus via CommunicationBus and translates
 //! system events into DaseinEvent messages on the DaseinModule's channel.
 
-#![allow(deprecated)]
 // TODO(P1-A): Migrate from EventBus::subscribe to CommunicationBus topic subscriptions.
 // The subscribe pattern (callback-per-EventType) does not map 1:1 to CommunicationBus
 // (topic-based broadcast/mpsc channels). Requires architectural change to convert
 // DaseinEventBridge from callback-based to channel-based event handling.
-// See: crates/runtime/src/impl/daemon/handler/mod.rs for the caller chain.
+// Currently uses communication_bus.event_bus().subscribe() as bridge.
 use base::event::EventType;
+use base::CommunicationBus;
 use base::EventBus;
 use tokio::sync::mpsc;
 
@@ -30,7 +30,7 @@ impl DaseinEventBridge {
         Self { dasein_tx }
     }
 
-    /// Register subscriptions on the EventBus to forward system events
+    /// Register subscriptions on the CommunicationBus to forward system events
     /// to the DaseinModule.
     ///
     /// Subscribes to:
@@ -38,8 +38,10 @@ impl DaseinEventBridge {
     /// - `MemoryStored` -- memory events sediment into bewandtnis relations
     /// - `EvolutionTriggered` -- evolution events trigger negativity checks
     /// - `AgentStarted` -- session/lifecycle events update the temporal stream
-    pub async fn subscribe(&self, event_bus: &dyn EventBus) -> anyhow::Result<()> {
+    pub async fn subscribe(&self, communication_bus: &CommunicationBus) -> anyhow::Result<()> {
+        let event_bus = communication_bus.event_bus();
         let tx = self.dasein_tx.clone();
+        #[allow(deprecated)]
         event_bus
             .subscribe(
                 EventType::ToolObservation,
@@ -64,6 +66,7 @@ impl DaseinEventBridge {
             .await?;
 
         let tx = self.dasein_tx.clone();
+        #[allow(deprecated)]
         event_bus
             .subscribe(
                 EventType::MemoryStored,
@@ -84,6 +87,7 @@ impl DaseinEventBridge {
             .await?;
 
         let tx = self.dasein_tx.clone();
+        #[allow(deprecated)]
         event_bus
             .subscribe(
                 EventType::EvolutionTriggered,
@@ -103,6 +107,7 @@ impl DaseinEventBridge {
             .await?;
 
         let tx = self.dasein_tx.clone();
+        #[allow(deprecated)]
         event_bus
             .subscribe(
                 EventType::AgentStarted,
@@ -116,7 +121,7 @@ impl DaseinEventBridge {
             )
             .await?;
 
-        tracing::info!("DaseinEventBridge subscribed to EventBus");
+        tracing::info!("DaseinEventBridge subscribed to EventBus via CommunicationBus");
         Ok(())
     }
 }

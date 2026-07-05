@@ -201,78 +201,62 @@ pub enum InterruptReason {
     BudgetExceeded,
 }
 
-/// Events emitted by the Runtime for TUI display.
+/// Client-facing event produced by the daemon and consumed by the TUI/CLI.
 ///
-/// These flow over the existing JSON-RPC notification channel
-/// with `method: "event"` and a `type` field discriminator.
+/// This is the canonical wire-protocol type shared between daemon and client.
+/// Every variant maps to an event notification sent over the Unix socket.
+///
+/// daemon:  runtime::Event -> ClientEvent -> serde_json -> socket
+/// client:  socket -> serde_json -> ClientEvent -> display handler
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum UiEvent {
-    // === Existing events (kept for compatibility) ===
-    /// Streaming text delta.
-    TextDelta { text: String },
-    /// Thinking/reasoning text delta.
-    ThinkingDelta { text: String },
-    /// Tool call started.
-    ToolCallStart {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
-    /// Tool call completed.
-    ToolCallResult {
-        id: String,
-        output: String,
-        success: bool,
-    },
-    /// Token/cost usage update.
-    Usage {
-        tokens_in: u32,
-        tokens_out: u32,
-        cache_hit_tokens: u32,
-        cache_miss_tokens: u32,
-    },
-    /// Turn completed.
-    TurnDone { response: String, interrupted: bool },
-    /// Error occurred.
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientEvent {
+    // ── Turn lifecycle ──
+    TurnStarted { iteration: usize },
+    TurnDone,
     Error { message: String },
-    /// Approval requested for a tool.
-    ApprovalRequest {
-        id: String,
+
+    // ── Streaming text ──
+    TextDelta { text: String },
+    ThinkingDelta { text: String },
+
+    // ── Tool calls ──
+    ToolCallStart { call_id: String, tool: String, args: serde_json::Value },
+    ToolCallResult {
+        call_id: String,
         tool: String,
-        input: serde_json::Value,
-        risk: String,
+        output: String,
+        is_error: bool,
+        elapsed_ms: u64,
     },
 
-    // === NEW events for the overhaul ===
-    /// Brain awareness signal changed.
-    AwarenessChanged {
-        level: AwarenessLevel,
-        context: String,
+    // ── Bookkeeping ──
+    Usage { tokens_in: u64, tokens_out: u64 },
+    ContextUpdate { max_tokens: u64, used_tokens: u64 },
+    GoalSet { goal: String, sub_goals: Vec<String> },
+    ModelSwitch { model: String },
+
+    // ── Awareness / collaboration ──
+    AwarenessChanged { level: String, context: String },
+    PlanUpdate {
+        version: u32,
+        plan: String,
+        critique: Option<String>,
+        ready_for_approval: bool,
     },
-    /// Plan mode update (new version or critique).
-    PlanUpdate(PlanUpdate),
-    /// Sub-agent status changed.
-    SubAgentStatusChanged {
+    SubAgentStatus {
         agent_id: String,
-        status: SubAgentStatus,
+        task: String,
+        status: String,
     },
-    /// Collaboration mode changed.
-    ModeChanged {
-        old: CollaborationMode,
-        new: CollaborationMode,
-    },
-    /// Evolution progress update.
-    EvolutionProgress { stage: EvolutionStage },
-    /// Context usage update.
-    ContextUpdate { used: usize, max: usize },
-    /// Model switched.
-    ModelSwitch { from: String, to: String },
-    /// Interrupt acknowledged.
-    Interrupted { reason: InterruptReason },
-    /// Compaction started.
-    CompactionStarted,
-    /// Compaction completed.
-    CompactionDone { summary_chars: usize },
+    ModeChanged { new: String },
+
+    // ── Limits / interruptions ──
+    Interrupted,
+    BudgetExceeded { limit: u64 },
+    CircuitBreakerTripped { reason: String },
+    CompactionTriggered,
+    Reflection { summary: String },
 }
 
 #[cfg(test)]

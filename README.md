@@ -216,21 +216,26 @@ cognit           --->  base, corpus, interact        (* see note)
 
 | Capability | Status | Code Anchor | Tests |
 |---|---|---|---|
-| DaemonHost (Unix socket JSON-RPC) | Stable | `crates/runtime/src/host/mod.rs` | `crates/runtime/tests/` |
-| SystemdHost (sd_notify, watchdog) | Stable | `crates/runtime/src/host/systemd.rs` | `crates/runtime/tests/` |
-| ContainerHost (Docker/Podman) | Experimental | `crates/runtime/src/host/container.rs` | `crates/runtime/tests/` |
-| JSON-RPC server (line-delimited) | Stable | `crates/runtime/src/impl/daemon/server.rs` | `crates/runtime/tests/` |
-| TUI client (aletheon binary) | Stable | `crates/interact/src/tui/` | `crates/interact/src/tui/test_infra.rs` |
-| ReActLoop inference engine | Stable | `crates/runtime/src/core/react_loop/mod.rs` | `crates/runtime/tests/` |
-| Multi-session support | Stable | `crates/runtime/src/impl/daemon/session_manager.rs` | `crates/runtime/tests/` |
-| Health check endpoint | Stable | `crates/runtime/src/impl/daemon/handler/rpc.rs` | `crates/runtime/tests/` |
-| Bash/File/Grep tools | Stable | `crates/corpus/src/tools/tools/` | `crates/corpus/src/tools/` |
-| Provider abstraction (Leju API) | Stable | `crates/cognit/src/impl/provider_registry.rs` | `crates/runtime/tests/` |
-| Session persistence (SQLite) | Stable | `crates/runtime/src/impl/session/store.rs` | `crates/runtime/tests/` |
-| Hook system (lifecycle hooks) | Stable | `crates/runtime/src/impl/hooks/` | `crates/runtime/tests/` |
-| io_uring IPC backend | Experimental | `crates/base/src/ipc/backends/io_uring.rs` | `crates/base/tests/` |
-| Self-evolution loop example | Experimental | `examples/self-evolution-loop/` | `crates/runtime/tests/self_evolution_loop_test.rs` |
-| eBPF kernel probes | Experimental | `crates/base/src/ipc/bus/kernel_bus.rs` | — |
+| DaemonHost (Unix socket JSON-RPC) | ✅ Stable | `crates/runtime/src/host/mod.rs` | `crates/runtime/tests/` |
+| SystemdHost (sd_notify, watchdog) | ✅ Stable | `crates/runtime/src/host/systemd.rs` | `crates/runtime/tests/` |
+| ContainerHost (Docker/Podman) | 🔧 Experimental | `crates/runtime/src/host/container.rs` | `crates/runtime/tests/` |
+| JSON-RPC server (line-delimited) | ✅ Stable | `crates/runtime/src/impl/daemon/server.rs` | `crates/runtime/tests/` |
+| TUI client (aletheon binary) | ✅ Stable | `crates/interact/src/tui/` | `crates/interact/src/tui/test_infra.rs` |
+| ReActLoop inference engine | ✅ Stable | `crates/runtime/src/core/react_loop/mod.rs` | `crates/runtime/tests/` |
+| Multi-session support | ✅ Stable | `crates/runtime/src/impl/daemon/session_manager.rs` | `crates/runtime/tests/` |
+| Health check endpoint | ✅ Stable | `crates/runtime/src/impl/daemon/handler/rpc.rs` | `crates/runtime/tests/` |
+| Bash/File/Grep tools | ✅ Stable | `crates/corpus/src/tools/tools/` | `crates/corpus/src/tools/` |
+| Provider abstraction (Anthropic / OpenAI compatible) | ✅ Stable | `crates/cognit/src/impl/provider_registry.rs` | `crates/runtime/tests/` |
+| Session persistence (SQLite) | ✅ Stable | `crates/runtime/src/impl/session/store.rs` | `crates/runtime/tests/` |
+| Hook system (lifecycle hooks) | ✅ Stable | `crates/runtime/src/impl/hooks/` | `crates/runtime/tests/` |
+| Bubblewrap Sandbox | ✅ Stable | `crates/corpus/src/security/sandbox/bubblewrap.rs` | `crates/corpus/tests/` |
+| Multi-agent Collaboration | ✅ Stable | `crates/runtime/src/impl/orchestration/agent.rs` | `crates/runtime/tests/` |
+| io_uring IPC backend | 🔧 Experimental | `crates/base/src/ipc/backends/io_uring.rs` | `crates/base/tests/` |
+| Local/Offline Model | 🔧 Experimental | — | — |
+| Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/self-evolution-loop/` | `crates/runtime/tests/self_evolution_loop_test.rs` |
+| eBPF kernel awareness | 📋 Design | `crates/base/src/ipc/bus/kernel_bus.rs` | — |
+| Android / Embedded targets | 📋 Design | — | — |
+| Cross-platform (macOS / Windows) | 📋 Design | — | — |
 
 ### 6.2 Stable (has code + tests)
 
@@ -243,9 +248,11 @@ These capabilities are implemented, tested, and used in production paths:
 - **Multi-session** — HashMap-based session registry with create/list/switch RPC methods.
 - **Health check** — RPC endpoint returning uptime, active connections, session count, and version.
 - **Bash/File/Grep tools** — Core tool set for filesystem interaction and command execution, with sandbox isolation.
-- **Provider abstraction** — LLM provider registry supporting Leju API (and other OpenAI-compatible endpoints) with model routing.
+- **Provider abstraction** — LLM provider registry supporting Anthropic API, OpenAI API, and other OpenAI-compatible endpoints with model routing.
 - **Session persistence** — SQLite-backed session store with journaling and event logging.
 - **Hook system** — Lifecycle hooks (session distiller, recall injection) with config-based loading.
+- **Bubblewrap Sandbox** — Tool execution sandboxing via bubblewrap (bwrap) for filesystem and network isolation.
+- **Multi-agent Collaboration** — Orchestration module for spawning and coordinating multiple agent instances for complex tasks.
 
 ### 6.3 Experimental (exists behind feature flags or as examples)
 
@@ -253,8 +260,9 @@ These have code but are gated behind features, environment variables, or exist o
 
 - **ContainerHost** — Docker/Podman container lifecycle management. Code exists at `crates/runtime/src/host/container.rs` with a binary entrypoint `aletheon-container`.
 - **io_uring backend** — High-performance IPC backend using Linux io_uring. Code exists but not yet the default transport.
-- **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/self-evolution-loop/`.
+- **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/self-evolution-loop/`. Requires explicit opt-in.
 - **eBPF probes** — Kernel-level perception via eBPF. Partial implementation in `kernel_bus.rs`.
+- **Local/Offline Model** — Support for locally-hosted inference engines (llama.cpp, Ollama). Experimental integration path.
 
 ### 6.4 Planned (design only, no implementation)
 
@@ -265,6 +273,7 @@ These are documented in design docs but have no working code:
 - **Android target** — AccessibilityService + Foreground Service for Android. Design only.
 - **Embedded/Board targets** — RK3588, Jetson Orin Nano, ESP32. Design only.
 - **Vector database** — Long-term semantic memory with vector storage. Design only.
+- **Cross-platform (macOS / Windows)** — Non-Linux platform support. Design only.
 
 ---
 

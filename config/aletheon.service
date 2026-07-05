@@ -1,26 +1,22 @@
 [Unit]
-Description=Aletheon AI Agent Daemon
-After=network.target
+Description=Aletheon Agent Daemon
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=/usr/bin/mkdir -p /var/lib/aletheon __HOME__/.local/share/aletheon __HOME__/.aletheon /run/aletheon
-ExecStart=/usr/bin/aletheon daemon
+User=aletheon
+Group=aletheon
+ExecStartPre=/usr/bin/mkdir -p /var/lib/aletheon /run/aletheon
+ExecStart=/usr/bin/aletheon daemon --socket /run/aletheon/aletheon.sock
+ExecStop=/bin/kill -TERM $MAINPID
 Restart=on-failure
-RestartSec=5
-EnvironmentFile=-/etc/aletheon/.env
-Environment=HOME=__HOME__
-Environment=AGENT_DATA_DIR=/var/lib/aletheon
-Environment=RUST_LOG=info
-WorkingDirectory=__PROJECT_DIR__
-
-RuntimeDirectory=aletheon
-RuntimeDirectoryMode=0755
-StateDirectory=aletheon
-StateDirectoryMode=0755
-
-# Security hardening
+RestartSec=2
 NoNewPrivileges=yes
+EnvironmentFile=-/etc/aletheon/.env
+StateDirectory=aletheon
+RuntimeDirectory=aletheon
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target

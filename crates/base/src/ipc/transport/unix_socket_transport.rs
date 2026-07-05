@@ -329,6 +329,7 @@ impl Drop for UnixSocketTransport {
 mod tests {
     use super::*;
 
+    #[cfg_attr(not(feature = "network-tests"), ignore)]
     #[tokio::test]
     async fn test_register_and_send_envelope() {
         let dir = tempfile::tempdir().unwrap();
@@ -369,6 +370,7 @@ mod tests {
         transport.unregister_agent(1).await;
     }
 
+    #[cfg_attr(not(feature = "network-tests"), ignore)]
     #[tokio::test]
     async fn test_can_reach() {
         let dir = tempfile::tempdir().unwrap();

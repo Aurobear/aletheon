@@ -10,6 +10,9 @@ description = "Aletheon — unified AI agent CLI (daemon, exec, TUI)"
 name = "aletheon"
 path = "src/main.rs"
 
+[features]
+integration-tests = []
+
 [dependencies]
 runtime = { path = "../runtime" }
 interact = { path = "../interact" }

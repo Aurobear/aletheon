@@ -2,22 +2,14 @@
 //!
 //! An `AgentFork` is a short-lived child spawned from a parent `AgentProcess`
 //! via a `ForkDirective`. It inherits a fraction of the parent's token budget
-//! and publishes an `AgentForkCompleted` event when done.
+//! and publishes a completion envelope when done.
 
-#![allow(deprecated)]
-// TODO(P1-A): EventBus usage has been migrated to CommunicationBus::publish_event().
-// The remaining allow(deprecated) is for `impl Event for ForkCompletedEvent` because
-// the Event trait itself is deprecated (use Envelope instead). Migrating ForkCompletedEvent
-// to Envelope payload requires changing the downstream subscribers, which is out of scope
-// for this phase.
-
-use std::any::Any;
 use std::sync::Arc;
 
 use base::agent::Pid;
-use base::envelope::Envelope;
+use base::envelope::{Envelope, Endpoint, Pattern, Payload, Target};
 use base::CommunicationBus;
-use base::{Event, EventType, ForkDirective, ForkResult, Priority};
+use base::{ForkDirective, ForkResult, Priority};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -61,33 +53,6 @@ pub struct AgentForkCompletedPayload {
     pub pid: u64,
     pub parent_pid: u64,
     pub success: bool,
-}
-
-// ---------------------------------------------------------------------------
-// Concrete event wrapper (keeps the fork module self-contained)
-// ---------------------------------------------------------------------------
-
-/// Private event type that wraps a completion payload for the `EventBus`.
-struct ForkCompletedEvent {
-    payload: AgentForkCompletedPayload,
-}
-
-impl Event for ForkCompletedEvent {
-    fn event_type(&self) -> EventType {
-        EventType::AgentForkCompleted
-    }
-
-    fn priority(&self) -> Priority {
-        Priority::Normal
-    }
-
-    fn source(&self) -> &str {
-        "agent_fork"
-    }
-
-    fn payload(&self) -> &dyn Any {
-        &self.payload
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -152,21 +117,27 @@ impl AgentFork {
 
     // -- internal -----------------------------------------------------------
 
-    /// Publish an `AgentForkCompleted` event onto the bus.
+    /// Publish an `AgentForkCompleted` envelope onto the bus.
     fn publish_completed(&self, success: bool) {
         let payload = AgentForkCompletedPayload {
             pid: self.pid.as_u64(),
             parent_pid: self.parent_pid.as_u64(),
             success,
         };
-        let event = Box::new(ForkCompletedEvent { payload });
+        let envelope = Envelope::new(
+            Endpoint::System,
+            Target::Broadcast,
+            Pattern::Publish,
+            Payload::Json(serde_json::to_value(&payload).unwrap_or_default()),
+        )
+        .with_priority(Priority::Normal);
         let bus = self.bus.clone();
         tokio::spawn(async move {
-            if let Err(e) = bus.publish_event(event).await {
+            if let Err(e) = bus.publish(envelope).await {
                 tracing::warn!(
                     source = "agent_fork",
                     error = %e,
-                    "Failed to publish AgentForkCompleted event"
+                    "Failed to publish AgentForkCompleted envelope"
                 );
             }
         });

@@ -29,6 +29,7 @@ base64 = "0.22"
 [features]
 default = []
 io_uring = []
+network-tests = []
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

@@ -68,6 +68,7 @@ pub struct DaemonHost {
     config_path: Option<PathBuf>,
     env_path: Option<PathBuf>,
     socket: PathBuf,
+    enable_evolution: bool,
 
     // --- Populated by init() ---
     pid_file: Option<PathBuf>,
@@ -75,11 +76,12 @@ pub struct DaemonHost {
 }
 
 impl DaemonHost {
-    pub fn new(config_path: Option<PathBuf>, env_path: Option<PathBuf>, socket: PathBuf) -> Self {
+    pub fn new(config_path: Option<PathBuf>, env_path: Option<PathBuf>, socket: PathBuf, enable_evolution: bool) -> Self {
         Self {
             config_path,
             env_path,
             socket,
+            enable_evolution,
             pid_file: None,
             core: None,
         }
@@ -120,7 +122,7 @@ impl RuntimeHost for DaemonHost {
         // host types (systemd, container, oneshot) can reuse it without
         // duplicating the 180-line init sequence.
         let config_path = self.config_path.take();
-        self.core = Some(RuntimeCore::bootstrap(config_path).await?);
+        self.core = Some(RuntimeCore::bootstrap(config_path, self.enable_evolution).await?);
 
         // ── Data dir ────────────────────────────────────────────────
         let core = self.core.as_ref().unwrap();
@@ -161,8 +163,10 @@ impl RuntimeHost for DaemonHost {
 
         // ── Unix server ─────────────────────────────────────────────
         info!(socket = %socket.display(), "Binding unix socket...");
+        let owner_uid = nix::unistd::Uid::current().as_raw();
+        let group_gid = nix::unistd::Gid::current().as_raw();
         let mut unix_server =
-            server::UnixServer::new(&socket, request_handler, cancel_token.clone()).await?;
+            server::UnixServer::new(&socket, request_handler, cancel_token.clone(), owner_uid, group_gid).await?;
 
         // ── Ctrl+C handler ──────────────────────────────────────────
         let shutdown_token = cancel_token.clone();
@@ -260,7 +264,7 @@ mod tests {
         // init/shutdown for DaemonHost now delegate to RuntimeCore::bootstrap().
         // The test verifies construction + lifecycle phases compile and do not panic
         // (init/shutdown may fail without a real config; accept that).
-        let mut host = DaemonHost::new(None, None, PathBuf::from("/tmp/test.sock"));
+        let mut host = DaemonHost::new(None, None, PathBuf::from("/tmp/test.sock"), false);
         let _ = host.init().await;
         let _ = host.shutdown().await;
     }

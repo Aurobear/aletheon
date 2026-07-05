@@ -138,38 +138,18 @@ else
     fi
 fi
 
-# Kill any running aletheon/aletheond daemon processes
-for proc in aletheond aletheon-exec aletheon-systemd aletheon-container aletheon; do
-    pids=$(pgrep -f "$proc" 2>/dev/null || true)
-    if [[ -n "$pids" ]]; then
-        echo "$pids" | while read pid; do
-            if [[ -n "$pid" ]]; then
-                kill "$pid" 2>/dev/null || true
-                log "Killed $proc (PID $pid)"
-            fi
-        done
-    fi
-done
-sleep 1
-
-# Force kill any remaining
-for proc in aletheond aletheon-exec aletheon-systemd aletheon-container; do
-    pids=$(pgrep -f "$proc" 2>/dev/null || true)
-    if [[ -n "$pids" ]]; then
-        echo "$pids" | while read pid; do
-            kill -9 "$pid" 2>/dev/null || true
-        done
-    fi
-done
-
-# Clean stale socket files
-for sock in /run/aletheon/aletheon.sock /tmp/aletheon*.sock \
-    "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/aletheon/aletheon.sock"; do
-    if [[ -e "$sock" ]]; then
-        $USE_SUDO rm -f "$sock" 2>/dev/null || rm -f "$sock" 2>/dev/null || true
-        log "Removed stale socket: $sock"
-    fi
-done
+# Stop via systemd (the proper way)
+if systemctl is-active --quiet aletheon.service 2>/dev/null; then
+    echo "Stopping aletheon.service..."
+    systemctl stop aletheon.service
+fi
+# Fallback: use pidfile if running outside systemd
+if [[ -f /run/aletheon/aletheon.pid ]]; then
+    echo "Killing daemon via pidfile..."
+    kill "$(cat /run/aletheon/aletheon.pid)" 2>/dev/null || true
+fi
+# Clean stale socket
+rm -f /run/aletheon/aletheon.sock
 
 log "Pre-install cleanup complete"
 
@@ -260,12 +240,6 @@ setup_config() {
     $USE_SUDO mkdir -p "$CFG_DIR" "$DATA_DIR" "$(dirname "$SOCKET_PATH")"
     if [[ "$MODE" == "system" ]]; then
         $USE_SUDO chown -R "$(whoami):$(whoami)" "$DATA_DIR" 2>/dev/null || true
-        # Create the real user's home dirs so ~/.aletheon/.env resolves when
-        # the daemon runs as root with HOME pointing to the real user.
-        local real_user="${SUDO_USER:-$(whoami)}"
-        local real_home
-        real_home=$(getent passwd "$real_user" | cut -d: -f6)
-        sudo mkdir -p "$real_home/.local/share/aletheon" "$real_home/.aletheon" /run/aletheon
     else
         mkdir -p "$(dirname "$SOCKET_PATH")"
     fi
@@ -368,16 +342,6 @@ ENV
         $USE_SUDO chmod 600 "$env"
         log "Env file written to $env"
     fi
-
-    # Symlink .env to the daemon user's ~/.aletheon/ so it finds it via env_file()
-    if [[ "$MODE" == "system" ]] && [[ -f "$env" ]]; then
-        local real_user="${SUDO_USER:-$(whoami)}"
-        local real_home
-        real_home=$(getent passwd "$real_user" | cut -d: -f6)
-        sudo mkdir -p "$real_home/.aletheon"
-        sudo ln -sf "$env" "$real_home/.aletheon/.env" 2>/dev/null || true
-        log "Linked $env → $real_home/.aletheon/.env"
-    fi
 }
 
 setup_config
@@ -427,13 +391,37 @@ setup_monitor
 
 setup_systemd() {
     if [[ "$MODE" == "system" ]]; then
-        real_user="${SUDO_USER:-$(whoami)}"
-        real_home=$(getent passwd "$real_user" | cut -d: -f6)
-        project_dir="$(cd "$SCRIPT_DIR" && pwd)"
+        # Create aletheon system user and group if they don't exist.
+        if ! id -u aletheon &>/dev/null; then
+            echo "Creating aletheon system user..."
+            useradd -r -s /usr/sbin/nologin -d /var/lib/aletheon aletheon
+        fi
+        # Add the real user (SUDO_USER or current user) to aletheon group.
+        local real_user="${SUDO_USER:-$USER}"
+        if [[ "$real_user" != "root" ]] && [[ "$real_user" != "aletheon" ]]; then
+            usermod -a -G aletheon "$real_user" 2>/dev/null || true
+            echo "Added $real_user to aletheon group (re-login required to take effect)"
+        fi
 
-        sed -e "s|__HOME__|$real_home|g" \
-            -e "s|__PROJECT_DIR__|$project_dir|g" \
-            "$SCRIPT_DIR/config/aletheon.service" | $USE_SUDO tee "$SYS_SVC" > /dev/null
+        # Ensure /etc/aletheon/.env exists for API keys.
+        if [[ ! -f /etc/aletheon/.env ]]; then
+            local env_src="${CFG_DIR}/.env"
+            if [[ -f "$env_src" ]]; then
+                cp "$env_src" /etc/aletheon/.env
+            elif [[ -f "$HOME/.aletheon/.env" ]]; then
+                cp "$HOME/.aletheon/.env" /etc/aletheon/.env
+            else
+                touch /etc/aletheon/.env
+            fi
+            chmod 600 /etc/aletheon/.env
+            chown aletheon:aletheon /etc/aletheon/.env
+            echo "Created /etc/aletheon/.env owned by aletheon:aletheon"
+        fi
+
+        # Ensure socket/data directories are owned by aletheon.
+        $USE_SUDO chown -R aletheon:aletheon "$DATA_DIR" "$(dirname "$SOCKET_PATH")" 2>/dev/null || true
+
+        $USE_SUDO cp "$SCRIPT_DIR/config/aletheon.service" "$SYS_SVC"
         $USE_SUDO systemctl daemon-reload
         $USE_SUDO systemctl enable aletheon.service
         log "Systemd service installed: $SYS_SVC"

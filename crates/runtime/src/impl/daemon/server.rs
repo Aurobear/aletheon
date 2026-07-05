@@ -1,14 +1,16 @@
+use std::ffi::CString;
 use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Result;
 use base::debug::DebugEvent;
+use nix::unistd::{Gid, Uid, User};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use super::handler::RequestHandler;
 
@@ -18,6 +20,10 @@ pub struct UnixServer {
     cancel_token: CancellationToken,
     /// Tracks spawned connection tasks for graceful shutdown drain.
     connections: JoinSet<()>,
+    /// UID of the daemon process — allowed to connect.
+    owner_uid: u32,
+    /// GID of the aletheon group — users in this group may also connect.
+    group_gid: u32,
 }
 
 impl UnixServer {
@@ -25,6 +31,8 @@ impl UnixServer {
         socket_path: &Path,
         handler: RequestHandler,
         cancel_token: CancellationToken,
+        owner_uid: u32,
+        group_gid: u32,
     ) -> Result<Self> {
         // Remove stale socket
         if socket_path.exists() {
@@ -32,19 +40,21 @@ impl UnixServer {
         }
 
         let listener = UnixListener::bind(socket_path)?;
-        // Allow all users to connect (systemd runs as root, TUI runs as user)
+        // Restrict socket to owner and group only (rw-rw----).
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o666))?;
+            std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
         }
-        info!(path = %socket_path.display(), "Unix socket listening");
+        info!(path = %socket_path.display(), owner_uid, group_gid, "Unix socket listening");
 
         Ok(Self {
             listener,
             handler,
             cancel_token,
             connections: JoinSet::new(),
+            owner_uid,
+            group_gid,
         })
     }
 
@@ -59,6 +69,11 @@ impl UnixServer {
             tokio::select! {
                 accept_result = self.listener.accept() => {
                     let (stream, _addr) = accept_result?;
+                    // Verify peer credentials before accepting the connection.
+                    if let Err(e) = Self::check_peer_cred(&stream, self.owner_uid, self.group_gid) {
+                        warn!(error = %e, "Connection rejected by peer credential check");
+                        continue;
+                    }
                     let mut handler = self.handler.clone();
 
                     // Create a per-connection notify channel so each client receives
@@ -110,6 +125,38 @@ impl UnixServer {
         }
 
         Ok(())
+    }
+
+    /// Verify that the connecting peer is either the daemon owner or a member
+    /// of the aletheon group. Root (uid 0) is always allowed.
+    fn check_peer_cred(
+        stream: &tokio::net::UnixStream,
+        owner_uid: u32,
+        group_gid: u32,
+    ) -> anyhow::Result<()> {
+        let cred = stream.peer_cred()?;
+        let peer_uid = cred.uid();
+
+        // Allow root and the daemon owner.
+        if peer_uid == 0 || peer_uid == owner_uid {
+            return Ok(());
+        }
+
+        // Check if the peer belongs to the aletheon group.
+        // First check primary group (fast path, no allocation).
+        if cred.gid() == group_gid {
+            return Ok(());
+        }
+        // Then check supplementary groups via nix.
+        if let Some(user) = User::from_uid(Uid::from_raw(peer_uid))? {
+            let c_name = CString::new(user.name)?;
+            let groups = nix::unistd::getgrouplist(&c_name, Gid::from_raw(cred.gid()))?;
+            if groups.contains(&Gid::from_raw(group_gid)) {
+                return Ok(());
+            }
+        }
+
+        anyhow::bail!("Access denied: uid {} not in aletheon group", peer_uid)
     }
 
     /// Handle a single client connection. Reads JSON-RPC requests from the

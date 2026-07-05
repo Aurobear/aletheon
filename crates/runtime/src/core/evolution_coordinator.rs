@@ -28,6 +28,10 @@ pub struct EvolutionConfig {
     /// Master switch. When false, the whole loop is inert (default).
     /// HIGH-risk autonomy -- OFF unless explicitly enabled by the operator.
     pub enabled: bool,
+    /// PermissionManager approval gate. Must be true for evolution to proceed.
+    /// Separate from `enabled` so operators can disable evolution entirely
+    /// while keeping the permission configured.
+    pub evolution_permitted: bool,
     /// Trigger evolution every N turns (0 = disabled).
     pub trigger_every_n_turns: usize,
     /// Also trigger evolution after any failed turn.
@@ -42,6 +46,7 @@ impl Default for EvolutionConfig {
     fn default() -> Self {
         Self {
             enabled: false, // HIGH-risk autonomy: OFF unless explicitly enabled
+            evolution_permitted: false, // separate PermissionManager gate, OFF by default
             trigger_every_n_turns: 5,
             trigger_on_failure: true,
             window_size: 20,
@@ -158,8 +163,8 @@ impl EvolutionCoordinator {
             elapsed_ms,
         };
 
-        // HIGH-risk autonomy gate. TODO(Tier 2a): also require PermissionManager approval.
-        if !self.config.enabled {
+        // HIGH-risk autonomy gate. Requires both config.enabled AND PermissionManager approval.
+        if !self.config.enabled || !self.config.evolution_permitted {
             return Ok(EvolutionSummary {
                 reflected: false,
                 reflection_id: None,

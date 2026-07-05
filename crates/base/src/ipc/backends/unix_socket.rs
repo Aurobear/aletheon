@@ -272,6 +272,7 @@ mod tests {
     use super::*;
     use crate::ipc::ipc_types::{IpcPriority as Priority, MessageType};
 
+    #[cfg_attr(not(feature = "network-tests"), ignore)]
     #[tokio::test]
     async fn test_register_and_send() {
         let dir = tempfile::tempdir().unwrap();
@@ -312,6 +313,7 @@ mod tests {
         backend.unregister_agent(1).await;
     }
 
+    #[cfg_attr(not(feature = "network-tests"), ignore)]
     #[tokio::test]
     async fn test_broadcast() {
         let dir = tempfile::tempdir().unwrap();

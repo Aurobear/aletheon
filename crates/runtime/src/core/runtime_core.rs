@@ -51,7 +51,7 @@ impl RuntimeCore {
     ///
     /// `config_path` — explicit config file path; falls back to layered config
     ///                  discovery when `None`.
-    pub async fn bootstrap(config_path: Option<PathBuf>) -> Result<Self> {
+    pub async fn bootstrap(config_path: Option<PathBuf>, enable_evolution: bool) -> Result<Self> {
         // ── AppConfig ───────────────────────────────────────────────
         // Layered base (defaults → /etc → user → project), then --config on top.
         let mut app_config = cognit::config::AppConfig::load_layered(None);
@@ -76,6 +76,7 @@ impl RuntimeCore {
                 .unwrap_or_else(|_| app_config.agent.system_prompt.clone()),
             sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
                 .unwrap_or_else(|_| "auto".to_string()),
+            enable_evolution,
             mcp_servers: app_config
                 .mcp_servers
                 .iter()
@@ -211,8 +212,8 @@ impl RuntimeCore {
             &config,
             &registry,
             app_config.model_routing.clone(),
-            app_config.evolution.enabled,
-            Some(kernel_bus),
+            config.enable_evolution,
+            Some(bus.clone()),
             cancel_token.clone(),
         )
         .await?;

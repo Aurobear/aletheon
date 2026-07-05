@@ -251,18 +251,18 @@ impl SelfField {
         self.dasein_event_tx.as_ref()
     }
 
-    /// Connect the DaseinModule to the EventBus for real system event integration.
+    /// Connect the DaseinModule to the CommunicationBus for real system event integration.
     ///
-    /// This should be called after SelfField::init() when the EventBus is available.
+    /// This should be called after SelfField::init() when the CommunicationBus is available.
     /// It subscribes the DaseinModule to tool execution, memory, evolution, and
     /// session lifecycle events.
     pub async fn wire_dasein_event_bridge(
         &self,
-        event_bus: &dyn base::EventBus,
+        communication_bus: &base::CommunicationBus,
     ) -> anyhow::Result<()> {
         if let (Some(ref _dasein), Some(ref tx)) = (&self.dasein, &self.dasein_event_tx) {
             let bridge = DaseinEventBridge::new(tx.clone());
-            bridge.subscribe(event_bus).await?;
+            bridge.subscribe(communication_bus).await?;
             info!("DaseinModule connected to EventBus via DaseinEventBridge");
         }
         Ok(())

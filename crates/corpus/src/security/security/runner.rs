@@ -8,7 +8,7 @@ use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use super::output_guardrail::OutputGuardrail;
 use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
-use crate::sandbox::{SandboxConfig, SandboxExecutor};
+use crate::sandbox::{SandboxConfig, SandboxExecutor, SandboxPreference};
 use base::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
 use base::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use base::{PermissionBehavior, PermissionContext};
@@ -76,6 +76,11 @@ impl ToolRunnerWithGuard {
     pub fn with_default_sandbox(audit_logger: AuditLogger) -> Self {
         use crate::sandbox::SandboxPreference;
         Self::new(SandboxExecutor::new(SandboxPreference::Auto), audit_logger)
+    }
+
+    /// Create with an explicit sandbox preference.
+    pub fn with_sandbox_preference(audit_logger: AuditLogger, preference: SandboxPreference) -> Self {
+        Self::new(SandboxExecutor::new(preference), audit_logger)
     }
 
     /// Set the approval gate used for actions that require approval.

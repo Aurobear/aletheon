@@ -54,16 +54,18 @@ pub struct SystemdHost {
     config_path: Option<PathBuf>,
     env_path: Option<PathBuf>,
     socket: PathBuf,
+    enable_evolution: bool,
     core: Option<RuntimeCore>,
     started_at: std::time::Instant,
 }
 
 impl SystemdHost {
-    pub fn new(config_path: Option<PathBuf>, env_path: Option<PathBuf>, socket: PathBuf) -> Self {
+    pub fn new(config_path: Option<PathBuf>, env_path: Option<PathBuf>, socket: PathBuf, enable_evolution: bool) -> Self {
         Self {
             config_path,
             env_path,
             socket,
+            enable_evolution,
             core: None,
             started_at: std::time::Instant::now(),
         }
@@ -85,7 +87,7 @@ impl crate::host::RuntimeHost for SystemdHost {
 
         // ── Runtime core bootstrap ──────────────────────────────────
         let config_path = self.config_path.take();
-        self.core = Some(RuntimeCore::bootstrap(config_path).await?);
+        self.core = Some(RuntimeCore::bootstrap(config_path, self.enable_evolution).await?);
 
         // ── Data dir ────────────────────────────────────────────────
         let core = self.core.as_ref().unwrap();
@@ -142,8 +144,10 @@ impl crate::host::RuntimeHost for SystemdHost {
 
         // ── Unix server ─────────────────────────────────────────────
         tracing::info!(socket = %socket.display(), "Binding unix socket...");
+        let owner_uid = nix::unistd::Uid::current().as_raw();
+        let group_gid = nix::unistd::Gid::current().as_raw();
         let mut unix_server =
-            server::UnixServer::new(&socket, request_handler, cancel_token.clone()).await?;
+            server::UnixServer::new(&socket, request_handler, cancel_token.clone(), owner_uid, group_gid).await?;
 
         // ── SIGTERM handler (systemd sends SIGTERM for shutdown) ────
         let shutdown_token = cancel_token.clone();

@@ -47,7 +47,7 @@ jobs:
         run: |
           cargo +stable build --release \
             --target ${{ matrix.target }} \
-            -p aletheond -p aletheon-exec -p aletheon-cli
+            -p aletheon
 
       - name: Package
         id: package
@@ -57,8 +57,6 @@ jobs:
           STAGING="aletheon-${TAG}-${ARCH}"
           mkdir "${STAGING}"
 
-          cp "target/${ARCH}/release/aletheond" "${STAGING}/"
-          cp "target/${ARCH}/release/aletheon-exec" "${STAGING}/"
           cp "target/${ARCH}/release/aletheon" "${STAGING}/"
           cp LICENSE README.md "${STAGING}/" 2>/dev/null || true
 
