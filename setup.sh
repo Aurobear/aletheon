@@ -259,8 +259,9 @@ done
 setup_config() {
     $USE_SUDO mkdir -p "$CFG_DIR" "$DATA_DIR" "$(dirname "$SOCKET_PATH")"
     if [[ "$MODE" == "system" ]]; then
-        $USE_SUDO chown -R "${SUDO_USER:-$(whoami)}:${SUDO_USER:-$(whoami)}" "$DATA_DIR" 2>/dev/null || true
-        # Create the real user's data dirs for the daemon (runs as $SUDO_USER, not root)
+        $USE_SUDO chown -R "$(whoami):$(whoami)" "$DATA_DIR" 2>/dev/null || true
+        # Create the real user's home dirs so ~/.aletheon/.env resolves when
+        # the daemon runs as root with HOME pointing to the real user.
         local real_user="${SUDO_USER:-$(whoami)}"
         local real_home
         real_home=$(getent passwd "$real_user" | cut -d: -f6)
@@ -426,7 +427,13 @@ setup_monitor
 
 setup_systemd() {
     if [[ "$MODE" == "system" ]]; then
-        $USE_SUDO cp "$SCRIPT_DIR/config/aletheon.service" "$SYS_SVC"
+        real_user="${SUDO_USER:-$(whoami)}"
+        real_home=$(getent passwd "$real_user" | cut -d: -f6)
+        project_dir="$(cd "$SCRIPT_DIR" && pwd)"
+
+        sed -e "s|__HOME__|$real_home|g" \
+            -e "s|__PROJECT_DIR__|$project_dir|g" \
+            "$SCRIPT_DIR/config/aletheon.service" | $USE_SUDO tee "$SYS_SVC" > /dev/null
         $USE_SUDO systemctl daemon-reload
         $USE_SUDO systemctl enable aletheon.service
         log "Systemd service installed: $SYS_SVC"

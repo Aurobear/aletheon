@@ -4,16 +4,15 @@ After=network.target
 
 [Service]
 Type=simple
-User=aurobear
-ExecStartPre=/usr/bin/mkdir -p /home/aurobear/.local/share/aletheon /home/aurobear/.aletheon /run/aletheon
+ExecStartPre=/usr/bin/mkdir -p /var/lib/aletheon __HOME__/.local/share/aletheon __HOME__/.aletheon /run/aletheon
 ExecStart=/usr/bin/aletheon daemon
 Restart=on-failure
 RestartSec=5
 EnvironmentFile=-/etc/aletheon/.env
-Environment=HOME=/home/aurobear
-Environment=AGENT_DATA_DIR=/home/aurobear/.local/share/aletheon
+Environment=HOME=__HOME__
+Environment=AGENT_DATA_DIR=/var/lib/aletheon
 Environment=RUST_LOG=info
-WorkingDirectory=/home/aurobear/Bear-ws/aletheon
+WorkingDirectory=__PROJECT_DIR__
 
 RuntimeDirectory=aletheon
 RuntimeDirectoryMode=0755
