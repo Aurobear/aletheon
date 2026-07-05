@@ -58,6 +58,16 @@ impl ReActLoop {
                         thinking_parts.push(text.clone());
                     }
                     ContentBlock::ToolUse { id, name, input } => {
+                        // Defensive: skip tool calls with empty names — some
+                        // OpenAI-compatible providers emit malformed tool-use
+                        // blocks that would poison the conversation.
+                        if name.is_empty() {
+                            warn!(
+                                tool_id = %id,
+                                "ReActLoop: skipping tool call with empty name"
+                            );
+                            continue;
+                        }
                         tool_calls.push((id.clone(), name.clone(), input.clone()));
                     }
                     _ => {}
@@ -123,6 +133,24 @@ impl ReActLoop {
 
             // Execute each requested tool and feed results back.
             for (tool_index, (id, name, input)) in tool_calls.iter().enumerate() {
+                // Defensive: skip tool calls with empty names — some
+                // OpenAI-compatible providers emit malformed tool-use blocks
+                // that would trip the circuit breaker.
+                if name.is_empty() {
+                    warn!(
+                        tool_id = %id,
+                        "ReActLoop: skipping tool call with empty name"
+                    );
+                    tool_result_blocks.push(ContentBlock::ToolResult {
+                        tool_use_id: id.clone(),
+                        content: "Error: tool call has empty name — skipping".to_string(),
+                        is_error: true,
+                    });
+                    tool_errors += 1;
+                    self.consecutive_errors += 1;
+                    continue;
+                }
+
                 // Check tool budget before executing
                 if !self.tool_budget.can_call() {
                     warn!("Tool budget exhausted, stopping loop");

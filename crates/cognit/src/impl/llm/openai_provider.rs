@@ -401,6 +401,16 @@ impl LlmProvider for OpenAiProvider {
         // Tool calls
         if let Some(tool_calls) = choice.message.tool_calls {
             for tc in tool_calls {
+                // Skip tool calls with empty names — some models emit malformed
+                // tool-use blocks that would poison the conversation and trip
+                // the circuit breaker.
+                if tc.function.name.is_empty() {
+                    tracing::warn!(
+                        tool_id = %tc.id,
+                        "Skipping tool call with empty name from model response"
+                    );
+                    continue;
+                }
                 let input: serde_json::Value =
                     serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
                 content.push(ContentBlock::ToolUse {
@@ -563,21 +573,28 @@ impl LlmProvider for OpenAiProvider {
                                             for tc in tool_calls {
                                                 let idx = tc.index;
 
-                                                // New tool call started
+                                                // New tool call started — skip if name is empty (malformed)
                                                 if let Some(id) = &tc.id {
                                                     if let Some(name) = &tc.function.name {
-                                                        tool_state.start_call(
-                                                            idx,
-                                                            id.clone(),
-                                                            name.clone(),
-                                                        );
-                                                        return Some((
-                                                            Ok(StreamChunk::ToolUseStart {
-                                                                id: id.clone(),
-                                                                name: name.clone(),
-                                                            }),
-                                                            (byte_stream, buffer, tool_state),
-                                                        ));
+                                                        if name.is_empty() {
+                                                            tracing::warn!(
+                                                                tool_id = %id,
+                                                                "Skipping streaming tool call with empty name"
+                                                            );
+                                                        } else {
+                                                            tool_state.start_call(
+                                                                idx,
+                                                                id.clone(),
+                                                                name.clone(),
+                                                            );
+                                                            return Some((
+                                                                Ok(StreamChunk::ToolUseStart {
+                                                                    id: id.clone(),
+                                                                    name: name.clone(),
+                                                                }),
+                                                                (byte_stream, buffer, tool_state),
+                                                            ));
+                                                        }
                                                     }
                                                 }
 
