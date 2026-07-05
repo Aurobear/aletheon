@@ -59,7 +59,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     let _ = app.stream.try_read(&mut app.read_buf);
 
     // Welcome message
-    app.chat.add_message(
+    app.chat.add_text(
         ChatRole::System,
         "Welcome to aletheon! Type a message to get started.\nShift+Enter 换行 │ Enter 发送 │ Ctrl+C 清空/退出 │ /copy 复制 │ /help 帮助".to_string(),
     );

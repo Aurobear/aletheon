@@ -9,6 +9,41 @@ use std::time::Instant;
 const THINKING_VIEW_MAX: usize = 4096; // 4KB cap for thinking tail
 const THINKING_TAIL_LINES: usize = 12; // max visual lines for thinking
 
+// ---------------------------------------------------------------------------
+// Table holdback helpers
+// ---------------------------------------------------------------------------
+
+fn is_pipe_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with('|') && trimmed.ends_with('|')
+}
+
+fn is_separator_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with('|')
+        && trimmed.ends_with('|')
+        && trimmed
+            .chars()
+            .all(|c| c == '|' || c == '-' || c == ':' || c == ' ')
+}
+
+// ---------------------------------------------------------------------------
+// Table holdback state
+// ---------------------------------------------------------------------------
+
+enum TableHoldbackState {
+    /// No table currently being tracked.
+    None,
+    /// Saw a pipe row, waiting to see if it is a table header.
+    WaitingForSeparator { header_line_idx: usize },
+    /// Confirmed table (header + separator seen), accumulating rows.
+    Accumulating { header_end_idx: usize },
+}
+
+// ---------------------------------------------------------------------------
+// StreamController
+// ---------------------------------------------------------------------------
+
 pub struct StreamController {
     /// Committed text (stable, in scrollback)
     committed: String,
@@ -22,6 +57,8 @@ pub struct StreamController {
     thinking_start: Option<Instant>,
     /// Thinking collapsed state
     thinking_collapsed: bool,
+    /// Table holdback state for flicker-free markdown table streaming
+    table_holdback: TableHoldbackState,
 }
 
 impl Default for StreamController {
@@ -39,6 +76,7 @@ impl StreamController {
             thinking: false,
             thinking_start: None,
             thinking_collapsed: true,
+            table_holdback: TableHoldbackState::None,
         }
     }
 
@@ -48,6 +86,7 @@ impl StreamController {
         self.thinking_buf.clear();
         self.thinking = false;
         self.thinking_start = None;
+        self.table_holdback = TableHoldbackState::None;
     }
 
     pub fn push_thinking(&mut self, text: &str) {
@@ -71,14 +110,118 @@ impl StreamController {
         self.tail.push_str(text);
     }
 
-    pub fn current_text(&self) -> String {
+    pub fn current_text(&mut self) -> String {
         let mut result = String::new();
         if self.thinking && !self.thinking_collapsed {
             result.push_str(&self.format_thinking_expanded());
         }
         result.push_str(&self.committed);
-        result.push_str(&self.tail);
+
+        // Table holdback: detect pipe tables in the tail and hold them back
+        // until they are complete, preventing row-by-row flicker.
+        let tail_lines: Vec<String> = self.tail.lines().map(|s| s.to_string()).collect();
+        let tail_line_refs: Vec<&str> = tail_lines.iter().map(|s| s.as_str()).collect();
+        self.update_table_holdback(&tail_line_refs);
+
+        match self.table_holdback {
+            TableHoldbackState::None | TableHoldbackState::WaitingForSeparator { .. } => {
+                result.push_str(&self.tail);
+            }
+            TableHoldbackState::Accumulating { header_end_idx } => {
+                // Only emit lines before the held-back table.
+                if header_end_idx > 0 && header_end_idx <= tail_lines.len() {
+                    for i in 0..header_end_idx {
+                        if i > 0 {
+                            result.push('\n');
+                        }
+                        result.push_str(&tail_lines[i]);
+                    }
+                }
+                // When header_end_idx == 0 the table starts at the very
+                // beginning of the tail — show nothing from tail.
+            }
+        }
+
         result
+    }
+
+    /// Scan the tail lines and update the table holdback state machine.
+    fn update_table_holdback(&mut self, tail_lines: &[&str]) {
+        match self.table_holdback {
+            TableHoldbackState::None => {
+                for (i, line) in tail_lines.iter().enumerate() {
+                    if is_pipe_row(line) {
+                        if i + 1 < tail_lines.len() && is_separator_row(tail_lines[i + 1]) {
+                            // Header + separator found. Check whether the table
+                            // is already complete (non-pipe, non-empty line
+                            // after at least one data row).
+                            let data_start = i + 2;
+                            let complete = tail_lines.iter().enumerate().any(|(j, l)| {
+                                j > data_start
+                                    && !l.trim().is_empty()
+                                    && !is_pipe_row(l)
+                                    && !is_separator_row(l)
+                            });
+                            if complete {
+                                break; // complete table, no holdback needed
+                            }
+                            self.table_holdback =
+                                TableHoldbackState::Accumulating { header_end_idx: i };
+                            return;
+                        } else if i + 1 >= tail_lines.len() {
+                            // Only the header has arrived so far — the
+                            // separator may come in the next delta.
+                            self.table_holdback =
+                                TableHoldbackState::WaitingForSeparator { header_line_idx: i };
+                            return;
+                        }
+                        // i+1 exists but is not a separator: false positive, skip.
+                    }
+                }
+            }
+            TableHoldbackState::WaitingForSeparator { header_line_idx } => {
+                let h = header_line_idx;
+                if h + 1 < tail_lines.len() {
+                    if is_separator_row(tail_lines[h + 1]) {
+                        // Header + separator confirmed.
+                        let data_start = h + 2;
+                        let complete = tail_lines.iter().enumerate().any(|(j, l)| {
+                            j > data_start
+                                && !l.trim().is_empty()
+                                && !is_pipe_row(l)
+                                && !is_separator_row(l)
+                        });
+                        if complete {
+                            self.table_holdback = TableHoldbackState::None;
+                        } else {
+                            self.table_holdback =
+                                TableHoldbackState::Accumulating { header_end_idx: h };
+                        }
+                    } else if !is_pipe_row(tail_lines[h + 1]) {
+                        // The line after the header is neither a separator nor a
+                        // pipe row — false positive.
+                        self.table_holdback = TableHoldbackState::None;
+                    }
+                    // If h+1 is also a pipe row but not a separator: unlikely
+                    // in GFM tables; keep waiting — the separator may appear
+                    // between two pipe rows in unusual formats.
+                }
+            }
+            TableHoldbackState::Accumulating { header_end_idx } => {
+                if header_end_idx + 2 < tail_lines.len() {
+                    let data_start = header_end_idx + 2;
+                    let should_release = tail_lines.iter().enumerate().any(|(j, l)| {
+                        j > data_start
+                            && !l.trim().is_empty()
+                            && !is_pipe_row(l)
+                            && !is_separator_row(l)
+                    });
+                    if should_release {
+                        self.table_holdback = TableHoldbackState::None;
+                    }
+                }
+            }
+        }
     }
 
     pub fn commit(&mut self) {
@@ -87,6 +230,7 @@ impl StreamController {
         }
         self.committed.push_str(&self.tail);
         self.tail.clear();
+        self.table_holdback = TableHoldbackState::None;
     }
 
     pub fn toggle_thinking(&mut self) {

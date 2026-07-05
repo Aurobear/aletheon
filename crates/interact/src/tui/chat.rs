@@ -1,3 +1,10 @@
+//! Chat widget with mixed text and executable tool entries.
+//!
+//! # Entry Types
+//!
+//! * `ChatEntry::Text` — Standard text messages (user, assistant, system).
+//! * `ChatEntry::Exec` — Tool call + result, rendered inline with spinner animation.
+
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -114,11 +121,190 @@ impl ChatMessage {
         result.push(Line::from(""));
         result
     }
+
+    /// Render lines for a given width (used by ChatEntry::Text rendering).
+    pub fn rendered_lines(&self, width: u16, caps: &TermCaps) -> Vec<Line<'static>> {
+        let theme = caps.theme();
+        Self::render_lines(&self.role, &self.content, width, caps, &theme)
+    }
 }
+
+// ── ExecEntry — tool call inline rendering ────────────────────────────
+
+/// Rendered tool execution entry in the chat history.
+///
+/// Displays a spinner during execution, then shows truncated output with
+/// expand/collapse support.  Rendered in chat order alongside text messages.
+pub struct ExecEntry {
+    pub call_id: String,
+    pub tool: String,
+    pub args: String,
+    pub output: String,
+    pub is_error: bool,
+    pub finished: bool,
+    pub expanded: bool,
+}
+
+impl ExecEntry {
+    pub fn new(call_id: String, tool: String, args: String) -> Self {
+        Self {
+            call_id,
+            tool,
+            args,
+            output: String::new(),
+            is_error: false,
+            finished: false,
+            expanded: false,
+        }
+    }
+
+    pub fn finish(&mut self, output: &str, is_error: bool) {
+        self.output = output.to_string();
+        self.is_error = is_error;
+        self.finished = true;
+    }
+
+    pub fn toggle(&mut self) {
+        self.expanded = !self.expanded;
+    }
+
+    /// Build animated styled lines — copies the `render_chat_lines` logic from toolcard.rs.
+    pub fn render_lines(&self, frame_counter: u64, _width: u16) -> Vec<Line<'static>> {
+        const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+        let dot_color = if self.is_error {
+            Color::Red
+        } else if !self.finished {
+            Color::Yellow
+        } else {
+            tool_color(&self.tool)
+        };
+
+        let status = if !self.finished {
+            SPINNER[frame_counter as usize % SPINNER.len()].to_string()
+        } else if self.is_error {
+            " ✗".to_string()
+        } else {
+            " ✓".to_string()
+        };
+
+        let header = format!(
+            "  ⏺ {}({}){}",
+            self.tool,
+            truncate_args(&self.args, 60),
+            status
+        );
+        let mut lines = vec![Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled("● ", Style::default().fg(dot_color)),
+            Span::raw(header),
+        ])];
+
+        if self.expanded && !self.output.is_empty() {
+            let output_lines: Vec<&str> = self.output.lines().collect();
+            let display = if output_lines.len() > 10 {
+                &output_lines[..10]
+            } else {
+                &output_lines
+            };
+            for line in display {
+                lines.push(Line::from(vec![
+                    Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                    Span::raw(line.to_string()),
+                ]));
+            }
+            if output_lines.len() > 10 {
+                lines.push(Line::from(vec![
+                    Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("... ({} lines total)", output_lines.len()),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            }
+        } else if self.finished {
+            let line_count = self.output.lines().count();
+            if line_count > 3 {
+                lines.push(Line::from(vec![
+                    Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("{} lines output, Ctrl+B to expand", line_count),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            } else if line_count > 0 {
+                for line in self.output.lines().take(3) {
+                    lines.push(Line::from(vec![
+                        Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                        Span::raw(line.to_string()),
+                    ]));
+                }
+            }
+        }
+
+        lines
+    }
+
+    pub fn to_summary(&self) -> String {
+        let status = if self.is_error { "failed" } else { "done" };
+        format!(
+            "  ⏺ {}({}) — {}",
+            self.tool,
+            truncate_args(&self.args, 40),
+            status
+        )
+    }
+}
+
+/// Assign a color to a tool based on its name.
+fn tool_color(tool: &str) -> Color {
+    let lower = tool.to_lowercase();
+    if lower.contains("read") || lower.contains("glob") || lower.contains("grep") {
+        Color::Cyan
+    } else if lower.contains("write") || lower.contains("edit") || lower.contains("apply") {
+        Color::Green
+    } else if lower.contains("bash") || lower.contains("shell") || lower.contains("exec") {
+        Color::Yellow
+    } else {
+        Color::Magenta
+    }
+}
+
+/// Truncate tool args to `max` chars, appending "…" if needed.
+fn truncate_args(args: &str, max: usize) -> String {
+    if args.len() <= max {
+        args.to_string()
+    } else {
+        format!("{}...", &args[..max])
+    }
+}
+
+// ── ChatEntry enum ────────────────────────────────────────────────────
+
+use ratatui::style::Color;
+
+/// A single entry in the chat history — either a text message or a tool execution.
+pub enum ChatEntry {
+    Text(ChatMessage),
+    Exec(ExecEntry),
+}
+
+impl ChatEntry {
+    /// Render this entry into styled lines for display.
+    fn render_lines(&self, frame_counter: u64, width: u16, caps: &TermCaps) -> Vec<Line<'static>> {
+        match self {
+            ChatEntry::Text(msg) => msg.rendered_lines(width, caps),
+            ChatEntry::Exec(entry) => entry.render_lines(frame_counter, width),
+        }
+    }
+}
+
+// ── ChatWidget ────────────────────────────────────────────────────────
 
 /// Chat message display widget with scroll support.
 pub struct ChatWidget {
-    pub messages: Vec<ChatMessage>,
+    /// Mixed entries: text messages and tool executions in display order.
+    pub entries: Vec<ChatEntry>,
     pub scroll_offset: u16,
     /// Whether the user has manually scrolled away from the bottom.
     pub user_scrolled: bool,
@@ -129,7 +315,7 @@ pub struct ChatWidget {
 impl ChatWidget {
     pub fn new(caps: TermCaps) -> Self {
         Self {
-            messages: Vec::new(),
+            entries: Vec::new(),
             scroll_offset: 0,
             user_scrolled: false,
             render_width: 80,
@@ -137,24 +323,69 @@ impl ChatWidget {
         }
     }
 
-    /// Add a new message.
-    pub fn add_message(&mut self, role: Role, content: String) {
+    /// Add a text message entry.
+    pub fn add_text(&mut self, role: Role, content: String) {
         let msg = ChatMessage::new(role, content, self.render_width, &self.caps);
-        self.messages.push(msg);
+        self.entries.push(ChatEntry::Text(msg));
         if !self.user_scrolled {
             self.scroll_offset = 0;
         }
     }
 
-    /// Update the last message content (for streaming responses).
-    pub fn update_last_message(&mut self, content: String) {
-        if let Some(last) = self.messages.last_mut() {
-            last.update_content(content, self.render_width, &self.caps);
-        }
-        // During streaming, follow the bottom unless user has manually scrolled
+    /// Add a tool execution entry (in-progress).
+    pub fn add_exec(&mut self, call_id: String, tool: String, args: String) {
+        let entry = ExecEntry::new(call_id, tool, args);
+        self.entries.push(ChatEntry::Exec(entry));
         if !self.user_scrolled {
             self.scroll_offset = 0;
         }
+    }
+
+    /// Update the last text entry's content (for streaming responses).
+    /// Only operates on `ChatEntry::Text` entries — ignores Exec entries.
+    pub fn update_last_text(&mut self, content: String) {
+        for entry in self.entries.iter_mut().rev() {
+            if let ChatEntry::Text(msg) = entry {
+                msg.update_content(content, self.render_width, &self.caps);
+                break;
+            }
+        }
+        if !self.user_scrolled {
+            self.scroll_offset = 0;
+        }
+    }
+
+    /// Update a tool execution entry by call_id (mark as finished with output).
+    pub fn update_exec(&mut self, call_id: &str, output: &str, is_error: bool) {
+        for entry in self.entries.iter_mut() {
+            if let ChatEntry::Exec(ref mut ee) = entry {
+                if ee.call_id == call_id {
+                    ee.finish(output, is_error);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Toggle expand/collapse on a tool execution entry by call_id.
+    pub fn toggle_exec(&mut self, call_id: &str) -> bool {
+        for entry in self.entries.iter_mut() {
+            if let ChatEntry::Exec(ref mut ee) = entry {
+                if ee.call_id == call_id {
+                    ee.toggle();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Count unfinished exec entries (still running).
+    pub fn active_exec_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| matches!(e, ChatEntry::Exec(ee) if !ee.finished))
+            .count()
     }
 
     /// Scroll up by n lines.
@@ -171,37 +402,44 @@ impl ChatWidget {
         }
     }
 
-    /// Update render width (on resize).
+    /// Update render width (on resize). Re-renders Text entries only.
     pub fn set_width(&mut self, width: u16) {
         if width != self.render_width {
             self.render_width = width;
-            let theme = self.caps.theme();
-            for msg in &mut self.messages {
-                msg.rendered = ChatMessage::render_lines(
-                    &msg.role,
-                    &msg.content,
-                    self.render_width,
-                    &self.caps,
-                    &theme,
-                );
+            for entry in &mut self.entries {
+                if let ChatEntry::Text(msg) = entry {
+                    let theme = self.caps.theme();
+                    msg.rendered = ChatMessage::render_lines(
+                        &msg.role,
+                        &msg.content,
+                        self.render_width,
+                        &self.caps,
+                        &theme,
+                    );
+                }
             }
         }
     }
 
-    /// Get all rendered lines (original pre-wrapped).
-    pub fn all_lines(&self) -> Vec<Line<'static>> {
+    /// Get all rendered lines (for the current frame, with animations).
+    pub fn all_lines(&self, frame_counter: u64) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
-        for msg in &self.messages {
-            lines.extend(msg.rendered.iter().cloned());
+        for entry in &self.entries {
+            lines.extend(entry.render_lines(
+                frame_counter,
+                self.render_width,
+                &self.caps,
+            ));
         }
         lines
     }
 
     /// Get all rendered lines, word-wrapped to fit the given width.
-    pub fn all_lines_wrapped(&self, width: usize) -> Vec<Line<'static>> {
+    pub fn all_lines_wrapped(&self, frame_counter: u64, width: usize) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
-        for msg in &self.messages {
-            for line in &msg.rendered {
+        for entry in &self.entries {
+            let raw = entry.render_lines(frame_counter, self.render_width, &self.caps);
+            for line in &raw {
                 lines.extend(word_wrap_line(line, width));
             }
         }
@@ -209,81 +447,24 @@ impl ChatWidget {
     }
 
     /// Render the chat widget.
-    pub fn render_widget(&self) -> ChatWidgetRenderer<'_> {
-        ChatWidgetRenderer { chat: self }
-    }
-
-    /// Render all lines including inline active tool cards inserted BEFORE the
-    /// last message. This ensures tool execution is visible above the streaming
-    /// text output, matching the expected order: tools first, then content.
-    pub fn render_with_active_tools(
-        &self,
-        active_tools: &std::collections::HashMap<String, super::toolcard::ToolCard>,
-        frame_counter: u64,
-        caps: &TermCaps,
-    ) -> Vec<Line<'static>> {
-        let width = self.render_width as usize;
-
-        if active_tools.is_empty() {
-            return self.all_lines_wrapped(width);
+    pub fn render_widget<'a>(&'a self, frame_counter: u64) -> ChatWidgetRenderer<'a> {
+        ChatWidgetRenderer {
+            chat: self,
+            frame_counter,
         }
-
-        let border_prefix = "  │ ";
-        let border_style = Style::default().fg(caps.theme().accent);
-
-        // Render all messages except the last one (which is the streaming text)
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        let msg_count = self.messages.len();
-        for (i, msg) in self.messages.iter().enumerate() {
-            // Skip the last message — we'll add it after tool cards
-            if i == msg_count - 1 {
-                continue;
-            }
-            for line in &msg.rendered {
-                lines.extend(word_wrap_line(line, width));
-            }
-        }
-
-        // Insert tool cards before the last message
-        for card in active_tools.values() {
-            let card_lines = card.render_chat_lines(frame_counter, card.expanded);
-            for card_line in card_lines {
-                let mut spans = vec![Span::styled(border_prefix.to_string(), border_style)];
-                spans.extend(card_line.spans.into_iter().map(|s| {
-                    let style = if s.style.fg.is_some() {
-                        s.style
-                    } else {
-                        s.style.fg(caps.theme().text)
-                    };
-                    Span::styled(s.content.to_string(), style)
-                }));
-                lines.extend(word_wrap_line(&Line::from(spans), width));
-            }
-            // Blank line after each tool card
-            lines.push(Line::from(vec![Span::styled(
-                border_prefix.to_string(),
-                border_style,
-            )]));
-        }
-
-        // Now add the last message (streaming text) after tool cards
-        if let Some(last_msg) = self.messages.last() {
-            for line in &last_msg.rendered {
-                lines.extend(word_wrap_line(line, width));
-            }
-        }
-
-        lines
     }
 }
 
 pub struct ChatWidgetRenderer<'a> {
     chat: &'a ChatWidget,
+    frame_counter: u64,
 }
 
 impl<'a> Widget for ChatWidgetRenderer<'a> {
     fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        let all_lines = self.chat.all_lines_wrapped(area.width as usize);
+        let all_lines = self
+            .chat
+            .all_lines_wrapped(self.frame_counter, area.width as usize);
         let total_lines = all_lines.len() as u16;
         let visible_height = area.height;
 
@@ -696,8 +877,8 @@ mod tests {
     fn test_all_lines_wrapped() {
         let caps = TermCaps::detect();
         let mut widget = ChatWidget::new(caps);
-        widget.add_message(Role::User, "hello world".to_string());
-        let wrapped = widget.all_lines_wrapped(80);
+        widget.add_text(Role::User, "hello world".to_string());
+        let wrapped = widget.all_lines_wrapped(0, 80);
         assert!(!wrapped.is_empty());
     }
 
@@ -705,7 +886,7 @@ mod tests {
     fn test_user_scrolled_flag() {
         let caps = TermCaps::detect();
         let mut widget = ChatWidget::new(caps);
-        widget.add_message(Role::User, "msg1".to_string());
+        widget.add_text(Role::User, "msg1".to_string());
         assert!(!widget.user_scrolled);
         assert_eq!(widget.scroll_offset, 0);
 
@@ -714,13 +895,113 @@ mod tests {
         assert_eq!(widget.scroll_offset, 5);
 
         // New message should not reset scroll when user has scrolled
-        widget.add_message(Role::User, "msg2".to_string());
+        widget.add_text(Role::User, "msg2".to_string());
         assert_eq!(widget.scroll_offset, 5);
 
         // Scroll to bottom should clear user_scrolled
         widget.scroll_down(5);
         assert!(!widget.user_scrolled);
         assert_eq!(widget.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_exec_entry_spinner() {
+        let mut entry = ExecEntry::new(
+            "call_1".to_string(),
+            "bash_exec".to_string(),
+            r#"{"command": "ls"}"#.to_string(),
+        );
+        let lines = entry.render_lines(0, 80);
+        assert!(!lines.is_empty());
+        // Should contain the spinner animation
+        let header_text: String = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(header_text.contains("⠋"), "should have spinner, got: {}", header_text);
+        assert!(!entry.finished);
+
+        entry.finish("file1.txt\nfile2.txt", false);
+        assert!(entry.finished);
+        let lines2 = entry.render_lines(0, 80);
+        let header2: String = lines2[0]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(header2.contains(" ✓"), "should have checkmark, got: {}", header2);
+    }
+
+    #[test]
+    fn test_exec_entry_toggle() {
+        let mut entry = ExecEntry::new(
+            "call_2".to_string(),
+            "file_read".to_string(),
+            r#"{"path": "/tmp/x"}"#.to_string(),
+        );
+        assert!(!entry.expanded);
+        entry.toggle();
+        assert!(entry.expanded);
+        entry.toggle();
+        assert!(!entry.expanded);
+    }
+
+    #[test]
+    fn test_update_last_text_skips_exec() {
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        widget.add_exec("c1".to_string(), "bash".to_string(), "{}".to_string());
+        widget.update_last_text("new content".to_string());
+        // Should NOT panic — update_last_text should skip over the Exec entry
+        // and find no Text entry to update
+    }
+
+    #[test]
+    fn test_update_exec_by_call_id() {
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        widget.add_exec("c1".to_string(), "bash".to_string(), "{}".to_string());
+        widget.update_exec("c1", "output text", false);
+        // Verify the entry was finished
+        match &widget.entries[0] {
+            ChatEntry::Exec(ee) => {
+                assert!(ee.finished);
+                assert!(!ee.is_error);
+                assert_eq!(ee.output, "output text");
+            }
+            _ => panic!("expected Exec entry"),
+        }
+    }
+
+    #[test]
+    fn test_active_exec_count() {
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        assert_eq!(widget.active_exec_count(), 0);
+        widget.add_exec("c1".to_string(), "bash".to_string(), "{}".to_string());
+        assert_eq!(widget.active_exec_count(), 1);
+        widget.add_exec("c2".to_string(), "read".to_string(), "{}".to_string());
+        assert_eq!(widget.active_exec_count(), 2);
+        widget.update_exec("c1", "done", false);
+        assert_eq!(widget.active_exec_count(), 1);
+    }
+
+    #[test]
+    fn test_toggle_exec_by_call_id() {
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        widget.add_exec("c1".to_string(), "bash".to_string(), "{}".to_string());
+        // Toggle should work
+        assert!(widget.toggle_exec("c1"));
+        match &widget.entries[0] {
+            ChatEntry::Exec(ee) => assert!(ee.expanded),
+            _ => panic!("expected Exec entry"),
+        }
+        // Non-existent call_id returns false
+        assert!(!widget.toggle_exec("no_such_call"));
     }
 
     #[test]

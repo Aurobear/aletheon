@@ -37,11 +37,15 @@ pub async fn submit_message(app: &mut App, text: String) {
                 // Copy last assistant message to clipboard via OSC 52
                 let last_assistant = app
                     .chat
-                    .messages
+                    .entries
                     .iter()
                     .rev()
-                    .find(|m| m.role == ChatRole::Assistant)
-                    .map(|m| m.content.clone());
+                    .find_map(|entry| {
+                        if let super::super::chat::ChatEntry::Text(ref msg) = entry {
+                            if msg.role == ChatRole::Assistant { Some(msg.content.clone()) }
+                            else { None }
+                        } else { None }
+                    });
                 match last_assistant {
                     Some(text) if !text.is_empty() => {
                         let encoded = base64_encode(&text);
@@ -50,60 +54,60 @@ pub async fn submit_message(app: &mut App, text: String) {
                         io::stdout().write_all(osc.as_bytes()).ok();
                         io::stdout().flush().ok();
                         app.chat
-                            .add_message(ChatRole::System, "已复制到剪贴板".to_string());
+                            .add_text(ChatRole::System, "已复制到剪贴板".to_string());
                     }
                     _ => {
                         app.chat
-                            .add_message(ChatRole::System, "没有可复制的内容".to_string());
+                            .add_text(ChatRole::System, "没有可复制的内容".to_string());
                     }
                 }
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Help)) => {
                 let help = "内置命令：\n  /help         显示帮助\n  /clear        清空对话\n  /copy         复制最后回复到剪贴板\n  /status (st)  查看自我演化状态\n  /reflect      查看反思记录\n  /reflect_now  执行即时反思\n  /evolution    查看演化历史\n  /genome       查看基因组\n  /sessions     列出会话\n  /resume <id>  恢复会话\n  /compact (cmp) 压缩上下文\n  /model (m)    切换模型\n  /quit         退出\n\n输入：\n  Shift+Enter 或 \\+Enter  换行\n  Enter                   发送\n  Ctrl+C                   清空/退出\n  Esc                      清空输入\n  PgUp/PgDn               滚动聊天";
-                app.chat.add_message(ChatRole::System, help.to_string());
+                app.chat.add_text(ChatRole::System, help.to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Status)) => {
                 send_jsonrpc_method(app, "status").await;
                 app.chat
-                    .add_message(ChatRole::System, "查询状态中...".to_string());
+                    .add_text(ChatRole::System, "查询状态中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Reflect)) => {
                 send_jsonrpc_method(app, "reflect").await;
                 app.chat
-                    .add_message(ChatRole::System, "查询反思记录中...".to_string());
+                    .add_text(ChatRole::System, "查询反思记录中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
                 send_jsonrpc_method(app, "reflect_now").await;
                 app.chat
-                    .add_message(ChatRole::System, "执行即时反思中...".to_string());
+                    .add_text(ChatRole::System, "执行即时反思中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Evolution)) => {
                 send_jsonrpc_method(app, "evolution").await;
                 app.chat
-                    .add_message(ChatRole::System, "查询演化历史中...".to_string());
+                    .add_text(ChatRole::System, "查询演化历史中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Genome)) => {
                 send_jsonrpc_method(app, "genome").await;
                 app.chat
-                    .add_message(ChatRole::System, "查询基因组中...".to_string());
+                    .add_text(ChatRole::System, "查询基因组中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
                 send_jsonrpc_method(app, "sessions").await;
                 app.chat
-                    .add_message(ChatRole::System, "查询会话列表中...".to_string());
+                    .add_text(ChatRole::System, "查询会话列表中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Resume { id })) => {
                 if id.is_empty() {
                     app.chat
-                        .add_message(ChatRole::System, "用法: /resume <session_id>".to_string());
+                        .add_text(ChatRole::System, "用法: /resume <session_id>".to_string());
                     return;
                 }
                 let msg = serde_json::json!({
@@ -118,19 +122,19 @@ pub async fn submit_message(app: &mut App, text: String) {
                 app.response_buf.clear();
                 app.status.waiting = true;
                 app.chat
-                    .add_message(ChatRole::System, format!("恢复会话 {}...", id));
+                    .add_text(ChatRole::System, format!("恢复会话 {}...", id));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
                 send_jsonrpc_method(app, "compact").await;
                 app.chat
-                    .add_message(ChatRole::System, "压缩上下文中...".to_string());
+                    .add_text(ChatRole::System, "压缩上下文中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Model)) => {
                 send_jsonrpc_method(app, "model_list").await;
                 app.chat
-                    .add_message(ChatRole::System, "查询可用模型中...".to_string());
+                    .add_text(ChatRole::System, "查询可用模型中...".to_string());
                 return;
             }
             // ── New P2 commands ──
@@ -158,7 +162,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
                 app.chat
-                    .add_message(ChatRole::System, format!("Switching mode to: {}", mode_str));
+                    .add_text(ChatRole::System, format!("Switching mode to: {}", mode_str));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Plan)) => {
@@ -173,7 +177,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
                 app.chat
-                    .add_message(ChatRole::System, format!("Switching to {} mode", target));
+                    .add_text(ChatRole::System, format!("Switching to {} mode", target));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Approve)) => {
@@ -183,20 +187,20 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
                 app.chat
-                    .add_message(ChatRole::System, "Plan approved".to_string());
+                    .add_text(ChatRole::System, "Plan approved".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Agents)) => {
                 if app.sub_agents.is_empty() {
                     app.chat
-                        .add_message(ChatRole::System, "No active sub-agents".to_string());
+                        .add_text(ChatRole::System, "No active sub-agents".to_string());
                 } else {
                     let lines: Vec<String> = app
                         .sub_agents
                         .iter()
                         .map(|a| format!("  {} - {:?}: {}", a.id, a.status, a.task))
                         .collect();
-                    app.chat.add_message(
+                    app.chat.add_text(
                         ChatRole::System,
                         format!("Active sub-agents:\n{}", lines.join("\n")),
                     );
@@ -209,30 +213,30 @@ pub async fn submit_message(app: &mut App, text: String) {
                         "Agent: {}\nTask: {}\nStatus: {:?}\nParent: {}",
                         agent.id, agent.task, agent.status, agent.parent_turn_id
                     );
-                    app.chat.add_message(ChatRole::System, msg);
+                    app.chat.add_text(ChatRole::System, msg);
                 } else {
                     app.chat
-                        .add_message(ChatRole::System, format!("Agent not found: {}", id));
+                        .add_text(ChatRole::System, format!("Agent not found: {}", id));
                 }
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Hooks)) => {
                 send_jsonrpc_method(app, "hooks_list").await;
                 app.chat
-                    .add_message(ChatRole::System, "Querying hooks...".to_string());
+                    .add_text(ChatRole::System, "Querying hooks...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
                 let skills = app.skill_loader.list();
                 if skills.is_empty() {
                     app.chat
-                        .add_message(ChatRole::System, "No skills loaded".to_string());
+                        .add_text(ChatRole::System, "No skills loaded".to_string());
                 } else {
                     let lines: Vec<String> = skills
                         .iter()
                         .map(|s| format!("  /{} - {}", s.name, s.description))
                         .collect();
-                    app.chat.add_message(
+                    app.chat.add_text(
                         ChatRole::System,
                         format!("Available skills:\n{}", lines.join("\n")),
                     );
@@ -244,7 +248,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     Some(s) => s.clone(),
                     None => {
                         app.chat
-                            .add_message(ChatRole::System, format!("Unknown skill: /{}", name));
+                            .add_text(ChatRole::System, format!("Unknown skill: /{}", name));
                         return;
                     }
                 };
@@ -253,8 +257,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                 } else {
                     format!("{}\n\nUser input: {}", skill.content, args)
                 };
-                app.chat.add_message(ChatRole::User, text.clone());
-                app.chat.add_message(ChatRole::Assistant, String::new());
+                app.chat.add_text(ChatRole::User, text.clone());
+                app.chat.add_text(ChatRole::Assistant, String::new());
                 send_to_daemon(app, &message).await;
                 return;
             }
@@ -265,7 +269,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
                 app.chat
-                    .add_message(ChatRole::System, "Interrupt sent".to_string());
+                    .add_text(ChatRole::System, "Interrupt sent".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Context)) => {
@@ -281,17 +285,17 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.app_state.awareness.level.icon(),
                     app.app_state.awareness.level.display_name(),
                 );
-                app.chat.add_message(ChatRole::System, msg);
+                app.chat.add_text(ChatRole::System, msg);
                 return;
             }
             Some(CommandType::Builtin(_)) => return,
             Some(CommandType::Skill { name, args }) => {
-                app.chat.add_message(ChatRole::User, text.clone());
+                app.chat.add_text(ChatRole::User, text.clone());
                 let skill = match app.skill_loader.get(&name) {
                     Some(s) => s.clone(),
                     None => {
                         app.chat
-                            .add_message(ChatRole::System, format!("未知技能: /{}", name));
+                            .add_text(ChatRole::System, format!("未知技能: /{}", name));
                         return;
                     }
                 };
@@ -300,13 +304,13 @@ pub async fn submit_message(app: &mut App, text: String) {
                 } else {
                     format!("{}\n\nUser input: {}", skill.content, args)
                 };
-                app.chat.add_message(ChatRole::Assistant, String::new());
+                app.chat.add_text(ChatRole::Assistant, String::new());
                 send_to_daemon(app, &message).await;
                 return;
             }
             None => {
                 app.chat
-                    .add_message(ChatRole::System, "无效命令".to_string());
+                    .add_text(ChatRole::System, "无效命令".to_string());
                 return;
             }
         }
@@ -314,8 +318,8 @@ pub async fn submit_message(app: &mut App, text: String) {
 
     // Regular chat message
     app.history.push(text.clone());
-    app.chat.add_message(ChatRole::User, text.clone());
-    app.chat.add_message(ChatRole::Assistant, String::new());
+    app.chat.add_text(ChatRole::User, text.clone());
+    app.chat.add_text(ChatRole::Assistant, String::new());
     send_to_daemon(app, &text).await;
 }
 
@@ -331,7 +335,7 @@ pub async fn send_to_daemon(app: &mut App, text: &str) {
 
     if app.stream.write_all(framed.as_bytes()).await.is_err() {
         app.chat
-            .add_message(ChatRole::System, "发送失败，请检查 daemon".to_string());
+            .add_text(ChatRole::System, "发送失败，请检查 daemon".to_string());
         return;
     }
     let _ = app.stream.flush().await;

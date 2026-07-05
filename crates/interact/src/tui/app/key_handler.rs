@@ -72,7 +72,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_message(
+                app.chat.add_text(
                     ChatRole::System,
                     format!("Approval: {} ({})", decision_str, dialog.action_summary),
                 );
@@ -83,7 +83,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             app.pending_approval = None;
             app.chat
-                .add_message(ChatRole::System, "Approval cancelled (deny)".to_string());
+                .add_text(ChatRole::System, "Approval cancelled (deny)".to_string());
         }
         return;
     }
@@ -140,10 +140,21 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Ctrl+B: toggle last tool card
+    // Ctrl+B: toggle last tool card (find last ExecEntry in chat history)
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
-        if let Some(last) = app.active_tools.values_mut().last() {
-            last.toggle();
+        // Iterate entries in reverse, find the last ExecEntry and toggle it
+        let call_id = {
+            let mut found = None;
+            for entry in app.chat.entries.iter().rev() {
+                if let super::super::chat::ChatEntry::Exec(ref ee) = entry {
+                    found = Some(ee.call_id.clone());
+                    break;
+                }
+            }
+            found
+        };
+        if let Some(cid) = call_id {
+            app.chat.toggle_exec(&cid);
         }
         return;
     }
@@ -167,7 +178,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         let framed = format!("{}\n", payload);
         let _ = app.stream.write_all(framed.as_bytes()).await;
         let _ = app.stream.flush().await;
-        app.chat.add_message(
+        app.chat.add_text(
             ChatRole::System,
             format!("Switching to {} mode", next.display_name()),
         );
@@ -188,7 +199,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         let _ = app.stream.write_all(framed.as_bytes()).await;
         let _ = app.stream.flush().await;
         app.chat
-            .add_message(ChatRole::System, format!("Switching to {} mode", target));
+            .add_text(ChatRole::System, format!("Switching to {} mode", target));
         return;
     }
 

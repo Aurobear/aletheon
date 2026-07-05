@@ -8,7 +8,6 @@ use base::ui_event::{
 use super::chat::Role as ChatRole;
 use super::plan_view::PlanVersion;
 use super::test_infra::EventRecorder;
-use super::toolcard::ToolCard;
 use super::App;
 
 /// Variant of `try_read_socket` that records events via `EventRecorder`.
@@ -20,7 +19,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
                 app.status.waiting = false;
                 app.app_state.streaming = false;
                 app.chat
-                    .add_message(ChatRole::System, "连接断开".to_string());
+                    .add_text(ChatRole::System, "连接断开".to_string());
                 break;
             }
             Ok(n) => {
@@ -94,34 +93,15 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::TextDelta { text } => {
             app.stream_ctrl.push_text(&text);
-            app.chat.update_last_message(app.stream_ctrl.current_text());
+            app.chat.update_last_text(app.stream_ctrl.current_text());
         }
         ClientEvent::ToolCallStart { call_id, tool, args } => {
-            let args_str = args_summary(&tool, &args);
-            app.chat.add_message(ChatRole::System, format!("🔧 {}: {}", tool, args_str));
-            let mut card = ToolCard::new(
-                call_id.clone(),
-                tool.clone(),
-                serde_json::to_string(&args).unwrap_or_default(),
-            );
-            card.expanded = false;
-            app.active_tools.insert(call_id, card);
+            let args_str = serde_json::to_string(&args).unwrap_or_default();
+            app.chat.add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;
         }
-        ClientEvent::ToolCallResult { call_id, tool, output, is_error, elapsed_ms } => {
-            if let Some(card) = app.active_tools.get_mut(&call_id) {
-                card.finish(&output, is_error);
-            }
-            let emoji = if is_error { "❌" } else { "✅" };
-            let output_preview: String = output.chars().take(120).collect();
-            let more = if output.chars().count() > 120 { "..." } else { "" };
-            app.chat.add_message(
-                ChatRole::System,
-                format!(
-                    "{} {} ({:.1}s): {}{}",
-                    emoji, tool, elapsed_ms as f64 / 1000.0, output_preview, more,
-                ),
-            );
+        ClientEvent::ToolCallResult { call_id, output, is_error, .. } => {
+            app.chat.update_exec(&call_id, &output, is_error);
         }
         ClientEvent::Usage { tokens_in, tokens_out } => {
             app.turn_tokens = Some((tokens_in as u32, tokens_out as u32));
@@ -139,11 +119,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.app_state.streaming = false;
             app.turn_active = false;
             app.status.session_turns += 1;
-            app.active_tools.clear();
         }
         ClientEvent::Error { message } => {
             app.chat
-                .add_message(ChatRole::System, format!("Error: {}", message));
+                .add_text(ChatRole::System, format!("Error: {}", message));
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
@@ -209,24 +188,24 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::Interrupted => {
             app.chat
-                .add_message(ChatRole::System, "Interrupted".to_string());
+                .add_text(ChatRole::System, "Interrupted".to_string());
         }
         ClientEvent::BudgetExceeded { limit } => {
-            app.chat.add_message(
+            app.chat.add_text(
                 ChatRole::System,
                 format!("Budget exceeded: {} tokens", limit),
             );
         }
         ClientEvent::CircuitBreakerTripped { reason } => {
             app.chat
-                .add_message(ChatRole::System, format!("Circuit breaker: {}", reason));
+                .add_text(ChatRole::System, format!("Circuit breaker: {}", reason));
         }
         ClientEvent::CompactionTriggered => {
             // compaction is internal, just note it
         }
         ClientEvent::Reflection { summary } => {
             app.chat
-                .add_message(ChatRole::System, format!("Reflection: {}", summary));
+                .add_text(ChatRole::System, format!("Reflection: {}", summary));
         }
         ClientEvent::GoalSet { goal: _, sub_goals: _ } => {
             // goal set — update app state
@@ -271,53 +250,53 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             // Standard chat response - deduplicate consecutive identical text
             // Some models repeat thinking/reasoning text
             let deduped = deduplicate_consecutive_text(text);
-            app.chat.update_last_message(deduped);
+            app.chat.update_last_text(deduped);
         } else if let Some(entries) = result.get("reflections") {
             // /reflect response — format reflection entries
             let formatted = format_reflections(entries);
-            app.chat.update_last_message(formatted);
+            app.chat.update_last_text(formatted);
         } else if let Some(genome) = result.get("genome") {
             // /genome response — format genome JSON
             let formatted = format_genome(genome);
-            app.chat.update_last_message(formatted);
+            app.chat.update_last_text(formatted);
         } else if let Some(evo) = result.get("evolution") {
             // /evolution response — format evolution history
             let formatted = format_evolution(evo);
-            app.chat.update_last_message(formatted);
+            app.chat.update_last_text(formatted);
         } else if let Some(status) = result.get("status") {
             // /status response — rich self-evolution state
             let formatted = format_status(status);
-            app.chat.update_last_message(formatted);
+            app.chat.update_last_text(formatted);
         } else if let Some(sessions) = result.get("sessions") {
             // /sessions response
             let formatted = format_sessions(sessions);
-            app.chat.update_last_message(formatted);
+            app.chat.update_last_text(formatted);
         } else if let Some(_models) = result.get("models") {
             // /model response
             let formatted = format_models(result);
-            app.chat.update_last_message(formatted);
+            app.chat.update_last_text(formatted);
         } else if let Some(hooks) = result.get("hooks") {
             // /hooks response
             let formatted = format_hooks(hooks);
-            app.chat.update_last_message(formatted);
+            app.chat.update_last_text(formatted);
         } else if let Some(tools) = result.get("tools") {
             // tools/list response
             let formatted = format_tools_list(tools);
-            app.chat.update_last_message(formatted);
+            app.chat.update_last_text(formatted);
         } else if let Some(agents) = result.get("agents") {
             // /agents response
             let formatted = format_agents(agents);
-            app.chat.update_last_message(formatted);
+            app.chat.update_last_text(formatted);
         } else if let Some(msg_text) = result.get("message").and_then(|v| v.as_str()) {
             // Generic message response (e.g. /resume, /compact)
-            app.chat.update_last_message(msg_text.to_string());
+            app.chat.update_last_text(msg_text.to_string());
         }
     } else if let Some(error) = msg.get("error") {
         let err = error
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        app.chat.update_last_message(format!("Error: {}", err));
+        app.chat.update_last_text(format!("Error: {}", err));
     }
     // NOTE: Do NOT clear streaming/waiting here. The JSON-RPC result arrives
     // BEFORE the turn_done event. Clearing streaming here causes a visible UI
@@ -645,45 +624,4 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
         lines.push(format!("  {} [{}] — {}", id, status, task));
     }
     lines.join("\n")
-}
-
-/// Extract a human-readable summary from tool args for chat display.
-fn args_summary(tool: &str, args: &serde_json::Value) -> String {
-    match tool {
-        "bash_exec" | "bash" => args
-            .get("command")
-            .and_then(|v| v.as_str())
-            .map(|c| format!("bash: {}", truncate(c, 80)))
-            .unwrap_or_else(|| format!("{} executing…", tool)),
-        "file_read" => args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .map(|p| format!("read: {}", truncate(p, 80)))
-            .unwrap_or_else(|| format!("{} …", tool)),
-        "file_write" => args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .map(|p| format!("write: {}", truncate(p, 80)))
-            .unwrap_or_else(|| format!("{} …", tool)),
-        "grep" => args
-            .get("pattern")
-            .and_then(|v| v.as_str())
-            .map(|p| format!("grep: {}", truncate(p, 80)))
-            .unwrap_or_else(|| format!("{} …", tool)),
-        "web_fetch" => args
-            .get("url")
-            .and_then(|v| v.as_str())
-            .map(|u| format!("fetch: {}", truncate(u, 80)))
-            .unwrap_or_else(|| format!("{} …", tool)),
-        _ => format!("{} …", tool),
-    }
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    let s = s.trim();
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max])
-    }
 }

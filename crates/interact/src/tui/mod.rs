@@ -25,8 +25,6 @@ pub mod streaming;
 pub mod subagent_view;
 pub mod term_compat;
 
-pub mod toolcard;
-
 // CLI modules (formerly cli/)
 pub mod cli;
 pub mod debug;
@@ -51,7 +49,6 @@ pub fn restore_terminal() {
     let _ = execute!(io::stderr(), crossterm::cursor::Show);
 }
 
-use std::collections::HashMap;
 use std::io;
 use std::time::Instant;
 
@@ -81,7 +78,6 @@ use self::status::StatusBar;
 use self::streaming::StreamController;
 use self::term_compat::TermCaps;
 pub use self::test_infra::TestConfig;
-use self::toolcard::ToolCard;
 
 use base::ui_event::SubAgentHandle;
 
@@ -239,8 +235,6 @@ struct App {
     pending_approval: Option<approval_dialog::ApprovalDialog>,
     /// Streaming controller for incremental rendering
     stream_ctrl: StreamController,
-    /// Active tool calls (call_id → ToolCard)
-    active_tools: HashMap<String, ToolCard>,
     /// Current turn's token count
     turn_tokens: Option<(u32, u32)>,
     /// Cumulative tokens across all turns
@@ -293,7 +287,6 @@ impl App {
             first_render: true,
             pending_approval: None,
             stream_ctrl: StreamController::new(),
-            active_tools: HashMap::new(),
             turn_tokens: None,
             total_tokens: 0,
             history: CommandHistory::new(),
