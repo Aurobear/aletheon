@@ -220,24 +220,32 @@ fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
                 });
             }
             Role::User => {
-                // Check if this is a tool result
-                if let Some(ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                    is_error,
-                }) = msg.content.first()
-                {
-                    let text = if *is_error {
-                        format!("[ERROR] {}", content)
-                    } else {
-                        content.clone()
-                    };
-                    result.push(ChatMessage {
-                        role: "tool".to_string(),
-                        content: serde_json::json!(text),
-                        tool_calls: None,
-                        tool_call_id: Some(tool_use_id.clone()),
-                    });
+                // Check if ALL blocks are tool results — the ReAct loop batches
+                // multiple ContentBlock::ToolResult entries into ONE user message
+                // (required by Anthropic API). OpenAI requires each tool result
+                // to be its own role="tool" message, so we emit one per block.
+                let all_tool_results = msg.content.iter().all(|c| matches!(c, ContentBlock::ToolResult { .. }));
+                if all_tool_results && !msg.content.is_empty() {
+                    for block in &msg.content {
+                        if let ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            is_error,
+                        } = block
+                        {
+                            let text = if *is_error {
+                                format!("[ERROR] {}", content)
+                            } else {
+                                content.clone()
+                            };
+                            result.push(ChatMessage {
+                                role: "tool".to_string(),
+                                content: serde_json::json!(text),
+                                tool_calls: None,
+                                tool_call_id: Some(tool_use_id.clone()),
+                            });
+                        }
+                    }
                 } else {
                     // Check if we need multimodal content (images present or multiple blocks)
                     let has_images = msg
