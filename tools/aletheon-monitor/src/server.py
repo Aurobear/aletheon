@@ -39,8 +39,11 @@ _client: AletheonClient | None = None
 _install_validated: bool = False
 
 
-def validate_installation() -> dict:
+async def validate_installation() -> dict:
     """Pre-flight check that aletheon was deployed via setup.sh.
+
+    Async so it is awaitable in the ``await handler(...)`` dispatch path
+    (see ``call_tool``); the body itself performs only fast sync checks.
 
     Returns a dict with keys: ok (bool), message (str), socket_path (str|null).
     This is the "constraint" that enforces setup.sh deployment.
