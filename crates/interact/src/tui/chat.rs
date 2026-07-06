@@ -345,20 +345,25 @@ impl ChatWidget {
         }
     }
 
-    /// Update the last text entry's content (for streaming responses).
-    /// Only operates on `ChatEntry::Text` entries — ignores Exec entries, and
-    /// skips System entries (e.g. Reflection notices) so that streamed/final
-    /// assistant text always lands on the assistant entry rather than
-    /// overwriting a System notice that arrived mid-stream (bug T1).
-    pub fn update_last_text(&mut self, content: String) {
-        for entry in self.entries.iter_mut().rev() {
-            if let ChatEntry::Text(msg) = entry {
-                if msg.role == Role::System {
-                    continue;
-                }
-                msg.update_content(content, self.render_width, &self.caps);
-                break;
-            }
+    /// Set the current assistant response content, creating a trailing
+    /// assistant text entry if the last entry isn't already one.
+    ///
+    /// Unlike a reverse search, this always writes to the END of the list, so
+    /// the assistant entry is appended AFTER any Exec (tool) and System
+    /// (reflection) entries that arrived during the turn. This keeps the final
+    /// answer rendering chronologically *after* the analysis log, and prevents
+    /// streamed/final text from overwriting an earlier placeholder or a System
+    /// notice (bugs T1 + "final answer above the log").
+    pub fn set_assistant_stream(&mut self, content: String) {
+        let trailing_is_assistant = matches!(
+            self.entries.last(),
+            Some(ChatEntry::Text(m)) if m.role == Role::Assistant
+        );
+        if !trailing_is_assistant {
+            self.add_text(Role::Assistant, String::new());
+        }
+        if let Some(ChatEntry::Text(msg)) = self.entries.last_mut() {
+            msg.update_content(content, self.render_width, &self.caps);
         }
         if !self.user_scrolled {
             self.scroll_offset = 0;
@@ -976,36 +981,44 @@ mod tests {
         let caps = TermCaps::detect();
         let mut widget = ChatWidget::new(caps);
         widget.add_exec("c1".to_string(), "bash".to_string(), "{}".to_string());
-        widget.update_last_text("new content".to_string());
-        // Should NOT panic — update_last_text should skip over the Exec entry
-        // and find no Text entry to update
+        widget.set_assistant_stream("new content".to_string());
+        // Exec entry stays; a fresh assistant entry is appended AFTER it.
+        assert!(matches!(widget.entries.first(), Some(ChatEntry::Exec(_))));
+        assert!(matches!(
+            widget.entries.last(),
+            Some(ChatEntry::Text(m)) if m.role == Role::Assistant && m.content == "new content"
+        ));
     }
 
     #[test]
-    fn test_update_last_text_skips_system_reflection() {
-        // Bug T1: a Reflection (System) entry arriving mid-stream must not
-        // capture subsequent assistant text updates.
+    fn test_assistant_stream_lands_after_logs() {
+        // Bug: final answer must render AFTER exec + reflection entries, and a
+        // mid-stream Reflection (System) must not capture assistant text.
         let caps = TermCaps::detect();
         let mut widget = ChatWidget::new(caps);
-        widget.add_text(Role::Assistant, String::new());
-        widget.update_last_text("partial answer".to_string());
+        widget.add_text(Role::User, "do it".to_string());
+        widget.add_exec("c1".to_string(), "bash".to_string(), "{}".to_string());
+        widget.set_assistant_stream("partial".to_string()); // first delta after tool
         widget.add_text(Role::System, "Reflection: 10 tool calls".to_string());
-        // Final assistant text arrives after the reflection notice.
-        widget.update_last_text("final answer".to_string());
+        widget.set_assistant_stream("final answer".to_string()); // more deltas
 
-        let texts: Vec<(&Role, &str)> = widget
+        let kinds: Vec<(&str, String)> = widget
             .entries
             .iter()
-            .filter_map(|e| match e {
-                ChatEntry::Text(m) => Some((&m.role, m.content.as_str())),
-                _ => None,
+            .map(|e| match e {
+                ChatEntry::Text(m) => (
+                    match m.role { Role::User => "user", Role::Assistant => "assistant", Role::System => "system" },
+                    m.content.clone(),
+                ),
+                ChatEntry::Exec(_) => ("exec", String::new()),
             })
             .collect();
-        // Assistant entry got the final answer; the reflection entry is intact.
-        assert_eq!(texts, vec![
-            (&Role::Assistant, "final answer"),
-            (&Role::System, "Reflection: 10 tool calls"),
-        ]);
+        // Order: user, exec, assistant(partial), system(reflection), assistant(final).
+        // A NEW assistant entry is appended after the reflection (System is not
+        // a trailing assistant), so the final answer sits at the very end.
+        assert_eq!(kinds.first().map(|k| k.0), Some("user"));
+        assert_eq!(kinds.get(1).map(|k| k.0), Some("exec"));
+        assert_eq!(kinds.last(), Some(&("assistant", "final answer".to_string())));
     }
 
     #[test]

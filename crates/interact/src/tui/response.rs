@@ -93,7 +93,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::TextDelta { text } => {
             app.stream_ctrl.push_text(&text);
-            app.chat.update_last_text(app.stream_ctrl.current_text());
+            app.chat.set_assistant_stream(app.stream_ctrl.current_text());
         }
         ClientEvent::ToolCallStart { call_id, tool, args } => {
             let args_str = serde_json::to_string(&args).unwrap_or_default();
@@ -255,53 +255,54 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             // Standard chat response - deduplicate consecutive identical text
             // Some models repeat thinking/reasoning text
             let deduped = deduplicate_consecutive_text(text);
-            app.chat.update_last_text(deduped);
+            app.chat.set_assistant_stream(deduped);
         } else if let Some(entries) = result.get("reflections") {
             // /reflect response — format reflection entries
             let formatted = format_reflections(entries);
-            app.chat.update_last_text(formatted);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(genome) = result.get("genome") {
             // /genome response — format genome JSON
             let formatted = format_genome(genome);
-            app.chat.update_last_text(formatted);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(evo) = result.get("evolution") {
             // /evolution response — format evolution history
             let formatted = format_evolution(evo);
-            app.chat.update_last_text(formatted);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(status) = result.get("status") {
             // /status response — rich self-evolution state
             let formatted = format_status(status);
-            app.chat.update_last_text(formatted);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(sessions) = result.get("sessions") {
             // /sessions response
             let formatted = format_sessions(sessions);
-            app.chat.update_last_text(formatted);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(_models) = result.get("models") {
             // /model response
             let formatted = format_models(result);
-            app.chat.update_last_text(formatted);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(hooks) = result.get("hooks") {
             // /hooks response
             let formatted = format_hooks(hooks);
-            app.chat.update_last_text(formatted);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(tools) = result.get("tools") {
             // tools/list response
             let formatted = format_tools_list(tools);
-            app.chat.update_last_text(formatted);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(agents) = result.get("agents") {
             // /agents response
             let formatted = format_agents(agents);
-            app.chat.update_last_text(formatted);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(msg_text) = result.get("message").and_then(|v| v.as_str()) {
             // Generic message response (e.g. /resume, /compact)
-            app.chat.update_last_text(msg_text.to_string());
+            app.chat.set_assistant_stream(msg_text.to_string());
         }
     } else if let Some(error) = msg.get("error") {
         let err = error
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        app.chat.update_last_text(format!("Error: {}", err));
+        app.chat
+            .add_text(ChatRole::System, format!("Error: {}", err));
     }
     // NOTE: Do NOT clear streaming/waiting here. The JSON-RPC result arrives
     // BEFORE the turn_done event. Clearing streaming here causes a visible UI

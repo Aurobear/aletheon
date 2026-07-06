@@ -258,7 +258,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                     format!("{}\n\nUser input: {}", skill.content, args)
                 };
                 app.chat.add_text(ChatRole::User, text.clone());
-                app.chat.add_text(ChatRole::Assistant, String::new());
+                // Assistant entry created lazily on first response delta so it
+                // renders after any tool/reflection logs (ordering fix).
                 send_to_daemon(app, &message).await;
                 return;
             }
@@ -304,7 +305,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                 } else {
                     format!("{}\n\nUser input: {}", skill.content, args)
                 };
-                app.chat.add_text(ChatRole::Assistant, String::new());
+                // Assistant entry created lazily on first response delta so it
+                // renders after any tool/reflection logs (ordering fix).
                 send_to_daemon(app, &message).await;
                 return;
             }
@@ -319,7 +321,8 @@ pub async fn submit_message(app: &mut App, text: String) {
     // Regular chat message
     app.history.push(text.clone());
     app.chat.add_text(ChatRole::User, text.clone());
-    app.chat.add_text(ChatRole::Assistant, String::new());
+    // Assistant entry created lazily on first response delta so it renders
+    // after any tool/reflection logs (ordering fix).
     send_to_daemon(app, &text).await;
 }
 
