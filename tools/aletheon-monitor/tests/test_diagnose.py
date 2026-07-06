@@ -8,12 +8,15 @@ def test_diagnose_stops_tui_on_capture_error(monkeypatch):
     calls = {"stopped": False}
     async def ok_start(task=""):
         return {"ok": True, "session": "s", "frame": ""}
-    async def boom_capture(scrollback=True, wait_stable=True):
+    async def ok_send(text, submit=True):
+        return {"ok": True}
+    async def boom_capture(*args, **kwargs):
         raise RuntimeError("capture failed")
     async def rec_stop():
         calls["stopped"] = True
         return {"ok": True}
     monkeypatch.setattr(tui_tools, "tui_start", ok_start)
+    monkeypatch.setattr(tui_tools, "tui_send", ok_send)
     monkeypatch.setattr(tui_tools, "tui_capture", boom_capture)
     monkeypatch.setattr(tui_tools, "tui_stop", rec_stop)
     try:

@@ -54,12 +54,25 @@ def build_timeline(journal: list[dict], audit_lines: list[str]) -> list[dict]:
 async def diagnose(client, task: str) -> dict:
     """Drive the TUI with `task`, capture the settled frame, and bundle it
     with daemon-side analysis, logs, audit tail, and a merged timeline."""
-    started = await tui_tools.tui_start(task=task)
+    # Phase 0: launch the TUI (ready-gated) WITHOUT sending the task yet.
+    started = await tui_tools.tui_start(task="")
     if not started.get("ok"):
         return {"error": "tui_start failed", "detail": started}
 
     try:
-        cap = await tui_tools.tui_capture(scrollback=True, wait_stable=True)
+        # Phase 1: submit the task and let the input echo settle -> baseline.
+        # This baseline includes the user's echoed input but no response yet.
+        await tui_tools.tui_send(task, submit=True)
+        submitted = await tui_tools.tui_capture(
+            scrollback=True, wait_stable=True, stable_secs=0.8, timeout=20.0,
+        )
+        baseline_frame = submitted.get("frame", "")
+
+        # Phase 2: wait for the assistant response to appear BEYOND the
+        # submitted baseline and then settle (real answer, not just the echo).
+        cap = await tui_tools.tui_capture(
+            scrollback=True, wait_stable=True, baseline=baseline_frame,
+        )
     finally:
         await tui_tools.tui_stop()
 

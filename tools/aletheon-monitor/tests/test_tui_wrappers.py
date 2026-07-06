@@ -47,3 +47,25 @@ def test_tui_capture_reports_dead_pane(monkeypatch):
     res = asyncio.run(tui_tools.tui_capture(wait_stable=True, poll=0.01, stable_secs=0.03, timeout=5.0))
     assert res["stable"] is False
     assert "error" in res
+
+
+def test_tui_capture_ignores_pre_response_quiet_window(monkeypatch):
+    """The screen sits static ('waiting') during LLM time-to-first-token; that
+    must NOT be reported as stable. Only after the response streams and settles
+    do we accept. Regression for the diagnose false-pass on empty responses."""
+    # 4 identical 'waiting' frames (quiet window) then the streamed answer settles.
+    frames = iter(["waiting", "waiting", "waiting", "waiting",
+                   "answer", "answer", "answer", "answer"])
+
+    async def fake_capture(session=ts.DEFAULT_SESSION, scrollback=False):
+        try:
+            return next(frames)
+        except StopIteration:
+            return "answer"
+
+    monkeypatch.setattr(ts, "capture", fake_capture)
+    res = asyncio.run(tui_tools.tui_capture(
+        wait_stable=True, poll=0.01, stable_secs=0.03, timeout=5.0
+    ))
+    assert res["stable"] is True
+    assert res["frame"] == "answer"  # NOT "waiting"
