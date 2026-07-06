@@ -58,8 +58,10 @@ async def diagnose(client, task: str) -> dict:
     if not started.get("ok"):
         return {"error": "tui_start failed", "detail": started}
 
-    cap = await tui_tools.tui_capture(scrollback=True, wait_stable=True)
-    await tui_tools.tui_stop()
+    try:
+        cap = await tui_tools.tui_capture(scrollback=True, wait_stable=True)
+    finally:
+        await tui_tools.tui_stop()
 
     daemon_analyze = await analyze_mod.analyze(client)
     daemon_logs = await logs_mod.logs(client, last_n=50)

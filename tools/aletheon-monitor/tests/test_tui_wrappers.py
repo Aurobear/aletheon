@@ -35,3 +35,15 @@ def test_tui_capture_reports_timeout_when_never_stable(monkeypatch):
     ))
     assert res["stable"] is False
     assert res["timeout"] is True
+
+
+def test_tui_capture_reports_dead_pane(monkeypatch):
+    async def empty_capture(session=ts.DEFAULT_SESSION, scrollback=False):
+        return ""
+    async def no_session(session=ts.DEFAULT_SESSION):
+        return False
+    monkeypatch.setattr(ts, "capture", empty_capture)
+    monkeypatch.setattr(ts, "has_session", no_session)
+    res = asyncio.run(tui_tools.tui_capture(wait_stable=True, poll=0.01, stable_secs=0.03, timeout=5.0))
+    assert res["stable"] is False
+    assert "error" in res

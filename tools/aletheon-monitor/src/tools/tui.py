@@ -49,6 +49,9 @@ async def tui_capture(scrollback: bool = True, wait_stable: bool = True,
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         frames.append(frame_mod.normalize(await ts.capture(scrollback=scrollback)))
+        if not frames[-1] and not await ts.has_session():
+            return {"stable": False, "error": "tui session ended (pane died)",
+                    "frame": "", "checks": []}
         if frame_mod.is_stable(frames, window=window):
             norm = frames[-1]
             return {"stable": True, "frame": norm,
