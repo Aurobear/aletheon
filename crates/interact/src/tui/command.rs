@@ -92,6 +92,22 @@ pub fn parse_command(input: &str) -> Option<CommandType> {
     }
 }
 
+/// Decide whether input should be treated as a slash command (vs. regular
+/// chat). A command starts with `/` and its name token (up to the first
+/// space) is non-empty and contains no `/`. This keeps absolute filesystem
+/// paths like `/home/user/proj` — which also start with `/` — as chat messages
+/// instead of mis-parsing them as unknown skills.
+pub fn looks_like_command(input: &str) -> bool {
+    let Some(rest) = input.strip_prefix('/') else {
+        return false;
+    };
+    let name = match rest.find(' ') {
+        Some(i) => &rest[..i],
+        None => rest,
+    };
+    !name.is_empty() && !name.contains('/')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +154,28 @@ mod tests {
     #[test]
     fn test_parse_not_command() {
         assert!(parse_command("hello").is_none());
+    }
+
+    #[test]
+    fn test_looks_like_command_true_for_commands() {
+        assert!(looks_like_command("/help"));
+        assert!(looks_like_command("/code-review main.rs"));
+        assert!(looks_like_command("/resume abc123"));
+    }
+
+    #[test]
+    fn test_looks_like_command_false_for_paths() {
+        // Absolute paths start with '/' but must be treated as chat, not skills.
+        assert!(!looks_like_command("/home/aurobear/Bear-ws/aletheon 分析这个项目"));
+        assert!(!looks_like_command("/usr/bin/foo"));
+        assert!(!looks_like_command("/home/user/proj"));
+    }
+
+    #[test]
+    fn test_looks_like_command_false_for_non_slash_and_bare_slash() {
+        assert!(!looks_like_command("hello"));
+        assert!(!looks_like_command("/"));
+        assert!(!looks_like_command("/ leading space"));
     }
 
     #[test]
