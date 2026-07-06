@@ -1,0 +1,24 @@
+name: Enforce Dev-Only PR to Main
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check-source:
+    name: PR source must be dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify PR source branch
+        run: |
+          if [ "${{ github.base_ref }}" != "main" ]; then
+            echo "PR targets ${{ github.base_ref }} — check only applies to main PRs. Skipping."
+            exit 0
+          fi
+          if [ "${{ github.head_ref }}" != "dev" ]; then
+            echo "::error::PRs to main must come from dev branch. Got: ${{ github.head_ref }}"
+            exit 1
+          fi
+          echo "PR source is dev — OK"
