@@ -100,6 +100,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.chat.add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;
         }
+        ClientEvent::ToolCallComplete { call_id, tool: _, args } => {
+            let args_str = serde_json::to_string(&args).unwrap_or_default();
+            app.chat.update_exec_args(&call_id, &args_str);
+        }
         ClientEvent::ToolCallResult { call_id, output, is_error, .. } => {
             app.chat.update_exec(&call_id, &output, is_error);
         }
@@ -204,8 +208,9 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             // compaction is internal, just note it
         }
         ClientEvent::Reflection { summary } => {
-            app.chat
-                .add_text(ChatRole::System, format!("Reflection: {}", summary));
+            // `summary` already begins with "Reflection: " (see reflection.rs);
+            // don't prepend it again (bug T2: "Reflection: Reflection: ...").
+            app.chat.add_text(ChatRole::System, summary);
         }
         ClientEvent::GoalSet { goal: _, sub_goals: _ } => {
             // goal set — update app state

@@ -164,6 +164,10 @@ impl ExecEntry {
         self.finished = true;
     }
 
+    pub fn update_args(&mut self, args: &str) {
+        self.args = args.to_string();
+    }
+
     pub fn toggle(&mut self) {
         self.expanded = !self.expanded;
     }
@@ -342,10 +346,16 @@ impl ChatWidget {
     }
 
     /// Update the last text entry's content (for streaming responses).
-    /// Only operates on `ChatEntry::Text` entries — ignores Exec entries.
+    /// Only operates on `ChatEntry::Text` entries — ignores Exec entries, and
+    /// skips System entries (e.g. Reflection notices) so that streamed/final
+    /// assistant text always lands on the assistant entry rather than
+    /// overwriting a System notice that arrived mid-stream (bug T1).
     pub fn update_last_text(&mut self, content: String) {
         for entry in self.entries.iter_mut().rev() {
             if let ChatEntry::Text(msg) = entry {
+                if msg.role == Role::System {
+                    continue;
+                }
                 msg.update_content(content, self.render_width, &self.caps);
                 break;
             }
@@ -361,6 +371,18 @@ impl ChatWidget {
             if let ChatEntry::Exec(ref mut ee) = entry {
                 if ee.call_id == call_id {
                     ee.finish(output, is_error);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Update a tool execution entry's args by call_id.
+    pub fn update_exec_args(&mut self, call_id: &str, args: &str) {
+        for entry in self.entries.iter_mut() {
+            if let ChatEntry::Exec(ref mut ee) = entry {
+                if ee.call_id == call_id {
+                    ee.update_args(args);
                     break;
                 }
             }
@@ -957,6 +979,33 @@ mod tests {
         widget.update_last_text("new content".to_string());
         // Should NOT panic — update_last_text should skip over the Exec entry
         // and find no Text entry to update
+    }
+
+    #[test]
+    fn test_update_last_text_skips_system_reflection() {
+        // Bug T1: a Reflection (System) entry arriving mid-stream must not
+        // capture subsequent assistant text updates.
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        widget.add_text(Role::Assistant, String::new());
+        widget.update_last_text("partial answer".to_string());
+        widget.add_text(Role::System, "Reflection: 10 tool calls".to_string());
+        // Final assistant text arrives after the reflection notice.
+        widget.update_last_text("final answer".to_string());
+
+        let texts: Vec<(&Role, &str)> = widget
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                ChatEntry::Text(m) => Some((&m.role, m.content.as_str())),
+                _ => None,
+            })
+            .collect();
+        // Assistant entry got the final answer; the reflection entry is intact.
+        assert_eq!(texts, vec![
+            (&Role::Assistant, "final answer"),
+            (&Role::System, "Reflection: 10 tool calls"),
+        ]);
     }
 
     #[test]
