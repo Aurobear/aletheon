@@ -515,7 +515,7 @@ mod tests {
             _m: &[Message],
             _t: &[ToolDefinition],
         ) -> Result<LlmStream> {
-            unimplemented!()
+            anyhow::bail!("mock(SlowProvider): streaming not implemented")
         }
         fn name(&self) -> &str {
             &self.name
@@ -539,7 +539,7 @@ mod tests {
             _m: &[Message],
             _t: &[ToolDefinition],
         ) -> Result<LlmStream> {
-            unimplemented!()
+            anyhow::bail!("mock(DeadProvider): streaming not supported for dead/exhausted provider")
         }
         fn name(&self) -> &str {
             &self.name

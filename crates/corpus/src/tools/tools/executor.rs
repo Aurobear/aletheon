@@ -367,8 +367,7 @@ mod tests {
             super::super::PermissionLevel::L0
         }
         fn boxed_clone(&self) -> Box<dyn Tool> {
-            // Not needed in tests.
-            unimplemented!()
+            panic!("mock tool boxed_clone should not be called in tests")
         }
         async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
             let seq = self.invocation_counter.fetch_add(1, Ordering::SeqCst);

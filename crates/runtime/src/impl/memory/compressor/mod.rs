@@ -184,7 +184,7 @@ mod tests {
             _m: &[Message],
             _t: &[ToolDefinition],
         ) -> anyhow::Result<LlmStream> {
-            unimplemented!()
+            anyhow::bail!("mock(SimpleLlm): streaming not implemented")
         }
         fn name(&self) -> &str {
             "simple"
