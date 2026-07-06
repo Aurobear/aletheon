@@ -6,7 +6,7 @@ from src.tools.diagnose import build_timeline
 
 def test_diagnose_stops_tui_on_capture_error(monkeypatch):
     calls = {"stopped": False}
-    async def ok_start(task=""):
+    async def ok_start(task="", cols=120, rows=50):
         return {"ok": True, "session": "s", "frame": ""}
     async def ok_send(text, submit=True):
         return {"ok": True}

@@ -51,11 +51,32 @@ def build_timeline(journal: list[dict], audit_lines: list[str]) -> list[dict]:
     return events
 
 
-async def diagnose(client, task: str) -> dict:
+async def diagnose(client, task: str, settle_secs: float = 6.0,
+                   timeout: float = 120.0, cols: int = 120,
+                   rows: int = 50) -> dict:
     """Drive the TUI with `task`, capture the settled frame, and bundle it
-    with daemon-side analysis, logs, audit tail, and a merged timeline."""
+    with daemon-side analysis, logs, audit tail, and a merged timeline.
+
+    COMPLETION IS HEURISTIC. There is currently no authoritative turn-complete
+    signal available to this tool: the daemon's journal/status RPCs run on a
+    *different* session than the TUI client creates (and journals aren't
+    persisted — see the I2 bug), and this build's TUI does not render a
+    machine-detectable busy/idle indicator. So the response phase waits until
+    the frame has changed beyond the submitted-input baseline and then stayed
+    unchanged for `settle_secs`. A multi-step turn whose inter-step LLM gap
+    exceeds `settle_secs` may be captured mid-turn; raise `settle_secs` (and
+    `timeout`) for slow/complex tasks. `settle_secs` defaults to 6s — larger
+    than typical observed inter-step gaps but still a heuristic, not a
+    guarantee. Robust completion needs upstream work (shared TUI/RPC session or
+    a TUI idle marker)."""
     # Phase 0: launch the TUI (ready-gated) WITHOUT sending the task yet.
-    started = await tui_tools.tui_start(task="")
+    # NOTE: ratatui uses the terminal ALTERNATE screen (no tmux scrollback),
+    # and the TUI keeps its own internal scroll, auto-scrolling to the input
+    # prompt when a turn ends. So a long answer can be scrolled off the pane by
+    # completion time and a single capture-pane only sees the tail. A taller
+    # pane (`rows`) helps short/medium answers fit but does NOT fully solve
+    # long ones — that needs scroll-and-stitch or a TUI export mode (follow-up).
+    started = await tui_tools.tui_start(task="", cols=cols, rows=rows)
     if not started.get("ok"):
         return {"error": "tui_start failed", "detail": started}
 
@@ -69,9 +90,11 @@ async def diagnose(client, task: str) -> dict:
         baseline_frame = submitted.get("frame", "")
 
         # Phase 2: wait for the assistant response to appear BEYOND the
-        # submitted baseline and then settle (real answer, not just the echo).
+        # submitted baseline and then stay quiet for settle_secs (heuristic
+        # completion — see the docstring caveat).
         cap = await tui_tools.tui_capture(
             scrollback=True, wait_stable=True, baseline=baseline_frame,
+            stable_secs=settle_secs, timeout=timeout,
         )
     finally:
         await tui_tools.tui_stop()
@@ -96,6 +119,8 @@ async def diagnose(client, task: str) -> dict:
         "task": task,
         "rendered_frame": cap.get("frame", ""),
         "stable": cap.get("stable"),
+        "completion": f"heuristic (settled {settle_secs}s beyond input echo; "
+                      "may be mid-turn if an inter-step gap exceeds that)",
         "tui_checks": cap.get("checks", []),
         "daemon": {"analyze": daemon_analyze, "logs": daemon_logs},
         "audit_tail": audit_tail,
