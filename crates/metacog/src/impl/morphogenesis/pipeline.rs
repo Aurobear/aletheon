@@ -320,10 +320,10 @@ mod tests {
                 _c: &RuntimeCandidate,
                 _t: &TestResult,
             ) -> anyhow::Result<Evaluation> {
-                unimplemented!()
+                anyhow::bail!("mock(CrashMetaRuntime): evaluate not implemented")
             }
             async fn migrate(&self, _c: &RuntimeCandidate) -> anyhow::Result<MigrationResult> {
-                unimplemented!()
+                anyhow::bail!("mock(CrashMetaRuntime): migrate not implemented")
             }
             async fn rollback(&self) -> anyhow::Result<()> {
                 self.rolled_back.store(true, Ordering::SeqCst);

@@ -251,7 +251,8 @@ impl ReActLoop {
                 // Record call in reflection engine (defer injection until after
                 // all tool results to preserve OpenAI API message format)
                 let mut should_reflect = false;
-                if self.reflection_engine.record_call() {
+                let is_timeout = is_error && content.to_lowercase().contains("timed out");
+                if self.reflection_engine.record_call(is_timeout) {
                     should_reflect = true;
                 }
                 // Truncate large tool outputs before storing in conversation

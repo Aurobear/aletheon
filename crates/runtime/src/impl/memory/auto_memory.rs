@@ -287,7 +287,7 @@ mod tests {
             _messages: &[Message],
             _tools: &[base::ToolDefinition],
         ) -> Result<cognit::r#impl::llm::LlmStream> {
-            unimplemented!("StubLlm does not support streaming")
+            anyhow::bail!("mock(StubLlm): streaming not implemented")
         }
 
         fn name(&self) -> &str {
@@ -317,7 +317,7 @@ mod tests {
             _messages: &[Message],
             _tools: &[base::ToolDefinition],
         ) -> Result<cognit::r#impl::llm::LlmStream> {
-            unimplemented!()
+            anyhow::bail!("mock(ErrorLlm): streaming not implemented")
         }
 
         fn name(&self) -> &str {

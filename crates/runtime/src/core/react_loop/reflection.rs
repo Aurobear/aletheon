@@ -76,6 +76,8 @@ pub struct ReflectionEngine {
     should_stop: bool,
     /// Maximum tool calls before reflection recommends BudgetExhausted stop.
     tool_call_limit: usize,
+    /// Consecutive timeout errors — triggers early termination at 3.
+    consecutive_timeouts: usize,
 }
 
 impl ReflectionEngine {
@@ -88,6 +90,7 @@ impl ReflectionEngine {
             calls_since_reflection: 0,
             should_stop: false,
             tool_call_limit,
+            consecutive_timeouts: 0,
         }
     }
 
@@ -102,8 +105,14 @@ impl ReflectionEngine {
     }
 
     /// Record a tool call and check if reflection is needed.
-    pub fn record_call(&mut self) -> bool {
+    /// `is_timeout` should be true when the tool execution timed out.
+    pub fn record_call(&mut self, is_timeout: bool) -> bool {
         self.calls_since_reflection += 1;
+        if is_timeout {
+            self.consecutive_timeouts += 1;
+        } else {
+            self.consecutive_timeouts = 0;
+        }
         self.should_reflect()
     }
 
@@ -112,6 +121,7 @@ impl ReflectionEngine {
         info!(
             tool_calls = context.tool_calls_made,
             errors = context.errors,
+            consecutive_timeouts = self.consecutive_timeouts,
             "Performing reflection"
         );
 
@@ -127,7 +137,11 @@ impl ReflectionEngine {
         // Classify deviation: spec problem vs agent enhancement
         let spec_verdict = self.classify_deviation(context);
 
-        let recommendation = if error_rate > 0.5 {
+        let recommendation = if self.consecutive_timeouts >= 3 {
+            self.should_stop = true;
+            warn!("{} consecutive timeouts — stopping", self.consecutive_timeouts);
+            ReflectionRecommendation::Stop(TerminationReason::Timeout)
+        } else if error_rate > 0.5 {
             self.should_stop = true;
             ReflectionRecommendation::Stop(TerminationReason::StuckInLoop)
         } else if context.tool_calls_made >= self.tool_call_limit {
@@ -240,6 +254,7 @@ impl ReflectionEngine {
     pub fn reset(&mut self) {
         self.calls_since_reflection = 0;
         self.should_stop = false;
+        self.consecutive_timeouts = 0;
     }
 }
 
@@ -265,11 +280,11 @@ mod tests {
         let mut engine = ReflectionEngine::new(3, 10);
 
         assert!(!engine.should_reflect());
-        engine.record_call();
+        engine.record_call(false);
         assert!(!engine.should_reflect());
-        engine.record_call();
+        engine.record_call(false);
         assert!(!engine.should_reflect());
-        engine.record_call();
+        engine.record_call(false);
         assert!(engine.should_reflect());
     }
 
@@ -277,8 +292,8 @@ mod tests {
     fn test_reflection_resets_counter() {
         let mut engine = ReflectionEngine::new(2, 10);
 
-        engine.record_call();
-        engine.record_call();
+        engine.record_call(false);
+        engine.record_call(false);
         assert!(engine.should_reflect());
 
         let ctx = make_ctx(2, 0);
@@ -384,6 +399,43 @@ mod tests {
         assert!(matches!(
             result.recommendation,
             ReflectionRecommendation::Continue
+        ));
+    }
+
+    #[test]
+    fn test_consecutive_timeouts_stop() {
+        let mut engine = ReflectionEngine::new(5, 10);
+
+        // 3 consecutive timeouts should trigger stop
+        engine.record_call(true);
+        engine.record_call(true);
+        engine.record_call(true);
+
+        let ctx = make_ctx(5, 3);
+        let result = engine.reflect(&ctx);
+        assert!(matches!(
+            result.recommendation,
+            ReflectionRecommendation::Stop(TerminationReason::Timeout)
+        ));
+        assert!(engine.consecutive_timeouts >= 3);
+    }
+
+    #[test]
+    fn test_timeout_reset_on_success() {
+        let mut engine = ReflectionEngine::new(5, 10);
+
+        engine.record_call(true);
+        engine.record_call(true);
+        // A successful call resets the counter
+        engine.record_call(false);
+        engine.record_call(true); // only 1 consecutive timeout now
+
+        let ctx = make_ctx(4, 3);
+        let result = engine.reflect(&ctx);
+        // error_rate is 3/4 = 75% > 50% → StuckInLoop, not Timeout
+        assert!(matches!(
+            result.recommendation,
+            ReflectionRecommendation::Stop(TerminationReason::StuckInLoop)
         ));
     }
 }
