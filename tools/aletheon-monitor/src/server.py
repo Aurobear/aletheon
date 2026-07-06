@@ -1,6 +1,6 @@
 """Aletheon Monitor MCP Server.
 
-FastMCP server exposing 9 tools for Claude Code to monitor and diagnose
+FastMCP server exposing 15 tools for Claude Code to monitor and diagnose
 the Aletheon daemon through the existing Session Gateway JSON-RPC interface.
 
 Prerequisites: Run aletheon's setup.sh first. This server expects:
@@ -30,6 +30,8 @@ from .tools import (
     sessions as sessions_mod,
     snapshot as snapshot_mod,
     watch as watch_mod,
+    tui as tui_mod,
+    diagnose as diagnose_mod,
 )
 
 # ── Global client (initialized once at startup) ──────────────────────────
@@ -37,8 +39,11 @@ _client: AletheonClient | None = None
 _install_validated: bool = False
 
 
-def validate_installation() -> dict:
+async def validate_installation() -> dict:
     """Pre-flight check that aletheon was deployed via setup.sh.
+
+    Async so it is awaitable in the ``await handler(...)`` dispatch path
+    (see ``call_tool``); the body itself performs only fast sync checks.
 
     Returns a dict with keys: ok (bool), message (str), socket_path (str|null).
     This is the "constraint" that enforces setup.sh deployment.
@@ -247,6 +252,57 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="aletheon_tui_start",
+        description="Launch the real aletheon TUI in a tmux pane (optionally send an initial task). Returns the first rendered frame. Use this to observe what the USER actually sees, not just the RPC response.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Optional first message to send", "default": ""},
+                "cols": {"type": "integer", "description": "Pane width (default 100)", "default": 100},
+                "rows": {"type": "integer", "description": "Pane height (default 40)", "default": 40},
+            },
+        },
+    ),
+    Tool(
+        name="aletheon_tui_send",
+        description="Type text into the running TUI pane; submit with Enter by default. Use for multi-turn or slash-command input.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Literal text to type"},
+                "submit": {"type": "boolean", "description": "Press Enter after typing (default true)", "default": True},
+            },
+            "required": ["text"],
+        },
+    ),
+    Tool(
+        name="aletheon_tui_capture",
+        description="Capture the current rendered TUI frame. With wait_stable, polls until the screen stops changing (1.5s) or times out (90s). Returns the frame text plus render checks (dup-render, raw markdown, permission-denied, etc).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "scrollback": {"type": "boolean", "description": "Include scrollback history (default true)", "default": True},
+                "wait_stable": {"type": "boolean", "description": "Wait until the frame settles (default true)", "default": True},
+            },
+        },
+    ),
+    Tool(
+        name="aletheon_tui_stop",
+        description="Tear down the TUI tmux session started by aletheon_tui_start.",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="aletheon_diagnose",
+        description="One-stop diagnosis: drives the real TUI with a task, captures the settled frame + render checks, and bundles daemon analyze + logs + audit tail into a single ts-sorted timeline with a pass/fail verdict. Prefer this over aletheon_ask when the bug might be in the TUI layer.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Task to send to the TUI"},
+            },
+            "required": ["task"],
+        },
+    ),
 ]
 
 # Tool handler dispatch table
@@ -285,6 +341,23 @@ _HANDLERS = {
         client,
         topic=args.get("topic", "perf"),
         duration_seconds=args.get("duration_seconds", 10),
+    ),
+    "aletheon_tui_start": lambda client, args: tui_mod.tui_start(
+        task=args.get("task", ""),
+        cols=args.get("cols", 100),
+        rows=args.get("rows", 40),
+    ),
+    "aletheon_tui_send": lambda client, args: tui_mod.tui_send(
+        text=args.get("text", ""),
+        submit=args.get("submit", True),
+    ),
+    "aletheon_tui_capture": lambda client, args: tui_mod.tui_capture(
+        scrollback=args.get("scrollback", True),
+        wait_stable=args.get("wait_stable", True),
+    ),
+    "aletheon_tui_stop": lambda client, args: tui_mod.tui_stop(),
+    "aletheon_diagnose": lambda client, args: diagnose_mod.diagnose(
+        client, task=args.get("task", ""),
     ),
 }
 

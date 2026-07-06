@@ -45,6 +45,10 @@ fn render_markdown_with_theme(
     let mut code_lines: Vec<Line<'static>> = Vec::new();
     let mut list_depth: usize = 0;
     let mut table_row: Vec<Vec<Span<'static>>> = Vec::new();
+    // Whole-table buffer: all rows (header first) are collected, then emitted
+    // aligned on TagEnd::Table once per-column widths are known.
+    let mut table_rows: Vec<Vec<Vec<Span<'static>>>> = Vec::new();
+    let mut table_header_count: usize = 0;
 
     let accent = theme.accent;
     let dim = theme.text_muted;
@@ -114,6 +118,8 @@ fn render_markdown_with_theme(
                 }
                 Tag::Table(_) => {
                     flush_spans(&mut current_spans, &mut lines);
+                    table_rows.clear();
+                    table_header_count = 0;
                 }
                 Tag::TableHead => {
                     table_row.clear();
@@ -229,35 +235,77 @@ fn render_markdown_with_theme(
                         flush_spans(&mut current_spans, &mut lines);
                     }
                     TagEnd::TableHead => {
-                        // Add separator line after header
-                        let mut sep_spans: Vec<Span<'static>> = Vec::new();
-                        for cell in &table_row {
-                            sep_spans.push(Span::styled(
-                                "─".repeat(cell.iter().map(|s| s.width()).sum::<usize>() + 2),
-                                Style::default().fg(dim),
-                            ));
-                            sep_spans.push(Span::styled(
-                                format!("{} ", caps.vline()),
-                                Style::default().fg(dim),
-                            ));
-                        }
-                        lines.push(Line::from(sep_spans));
+                        // Buffer the header row; the separator + alignment are
+                        // emitted once at TagEnd::Table when all widths are known.
+                        table_rows.push(std::mem::take(&mut table_row));
+                        table_header_count = table_rows.len();
                     }
                     TagEnd::TableRow => {
-                        let mut row_spans: Vec<Span<'static>> = Vec::new();
-                        for cell in &table_row {
-                            row_spans.extend(cell.clone());
-                            row_spans.push(Span::styled(
-                                format!(" {} ", caps.vline()),
-                                Style::default().fg(dim),
-                            ));
-                        }
-                        lines.push(Line::from(row_spans));
-                        table_row.clear();
+                        table_rows.push(std::mem::take(&mut table_row));
                     }
                     TagEnd::TableCell => {
                         let cell_spans: Vec<Span<'static>> = std::mem::take(&mut current_spans);
                         table_row.push(cell_spans);
+                    }
+                    TagEnd::Table => {
+                        // Two-pass layout: compute per-column widths across ALL
+                        // rows, then emit aligned rows with borders + a header
+                        // separator. Fixes misaligned columns / broken separator
+                        // rows (bug T3).
+                        let ncols = table_rows.iter().map(|r| r.len()).max().unwrap_or(0);
+                        let mut col_w = vec![0usize; ncols];
+                        for row in &table_rows {
+                            for (c, cell) in row.iter().enumerate() {
+                                let w: usize = cell.iter().map(|s| s.width()).sum();
+                                if w > col_w[c] {
+                                    col_w[c] = w;
+                                }
+                            }
+                        }
+                        let vbar = caps.vline();
+                        for (ridx, row) in table_rows.iter().enumerate() {
+                            let mut spans: Vec<Span<'static>> = Vec::new();
+                            spans.push(Span::styled(
+                                format!("{} ", vbar),
+                                Style::default().fg(dim),
+                            ));
+                            for c in 0..ncols {
+                                let cell = row.get(c);
+                                let w: usize = cell
+                                    .map(|c| c.iter().map(|s| s.width()).sum())
+                                    .unwrap_or(0);
+                                if let Some(cell) = cell {
+                                    spans.extend(cell.clone());
+                                }
+                                if w < col_w[c] {
+                                    spans.push(Span::raw(" ".repeat(col_w[c] - w)));
+                                }
+                                spans.push(Span::styled(
+                                    format!(" {} ", vbar),
+                                    Style::default().fg(dim),
+                                ));
+                            }
+                            lines.push(Line::from(spans));
+                            // Emit the header/body separator right after the
+                            // last header row.
+                            if ridx + 1 == table_header_count {
+                                let mut sep: Vec<Span<'static>> =
+                                    vec![Span::styled(vbar.to_string(), Style::default().fg(dim))];
+                                for c in 0..ncols {
+                                    sep.push(Span::styled(
+                                        "─".repeat(col_w[c] + 2),
+                                        Style::default().fg(dim),
+                                    ));
+                                    sep.push(Span::styled(
+                                        vbar.to_string(),
+                                        Style::default().fg(dim),
+                                    ));
+                                }
+                                lines.push(Line::from(sep));
+                            }
+                        }
+                        table_rows.clear();
+                        table_header_count = 0;
                     }
                     TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link => {
                         style_stack.pop();
@@ -404,6 +452,39 @@ mod tests {
         let caps = test_caps();
         let lines = render_markdown("~~deleted~~", 80, &caps);
         assert!(!lines.is_empty());
+    }
+
+    #[test]
+    fn test_table_aligned() {
+        let caps = test_caps();
+        let input = "| Lang | Use |\n|------|-----|\n| Rust | sys |\n| Go | web |";
+        let lines = render_markdown(input, 80, &caps);
+        let text = |l: &Line| -> String {
+            l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+        };
+        // Table rows are the lines containing the vertical border.
+        let tbl: Vec<String> = lines
+            .iter()
+            .map(&text)
+            .filter(|t| t.contains('│'))
+            .collect();
+        // header + separator + 2 body rows.
+        assert_eq!(tbl.len(), 4, "table lines: {:?}", tbl);
+        // All rows align to the same display width (ignoring trailing space).
+        let w0 = tbl[0].trim_end().chars().count();
+        for t in &tbl {
+            assert_eq!(t.trim_end().chars().count(), w0, "misaligned: {:?}", tbl);
+        }
+        // Row index 1 is the header separator: only box-drawing chars, no text.
+        let sep = &tbl[1];
+        assert!(sep.contains('─'), "no separator dashes: {:?}", sep);
+        assert!(!sep.chars().any(|c| c.is_alphabetic()), "separator has text: {:?}", sep);
+        // No raw markdown table syntax leaked as literal characters.
+        assert!(
+            !tbl.iter().any(|t| t.contains('|') || t.contains("---")),
+            "raw markdown leaked: {:?}",
+            tbl
+        );
     }
 
     #[test]

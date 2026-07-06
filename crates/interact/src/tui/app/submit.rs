@@ -5,7 +5,7 @@ use base::ui_event::CollaborationMode;
 use tokio::io::AsyncWriteExt;
 
 use super::super::chat::{ChatWidget, Role as ChatRole};
-use super::super::command::{parse_command, BuiltinCommand, CommandType};
+use super::super::command::{looks_like_command, parse_command, BuiltinCommand, CommandType};
 use super::super::App;
 
 /// Send a simple JSON-RPC method call to the daemon (no params).
@@ -21,8 +21,8 @@ async fn send_jsonrpc_method(app: &mut App, method: &str) {
 }
 
 pub async fn submit_message(app: &mut App, text: String) {
-    // Check for /commands
-    if text.starts_with('/') {
+    // Check for /commands (but NOT absolute paths like /home/... — those are chat)
+    if looks_like_command(&text) {
         let parsed = parse_command(&text);
         match parsed {
             Some(CommandType::Builtin(BuiltinCommand::Quit)) => {
@@ -258,7 +258,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                     format!("{}\n\nUser input: {}", skill.content, args)
                 };
                 app.chat.add_text(ChatRole::User, text.clone());
-                app.chat.add_text(ChatRole::Assistant, String::new());
+                // Assistant entry created lazily on first response delta so it
+                // renders after any tool/reflection logs (ordering fix).
                 send_to_daemon(app, &message).await;
                 return;
             }
@@ -304,7 +305,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                 } else {
                     format!("{}\n\nUser input: {}", skill.content, args)
                 };
-                app.chat.add_text(ChatRole::Assistant, String::new());
+                // Assistant entry created lazily on first response delta so it
+                // renders after any tool/reflection logs (ordering fix).
                 send_to_daemon(app, &message).await;
                 return;
             }
@@ -319,7 +321,8 @@ pub async fn submit_message(app: &mut App, text: String) {
     // Regular chat message
     app.history.push(text.clone());
     app.chat.add_text(ChatRole::User, text.clone());
-    app.chat.add_text(ChatRole::Assistant, String::new());
+    // Assistant entry created lazily on first response delta so it renders
+    // after any tool/reflection logs (ordering fix).
     send_to_daemon(app, &text).await;
 }
 

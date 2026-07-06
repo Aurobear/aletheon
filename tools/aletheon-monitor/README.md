@@ -49,6 +49,20 @@ Add to `~/.claude/mcp.json` (or equivalent Claude Code MCP config):
 | `aletheon_ask` | Forward question to agent's LLM for introspection | ✅ | ❌ |
 | `aletheon_watch` | Real-time event subscription (time-bounded, max 60s) | ✅ | ❌ |
 
+## TUI observability tools
+
+| Tool | Purpose |
+|------|---------|
+| `aletheon_tui_start` | Launch the real TUI in tmux (optionally send a task); returns first frame |
+| `aletheon_tui_send`  | Type text into the running TUI (submit with Enter) |
+| `aletheon_tui_capture` | Capture the settled frame + render checks (dup-render, raw markdown, …) |
+| `aletheon_tui_stop`  | Tear down the TUI tmux session |
+| `aletheon_diagnose`  | One-stop: TUI frame + checks + daemon analyze/logs + audit tail + timeline + verdict |
+
+Requires `tmux`. The TUI command defaults to `aletheon --socket $ALETHEON_SOCKET`;
+override with `ALETHEON_TUI_CMD`. Audit path defaults to the repo
+`.aletheon-audit.jsonl`; override with `ALETHEON_AUDIT`.
+
 ## Monitoring Schedule
 
 Configure Claude Code cron jobs for automated monitoring:

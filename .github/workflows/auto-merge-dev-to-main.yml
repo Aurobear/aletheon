@@ -1,0 +1,46 @@
+name: Auto Merge Dev to Main
+
+on:
+  schedule:
+    # Every Monday at 09:00 UTC (17:00 CST)
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check if main is behind dev
+        id: check
+        run: |
+          git fetch origin dev
+          behind=$(git rev-list --count main..origin/dev)
+          echo "behind=$behind" >> "$GITHUB_OUTPUT"
+          if [ "$behind" -gt 0 ]; then
+            echo "main is $behind commits behind dev"
+          else
+            echo "main is up to date with dev"
+          fi
+
+      - name: Create PR from dev to main
+        if: steps.check.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --repo Aurobear/aletheon \
+            --base main \
+            --head dev \
+            --title "chore: auto merge dev into main" \
+            --body "Automated weekly PR to merge dev into main. Please review and merge." \
+            --label "sync" \
+          || echo "PR already exists, skipping"
