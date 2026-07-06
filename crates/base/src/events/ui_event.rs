@@ -222,6 +222,8 @@ pub enum ClientEvent {
 
     // ── Tool calls ──
     ToolCallStart { call_id: String, tool: String, args: serde_json::Value },
+    /// Emitted when streaming tool args are complete — carries the real args.
+    ToolCallComplete { call_id: String, tool: String, args: serde_json::Value },
     ToolCallResult {
         call_id: String,
         tool: String,

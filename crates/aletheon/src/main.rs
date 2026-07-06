@@ -15,6 +15,7 @@ use clap::{Parser, Subcommand};
 use runtime::host::RuntimeHost;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
@@ -99,7 +100,7 @@ async fn main() -> Result<()> {
             }),
             _,
         ) => {
-            init_tracing("aletheon::daemon");
+            init_tracing("aletheon::daemon", Some(Path::new("/var/lib/aletheon/aletheon.log")));
             let socket_path = socket.clone().unwrap_or(cli.socket);
             let daemon_mode = detect_daemon_mode(container);
 
@@ -145,7 +146,7 @@ async fn main() -> Result<()> {
             }),
             _,
         ) => {
-            init_tracing("aletheon::exec");
+            init_tracing("aletheon::exec", None);
             run_exec(
                 prompt,
                 model,
@@ -195,16 +196,49 @@ fn detect_daemon_mode(container_override: &Option<String>) -> DaemonMode {
 
 // ── Tracing ─────────────────────────────────────────────────────────────────
 
-fn init_tracing(target: &str) {
-    if std::env::var("RUST_LOG").is_ok() {
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env())
-            .init();
+fn init_tracing(target: &str, log_file: Option<&Path>) {
+    use std::fs;
+    let env_filter = if std::env::var("RUST_LOG").is_ok() {
+        EnvFilter::from_default_env()
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::new(format!("{}=info", target)))
-            .init();
+        // Capture info-level logs from aletheon + key runtime subsystems
+        EnvFilter::new(format!("{}=info,runtime=info,cognit=info,corpus=info", target))
+    };
+
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr);
+
+    let subscriber = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(stderr_layer);
+
+    if let Some(path) = log_file {
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let log_path = path.to_path_buf();
+        // Test that the file is writable before adding the layer
+        match fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            Ok(_) => {
+                let file_layer = tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(move || {
+                        fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&log_path)
+                            .expect("failed to open log file for append")
+                    });
+                subscriber.with(file_layer).init();
+                return;
+            }
+            Err(e) => {
+                eprintln!("Warning: could not open log file {}: {}", log_path.display(), e);
+            }
+        }
     }
+
+    subscriber.init();
 }
 
 // ── Exec ────────────────────────────────────────────────────────────────────

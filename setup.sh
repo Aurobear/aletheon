@@ -400,7 +400,7 @@ setup_systemd() {
         local real_user="${SUDO_USER:-$USER}"
         if [[ "$real_user" != "root" ]] && [[ "$real_user" != "aletheon" ]]; then
             usermod -a -G aletheon "$real_user" 2>/dev/null || true
-            echo "Added $real_user to aletheon group (re-login required to take effect)"
+            log "Added $real_user to aletheon group"
         fi
 
         # Ensure /etc/aletheon/.env exists for API keys.

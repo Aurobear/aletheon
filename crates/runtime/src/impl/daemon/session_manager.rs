@@ -459,7 +459,7 @@ mod compaction_tests {
             _m: &[Message],
             _t: &[ToolDefinition],
         ) -> anyhow::Result<LlmStream> {
-            unimplemented!()
+            anyhow::bail!("mock(StubLlm): streaming not implemented")
         }
         fn name(&self) -> &str {
             "stub"

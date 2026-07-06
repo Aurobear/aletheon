@@ -22,6 +22,11 @@ pub fn event_to_client_event(event: &Event) -> Option<ClientEvent> {
             tool: name.clone(),
             args: serde_json::Value::Null,
         }),
+        Event::ToolCallComplete { call_id, name, args } => Some(ClientEvent::ToolCallComplete {
+            call_id: call_id.clone(),
+            tool: name.clone(),
+            args: args.clone(),
+        }),
         Event::ToolResult { name, call_id, result } => Some(ClientEvent::ToolCallResult {
             call_id: call_id.clone(),
             tool: name.clone(),
@@ -78,7 +83,6 @@ pub fn event_to_client_event(event: &Event) -> Option<ClientEvent> {
         Event::Text { .. }
         | Event::Reasoning { .. }
         | Event::ToolDispatch { .. }
-        | Event::ToolCallComplete { .. }
         | Event::ApprovalRequest { .. }
         | Event::AskRequest { .. }
         | Event::CompactionStarted

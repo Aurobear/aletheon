@@ -564,7 +564,10 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
                 if let Some(params) = resp.get("params") {
                     if let Ok(event) = serde_json::from_value::<ClientEvent>(params.clone()) {
                         match event {
-                            ClientEvent::ToolCallStart { tool, args, .. } => {
+                            ClientEvent::ToolCallStart { .. } => {
+                                // args arrive later via ToolCallComplete — skip here
+                            }
+                            ClientEvent::ToolCallComplete { tool, args, .. } => {
                                 eprintln!("[tool] {} {}", tool, serde_json::to_string(&args).unwrap_or_default());
                             }
                             ClientEvent::TextDelta { .. } => {
