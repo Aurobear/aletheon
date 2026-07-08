@@ -331,6 +331,18 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
+The system socket is deliberately restricted to `0660` and owned by
+`aletheon:aletheon`. After a system install adds your account to the group, an
+existing login session may still have stale supplementary groups. Verify with:
+
+```bash
+id -nG | grep -w aletheon
+```
+
+If it is not active, log out and back in, run `newgrp aletheon`, or use
+`sg aletheon -c 'aletheon'` for a one-off TUI launch. Do not make the socket
+world-writable to work around stale login credentials.
+
 ---
 
 ## 8. Android Platform Design

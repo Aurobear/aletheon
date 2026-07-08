@@ -8,13 +8,100 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use base::hook::{HookContext, HookPoint, HookResult};
-use base::{Context as AbiContext, Intent, IntentSource, ReflectionTrigger, SelfFieldOps, Verdict};
+use base::{
+    ContentBlock, Context as AbiContext, Intent, IntentSource, Message, ReflectionTrigger, Role,
+    SelfFieldOps, Verdict,
+};
 use std::collections::HashMap;
 
 use crate::core::event_sink::{ChannelEventSink, Event, EventSink};
 use crate::core::react_loop::ReActLoop;
 use crate::r#impl::memory::fact_store::FactStore;
 use cognit::r#impl::llm::LlmProvider;
+
+const MAX_ACTIVATED_SKILL_CHARS: usize = 12 * 1024;
+const MAX_ACTIVATED_SKILLS_TOTAL_CHARS: usize = 24 * 1024;
+const MAX_RECALLED_FACT_CHARS: usize = 2 * 1024;
+const MAX_RECALL_TOTAL_CHARS: usize = 8 * 1024;
+const MAX_HISTORY_MESSAGE_CHARS: usize = 16 * 1024;
+const MAX_HISTORY_TOTAL_CHARS: usize = 64 * 1024;
+const MAX_HISTORY_MESSAGES: usize = 6;
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars == 0 {
+        return String::new();
+    }
+    let truncated: String = value.chars().take(max_chars - 1).collect();
+    format!("{truncated}…")
+}
+
+fn append_bounded_text(
+    target: &mut String,
+    value: &str,
+    per_item: usize,
+    remaining: &mut usize,
+) {
+    if *remaining == 0 {
+        return;
+    }
+    let bounded = truncate_chars(value, per_item.min(*remaining));
+    *remaining = (*remaining).saturating_sub(bounded.chars().count());
+    target.push_str(&bounded);
+}
+
+/// Return only bounded conversational text. Tool blocks and historical system
+/// prompts are deliberately excluded so a restored session cannot replay
+/// transient prompt decorations or malformed tool-call sequences.
+fn bounded_text_history(history: &[Message]) -> Vec<Message> {
+    let mut remaining = MAX_HISTORY_TOTAL_CHARS;
+    let mut selected = Vec::new();
+
+    for message in history.iter().rev() {
+        if selected.len() >= MAX_HISTORY_MESSAGES || remaining == 0 {
+            break;
+        }
+        if !matches!(message.role, Role::User | Role::Assistant) {
+            continue;
+        }
+        let text = message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if text.is_empty() {
+            continue;
+        }
+        let bounded = truncate_chars(&text, MAX_HISTORY_MESSAGE_CHARS.min(remaining));
+        remaining = remaining.saturating_sub(bounded.chars().count());
+        selected.push(match message.role {
+            Role::User => Message::user(bounded),
+            Role::Assistant => Message::assistant(bounded),
+            Role::System => unreachable!(),
+        });
+    }
+
+    selected.reverse();
+    selected
+}
+
+fn build_request_messages(
+    system_prompt: String,
+    history: &[Message],
+    effective_message: String,
+) -> Vec<Message> {
+    let mut messages = Vec::with_capacity(MAX_HISTORY_MESSAGES + 2);
+    messages.push(Message::system(system_prompt));
+    messages.extend(bounded_text_history(history));
+    messages.push(Message::user(effective_message));
+    messages
+}
 
 impl RequestHandler {
     pub(super) async fn handle_chat(
@@ -118,9 +205,18 @@ impl RequestHandler {
             drop(loader);
             let matched =
                 crate::r#impl::skills::keyword_matcher::match_skills(message, &skill_keywords);
+            let mut remaining = MAX_ACTIVATED_SKILLS_TOTAL_CHARS;
             for body in matched {
+                if remaining == 0 {
+                    break;
+                }
                 effective_message.push_str("\n<activated-skill>\n");
-                effective_message.push_str(&body);
+                append_bounded_text(
+                    &mut effective_message,
+                    &body,
+                    MAX_ACTIVATED_SKILL_CHARS,
+                    &mut remaining,
+                );
                 effective_message.push_str("\n</activated-skill>\n");
             }
         }
@@ -138,11 +234,19 @@ impl RequestHandler {
                 if let Ok(facts) = fs.search_facts_governed(&query, None, false, 0.15, 4) {
                     if !facts.is_empty() {
                         let mut recall_block = String::from("\n[Recalled memories]\n");
+                        let mut remaining = MAX_RECALL_TOTAL_CHARS;
                         for fact in &facts {
-                            recall_block.push_str(&format!(
-                                "- {} (trust: {:.2})\n",
-                                fact.content, fact.trust_score
-                            ));
+                            if remaining == 0 {
+                                break;
+                            }
+                            recall_block.push_str("- ");
+                            append_bounded_text(
+                                &mut recall_block,
+                                &fact.content,
+                                MAX_RECALLED_FACT_CHARS,
+                                &mut remaining,
+                            );
+                            recall_block.push_str(&format!(" (trust: {:.2})\n", fact.trust_score));
                             let _ = fs.record_feedback(fact.fact_id, true);
                         }
                         // Entity graph boost
@@ -152,10 +256,18 @@ impl RequestHandler {
                                 if let Ok(related) = fs.get_entity_facts(eid) {
                                     for rf in related.iter().take(1) {
                                         if !facts.iter().any(|f| f.fact_id == rf.fact_id) {
-                                            recall_block.push_str(&format!(
-                                                "- {} (entity: {})\n",
-                                                rf.content, entity
-                                            ));
+                                            if remaining == 0 {
+                                                break;
+                                            }
+                                            recall_block.push_str("- ");
+                                            append_bounded_text(
+                                                &mut recall_block,
+                                                &rf.content,
+                                                MAX_RECALLED_FACT_CHARS,
+                                                &mut remaining,
+                                            );
+                                            recall_block
+                                                .push_str(&format!(" (entity: {})\n", entity));
                                         }
                                     }
                                 }
@@ -270,10 +382,7 @@ impl RequestHandler {
         {
             let (_sid, sm_arc) = self.get_or_create_session(None).await;
             let mut sm = sm_arc.lock().await;
-            if sm.turn_count() == 0 {
-                sm.push_system(&system_prompt);
-            }
-            sm.push_user(&effective_message).await;
+            sm.push_user(message).await;
         }
         // Persist user message to recall memory
         {
@@ -499,7 +608,7 @@ impl RequestHandler {
         let event_sink = ChannelEventSink::new(event_tx);
 
         // Inject Dasein context into user input (Task 17)
-        let _effective_message = {
+        let effective_message = {
             let sf = self.self_field.lock().await;
             if let Some(ctx) = sf.dasein_prompt_injection() {
                 format!("{}\n\n---\n\n{}", ctx, effective_message)
@@ -516,25 +625,46 @@ impl RequestHandler {
 
         // Pre-turn proactive compaction: compact the persisted history before
         // seeding the ReAct loop so the seed is already within token budget.
-        // Take only the last 2 messages (last assistant + user pair) for
-        // context continuity — full history seeding blows context budget.
+        // Persisted history contains the raw current user message. Remove it
+        // from the historical tail and add the enriched form exactly once as
+        // an ephemeral message below.
         let existing_messages = {
             let (_sid, sm_arc) = self.get_or_create_session(None).await;
             let mut sm = sm_arc.lock().await;
             let _ = sm.compact_if_needed(&*self.llm).await;
-            let full_history = sm.history().to_vec();
-            full_history
-                .into_iter()
-                .rev()
-                .take(2)
-                .rev()
-                .collect::<Vec<_>>()
+            let mut full_history = sm.history().to_vec();
+            if full_history.last().is_some_and(|last| {
+                last.role == Role::User
+                    && last.content.iter().any(
+                        |block| matches!(block, ContentBlock::Text { text } if text == message),
+                    )
+            }) {
+                full_history.pop();
+            }
+            bounded_text_history(&full_history)
         };
+
+        let system_prompt_for_react = system_prompt.clone();
+        let history_chars: usize = existing_messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .map(ContentBlock::estimate_chars)
+            .sum();
+        info!(
+            system_chars = system_prompt.len(),
+            history_chars,
+            ephemeral_user_chars = effective_message.len(),
+            "LLM request context assembled"
+        );
 
         let mut react_task = tokio::spawn(async move {
             let mut react_loop = ReActLoop::new(config);
-            // Seed with existing conversation history for context continuity
-            react_loop.seed_messages(existing_messages);
+            let request_messages = build_request_messages(
+                system_prompt_for_react,
+                &existing_messages,
+                effective_message,
+            );
+            react_loop.seed_messages(request_messages);
             react_loop.set_goal(goal_message.clone());
             let sf_for_ctx = self_field_arc_for_react.clone();
             react_loop.set_dasein_context_provider(Box::new(move || {
@@ -674,6 +804,7 @@ impl RequestHandler {
             }
         }
 
+        let turn_succeeded = text.is_ok();
         let (text, metrics) = text.unwrap_or_else(|e| {
             (
                 format!("error: {e}"),
@@ -708,7 +839,9 @@ impl RequestHandler {
         }
 
         // Coordinate: quick mood update after the turn (Task 23)
-        self.coordinate(&turn_count, &text).await;
+        if turn_succeeded {
+            self.coordinate(&turn_count, &text).await;
+        }
 
         // Record turn in perf counter (token counts from accumulated Usage events).
         self.debug_perf.record_turn(acc_tokens_in, acc_tokens_out);
@@ -754,7 +887,7 @@ impl RequestHandler {
         // --- Auto-memory extraction ---
         // Runs after PostTurn hooks, before compaction.
         // Uses a cheap LLM to extract facts from the turn.
-        {
+        if turn_succeeded {
             let mut am = self.auto_memory.lock().await;
             if let Ok(facts) = am.analyze_and_store(message, &text).await {
                 if !facts.is_empty() {
@@ -765,7 +898,7 @@ impl RequestHandler {
 
         // Push tool call messages and assistant response to session manager
         // This ensures the session history has the correct structure for OpenAI API
-        let turn = {
+        let turn = if turn_succeeded {
             let (_sid, sm_arc) = self.get_or_create_session(None).await;
             let mut sm = sm_arc.lock().await;
 
@@ -809,9 +942,12 @@ impl RequestHandler {
             sm.push_assistant(&text).await;
             let _ = sm.compact_if_needed(&*self.llm).await;
             sm.turn_count()
+        } else {
+            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            sm_arc.lock().await.turn_count()
         };
         // Persist assistant response to recall memory
-        {
+        if turn_succeeded {
             let session_id = self.get_or_create_session(None).await.0;
             let rm = self.recall_memory.lock().await;
             let _ = rm.store(&session_id, "assistant_message", &text, None);
@@ -961,5 +1097,88 @@ impl RequestHandler {
             "id": id,
             "result": { "response": text, "turn": turn }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_of(message: &Message) -> &str {
+        match &message.content[0] {
+            ContentBlock::Text { text } => text,
+            other => panic!("expected text block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bounded_history_excludes_system_and_tool_blocks() {
+        let history = vec![
+            Message::system("large transient prefix"),
+            Message::user("raw user"),
+            Message::tool_result("call-1", "tool output", false),
+            Message::assistant("raw assistant"),
+        ];
+
+        let bounded = bounded_text_history(&history);
+
+        assert_eq!(bounded.len(), 2);
+        assert_eq!(text_of(&bounded[0]), "raw user");
+        assert_eq!(text_of(&bounded[1]), "raw assistant");
+    }
+
+    #[test]
+    fn bounded_history_caps_restored_injected_payloads() {
+        let huge = format!(
+            "<activated-skill>{}</activated-skill>",
+            "x".repeat(200_000)
+        );
+        let history = vec![Message::user(huge)];
+
+        let bounded = bounded_text_history(&history);
+
+        assert_eq!(bounded.len(), 1);
+        assert!(text_of(&bounded[0]).chars().count() <= MAX_HISTORY_MESSAGE_CHARS);
+    }
+
+    #[test]
+    fn bounded_text_is_utf8_safe_and_respects_budget() {
+        let mut output = String::new();
+        let mut remaining = 8;
+
+        append_bounded_text(&mut output, "机器人上下文非常长", 6, &mut remaining);
+
+        assert!(output.is_char_boundary(output.len()));
+        assert!(output.chars().count() <= 6);
+        assert!(remaining <= 2);
+    }
+
+    #[test]
+    fn request_contains_one_system_prefix_and_one_ephemeral_user_message() {
+        let history = vec![
+            Message::system("old prefix that must not be replayed"),
+            Message::user("raw prior user"),
+            Message::assistant("raw prior assistant"),
+        ];
+
+        let messages = build_request_messages(
+            "current prefix".into(),
+            &history,
+            "<activated-skill>ephemeral</activated-skill>\ncurrent raw user".into(),
+        );
+
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|m| m.role == Role::System)
+                .count(),
+            1
+        );
+        assert_eq!(text_of(&messages[0]), "current prefix");
+        assert_eq!(
+            text_of(messages.last().unwrap()),
+            "<activated-skill>ephemeral</activated-skill>\ncurrent raw user"
+        );
+        assert!(!messages.iter().any(|m| text_of(m).contains("old prefix")));
     }
 }
