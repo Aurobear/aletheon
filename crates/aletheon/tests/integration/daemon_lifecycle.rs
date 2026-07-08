@@ -1,6 +1,7 @@
 /// Tests daemon lifecycle: restart, session persistence.
 /// Requires: systemctl, aletheon.service installed.
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod daemon_lifecycle {
     use std::process::Command;
 
@@ -13,8 +14,11 @@ mod daemon_lifecycle {
             .args(["systemctl", "restart", "aletheon.service"])
             .output()
             .expect("Failed to restart daemon");
-        assert!(restart.status.success(), "Daemon restart failed: {:?}",
-            String::from_utf8_lossy(&restart.stderr));
+        assert!(
+            restart.status.success(),
+            "Daemon restart failed: {:?}",
+            String::from_utf8_lossy(&restart.stderr)
+        );
 
         // Wait for it to come up
         std::thread::sleep(std::time::Duration::from_secs(3));

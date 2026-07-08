@@ -45,7 +45,7 @@ pub struct EvolutionConfig {
 impl Default for EvolutionConfig {
     fn default() -> Self {
         Self {
-            enabled: false, // HIGH-risk autonomy: OFF unless explicitly enabled
+            enabled: false,             // HIGH-risk autonomy: OFF unless explicitly enabled
             evolution_permitted: false, // separate PermissionManager gate, OFF by default
             trigger_every_n_turns: 5,
             trigger_on_failure: true,

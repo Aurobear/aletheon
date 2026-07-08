@@ -212,18 +212,34 @@ pub enum InterruptReason {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientEvent {
     // ── Turn lifecycle ──
-    TurnStarted { iteration: usize },
+    TurnStarted {
+        iteration: usize,
+    },
     TurnDone,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 
     // ── Streaming text ──
-    TextDelta { text: String },
-    ThinkingDelta { text: String },
+    TextDelta {
+        text: String,
+    },
+    ThinkingDelta {
+        text: String,
+    },
 
     // ── Tool calls ──
-    ToolCallStart { call_id: String, tool: String, args: serde_json::Value },
+    ToolCallStart {
+        call_id: String,
+        tool: String,
+        args: serde_json::Value,
+    },
     /// Emitted when streaming tool args are complete — carries the real args.
-    ToolCallComplete { call_id: String, tool: String, args: serde_json::Value },
+    ToolCallComplete {
+        call_id: String,
+        tool: String,
+        args: serde_json::Value,
+    },
     ToolCallResult {
         call_id: String,
         tool: String,
@@ -233,13 +249,27 @@ pub enum ClientEvent {
     },
 
     // ── Bookkeeping ──
-    Usage { tokens_in: u64, tokens_out: u64 },
-    ContextUpdate { max_tokens: u64, used_tokens: u64 },
-    GoalSet { goal: String, sub_goals: Vec<String> },
-    ModelSwitch { model: String },
+    Usage {
+        tokens_in: u64,
+        tokens_out: u64,
+    },
+    ContextUpdate {
+        max_tokens: u64,
+        used_tokens: u64,
+    },
+    GoalSet {
+        goal: String,
+        sub_goals: Vec<String>,
+    },
+    ModelSwitch {
+        model: String,
+    },
 
     // ── Awareness / collaboration ──
-    AwarenessChanged { level: String, context: String },
+    AwarenessChanged {
+        level: String,
+        context: String,
+    },
     PlanUpdate {
         version: u32,
         plan: String,
@@ -251,14 +281,22 @@ pub enum ClientEvent {
         task: String,
         status: String,
     },
-    ModeChanged { new: String },
+    ModeChanged {
+        new: String,
+    },
 
     // ── Limits / interruptions ──
     Interrupted,
-    BudgetExceeded { limit: u64 },
-    CircuitBreakerTripped { reason: String },
+    BudgetExceeded {
+        limit: u64,
+    },
+    CircuitBreakerTripped {
+        reason: String,
+    },
     CompactionTriggered,
-    Reflection { summary: String },
+    Reflection {
+        summary: String,
+    },
 }
 
 #[cfg(test)]

@@ -86,8 +86,13 @@ impl StormBreaker {
 
     /// Check if any pattern has reached the loop threshold.
     pub fn has_triggered(&self) -> bool {
-        self.failure_counts.values().any(|&c| c >= self.failure_threshold)
-            || self.success_counts.values().any(|&c| c >= self.success_threshold)
+        self.failure_counts
+            .values()
+            .any(|&c| c >= self.failure_threshold)
+            || self
+                .success_counts
+                .values()
+                .any(|&c| c >= self.success_threshold)
     }
 
     /// Extract a normalized error signature for comparison.
