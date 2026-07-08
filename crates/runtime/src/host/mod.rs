@@ -76,7 +76,12 @@ pub struct DaemonHost {
 }
 
 impl DaemonHost {
-    pub fn new(config_path: Option<PathBuf>, env_path: Option<PathBuf>, socket: PathBuf, enable_evolution: bool) -> Self {
+    pub fn new(
+        config_path: Option<PathBuf>,
+        env_path: Option<PathBuf>,
+        socket: PathBuf,
+        enable_evolution: bool,
+    ) -> Self {
         Self {
             config_path,
             env_path,
@@ -165,8 +170,14 @@ impl RuntimeHost for DaemonHost {
         info!(socket = %socket.display(), "Binding unix socket...");
         let owner_uid = nix::unistd::Uid::current().as_raw();
         let group_gid = nix::unistd::Gid::current().as_raw();
-        let mut unix_server =
-            server::UnixServer::new(&socket, request_handler, cancel_token.clone(), owner_uid, group_gid).await?;
+        let mut unix_server = server::UnixServer::new(
+            &socket,
+            request_handler,
+            cancel_token.clone(),
+            owner_uid,
+            group_gid,
+        )
+        .await?;
 
         // ── Ctrl+C handler ──────────────────────────────────────────
         let shutdown_token = cancel_token.clone();

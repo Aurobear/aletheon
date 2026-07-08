@@ -35,17 +35,17 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(BuiltinCommand::Copy)) => {
                 // Copy last assistant message to clipboard via OSC 52
-                let last_assistant = app
-                    .chat
-                    .entries
-                    .iter()
-                    .rev()
-                    .find_map(|entry| {
-                        if let super::super::chat::ChatEntry::Text(ref msg) = entry {
-                            if msg.role == ChatRole::Assistant { Some(msg.content.clone()) }
-                            else { None }
-                        } else { None }
-                    });
+                let last_assistant = app.chat.entries.iter().rev().find_map(|entry| {
+                    if let super::super::chat::ChatEntry::Text(ref msg) = entry {
+                        if msg.role == ChatRole::Assistant {
+                            Some(msg.content.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                });
                 match last_assistant {
                     Some(text) if !text.is_empty() => {
                         let encoded = base64_encode(&text);
@@ -311,8 +311,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             None => {
-                app.chat
-                    .add_text(ChatRole::System, "无效命令".to_string());
+                app.chat.add_text(ChatRole::System, "无效命令".to_string());
                 return;
             }
         }

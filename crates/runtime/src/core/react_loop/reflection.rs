@@ -139,7 +139,10 @@ impl ReflectionEngine {
 
         let recommendation = if self.consecutive_timeouts >= 3 {
             self.should_stop = true;
-            warn!("{} consecutive timeouts — stopping", self.consecutive_timeouts);
+            warn!(
+                "{} consecutive timeouts — stopping",
+                self.consecutive_timeouts
+            );
             ReflectionRecommendation::Stop(TerminationReason::Timeout)
         } else if error_rate > 0.5 {
             self.should_stop = true;

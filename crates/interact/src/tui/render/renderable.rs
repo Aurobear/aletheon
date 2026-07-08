@@ -75,8 +75,7 @@ impl Renderable for LayoutHelper<'_> {
         }
 
         let flex_height = if flex_count > 0 {
-            area
-                .height
+            area.height
                 .saturating_sub(total_fixed)
                 .saturating_div(flex_count)
         } else {
@@ -132,18 +131,13 @@ impl Renderable for HeaderRenderable<'_> {
             } else {
                 "  Shift+Enter newline | Enter send | Ctrl+C quit | /help"
             };
-            let line3 =
-                Line::from(Span::styled(hints, Style::default().fg(Color::DarkGray)));
+            let line3 = Line::from(Span::styled(hints, Style::default().fg(Color::DarkGray)));
 
-            let header = Paragraph::new(vec![line1, line2, line3])
-                .style(Style::default().bg(bg));
+            let header = Paragraph::new(vec![line1, line2, line3]).style(Style::default().bg(bg));
             header.render(area, buf);
         } else {
             let title = format!("  aletheon  │  {}", self.model_name);
-            let line = Line::from(Span::styled(
-                title,
-                Style::default().fg(Color::White),
-            ));
+            let line = Line::from(Span::styled(title, Style::default().fg(Color::White)));
             let header = Paragraph::new(line).style(Style::default().bg(bg));
             header.render(area, buf);
         }
@@ -175,7 +169,9 @@ impl Renderable for ChatRenderable<'_> {
         let chat_inner = chat_block.inner(area);
         chat_block.render(area, buf);
 
-        let chat_lines = self.chat.all_lines_wrapped(self.frame_counter, area.width as usize);
+        let chat_lines = self
+            .chat
+            .all_lines_wrapped(self.frame_counter, area.width as usize);
         let total_lines = chat_lines.len() as u16;
         let visible_height = chat_inner.height;
         let max_scroll = total_lines.saturating_sub(visible_height);
@@ -223,10 +219,7 @@ impl Renderable for InputRenderable<'_> {
             height: 1,
             ..area
         };
-        let mut spans = vec![Span::styled(
-            prompt,
-            Style::default().fg(Color::Green),
-        )];
+        let mut spans = vec![Span::styled(prompt, Style::default().fg(Color::Green))];
 
         let byte_pos = self.cursor.min(self.buf.len());
         let before = &self.buf[..byte_pos];
@@ -305,10 +298,7 @@ impl InputRenderable<'_> {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                ListItem::new(Line::from(Span::styled(
-                    format!("  {} ", cmd),
-                    item_style,
-                )))
+                ListItem::new(Line::from(Span::styled(format!("  {} ", cmd), item_style)))
             })
             .collect();
 

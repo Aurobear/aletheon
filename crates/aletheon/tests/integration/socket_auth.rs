@@ -19,8 +19,12 @@ mod socket_auth {
             use std::os::unix::fs::PermissionsExt;
             let mode = meta.permissions().mode();
             // Should be 0660 (socket, no world access)
-            assert_eq!(mode & 0o777, 0o660,
-                "Socket should be 0660, got {:o}", mode & 0o777);
+            assert_eq!(
+                mode & 0o777,
+                0o660,
+                "Socket should be 0660, got {:o}",
+                mode & 0o777
+            );
         }
     }
 

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use base::agent::Pid;
-use base::envelope::{Envelope, Endpoint, Pattern, Payload, Target};
+use base::envelope::{Endpoint, Envelope, Pattern, Payload, Target};
 use base::CommunicationBus;
 use base::{ForkDirective, ForkResult, Priority};
 use serde::{Deserialize, Serialize};

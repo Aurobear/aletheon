@@ -484,8 +484,12 @@ impl RequestHandler {
 
         // StormBreaker, CheckpointStore, SkillRouter, AgentLoader
         let storm_breaker = Arc::new(Mutex::new(StormBreaker::new(
-            runtime_config_snapshot.agent_loop.storm_breaker_failure_threshold,
-            runtime_config_snapshot.agent_loop.storm_breaker_success_threshold,
+            runtime_config_snapshot
+                .agent_loop
+                .storm_breaker_failure_threshold,
+            runtime_config_snapshot
+                .agent_loop
+                .storm_breaker_success_threshold,
         )));
         let session_dir = aletheon_dir.join("sessions").join(&session_id);
         std::fs::create_dir_all(&session_dir)?;

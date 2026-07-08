@@ -265,15 +265,12 @@ fn render_markdown_with_theme(
                         let vbar = caps.vline();
                         for (ridx, row) in table_rows.iter().enumerate() {
                             let mut spans: Vec<Span<'static>> = Vec::new();
-                            spans.push(Span::styled(
-                                format!("{} ", vbar),
-                                Style::default().fg(dim),
-                            ));
+                            spans
+                                .push(Span::styled(format!("{} ", vbar), Style::default().fg(dim)));
                             for c in 0..ncols {
                                 let cell = row.get(c);
-                                let w: usize = cell
-                                    .map(|c| c.iter().map(|s| s.width()).sum())
-                                    .unwrap_or(0);
+                                let w: usize =
+                                    cell.map(|c| c.iter().map(|s| s.width()).sum()).unwrap_or(0);
                                 if let Some(cell) = cell {
                                     spans.extend(cell.clone());
                                 }
@@ -460,7 +457,10 @@ mod tests {
         let input = "| Lang | Use |\n|------|-----|\n| Rust | sys |\n| Go | web |";
         let lines = render_markdown(input, 80, &caps);
         let text = |l: &Line| -> String {
-            l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
         };
         // Table rows are the lines containing the vertical border.
         let tbl: Vec<String> = lines
@@ -478,7 +478,11 @@ mod tests {
         // Row index 1 is the header separator: only box-drawing chars, no text.
         let sep = &tbl[1];
         assert!(sep.contains('─'), "no separator dashes: {:?}", sep);
-        assert!(!sep.chars().any(|c| c.is_alphabetic()), "separator has text: {:?}", sep);
+        assert!(
+            !sep.chars().any(|c| c.is_alphabetic()),
+            "separator has text: {:?}",
+            sep
+        );
         // No raw markdown table syntax leaked as literal characters.
         assert!(
             !tbl.iter().any(|t| t.contains('|') || t.contains("---")),
