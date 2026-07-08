@@ -143,8 +143,8 @@ pub use events::event::{
 pub use events::event_bridge::EventBridge;
 pub use events::event_log::{EventLog, LogEntry};
 pub use events::ui_event::{
-    AwarenessLevel, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate, SubAgentHandle,
-    SubAgentState, SubAgentStatus, ClientEvent,
+    AwarenessLevel, ClientEvent, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate,
+    SubAgentHandle, SubAgentState, SubAgentStatus,
 };
 
 // IPC types (from ipc/)

@@ -1,6 +1,7 @@
 /// Tests socket peer credential enforcement.
 /// Requires: daemon running as aletheon user, socket at /run/aletheon/aletheon.sock.
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod socket_auth {
     use std::os::unix::fs::FileTypeExt;
     use std::os::unix::net::UnixStream;
@@ -19,8 +20,12 @@ mod socket_auth {
             use std::os::unix::fs::PermissionsExt;
             let mode = meta.permissions().mode();
             // Should be 0660 (socket, no world access)
-            assert_eq!(mode & 0o777, 0o660,
-                "Socket should be 0660, got {:o}", mode & 0o777);
+            assert_eq!(
+                mode & 0o777,
+                0o660,
+                "Socket should be 0660, got {:o}",
+                mode & 0o777
+            );
         }
     }
 

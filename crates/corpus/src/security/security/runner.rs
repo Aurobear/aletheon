@@ -79,7 +79,10 @@ impl ToolRunnerWithGuard {
     }
 
     /// Create with an explicit sandbox preference.
-    pub fn with_sandbox_preference(audit_logger: AuditLogger, preference: SandboxPreference) -> Self {
+    pub fn with_sandbox_preference(
+        audit_logger: AuditLogger,
+        preference: SandboxPreference,
+    ) -> Self {
         Self::new(SandboxExecutor::new(preference), audit_logger)
     }
 

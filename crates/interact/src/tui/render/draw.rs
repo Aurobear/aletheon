@@ -3,8 +3,7 @@ use ratatui::Terminal;
 use super::super::test_infra::{buffer_to_text, now_ms, FrameRecorder, FrameSnapshot};
 use super::super::App;
 use super::renderable::{
-    ChatRenderable, HeaderRenderable, InputRenderable, LayoutHelper, Renderable,
-    StatusRenderable,
+    ChatRenderable, HeaderRenderable, InputRenderable, LayoutHelper, Renderable, StatusRenderable,
 };
 
 /// Draw with optional frame recording — captures the buffer inside the draw closure.
@@ -66,12 +65,7 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
                 completion: completion_ref,
             },
         );
-        layout.push_fixed(
-            1,
-            StatusRenderable {
-                status: status_ref,
-            },
-        );
+        layout.push_fixed(1, StatusRenderable { status: status_ref });
         layout.render(size, f.buffer_mut());
 
         // Approval dialog rendered as modal overlay

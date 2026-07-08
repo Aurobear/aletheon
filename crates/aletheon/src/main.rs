@@ -14,8 +14,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use runtime::host::RuntimeHost;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
@@ -100,7 +100,10 @@ async fn main() -> Result<()> {
             }),
             _,
         ) => {
-            init_tracing("aletheon::daemon", Some(Path::new("/var/lib/aletheon/aletheon.log")));
+            init_tracing(
+                "aletheon::daemon",
+                Some(Path::new("/var/lib/aletheon/aletheon.log")),
+            );
             let socket_path = socket.clone().unwrap_or(cli.socket);
             let daemon_mode = detect_daemon_mode(container);
 
@@ -127,8 +130,12 @@ async fn main() -> Result<()> {
                     Box::new(host).serve().await
                 }
                 DaemonMode::Foreground => {
-                    let mut host =
-                        runtime::host::DaemonHost::new(config.clone(), env.clone(), socket_path, *enable_evolution);
+                    let mut host = runtime::host::DaemonHost::new(
+                        config.clone(),
+                        env.clone(),
+                        socket_path,
+                        *enable_evolution,
+                    );
                     host.init().await?;
                     Box::new(host).serve().await
                 }
@@ -202,11 +209,13 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
         EnvFilter::from_default_env()
     } else {
         // Capture info-level logs from aletheon + key runtime subsystems
-        EnvFilter::new(format!("{}=info,runtime=info,cognit=info,corpus=info", target))
+        EnvFilter::new(format!(
+            "{}=info,runtime=info,cognit=info,corpus=info",
+            target
+        ))
     };
 
-    let stderr_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr);
+    let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
 
     let subscriber = tracing_subscriber::registry()
         .with(env_filter)
@@ -218,7 +227,11 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
         }
         let log_path = path.to_path_buf();
         // Test that the file is writable before adding the layer
-        match fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+        match fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
             Ok(_) => {
                 let file_layer = tracing_subscriber::fmt::layer()
                     .with_ansi(false)
@@ -233,7 +246,11 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
                 return;
             }
             Err(e) => {
-                eprintln!("Warning: could not open log file {}: {}", log_path.display(), e);
+                eprintln!(
+                    "Warning: could not open log file {}: {}",
+                    log_path.display(),
+                    e
+                );
             }
         }
     }
@@ -294,9 +311,11 @@ async fn run_exec(
     let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
     let sandbox_preference = SandboxPreference::from_str(sandbox);
     info!(preference = ?sandbox_preference, "sandbox configured");
-    let mut runner =
-        ToolRunnerWithGuard::with_sandbox_preference(AuditLogger::new(audit_path)?, sandbox_preference)
-            .with_approval_gate(approval);
+    let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
+        AuditLogger::new(audit_path)?,
+        sandbox_preference,
+    )
+    .with_approval_gate(approval);
     let turn_id = uuid::Uuid::new_v4().to_string();
     runner.on_new_turn(&turn_id);
 

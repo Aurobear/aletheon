@@ -265,20 +265,18 @@ fn render_markdown_with_theme(
                         let vbar = caps.vline();
                         for (ridx, row) in table_rows.iter().enumerate() {
                             let mut spans: Vec<Span<'static>> = Vec::new();
-                            spans.push(Span::styled(
-                                format!("{} ", vbar),
-                                Style::default().fg(dim),
-                            ));
-                            for c in 0..ncols {
+                            spans
+                                .push(Span::styled(format!("{} ", vbar), Style::default().fg(dim)));
+                            for (c, &col_width) in col_w.iter().enumerate() {
                                 let cell = row.get(c);
                                 let w: usize = cell
-                                    .map(|c| c.iter().map(|s| s.width()).sum())
+                                    .map(|cs| cs.iter().map(|s| s.width()).sum())
                                     .unwrap_or(0);
                                 if let Some(cell) = cell {
                                     spans.extend(cell.clone());
                                 }
-                                if w < col_w[c] {
-                                    spans.push(Span::raw(" ".repeat(col_w[c] - w)));
+                                if w < col_width {
+                                    spans.push(Span::raw(" ".repeat(col_width - w)));
                                 }
                                 spans.push(Span::styled(
                                     format!(" {} ", vbar),
@@ -291,9 +289,9 @@ fn render_markdown_with_theme(
                             if ridx + 1 == table_header_count {
                                 let mut sep: Vec<Span<'static>> =
                                     vec![Span::styled(vbar.to_string(), Style::default().fg(dim))];
-                                for c in 0..ncols {
+                                for &col_width in &col_w {
                                     sep.push(Span::styled(
-                                        "─".repeat(col_w[c] + 2),
+                                        "─".repeat(col_width + 2),
                                         Style::default().fg(dim),
                                     ));
                                     sep.push(Span::styled(
@@ -460,7 +458,10 @@ mod tests {
         let input = "| Lang | Use |\n|------|-----|\n| Rust | sys |\n| Go | web |";
         let lines = render_markdown(input, 80, &caps);
         let text = |l: &Line| -> String {
-            l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
         };
         // Table rows are the lines containing the vertical border.
         let tbl: Vec<String> = lines
@@ -478,7 +479,11 @@ mod tests {
         // Row index 1 is the header separator: only box-drawing chars, no text.
         let sep = &tbl[1];
         assert!(sep.contains('─'), "no separator dashes: {:?}", sep);
-        assert!(!sep.chars().any(|c| c.is_alphabetic()), "separator has text: {:?}", sep);
+        assert!(
+            !sep.chars().any(|c| c.is_alphabetic()),
+            "separator has text: {:?}",
+            sep
+        );
         // No raw markdown table syntax leaked as literal characters.
         assert!(
             !tbl.iter().any(|t| t.contains('|') || t.contains("---")),

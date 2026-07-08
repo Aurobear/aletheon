@@ -130,11 +130,11 @@ impl StreamController {
             TableHoldbackState::Accumulating { header_end_idx } => {
                 // Only emit lines before the held-back table.
                 if header_end_idx > 0 && header_end_idx <= tail_lines.len() {
-                    for i in 0..header_end_idx {
+                    for (i, line) in tail_lines.iter().take(header_end_idx).enumerate() {
                         if i > 0 {
                             result.push('\n');
                         }
-                        result.push_str(&tail_lines[i]);
+                        result.push_str(line);
                     }
                 }
                 // When header_end_idx == 0 the table starts at the very

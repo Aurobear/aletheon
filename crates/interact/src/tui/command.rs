@@ -166,7 +166,9 @@ mod tests {
     #[test]
     fn test_looks_like_command_false_for_paths() {
         // Absolute paths start with '/' but must be treated as chat, not skills.
-        assert!(!looks_like_command("/home/aurobear/Bear-ws/aletheon 分析这个项目"));
+        assert!(!looks_like_command(
+            "/home/aurobear/Bear-ws/aletheon 分析这个项目"
+        ));
         assert!(!looks_like_command("/usr/bin/foo"));
         assert!(!looks_like_command("/home/user/proj"));
     }

@@ -7,11 +7,9 @@ use super::debug;
 use super::goal;
 use super::workflow;
 
-use base::ui_event::ClientEvent;
-use super::response::{
-    format_reflections, format_genome, format_evolution, format_status,
-};
 use super::response::deduplicate_consecutive_text as deduplicate_response;
+use super::response::{format_evolution, format_genome, format_reflections, format_status};
+use base::ui_event::ClientEvent;
 
 use std::io;
 use std::path::PathBuf;

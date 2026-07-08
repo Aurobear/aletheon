@@ -1,5 +1,5 @@
-use base::events::ui_event::ClientEvent;
 use crate::core::event_sink::Event;
+use base::events::ui_event::ClientEvent;
 
 /// Convert a `ClientEvent` to a JSON-RPC 2.0 notification string.
 pub fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
@@ -15,49 +15,79 @@ pub fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
 /// Returns `None` for internal-only events (compaction, memory, approval, etc.).
 pub fn event_to_client_event(event: &Event) -> Option<ClientEvent> {
     match event {
-        Event::TurnStarted { iteration } => Some(ClientEvent::TurnStarted { iteration: *iteration }),
-        Event::TextDelta { delta } => Some(ClientEvent::TextDelta { text: delta.clone() }),
+        Event::TurnStarted { iteration } => Some(ClientEvent::TurnStarted {
+            iteration: *iteration,
+        }),
+        Event::TextDelta { delta } => Some(ClientEvent::TextDelta {
+            text: delta.clone(),
+        }),
         Event::ToolCallStart { name, call_id } => Some(ClientEvent::ToolCallStart {
             call_id: call_id.clone(),
             tool: name.clone(),
             args: serde_json::Value::Null,
         }),
-        Event::ToolCallComplete { call_id, name, args } => Some(ClientEvent::ToolCallComplete {
+        Event::ToolCallComplete {
+            call_id,
+            name,
+            args,
+        } => Some(ClientEvent::ToolCallComplete {
             call_id: call_id.clone(),
             tool: name.clone(),
             args: args.clone(),
         }),
-        Event::ToolResult { name, call_id, result } => Some(ClientEvent::ToolCallResult {
+        Event::ToolResult {
+            name,
+            call_id,
+            result,
+        } => Some(ClientEvent::ToolCallResult {
             call_id: call_id.clone(),
             tool: name.clone(),
             output: result.content.clone(),
             is_error: result.is_error,
             elapsed_ms: result.execution_time_ms,
         }),
-        Event::Usage { tokens_in, tokens_out, .. } => Some(ClientEvent::Usage {
+        Event::Usage {
+            tokens_in,
+            tokens_out,
+            ..
+        } => Some(ClientEvent::Usage {
             tokens_in: *tokens_in as u64,
             tokens_out: *tokens_out as u64,
         }),
         Event::TurnDone { .. } => Some(ClientEvent::TurnDone),
-        Event::Error { message } => Some(ClientEvent::Error { message: message.clone() }),
+        Event::Error { message } => Some(ClientEvent::Error {
+            message: message.clone(),
+        }),
         Event::AwarenessChanged { level, context } => Some(ClientEvent::AwarenessChanged {
             level: level.clone(),
             context: context.clone(),
         }),
         Event::ModeChanged { mode } => Some(ClientEvent::ModeChanged { new: mode.clone() }),
-        Event::SubAgentStatusChanged { agent_id, status, task } => Some(ClientEvent::SubAgentStatus {
+        Event::SubAgentStatusChanged {
+            agent_id,
+            status,
+            task,
+        } => Some(ClientEvent::SubAgentStatus {
             agent_id: agent_id.clone(),
             task: task.clone(),
             status: status.clone(),
         }),
-        Event::PlanUpdate { version, plan, critique, ready_for_approval } => Some(ClientEvent::PlanUpdate {
+        Event::PlanUpdate {
+            version,
+            plan,
+            critique,
+            ready_for_approval,
+        } => Some(ClientEvent::PlanUpdate {
             version: *version,
             plan: plan.clone(),
             critique: critique.clone(),
             ready_for_approval: *ready_for_approval,
         }),
         Event::Interrupted { .. } => Some(ClientEvent::Interrupted),
-        Event::ContextUpdate { used_tokens, max_tokens } => Some(ClientEvent::ContextUpdate {
+        Event::ContextUpdate {
+            used_tokens,
+            max_tokens,
+        } => Some(ClientEvent::ContextUpdate {
             used_tokens: *used_tokens as u64,
             max_tokens: *max_tokens as u64,
         }),
@@ -71,9 +101,9 @@ pub fn event_to_client_event(event: &Event) -> Option<ClientEvent> {
         Event::Reflection { summary, .. } => Some(ClientEvent::Reflection {
             summary: summary.clone(),
         }),
-        Event::BudgetExceeded { max, .. } => Some(ClientEvent::BudgetExceeded {
-            limit: *max as u64,
-        }),
+        Event::BudgetExceeded { max, .. } => {
+            Some(ClientEvent::BudgetExceeded { limit: *max as u64 })
+        }
         Event::CircuitBreakerTripped { reason } => Some(ClientEvent::CircuitBreakerTripped {
             reason: reason.clone(),
         }),

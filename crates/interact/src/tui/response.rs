@@ -18,8 +18,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
                 app.streaming = false;
                 app.status.waiting = false;
                 app.app_state.streaming = false;
-                app.chat
-                    .add_text(ChatRole::System, "连接断开".to_string());
+                app.chat.add_text(ChatRole::System, "连接断开".to_string());
                 break;
             }
             Ok(n) => {
@@ -93,21 +92,38 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::TextDelta { text } => {
             app.stream_ctrl.push_text(&text);
-            app.chat.set_assistant_stream(app.stream_ctrl.current_text());
+            app.chat
+                .set_assistant_stream(app.stream_ctrl.current_text());
         }
-        ClientEvent::ToolCallStart { call_id, tool, args } => {
+        ClientEvent::ToolCallStart {
+            call_id,
+            tool,
+            args,
+        } => {
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             app.chat.add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;
         }
-        ClientEvent::ToolCallComplete { call_id, tool: _, args } => {
+        ClientEvent::ToolCallComplete {
+            call_id,
+            tool: _,
+            args,
+        } => {
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             app.chat.update_exec_args(&call_id, &args_str);
         }
-        ClientEvent::ToolCallResult { call_id, output, is_error, .. } => {
+        ClientEvent::ToolCallResult {
+            call_id,
+            output,
+            is_error,
+            ..
+        } => {
             app.chat.update_exec(&call_id, &output, is_error);
         }
-        ClientEvent::Usage { tokens_in, tokens_out } => {
+        ClientEvent::Usage {
+            tokens_in,
+            tokens_out,
+        } => {
             app.turn_tokens = Some((tokens_in as u32, tokens_out as u32));
             app.total_tokens = app
                 .total_tokens
@@ -138,7 +154,12 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 app.app_state.awareness.update(awareness_level, context);
             }
         }
-        ClientEvent::PlanUpdate { version, plan, critique, ready_for_approval } => {
+        ClientEvent::PlanUpdate {
+            version,
+            plan,
+            critique,
+            ready_for_approval,
+        } => {
             if let Ok(plan_obj) = serde_json::from_str::<Plan>(&plan) {
                 let critique_obj: Option<Vec<Critique>> = critique
                     .as_ref()
@@ -151,10 +172,12 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 app.plan_view.set_ready(ready_for_approval);
             }
         }
-        ClientEvent::SubAgentStatus { agent_id, task, status } => {
-            if let Ok(s) =
-                serde_json::from_str::<SubAgentStatus>(&format!("\"{}\"", status))
-            {
+        ClientEvent::SubAgentStatus {
+            agent_id,
+            task,
+            status,
+        } => {
+            if let Ok(s) = serde_json::from_str::<SubAgentStatus>(&format!("\"{}\"", status)) {
                 let existing = app.sub_agents.iter_mut().find(|a| a.id == agent_id);
                 match existing {
                     Some(handle) => {
@@ -174,13 +197,14 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             }
         }
         ClientEvent::ModeChanged { new } => {
-            if let Ok(mode) =
-                serde_json::from_str::<CollaborationMode>(&format!("\"{}\"", new))
-            {
+            if let Ok(mode) = serde_json::from_str::<CollaborationMode>(&format!("\"{}\"", new)) {
                 app.app_state.mode = mode;
             }
         }
-        ClientEvent::ContextUpdate { max_tokens, used_tokens } => {
+        ClientEvent::ContextUpdate {
+            max_tokens,
+            used_tokens,
+        } => {
             app.app_state.context.used = used_tokens as usize;
             app.app_state.context.max = max_tokens as usize;
             app.status.context_window = max_tokens as u32;
@@ -212,7 +236,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             // don't prepend it again (bug T2: "Reflection: Reflection: ...").
             app.chat.add_text(ChatRole::System, summary);
         }
-        ClientEvent::GoalSet { goal: _, sub_goals: _ } => {
+        ClientEvent::GoalSet {
+            goal: _,
+            sub_goals: _,
+        } => {
             // goal set — update app state
         }
     }

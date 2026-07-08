@@ -339,7 +339,7 @@ async fn sliding_window_eviction() {
 async fn disabled_coordinator_is_a_noop() {
     let tmp = tempfile::tempdir().unwrap();
     let config = EvolutionConfig {
-        enabled: false,           // default-off gate
+        enabled: false, // default-off gate
         evolution_permitted: false,
         trigger_every_n_turns: 1, // would trigger every turn if enabled
         trigger_on_failure: true,

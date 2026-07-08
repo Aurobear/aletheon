@@ -452,11 +452,7 @@ impl ChatWidget {
     pub fn all_lines(&self, frame_counter: u64) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         for entry in &self.entries {
-            lines.extend(entry.render_lines(
-                frame_counter,
-                self.render_width,
-                &self.caps,
-            ));
+            lines.extend(entry.render_lines(frame_counter, self.render_width, &self.caps));
         }
         lines
     }
@@ -947,7 +943,11 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect::<Vec<_>>()
             .join("");
-        assert!(header_text.contains("⠋"), "should have spinner, got: {}", header_text);
+        assert!(
+            header_text.contains("⠋"),
+            "should have spinner, got: {}",
+            header_text
+        );
         assert!(!entry.finished);
 
         entry.finish("file1.txt\nfile2.txt", false);
@@ -959,7 +959,11 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect::<Vec<_>>()
             .join("");
-        assert!(header2.contains(" ✓"), "should have checkmark, got: {}", header2);
+        assert!(
+            header2.contains(" ✓"),
+            "should have checkmark, got: {}",
+            header2
+        );
     }
 
     #[test]
@@ -1007,7 +1011,11 @@ mod tests {
             .iter()
             .map(|e| match e {
                 ChatEntry::Text(m) => (
-                    match m.role { Role::User => "user", Role::Assistant => "assistant", Role::System => "system" },
+                    match m.role {
+                        Role::User => "user",
+                        Role::Assistant => "assistant",
+                        Role::System => "system",
+                    },
                     m.content.clone(),
                 ),
                 ChatEntry::Exec(_) => ("exec", String::new()),
@@ -1018,7 +1026,10 @@ mod tests {
         // a trailing assistant), so the final answer sits at the very end.
         assert_eq!(kinds.first().map(|k| k.0), Some("user"));
         assert_eq!(kinds.get(1).map(|k| k.0), Some("exec"));
-        assert_eq!(kinds.last(), Some(&("assistant", "final answer".to_string())));
+        assert_eq!(
+            kinds.last(),
+            Some(&("assistant", "final answer".to_string()))
+        );
     }
 
     #[test]
