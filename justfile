@@ -9,11 +9,11 @@ default:
 
 # 快速增量编译（debug 模式，日常开发用）
 dev:
-    cargo build -p aletheon
+    cargo build -p aletheon-bin
 
 # 编译 + 测试 + lint 全部通过后才 build release
 build: test lint
-    cargo build -p aletheon --release
+    cargo build -p aletheon-bin --release
 
 # 查看各 crate 编译耗时
 timings:

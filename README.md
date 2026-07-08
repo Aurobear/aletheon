@@ -10,7 +10,7 @@
 **Created:** 2026-06-06
 **Author:** aurobear
 
-**[Quick Start](docs/guide/getting-started.md)** | **[Contributing](CONTRIBUTING.md)** | **[Demo](examples/self-evolution-demo/README.md)**
+**[Design Guide](docs/design/README.md)** | **[Contributing](CONTRIBUTING.md)** | **[Demo](examples/self-evolution-demo/README.md)**
 
 ---
 
@@ -174,13 +174,13 @@ Aletheon follows a triune architecture inspired by the Nous framework:
                     +------------------------+
 ```
 
-See [docs/design/architecture-overview.md](docs/design/architecture-overview.md) and [docs/architecture/](docs/architecture/) for full architectural details.
+See [the architecture overview](docs/design/architecture-overview.md) and [design documentation](docs/design/README.md) for architectural details.
 
 ---
 
 ## 5. Crate Architecture
 
-Aletheon is organized as a Cargo workspace with 8 crates:
+Aletheon is organized as eight domain crates plus one executable assembly package:
 
 | Crate | Concept | Role |
 |---|---|---|
@@ -188,25 +188,25 @@ Aletheon is organized as a Cargo workspace with 8 crates:
 | `dasein` | Self | identity, boundary, care, narrative |
 | `cognit` | Brain | reasoning, planning, reflection, provider routing |
 | `corpus` | Body | tools, sandbox, perception, MCP, drivers |
-| `runtime` | Runtime | cognitive loop, orchestration, daemon (`aletheond`, `aletheon-exec` bins) |
-| `interact` | Interface | CLI + TUI client (`aletheon` bin) |
+| `runtime` | Runtime | cognitive loop, orchestration, and daemon implementation |
+| `interact` | Interface | reusable CLI and TUI implementation |
 | `memory` | Memory | cognitive memory backends (episodic/semantic/procedural/self) |
 | `metacog` | Meta | self-evolution scaffolding |
+| `bin` | Assembly | unified `aletheon` executable entry point; no domain logic |
 
-Real binaries:
-- `aletheond` + `aletheon-exec` — `crates/runtime/Cargo.toml:8-14`
-- `aletheon` — `crates/interact/Cargo.toml:8-10`
+Executable entry point:
+- `aletheon` — assembled by `crates/bin` (`crates/bin/Cargo.toml`); provides TUI, `daemon`, and `exec` modes.
 
 ### Crate Dependency Graph
 
 ```
-aletheon (bin)  --->  interact  --->  base, corpus
-aletheond (bin) --->  runtime   --->  base, cognit, corpus, dasein, memory, metacog
-aletheon-exec    ---/
-cognit           --->  base, corpus, interact        (* see note)
+aletheon (crates/bin) ---> interact, runtime, base, cognit, corpus
+interact               ---> base, corpus
+runtime                ---> base, cognit, corpus, dasein, memory, metacog
+cognit                 ---> base
 ```
 
-> **Note:** `cognit` currently depends on `corpus` and `interact` (an inversion; Tier 2c on the roadmap will fix this by moving the shared contract into `base`). This diagram describes the *current* state of the repo.
+> `crates/bin` is an assembly boundary only. Domain behavior remains in the eight domain crates.
 
 ---
 
@@ -220,7 +220,7 @@ cognit           --->  base, corpus, interact        (* see note)
 | SystemdHost (sd_notify, watchdog) | ✅ Stable | `crates/runtime/src/host/systemd.rs` | `crates/runtime/tests/` |
 | ContainerHost (Docker/Podman) | 🔧 Experimental | `crates/runtime/src/host/container.rs` | `crates/runtime/tests/` |
 | JSON-RPC server (line-delimited) | ✅ Stable | `crates/runtime/src/impl/daemon/server.rs` | `crates/runtime/tests/` |
-| TUI client (aletheon binary) | ✅ Stable | `crates/interact/src/tui/` | `crates/interact/src/tui/test_infra.rs` |
+| TUI client (`interact`, assembled by `bin`) | ✅ Stable | `crates/interact/src/tui/` | `crates/interact/src/tui/test_infra.rs` |
 | ReActLoop inference engine | ✅ Stable | `crates/runtime/src/core/react_loop/mod.rs` | `crates/runtime/tests/` |
 | Multi-session support | ✅ Stable | `crates/runtime/src/impl/daemon/session_manager.rs` | `crates/runtime/tests/` |
 | Health check endpoint | ✅ Stable | `crates/runtime/src/impl/daemon/handler/rpc.rs` | `crates/runtime/tests/` |
@@ -239,11 +239,11 @@ cognit           --->  base, corpus, interact        (* see note)
 
 ### 6.2 Stable (has code + tests)
 
-These capabilities are implemented, tested, and used in production paths:
+These capabilities have implementation and test coverage in the current repository:
 
 - **DaemonHost + SystemdHost** — Daemon runs as a systemd service with sd_notify, watchdog, and SIGTERM graceful shutdown.
 - **JSON-RPC API** — Line-delimited JSON-RPC over Unix socket with concurrent connection handling and streaming notifications (TextDelta, ToolCallStart, etc.).
-- **TUI client** — Terminal UI via `aletheon` binary in `crates/interact/`, connecting to the daemon over Unix socket.
+- **TUI client** — Terminal UI implemented in `crates/interact/` and assembled by `crates/bin`, connecting to the daemon over Unix socket.
 - **ReActLoop inference** — Sole production inference engine (Legacy Engine removed). Think-Act-Observe loop with streaming, tool execution, circuit breaker, and goal tracking.
 - **Multi-session** — HashMap-based session registry with create/list/switch RPC methods.
 - **Health check** — RPC endpoint returning uptime, active connections, session count, and version.
@@ -258,7 +258,7 @@ These capabilities are implemented, tested, and used in production paths:
 
 These have code but are gated behind features, environment variables, or exist only as examples:
 
-- **ContainerHost** — Docker/Podman container lifecycle management. Code exists at `crates/runtime/src/host/container.rs` with a binary entrypoint `aletheon-container`.
+- **ContainerHost** — Docker/Podman container lifecycle management. Code exists at `crates/runtime/src/host/container.rs` and is selected through `aletheon daemon --container <runtime>`.
 - **io_uring backend** — High-performance IPC backend using Linux io_uring. Code exists but not yet the default transport.
 - **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/self-evolution-loop/`. Requires explicit opt-in.
 - **eBPF probes** — Kernel-level perception via eBPF. Partial implementation in `kernel_bus.rs`.
@@ -314,14 +314,14 @@ eBPF is Linux's killer feature for safe kernel-level perception.
 ### systemd Integration
 
 ```ini
-# /etc/systemd/system/aletheond.service
+# /etc/systemd/system/aletheon.service
 [Unit]
 Description=Aletheon Agent Service
 After=network.target
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/aletheond --config /etc/aletheon/config.toml
+ExecStart=/usr/bin/aletheon daemon --config /etc/aletheon/config.toml
 ProtectSystem=strict
 ReadWritePaths=/home /tmp /var/lib/aletheon
 WatchdogSec=30s
