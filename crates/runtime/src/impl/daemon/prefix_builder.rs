@@ -8,6 +8,20 @@ use crate::CoreMemory;
 /// so the prefix stays byte-stable across turns for maximum cache reuse.
 pub struct PrefixBuilder;
 
+const MAX_SKILL_DESCRIPTION_CHARS: usize = 512;
+const MAX_SKILLS_INDEX_CHARS: usize = 16 * 1024;
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars == 0 {
+        return String::new();
+    }
+    let truncated: String = value.chars().take(max_chars - 1).collect();
+    format!("{truncated}…")
+}
+
 impl PrefixBuilder {
     /// Build the prefix from its components.
     /// Order is deterministic: base -> skills -> core memory.
@@ -23,8 +37,17 @@ impl PrefixBuilder {
             prefix.push_str(
                 "\n\n[Skills]\nThe following skills are available. Use them when relevant.\n",
             );
+            let mut index_chars = 0;
             for skill in skills {
-                prefix.push_str(&format!("\n## {}\n{}\n", skill.name, skill.content));
+                let description = truncate_chars(&skill.description, MAX_SKILL_DESCRIPTION_CHARS);
+                let entry = format!("\n## {}\n{}\n", skill.name, description);
+                let remaining = MAX_SKILLS_INDEX_CHARS.saturating_sub(index_chars);
+                if remaining == 0 {
+                    break;
+                }
+                let bounded = truncate_chars(&entry, remaining);
+                index_chars += bounded.chars().count();
+                prefix.push_str(&bounded);
             }
         }
 
@@ -142,6 +165,40 @@ mod tests {
         let skills_pos = prefix.find("[Skills]").unwrap();
         let memory_pos = prefix.find("[Persona]").unwrap();
         assert!(skills_pos < memory_pos);
+    }
+
+    #[test]
+    fn skills_index_uses_description_not_full_body() {
+        let mem = CoreMemory::with_defaults();
+        let skill = LoadedSkill {
+            name: "large".into(),
+            description: "Short routing summary".into(),
+            content: "FULL_BODY_SHOULD_NOT_BE_IN_PREFIX".repeat(10_000),
+            source: "test".into(),
+        };
+
+        let prefix = PrefixBuilder::build("Base.", &[skill], &mem);
+
+        assert!(prefix.contains("Short routing summary"));
+        assert!(!prefix.contains("FULL_BODY_SHOULD_NOT_BE_IN_PREFIX"));
+        assert!(prefix.len() < 32 * 1024);
+    }
+
+    #[test]
+    fn skills_index_has_total_budget() {
+        let mem = CoreMemory::with_defaults();
+        let skills = (0..100)
+            .map(|i| LoadedSkill {
+                name: format!("skill-{i}"),
+                description: "d".repeat(2_000),
+                content: String::new(),
+                source: "test".into(),
+            })
+            .collect::<Vec<_>>();
+
+        let prefix = PrefixBuilder::build("Base.", &skills, &mem);
+
+        assert!(prefix.len() < 32 * 1024);
     }
 
     #[test]

@@ -259,6 +259,10 @@ client connect
 
 关键设计点:
 - 启动时移除已存在的 stale socket 文件
+- socket 权限固定为 `0660`、所有者组为 `aletheon`
+- 安装时新增的 supplementary group 不会自动进入既有登录进程；使用
+  `id -nG | grep -w aletheon` 检查，并通过重新登录、`newgrp aletheon`
+  或临时执行 `sg aletheon -c 'aletheon'` 激活
 - 每个连接独立 tokio task（支持并发客户端）
 - 连接 EOF 时自动清理
 
