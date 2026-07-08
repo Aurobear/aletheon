@@ -86,7 +86,7 @@ runtime/src/
       webhook.rs                # WebhookEvent
     agent/                      # Agent abstractions
       mod.rs
-    daemon/                     # Daemon (aletheond)
+    daemon/                     # Daemon (aletheon daemon)
       mod.rs
       handler.rs                # Request handler
       server.rs                 # Server

@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aletheon"
+name = "aletheon-bin"
 version = "0.1.0"
 dependencies = [
  "anyhow",

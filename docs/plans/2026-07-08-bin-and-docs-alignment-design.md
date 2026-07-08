@@ -3,7 +3,7 @@
 ## Scope
 
 1. Keep the 14 documentation deletions already present in the working tree.
-2. Rename the unified executable package directory from `crates/aletheon` to
+2. Rename the unified executable package directory from `crates/bin` to
    `crates/bin` without changing the installed executable name `aletheon`.
 3. Rename concept-oriented design directories to match their implementation
    crates:
@@ -50,11 +50,9 @@ crates must not depend on `aletheon-bin`.
 ## Validation
 
 - `cargo metadata --no-deps` recognizes `crates/bin` and no longer references
-  `crates/aletheon`.
+  the old `crates/aletheon` path.
 - The workspace still produces a binary named `aletheon`.
 - All relative Markdown links in `README.md` and `docs/**/*.md` resolve.
-- Repository searches find no obsolete `crates/aletheon`, `docs/design/abi`,
-  `docs/design/body`, `docs/design/brain`, `docs/design/self`,
-  `docs/design/meta`, or `docs/design/cli` paths.
+- Repository searches find no obsolete `crates/aletheon` or concept-oriented design directory paths.
 - Existing user deletions remain deleted.
 

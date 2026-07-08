@@ -19,12 +19,12 @@
 
 ## 1. 流水线阶段
 
-### 1.1 已配置的 CI 阶段 (待落地到 GitHub Actions)
+### 1.1 已配置的 GitHub Actions CI 阶段
 
 计划的 workflow 包含以下 job:
 
 ```yaml
-# .github/workflows/ci.yml (待创建)
+# .github/workflows/ci.yml
 jobs:
   - python-lint:    # Python 代码 lint (scripts/, src/lib/)
   - shell-lint:     # Shell 脚本 lint (scripts/)
@@ -155,10 +155,10 @@ jobs:
 
 | 产物 | 格式 | 包含 | 分发方式 |
 |------|------|------|----------|
-| aletheond + interact | `.pkg.tar.zst` | 二进制 + systemd service + 默认配置 | AUR |
-| aletheond + interact | `.deb` | 二进制 + systemd service + 默认配置 | 手动 |
+| aletheon daemon + interact | `.pkg.tar.zst` | 二进制 + systemd service + 默认配置 | AUR |
+| aletheon daemon + interact | `.deb` | 二进制 + systemd service + 默认配置 | 手动 |
 | DKMS 包 | `.deb` / `.pkg.tar.zst` | `agent_ipc.ko` 内核模块 | 手动 |
-| Docker 镜像 | `ghcr.io/aurobear/aletheon` | aletheond + base tools | GHCR |
+| Docker 镜像 | `ghcr.io/aurobear/aletheon` | aletheon daemon + base tools | GHCR |
 
 ---
 
