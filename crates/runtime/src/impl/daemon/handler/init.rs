@@ -127,7 +127,7 @@ impl RequestHandler {
         // Wire DaseinEventBridge to CommunicationBus if available
         if let Some(ref bus) = event_bus {
             let sf = self_field.lock().await;
-            sf.wire_dasein_event_bridge(&**bus).await?;
+            sf.wire_dasein_event_bridge(bus).await?;
         }
 
         // Create memory instances

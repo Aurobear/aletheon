@@ -1,6 +1,7 @@
 /// Tests API behavior under stress/edge conditions.
 /// Requires: running daemon with valid API key.
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod api_stress {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;

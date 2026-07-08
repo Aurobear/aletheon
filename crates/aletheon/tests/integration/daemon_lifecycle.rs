@@ -1,6 +1,7 @@
 /// Tests daemon lifecycle: restart, session persistence.
 /// Requires: systemctl, aletheon.service installed.
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod daemon_lifecycle {
     use std::process::Command;
 

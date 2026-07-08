@@ -1,6 +1,7 @@
 /// Tests socket peer credential enforcement.
 /// Requires: daemon running as aletheon user, socket at /run/aletheon/aletheon.sock.
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod socket_auth {
     use std::os::unix::fs::FileTypeExt;
     use std::os::unix::net::UnixStream;
