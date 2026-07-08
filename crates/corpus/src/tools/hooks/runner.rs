@@ -56,11 +56,12 @@ impl HookRunner {
             .spawn()
             .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
 
-        // Write payload to stdin.
+        // Write payload to stdin (best-effort). A hook that does not read its
+        // stdin may exit before the write finishes, yielding a broken-pipe
+        // (EPIPE) error — that is NOT a hook failure, so ignore write errors.
+        // The hook's exit status and stdout determine the response.
         if let Some(ref mut stdin) = child.stdin {
-            stdin
-                .write_all(json_payload.as_bytes())
-                .map_err(|e| anyhow::anyhow!("stdin write failed: {e}"))?;
+            let _ = stdin.write_all(json_payload.as_bytes());
         }
         // Close stdin so the hook knows input is done.
         drop(child.stdin.take());
