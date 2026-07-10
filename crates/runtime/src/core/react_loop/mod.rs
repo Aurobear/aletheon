@@ -19,12 +19,12 @@ use tool_budget::ToolBudget;
 
 use crate::core::config::RuntimeConfig;
 use crate::core::interrupt::InterruptFlag;
-use crate::r#impl::memory::compressor::AdvancedCompressor;
 use base::body::Action;
 use base::message::Message;
 use base::policy::verifier::Verifier;
 use base::self_field::{Intent, IntentSource};
 use cognit::core::awareness_signal::AwarenessSignal;
+use memory::AdvancedCompressor;
 use std::sync::Arc;
 
 /// Marker injected into user messages when plan mode is active.

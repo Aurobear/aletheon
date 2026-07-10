@@ -37,7 +37,7 @@ pub use r#impl::session;
 // Re-export provider registry from brain-core
 pub use cognit::r#impl::provider_registry::ProviderRegistry;
 
-// Re-export memory types
-pub use r#impl::memory::core_memory::CoreMemory;
-pub use r#impl::memory::recall_memory::RecallMemory;
-pub use r#impl::memory::tools as memory_tools;
+// Re-export memory types (now in the memory crate, Group B Phase 2)
+pub use memory::memory_tools;
+pub use memory::CoreMemory;
+pub use memory::RecallMemory;

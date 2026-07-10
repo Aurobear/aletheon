@@ -11,6 +11,7 @@ impl FactStore {
 
     /// Add a fact. INSERT OR IGNORE on duplicate content.
     /// Returns the fact_id (existing or newly inserted).
+    #[allow(clippy::too_many_arguments)]
     pub fn add_fact(
         &self,
         content: &str,
@@ -345,6 +346,7 @@ impl FactStore {
     // ── Episodes ─────────────────────────────────────────────────────────────
 
     /// Add an episode.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_episode(
         &self,
         session_id: &str,

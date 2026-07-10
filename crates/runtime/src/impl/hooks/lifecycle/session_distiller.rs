@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::sync::Mutex;
 
 use super::{Hook, HookEvent, HookResult};
-use crate::r#impl::memory::FactStore;
+use memory::FactStore;
 
 const MAX_TRANSCRIPT_CHARS: usize = 12_000;
 const MAX_FACTS_PER_SESSION: usize = 5;

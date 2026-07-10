@@ -29,12 +29,12 @@ use crate::core::orchestrator::AletheonRuntime;
 use crate::core::storm_breaker::StormBreaker;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::r#impl::hooks::registry::HookRegistry;
-use crate::r#impl::memory::auto_memory::AutoMemory;
-use crate::r#impl::memory::fact_store::FactStore;
 use crate::r#impl::skill_router::SkillRouter;
 use crate::r#impl::skills::loader::SkillLoader;
 use crate::CoreMemory;
 use crate::RecallMemory;
+use memory::AutoMemory;
+use memory::FactStore;
 
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use cognit::core::reflector::Reflector;

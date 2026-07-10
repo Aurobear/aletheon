@@ -6,8 +6,8 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use super::{Hook, HookEvent, HookResult};
-use crate::r#impl::memory::FactStore;
 use crate::r#impl::skill_router::SkillRouter;
+use memory::FactStore;
 
 const MIN_PROMPT_LEN: usize = 8;
 const MAX_FACTS: usize = 4;

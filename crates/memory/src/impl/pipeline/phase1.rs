@@ -253,7 +253,7 @@ fn current_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::memory::pipeline::state_db::{SessionRecord, Stage1Status};
+    use crate::r#impl::pipeline::state_db::{SessionRecord, Stage1Status};
     use tempfile::TempDir;
 
     fn default_phase1_config() -> Phase1Config {
