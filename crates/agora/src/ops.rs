@@ -67,6 +67,15 @@ impl AgoraOps for AgoraRegistry {
         }
         Ok(())
     }
+
+    async fn trace(&self, session: &str, kind: &str, content: Value) -> Result<()> {
+        let mut map = self.sessions.lock().await;
+        let ws = map
+            .entry(session.to_string())
+            .or_insert_with(|| Workspace::new(session));
+        ws.trace.push(kind, content);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -103,5 +112,18 @@ mod tests {
         assert_eq!(snap["blackboard"]["k"], json!(1));
         reg.clear("s1").await.unwrap();
         assert_eq!(reg.recall("s1", "k").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn trace_appends_and_reflects_in_snapshot() {
+        let reg = AgoraRegistry::new();
+        reg.publish("s1", "k", json!(1)).await.unwrap();
+        let before = reg.snapshot("s1").await.unwrap();
+        assert_eq!(before["trace_len"], json!(0));
+        reg.trace("s1", "tool_result", json!({"call_id": "c1", "ok": true}))
+            .await
+            .unwrap();
+        let after = reg.snapshot("s1").await.unwrap();
+        assert_eq!(after["trace_len"], json!(1));
     }
 }

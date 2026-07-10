@@ -68,6 +68,8 @@ pub trait AgoraOps: Send + Sync {
     async fn snapshot(&self, session: &str) -> Result<serde_json::Value>;
     /// Clear a session's workspace.
     async fn clear(&self, session: &str) -> Result<()>;
+    /// Append an entry onto a session's reasoning trace.
+    async fn trace(&self, session: &str, kind: &str, content: serde_json::Value) -> Result<()>;
 }
 
 // ---------------------------------------------------------------------------
