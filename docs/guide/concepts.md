@@ -47,7 +47,7 @@ SelfField is not a static identity object. It is a dynamic field that maintains 
 | Continuity | "How do I persist?" | Maintains lineage across restarts and evolution cycles |
 | Mutation | "How do I change?" | Policy updates, memory schema changes, topology updates |
 
-**Implementation:** `crates/dasein/` -- see [SelfField design](../design/self/self-field.md).
+**Implementation:** `crates/dasein/` -- see [SelfField design](../design/dasein/self-field.md).
 
 ---
 
@@ -73,7 +73,7 @@ User request / Perception event
   --> loop until done or max iterations
 ```
 
-**Implementation:** `crates/cognit/` -- see [Cognitive Engine](../design/brain/cognitive-engine.md).
+**Implementation:** `crates/cognit/` -- see [Cognitive Engine](../design/cognit/cognitive-engine.md).
 
 ---
 
@@ -91,7 +91,7 @@ BodyRuntime is the agent's embodied execution layer. It interacts with the opera
 
 BodyRuntime can **refuse** actions flagged by SelfField's boundary layer and can **observe** system state that feeds into BrainCore's reasoning.
 
-**Implementation:** `crates/corpus/` -- see [Body design](../design/body/tools.md).
+**Implementation:** `crates/corpus/` -- see [Body design](../design/corpus/tools.md).
 
 ---
 
@@ -123,7 +123,7 @@ Run --> Reflect --> Mutate Spec --> Generate Candidate --> Evaluate --> Migrate 
 
 This is the foundation of true self-evolution: not just learning patterns, but regenerating the runtime itself.
 
-**Implementation:** `crates/metacog/` -- see [MetaRuntime design](../design/meta/meta-runtime.md).
+**Implementation:** `crates/metacog/` -- see [MetaRuntime design](../design/metacog/meta-runtime.md).
 
 ---
 
@@ -152,5 +152,5 @@ See [Linux Integration](../architecture/linux-integration.md) for details.
 
 - [Architecture Overview](../design/architecture-overview.md) -- full system architecture with crate graph
 - [Project Aletheon](../Aletheon.md) -- design philosophy and research foundations
-- [Hook System](../design/self/hook-system.md) -- 21 event types for lifecycle hooks
-- [Security Model](../design/body/security.md) -- policy engine, sandboxing, rollback
+- [Hook System](../design/runtime/hook-system.md) -- 21 event types for lifecycle hooks
+- [Security Model](../design/corpus/security.md) -- policy engine, sandboxing, rollback

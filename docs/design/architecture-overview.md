@@ -86,12 +86,12 @@ metacog         (depends on base -- self-evolution)
 |-------|------|----------|
 | `base` | 契约层+通信层 | 零实现 Trait 定义、共享类型（message, tool, sandbox, llm_types, memory, event, genome）、EventBus、Unix Socket、io_uring、优先队列、消息路由 |
 | `memory` | 记忆层 | SQLite 后端：episodic、semantic、procedural、self_memory、MemoryRouter |
-| `corpus` | 执行层 | 工具、沙箱、MCP、感知、平台适配、驱动、UI、ACIX |
-| `dasein` | 主体场 | 身份、边界、关切、叙事、冲突、注意力、连续性、变异、Hook、安全、容错 |
+| `corpus` | 执行层 | 工具、沙箱、MCP、平台适配、驱动 |
+| `dasein` | 主体场 | 身份、边界、关切、叙事、冲突、注意力、连续性、变异、感知、安全、容错 |
 | `cognit` | 认知层 | 推理、规划、批判、反思、学习、LLM 桥接、推理路由 |
-| `runtime` | 编排层 | ReAct 循环、会话、编排、记忆管道、插件、自动化、守护进程（aletheond binary） |
+| `runtime` | 编排层 | ReAct 循环、会话、编排、记忆管道、插件、自动化、守护进程（aletheond binary）、Hook 系统 |
 | `metacog` | 自演化层 | MetaRuntime、Morphogenesis、Genome、候选生成、沙箱测试、迁移 |
-| `interact` | 客户端 | CLI/TUI、三种模式（单消息/TUI/REPL），aletheon binary |
+| `interact` | 客户端 | CLI/TUI、三种模式（单消息/TUI/REPL）、ACIX，aletheon binary |
 
 ### 内部结构模式
 
@@ -112,30 +112,30 @@ crates/*/
 
 | 模块 | 状态 | 说明 | Crate | 设计文档 |
 |------|------|------|-------|---------|
-| **认知引擎** | ✅ | ReAct 循环，content-block 协议；流式输出 | runtime + brain | [runtime/react-loop.md](runtime/react-loop.md), [brain/cognitive-engine.md](brain/cognitive-engine.md) |
-| **LLM 提供者** | ✅ | OpenAI 兼容 + Anthropic，流式 SSE | brain | [brain/inference.md](brain/inference.md) |
-| **混合推理路由** | 🔶 | IntentClassifier + InferenceRouter 代码已实现，但未接入 Engine | brain | [brain/inference.md](brain/inference.md) |
-| **工具系统** | ✅ | 9 个内置工具，沙箱执行 | body | [body/tools.md](body/tools.md) |
-| **安全层** | ✅ | 策略引擎，循环检测，熔断器，审计日志 | body + self | [body/security.md](body/security.md), [self/loop-detector.md](self/loop-detector.md) |
-| **沙箱** | ✅ | bubblewrap / process / noop 三种后端 | body | [body/sandbox.md](body/sandbox.md) |
+| **认知引擎** | ✅ | ReAct 循环，content-block 协议；流式输出 | runtime + cognit | [runtime/react-loop.md](runtime/react-loop.md), [cognit/cognitive-engine.md](cognit/cognitive-engine.md) |
+| **LLM 提供者** | ✅ | OpenAI 兼容 + Anthropic，流式 SSE | cognit | [cognit/inference.md](cognit/inference.md) |
+| **混合推理路由** | 🔶 | IntentClassifier + InferenceRouter 代码已实现，但未接入 Engine | cognit | [cognit/inference.md](cognit/inference.md) |
+| **工具系统** | ✅ | 9 个内置工具，沙箱执行 | corpus | [corpus/tools.md](corpus/tools.md) |
+| **安全层** | ✅ | 策略引擎，循环检测，熔断器，审计日志 | corpus + dasein | [corpus/security.md](corpus/security.md), [corpus/loop-detector.md](corpus/loop-detector.md) |
+| **沙箱** | ✅ | bubblewrap / process / noop 三种后端 | corpus | [corpus/sandbox.md](corpus/sandbox.md) |
 | **记忆系统** | ✅ | L1 CoreMemory + L2 Recall(SQLite) + L3 Archival(向量搜索 🔶) | memory + runtime | [memory/memory-system.md](memory/memory-system.md) |
-| **感知层** | ✅ | /proc + inotify(轮询) + journald + eBPF(mock) + 瓶颈检测 | body + self | [body/perception.md](body/perception.md), [self/perception-sources.md](self/perception-sources.md) |
+| **感知层** | ✅ | /proc + inotify(轮询) + journald + eBPF(mock) + 瓶颈检测 | corpus + dasein | [dasein/perception.md](dasein/perception.md), [dasein/perception-sources.md](dasein/perception-sources.md) |
 | **多 Agent** | ✅ | Agent trait，委托，选择器/交接策略，DiGraph 工作流 | runtime | [runtime/orchestration.md](runtime/orchestration.md) |
-| **Hook 系统** | ✅ | 21 事件类型，3 层 TOML 配置，命令钩子 | self | [self/hook-system.md](self/hook-system.md) |
-| **MCP 客户端** | ✅ | stdio/StreamableHTTP/SSE 传输，OAuth 2.0 | body | [body/mcp.md](body/mcp.md) |
+| **Hook 系统** | ✅ | 21 事件类型，3 层 TOML 配置，命令钩子 | runtime | [runtime/hook-system.md](runtime/hook-system.md) |
+| **MCP 客户端** | ✅ | stdio/StreamableHTTP/SSE 传输，OAuth 2.0 | corpus | [corpus/mcp.md](corpus/mcp.md) |
 | **插件系统** | ✅ | 命令子进程运行时，清单加载，工具注册 | runtime | [runtime/plugin.md](runtime/plugin.md) |
 | **Agent 系统** | ✅ | TOML+Markdown 配置驱动，内置 3 个 Agent | runtime | [runtime/orchestration.md](runtime/orchestration.md) |
 | **会话管理** | ✅ | SQLite 存储，JSONL 事件日志，崩溃恢复 | runtime | [runtime/session.md](runtime/session.md) |
-| **TUI/CLI** | ✅ | ratatui 终端界面，markdown 渲染，技能系统 | body + cli | [body/ui.md](body/ui.md), [cli/README.md](cli/README.md) |
+| **TUI/CLI** | ✅ | ratatui 终端界面，markdown 渲染，技能系统 | corpus + interact | [interact/ui.md](interact/ui.md), [interact/README.md](interact/README.md) |
 | **上下文压缩** | ✅ | LLM 摘要压缩，HeadAndTail 策略 | runtime | [runtime/react-loop.md](runtime/react-loop.md) |
-| **IPC 层** | ✅ | Unix Socket + JSON-RPC + io_uring(🔶) + 共享内存(stub) | comm | [comm/ipc.md](comm/ipc.md) |
-| **FUSE 文件系统** | ✅ | fuse3 真实挂载，context/controls/sensors/logs | self | [body/fuse.md](body/fuse.md) |
+| **IPC 层** | ✅ | Unix Socket + JSON-RPC + io_uring(🔶) + 共享内存(stub) | base | [base/ipc.md](base/ipc.md) |
+| **FUSE 文件系统** | ✅ | fuse3 真实挂载，context/controls/sensors/logs | dasein | [corpus/fuse.md](corpus/fuse.md) |
 | **向量记忆** | 🔶 | L3 ArchivalMemory 语义搜索（Qdrant + LanceDB 双后端） | runtime | [memory/memory-system.md](memory/memory-system.md) |
-| **回滚引擎** | ✅ | 三层回滚（btrfs 快照/文件备份/审计日志） | body | [body/security.md](body/security.md) |
-| **平台适配器** | ✅ | PlatformAdapter trait + Linux(systemd/D-Bus) + Android | body | [body/platform.md](body/platform.md) |
-| **SelfField** | ✅ | 身份/边界/关切/叙事/冲突/注意力/连续性/变异 8 层 | self | [self/self-field.md](self/self-field.md) |
-| **MetaRuntime** | 🔶 | 自我读取/修改/回滚/迁移，设计骨架 | meta | [meta/meta-runtime.md](meta/meta-runtime.md) |
-| **Morphogenesis** | 🔶 | 形态演化 pipeline，Genome 模型 | meta | [meta/morphogenesis.md](meta/morphogenesis.md) |
+| **回滚引擎** | ✅ | 三层回滚（btrfs 快照/文件备份/审计日志） | corpus | [corpus/security.md](corpus/security.md) |
+| **平台适配器** | ✅ | PlatformAdapter trait + Linux(systemd/D-Bus) + Android | corpus | [corpus/platform.md](corpus/platform.md) |
+| **SelfField** | ✅ | 身份/边界/关切/叙事/冲突/注意力/连续性/变异 8 层 | dasein | [dasein/self-field.md](dasein/self-field.md) |
+| **MetaRuntime** | 🔶 | 自我读取/修改/回滚/迁移，设计骨架 | metacog | [metacog/meta-runtime.md](metacog/meta-runtime.md) |
+| **Morphogenesis** | 🔶 | 形态演化 pipeline，Genome 模型 | metacog | [metacog/morphogenesis.md](metacog/morphogenesis.md) |
 | **自动化** | ✅ | Cron、Webhook、脚本、投递 | runtime | [runtime/automation.md](runtime/automation.md) |
 
 ---

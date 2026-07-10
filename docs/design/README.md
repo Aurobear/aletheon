@@ -44,15 +44,14 @@
 
 | Crate | 目录 | 核心内容 |
 |-------|------|----------|
-| `base` | [abi/](abi/), [comm/](comm/) | 共享类型定义、Trait 接口、ABI 契约、IPC 层（EventBus、Unix Socket、消息路由） |
+| `base` | [base/](base/) | 共享类型定义、Trait 接口、ABI 契约、IPC 层（EventBus、Unix Socket、消息路由） |
 | `memory` | [memory/](memory/) | 记忆系统：episodic/semantic/procedural/self-memory |
-| `corpus` | [body/](body/) | 执行层：工具、沙箱、MCP、感知、平台、驱动、UI |
-| `dasein` | [self/](self/) | SelfField：身份、边界、关切、叙事、Hook、安全、容错 |
-| `cognit` | [brain/](brain/) | 认知引擎：推理、规划、反思、学习、推理路由 |
-| `runtime` | [runtime/](runtime/) | 运行时：ReAct 循环、会话、编排、可观测、插件、自动化 |
-| `metacog` | [meta/](meta/) | MetaRuntime：自我更新、形态演化、基因组 |
-| `aletheond` | [daemon/](daemon/) | 守护进程 (runtime crate binary)，Unix Socket 服务 |
-| `interact` | [cli/](cli/) | CLI/TUI 客户端（逻辑在 corpus crate，thin re-export） |
+| `corpus` | [corpus/](corpus/) | 执行层：工具、沙箱、MCP、平台、驱动 |
+| `dasein` | [dasein/](dasein/) | SelfField：身份、边界、关切、叙事、感知、安全、容错 |
+| `cognit` | [cognit/](cognit/) | 认知引擎：推理、规划、反思、学习、推理路由 |
+| `runtime` | [runtime/](runtime/) | 运行时：ReAct 循环、会话、编排、可观测、插件、自动化、守护进程 |
+| `metacog` | [metacog/](metacog/) | MetaRuntime：自我更新、形态演化、基因组 |
+| `interact` | [interact/](interact/) | CLI/TUI 客户端（aletheon binary） |
 
 **按关注点查阅：**
 
@@ -60,11 +59,11 @@
 |--------|------|----------|
 | 核心循环 | [runtime/react-loop.md](runtime/react-loop.md) | ReAct 循环、ContentBlock 协议 |
 | 记忆系统 | [memory/memory-system.md](memory/memory-system.md) | 三级记忆、自学习循环、上下文预算 |
-| 工具与沙箱 | [body/tools.md](body/tools.md), [body/sandbox.md](body/sandbox.md) | Tool trait、沙箱执行 |
-| 安全 | [body/security.md](body/security.md), [self/](self/) | 权限、策略、自我保护、循环检测 |
-| 感知 | [body/perception.md](body/perception.md) | eBPF、事件聚合、背压控制 |
+| 工具与沙箱 | [corpus/tools.md](corpus/tools.md), [corpus/sandbox.md](corpus/sandbox.md) | Tool trait、沙箱执行 |
+| 安全 | [corpus/security.md](corpus/security.md), [dasein/](dasein/) | 权限、策略、自我保护、循环检测 |
+| 感知 | [dasein/perception.md](dasein/perception.md) | eBPF、事件聚合、背压控制 |
 | 编排 | [runtime/orchestration.md](runtime/orchestration.md) | 多 Agent 编排、Selector/Handoff/DiGraph |
-| 自我演化 | [meta/](meta/) | MetaRuntime、Morphogenesis、Genome |
+| 自我演化 | [metacog/](metacog/) | MetaRuntime、Morphogenesis、Genome |
 | 测试 | [testing/](testing/) | 测试策略、Mock、CI |
 | 路线图 | [roadmap/](roadmap/) | 6 Phase 路线图、开放问题 |
 
@@ -175,15 +174,14 @@ aletheon/
 ├── Cargo.toml                  # workspace 根
 │
 ├── crates/
-│   ├── base/           # ABI 类型: IPC, tool, message, sandbox, LLM types
 │   ├── base/              # ABI 层: 共享类型、Trait 接口、IPC 层
-│   ├── memory/        # 记忆系统: self-memory, episodic/semantic
-│   ├── dasein/          # SelfField: identity, boundary, care, narrative
-│   ├── cognit/         # BrainCore: reasoning, planning, reflection
-│   ├── corpus/          # BodyRuntime: tools, sandbox, perception, MCP, TUI
-│   ├── runtime/       # Runtime engine: cognitive loop, orchestration, daemon (aletheond binary)
-│   ├── metacog/          # MetaRuntime: self-update, self-generation
-│   └── interact/           # CLI + TUI 客户端 (aletheon binary)
+│   ├── memory/            # 记忆系统: self-memory, episodic/semantic
+│   ├── dasein/            # SelfField: identity, boundary, care, narrative
+│   ├── cognit/            # BrainCore: reasoning, planning, reflection
+│   ├── corpus/            # BodyRuntime: tools, sandbox, perception, MCP
+│   ├── runtime/           # Runtime engine: cognitive loop, orchestration, daemon
+│   ├── metacog/           # MetaRuntime: self-update, self-generation
+│   └── interact/          # CLI + TUI 客户端 (aletheon binary)
 │
 ├── agents/                     # Agent 定义文件 (TOML + .md)
 │   ├── fs-agent.md
@@ -211,38 +209,38 @@ aletheon/
 
 | Crate | 设计文档 | 核心内容 |
 |-------|---------|----------|
-| **base** | [abi/types.md](abi/types.md) | 共享类型、Trait 定义、接口规范 |
-| **base** | [comm/ipc.md](comm/ipc.md) | Unix Socket、io_uring、优先队列、消息路由 |
+| **base** | [base/types.md](base/types.md) | 共享类型、Trait 定义、接口规范 |
+| **base** | [base/ipc.md](base/ipc.md) | Unix Socket、io_uring、优先队列、消息路由 |
 | **memory** | [memory/memory-system.md](memory/memory-system.md) | 三级记忆、上下文预算、记忆管道、向量存储 |
-| **corpus** | [body/tools.md](body/tools.md) | Tool trait、并行执行、分层暴露 |
-| | [body/sandbox.md](body/sandbox.md) | bubblewrap、seccomp、cgroups |
-| | [body/mcp.md](body/mcp.md) | MCP 集成、OAuth、工具转换 |
-| | [body/perception.md](body/perception.md) | eBPF、事件聚合、背压控制 |
-| | [body/fuse.md](body/fuse.md) | FUSE 虚拟文件系统接口 |
-| | [body/platform.md](body/platform.md) | 平台适配、启动集成、内核 IPC、多设备 |
-| | [body/security.md](body/security.md) | 策略引擎、风险分类、审计、回滚 |
-| | [body/driver.md](body/driver.md) | 显示/输入/OCR/无障碍驱动 |
-| | [body/ui.md](body/ui.md) | TUI 终端界面 |
-| | [body/acix.md](body/acix.md) | Agent-Computer 交互体验 |
-| **dasein** | [self/self-field.md](self/self-field.md) | SelfField 架构：身份/边界/关切/叙事/冲突/注意力/连续性/变异 |
-| | [self/hook-system.md](self/hook-system.md) | 21 事件类型，3 层配置，命令钩子 |
-| | [self/loop-detector.md](self/loop-detector.md) | 循环检测、熔断器 |
-| | [self/self-protection.md](self/self-protection.md) | 注入防御、资源治理、紧急停止 |
-| | [self/writable-root.md](self/writable-root.md) | 可写根路径隔离 |
-| | [self/resilience.md](self/resilience.md) | 错误处理、限流、panic 恢复 |
-| | [self/perception-sources.md](self/perception-sources.md) | eBPF、inotify、journald、/proc |
-| **cognit** | [brain/cognitive-engine.md](brain/cognitive-engine.md) | 推理、规划、批判、反思、学习 |
-| | [brain/inference.md](brain/inference.md) | 推理路由、Provider 管理 |
+| **corpus** | [corpus/tools.md](corpus/tools.md) | Tool trait、并行执行、分层暴露 |
+| | [corpus/sandbox.md](corpus/sandbox.md) | bubblewrap、seccomp、cgroups |
+| | [corpus/mcp.md](corpus/mcp.md) | MCP 集成、OAuth、工具转换 |
+| | [corpus/fuse.md](corpus/fuse.md) | FUSE 虚拟文件系统接口 |
+| | [corpus/platform.md](corpus/platform.md) | 平台适配、启动集成、内核 IPC、多设备 |
+| | [corpus/security.md](corpus/security.md) | 策略引擎、风险分类、审计、回滚 |
+| | [corpus/driver.md](corpus/driver.md) | 显示/输入/OCR/无障碍驱动 |
+| | [corpus/loop-detector.md](corpus/loop-detector.md) | 循环检测、熔断器 |
+| **dasein** | [dasein/self-field.md](dasein/self-field.md) | SelfField 架构：身份/边界/关切/叙事/冲突/注意力/连续性/变异 |
+| | [dasein/perception.md](dasein/perception.md) | eBPF、事件聚合、背压控制 |
+| | [dasein/perception-sources.md](dasein/perception-sources.md) | eBPF、inotify、journald、/proc |
+| | [dasein/resilience.md](dasein/resilience.md) | 错误处理、限流、panic 恢复 |
+| | [dasein/self-protection.md](dasein/self-protection.md) | 注入防御、资源治理、紧急停止 |
+| | [dasein/writable-root.md](dasein/writable-root.md) | 可写根路径隔离 |
+| **interact** | [interact/ui.md](interact/ui.md) | TUI 终端界面 |
+| | [interact/acix.md](interact/acix.md) | Agent-Computer 交互体验 |
+| | [interact/README.md](interact/README.md) | CLI/TUI、三种运行模式 |
+| **cognit** | [cognit/cognitive-engine.md](cognit/cognitive-engine.md) | 推理、规划、批判、反思、学习 |
+| | [cognit/inference.md](cognit/inference.md) | 推理路由、Provider 管理 |
 | **runtime** | [runtime/react-loop.md](runtime/react-loop.md) | ReAct 循环、ContentBlock 协议 |
 | | [runtime/session.md](runtime/session.md) | 会话持久化、崩溃恢复 |
 | | [runtime/orchestration.md](runtime/orchestration.md) | Selector、Handoff、DiGraph |
 | | [runtime/observability.md](runtime/observability.md) | Metrics、Tracing、健康检查 |
 | | [runtime/plugin.md](runtime/plugin.md) | 插件系统 |
 | | [runtime/automation.md](runtime/automation.md) | Cron、Webhook、脚本 |
-| **metacog** | [meta/meta-runtime.md](meta/meta-runtime.md) | 自我读取、修改、回滚、迁移 |
-| | [meta/morphogenesis.md](meta/morphogenesis.md) | 形态演化、Genome、候选生成 |
-| **aletheond** | [daemon/README.md](daemon/README.md) | 守护进程（runtime crate binary） |
-| **interact** | [cli/README.md](cli/README.md) | CLI/TUI、三种运行模式（aletheon binary） |
+| | [runtime/daemon.md](runtime/daemon.md) | 守护进程 |
+| | [runtime/hook-system.md](runtime/hook-system.md) | 21 事件类型，3 层配置，命令钩子 |
+| **metacog** | [metacog/meta-runtime.md](metacog/meta-runtime.md) | 自我读取、修改、回滚、迁移 |
+| | [metacog/morphogenesis.md](metacog/morphogenesis.md) | 形态演化、Genome、候选生成 |
 
 ### 跨 Crate 文档
 
