@@ -14,9 +14,13 @@ use base::{
 };
 use std::collections::HashMap;
 
-use crate::core::event_sink::{ChannelEventSink, Event, EventSink};
-use crate::core::react_loop::ReActLoop;
+use cognit::harness::config::HarnessConfig;
+use cognit::harness::event_sink::{ChannelEventSink, Event, EventSink};
+use cognit::harness::linear::DynLlmRef;
+use cognit::harness::linear::ReActLoop;
+use cognit::harness::linear::TurnMetrics;
 use cognit::r#impl::llm::LlmProvider;
+use memory::AdvancedCompressor;
 use memory::FactStore;
 
 const MAX_ACTIVATED_SKILL_CHARS: usize = 12 * 1024;
@@ -656,7 +660,30 @@ impl RequestHandler {
         );
 
         let mut react_task = tokio::spawn(async move {
-            let mut react_loop = ReActLoop::new(config);
+            let harness_config = HarnessConfig {
+                max_iterations: config.max_iterations,
+                compaction_enabled: config.compaction_enabled,
+                tail_token_budget: config.tail_token_budget,
+                target_summary_chars: config.target_summary_chars,
+                context_window_tokens: config.context_window_tokens,
+                max_tool_calls: config.agent_loop.max_tool_calls,
+                reflection_interval: config.agent_loop.reflection_interval,
+                reflection_tool_call_limit: config.agent_loop.reflection_tool_call_limit,
+                circuit_breaker_max_repeats: config.circuit_breaker.max_repeats,
+                circuit_breaker_window_size: config.circuit_breaker.window_size,
+                learning_enabled: config.learning_enabled,
+            };
+            let effective_tail = if config.tail_token_budget * 4 < config.context_window_tokens {
+                config.context_window_tokens / 8
+            } else {
+                config.tail_token_budget
+            };
+            let compressor = Box::new(AdvancedCompressor::new(
+                effective_tail,
+                config.target_summary_chars,
+                config.context_window_tokens,
+            )) as Box<dyn cognit::harness::linear::CompactorTrait>;
+            let mut react_loop = ReActLoop::new(harness_config, compressor);
             let request_messages = build_request_messages(
                 system_prompt_for_react,
                 &existing_messages,
@@ -676,7 +703,12 @@ impl RequestHandler {
                 sub_goals: vec![],
             });
             react_loop
-                .run_streaming(&*llm_clone, &tool_defs_clone, execute_tool, &event_sink)
+                .run_streaming(
+                    &DynLlmRef(&*llm_clone),
+                    &tool_defs_clone,
+                    execute_tool,
+                    &event_sink,
+                )
                 .await
         });
 
@@ -806,7 +838,7 @@ impl RequestHandler {
         let (text, metrics) = text.unwrap_or_else(|e| {
             (
                 format!("error: {e}"),
-                crate::core::react_loop::TurnMetrics {
+                TurnMetrics {
                     tool_calls_made: 0,
                     tool_errors: 0,
                     elapsed_ms: 0,

@@ -1,5 +1,5 @@
-use crate::core::event_sink::Event;
 use base::events::ui_event::ClientEvent;
+use cognit::harness::event_sink::Event;
 
 /// Convert a `ClientEvent` to a JSON-RPC 2.0 notification string.
 pub fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {

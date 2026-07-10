@@ -3,9 +3,7 @@ use std::sync::Arc;
 use crate::core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 use crate::core::config::{GenomeConfig, RuntimeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
-use crate::core::interrupt::InterruptFlag;
 use crate::core::mode_router::ModeRouter;
-use crate::core::react_loop::ReActLoop;
 use crate::core::sub_agent::SubAgentSpawner;
 use crate::core::verdict_handler::DefaultVerdictHandler;
 use anyhow::Result;
@@ -14,6 +12,11 @@ use base::brain::Plan;
 use base::context::Context;
 use base::runtime::StepResult;
 use base::self_field::{Intent, Verdict, VerdictAction, VerdictHandler};
+use cognit::harness::config::HarnessConfig;
+use cognit::harness::interrupt::InterruptFlag;
+use cognit::harness::linear::ReActLoop;
+use cognit::harness::linear::TurnMetrics;
+use memory::AdvancedCompressor;
 use tracing::{debug, warn};
 
 /// Top-level Aletheon runtime — decomposes Engine::run_turn() into 6 layers
@@ -38,7 +41,31 @@ pub struct AletheonRuntime {
 
 impl AletheonRuntime {
     pub fn new(config: RuntimeConfig) -> Self {
-        let react_loop = ReActLoop::new(config.clone());
+        let harness_config = HarnessConfig {
+            max_iterations: config.max_iterations,
+            compaction_enabled: config.compaction_enabled,
+            tail_token_budget: config.tail_token_budget,
+            target_summary_chars: config.target_summary_chars,
+            context_window_tokens: config.context_window_tokens,
+            max_tool_calls: config.agent_loop.max_tool_calls,
+            reflection_interval: config.agent_loop.reflection_interval,
+            reflection_tool_call_limit: config.agent_loop.reflection_tool_call_limit,
+            circuit_breaker_max_repeats: config.circuit_breaker.max_repeats,
+            circuit_breaker_window_size: config.circuit_breaker.window_size,
+            learning_enabled: config.learning_enabled,
+        };
+        // Scale tail_token_budget proportionally to context_window_tokens.
+        let effective_tail = if config.tail_token_budget * 4 < config.context_window_tokens {
+            config.context_window_tokens / 8
+        } else {
+            config.tail_token_budget
+        };
+        let compressor = Box::new(AdvancedCompressor::new(
+            effective_tail,
+            config.target_summary_chars,
+            config.context_window_tokens,
+        )) as Box<dyn cognit::harness::linear::CompactorTrait>;
+        let react_loop = ReActLoop::new(harness_config, compressor);
         Self {
             config,
             react_loop,
@@ -281,9 +308,9 @@ impl AletheonRuntime {
         llm: &L,
         tool_defs: &[base::ToolDefinition],
         execute_tool: F,
-    ) -> Result<(String, crate::core::react_loop::TurnMetrics)>
+    ) -> Result<(String, TurnMetrics)>
     where
-        L: cognit::r#impl::llm::provider::LlmProvider + ?Sized,
+        L: cognit::r#impl::llm::provider::LlmProvider,
         R: Fn(&Intent, &Context) -> Result<Verdict>,
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
         Fut: std::future::Future<Output = (String, bool)>,
@@ -311,7 +338,7 @@ impl AletheonRuntime {
                 }
             }
             VerdictAction::ShortCircuit { response } => {
-                let metrics = crate::core::react_loop::TurnMetrics {
+                let metrics = TurnMetrics {
                     tool_calls_made: 0,
                     tool_errors: 0,
                     elapsed_ms: 0,

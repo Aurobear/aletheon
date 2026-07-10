@@ -5,6 +5,7 @@ use anyhow::Result;
 use tracing::info;
 
 use base::message::{ContentBlock, Message};
+use cognit::harness::linear::CompactorTrait;
 use cognit::r#impl::llm::LlmProvider;
 use tail::{find_tail_cut, TailProtectionConfig};
 use template::{SummaryTemplate, SUMMARY_PREFIX};
@@ -141,6 +142,26 @@ impl AdvancedCompressor {
             .collect();
 
         Ok(summary)
+    }
+}
+
+impl CompactorTrait for AdvancedCompressor {
+    fn maybe_compact<'a>(
+        &'a mut self,
+        messages: &'a mut Vec<Message>,
+        llm: &'a dyn LlmProvider,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>>
+    {
+        Box::pin(self.maybe_compact(messages, llm))
+    }
+
+    fn force_compact<'a>(
+        &'a mut self,
+        messages: &'a mut Vec<Message>,
+        llm: &'a dyn LlmProvider,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>>
+    {
+        Box::pin(self.force_compact(messages, llm))
     }
 }
 

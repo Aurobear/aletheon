@@ -1,11 +1,11 @@
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
 use super::tool_budget;
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
-use crate::core::event_sink::{Event, EventSink, ToolResultEvent};
+use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
+use crate::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
 use base::message::{ContentBlock, Message, Role};
 use base::ToolDefinition;
-use cognit::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -20,7 +20,7 @@ impl ReActLoop {
         event_sink: &dyn EventSink,
     ) -> anyhow::Result<(String, TurnMetrics)>
     where
-        L: LlmProvider + ?Sized,
+        L: LlmProvider,
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
         Fut: Future<Output = (String, bool)>,
     {
@@ -249,7 +249,7 @@ impl ReActLoop {
                     );
                     event_sink.emit(Event::BudgetExceeded {
                         used: self.tool_budget.total_calls(),
-                        max: self.config.agent_loop.max_tool_calls,
+                        max: self.config.max_tool_calls,
                     });
                     // The assistant tool-use message is already in history. Close every
                     // unexecuted call with an error result so the next request is
@@ -428,7 +428,7 @@ impl ReActLoop {
                 });
                 // Defer reflection: collect flag, will inject after all tool results
                 if should_reflect {
-                    let ctx = crate::core::react_loop::reflection::ReflectionContext {
+                    let ctx = crate::harness::linear::reflection::ReflectionContext {
                         goal: self.goal_tracker.current_goal_description(),
                         recent_actions: self.recent_tools.clone(),
                         current_state: if is_error { "error" } else { "ok" }.to_string(),
@@ -499,7 +499,10 @@ impl ReActLoop {
             }
 
             if self.config.compaction_enabled {
-                let _ = self.compressor.maybe_compact(&mut self.messages, llm).await;
+                let _ = self
+                    .compressor
+                    .maybe_compact(&mut self.messages, llm as &dyn LlmProvider)
+                    .await;
             }
         }
 

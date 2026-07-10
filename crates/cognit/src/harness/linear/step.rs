@@ -2,10 +2,10 @@ use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
 use super::tool_budget;
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 
+use crate::r#impl::llm::provider::LlmProvider;
 use base::message::{ContentBlock, Message, Role};
 use base::policy::verifier::Verdict;
 use base::ToolDefinition;
-use cognit::r#impl::llm::provider::LlmProvider;
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -21,7 +21,7 @@ impl ReActLoop {
         execute_tool: F,
     ) -> anyhow::Result<(String, TurnMetrics)>
     where
-        L: LlmProvider + ?Sized,
+        L: LlmProvider,
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
         Fut: Future<Output = (String, bool)>,
     {
@@ -288,7 +288,7 @@ impl ReActLoop {
                 });
                 // Defer reflection until after all tool results
                 if should_reflect {
-                    let ctx = crate::core::react_loop::reflection::ReflectionContext {
+                    let ctx = crate::harness::linear::reflection::ReflectionContext {
                         goal: self.goal_tracker.current_goal_description(),
                         recent_actions: self.recent_tools.clone(),
                         current_state: if is_error { "error" } else { "ok" }.to_string(),

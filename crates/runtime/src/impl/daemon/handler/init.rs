@@ -508,12 +508,12 @@ impl RequestHandler {
             plan_mode: false,
             consecutive_errors: 0,
             circuit_breaker_status:
-                crate::core::react_loop::circuit_breaker::CircuitBreakerStatus::Ok,
+                cognit::harness::linear::circuit_breaker::CircuitBreakerStatus::Ok,
             tool_budget_remaining: runtime_config_snapshot.agent_loop.max_tool_calls,
             tool_budget_max: runtime_config_snapshot.agent_loop.max_tool_calls,
             recent_tools: Vec::new(),
             storm_breaker_failure_count: 0,
-            goal_tracker: crate::core::react_loop::goal_tracker::GoalTracker::new(),
+            goal_tracker: cognit::harness::linear::goal_tracker::GoalTracker::new(),
         }));
         let gw_started_at = std::time::Instant::now();
         let session_gateway = Arc::new(SessionGateway::new(

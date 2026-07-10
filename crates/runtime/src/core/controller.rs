@@ -10,8 +10,10 @@
 //! fields.
 
 use super::config::RuntimeConfig;
-use super::event_sink::{Event, EventSink};
-use super::react_loop::{ReActLoop, PLAN_MODE_MARKER};
+use cognit::harness::config::HarnessConfig;
+use cognit::harness::event_sink::{Event, EventSink};
+use cognit::harness::linear::{CompactorTrait, ReActLoop, PLAN_MODE_MARKER};
+use memory::AdvancedCompressor;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -77,7 +79,18 @@ impl Controller {
             ..RuntimeConfig::default()
         };
 
-        let mut react_loop = ReActLoop::new(config);
+        let harness_config = HarnessConfig {
+            max_iterations: config.max_iterations,
+            compaction_enabled: config.compaction_enabled,
+            ..HarnessConfig::default()
+        };
+        let compressor = Box::new(AdvancedCompressor::new(
+            config.tail_token_budget,
+            config.target_summary_chars,
+            config.context_window_tokens,
+        )) as Box<dyn CompactorTrait>;
+
+        let mut react_loop = ReActLoop::new(harness_config, compressor);
         react_loop.set_system_prompt(opts.system_prompt.clone());
 
         Self {
@@ -159,7 +172,7 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::event_sink::NullEventSink;
+    use cognit::harness::event_sink::NullEventSink;
 
     #[tokio::test]
     async fn compose_plain_input() {
