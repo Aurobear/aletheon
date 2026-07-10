@@ -29,7 +29,7 @@
 
 ## 1. Design Philosophy
 
-From `Aletheon.md` section 7:
+From `README.md` section 7:
 
 > MetaRuntime is a self-modification engine.
 >
@@ -121,7 +121,7 @@ Code location: `metacog/src/impl/meta_runtime/migration.rs`
 
 ### 3.8 LineageRecorder
 
-Records the evolution lineage — every mutation, evaluation, and migration is recorded with full provenance. This preserves the continuity anchor (lineage, memory relation, user relation, migration history) as described in `Aletheon.md` section 10.
+Records the evolution lineage — every mutation, evaluation, and migration is recorded with full provenance. This preserves the continuity anchor (lineage, memory relation, user relation, migration history) as described in `README.md` section 10.
 
 Code location: `metacog/src/impl/meta_runtime/lineage.rs`
 

@@ -1,4 +1,4 @@
-# Body Crate (`corpus`)
+# Corpus Crate — Tools, Sandbox, and Perception
 
 > The corpus crate provides the physical interface layer — tools, sandbox, MCP, platform adaptation, security policy, drivers, UI, and ACIX.
 

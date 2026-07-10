@@ -14,7 +14,7 @@
 
 > 统一的错误分类、降级策略和恢复机制。`AgentError` 枚举、错误严重级别、降级链和重试退避已实现。
 
-**关联模块:** [panic 恢复](panic-recovery.md), [限流](rate-limiting.md), [安全模型](../security/security-model.md)
+**关联模块:** [panic 恢复](resilience.md), [限流](resilience.md), [安全模型](../corpus/security.md)
 **最后更新:** 2026-06-07
 
 ---
@@ -250,7 +250,7 @@ struct RecoveryEngine {
 
 > Daemon 容错、自愈和状态恢复。`DaemonGuardian`、三层看门狗、`SafeMode` 和崩溃现场保存均已实现。
 
-**关联模块:** [错误处理](error-handling.md), [会话管理](../core/session-lifecycle.md)
+**关联模块:** [错误处理](resilience.md), [会话管理](../runtime/session.md)
 **最后更新:** 2026-06-07
 
 ---
@@ -372,7 +372,7 @@ impl WatchdogTimer {
 
 | 层级 | 机制 | 超时 | 探测目标 |
 |------|------|------|----------|
-| L1: 进程级 | systemd WatchdogSec | 30s | 整个 aletheond 进程 |
+| L1: 进程级 | systemd WatchdogSec | 30s | 整个 aletheon daemon 进程 |
 | L2: 事件循环级 | Tokio runtime 检测 | 10s | 事件循环是否阻塞 |
 | L3: 推理循环级 | 自定义 deadline | 每轮 5min | 单次推理是否卡死 |
 
@@ -422,14 +422,14 @@ crash/{timestamp}/
 ├── state_snapshot.json   # 最后一次安全的运行时状态
 ├── session_snapshot.json # 活跃会话快照
 ├── journal_{seq}.jsonl   # 最近 N 条事件日志
-└── version.txt           # aletheond 版本 + commit
+└── version.txt           # aletheon daemon 版本 + commit
 ```
 
 ---
 
 ## 4. 安全模式 (Safe Mode)
 
-当关键子系统（记忆系统、LLM Provider 等）不可恢复时，aletheond 自动进入安全模式：
+当关键子系统（记忆系统、LLM Provider 等）不可恢复时，aletheon daemon 自动进入安全模式：
 
 | 能力 | 安全模式下 | 说明 |
 |------|-----------|------|
@@ -476,7 +476,7 @@ crash/{timestamp}/
 
 > Token 速率限制、工具调用频率限制、感知事件洪水防护和背压传播。`TokenRateLimiter`、`ToolCallLimiter`、`FloodProtector` 和 `BackpressureController` 均已实现。
 
-**关联模块:** [错误处理](error-handling.md), [自我保护](../security/self-protection.md), [感知层](../perception/perception-layer.md)
+**关联模块:** [错误处理](resilience.md), [自我保护](self-protection.md), [感知层](../corpus/perception.md)
 **最后更新:** 2026-06-07
 
 ---

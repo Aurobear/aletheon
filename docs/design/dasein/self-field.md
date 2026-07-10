@@ -65,9 +65,9 @@ Defines "who the agent is" — its core identity, capabilities, and constraints.
 ### 2.2 Boundary Layer
 
 Defines what the agent can and cannot touch. Implemented through:
-- Security policy (see [body/security.md](../body/security.md))
+- Security policy (see [body/security.md](../corpus/security.md))
 - WritableRoot path isolation (see [writable-root.md](writable-root.md))
-- Sandbox execution (see [body/sandbox.md](../body/sandbox.md))
+- Sandbox execution (see [body/sandbox.md](../corpus/sandbox.md))
 
 ### 2.3 Care Layer
 
@@ -81,7 +81,7 @@ Defines what matters to the agent — priorities, values, and protection of crit
 The agent's story — memory of what happened, what was done, and what was learned. Implemented through:
 - Hook system event logging
 - Audit trail (AuditLogger)
-- Experience memory (see [body/acix.md](../body/acix.md))
+- Experience memory (see [body/acix.md](../corpus/acix.md))
 
 ### 2.5 Conflict Layer
 

@@ -1,4 +1,4 @@
-# Brain Crate (`cognit`)
+# Cognit Crate — Cognitive Engine
 
 > The reasoning and inference layer — cognitive engine, hybrid inference routing, and LLM provider management.
 

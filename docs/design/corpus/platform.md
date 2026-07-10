@@ -11,7 +11,7 @@
 
 > 跨平台通过 `PlatformAdapter` trait 实现，核心运行时仅依赖此接口，编译时通过 feature flag 选择平台实现。
 
-**关联模块:** [IPC 与内核](kernel-ipc.md), [感知层](../perception/perception-layer.md)
+**关联模块:** [IPC 与内核](../base/ipc.md), [感知层](perception.md)
 **最后更新:** 2026-06-06
 
 ---
@@ -36,7 +36,7 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 
 ## 2. PlatformAdapter 接口
 
-> **See [shared/traits.md](../shared/traits.md) for the canonical `PlatformAdapter` trait definition.**
+> **See [shared/traits.md](../base/types.md) for the canonical `PlatformAdapter` trait definition.**
 > The table below provides platform-specific implementation notes for each method group.
 
 | 方法 | 说明 | Linux 实现 | Android 实现 | 嵌入式实现 |
@@ -124,7 +124,7 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 
 > Agent 参与系统启动过程，提供启动监控和故障诊断。BootMonitor、ServiceDependencyGraph（含拓扑排序和环检测）、5 阶段延迟加载、启动故障诊断均已实现。
 
-**关联模块:** [系统管理](../perception/system-management.md), [可观测性栈](../observability/observability-stack.md)
+**关联模块:** [系统管理](../dasein/perception-sources.md), [可观测性栈](../runtime/observability.md)
 **最后更新:** 2026-06-07
 
 ---
@@ -138,14 +138,14 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 | ServiceDependencyGraph | ✅ Implemented | `platform/boot.rs` | Topological sort + cycle detection (`would_create_cycle`) |
 | Lazy loading (5-stage) | ✅ Implemented | `platform/boot.rs` | `LazyLoadStage`: immediate → 500ms → 2s → 5s → on-demand |
 | Boot diagnosis | ✅ Implemented | `platform/boot.rs` | `BootDiagnosis`: resource/service/historical checks |
-| systemd service | ✅ Exists | `systemd/aletheond.service` | Service file |
+| systemd service | ✅ Exists | `config/aletheon.service` | Service file |
 
 ---
 
 ## 1. 启动阶段
 
 ```
-GRUB/UEFI → initramfs → systemd init → services → user session → aletheond
+GRUB/UEFI → initramfs → systemd init → services → user session → aletheon daemon
               [Phase 6]    [Phase 1-3]    [...services]     [interact]
 ```
 
@@ -153,7 +153,7 @@ GRUB/UEFI → initramfs → systemd init → services → user session → aleth
 |------|---------------|------|
 | initramfs | ❌ 未参与 | 挂载根文件系统前 Agent 不可用 |
 | systemd early | ❌ 未参与 | basic.target 前依赖缺失 |
-| systemd services | ✅ systemd service | aletheond 在 network.target 后启动 |
+| systemd services | ✅ systemd service | aletheon daemon 在 network.target 后启动 |
 | user session | ✅ systemd --user / 桌面启动 | interact 提供用户交互 |
 
 ---
@@ -167,7 +167,7 @@ After=network.target dbus.service sysinit.target
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/aletheond --config /etc/agent/agent.toml
+ExecStart=/usr/bin/aletheon daemon --config /etc/agent/agent.toml
 Restart=on-failure
 RestartSec=5
 WatchdogSec=30
@@ -270,7 +270,7 @@ Agent 检测到服务启动失败
 
 ## 5. 启动后延迟加载
 
-为了不影响系统启动时间，aletheond 的功能分层加载：
+为了不影响系统启动时间，aletheon daemon 的功能分层加载：
 
 | 加载阶段 | 加载内容 | 延迟 |
 |----------|----------|------|
@@ -305,7 +305,7 @@ Agent 检测到服务启动失败
 | ServiceDependencyGraph | `crates/corpus/src/impl/platform/boot.rs` | Topological sort + `would_create_cycle()` cycle detection |
 | LazyLoadStage | `crates/corpus/src/impl/platform/boot.rs` | 5 stages: immediate / 500ms / 2s / 5s / on-demand |
 | BootDiagnosis | `crates/corpus/src/impl/platform/boot.rs` | Resource/service/historical checks |
-| systemd service | `systemd/aletheond.service` | Service file exists |
+| systemd service | `config/aletheon.service` | Service file exists |
 
 
 ---
@@ -315,7 +315,7 @@ Agent 检测到服务启动失败
 
 > 多个 Agent 共存时的发现、通信和冲突协调。L2 本地发现（Unix socket 扫描）、冲突检测、生命周期 FSM、JSON-RPC 通信 trait 均已实现。L3/L4 发现层级（mDNS/WAN）待实现。
 
-**关联模块:** [编排引擎](../orchestration/orchestration-engine.md), [多设备](multi-device.md), [IPC 层](../execution/ipc.md)
+**关联模块:** [编排引擎](../runtime/orchestration.md), [多设备](platform.md), [IPC 层](../base/ipc.md)
 **最后更新:** 2026-06-07
 
 ---
@@ -363,7 +363,7 @@ struct AgentInfo {
 | 层级 | 发现机制 | 范围 | 延迟 | 适用场景 |
 |------|----------|------|------|----------|
 | L1: 进程内 | `AgentRegistry` | 同一进程的 Agent | <1ms | 编排引擎子 Agent |
-| L2: 本机 | D-Bus / Unix socket | 同一主机的 Agent | <5ms | aletheond 发现 ROS Agent |
+| L2: 本机 | D-Bus / Unix socket | 同一主机的 Agent | <5ms | aletheon daemon 发现 ROS Agent |
 | L3: LAN | mDNS (RFC 6762) | 同一网段的 Agent | <100ms | 多设备协作 |
 | L4: WAN | 中心注册表 / NATS | 跨网络 Agent | 可变 | 云端 Agent 集群 |
 
@@ -508,10 +508,10 @@ Registered → Active ↔ Idle ↔ Busy → Degraded → Offline
 
 > Agent 间低延迟零拷贝通信的内核模块设计，包含 Agent Ring (类 io_uring)、优先级消息队列和系统调用扩展。
 
-> **注意:** 本文档仅涵盖内核级 IPC（agent_ipc.ko、系统调用、io_uring）。用户态 IPC（Unix socket、D-Bus）和 Phase 1-4 的 IPC 降级方案详见 [执行层 IPC](../execution/ipc.md)。
+> **注意:** 本文档仅涵盖内核级 IPC（agent_ipc.ko、系统调用、io_uring）。用户态 IPC（Unix socket、D-Bus）和 Phase 1-4 的 IPC 降级方案详见 [执行层 IPC](../base/ipc.md)。
 
 **模块编号:** 07
-**关联模块:** [编排引擎](../orchestration/orchestration-engine.md), [FUSE 接口](../perception/fuse-interface.md), [平台适配器](platform-adapter.md)
+**关联模块:** [编排引擎](../runtime/orchestration.md), [FUSE 接口](fuse.md), [平台适配器](platform.md)
 **最后更新:** 2026-06-06
 
 ---
@@ -979,7 +979,7 @@ io_uring 混合架构        可选内核模块            自定义 syscall
 
 > 多个 Agent 设备间的发现、通信、记忆同步和任务委托。属于 Phase 6 延期功能，全局概念设计。
 
-**关联模块:** [记忆系统](../core/memory-system.md), [IPC](../execution/ipc.md), [Agent 间感知](agent-awareness.md)
+**关联模块:** [记忆系统](../memory/memory-system.md), [IPC](../base/ipc.md), [Agent 间感知](platform.md)
 **最后更新:** 2026-06-07
 
 ---

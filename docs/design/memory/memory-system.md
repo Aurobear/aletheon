@@ -157,7 +157,7 @@ The `system_state` block in Core Memory is automatically updated by the percepti
 
 **Severity:** P0
 
-If aletheond process crashes during Core Memory update (`append`/`replace`/`rethink`), block values may be partially written, or Recall Memory and Core Memory states may be inconsistent.
+If aletheon daemon process crashes during Core Memory update (`append`/`replace`/`rethink`), block values may be partially written, or Recall Memory and Core Memory states may be inconsistent.
 
 **Mitigation:** Unified by the Session persistence module. Memory system side needs:
 - Core Memory update operations should be atomic (write WAL first, then apply)

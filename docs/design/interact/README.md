@@ -1,11 +1,11 @@
 # Aletheon CLI
 
-> 用户交互入口，支持单消息和 TUI 两种模式。通过 Unix socket 与 aletheond 通信。
+> 用户交互入口，支持单消息和 TUI 两种模式。通过 Unix socket 与 aletheon daemon 通信。
 > CLI 逻辑已合并到 `corpus/src/impl/cli/`，TUI 在 `corpus/src/impl/ui/`。
 > `interact` crate 保留为薄包装（向后兼容），实际逻辑在 corpus crate 中。
 
 **模块编号:** CLI
-**关联模块:** [daemon](../daemon/README.md), [body/ui](../body/ui.md)
+**关联模块:** [daemon](../runtime/daemon.md), [body/ui](../corpus/ui.md)
 **Crate:** `corpus` (feature `cli`), `interact` (thin re-export)
 **最后更新:** 2026-06-14
 
@@ -58,7 +58,7 @@
 `interact` 是 Aletheon 的用户交互层。它不包含推理逻辑，仅负责:
 - 接收用户输入
 - 格式化为 JSON-RPC 请求
-- 通过 Unix socket 发送到 `aletheond`
+- 通过 Unix socket 发送到 `aletheon daemon`
 - 接收并渲染响应
 
 三种模式满足不同场景需求:
@@ -99,7 +99,7 @@
                            │
                            ▼
                     ┌──────────────┐
-                    │  aletheond   │
+                    │  aletheon daemon   │
                     └──────────────┘
 ```
 

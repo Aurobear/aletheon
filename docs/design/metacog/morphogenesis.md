@@ -24,7 +24,7 @@
 
 ## 1. Design Philosophy
 
-From `Aletheon.md` section 8:
+From `README.md` section 8:
 
 > Agent does not update code.
 >
@@ -98,7 +98,7 @@ The new version is now the running agent. The `LineageRecorder` records the full
 
 ## 3. Genome Model
 
-From `Aletheon.md` section 9:
+From `README.md` section 9:
 
 > Replace fixed architecture.
 >
@@ -126,15 +126,15 @@ Defines the subsystem graph — which subsystems exist and how they connect. Thi
 
 ### 3.2 Identity
 
-From `Aletheon.md` section 3.1: The agent's sense of self, including name, version, and continuity markers.
+From `README.md` section 3.1: The agent's sense of self, including name, version, and continuity markers.
 
 ### 3.3 Boundary
 
-From `Aletheon.md` section 3.2: What the agent can and cannot do — permission boundaries, safety constraints, operational limits.
+From `README.md` section 3.2: What the agent can and cannot do — permission boundaries, safety constraints, operational limits.
 
 ### 3.4 Care
 
-From `Aletheon.md` section 3.3: What the agent cares about — values, priorities, goals that guide its behavior.
+From `README.md` section 3.3: What the agent cares about — values, priorities, goals that guide its behavior.
 
 ### 3.5 Memory
 
@@ -146,13 +146,13 @@ Rules governing how the agent can mutate itself — allowed mutation types, safe
 
 ### 3.7 Lifecycle
 
-Lifecycle constraints — terminal constraints (preserve continuity), meta goals, and emergent goals as described in `Aletheon.md` section 11.
+Lifecycle constraints — terminal constraints (preserve continuity), meta goals, and emergent goals as described in `README.md` section 11.
 
 ---
 
 ## 4. Continuity Anchor
 
-From `Aletheon.md` section 10:
+From `README.md` section 10:
 
 > Minimal invariant.
 > Preserve: lineage, memory relation, user relation, migration history.

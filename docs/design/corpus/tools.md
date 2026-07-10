@@ -5,11 +5,11 @@
 > 定义工具分类、生命周期与沙箱隔离执行模型，确保工具调用安全可控。
 
 **模块编号:** 03
-**关联模块:** [cognitive-engine](../core/cognitive-engine.md), [memory-system](../core/memory-system.md)
+**关联模块:** [cognitive-engine](../cognit/cognitive-engine.md), [memory-system](../memory/memory-system.md)
 **最后更新:** 2026-06-06
 **注:** 本文档为 `03-tool-system.md` 的副本，已更新跨文件引用路径。
 沙箱相关内容已拆分至 [sandbox.md](sandbox.md)。
-MCP 集成相关内容已拆分至 [mcp-integration.md](mcp-integration.md)。
+MCP 集成相关内容已拆分至 [mcp-integration.md](mcp.md)。
 
 ---
 
@@ -23,7 +23,7 @@ MCP 集成相关内容已拆分至 [mcp-integration.md](mcp-integration.md)。
 | OutputManager | ✅ Implemented | `tool/output.rs` | Output bounding and truncation |
 | Tool exposure tiers | ⬜ Planned | — | Direct/Deferred/Hidden designed, not implemented |
 | Tool parallelism | ⬜ Planned | — | RwLock gate + JoinSet designed, not implemented |
-| MCP integration | ⬜ Planned | — | See [mcp-integration.md](mcp-integration.md) |
+| MCP integration | ⬜ Planned | — | See [mcp-integration.md](mcp.md) |
 | BM25 tool search | ⬜ Planned | — | CatalogEntry + scoring designed |
 | Toolset composition | ⬜ Planned | — | Toolset + include chain designed |
 
@@ -116,7 +116,7 @@ MCP 集成相关内容已拆分至 [mcp-integration.md](mcp-integration.md)。
 
 ### 2.2 工具 Trait
 
-> **See [shared/traits.md](../shared/traits.md) for the canonical `Tool` trait definition.**
+> **See [shared/traits.md](../base/types.md) for the canonical `Tool` trait definition.**
 > The fields described below are the design rationale for each method.
 
 **设计要点：**
@@ -536,13 +536,13 @@ LLM Stream
 
 ### 4.4 MCP 集成
 
-> MCP 集成相关内容已拆分至 [mcp-integration.md](mcp-integration.md)。
+> MCP 集成相关内容已拆分至 [mcp-integration.md](mcp.md)。
 
 支持 MCP 的三种传输方式：stdio、StreamableHTTP、SSE。完整的生命周期管理由 `McpConnectionManager` 统一负责。
 
 ### 4.5 MCP OAuth 认证与多模态输出
 
-> MCP 相关内容已拆分至 [mcp-integration.md](mcp-integration.md)。
+> MCP 相关内容已拆分至 [mcp-integration.md](mcp.md)。
 
 Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的 trait 占位；同时实现多模态工具输出。
 
@@ -554,7 +554,7 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 
 ### 4.7 MCP 工具名规范化改进
 
-> MCP 相关内容已拆分至 [mcp-integration.md](mcp-integration.md)。
+> MCP 相关内容已拆分至 [mcp-integration.md](mcp.md)。
 
 ---
 

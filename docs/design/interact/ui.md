@@ -29,12 +29,12 @@
 
 ## 1. Architecture
 
-The TUI is a ratatui-based terminal application connecting to the aletheond daemon via Unix socket (JSON-RPC 2.0).
+The TUI is a ratatui-based terminal application connecting to the aletheon daemon daemon via Unix socket (JSON-RPC 2.0).
 
 ```
 interact (TUI)
     ├── ratatui + crossterm
-    ├── UnixStream → aletheond
+    ├── UnixStream → aletheon daemon
     └── Modules:
         ├── chat.rs      — ChatWidget (message history, scrolling)
         ├── command.rs    — /command parsing

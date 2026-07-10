@@ -5,7 +5,7 @@
 > 从内核事件到用户行为，Agent 的全栈感知引擎。
 
 **模块编号:** 04
-**关联模块:** [认知引擎](../core/cognitive-engine.md) · [记忆系统](../core/memory-system.md) · [安全模型](../security/security-model.md) · [系统管理](system-management.md) · [FUSE 接口](fuse-interface.md)
+**关联模块:** [认知引擎](../cognit/cognitive-engine.md) · [记忆系统](../memory/memory-system.md) · [安全模型](security.md) · [系统管理](../dasein/perception-sources.md) · [FUSE 接口](fuse.md)
 **最后更新:** 2026-06-06
 
 ---
@@ -137,7 +137,7 @@ Core Memory 中的 `system_state` block 由感知引擎自动更新，包含 CPU
 
 | 阶段 | 能力 |
 |------|------|
-| Phase 1（现有） | 固定 eBPF 程序集合，BPF CO-RE 编译，aletheond 启动时加载、退出时卸载 |
+| Phase 1（现有） | 固定 eBPF 程序集合，BPF CO-RE 编译，aletheon daemon 启动时加载、退出时卸载 |
 | Phase 2（扩展） | 动态加载/卸载，Agent 可请求新感知点，eBPF map 共享，tail call 链式处理 |
 
 ---

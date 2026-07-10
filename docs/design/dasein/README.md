@@ -1,4 +1,4 @@
-# Self Crate (`dasein`)
+# Dasein Crate — Self Model
 
 > The self-awareness and self-protection layer — hooks, security, resilience, and perception.
 

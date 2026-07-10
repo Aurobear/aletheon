@@ -5,7 +5,7 @@
 > 工具系统的沙箱隔离执行模型，包含 bubblewrap 配置、执行器设计和多后端可移植性方案。
 
 **模块编号:** 03 (沙箱子系统)
-**关联模块:** [tool-system.md](tool-system.md), [mcp-integration.md](mcp-integration.md)
+**关联模块:** [tool-system.md](tools.md), [mcp-integration.md](mcp.md)
 **最后更新:** 2026-06-06
 **来源:** 从 `03-tool-system.md` 的 2.3-2.5、3.6、4.6 节提取。
 

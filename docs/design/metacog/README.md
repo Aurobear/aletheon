@@ -1,4 +1,4 @@
-# Meta Crate — Self-Modification Engine
+# Metacog Crate — Meta-Cognition and Evolution
 
 > Code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 

@@ -1,4 +1,4 @@
-# ABI Crate — Zero-Implementation Trait Definitions
+# Base Crate — Shared Contracts and Communication
 
 > Code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 

@@ -4,7 +4,7 @@
 
 > Agent 不只是"运行在 OS 上"的 daemon，而是"管理 OS"的系统管理者。
 
-**关联模块:** [感知层](perception-layer.md), [安全模型](../security/security-model.md), [认知引擎](../core/cognitive-engine.md)
+**关联模块:** [感知层](../corpus/perception.md), [安全模型](../corpus/security.md), [认知引擎](../cognit/cognitive-engine.md)
 **最后更新:** 2026-06-06
 
 ---

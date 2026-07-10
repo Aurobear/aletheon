@@ -4,7 +4,7 @@
 
 > 安全模型定义了 Agent 对系统的权限，自我保护定义了 Agent 如何保护自己。三个保护层（InputSanitizer、ResourceGovernor、EmergencyKillswitch）及完整性监控均已实现。
 
-**关联模块:** [安全模型](security-model.md), [资源治理](../resilience/rate-limiting.md), [错误处理](../resilience/error-handling.md)
+**关联模块:** [安全模型](../corpus/security.md), [资源治理](resilience.md), [错误处理](resilience.md)
 **最后更新:** 2026-06-07
 
 ---
@@ -189,7 +189,7 @@ struct SelfUpdateManager {
 ```rust
 struct IntegrityMonitor {
     config_hashes: HashMap<PathBuf, Hash>,  // 配置文件的已知 hash
-    binary_hash: Hash,                       // aletheond 二进制的已知 hash
+    binary_hash: Hash,                       // aletheon daemon 二进制的已知 hash
     /// 定期完整性检查（默认每 5 分钟）
     async fn check_integrity(&self) -> IntegrityReport { ... }
     /// 检测到篡改时触发紧急停止
@@ -201,7 +201,7 @@ struct IntegrityMonitor {
 
 | 检查项 | 方法 | 检查频率 |
 |--------|------|----------|
-| aletheond 二进制 | mmap + SHA256 | 启动时 + 每 5min |
+| aletheon daemon 二进制 | mmap + SHA256 | 启动时 + 每 5min |
 | 配置文件 (TOML) | SHA256 | 每次重新加载 |
 | 安全策略 (YAML) | SHA256 | 每次策略评估 |
 | Agent 定义 (TOML) | SHA256 | 启动时 |

@@ -44,4 +44,4 @@ base/src/
 
 ## Related Docs
 
-- [comm/ipc.md](ipc.md) — Full IPC design (migrated from execution/ipc.md)
+- [base/ipc.md](ipc.md) — Full IPC design (migrated from execution/ipc.md)

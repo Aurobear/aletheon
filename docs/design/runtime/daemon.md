@@ -1,10 +1,10 @@
-# Aletheon Daemon (aletheond)
+# Aletheon Daemon (aletheon daemon)
 
 > 持久运行的后台守护进程，通过 Unix socket 接收 CLI 请求，调度 LLM 推理与工具执行。
 > 作为 systemd 服务运行，是 Aletheon 系统的核心入口。
 
 **模块编号:** Daemon
-**关联模块:** [cli](../cli/README.md), [cognitive-engine](../brain/cognitive-engine.md), [perception](../body/perception.md)
+**关联模块:** [cli](../interact/README.md), [cognitive-engine](../cognit/cognitive-engine.md), [perception](../corpus/perception.md)
 **最后更新:** 2026-07-03
 
 ---
@@ -13,7 +13,7 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| CLI entry point | ✅ Implemented | `crates/runtime/src/bin/aletheond.rs` | clap-based arg parsing |
+| CLI entry point | ✅ Implemented | `crates/bin/src/main.rs` | clap-based arg parsing |
 | .env loading | ✅ Implemented | `crates/runtime/src/host/mod.rs` | `load_dotenv()` shared across hosts |
 | TOML config loading | ✅ Implemented | `crates/runtime/src/core/runtime_core.rs` | `AppConfig::load_layered()` |
 | Provider registry init | ✅ Implemented | `crates/runtime/src/core/runtime_core.rs` | `ProviderRegistry::from_config()` |
@@ -31,9 +31,7 @@
 | SystemdHost | ✅ Implemented | `crates/runtime/src/host/systemd.rs` | sd_notify(READY/WATCHDOG/STOPPING), SIGTERM handler |
 | ContainerHost | ✅ Implemented | `crates/runtime/src/host/container.rs` | Docker/Podman container lifecycle via CLI |
 | RuntimeCore (host-agnostic) | ✅ Implemented | `crates/runtime/src/core/runtime_core.rs` | Shared bootstrap for all host types |
-| `aletheon-exec` (CI/CD) | ✅ Implemented | `crates/runtime/src/bin/aletheon-exec.rs` | Non-interactive batch execution |
-| `aletheon-systemd` binary | ✅ Implemented | `crates/runtime/src/bin/aletheon-systemd.rs` | SystemdHost CLI entrypoint |
-| `aletheon-container` binary | ✅ Implemented | `crates/runtime/src/bin/aletheon-container.rs` | ContainerHost CLI entrypoint |
+| `aletheon exec` (CI/CD) | ✅ Implemented | `crates/bin/src/main.rs` | Non-interactive batch execution |
 
 ---
 
@@ -59,7 +57,7 @@
 
 ## 1. 概述
 
-`aletheond` 是 Aletheon 系统的持久后台进程。它：
+`aletheon daemon` 是 Aletheon 系统的持久后台进程。它：
 
 1. 加载 TOML 配置和环境变量
 2. 初始化 LLM Provider 注册表
@@ -82,7 +80,7 @@
                          │ Unix Socket (JSON-RPC, line-delimited)
                          ▼
 ┌──────────────────────────────────────────────────────────┐
-│                     aletheond (daemon)                    │
+│                     aletheon daemon (daemon)                    │
 │                                                          │
 │  ┌─────────────────────────────────────────────────────┐ │
 │  │                 UnixServer                           │ │
@@ -120,27 +118,29 @@
 
 ### 3.1 CLI 参数
 
-入口文件: `crates/runtime/src/bin/aletheond.rs`
+入口文件: `crates/bin/src/main.rs`
 
 ```rust
-#[derive(Parser)]
-#[command(name = "aletheond", about = "Aletheon daemon")]
-struct Args {
-    /// Path to config file
-    #[arg(short, long)]
-    config: Option<PathBuf>,
-
-    /// Path to .env file
-    #[arg(long)]
-    env: Option<PathBuf>,
-
-    /// Socket path
-    #[arg(short, long, default_value = "/run/aletheond/aletheond.sock")]
-    socket: PathBuf,
+#[derive(Subcommand)]
+enum Commands {
+    Daemon {
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        env: Option<PathBuf>,
+        #[arg(short, long)]
+        socket: Option<PathBuf>,
+        #[arg(long)]
+        container: Option<String>,
+        #[arg(long, default_value_t = false)]
+        enable_evolution: bool,
+    },
+    Exec { /* non-interactive execution options */ },
+    Version,
 }
 ```
 
-`main()` 初始化 tracing 后直接调用 `aletheon_runtime::impl::daemon::run()`。
+`main()` 根据 `daemon` 子命令选择 `SystemdHost`、`ContainerHost` 或前台 `DaemonHost`，随后完成初始化并进入服务循环。
 
 ### 3.2 配置加载
 
@@ -259,6 +259,10 @@ client connect
 
 关键设计点:
 - 启动时移除已存在的 stale socket 文件
+- socket 权限固定为 `0660`、所有者组为 `aletheon`
+- 安装时新增的 supplementary group 不会自动进入既有登录进程；使用
+  `id -nG | grep -w aletheon` 检查，并通过重新登录、`newgrp aletheon`
+  或临时执行 `sg aletheon -c 'aletheon'` 激活
 - 每个连接独立 tokio task（支持并发客户端）
 - 连接 EOF 时自动清理
 

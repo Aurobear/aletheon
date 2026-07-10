@@ -198,10 +198,10 @@ if ! $SKIP_BUILD; then
         # ensure target/ is writable by the original user
         chown -R "$SUDO_USER:$SUDO_USER" target/ 2>/dev/null || true
         log "Building release binary (cargo build --release)..."
-        sudo -u "$SUDO_USER" cargo build -p aletheon --release 2>&1
+        sudo -u "$SUDO_USER" cargo build -p aletheon-bin --release 2>&1
     else
         log "Building release binary (cargo build --release)..."
-        cargo build -p aletheon --release 2>&1
+        cargo build -p aletheon-bin --release 2>&1
     fi
 
     if [[ ! -f "$BINARY_PATH" ]]; then
@@ -399,8 +399,16 @@ setup_systemd() {
         # Add the real user (SUDO_USER or current user) to aletheon group.
         local real_user="${SUDO_USER:-$USER}"
         if [[ "$real_user" != "root" ]] && [[ "$real_user" != "aletheon" ]]; then
-            usermod -a -G aletheon "$real_user" 2>/dev/null || true
-            log "Added $real_user to aletheon group"
+            if usermod -a -G aletheon "$real_user"; then
+                log "Added $real_user to aletheon group"
+                warn "The current login session may not have the aletheon group active yet."
+                echo "  Verify in your login shell: id -nG | grep -w aletheon"
+                echo "  Activate permanently: log out and log back in"
+                echo "  Activate a subshell now: newgrp aletheon"
+                echo "  One-off TUI command: sg aletheon -c 'aletheon'"
+            else
+                warn "Failed to add $real_user to the aletheon group"
+            fi
         fi
 
         # Ensure /etc/aletheon/.env exists for API keys.

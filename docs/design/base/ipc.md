@@ -3,11 +3,11 @@
 > Migrated from `docs/design/execution/ipc.md` — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 > Agent-to-agent communication user-space layer design, including Unix socket message protocol, priority queue, and progressive degradation strategy.
-> Kernel-level IPC (agent_ring, io_uring, syscall extensions) see [platform/kernel-ipc.md](../platform/kernel-ipc.md).
+> Kernel-level IPC (agent_ring, io_uring, syscall extensions) see [platform/kernel-ipc.md](ipc.md).
 
 **Module:** 07 (User-Space part)
 **Crate:** base
-**Related modules:** [orchestration-engine](../runtime/orchestration.md), [platform/kernel-ipc.md](../platform/kernel-ipc.md)
+**Related modules:** [orchestration-engine](../runtime/orchestration.md), [platform/kernel-ipc.md](ipc.md)
 **Last Updated:** 2026-06-14
 
 ---
@@ -23,7 +23,7 @@
 | IpcManager | Implemented | `base/src/impl/ipc/manager.rs` | Unified IPC management |
 | Agent ring (kernel) | Planned | — | Kernel module not started |
 
-**NOTE:** `aletheond` uses its own `UnixServer`, NOT `IpcManager`. These are disconnected subsystems.
+**NOTE:** `aletheon daemon` uses its own `UnixServer`, NOT `IpcManager`. These are disconnected subsystems.
 
 ---
 
@@ -32,7 +32,7 @@
 IPC (Inter-Process Communication) is the foundation of multi-agent collaboration. Aletheon's IPC architecture is split into two layers:
 
 - **User-space layer (this document)**: Unix socket + structured message protocol + priority queue
-- **Kernel-space layer** ([platform/kernel-ipc.md](../platform/kernel-ipc.md)): agent_ipc.ko kernel module, io_uring hybrid architecture, syscall extensions
+- **Kernel-space layer** ([platform/kernel-ipc.md](ipc.md)): agent_ipc.ko kernel module, io_uring hybrid architecture, syscall extensions
 
 User-space IPC is the functional baseline for all phases; kernel-level IPC is an optional performance acceleration layer.
 
@@ -128,7 +128,7 @@ Code location: `base/src/impl/ipc/mod.rs`
 
 ### 3.1 Risk Matrix
 
-> Kernel module risks detailed in [platform/kernel-ipc.md](../platform/kernel-ipc.md).
+> Kernel module risks detailed in [platform/kernel-ipc.md](ipc.md).
 
 | Risk | Impact | Likelihood | Severity | Mitigation |
 |------|--------|------------|----------|------------|
@@ -244,7 +244,7 @@ io_uring hybrid           optional kernel module    custom syscall
    No kernel dep       Requires DKMS       Requires upstream
 ```
 
-> Phase 5b/5c details in [platform/kernel-ipc.md](../platform/kernel-ipc.md).
+> Phase 5b/5c details in [platform/kernel-ipc.md](ipc.md).
 
 ---
 

@@ -3,7 +3,7 @@
 # 安全策略 (Security Policy)
 
 > 分级权限、策略引擎、审计日志、回滚引擎、多 Agent 权限继承。
-> 循环检测见 [self/loop-detector.md](../self/loop-detector.md)，路径隔离见 [self/writable-root.md](../self/writable-root.md)。
+> 循环检测见 [self/loop-detector.md](../dasein/loop-detector.md)，路径隔离见 [self/writable-root.md](../dasein/writable-root.md)。
 
 ---
 

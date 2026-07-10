@@ -5,7 +5,7 @@
 > 通过 FUSE 挂载点暴露 Agent 状态、感知数据和控制接口，让 shell 脚本和系统工具可以直接与 Agent 交互。
 
 **模块编号:** 08
-**关联模块:** [编排引擎](../orchestration/orchestration-engine.md), [IPC 与内核](../platform/kernel-ipc.md), [感知层](perception-layer.md)
+**关联模块:** [编排引擎](../runtime/orchestration.md), [IPC 与内核](../base/ipc.md), [感知层](perception.md)
 **最后更新:** 2026-06-07
 
 ---
@@ -189,11 +189,11 @@ FUSE 层自动选择：运行时用 Live，离线用 Checkpoint。
 ## 5. 实现要点
 
 - **使用 fuse3 crate**: libfuse 3.x 的 Rust 绑定，支持 async/await。
-- **挂载点权限**: `/mnt/agent/` 应由 aletheond 创建和管理，挂载时使用 `allow_other` 或 `allow_root` 选项。
+- **挂载点权限**: `/mnt/agent/` 应由 aletheon daemon 创建和管理，挂载时使用 `allow_other` 或 `allow_root` 选项。
 - **缓存策略**: `context/` 和 `sensors/` 的内容变化频繁，不应启用页缓存 (direct_io)。
 - **日志轮转**: `logs/` 下的文件应支持大小限制和轮转，避免 FUSE 返回无限大的文件。
-- **优雅关闭**: aletheond 停止时应执行 `fusermount -u /mnt/agent/`，确保挂载点清理。
-- **systemd 集成**: FUSE 挂载应作为 aletheond.service 的一部分，或独立为 agent-fuse.service。
+- **优雅关闭**: aletheon daemon 停止时应执行 `fusermount -u /mnt/agent/`，确保挂载点清理。
+- **systemd 集成**: FUSE 挂载应作为 aletheon.service 的一部分，或独立为 agent-fuse.service。
 - **与 Session Persistence 的集成**: FUSE 层的状态读取应通过 StateProvider trait 抽象，支持从检查点恢复。
 - **Poll 支持**: 对 `sensors/events` 和 `logs/` 等流式文件实现 `poll()`，让 `select()`/`epoll()` 可用。
 
