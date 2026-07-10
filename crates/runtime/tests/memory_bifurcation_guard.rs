@@ -22,8 +22,9 @@ fn daemon_never_wires_a_memory_router_into_the_runtime() {
         !handler.contains("with_memory("),
         "Option A: daemon must build AletheonRuntime without a MemoryRouter"
     );
+    let core_systems = include_str!("../src/core/core_systems.rs");
     assert!(
-        handler.contains("EpisodicMemory"),
+        core_systems.contains("EpisodicMemory"),
         "EpisodicMemory remains the daemon's reflection store (kept under Option A)"
     );
 }

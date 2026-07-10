@@ -29,7 +29,7 @@ impl RequestHandler {
                 let sm = sm_arc.lock().await;
                 (sm.session_id.clone(), sm.turn_count())
             };
-            let hr = self.hook_registry.lock().await;
+            let hr = self.subsystems.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnSessionEnd,
                 session_id: sid,
@@ -43,18 +43,21 @@ impl RequestHandler {
             hr.execute(&ctx).await;
         }
         // Run configured on_session_end hook scripts
-        if !self.hooks_config.on_session_end.is_empty() {
+        if !self.subsystems.hooks_config.on_session_end.is_empty() {
             let hook_input = serde_json::json!({
                 "session_id": &session_id,
                 "cwd": std::env::current_dir().unwrap_or_default()
             });
             let _ = self
-                .run_hook_scripts(&self.hooks_config.on_session_end, &hook_input.to_string())
+                .run_hook_scripts(
+                    &self.subsystems.hooks_config.on_session_end,
+                    &hook_input.to_string(),
+                )
                 .await;
         }
         // Distill session facts into FactStore
         {
-            let fs = self.fact_store.lock().await;
+            let fs = self.subsystems.fact_store.lock().await;
             let sm = sm_arc.lock().await;
             let recent: Vec<_> = sm.history().iter().rev().take(10).collect();
             for msg in &recent {
@@ -80,11 +83,9 @@ impl RequestHandler {
         }
         // Clear cancel token
         {
-            let mut ct = self.cancel_token.lock().await;
+            let mut ct = self.subsystems.cancel_token.lock().await;
             *ct = None;
         }
-        let mut state = self.state.lock().await;
-        state.pending_input = None;
         json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -97,7 +98,7 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        match SessionStore::new(&self.data_dir) {
+        match SessionStore::new(&self.subsystems.data_dir) {
             Ok(store) => match store.list_sessions() {
                 Ok(ids) => json!({
                     "jsonrpc": "2.0",
@@ -131,12 +132,12 @@ impl RequestHandler {
                 "error": { "code": -32021, "message": "Missing session_id parameter" }
             })
         } else {
-            match SessionManager::recover(&self.data_dir, target_session_id).await {
+            match SessionManager::recover(&self.subsystems.data_dir, target_session_id).await {
                 Some(msgs) => {
                     match SessionManager::new(
-                        &self.data_dir,
+                        &self.subsystems.data_dir,
                         target_session_id.to_string(),
-                        self.context_window,
+                        self.subsystems.context_window,
                     )
                     .await
                     {
@@ -210,7 +211,7 @@ impl RequestHandler {
         };
         // Fire OnSessionEnd for the outgoing session
         {
-            let hr = self.hook_registry.lock().await;
+            let hr = self.subsystems.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnSessionEnd,
                 session_id: old_id,
@@ -224,28 +225,37 @@ impl RequestHandler {
             hr.execute(&ctx).await;
         }
         // Run configured on_session_end hook scripts
-        if !self.hooks_config.on_session_end.is_empty() {
+        if !self.subsystems.hooks_config.on_session_end.is_empty() {
             let hook_input = serde_json::json!({
                 "session_id": &old_hook_session_id,
                 "cwd": std::env::current_dir().unwrap_or_default()
             });
             let _ = self
-                .run_hook_scripts(&self.hooks_config.on_session_end, &hook_input.to_string())
+                .run_hook_scripts(
+                    &self.subsystems.hooks_config.on_session_end,
+                    &hook_input.to_string(),
+                )
                 .await;
         }
         // Create new session and replace SessionManager
-        match SessionManager::new(&self.data_dir, new_id.clone(), self.context_window).await {
+        match SessionManager::new(
+            &self.subsystems.data_dir,
+            new_id.clone(),
+            self.subsystems.context_window,
+        )
+        .await
+        {
             Ok(new_sm) => {
                 // Register session in store
-                if let Ok(store) = SessionStore::new(&self.data_dir) {
+                if let Ok(store) = SessionStore::new(&self.subsystems.data_dir) {
                     let _ = store.create_session(&new_id);
                 }
                 self.register_default_session(new_id.clone(), new_sm).await;
                 // Clear per-session approval cache
-                self.session_approvals.lock().await.clear();
+                self.subsystems.session_approvals.lock().await.clear();
                 // Fire OnSessionStart for the new session
                 {
-                    let hr = self.hook_registry.lock().await;
+                    let hr = self.subsystems.hook_registry.lock().await;
                     let ctx = HookContext {
                         point: HookPoint::OnSessionStart,
                         session_id: new_id.clone(),
@@ -278,15 +288,15 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        match SessionStore::new(&self.data_dir) {
+        match SessionStore::new(&self.subsystems.data_dir) {
             Ok(store) => match store.most_recent() {
                 Ok(Some(recent_id)) => {
-                    match SessionManager::recover(&self.data_dir, &recent_id).await {
+                    match SessionManager::recover(&self.subsystems.data_dir, &recent_id).await {
                         Some(msgs) => {
                             match SessionManager::new(
-                                &self.data_dir,
+                                &self.subsystems.data_dir,
                                 recent_id.clone(),
-                                self.context_window,
+                                self.subsystems.context_window,
                             )
                             .await
                             {
@@ -318,9 +328,9 @@ impl RequestHandler {
                         None => {
                             // No recoverable journal -- create fresh session with this id
                             match SessionManager::new(
-                                &self.data_dir,
+                                &self.subsystems.data_dir,
                                 recent_id.clone(),
-                                self.context_window,
+                                self.subsystems.context_window,
                             )
                             .await
                             {
@@ -349,11 +359,15 @@ impl RequestHandler {
                 Ok(None) => {
                     // No sessions exist at all -- create a new one
                     let new_id = uuid::Uuid::new_v4().to_string();
-                    match SessionManager::new(&self.data_dir, new_id.clone(), self.context_window)
-                        .await
+                    match SessionManager::new(
+                        &self.subsystems.data_dir,
+                        new_id.clone(),
+                        self.subsystems.context_window,
+                    )
+                    .await
                     {
                         Ok(new_sm) => {
-                            if let Ok(store) = SessionStore::new(&self.data_dir) {
+                            if let Ok(store) = SessionStore::new(&self.subsystems.data_dir) {
                                 let _ = store.create_session(&new_id);
                             }
                             self.register_default_session(new_id.clone(), new_sm).await;
@@ -390,12 +404,19 @@ impl RequestHandler {
         _request: &serde_json::Value,
     ) -> serde_json::Value {
         let new_id = uuid::Uuid::new_v4().to_string();
-        match SessionManager::new(&self.data_dir, new_id.clone(), self.context_window).await {
+        match SessionManager::new(
+            &self.subsystems.data_dir,
+            new_id.clone(),
+            self.subsystems.context_window,
+        )
+        .await
+        {
             Ok(new_sm) => {
                 let created_at = chrono::Utc::now().to_rfc3339();
                 let sm = Arc::new(tokio::sync::Mutex::new(new_sm));
                 self.sessions.lock().await.insert(new_id.clone(), sm);
-                self.session_created_at
+                self.subsystems
+                    .session_created_at
                     .lock()
                     .await
                     .insert(new_id.clone(), Instant::now());
@@ -422,7 +443,7 @@ impl RequestHandler {
         _request: &serde_json::Value,
     ) -> serde_json::Value {
         let sessions = self.sessions.lock().await;
-        let created_at_map = self.session_created_at.lock().await;
+        let created_at_map = self.subsystems.session_created_at.lock().await;
         let mut list = Vec::new();
         for (sid, sm_arc) in sessions.iter() {
             let msg_count = sm_arc.lock().await.message_count();
@@ -472,7 +493,7 @@ impl RequestHandler {
                 "error": { "code": -32021, "message": format!("Session not found: {}", target_id) }
             });
         }
-        *self.default_session_id.lock().await = target_id.clone();
+        *self.subsystems.default_session_id.lock().await = target_id.clone();
         info!(session_id = %target_id, "Session switched");
         json!({
             "jsonrpc": "2.0",

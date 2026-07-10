@@ -2,6 +2,7 @@ pub mod behavior_paths;
 pub mod checkpoint;
 pub mod config;
 pub mod controller;
+pub mod core_systems;
 pub mod event_sink;
 pub mod evolution_coordinator;
 pub mod interrupt;
@@ -21,6 +22,7 @@ pub use config::{
     AgentConfig, AppConfig, DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig,
     ProviderConfig, RuntimeConfig, SandboxConfig, Transport,
 };
+pub use core_systems::CoreSystems;
 pub use evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 pub use interrupt::InterruptFlag;
 pub use mode_router::ModeRouter;

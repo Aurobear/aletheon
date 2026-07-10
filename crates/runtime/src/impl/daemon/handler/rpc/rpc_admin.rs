@@ -33,7 +33,7 @@ impl RequestHandler {
         _request: &serde_json::Value,
     ) -> serde_json::Value {
         let count = {
-            let mut loader = self.skill_loader.lock().await;
+            let mut loader = self.subsystems.skill_loader.lock().await;
             loader.reload()
         };
         info!(count = count, "Skills reloaded via reload_skills RPC");
@@ -42,11 +42,11 @@ impl RequestHandler {
         // Note: core_memory snapshot is from boot; mid-session memory
         // changes ride the memory_queue, not the prefix.
         {
-            let loader = self.skill_loader.lock().await;
-            let cm = self.core_memory.lock().await;
-            let old_prefix = self.cached_prefix.lock().await;
+            let loader = self.subsystems.skill_loader.lock().await;
+            let cm = self.subsystems.core_memory.lock().await;
+            let old_prefix = self.subsystems.cached_prefix.lock().await;
             let new_prefix = crate::r#impl::daemon::prefix_builder::PrefixBuilder::build(
-                &self.config_prompt,
+                &self.subsystems.config_prompt,
                 loader.skills(),
                 &cm,
             );
@@ -59,7 +59,7 @@ impl RequestHandler {
             drop(old_prefix);
             drop(cm);
             drop(loader);
-            *self.cached_prefix.lock().await = new_prefix;
+            *self.subsystems.cached_prefix.lock().await = new_prefix;
         }
 
         json!({
@@ -93,7 +93,7 @@ impl RequestHandler {
             "always" => {
                 // Cache approval for this tool for the rest of the session
                 if !tool_name.is_empty() {
-                    let mut approvals = self.session_approvals.lock().await;
+                    let mut approvals = self.subsystems.session_approvals.lock().await;
                     approvals.insert(tool_name.clone(), true);
                     info!(tool = %tool_name, "Tool approved for session (always)");
                 }
@@ -102,7 +102,7 @@ impl RequestHandler {
             _ => ApprovalDecision::Deny,
         };
 
-        if let Some(tx) = self.pending_approvals.lock().await.remove(&aid) {
+        if let Some(tx) = self.subsystems.pending_approvals.lock().await.remove(&aid) {
             let _ = tx.send(decision);
             info!(approval_id = %aid, action = %action, "Approval resolved");
         } else {
@@ -132,8 +132,12 @@ impl RequestHandler {
             _ => InterruptReason::UserCancelled,
         };
         {
-            let state = self.state.lock().await;
-            state.runtime.interrupt_flag().request(reason);
+            self.subsystems
+                .runtime
+                .lock()
+                .await
+                .interrupt_flag()
+                .request(reason);
         }
         info!(reason = ?reason, "Interrupt requested");
         json!({
@@ -161,9 +165,9 @@ impl RequestHandler {
         };
         let old_mode;
         {
-            let mut state = self.state.lock().await;
-            old_mode = state.runtime.mode_router().current_mode();
-            state.runtime.mode_router_mut().set_mode(mode);
+            let mut rt = self.subsystems.runtime.lock().await;
+            old_mode = rt.mode_router().current_mode();
+            rt.mode_router_mut().set_mode(mode);
         }
         info!(old = ?old_mode, new = ?mode, "Collaboration mode switched");
         // Notify all connected clients about the mode change
@@ -228,7 +232,7 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let tools_arc = self.tools.clone();
+        let tools_arc = self.subsystems.tools.clone();
         let reg = tools_arc.lock().await;
         let tools: Vec<serde_json::Value> = reg
             .definitions()
@@ -253,7 +257,7 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let hr = self.hook_registry.lock().await;
+        let hr = self.subsystems.hook_registry.lock().await;
         let hooks: Vec<serde_json::Value> = hr
             .list()
             .iter()
@@ -279,9 +283,11 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let state = self.state.lock().await;
-        let agents: Vec<_> = state
+        let agents: Vec<_> = self
+            .subsystems
             .runtime
+            .lock()
+            .await
             .sub_agent_spawner()
             .list()
             .iter()

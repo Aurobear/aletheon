@@ -20,7 +20,7 @@ impl RequestHandler {
         let id = if let Some(sid) = session_id {
             sid.to_string()
         } else {
-            self.default_session_id.lock().await.clone()
+            self.subsystems.default_session_id.lock().await.clone()
         };
 
         // Fast path: check if session exists
@@ -32,12 +32,19 @@ impl RequestHandler {
         }
 
         // Slow path: create session on demand
-        match SessionManager::new(&self.data_dir, id.clone(), self.context_window).await {
+        match SessionManager::new(
+            &self.subsystems.data_dir,
+            id.clone(),
+            self.subsystems.context_window,
+        )
+        .await
+        {
             Ok(new_sm) => {
                 let sm = Arc::new(Mutex::new(new_sm));
                 let mut sessions = self.sessions.lock().await;
                 sessions.insert(id.clone(), sm.clone());
-                self.session_created_at
+                self.subsystems
+                    .session_created_at
                     .lock()
                     .await
                     .insert(id.clone(), Instant::now());
@@ -46,7 +53,7 @@ impl RequestHandler {
             }
             Err(e) => {
                 warn!(error = %e, session_id = %id, "Failed to create session on demand, falling back to default");
-                let default_id = self.default_session_id.lock().await.clone();
+                let default_id = self.subsystems.default_session_id.lock().await.clone();
                 let sessions = self.sessions.lock().await;
                 let sm = sessions
                     .get(&default_id)
@@ -66,8 +73,9 @@ impl RequestHandler {
         let sm = Arc::new(Mutex::new(session_manager));
         let mut sessions = self.sessions.lock().await;
         sessions.insert(session_id.clone(), sm);
-        *self.default_session_id.lock().await = session_id.clone();
-        self.session_created_at
+        *self.subsystems.default_session_id.lock().await = session_id.clone();
+        self.subsystems
+            .session_created_at
             .lock()
             .await
             .insert(session_id.clone(), Instant::now());

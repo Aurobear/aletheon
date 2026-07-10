@@ -191,19 +191,12 @@ impl Planner {
         // Try fenced JSON block first
         let json_str = if let Some(start) = llm_output.find("```json") {
             let after_fence = &llm_output[start + 7..];
-            if let Some(end) = after_fence.find("```") {
-                after_fence[..end].trim()
-            } else {
-                return None;
-            }
-        } else if let Some(start) = llm_output.find('[') {
-            if let Some(end) = llm_output[start..].rfind(']') {
-                &llm_output[start..=start + end]
-            } else {
-                return None;
-            }
+            let end = after_fence.find("```")?;
+            after_fence[..end].trim()
         } else {
-            return None;
+            let start = llm_output.find('[')?;
+            let end = llm_output[start..].rfind(']')?;
+            &llm_output[start..=start + end]
         };
 
         let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;

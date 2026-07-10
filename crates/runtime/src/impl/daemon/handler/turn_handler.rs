@@ -14,13 +14,13 @@ impl RequestHandler {
         // Set the interrupt flag on the runtime so the ReAct loop can
         // detect and handle the cancellation during tool execution.
         {
-            let state = self.state.lock().await;
-            let flag = state.runtime.interrupt_flag();
+            let rt = self.subsystems.runtime.lock().await;
+            let flag = rt.interrupt_flag();
             flag.request(InterruptReason::Timeout);
         }
 
         // Cancel the per-turn token (created fresh by each handle_chat call).
-        let mut token = self.cancel_token.lock().await;
+        let mut token = self.subsystems.cancel_token.lock().await;
         if let Some(ct) = token.take() {
             ct.cancel();
         }
@@ -30,7 +30,7 @@ impl RequestHandler {
     /// The returned token is stored so it can be cancelled during shutdown.
     pub async fn begin_turn_token(&self) -> CancellationToken {
         let ct = CancellationToken::new();
-        let mut token = self.cancel_token.lock().await;
+        let mut token = self.subsystems.cancel_token.lock().await;
         *token = Some(ct.clone());
         ct
     }

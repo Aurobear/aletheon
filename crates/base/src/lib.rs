@@ -26,6 +26,7 @@ pub mod events;
 pub mod include;
 pub mod ipc;
 pub mod kernel;
+pub mod ops;
 pub mod policy;
 pub mod types;
 
@@ -179,3 +180,6 @@ pub use policy::execpolicy::{
 // Note: policy::execpolicy::Evaluation is not re-exported at crate root
 // to avoid conflict with include::meta::Evaluation.
 // Access via base::policy::execpolicy::Evaluation or base::execpolicy::Evaluation.
+
+// Ops traits (from ops/)
+pub use ops::{CognitOps, CognitiveHarness, CorpusOps, DaseinOps, MnemosyneOps, ToolExecutor};

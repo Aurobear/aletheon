@@ -38,12 +38,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     format!("{truncated}…")
 }
 
-fn append_bounded_text(
-    target: &mut String,
-    value: &str,
-    per_item: usize,
-    remaining: &mut usize,
-) {
+fn append_bounded_text(target: &mut String, value: &str, per_item: usize, remaining: &mut usize) {
     if *remaining == 0 {
         return;
     }
@@ -131,7 +126,7 @@ impl RequestHandler {
             },
         };
         let sf_ctx = AbiContext::new(
-            &self.state.lock().await.runtime.config().session_id,
+            &self.subsystems.runtime.lock().await.config().session_id,
             std::env::current_dir().unwrap_or_default(),
         );
 
@@ -152,7 +147,7 @@ impl RequestHandler {
 
         // Use the cache-stable prefix (built once at boot)
         let system_prompt = {
-            let prefix = self.cached_prefix.lock().await;
+            let prefix = self.subsystems.cached_prefix.lock().await;
             prefix.clone()
         };
 
@@ -165,7 +160,7 @@ impl RequestHandler {
         // Reset Storm Breaker counters at the start of each turn so that
         // success/failure warnings don't accumulate across turns.
         {
-            let mut sb = self.storm_breaker.lock().await;
+            let mut sb = self.subsystems.storm_breaker.lock().await;
             sb.reset();
         }
 
@@ -191,7 +186,7 @@ impl RequestHandler {
         // --- Keyword skill injection ---
         // Gather loaded skills with keywords and match against user message.
         {
-            let loader = self.skill_loader.lock().await;
+            let loader = self.subsystems.skill_loader.lock().await;
             let skill_keywords: Vec<crate::r#impl::skills::keyword_matcher::SkillKeywords> = loader
                 .plugins()
                 .iter()
@@ -223,7 +218,7 @@ impl RequestHandler {
 
         // --- Fact recall from FactStore ---
         {
-            let fs = self.fact_store.lock().await;
+            let fs = self.subsystems.fact_store.lock().await;
             let keywords: Vec<String> = message
                 .split_whitespace()
                 .filter(|w| w.len() > 3)
@@ -285,7 +280,7 @@ impl RequestHandler {
         // core_memory_append/AutoMemory updates it in-memory after that.
         // Inject the current state so the model sees up-to-date facts.
         {
-            let cm = self.core_memory.lock().await;
+            let cm = self.subsystems.core_memory.lock().await;
             let mut core_lines = Vec::new();
             for (label, block) in cm.blocks() {
                 if block.read_only || block.value.is_empty() {
@@ -309,7 +304,7 @@ impl RequestHandler {
 
         // --- Skill suggestion via SkillRouter ---
         {
-            let sr = self.skill_router.lock().await;
+            let sr = self.subsystems.skill_router.lock().await;
             let suggestions = sr.suggest(message, 0.6, 1);
             if let Some(suggestion) = suggestions.first() {
                 info!(skill = %suggestion.name, confidence = suggestion.confidence, "Skill suggested");
@@ -322,19 +317,22 @@ impl RequestHandler {
 
         // --- Periodic stale fact decay ---
         {
-            let fs = self.fact_store.lock().await;
+            let fs = self.subsystems.fact_store.lock().await;
             let _ = fs.decay_stale();
         }
 
         // --- Configured pre_turn hook scripts ---
-        if !self.hooks_config.pre_turn.is_empty() {
+        if !self.subsystems.hooks_config.pre_turn.is_empty() {
             let hook_session_id = self.get_or_create_session(None).await.0;
             let hook_input = serde_json::json!({
                 "prompt": message,
                 "session_id": hook_session_id
             });
             let hook_outputs = self
-                .run_hook_scripts(&self.hooks_config.pre_turn, &hook_input.to_string())
+                .run_hook_scripts(
+                    &self.subsystems.hooks_config.pre_turn,
+                    &hook_input.to_string(),
+                )
                 .await;
             for output in hook_outputs {
                 effective_message.push_str(&format!("\n[Hook output]\n{}\n", output));
@@ -351,7 +349,7 @@ impl RequestHandler {
                 let sm = sm_arc.lock().await;
                 (sm.session_id.clone(), sm.turn_count())
             };
-            let hr = self.hook_registry.lock().await;
+            let hr = self.subsystems.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::PreTurn,
                 session_id,
@@ -387,11 +385,11 @@ impl RequestHandler {
         // Persist user message to recall memory
         {
             let (session_id, sm_arc) = self.get_or_create_session(None).await;
-            let rm = self.recall_memory.lock().await;
+            let rm = self.subsystems.recall_memory.lock().await;
             let _ = rm.store(&session_id, "user_message", message, None);
             // Fire OnMemoryStore hook
             {
-                let hr = self.hook_registry.lock().await;
+                let hr = self.subsystems.hook_registry.lock().await;
                 let turn_count = sm_arc.lock().await.turn_count();
                 let ctx = HookContext {
                     point: HookPoint::OnMemoryStore,
@@ -410,20 +408,20 @@ impl RequestHandler {
         // --- Interleaved ReAct loop with tools ---
         // Build tool definitions from the shared tool registry.
         let tool_defs = {
-            let tools = self.tools.lock().await;
+            let tools = self.subsystems.tools.lock().await;
             tools.definitions()
         };
 
         // Prepare execute_tool closure that runs tools through the guarded runner.
-        let runner = self.tool_runner.clone();
-        let tools_arc = self.tools.clone();
-        let hook_registry_arc = self.hook_registry.clone();
-        let storm_breaker_arc = self.storm_breaker.clone();
-        let memory_queue_arc = self.memory_queue.clone();
-        let session_approvals_arc = self.session_approvals.clone();
+        let runner = self.subsystems.tool_runner.clone();
+        let tools_arc = self.subsystems.tools.clone();
+        let hook_registry_arc = self.subsystems.hook_registry.clone();
+        let storm_breaker_arc = self.subsystems.storm_breaker.clone();
+        let memory_queue_arc = self.subsystems.memory_queue.clone();
+        let session_approvals_arc = self.subsystems.session_approvals.clone();
         let notify_tx_arc = self.notify_tx.clone();
-        let debug_perf_arc = self.debug_perf.clone();
-        let self_field_arc = self.self_field.clone();
+        let debug_perf_arc = self.subsystems.debug_perf.clone();
+        let self_field_arc = self.subsystems.self_field.clone();
         let working_dir = std::env::current_dir().unwrap_or_default();
         let (session_id, sm_arc) = self.get_or_create_session(None).await;
         let turn_count = sm_arc.lock().await.turn_count();
@@ -586,8 +584,8 @@ impl RequestHandler {
         //
         // We spawn the ReAct loop as a background task so we can
         // concurrently pump approval requests from the SocketApprovalGate.
-        let approval_rx = self.approval_rx.clone();
-        let pending_approvals = self.pending_approvals.clone();
+        let approval_rx = self.subsystems.approval_rx.clone();
+        let pending_approvals = self.subsystems.pending_approvals.clone();
         let notify_tx = self.notify_tx.clone();
 
         // Dynamic model selection based on message content
@@ -609,7 +607,7 @@ impl RequestHandler {
 
         // Inject Dasein context into user input (Task 17)
         let effective_message = {
-            let sf = self.self_field.lock().await;
+            let sf = self.subsystems.self_field.lock().await;
             if let Some(ctx) = sf.dasein_prompt_injection() {
                 format!("{}\n\n---\n\n{}", ctx, effective_message)
             } else {
@@ -617,7 +615,7 @@ impl RequestHandler {
             }
         };
 
-        let config = self.state.lock().await.runtime.config().clone();
+        let config = self.subsystems.runtime.lock().await.config().clone();
         let llm_clone = llm.clone();
         let tool_defs_clone = tool_defs.clone();
         let goal_message = message.to_string();
@@ -825,7 +823,7 @@ impl RequestHandler {
                 .iter()
                 .map(|(_, name, _)| name.clone())
                 .collect();
-            let sb = self.storm_breaker.lock().await;
+            let sb = self.subsystems.storm_breaker.lock().await;
             self.session_gateway
                 .update_turn_state(
                     turn_count,
@@ -844,7 +842,9 @@ impl RequestHandler {
         }
 
         // Record turn in perf counter (token counts from accumulated Usage events).
-        self.debug_perf.record_turn(acc_tokens_in, acc_tokens_out);
+        self.subsystems
+            .debug_perf
+            .record_turn(acc_tokens_in, acc_tokens_out);
 
         // Narrate the completed interaction in the SelfField narrative layer (bus-aware)
         let msg_preview_end = message
@@ -870,7 +870,7 @@ impl RequestHandler {
                 let sm = sm_arc.lock().await;
                 (sm.session_id.clone(), sm.turn_count())
             };
-            let hr = self.hook_registry.lock().await;
+            let hr = self.subsystems.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::PostTurn,
                 session_id,
@@ -888,7 +888,7 @@ impl RequestHandler {
         // Runs after PostTurn hooks, before compaction.
         // Uses a cheap LLM to extract facts from the turn.
         if turn_succeeded {
-            let mut am = self.auto_memory.lock().await;
+            let mut am = self.subsystems.auto_memory.lock().await;
             if let Ok(facts) = am.analyze_and_store(message, &text).await {
                 if !facts.is_empty() {
                     info!(count = facts.len(), "Auto-memory: stored facts");
@@ -944,16 +944,17 @@ impl RequestHandler {
             sm.turn_count()
         } else {
             let (_sid, sm_arc) = self.get_or_create_session(None).await;
-            sm_arc.lock().await.turn_count()
+            let tc = sm_arc.lock().await.turn_count();
+            tc
         };
         // Persist assistant response to recall memory
         if turn_succeeded {
             let session_id = self.get_or_create_session(None).await.0;
-            let rm = self.recall_memory.lock().await;
+            let rm = self.subsystems.recall_memory.lock().await;
             let _ = rm.store(&session_id, "assistant_message", &text, None);
             // Fire OnMemoryStore hook
             {
-                let hr = self.hook_registry.lock().await;
+                let hr = self.subsystems.hook_registry.lock().await;
                 let ctx = HookContext {
                     point: HookPoint::OnMemoryStore,
                     session_id: session_id.clone(),
@@ -1029,7 +1030,7 @@ impl RequestHandler {
         what_worked.push(format!("Conversation turn #{}", turn));
 
         let has_failures = !what_failed.is_empty();
-        let entry = self.reflector.reflect_conversation(
+        let entry = self.subsystems.reflector.reflect_conversation(
             &task_summary,
             ReflectionTrigger::TaskComplete,
             !has_failures,
@@ -1039,7 +1040,7 @@ impl RequestHandler {
         );
         // Store reflection — drop lock guard before re-locking for evolution check
         let store_result = {
-            let mem = self.episodic_memory.lock().await;
+            let mem = self.subsystems.episodic_memory.lock().await;
             mem.store_reflection(&entry)
         };
         if let Err(e) = store_result {
@@ -1048,7 +1049,7 @@ impl RequestHandler {
             info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
 
             // Periodic evolution trigger: every 10 reflections, run ExperienceSummarizer
-            let mem = self.episodic_memory.lock().await;
+            let mem = self.subsystems.episodic_memory.lock().await;
             if let Ok(count) = mem.reflection_count() {
                 if count > 0 && count % 10 == 0 {
                     info!(
@@ -1073,9 +1074,11 @@ impl RequestHandler {
         // EvolutionCoordinator: post-turn evolution (accumulates reflections, triggers every N turns)
         {
             let success = metrics.completed_normally && !text.starts_with("error:");
-            let mut state = self.state.lock().await;
-            if let Err(e) = state
+            if let Err(e) = self
+                .subsystems
                 .runtime
+                .lock()
+                .await
                 .post_evolution(
                     &task_summary,
                     &text,
@@ -1084,7 +1087,7 @@ impl RequestHandler {
                     metrics.tool_errors,
                     metrics.elapsed_ms,
                     metrics.iterations,
-                    &*self.pipeline,
+                    &*self.subsystems.pipeline,
                 )
                 .await
             {
@@ -1129,10 +1132,7 @@ mod tests {
 
     #[test]
     fn bounded_history_caps_restored_injected_payloads() {
-        let huge = format!(
-            "<activated-skill>{}</activated-skill>",
-            "x".repeat(200_000)
-        );
+        let huge = format!("<activated-skill>{}</activated-skill>", "x".repeat(200_000));
         let history = vec![Message::user(huge)];
 
         let bounded = bounded_text_history(&history);
@@ -1168,10 +1168,7 @@ mod tests {
         );
 
         assert_eq!(
-            messages
-                .iter()
-                .filter(|m| m.role == Role::System)
-                .count(),
+            messages.iter().filter(|m| m.role == Role::System).count(),
             1
         );
         assert_eq!(text_of(&messages[0]), "current prefix");
