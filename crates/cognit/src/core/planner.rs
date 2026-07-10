@@ -193,11 +193,10 @@ impl Planner {
             let after_fence = &llm_output[start + 7..];
             let end = after_fence.find("```")?;
             after_fence[..end].trim()
-        } else if let Some(start) = llm_output.find('[') {
+        } else {
+            let start = llm_output.find('[')?;
             let end = llm_output[start..].rfind(']')?;
             &llm_output[start..=start + end]
-        } else {
-            return None;
         };
 
         let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;
