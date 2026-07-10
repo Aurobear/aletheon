@@ -540,6 +540,7 @@ impl RequestHandler {
             auto_memory,
             objective_store,
             reflector,
+            agora: Arc::new(agora::AgoraRegistry::new()),
             tools,
             tool_runner,
             skill_loader: Arc::new(Mutex::new(skill_loader)),

@@ -15,6 +15,7 @@ use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 
+use agora::AgoraRegistry;
 use corpus::security::security::approval::ApprovalDecision;
 use corpus::security::security::runner::ToolRunnerWithGuard;
 use corpus::security::security::socket_approval::PendingApproval;
@@ -59,6 +60,9 @@ pub struct CoreSystems {
 
     // --- Cognit ---
     pub reflector: Reflector,
+
+    /// Shared cognitive workspace (RFC-014). Session-isolated working memory.
+    pub agora: Arc<AgoraRegistry>,
 
     // --- Corpus ---
     pub tools: Arc<Mutex<ToolRegistry>>,
