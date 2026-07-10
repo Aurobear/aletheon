@@ -5,9 +5,9 @@
 
 use crate::r#impl::morphogenesis::pipeline::MorphogenesisPipeline;
 use anyhow::Result;
-use base::evolution::EvolutionResultPayload;
-use base::self_field::MutationIntent;
-use base::MetaRuntimeOps;
+use fabric::evolution::EvolutionResultPayload;
+use fabric::self_field::MutationIntent;
+use fabric::MetaRuntimeOps;
 
 /// Executes mutation intents through the Morphogenesis Pipeline.
 pub struct MutationExecutor<M: MetaRuntimeOps> {

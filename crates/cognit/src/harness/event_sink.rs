@@ -3,7 +3,7 @@
 //! All frontends observe the same event stream. Each frontend
 //! implements `EventSink` to receive events.
 
-use base::tool::ToolResult;
+use fabric::tool::ToolResult;
 
 /// Lifecycle events emitted by the agent.
 #[derive(Debug, Clone)]
@@ -198,7 +198,7 @@ mod tests {
         let tr = ToolResult {
             content: "ok".into(),
             is_error: false,
-            metadata: base::tool::ToolResultMeta {
+            metadata: fabric::tool::ToolResultMeta {
                 execution_time_ms: 50,
                 truncated: false,
             },
@@ -213,7 +213,7 @@ mod tests {
         let tr = ToolResult {
             content: "error output".into(),
             is_error: true,
-            metadata: base::tool::ToolResultMeta {
+            metadata: fabric::tool::ToolResultMeta {
                 execution_time_ms: 10,
                 truncated: false,
             },

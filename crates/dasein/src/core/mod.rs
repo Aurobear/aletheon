@@ -18,12 +18,12 @@ pub mod store;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use base::self_field::RiskLevel;
-use base::{
+use chrono::Duration;
+use fabric::self_field::RiskLevel;
+use fabric::{
     Care, Conflict, Context, Identity, Intent, MutationIntent, Resolution, Subsystem,
     SubsystemContext, SubsystemHealth, Verdict, Version,
 };
-use chrono::Duration;
 use std::sync::Arc;
 use tracing::info;
 
@@ -42,7 +42,7 @@ use crate::core::narrative::NarrativeLayer;
 use crate::core::store::SelfFieldStore;
 use crate::dasein::DaseinEventBridge;
 use crate::dasein::DaseinModule;
-use base::dasein::DaseinEvent;
+use fabric::dasein::DaseinEvent;
 
 /// Configuration for SelfField construction.
 pub struct SelfFieldConfig {
@@ -103,7 +103,8 @@ pub struct SelfField {
     dasein_event_tx: Option<tokio::sync::mpsc::Sender<DaseinEvent>>,
     /// Optional Runtime permission authority. When set, `review()` delegates
     /// the confirmation verdict to it instead of using the inline rule.
-    permission_authority: Option<Arc<dyn base::policy::permission_authority::PermissionAuthority>>,
+    permission_authority:
+        Option<Arc<dyn fabric::policy::permission_authority::PermissionAuthority>>,
 }
 
 impl SelfField {
@@ -172,7 +173,7 @@ impl SelfField {
     /// daemon handler after constructing SelfField.
     pub fn set_permission_authority(
         &mut self,
-        authority: Arc<dyn base::policy::permission_authority::PermissionAuthority>,
+        authority: Arc<dyn fabric::policy::permission_authority::PermissionAuthority>,
     ) {
         self.permission_authority = Some(authority);
     }
@@ -214,7 +215,7 @@ impl SelfField {
         &self,
         tool_name: &str,
         args: &serde_json::Value,
-        result: &base::tool::ToolResult,
+        result: &fabric::tool::ToolResult,
         turn_id: &str,
     ) {
         self.loop_bridge
@@ -237,7 +238,7 @@ impl SelfField {
     }
 
     /// Get DaseinContext for LLM injection.
-    pub fn dasein_context(&self) -> Option<base::dasein::DaseinContext> {
+    pub fn dasein_context(&self) -> Option<fabric::dasein::DaseinContext> {
         self.dasein.as_ref().map(|d| d.to_context_injection())
     }
 
@@ -258,7 +259,7 @@ impl SelfField {
     /// session lifecycle events.
     pub async fn wire_dasein_event_bridge(
         &self,
-        communication_bus: &base::CommunicationBus,
+        communication_bus: &fabric::CommunicationBus,
     ) -> anyhow::Result<()> {
         if let (Some(ref _dasein), Some(ref tx)) = (&self.dasein, &self.dasein_event_tx) {
             let bridge = DaseinEventBridge::new(tx.clone());
@@ -358,7 +359,7 @@ impl Subsystem for SelfField {
 }
 
 #[async_trait]
-impl base::SelfFieldOps for SelfField {
+impl fabric::SelfFieldOps for SelfField {
     /// Core review pipeline: Hook -> Policy -> Boundary -> Care -> Permissions -> Narrative -> Verdict.
     async fn review(&self, intent: &Intent, ctx: &Context) -> Result<Verdict> {
         // 1. Hook check (pre-tool hooks can block)
@@ -415,7 +416,7 @@ impl base::SelfFieldOps for SelfField {
             }
         } else if care_score > 0.8 {
             // Fallback: historical inline rule (exact port, line-for-line).
-            if ctx.permissions.max_level() < base::PermissionLevel::SystemChange {
+            if ctx.permissions.max_level() < fabric::PermissionLevel::SystemChange {
                 let verdict = Verdict::RequireConfirmation {
                     reason: format!(
                         "High care relevance ({:.2}) with insufficient permissions for action '{}'",
@@ -487,8 +488,8 @@ impl base::SelfFieldOps for SelfField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::self_field::{ConflictSource, RiskLevel};
-    use base::{IntentSource, SelfFieldOps};
+    use fabric::self_field::{ConflictSource, RiskLevel};
+    use fabric::{IntentSource, SelfFieldOps};
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -650,7 +651,7 @@ mod tests {
             name: "self_field".to_string(),
             working_dir: PathBuf::from("/tmp"),
             config: json!({}),
-            bus: std::sync::Arc::new(base::CommunicationBus::new()),
+            bus: std::sync::Arc::new(fabric::CommunicationBus::new()),
         };
         sf.init(&ctx).await.unwrap();
         assert!(matches!(sf.health().await, SubsystemHealth::Healthy));
@@ -662,14 +663,14 @@ mod tests {
         ));
     }
 
-    use base::policy::permission_authority::PermissionAuthority;
+    use fabric::policy::permission_authority::PermissionAuthority;
     use std::sync::Arc;
 
     struct StubAuthority;
     impl PermissionAuthority for StubAuthority {
         fn confirmation_verdict(
             &self,
-            _ctx: &base::Context,
+            _ctx: &fabric::Context,
             _care: f64,
             action: &str,
         ) -> Option<Verdict> {

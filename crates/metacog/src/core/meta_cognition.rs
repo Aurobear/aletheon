@@ -1,5 +1,5 @@
-use base::dasein::{BoredomDepth, DaseinContext, DaseinEvent, Stimmung};
-use base::self_field::MutationIntent;
+use fabric::dasein::{BoredomDepth, DaseinContext, DaseinEvent, Stimmung};
+use fabric::self_field::MutationIntent;
 use std::sync::RwLock;
 use tokio::sync::mpsc;
 

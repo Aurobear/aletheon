@@ -6,11 +6,11 @@
 //! Run with:  cargo run -p basic-agent-example
 
 use anyhow::Result;
-use base::body::{Action, ActionResult};
-use base::brain::{CostEstimate, Plan, PlanStep};
-use base::context::Context;
-use base::self_field::{Intent, RiskLevel, Verdict};
-use runtime::{AletheonRuntime, RuntimeConfig};
+use executive::{AletheonRuntime, RuntimeConfig};
+use fabric::body::{Action, ActionResult};
+use fabric::brain::{CostEstimate, Plan, PlanStep};
+use fabric::context::Context;
+use fabric::self_field::{Intent, RiskLevel, Verdict};
 use std::path::PathBuf;
 
 /// Stub: policy review -- always approves in this example.

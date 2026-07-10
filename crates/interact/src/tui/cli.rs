@@ -9,7 +9,7 @@ use super::workflow;
 
 use super::response::deduplicate_consecutive_text as deduplicate_response;
 use super::response::{format_evolution, format_genome, format_reflections, format_status};
-use base::ui_event::ClientEvent;
+use fabric::ui_event::ClientEvent;
 
 use std::io;
 use std::path::PathBuf;

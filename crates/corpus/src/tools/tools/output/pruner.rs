@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-use base::{ContentBlock, Message};
+use fabric::{ContentBlock, Message};
 
 /// Pre-summarization tool output pruning (Hermes 3-pass pattern).
 ///
@@ -73,7 +73,7 @@ fn summarize_old_tool_results(messages: &mut [Message]) {
 
 fn truncate_tool_call_args(messages: &mut [Message]) {
     for msg in messages.iter_mut() {
-        if msg.role != base::Role::Assistant {
+        if msg.role != fabric::Role::Assistant {
             continue;
         }
         for block in msg.content.iter_mut() {
@@ -101,7 +101,7 @@ mod tests {
 
     fn make_tool_result(content: &str) -> Message {
         Message {
-            role: base::Role::User,
+            role: fabric::Role::User,
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: "test".to_string(),
                 content: content.to_string(),
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn test_truncate_tool_call_args() {
         let mut messages = vec![Message {
-            role: base::Role::Assistant,
+            role: fabric::Role::Assistant,
             content: vec![ContentBlock::ToolUse {
                 id: "test".to_string(),
                 name: "bash_exec".to_string(),

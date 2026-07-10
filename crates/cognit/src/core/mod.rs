@@ -25,8 +25,8 @@ pub mod world_model;
 mod tests;
 
 use anyhow::Result;
-use base::message::ContentBlock;
-use base::self_field::Intent;
+use fabric::message::ContentBlock;
+use fabric::self_field::Intent;
 
 use self::awareness::{AwarenessContext, AwarenessGenerator};
 use self::critic::Critic;
@@ -40,7 +40,7 @@ use self::world_model::WorldModel;
 use crate::bridge::dual_model::{DualModelBridge, TaskComplexity};
 use crate::bridge::learning::LearningBridge;
 use crate::bridge::llm::LlmBridge;
-use base::{brain::Plan, context::Context, self_field::AwarenessGrowthSuggestion, SelfAwareness};
+use fabric::{brain::Plan, context::Context, self_field::AwarenessGrowthSuggestion, SelfAwareness};
 
 /// Configuration for BrainCore construction.
 pub struct BrainCoreConfig {

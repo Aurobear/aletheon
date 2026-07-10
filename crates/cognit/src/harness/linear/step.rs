@@ -3,9 +3,9 @@ use super::tool_budget;
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 
 use crate::r#impl::llm::provider::LlmProvider;
-use base::message::{ContentBlock, Message, Role};
-use base::policy::verifier::Verdict;
-use base::ToolDefinition;
+use fabric::message::{ContentBlock, Message, Role};
+use fabric::policy::verifier::Verdict;
+use fabric::ToolDefinition;
 use std::future::Future;
 use tracing::{debug, warn};
 

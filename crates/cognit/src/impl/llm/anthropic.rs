@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use super::provider::*;
-use base::message::{ContentBlock, Message, Role};
+use fabric::message::{ContentBlock, Message, Role};
 
 pub struct AnthropicProvider {
     client: Client,

@@ -1,6 +1,6 @@
 use crate::r#impl::hook::dispatcher::HookDispatcher;
 use crate::r#impl::hook::types::{HandlerResult, HookContext, HookEventName};
-use base::self_field::Verdict;
+use fabric::self_field::Verdict;
 
 /// Bridges HookDispatcher into SelfField.
 pub struct HookBridge {

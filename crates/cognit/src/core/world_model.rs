@@ -4,8 +4,8 @@
 //! and tracks entity state derived from those observations.
 //! Provides snapshot summaries for the Reasoner to use as context.
 
-use base::brain::Observation;
 use chrono::{DateTime, Utc};
+use fabric::brain::Observation;
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
 

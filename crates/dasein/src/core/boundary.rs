@@ -4,8 +4,8 @@
 //! first match wins. Uses glob patterns for action matching.
 
 use anyhow::Result;
-use base::self_field::RiskLevel;
-use base::{Intent, IntentSource, Verdict};
+use fabric::self_field::RiskLevel;
+use fabric::{Intent, IntentSource, Verdict};
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
 

@@ -5,8 +5,8 @@
 
 use crate::core::mutation::MutationLayer;
 use anyhow::Result;
-use base::evolution::EvolutionTriggeredPayload;
-use base::self_field::{MutationIntent, Verdict};
+use fabric::evolution::EvolutionTriggeredPayload;
+use fabric::self_field::{MutationIntent, Verdict};
 use std::sync::Arc;
 
 /// Validates evolution triggers and generates approved mutation intents.

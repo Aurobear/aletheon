@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use base::Care;
+use fabric::Care;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 

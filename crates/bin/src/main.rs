@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use runtime::host::RuntimeHost;
+use executive::host::RuntimeHost;
 use tracing::info;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
 
             match daemon_mode {
                 DaemonMode::Systemd => {
-                    let mut host = runtime::host::systemd::SystemdHost::new(
+                    let mut host = executive::host::systemd::SystemdHost::new(
                         config.clone(),
                         env.clone(),
                         socket_path,
@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
                     Box::new(host).serve().await
                 }
                 DaemonMode::Container { runtime_name } => {
-                    let mut host = runtime::host::container::ContainerHost::new(
+                    let mut host = executive::host::container::ContainerHost::new(
                         config.clone(),
                         env.clone(),
                         runtime_name,
@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
                     Box::new(host).serve().await
                 }
                 DaemonMode::Foreground => {
-                    let mut host = runtime::host::DaemonHost::new(
+                    let mut host = executive::host::DaemonHost::new(
                         config.clone(),
                         env.clone(),
                         socket_path,
@@ -260,7 +260,6 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
 
 // ── Exec ────────────────────────────────────────────────────────────────────
 
-use base::{ContentBlock, Message, Role};
 use cognit::r#impl::llm::LlmProvider;
 use cognit::r#impl::llm::StopReason;
 use cognit::r#impl::provider_registry::ProviderRegistry;
@@ -269,6 +268,7 @@ use corpus::security::security::approval::{ApprovalGate, TerminalApprovalGate};
 use corpus::security::security::audit::AuditLogger;
 use corpus::security::security::runner::ToolRunnerWithGuard;
 use corpus::tools::tools::{ToolContext, ToolRegistry};
+use fabric::{ContentBlock, Message, Role};
 
 /// Non-interactive exec logic — mirrors the old aletheon-exec binary.
 async fn run_exec(
@@ -282,7 +282,7 @@ async fn run_exec(
 ) -> Result<()> {
     // Load ~/.aletheon/.env so provider API keys resolve.
     if let Some(home) = std::env::var_os("HOME") {
-        runtime::host::load_dotenv(&PathBuf::from(home).join(".aletheon").join(".env"));
+        executive::host::load_dotenv(&PathBuf::from(home).join(".aletheon").join(".env"));
     }
 
     let working_dir = working_dir

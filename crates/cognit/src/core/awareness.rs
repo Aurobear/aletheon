@@ -7,7 +7,7 @@
 //! Philosophical basis: Spinoza's idea ideae — the mind's awareness
 //! of its own ideas is not a second act, but inherent in every idea.
 
-use base::{AwarenessExtension, AwarenessGrowthSuggestion, SelfAwareness, SelfState};
+use fabric::{AwarenessExtension, AwarenessGrowthSuggestion, SelfAwareness, SelfState};
 
 /// System prompt for generating self-awareness.
 ///

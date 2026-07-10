@@ -3,7 +3,7 @@ use super::care_structure::*;
 use super::negativity::*;
 use super::self_model::*;
 use super::temporality::*;
-use base::dasein::{DaseinEvent, Stimmung};
+use fabric::dasein::{DaseinEvent, Stimmung};
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

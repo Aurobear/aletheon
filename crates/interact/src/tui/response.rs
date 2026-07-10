@@ -1,7 +1,7 @@
 use std::io;
 
-use base::brain::{Critique, Plan};
-use base::ui_event::{
+use fabric::brain::{Critique, Plan};
+use fabric::ui_event::{
     AwarenessLevel, ClientEvent, CollaborationMode, SubAgentHandle, SubAgentStatus,
 };
 

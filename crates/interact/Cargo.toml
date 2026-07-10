@@ -7,7 +7,7 @@ license.workspace = true
 description = "User interaction: TUI, CLI, and ACIX"
 
 [dependencies]
-base = { path = "../base" }
+fabric = { path = "../fabric" }
 corpus = { path = "../corpus", features = ["input", "display", "a11y", "ocr"] }
 anyhow = "1"
 async-trait = "0.1"

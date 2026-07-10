@@ -4,8 +4,8 @@
 //! the previous state in a history chain.
 
 use anyhow::Result;
-use base::Identity;
 use chrono::Utc;
+use fabric::Identity;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 

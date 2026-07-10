@@ -5,7 +5,7 @@
 //! Parses the `---` delimited YAML header from SKILL.md files into
 //! typed manifest structures.
 
-use base::tool::PermissionLevel;
+use fabric::tool::PermissionLevel;
 use serde::{Deserialize, Serialize};
 
 /// Raw YAML frontmatter from SKILL.md.
@@ -96,13 +96,13 @@ pub fn parse_permission(s: &str) -> PermissionLevel {
 }
 
 /// Parse an exposure string into ToolExposure.
-pub fn parse_exposure(s: &str) -> base::tool::ToolExposure {
+pub fn parse_exposure(s: &str) -> fabric::tool::ToolExposure {
     match s.to_lowercase().as_str() {
-        "direct" => base::tool::ToolExposure::Direct,
-        "deferred" => base::tool::ToolExposure::Deferred,
-        "directmodelonly" => base::tool::ToolExposure::DirectModelOnly,
-        "hidden" => base::tool::ToolExposure::Hidden,
-        _ => base::tool::ToolExposure::Direct,
+        "direct" => fabric::tool::ToolExposure::Direct,
+        "deferred" => fabric::tool::ToolExposure::Deferred,
+        "directmodelonly" => fabric::tool::ToolExposure::DirectModelOnly,
+        "hidden" => fabric::tool::ToolExposure::Hidden,
+        _ => fabric::tool::ToolExposure::Direct,
     }
 }
 
@@ -190,13 +190,16 @@ No tools or hooks.
 
     #[test]
     fn parse_exposure_levels() {
-        assert_eq!(parse_exposure("direct"), base::tool::ToolExposure::Direct);
+        assert_eq!(parse_exposure("direct"), fabric::tool::ToolExposure::Direct);
         assert_eq!(
             parse_exposure("deferred"),
-            base::tool::ToolExposure::Deferred
+            fabric::tool::ToolExposure::Deferred
         );
-        assert_eq!(parse_exposure("hidden"), base::tool::ToolExposure::Hidden);
-        assert_eq!(parse_exposure("unknown"), base::tool::ToolExposure::Direct);
+        assert_eq!(parse_exposure("hidden"), fabric::tool::ToolExposure::Hidden);
+        assert_eq!(
+            parse_exposure("unknown"),
+            fabric::tool::ToolExposure::Direct
+        );
     }
 
     #[test]

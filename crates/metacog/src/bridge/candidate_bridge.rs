@@ -1,7 +1,7 @@
 //! CandidateBridge — converts between CandidateGenerator outputs and ABI types.
 
 use anyhow::Result;
-use base::{Genome, MutationIntent, RuntimeCandidate};
+use fabric::{Genome, MutationIntent, RuntimeCandidate};
 
 use crate::r#impl::morphogenesis::candidate::CandidateGenerator;
 

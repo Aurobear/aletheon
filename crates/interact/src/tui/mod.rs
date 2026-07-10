@@ -79,7 +79,7 @@ use self::streaming::StreamController;
 use self::term_compat::TermCaps;
 pub use self::test_infra::TestConfig;
 
-use base::ui_event::SubAgentHandle;
+use fabric::ui_event::SubAgentHandle;
 
 /// Run the full TUI with raw mode, alternate screen, and IME-aware input.
 /// This is the original entry point (no test config).

@@ -6,8 +6,8 @@ use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use super::output_guardrail::OutputGuardrail;
 use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
-use base::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use corpus::security::sandbox::{SandboxConfig, SandboxExecutor};
+use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 #[derive(Debug)]
 pub enum ToolError {

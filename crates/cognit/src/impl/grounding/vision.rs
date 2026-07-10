@@ -3,9 +3,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
-use base::message::{ContentBlock, ImageSource, Message, Role};
-use base::types::grounding::{GroundingProvider, GroundingResult};
-use base::types::vision::Image;
+use fabric::message::{ContentBlock, ImageSource, Message, Role};
+use fabric::types::grounding::{GroundingProvider, GroundingResult};
+use fabric::types::vision::Image;
 
 use crate::r#impl::llm::provider::LlmProvider;
 

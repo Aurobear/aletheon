@@ -3,7 +3,7 @@
 //! Applies mutation intents to a genome to produce RuntimeCandidates.
 
 use anyhow::Result;
-use base::{Genome, MutationIntent, RuntimeCandidate};
+use fabric::{Genome, MutationIntent, RuntimeCandidate};
 
 /// Generates candidate runtimes from genome mutations.
 pub struct CandidateGenerator;

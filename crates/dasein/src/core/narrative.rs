@@ -336,7 +336,7 @@ impl Default for NarrativeLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::Verdict;
+    use fabric::Verdict;
 
     #[test]
     fn record_and_retrieve() {

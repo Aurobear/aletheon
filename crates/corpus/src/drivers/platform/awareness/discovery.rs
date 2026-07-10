@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 /// Default socket directory for aletheon.
-pub const DEFAULT_SOCKET_DIR: &str = base::paths::SOCKET_DIR;
+pub const DEFAULT_SOCKET_DIR: &str = fabric::paths::SOCKET_DIR;
 
 /// Discovers agents by scanning a Unix socket directory.
 pub struct AgentDiscovery {

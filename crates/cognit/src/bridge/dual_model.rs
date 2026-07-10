@@ -90,7 +90,7 @@ mod tests {
     use crate::r#impl::llm::{
         LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage,
     };
-    use base::message::{ContentBlock, Message};
+    use fabric::message::{ContentBlock, Message};
 
     /// Minimal stub provider for unit tests.
     struct StubProvider {

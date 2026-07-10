@@ -7,10 +7,10 @@ license.workspace = true
 description = "Aletheon Self-evolution - reflection, behavior evolution, and genome generation"
 
 [dependencies]
-base = { path = "../base" }
+fabric = { path = "../fabric" }
 corpus = { path = "../corpus" }
 cognit = { path = "../cognit" }
-memory = { path = "../memory" }
+mnemosyne = { path = "../mnemosyne" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }

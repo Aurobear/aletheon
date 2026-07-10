@@ -4,7 +4,7 @@ pub mod builtin;
 pub mod loader;
 pub mod registry;
 
-use base::hook::{HookContext, HookPoint, HookResult};
+use fabric::hook::{HookContext, HookPoint, HookResult};
 use registry::HookRegistry;
 
 /// High-level hook events that map to ABI `HookPoint` values.
@@ -111,7 +111,7 @@ impl HookEvent {
                     turn_count,
                     tool_name: Some(tool_name.clone()),
                     tool_input: None,
-                    tool_result: Some(base::hook::HookToolResult {
+                    tool_result: Some(fabric::hook::HookToolResult {
                         content: output.clone(),
                         is_error: !success,
                         execution_time_ms: *duration_ms,

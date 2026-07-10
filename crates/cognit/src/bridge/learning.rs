@@ -2,8 +2,8 @@ use crate::r#impl::learning::{
     LearnRule, OutcomeContext, OutcomeRecord, OutcomeRecorder, PatternExtractor, RuleStore,
 };
 use anyhow::Result;
-use base::body::{Action, ActionResult};
-use base::brain::{Experience, LearnedRule};
+use fabric::body::{Action, ActionResult};
+use fabric::brain::{Experience, LearnedRule};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 

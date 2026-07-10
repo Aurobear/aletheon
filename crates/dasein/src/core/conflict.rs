@@ -4,8 +4,8 @@
 //! Priority: User > Body(risk>=High) > Brain(confidence>=0.8) > Memory > Self_.
 //! Body Critical risk always wins (safety overrides everything).
 
-use base::self_field::{ConflictSource, RiskLevel};
-use base::{Conflict, Resolution};
+use fabric::self_field::{ConflictSource, RiskLevel};
+use fabric::{Conflict, Resolution};
 
 /// ConflictLayer — stateless conflict arbitration.
 pub struct ConflictLayer;
@@ -91,7 +91,7 @@ impl Default for ConflictLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::Context;
+    use fabric::Context;
     use std::path::PathBuf;
 
     fn test_ctx() -> Context {

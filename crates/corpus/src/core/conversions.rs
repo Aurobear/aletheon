@@ -1,7 +1,7 @@
-use base::body::{Action, ActionResult};
-use base::capability::{Capability, PermissionLevel as AbiPermissionLevel};
-use base::context::Context;
-use base::tool::{PermissionLevel as ToolPermissionLevel, ToolContext, ToolResult};
+use fabric::body::{Action, ActionResult};
+use fabric::capability::{Capability, PermissionLevel as AbiPermissionLevel};
+use fabric::context::Context;
+use fabric::tool::{PermissionLevel as ToolPermissionLevel, ToolContext, ToolResult};
 use std::time::Duration;
 
 /// Convert Action to tool name + JSON input
@@ -60,7 +60,7 @@ pub fn elapsed_to_duration(ms: u64) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::tool::ToolResultMeta;
+    use fabric::tool::ToolResultMeta;
 
     #[test]
     fn test_action_roundtrip() {

@@ -1,5 +1,5 @@
 use super::types::*;
-use base::dasein::{CareStructureSnapshot, ConcernSnapshot, Stimmung};
+use fabric::dasein::{CareStructureSnapshot, ConcernSnapshot, Stimmung};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -250,7 +250,7 @@ impl CareStructure {
 
         if urgent_count >= 3 {
             return Some(Stimmung::Angst {
-                facing: base::dasein::AngstSource::Responsibility,
+                facing: fabric::dasein::AngstSource::Responsibility,
             });
         }
 
@@ -349,7 +349,7 @@ mod tests {
         // Angst -> faster rhythm
         care.rhythm.write().adapt(
             &Stimmung::Angst {
-                facing: base::dasein::AngstSource::Freedom,
+                facing: fabric::dasein::AngstSource::Freedom,
             },
             2,
         );

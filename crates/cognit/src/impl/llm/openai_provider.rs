@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use super::provider::*;
-use base::message::{ContentBlock, ImageSource, Message, Role};
+use fabric::message::{ContentBlock, ImageSource, Message, Role};
 
 /// OpenAI-compatible provider (chat/completions).
 /// Works with OpenAI, DeepSeek, Ollama, LM Studio, vLLM, Xiaomi MiMo, etc.

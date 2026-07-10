@@ -14,9 +14,9 @@ path = "src/main.rs"
 integration-tests = []
 
 [dependencies]
-runtime = { path = "../runtime" }
+executive = { path = "../executive" }
 interact = { path = "../interact" }
-base = { path = "../base" }
+fabric = { path = "../fabric" }
 cognit = { path = "../cognit" }
 corpus = { path = "../corpus" }
 anyhow = { workspace = true }

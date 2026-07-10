@@ -4,7 +4,7 @@
 
 use crate::core::types::{CareExt, GenomeMeta, ReasoningConfig};
 use anyhow::Result;
-use base::genome::Genome;
+use fabric::genome::Genome;
 use std::path::Path;
 
 use crate::r#impl::genome::loader::GenomeLoader;

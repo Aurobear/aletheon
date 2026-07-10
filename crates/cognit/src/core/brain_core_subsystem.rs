@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tracing::info;
 
-use base::{Subsystem, SubsystemContext, SubsystemHealth, Version};
+use fabric::{Subsystem, SubsystemContext, SubsystemHealth, Version};
 
 use super::BrainCore;
 

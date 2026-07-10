@@ -4,7 +4,7 @@
 //! and potentially adopted by the morphogenesis pipeline.
 
 use anyhow::Result;
-use base::{Genome, RuntimeCandidate};
+use fabric::{Genome, RuntimeCandidate};
 
 pub struct RuntimeBuilder;
 

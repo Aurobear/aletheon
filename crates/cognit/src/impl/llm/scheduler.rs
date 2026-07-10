@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use tokio::time::sleep;
 
-use base::evolution::{LlmPurpose, ProviderHealth};
-use base::message::Message;
+use fabric::evolution::{LlmPurpose, ProviderHealth};
+use fabric::message::Message;
 
 use super::provider::{LlmProvider, LlmResponse, ToolDefinition};
 use super::provider_factory::create_provider_by_kind;
@@ -404,7 +404,7 @@ fn resolve_api_key(api_key: &str, provider_name: &str) -> String {
 mod tests {
     use super::super::provider::{LlmResponse, LlmStream, StopReason, Usage};
     use super::*;
-    use base::message::ContentBlock;
+    use fabric::message::ContentBlock;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]

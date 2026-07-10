@@ -1,4 +1,4 @@
-use base::tool::ConcurrencyClass;
+use fabric::tool::ConcurrencyClass;
 
 /// Maximum number of tools to execute in a single parallel batch.
 const MAX_PARALLEL_TOOLS: usize = 8;

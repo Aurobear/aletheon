@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::registry::RegisteredHook;
-use base::hook::HookPoint;
+use fabric::hook::HookPoint;
 
 /// A hook definition parsed from a TOML file.
 #[derive(Debug, Clone)]

@@ -8,9 +8,9 @@
 //! These signals are the "idea of an idea" — awareness that arises
 //! inherently in the act of thinking, not as a separate reflection.
 
-use base::self_field::{AwarenessCore, AwarenessExtension, SelfAwareness, SelfState};
-use base::ui_event::AwarenessLevel;
 use chrono::{DateTime, Utc};
+use fabric::self_field::{AwarenessCore, AwarenessExtension, SelfAwareness, SelfState};
+use fabric::ui_event::AwarenessLevel;
 
 /// Lightweight awareness signal emitted during cognitive loop.
 /// No LLM call — pure rule-based state detection.

@@ -22,11 +22,11 @@ use crate::core::awareness_signal::AwarenessSignal;
 use crate::harness::config::HarnessConfig;
 use crate::harness::interrupt::InterruptFlag;
 use crate::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream};
-use base::body::Action;
-use base::message::Message;
-use base::policy::verifier::Verifier;
-use base::self_field::{Intent, IntentSource};
-use base::ToolDefinition;
+use fabric::body::Action;
+use fabric::message::Message;
+use fabric::policy::verifier::Verifier;
+use fabric::self_field::{Intent, IntentSource};
+use fabric::ToolDefinition;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -284,8 +284,8 @@ mod tests {
     use super::*;
     use crate::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
     use async_trait::async_trait;
-    use base::message::{ContentBlock, Message};
-    use base::ToolDefinition;
+    use fabric::message::{ContentBlock, Message};
+    use fabric::ToolDefinition;
     use std::pin::Pin;
     use std::sync::Mutex;
 
@@ -910,7 +910,7 @@ mod tests {
 
     // ── M-C Verifier tests ─────────────────────────────────────────────────
 
-    use base::policy::verifier::{Verdict, Verifier};
+    use fabric::policy::verifier::{Verdict, Verifier};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Rejects the first candidate answer, accepts all subsequent ones.

@@ -1,6 +1,6 @@
 use super::ReActLoop;
 use crate::core::awareness_signal::{self, AwarenessSignal, StepType};
-use base::self_field::SelfState;
+use fabric::self_field::SelfState;
 
 impl ReActLoop {
     /// Emit an awareness signal into the collection buffer.
@@ -17,7 +17,7 @@ impl ReActLoop {
     ///
     /// Returns `(AwarenessLevel, context)` pairs suitable for TUI display.
     /// Signals with no detected state or unrecognized states are filtered out.
-    pub fn drain_awareness_events(&mut self) -> Vec<(base::ui_event::AwarenessLevel, String)> {
+    pub fn drain_awareness_events(&mut self) -> Vec<(fabric::ui_event::AwarenessLevel, String)> {
         let signals: Vec<_> = self.signals.drain(..).collect();
         awareness_signal::signals_to_ui_events(&signals)
     }

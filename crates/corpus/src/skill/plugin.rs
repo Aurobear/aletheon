@@ -13,15 +13,15 @@ use tracing::{info, warn};
 
 use crate::tools::tools::script_tool::ScriptTool;
 use crate::tools::tools::ToolRegistry;
-use base::tool::{PermissionLevel, ToolExposure};
-use base::Registry;
+use fabric::tool::{PermissionLevel, ToolExposure};
+use fabric::Registry;
 
 use super::manifest::{
     parse_exposure, parse_permission, HookManifest, HooksManifest, SkillManifest,
 };
 
 use crate::hook::registry::{HookRegistry, RegisteredHook};
-use base::hook::HookPoint;
+use fabric::hook::HookPoint;
 
 /// A fully parsed skill plugin with all metadata and content.
 #[derive(Debug, Clone)]

@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 
 use super::circuit_breaker::LoopCircuitBreaker;
 use super::risk_classifier::RiskClassifier;
-use base::tool::ToolResult;
+use fabric::tool::ToolResult;
 
 #[derive(Debug, Clone)]
 pub struct LoopDetectorConfig {

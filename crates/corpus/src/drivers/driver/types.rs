@@ -89,7 +89,7 @@ pub enum Key {
 }
 
 // Re-exported from base (Tier 2c) for backward compatibility.
-pub use base::types::vision::{Bounds, Image};
+pub use fabric::types::vision::{Bounds, Image};
 
 /// UI element
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 use super::DaseinModule;
 use crate::core::store::SelfFieldStore;
-use base::dasein::Stimmung;
+use fabric::dasein::Stimmung;
 use rusqlite::params;
 
 pub fn save_dasein_state(dasein: &DaseinModule, store: &SelfFieldStore) -> anyhow::Result<()> {

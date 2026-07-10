@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use base::{
+use fabric::{
     Evaluation, Genome, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate,
     Subsystem, SubsystemContext, SubsystemHealth, TestResult, Version,
 };

@@ -4,8 +4,6 @@
 //! load fresh layers from store, verify all state preserved. Then repeat
 //! a second cycle to verify accumulated evolution.
 
-use base::self_field::RiskLevel;
-use base::{MutationIntent, Verdict};
 use chrono::Duration;
 use dasein::core::attention::AttentionLayer;
 use dasein::core::boundary::{BoundaryAction, BoundaryLayer, BoundaryRule};
@@ -15,6 +13,8 @@ use dasein::core::identity::IdentityLayer;
 use dasein::core::mutation::MutationLayer;
 use dasein::core::narrative::NarrativeLayer;
 use dasein::core::store::SelfFieldStore;
+use fabric::self_field::RiskLevel;
+use fabric::{MutationIntent, Verdict};
 use serde_json::json;
 use tempfile::NamedTempFile;
 
@@ -143,20 +143,20 @@ fn cycle1_boundary_rule_roundtrip() {
     assert_eq!(loaded.rule_count(), 2);
 
     // Verify deploy rule is Sandbox (mutable)
-    let intent_deploy = base::Intent {
+    let intent_deploy = fabric::Intent {
         action: "deploy.prod".to_string(),
         parameters: json!({}),
-        source: base::IntentSource::User,
+        source: fabric::IntentSource::User,
         description: "deploy to production".to_string(),
     };
     let verdict = loaded.check(&intent_deploy);
     assert!(matches!(verdict, Some(Verdict::SandboxFirst { .. })));
 
     // Verify rm rule is Deny (immutable)
-    let intent_rm = base::Intent {
+    let intent_rm = fabric::Intent {
         action: "rm -rf /".to_string(),
         parameters: json!({}),
-        source: base::IntentSource::User,
+        source: fabric::IntentSource::User,
         description: "delete everything".to_string(),
     };
     let verdict = loaded.check(&intent_rm);
@@ -375,10 +375,10 @@ fn full_e2e_two_cycles() {
     assert!(approx_eq(care2.weight_of("safety").unwrap(), 1.0));
 
     assert_eq!(boundary2.rule_count(), 1);
-    let deploy_intent = base::Intent {
+    let deploy_intent = fabric::Intent {
         action: "deploy.prod".to_string(),
         parameters: json!({}),
-        source: base::IntentSource::User,
+        source: fabric::IntentSource::User,
         description: "deploy to production".to_string(),
     };
     assert!(matches!(
@@ -509,10 +509,10 @@ fn full_e2e_two_cycles() {
     ));
 
     // delete rule should require confirmation
-    let delete_intent = base::Intent {
+    let delete_intent = fabric::Intent {
         action: "delete_user_data".to_string(),
         parameters: json!({}),
-        source: base::IntentSource::User,
+        source: fabric::IntentSource::User,
         description: "delete user data".to_string(),
     };
     assert!(matches!(
