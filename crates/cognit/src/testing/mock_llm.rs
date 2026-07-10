@@ -7,7 +7,7 @@ use futures::stream;
 use crate::r#impl::llm::{
     LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk, ToolDefinition, Usage,
 };
-use base::message::{ContentBlock, Message};
+use fabric::message::{ContentBlock, Message};
 
 /// Mock LLM provider with canned responses.
 ///

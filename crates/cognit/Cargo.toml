@@ -7,7 +7,7 @@ license.workspace = true
 description = "Aletheon Brain core - reasoning, planning, and reflection"
 
 [dependencies]
-base = { path = "../base" }
+fabric = { path = "../fabric" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }

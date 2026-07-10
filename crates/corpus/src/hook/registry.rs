@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use tracing::warn;
 
-use base::hook::{HookContext, HookPoint, HookResult};
+use fabric::hook::{HookContext, HookPoint, HookResult};
 
 /// A registered hook.
 #[derive(Debug, Clone)]

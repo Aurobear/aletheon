@@ -1,0 +1,44 @@
+[package]
+name = "executive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Aletheon Runtime - core agent runtime and orchestration"
+
+[dependencies]
+fabric = { path = "../fabric" }
+cognit = { path = "../cognit" }
+corpus = { path = "../corpus" }
+mnemosyne = { path = "../mnemosyne" }
+dasein = { path = "../dasein" }
+metacog = { path = "../metacog" }
+anyhow = "1"
+serde_yaml = "0.9"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { workspace = true }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { workspace = true }
+parking_lot = "0.12"
+futures = "0.3"
+toml = "0.8"
+reqwest = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+urlencoding = { workspace = true }
+regex = { workspace = true }
+dirs = "5"
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+nix = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
+[lints]
+workspace = true

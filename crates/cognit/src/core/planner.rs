@@ -3,11 +3,11 @@
 //! The Planner takes an intent + reasoning chain and produces a Plan
 //! containing PlanSteps with rollback actions and cost estimates.
 
-use base::body::Action;
-use base::brain::{CostEstimate, Plan, PlanStep};
-use base::context::Context;
-use base::dasein::Stimmung;
-use base::self_field::{Intent, RiskLevel};
+use fabric::body::Action;
+use fabric::brain::{CostEstimate, Plan, PlanStep};
+use fabric::context::Context;
+use fabric::dasein::Stimmung;
+use fabric::self_field::{Intent, RiskLevel};
 use uuid::Uuid;
 
 /// The planner component.
@@ -294,7 +294,7 @@ impl Default for Planner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::IntentSource;
+    use fabric::IntentSource;
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -450,7 +450,7 @@ mod tests {
         let planner = Planner::new();
         let intent = make_intent("file.read", "read file");
         let mood = Stimmung::Angst {
-            facing: base::dasein::AngstSource::Finitude,
+            facing: fabric::dasein::AngstSource::Finitude,
         };
         let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
         // file.read is normally Low; Angst should bump it to Medium

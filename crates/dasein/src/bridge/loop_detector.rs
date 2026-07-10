@@ -1,6 +1,6 @@
 use crate::r#impl::security::{LoopDetector, LoopDetectorConfig, LoopVerdict};
-use base::self_field::{RiskLevel, Verdict};
-use base::tool::ToolResult;
+use fabric::self_field::{RiskLevel, Verdict};
+use fabric::tool::ToolResult;
 use parking_lot::Mutex;
 use serde_json::Value;
 

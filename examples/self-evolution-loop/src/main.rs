@@ -17,14 +17,14 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 
-use base::events::event::{ConcreteEvent, EventType, Priority};
-use base::evolution::*;
-use base::EventBus;
-use base::KernelEventBus;
 use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
 use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
+use fabric::events::event::{ConcreteEvent, EventType, Priority};
+use fabric::evolution::*;
+use fabric::EventBus;
+use fabric::KernelEventBus;
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -8,7 +8,7 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-use base::tool::ToolResult;
+use fabric::tool::ToolResult;
 
 // ── Injection Risk ──────────────────────────────────────────────────────────
 
@@ -212,7 +212,7 @@ impl Default for InputSanitizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::tool::ToolResultMeta;
+    use fabric::tool::ToolResultMeta;
 
     fn make_tool_result(content: &str) -> ToolResult {
         ToolResult {

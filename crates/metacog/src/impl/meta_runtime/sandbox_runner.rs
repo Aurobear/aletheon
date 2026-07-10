@@ -4,7 +4,7 @@
 //! a TestResult with pass/fail counts and failure details.
 
 use anyhow::{Context, Result};
-use base::{RuntimeCandidate, TestResult};
+use fabric::{RuntimeCandidate, TestResult};
 use std::process::Command;
 
 pub struct SandboxRunner {

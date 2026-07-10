@@ -3,9 +3,9 @@
 //! Tracks mutation requests (changes to the agent's own configuration).
 //! Irreversible mutations to core identity fields are auto-denied.
 
-use base::self_field::RiskLevel;
-use base::{MutationIntent, Verdict};
 use chrono::{DateTime, Utc};
+use fabric::self_field::RiskLevel;
+use fabric::{MutationIntent, Verdict};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 

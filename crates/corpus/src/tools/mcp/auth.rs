@@ -165,7 +165,7 @@ impl TokenStore {
 
     /// Default store at `~/.config/aletheon/mcp_tokens.json`.
     pub fn default_path() -> Result<PathBuf> {
-        Ok(base::paths::mcp_tokens_path())
+        Ok(fabric::paths::mcp_tokens_path())
     }
 
     /// Create a store at the default path, creating parent directories as

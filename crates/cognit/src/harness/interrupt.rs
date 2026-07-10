@@ -1,6 +1,6 @@
 //! Interrupt handling for canceling streaming and in-flight operations.
 
-use base::ui_event::InterruptReason;
+use fabric::ui_event::InterruptReason;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

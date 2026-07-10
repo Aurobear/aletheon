@@ -15,14 +15,14 @@ impl HookConfig {
 
         // Layer 1: System hooks
         hooks.extend(load_hooks_from_dir(Path::new(
-            base::paths::HOOKS_SYSTEM_DIR,
+            fabric::paths::HOOKS_SYSTEM_DIR,
         ))?);
 
         // Layer 2: User hooks
-        hooks.extend(load_hooks_from_dir(&base::paths::user_hooks_dir())?);
+        hooks.extend(load_hooks_from_dir(&fabric::paths::user_hooks_dir())?);
 
         // Layer 3: Project hooks
-        hooks.extend(load_hooks_from_dir(&base::paths::local_hooks_dir())?);
+        hooks.extend(load_hooks_from_dir(&fabric::paths::local_hooks_dir())?);
 
         info!(count = hooks.len(), "Loaded hooks from all layers");
         Ok(Self { hooks })

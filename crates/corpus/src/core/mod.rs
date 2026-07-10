@@ -4,10 +4,10 @@ use crate::security::security::{AuditLogger, ToolRunnerWithGuard};
 use crate::tools::tools::ToolRegistry;
 use anyhow::Result;
 use async_trait::async_trait;
-use base::body::{Action, ActionResult, BodyRuntime};
-use base::capability::Capability;
-use base::context::Context;
-use base::subsystem::{Subsystem, SubsystemContext, SubsystemHealth, Version};
+use fabric::body::{Action, ActionResult, BodyRuntime};
+use fabric::capability::Capability;
+use fabric::context::Context;
+use fabric::subsystem::{Subsystem, SubsystemContext, SubsystemHealth, Version};
 use std::path::PathBuf;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -169,7 +169,7 @@ impl BodyRuntime for AletheonBodyRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::context::Context;
+    use fabric::context::Context;
     use std::path::PathBuf;
 
     #[tokio::test]
@@ -193,7 +193,7 @@ mod tests {
             name: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
             config: serde_json::json!({}),
-            bus: std::sync::Arc::new(base::CommunicationBus::new()),
+            bus: std::sync::Arc::new(fabric::CommunicationBus::new()),
         };
         rt.init(&ctx).await.unwrap();
 

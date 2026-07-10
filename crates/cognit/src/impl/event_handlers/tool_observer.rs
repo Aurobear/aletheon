@@ -11,8 +11,8 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use base::evolution::*;
-use base::message::{ContentBlock, Message, Role};
+use fabric::evolution::*;
+use fabric::message::{ContentBlock, Message, Role};
 
 use crate::r#impl::llm::scheduler::LlmScheduler;
 

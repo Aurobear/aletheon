@@ -6,8 +6,8 @@
 //! 3. AwarenessGrowthAnalyzer produces suggestions
 //! 4. Suggestions are fed back to BrainCore
 
-use base::{AwarenessExtension, AwarenessExtensionCounts, SelfAwareness, SelfState};
 use dasein::core::awareness_growth::AwarenessGrowthAnalyzer;
+use fabric::{AwarenessExtension, AwarenessExtensionCounts, SelfAwareness, SelfState};
 
 #[test]
 fn test_full_awareness_flow() {

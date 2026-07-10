@@ -4,7 +4,7 @@
 //! and produces a Genome struct.
 
 use anyhow::Result;
-use base::{
+use fabric::{
     genome::{
         BoundaryRuleSpec, BoundarySpec, CarePriority, CareSpec, IdentitySpec, LifecycleSpec,
         MemorySpec, MutationSpec, Topology,

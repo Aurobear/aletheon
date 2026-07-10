@@ -9,9 +9,9 @@ use super::output_guardrail::OutputGuardrail;
 use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
 use crate::sandbox::{SandboxConfig, SandboxExecutor, SandboxPreference};
-use base::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
-use base::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use base::{PermissionBehavior, PermissionContext};
+use fabric::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
+use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use fabric::{PermissionBehavior, PermissionContext};
 
 #[derive(Debug)]
 pub enum ToolError {
@@ -109,7 +109,7 @@ impl ToolRunnerWithGuard {
     fn check_policy(&self, tool_name: &str, input: &serde_json::Value) -> PolicyVerdict {
         if let Some(ref policy) = self.exec_policy {
             let cmd = Self::build_command_vec(tool_name, input);
-            let eval = policy.check(&cmd, base::execpolicy::default_heuristics);
+            let eval = policy.check(&cmd, fabric::execpolicy::default_heuristics);
             match eval.decision {
                 ExecDecision::Allow => PolicyVerdict::Allow,
                 ExecDecision::Forbidden => PolicyVerdict::Deny {
@@ -449,12 +449,12 @@ mod tests {
     use super::super::approval::{AutoApproveGate, AutoDenyGate};
     use super::*;
     use async_trait::async_trait;
-    use base::execpolicy::{Decision as ExecDecision, PrefixRule as ExecPrefixRule};
-    use base::tool::{
+    use fabric::execpolicy::{Decision as ExecDecision, PrefixRule as ExecPrefixRule};
+    use fabric::tool::{
         ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult,
         ToolResultMeta,
     };
-    use base::{PermissionContext, PermissionMode};
+    use fabric::{PermissionContext, PermissionMode};
 
     /// A dummy L2 tool used to exercise the approval gate path.
     /// Named "bash_exec" so the policy engine's `rm -rf *` rule triggers RequireApproval.

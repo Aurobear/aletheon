@@ -3,7 +3,7 @@
 //! Extracts state fields from the monolithic App struct in mod.rs
 //! into a focused module for clarity and testability.
 
-use base::ui_event::{AwarenessLevel, CollaborationMode};
+use fabric::ui_event::{AwarenessLevel, CollaborationMode};
 use std::time::Instant;
 
 /// Tracks the current awareness level from brain signals.

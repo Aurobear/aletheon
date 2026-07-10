@@ -4,8 +4,8 @@ use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
 use crate::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
-use base::message::{ContentBlock, Message, Role};
-use base::ToolDefinition;
+use fabric::message::{ContentBlock, Message, Role};
+use fabric::ToolDefinition;
 use std::future::Future;
 use tracing::{debug, warn};
 

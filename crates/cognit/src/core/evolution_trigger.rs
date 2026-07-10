@@ -4,8 +4,8 @@
 //! periodic intervals, and confidence drops. When triggered, delegates
 //! to `ExperienceSummarizer` to produce an `EvolutionLogEntry`.
 
-use base::brain::{EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 use chrono::{DateTime, Duration, Utc};
+use fabric::brain::{EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
 /// Configuration for the evolution trigger.
 #[derive(Debug, Clone)]

@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::event::{PerceptionEvent, Priority};
-use base::Message;
+use fabric::Message;
 
 /// Bridges perception events into the engine as system messages.
 pub struct PerceptionBridge {
@@ -110,8 +110,8 @@ fn event_to_message(event: &PerceptionEvent) -> Message {
 mod tests {
     use super::super::event::*;
     use super::*;
-    use base::ContentBlock;
     use chrono::Utc;
+    use fabric::ContentBlock;
 
     fn make_event(priority: Priority, summary_data: EventData) -> PerceptionEvent {
         PerceptionEvent {

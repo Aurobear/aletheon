@@ -16,7 +16,7 @@ pub mod sorge;
 pub mod temporality;
 pub mod types;
 
-pub use base::dasein::*;
+pub use fabric::dasein::*;
 
 use parking_lot::RwLock;
 use std::sync::Arc;

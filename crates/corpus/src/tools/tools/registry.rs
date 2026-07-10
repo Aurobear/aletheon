@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use base::{AgentError, RegistrationId, Registry};
+use fabric::{AgentError, RegistrationId, Registry};
 
 use super::Tool;
 
@@ -31,10 +31,10 @@ impl ToolRegistry {
     }
 
     /// Get tool definitions for LLM (name, description, schema).
-    pub fn definitions(&self) -> Vec<base::ToolDefinition> {
+    pub fn definitions(&self) -> Vec<fabric::ToolDefinition> {
         self.tools
             .values()
-            .map(|t| base::ToolDefinition {
+            .map(|t| fabric::ToolDefinition {
                 name: t.name().to_string(),
                 description: t.description().to_string(),
                 input_schema: t.input_schema(),
@@ -164,7 +164,7 @@ impl Default for ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::Registry;
+    use fabric::Registry;
 
     /// A minimal mock tool for testing.
     struct MockTool {
@@ -193,19 +193,19 @@ mod tests {
             serde_json::json!({})
         }
 
-        fn permission_level(&self) -> base::tool::PermissionLevel {
-            base::tool::PermissionLevel::L0
+        fn permission_level(&self) -> fabric::tool::PermissionLevel {
+            fabric::tool::PermissionLevel::L0
         }
 
         async fn execute(
             &self,
             _params: serde_json::Value,
-            _ctx: &base::tool::ToolContext,
-        ) -> base::tool::ToolResult {
-            base::tool::ToolResult {
+            _ctx: &fabric::tool::ToolContext,
+        ) -> fabric::tool::ToolResult {
+            fabric::tool::ToolResult {
                 content: String::new(),
                 is_error: false,
-                metadata: base::tool::ToolResultMeta::default(),
+                metadata: fabric::tool::ToolResultMeta::default(),
             }
         }
 

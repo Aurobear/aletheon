@@ -20,7 +20,7 @@ use super::{Tool, ToolContext, ToolResult};
 // Concurrency classification
 // ---------------------------------------------------------------------------
 
-pub use base::tool::ConcurrencyClass;
+pub use fabric::tool::ConcurrencyClass;
 
 // ---------------------------------------------------------------------------
 // Cancel mode

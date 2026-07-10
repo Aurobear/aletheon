@@ -4,7 +4,7 @@
 //! that can be injected into the system prompt, giving the LLM awareness
 //! of the existential substrate's current state.
 
-use base::dasein::*;
+use fabric::dasein::*;
 
 /// Format DaseinContext for LLM prompt injection.
 pub fn format_dasein_context(ctx: &DaseinContext) -> String {

@@ -2,14 +2,14 @@
 resolver = "2"
 members = [
     "crates/bin",
-    "crates/base",
+    "crates/fabric",
     "crates/cognit",
     "crates/corpus",
     "crates/dasein",
     "crates/interact",
-    "crates/memory",
+    "crates/mnemosyne",
     "crates/metacog",
-    "crates/runtime",
+    "crates/executive",
     "examples/basic-agent",
     "examples/self-evolution-loop",
 ]

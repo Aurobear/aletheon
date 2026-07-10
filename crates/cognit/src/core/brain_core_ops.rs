@@ -3,12 +3,12 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use base::brain::{
+use fabric::brain::{
     BrainCoreOps, Critique, ExecutionResult, Experience, LearnedRule, Observation, Plan, Reflection,
 };
-use base::context::Context;
-use base::message::ContentBlock;
-use base::self_field::Intent;
+use fabric::context::Context;
+use fabric::message::ContentBlock;
+use fabric::self_field::Intent;
 
 use super::BrainCore;
 use crate::bridge::dual_model::TaskComplexity;

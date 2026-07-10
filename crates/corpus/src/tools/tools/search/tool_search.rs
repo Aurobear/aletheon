@@ -95,8 +95,8 @@ impl Tool for ToolSearchTool {
 mod tests {
     use super::super::{tokenize_and_stem, CatalogEntry};
     use super::*;
-    use base::tool::Tool;
-    use base::tool::ToolExposure;
+    use fabric::tool::Tool;
+    use fabric::tool::ToolExposure;
 
     fn build_test_catalog() -> BM25Catalog {
         let entries = vec![

@@ -4,7 +4,7 @@
 //! core invariants (identity immutability, safety floors, weight ranges).
 //! Provides snapshot/compare/rollback for safe experimentation.
 
-use base::brain::BehaviorAdjustment;
+use fabric::brain::BehaviorAdjustment;
 use serde::{Deserialize, Serialize};
 
 use crate::core::attention::FocusTopic;
@@ -352,7 +352,7 @@ mod tests {
     use super::*;
     use crate::core::boundary::{BoundaryAction, BoundaryRule};
     use crate::core::{SelfField, SelfFieldConfig};
-    use base::self_field::RiskLevel;
+    use fabric::self_field::RiskLevel;
 
     fn make_self_field() -> SelfField {
         SelfField::new(SelfFieldConfig::default())

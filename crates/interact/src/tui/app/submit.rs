@@ -1,7 +1,7 @@
 use std::io;
 use std::io::Write;
 
-use base::ui_event::CollaborationMode;
+use fabric::ui_event::CollaborationMode;
 use tokio::io::AsyncWriteExt;
 
 use super::super::chat::{ChatWidget, Role as ChatRole};

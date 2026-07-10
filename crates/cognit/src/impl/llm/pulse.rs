@@ -11,10 +11,10 @@ use chrono::Utc;
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use base::evolution::CognitivePulseEvent;
-use base::CommunicationBus;
-use base::ConcreteEvent;
-use base::{EventType, Priority};
+use fabric::evolution::CognitivePulseEvent;
+use fabric::CommunicationBus;
+use fabric::ConcreteEvent;
+use fabric::{EventType, Priority};
 
 use super::scheduler::LlmScheduler;
 

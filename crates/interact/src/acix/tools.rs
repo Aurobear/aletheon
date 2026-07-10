@@ -11,9 +11,9 @@ use serde_json::json;
 
 use crate::acix::Aci;
 use crate::acix::GroundingProvider;
-use base::Registry;
 use corpus::drivers::driver::types::{Key, ScrollDirection};
 use corpus::tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use fabric::Registry;
 
 // ---------------------------------------------------------------------------
 // Shared helpers

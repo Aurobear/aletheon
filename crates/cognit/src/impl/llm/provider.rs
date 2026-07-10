@@ -3,7 +3,7 @@ use futures::Stream;
 
 use std::pin::Pin;
 
-use base::message::Message;
+use fabric::message::Message;
 
 /// A chunk of a streamed LLM response.
 #[derive(Debug, Clone)]
@@ -78,12 +78,12 @@ pub trait LlmProvider: Send + Sync {
 }
 
 /// Tool definition sent to the LLM.
-pub use base::ToolDefinition;
+pub use fabric::ToolDefinition;
 
 /// Response from the LLM.
 #[derive(Debug, Clone)]
 pub struct LlmResponse {
-    pub content: Vec<base::message::ContentBlock>,
+    pub content: Vec<fabric::message::ContentBlock>,
     pub stop_reason: StopReason,
     pub usage: Usage,
     /// Tokens that hit the provider's cache (e.g. DeepSeek cached_tokens, Anthropic cache_read)

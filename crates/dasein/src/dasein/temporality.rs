@@ -5,7 +5,7 @@
 //! Not clock time, but lived time.
 
 use super::types::*;
-use base::dasein::{
+use fabric::dasein::{
     AffectTone, AngstSource, BoredomDepth, PresentSnapshot, ProtentionSnapshot, RentionalSnapshot,
     Stimmung, TemporalStreamSnapshot,
 };

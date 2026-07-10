@@ -27,7 +27,7 @@ pub mod web_fetch;
 pub mod web_search;
 
 // Re-export types from aletheon-abi (the canonical definitions)
-pub use base::tool::{ConcurrencyClass, ToolExposure};
-pub use base::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+pub use fabric::tool::{ConcurrencyClass, ToolExposure};
+pub use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 pub use registry::ToolRegistry;
 pub use toolset::ToolsetRegistry;

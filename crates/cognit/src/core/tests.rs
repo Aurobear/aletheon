@@ -1,12 +1,12 @@
 use super::*;
 use async_trait::async_trait;
-use base::body::{Action, ActionResult};
-use base::brain::BrainCoreOps;
-use base::brain::{ExecutionResult, Experience, Observation, ReflectionEntry, ReflectionOutcome};
-use base::context::Context;
-use base::self_field::Intent;
-use base::Subsystem;
-use base::{IntentSource, SubsystemHealth};
+use fabric::body::{Action, ActionResult};
+use fabric::brain::BrainCoreOps;
+use fabric::brain::{ExecutionResult, Experience, Observation, ReflectionEntry, ReflectionOutcome};
+use fabric::context::Context;
+use fabric::self_field::Intent;
+use fabric::Subsystem;
+use fabric::{IntentSource, SubsystemHealth};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -57,7 +57,7 @@ async fn critique_plan() {
     // A simple plan should have minimal critiques
     assert!(critiques
         .iter()
-        .all(|c| c.severity <= base::brain::CriticismSeverity::Info));
+        .all(|c| c.severity <= fabric::brain::CriticismSeverity::Info));
 }
 
 #[tokio::test]
@@ -123,11 +123,11 @@ async fn subsystem_lifecycle() {
         SubsystemHealth::Degraded { .. }
     ));
 
-    let ctx = base::SubsystemContext {
+    let ctx = fabric::SubsystemContext {
         name: "brain_core".to_string(),
         working_dir: PathBuf::from("/tmp"),
         config: json!({}),
-        bus: std::sync::Arc::new(base::CommunicationBus::new()),
+        bus: std::sync::Arc::new(fabric::CommunicationBus::new()),
     };
     bc.init(&ctx).await.unwrap();
     assert!(matches!(bc.health().await, SubsystemHealth::Healthy));
@@ -155,7 +155,7 @@ async fn full_pipeline_think_critique_execute_reflect_learn() {
     // Should be clean for a simple plan
     assert!(critiques
         .iter()
-        .all(|c| c.severity <= base::brain::CriticismSeverity::Warning));
+        .all(|c| c.severity <= fabric::brain::CriticismSeverity::Warning));
 
     // 3. Simulate execution
     let execution = ExecutionResult {
@@ -218,7 +218,7 @@ fn make_reflection_entry(
     task: &str,
     confidence: f64,
 ) -> ReflectionEntry {
-    use base::ReflectionTrigger;
+    use fabric::ReflectionTrigger;
     ReflectionEntry {
         id: format!("ref-{}", uuid::Uuid::new_v4()),
         timestamp: chrono::Utc::now(),
@@ -323,7 +323,7 @@ fn summarizer_success_strategy_with_common_lessons() {
 
 use crate::bridge::dual_model::{DualModelBridge, DualModelConfig, TaskComplexity};
 use crate::r#impl::llm::{LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage};
-use base::message::Message;
+use fabric::message::Message;
 use std::sync::Arc;
 
 /// Stub provider whose name appears in its response text.
@@ -530,7 +530,7 @@ fn make_experience_for_learner(
     error: Option<&str>,
     elapsed_ms: u64,
 ) -> Experience {
-    use base::body::{Action, ActionResult};
+    use fabric::body::{Action, ActionResult};
     Experience {
         action: Action {
             name: action_name.to_string(),

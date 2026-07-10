@@ -5,7 +5,7 @@ use super::super::chat::{ChatWidget, Role as ChatRole};
 use super::super::App;
 use super::submit::submit_message;
 
-use base::ui_event::CollaborationMode;
+use fabric::ui_event::CollaborationMode;
 
 pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
     use crossterm::event::MouseEventKind;

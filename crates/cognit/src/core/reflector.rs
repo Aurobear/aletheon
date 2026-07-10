@@ -6,10 +6,10 @@
 //!
 //! Also produces structured ReflectionEntry for persistent self-evolution.
 
-use base::brain::{
+use chrono::Utc;
+use fabric::brain::{
     ExecutionResult, Reflection, ReflectionEntry, ReflectionOutcome, ReflectionTrigger,
 };
-use chrono::Utc;
 use uuid::Uuid;
 
 /// The reflector component.

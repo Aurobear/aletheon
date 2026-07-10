@@ -4,7 +4,7 @@
 //! lineage when rollback is requested.
 
 use anyhow::{bail, Result};
-use base::Genome;
+use fabric::Genome;
 use std::sync::Mutex;
 
 /// A snapshot of a genome version for rollback.

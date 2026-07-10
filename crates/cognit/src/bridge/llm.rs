@@ -1,6 +1,6 @@
 use crate::r#impl::llm::{LlmProvider, LlmResponse, LlmStream, ToolDefinition};
 use anyhow::Result;
-use base::{ContentBlock, Message, Role};
+use fabric::{ContentBlock, Message, Role};
 use std::sync::Arc;
 
 /// Wraps LlmProvider for use by BrainCore.

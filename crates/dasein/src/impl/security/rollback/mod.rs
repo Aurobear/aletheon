@@ -436,7 +436,7 @@ impl BtrfsRollbackBackend {
         }
 
         Some(Self {
-            snapshot_dir: std::path::PathBuf::from(base::paths::SNAPSHOT_DIR),
+            snapshot_dir: std::path::PathBuf::from(fabric::paths::SNAPSHOT_DIR),
         })
     }
 }

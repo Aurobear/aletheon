@@ -3,7 +3,7 @@
 //! Renders sub-agent status cards inline in the chat area.
 
 use super::term_compat::TermCaps;
-use base::ui_event::{SubAgentHandle, SubAgentStatus};
+use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 

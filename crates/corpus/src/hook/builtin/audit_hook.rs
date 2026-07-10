@@ -8,7 +8,7 @@
 use tracing::info;
 
 use crate::hook::registry::{HookRegistry, RegisteredHook};
-use base::hook::HookPoint;
+use fabric::hook::HookPoint;
 
 /// Register the audit hook in the hook registry.
 pub fn register_audit_hook(registry: &mut HookRegistry) {

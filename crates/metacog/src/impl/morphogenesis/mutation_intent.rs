@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 
-use base::brain::{ReflectionEntry, ReflectionOutcome};
-use base::MutationIntent;
+use fabric::brain::{ReflectionEntry, ReflectionOutcome};
+use fabric::MutationIntent;
 
 /// Generate mutation intents from reflection and experience.
 #[derive(Default)]
@@ -287,8 +287,8 @@ fn success_rate(entries: &[ReflectionEntry]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::brain::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
     use chrono::Utc;
+    use fabric::brain::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
     fn make_entry(outcome: ReflectionOutcome, what_failed: Vec<String>) -> ReflectionEntry {
         make_entry_full(outcome, what_failed, vec![], vec![])

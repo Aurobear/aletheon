@@ -8,7 +8,7 @@
 //! arbitrary additions.
 
 use anyhow::Result;
-use base::{
+use fabric::{
     AwarenessExtension, AwarenessExtensionCounts, AwarenessGrowthSuggestion, SelfAwareness,
 };
 
@@ -170,7 +170,7 @@ impl AwarenessGrowthAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::AwarenessCore;
+    use fabric::AwarenessCore;
 
     fn make_awareness(extensions: Vec<AwarenessExtension>) -> SelfAwareness {
         SelfAwareness {
@@ -217,7 +217,7 @@ mod tests {
                         reason: "test".into(),
                     },
                     AwarenessExtension::SelfState {
-                        state: base::SelfState::Focused,
+                        state: fabric::SelfState::Focused,
                     },
                     AwarenessExtension::Significance {
                         meaning: "test".into(),
@@ -253,7 +253,7 @@ mod tests {
                 reason: "test".into(),
             },
             AwarenessExtension::SelfState {
-                state: base::SelfState::Focused,
+                state: fabric::SelfState::Focused,
             },
             AwarenessExtension::Significance {
                 meaning: "test".into(),
