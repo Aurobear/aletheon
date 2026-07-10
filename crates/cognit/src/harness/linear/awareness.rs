@@ -1,6 +1,6 @@
 use super::ReActLoop;
+use crate::core::awareness_signal::{self, AwarenessSignal, StepType};
 use base::self_field::SelfState;
-use cognit::core::awareness_signal::{self, AwarenessSignal, StepType};
 
 impl ReActLoop {
     /// Emit an awareness signal into the collection buffer.
@@ -24,7 +24,7 @@ impl ReActLoop {
 
     /// Emit a LoopStart signal with impasse detection.
     pub(crate) fn emit_loop_start(&mut self, action: &str) {
-        use cognit::core::awareness_signal::detect_impasse;
+        use crate::core::awareness_signal::detect_impasse;
         let detected = detect_impasse(
             self.consecutive_errors,
             self.iteration,
@@ -40,7 +40,7 @@ impl ReActLoop {
 
     /// Emit a ThinkingComplete signal with uncertainty detection from response text.
     pub(crate) fn emit_thinking_complete(&mut self, action: &str, response_text: &str) {
-        use cognit::core::awareness_signal::detect_uncertainty;
+        use crate::core::awareness_signal::detect_uncertainty;
         let detected = detect_uncertainty(response_text);
         self.emit_signal(AwarenessSignal {
             step: StepType::ThinkingComplete,
@@ -52,7 +52,7 @@ impl ReActLoop {
 
     /// Emit a ToolCallEnd signal with impasse detection from consecutive errors.
     pub(crate) fn emit_tool_call_end(&mut self, tool_name: &str) {
-        use cognit::core::awareness_signal::{detect_goal_shift, detect_impasse};
+        use crate::core::awareness_signal::{detect_goal_shift, detect_impasse};
 
         // Track tool name for goal-shift detection
         self.recent_tools.push(tool_name.to_string());

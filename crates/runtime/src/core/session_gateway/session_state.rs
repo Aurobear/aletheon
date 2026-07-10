@@ -5,8 +5,8 @@
 
 use serde_json::{json, Value};
 
-use crate::core::react_loop::circuit_breaker::CircuitBreakerStatus;
-use crate::core::react_loop::goal_tracker::GoalTracker;
+use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
+use cognit::harness::linear::goal_tracker::GoalTracker;
 
 use super::gateway::SessionGateway;
 

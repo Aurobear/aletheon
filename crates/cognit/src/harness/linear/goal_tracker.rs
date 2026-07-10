@@ -86,7 +86,15 @@ impl GoalTracker {
             spec_source: None,
         }
     }
+}
 
+impl Default for GoalTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GoalTracker {
     /// Set the main goal for this turn.
     pub fn set_goal(&mut self, goal: String) {
         info!(goal = %goal, "Setting agent goal");

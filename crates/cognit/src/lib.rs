@@ -19,6 +19,7 @@
 pub mod bridge;
 pub mod config;
 pub mod core;
+pub mod harness;
 pub mod r#impl;
 
 // Re-export core components
@@ -36,7 +37,10 @@ pub use bridge::inference::InferenceBridge;
 pub use bridge::learning::LearningBridge;
 pub use bridge::llm::LlmBridge;
 
-// Re-export impl components
+// Re-export harness components
+pub use harness::config::HarnessConfig;
+pub use harness::linear as react_loop;
+pub use harness::linear::{ReActLoop, TurnMetrics};
 pub use r#impl::inference;
 pub use r#impl::learning;
 pub use r#impl::llm;

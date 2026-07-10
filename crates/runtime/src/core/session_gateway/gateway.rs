@@ -39,14 +39,14 @@ pub use super::session_state::SessionStateRef;
 use super::subsystem_query::SubsystemRegistry;
 
 use crate::core::config::RuntimeConfig;
-#[cfg(test)]
-use crate::core::react_loop::circuit_breaker::CircuitBreakerStatus;
-#[cfg(test)]
-use crate::core::react_loop::goal_tracker::GoalTracker;
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::CoreMemory;
 use crate::RecallMemory;
+#[cfg(test)]
+use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
+#[cfg(test)]
+use cognit::harness::linear::goal_tracker::GoalTracker;
 use cognit::r#impl::llm::LlmProvider;
 use dasein::SelfField;
 
