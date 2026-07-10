@@ -1,7 +1,7 @@
 //! CoreSystems — concrete subsystem type bundle.
 //!
 //! Holds all subsystem types that RequestHandler currently owns directly.
-//! During Group B, each field transitions to Arc<dyn TraitOps> from
+//! During Group B, each field transitions to `Arc<dyn TraitOps>` from
 //! base::ops as each subsystem gets its trait implementation migrated.
 //!
 //! This is the intermediate step between the God Object and the final
@@ -41,7 +41,7 @@ use cognit::core::reflector::Reflector;
 
 /// Bundle of subsystem types.
 ///
-/// In Group B, each field transitions to Arc<dyn TraitOps>.
+/// In Group B, each field transitions to `Arc<dyn TraitOps>`.
 pub struct CoreSystems {
     // --- Orchestrator ---
     pub runtime: Arc<Mutex<AletheonRuntime>>,

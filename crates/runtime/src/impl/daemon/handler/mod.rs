@@ -42,7 +42,7 @@ use crate::core::session_gateway::SessionGateway;
 
 #[derive(Clone)]
 pub struct RequestHandler {
-    /// All subsystem types — becomes Arc<dyn TraitOps> in Group B.
+    /// All subsystem types — becomes `Arc<dyn TraitOps>` in Group B.
     pub(crate) subsystems: Arc<CoreSystems>,
     /// Multi-session registry.
     pub(crate) sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
