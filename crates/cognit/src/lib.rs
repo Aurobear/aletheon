@@ -41,6 +41,7 @@ pub use bridge::llm::LlmBridge;
 pub use harness::config::HarnessConfig;
 pub use harness::linear as react_loop;
 pub use harness::linear::{ReActLoop, TurnMetrics};
+pub use harness::{build_harness, HarnessKind};
 pub use r#impl::inference;
 pub use r#impl::learning;
 pub use r#impl::llm;

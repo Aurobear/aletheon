@@ -11,6 +11,7 @@ use cognit::harness::config::HarnessConfig;
 use cognit::harness::interrupt::InterruptFlag;
 use cognit::harness::linear::ReActLoop;
 use cognit::harness::linear::TurnMetrics;
+use cognit::harness::{build_harness, HarnessKind};
 use fabric::body::{Action, ActionResult};
 use fabric::brain::Plan;
 use fabric::context::Context;
@@ -65,7 +66,9 @@ impl AletheonRuntime {
             config.target_summary_chars,
             config.context_window_tokens,
         )) as Box<dyn cognit::harness::linear::CompactorTrait>;
-        let react_loop = ReActLoop::new(harness_config, compressor);
+        // TODO: wire from config — RuntimeConfig has no harness-kind field yet.
+        let harness_kind = HarnessKind::default();
+        let react_loop = build_harness(harness_kind, harness_config, compressor);
         Self {
             config,
             react_loop,
