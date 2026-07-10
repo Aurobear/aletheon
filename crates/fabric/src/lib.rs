@@ -28,6 +28,7 @@ pub mod ipc;
 pub mod kernel;
 pub mod ops;
 pub mod policy;
+pub mod primitives;
 pub mod types;
 
 // === Backward-compatible module re-exports ===
@@ -180,6 +181,13 @@ pub use policy::execpolicy::{
 // Note: policy::execpolicy::Evaluation is not re-exported at crate root
 // to avoid conflict with include::meta::Evaluation.
 // Access via fabric::policy::execpolicy::Evaluation or fabric::execpolicy::Evaluation.
+
+// Primitives (RFC-017 canonical vocabulary)
+// Note: primitives::Event is not re-exported at crate root to avoid conflict
+// with events::event::Event (the trait). Access via fabric::primitives::Event.
+pub use primitives::{
+    Command, Commitment, Evidence, Hypothesis, Mailbox, Narrative, Query, Stream,
+};
 
 // Ops traits (from ops/)
 pub use ops::{CognitOps, CognitiveHarness, CorpusOps, DaseinOps, MnemosyneOps, ToolExecutor};
