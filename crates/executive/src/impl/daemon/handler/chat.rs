@@ -757,6 +757,22 @@ impl RequestHandler {
                         }
                         Event::ToolResult { name: _, call_id, result } => {
                             tool_results_for_session.push((call_id.clone(), result.content.clone(), result.is_error));
+                            if let Err(e) = self
+                                .subsystems
+                                .agora
+                                .trace(
+                                    &session_id_for_agora,
+                                    "tool_result",
+                                    serde_json::json!({
+                                        "call_id": call_id,
+                                        "content": result.content,
+                                        "is_error": result.is_error,
+                                    }),
+                                )
+                                .await
+                            {
+                                tracing::warn!(target: "agora", error = %e, "agora trace append failed");
+                            }
                         }
                         Event::Usage {
                             tokens_in,
@@ -1140,9 +1156,22 @@ impl RequestHandler {
             }
         }
 
-        // RFC-014 commit: snapshot the Agora workspace at turn end.
+        // RFC-014 commit: snapshot the Agora workspace at turn end, then
+        // persist it to recall memory (RFC-018 Phase 1 — best-effort, never
+        // propagated into the chat turn).
         match self.subsystems.agora.snapshot(&session_id_for_agora).await {
-            Ok(snap) => tracing::debug!(target: "agora", "workspace snapshot: {snap}"),
+            Ok(snap) => {
+                tracing::debug!(target: "agora", "workspace snapshot: {snap}");
+                let rm = self.subsystems.recall_memory.lock().await;
+                if let Err(e) = rm.store(
+                    &session_id_for_agora,
+                    "agora_snapshot",
+                    &snap.to_string(),
+                    None,
+                ) {
+                    tracing::warn!(target: "agora", error = %e, "agora snapshot persist failed");
+                }
+            }
             Err(e) => tracing::warn!("agora snapshot failed: {e}"),
         }
 
