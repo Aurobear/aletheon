@@ -44,14 +44,14 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
-use crate::core::storm_breaker::StormBreaker;
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::r#impl::goal::ObjectiveStore;
-use crate::r#impl::hooks::builtin::audit_hook;
-use crate::r#impl::hooks::registry::HookRegistry;
-use crate::r#impl::skill_router::SkillRouter;
-use crate::r#impl::skills::loader::SkillLoader;
-use crate::r#impl::skills::plugin::register_skill;
+use corpus::hook::builtin::audit_hook;
+use corpus::security::storm_breaker::StormBreaker;
+use corpus::skill::plugin::register_skill;
+use corpus::HookRegistry;
+use corpus::SkillLoader;
+use corpus::SkillRouter;
 use memory::AutoMemory;
 use memory::FactStore;
 
@@ -287,7 +287,7 @@ impl RequestHandler {
         let mut hook_registry = HookRegistry::new();
         audit_hook::register_audit_hook(&mut hook_registry);
         let hooks_dir = aletheon_dir.join("hooks");
-        let hook_loader = crate::r#impl::hooks::loader::HookLoader::new(hooks_dir);
+        let hook_loader = corpus::hook::loader::HookLoader::new(hooks_dir);
         let user_hook_count = hook_loader.register_all(&mut hook_registry);
         if user_hook_count > 0 {
             info!(count = user_hook_count, "Loaded user hooks");

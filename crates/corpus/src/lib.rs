@@ -3,7 +3,9 @@
 pub mod bridge;
 pub mod core;
 pub mod drivers;
+pub mod hook;
 pub mod security;
+pub mod skill;
 pub mod testing;
 pub mod tools;
 
@@ -14,3 +16,9 @@ pub use core::AletheonBodyRuntime;
 pub use drivers::*;
 pub use security::*;
 pub use tools::*;
+
+// Re-export skill/hook top-level types for runtime convenience
+pub use hook::registry::HookRegistry;
+pub use skill::loader::SkillLoader;
+pub use skill::plugin::register_skill;
+pub use skill::router::SkillRouter;

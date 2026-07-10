@@ -1,5 +1,5 @@
-use crate::r#impl::skills::loader::LoadedSkill;
 use crate::CoreMemory;
+use corpus::skill::loader::LoadedSkill;
 
 /// Builds a deterministic, cache-stable system prompt prefix.
 ///
@@ -118,7 +118,7 @@ impl PrefixBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::skills::loader::LoadedSkill;
+    use corpus::skill::loader::LoadedSkill;
 
     fn make_skill(name: &str, content: &str) -> LoadedSkill {
         LoadedSkill {

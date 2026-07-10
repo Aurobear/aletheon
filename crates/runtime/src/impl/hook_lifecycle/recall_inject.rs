@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use super::{Hook, HookEvent, HookResult};
-use crate::r#impl::skill_router::SkillRouter;
+use corpus::skill::router::SkillRouter;
 use memory::FactStore;
 
 const MIN_PROMPT_LEN: usize = 8;
@@ -366,7 +366,7 @@ mod tests {
     fn test_recall_skill_suggestion() {
         let (injector, _tmp) = setup();
         let mut router = SkillRouter::new();
-        router.load_from_skill(crate::r#impl::skill_router::SkillEntry {
+        router.load_from_skill(corpus::skill::router::SkillEntry {
             name: "git".to_string(),
             description: "Git workflow automation".to_string(),
             triggers: vec!["commit".to_string(), "push".to_string()],

@@ -191,19 +191,18 @@ impl RequestHandler {
         // Gather loaded skills with keywords and match against user message.
         {
             let loader = self.subsystems.skill_loader.lock().await;
-            let skill_keywords: Vec<crate::r#impl::skills::keyword_matcher::SkillKeywords> = loader
+            let skill_keywords: Vec<corpus::skill::keyword_matcher::SkillKeywords> = loader
                 .plugins()
                 .iter()
                 .filter(|p| !p.keywords.is_empty())
-                .map(|p| crate::r#impl::skills::keyword_matcher::SkillKeywords {
+                .map(|p| corpus::skill::keyword_matcher::SkillKeywords {
                     name: p.name.clone(),
                     keywords: p.keywords.clone(),
                     body: p.system_prompt.clone(),
                 })
                 .collect();
             drop(loader);
-            let matched =
-                crate::r#impl::skills::keyword_matcher::match_skills(message, &skill_keywords);
+            let matched = corpus::skill::keyword_matcher::match_skills(message, &skill_keywords);
             let mut remaining = MAX_ACTIVATED_SKILLS_TOTAL_CHARS;
             for body in matched {
                 if remaining == 0 {
