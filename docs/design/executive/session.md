@@ -1,11 +1,11 @@
 # Session Persistence and Lifecycle
 
-> Migrated from `docs/design/core/session-lifecycle.md` (session persistence and crash recovery sections only) — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from `docs/design/core/session-lifecycle.md` (session persistence and crash recovery sections only) — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 > Session persistence, EventJournal, crash recovery. Observability sections extracted to [observability.md](observability.md).
 
 **Module:** 10
-**Crate:** `runtime`
+**Crate:** `executive`
 **Code location:** `runtime/src/impl/session/`
 **Related modules:** [react-loop.md](react-loop.md), [observability.md](observability.md)
 **Last Updated:** 2026-06-14

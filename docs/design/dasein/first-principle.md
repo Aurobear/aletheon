@@ -59,7 +59,7 @@ How well does the current implementation satisfy the first principle?
 
 | Invariant | Status | Evidence |
 |-----------|--------|----------|
-| I1 (No execution without review) | Partial | review() is designed but not yet wired into the ReAct loop as a mandatory gate. Tool execution currently bypasses SelfField. See `crates/runtime/src/core/react_loop/tool_exec.rs`. |
+| I1 (No execution without review) | Partial | review() is designed but not yet wired into the ReAct loop as a mandatory gate. Tool execution currently bypasses SelfField. See `crates/executive/src/core/react_loop/tool_exec.rs`. |
 | I2 (No state change without narrative) | Not Yet | narrate() exists in the trait but is not called automatically on state changes. NarrativeLayer records are explicit calls only. |
 | I3 (External input interpreted before memory) | Partial | PerceptionBridge exists but SelfField boundary check is not yet in the perception pipeline. Events flow directly to memory. |
 | I4 (Identity continuity never broken) | Partial | Continuity layer has lineage records and mutation_history, but rollback verification is not enforced. |
@@ -174,7 +174,7 @@ Everything flows inward through the SelfField, is interpreted, and only then rea
 - [Perception Sources](perception-sources.md) -- How external input enters the system
 - [Writable Root](writable-root.md) -- FUSE-based self-access layer
 - [Dasein Crate](../../../crates/dasein/src/lib.rs) -- SelfField implementation crate
-- [SelfFieldOps Trait](../../../crates/base/src/include/self_field.rs) -- Core trait definition
+- [SelfFieldOps Trait](../../../crates/fabric/src/include/self_field.rs) -- Core trait definition
 
 ---
 *Document version: 1.0.0*

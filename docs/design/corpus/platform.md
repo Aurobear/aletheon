@@ -11,7 +11,7 @@
 
 > 跨平台通过 `PlatformAdapter` trait 实现，核心运行时仅依赖此接口，编译时通过 feature flag 选择平台实现。
 
-**关联模块:** [IPC 与内核](../base/ipc.md), [感知层](perception.md)
+**关联模块:** [IPC 与内核](../fabric/ipc.md), [感知层](perception.md)
 **最后更新:** 2026-06-06
 
 ---
@@ -36,7 +36,7 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 
 ## 2. PlatformAdapter 接口
 
-> **See [shared/traits.md](../base/types.md) for the canonical `PlatformAdapter` trait definition.**
+> **See [shared/traits.md](../fabric/types.md) for the canonical `PlatformAdapter` trait definition.**
 > The table below provides platform-specific implementation notes for each method group.
 
 | 方法 | 说明 | Linux 实现 | Android 实现 | 嵌入式实现 |
@@ -124,7 +124,7 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 
 > Agent 参与系统启动过程，提供启动监控和故障诊断。BootMonitor、ServiceDependencyGraph（含拓扑排序和环检测）、5 阶段延迟加载、启动故障诊断均已实现。
 
-**关联模块:** [系统管理](../dasein/perception-sources.md), [可观测性栈](../runtime/observability.md)
+**关联模块:** [系统管理](../dasein/perception-sources.md), [可观测性栈](../executive/observability.md)
 **最后更新:** 2026-06-07
 
 ---
@@ -315,7 +315,7 @@ Agent 检测到服务启动失败
 
 > 多个 Agent 共存时的发现、通信和冲突协调。L2 本地发现（Unix socket 扫描）、冲突检测、生命周期 FSM、JSON-RPC 通信 trait 均已实现。L3/L4 发现层级（mDNS/WAN）待实现。
 
-**关联模块:** [编排引擎](../runtime/orchestration.md), [多设备](platform.md), [IPC 层](../base/ipc.md)
+**关联模块:** [编排引擎](../executive/orchestration.md), [多设备](platform.md), [IPC 层](../fabric/ipc.md)
 **最后更新:** 2026-06-07
 
 ---
@@ -508,10 +508,10 @@ Registered → Active ↔ Idle ↔ Busy → Degraded → Offline
 
 > Agent 间低延迟零拷贝通信的内核模块设计，包含 Agent Ring (类 io_uring)、优先级消息队列和系统调用扩展。
 
-> **注意:** 本文档仅涵盖内核级 IPC（agent_ipc.ko、系统调用、io_uring）。用户态 IPC（Unix socket、D-Bus）和 Phase 1-4 的 IPC 降级方案详见 [执行层 IPC](../base/ipc.md)。
+> **注意:** 本文档仅涵盖内核级 IPC（agent_ipc.ko、系统调用、io_uring）。用户态 IPC（Unix socket、D-Bus）和 Phase 1-4 的 IPC 降级方案详见 [执行层 IPC](../fabric/ipc.md)。
 
 **模块编号:** 07
-**关联模块:** [编排引擎](../runtime/orchestration.md), [FUSE 接口](fuse.md), [平台适配器](platform.md)
+**关联模块:** [编排引擎](../executive/orchestration.md), [FUSE 接口](fuse.md), [平台适配器](platform.md)
 **最后更新:** 2026-06-06
 
 ---
@@ -979,7 +979,7 @@ io_uring 混合架构        可选内核模块            自定义 syscall
 
 > 多个 Agent 设备间的发现、通信、记忆同步和任务委托。属于 Phase 6 延期功能，全局概念设计。
 
-**关联模块:** [记忆系统](../memory/memory-system.md), [IPC](../base/ipc.md), [Agent 间感知](platform.md)
+**关联模块:** [记忆系统](../mnemosyne/memory-system.md), [IPC](../fabric/ipc.md), [Agent 间感知](platform.md)
 **最后更新:** 2026-06-07
 
 ---

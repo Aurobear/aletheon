@@ -1,8 +1,8 @@
 # ReAct Loop and ContentBlock Protocol
 
-> Migrated from `docs/design/core/cognitive-engine.md` (ReAct loop and ContentBlock sections only) — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from `docs/design/core/cognitive-engine.md` (ReAct loop and ContentBlock sections only) — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
-**Crate:** `runtime`
+**Crate:** `executive`
 **Code location:** `runtime/src/impl/engine/cognitive_loop.rs`
 **Last Updated:** 2026-06-14
 
@@ -123,7 +123,7 @@ async fn compact(&mut self) {
 
 **Compression trigger:**
 - Token count exceeds threshold (default 70% of context window)
-- Can be precisely tracked by `ContextBudget` module (see [memory-system.md](../memory/memory-system.md) section 2.2)
+- Can be precisely tracked by `ContextBudget` module (see [memory-system.md](../mnemosyne/memory-system.md) section 2.2)
 
 ---
 

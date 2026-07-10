@@ -1,8 +1,8 @@
-# Runtime Crate — Core Runtime Infrastructure
+# Executive Crate — Core Runtime Infrastructure
 
-> Code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
-**Crate:** `runtime`
+**Crate:** `executive`
 **Purpose:** The core runtime that drives agent reasoning, manages sessions, orchestrates multi-agent collaboration, and hosts plugins and automations.
 
 ---
@@ -10,7 +10,7 @@
 ## Internal Structure
 
 ```
-runtime/src/
+executive/src/
   impl/
     mod.rs
     coordinator.rs              # Runtime coordinator
@@ -97,7 +97,7 @@ runtime/src/
 | Subsystem | Doc | Purpose |
 |-----------|-----|---------|
 | Engine | [react-loop.md](react-loop.md) | ReAct reasoning loop, ContentBlock protocol |
-| Memory | [../memory/memory-system.md](../memory/memory-system.md) | L1/L2/L3 memory, compression, scoping |
+| Memory | [../mnemosyne/memory-system.md](../mnemosyne/memory-system.md) | L1/L2/L3 memory, compression, scoping |
 | Session | [session.md](session.md) | Persistence, EventJournal, crash recovery |
 | Orchestration | [orchestration.md](orchestration.md) | Multi-agent strategies, delegation |
 | Observability | [observability.md](observability.md) | Metrics, reasoning logs, debug CLI |
@@ -106,9 +106,9 @@ runtime/src/
 
 ## Related Crates
 
-- `base` — Trait definitions and shared types
-- `memory` — Backend memory storage (episodic, semantic, procedural)
-- `base` — IPC and inter-process communication
+- `fabric` — Trait definitions and shared types
+- `mnemosyne` — Backend memory storage (episodic, semantic, procedural)
+- `fabric` — IPC and inter-process communication
 - `corpus` — Tools, sandbox, security, platform adapters
 - `cognit` — LLM inference
 - `dasein` — Perception, hooks

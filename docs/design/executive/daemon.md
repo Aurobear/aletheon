@@ -14,23 +14,23 @@
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
 | CLI entry point | ✅ Implemented | `crates/bin/src/main.rs` | clap-based arg parsing |
-| .env loading | ✅ Implemented | `crates/runtime/src/host/mod.rs` | `load_dotenv()` shared across hosts |
-| TOML config loading | ✅ Implemented | `crates/runtime/src/core/runtime_core.rs` | `AppConfig::load_layered()` |
-| Provider registry init | ✅ Implemented | `crates/runtime/src/core/runtime_core.rs` | `ProviderRegistry::from_config()` |
-| Unix socket server | ✅ Implemented | `crates/runtime/src/impl/daemon/server.rs` | Line-delimited JSON-RPC, concurrent connections |
-| RequestHandler | ✅ Implemented | `crates/runtime/src/impl/daemon/handler/mod.rs` | chat/clear/status/health/session.* methods |
-| Chat → ReAct loop | ✅ Implemented | `crates/runtime/src/impl/daemon/handler/chat.rs` | `ReActLoop::run_streaming()` with full tool calling |
-| Streaming responses | ✅ Implemented | `crates/runtime/src/core/react_loop/tool_exec.rs` | `ChannelEventSink` → JSON-RPC notifications (TextDelta, ToolCallStart, etc.) |
-| Perception manager | ✅ Implemented | `crates/runtime/src/core/runtime_core.rs` | Spawns in background task via bootstrap |
-| Perception bridge | ✅ Implemented | `crates/runtime/src/core/runtime_core.rs` | Event→Engine injection channel |
-| Agent registry | ✅ Implemented | `crates/runtime/src/impl/daemon/handler/mod.rs` | Config-based + builtin fallback |
-| Memory system init | ✅ Implemented | `crates/runtime/src/impl/daemon/handler/mod.rs` | CoreMemory + RecallMemory + FactStore |
-| Graceful shutdown | ✅ Implemented | `crates/runtime/src/impl/daemon/server.rs`, `host/mod.rs` | JoinSet connection drain (5s timeout), InterruptFlag, per-turn cancel token |
-| Health check endpoint | ✅ Implemented | `crates/runtime/src/impl/daemon/handler/rpc.rs` | `health` RPC: uptime, connections, sessions, version |
-| Multi-session support | ✅ Implemented | `crates/runtime/src/impl/daemon/handler/mod.rs` | HashMap-based session registry, `session.create/list/switch` RPC |
-| SystemdHost | ✅ Implemented | `crates/runtime/src/host/systemd.rs` | sd_notify(READY/WATCHDOG/STOPPING), SIGTERM handler |
-| ContainerHost | ✅ Implemented | `crates/runtime/src/host/container.rs` | Docker/Podman container lifecycle via CLI |
-| RuntimeCore (host-agnostic) | ✅ Implemented | `crates/runtime/src/core/runtime_core.rs` | Shared bootstrap for all host types |
+| .env loading | ✅ Implemented | `crates/executive/src/host/mod.rs` | `load_dotenv()` shared across hosts |
+| TOML config loading | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | `AppConfig::load_layered()` |
+| Provider registry init | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | `ProviderRegistry::from_config()` |
+| Unix socket server | ✅ Implemented | `crates/executive/src/impl/daemon/server.rs` | Line-delimited JSON-RPC, concurrent connections |
+| RequestHandler | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | chat/clear/status/health/session.* methods |
+| Chat → ReAct loop | ✅ Implemented | `crates/executive/src/impl/daemon/handler/chat.rs` | `ReActLoop::run_streaming()` with full tool calling |
+| Streaming responses | ✅ Implemented | `crates/executive/src/core/react_loop/tool_exec.rs` | `ChannelEventSink` → JSON-RPC notifications (TextDelta, ToolCallStart, etc.) |
+| Perception manager | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Spawns in background task via bootstrap |
+| Perception bridge | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Event→Engine injection channel |
+| Agent registry | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | Config-based + builtin fallback |
+| Memory system init | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | CoreMemory + RecallMemory + FactStore |
+| Graceful shutdown | ✅ Implemented | `crates/executive/src/impl/daemon/server.rs`, `host/mod.rs` | JoinSet connection drain (5s timeout), InterruptFlag, per-turn cancel token |
+| Health check endpoint | ✅ Implemented | `crates/executive/src/impl/daemon/handler/rpc.rs` | `health` RPC: uptime, connections, sessions, version |
+| Multi-session support | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | HashMap-based session registry, `session.create/list/switch` RPC |
+| SystemdHost | ✅ Implemented | `crates/executive/src/host/systemd.rs` | sd_notify(READY/WATCHDOG/STOPPING), SIGTERM handler |
+| ContainerHost | ✅ Implemented | `crates/executive/src/host/container.rs` | Docker/Podman container lifecycle via CLI |
+| RuntimeCore (host-agnostic) | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Shared bootstrap for all host types |
 | `aletheon exec` (CI/CD) | ✅ Implemented | `crates/bin/src/main.rs` | Non-interactive batch execution |
 
 ---
@@ -290,11 +290,11 @@ pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value
 
 错误响应: JSON-RPC 标准错误格式，`code: -32000` (LLM error) 或 `-32601` (unknown method)。
 
-**注意:** `chat` 方法现已完整走 `ReActLoop::run_streaming()` 推理循环，支持工具调用、多轮推理和安全策略检查。详见 `crates/runtime/src/impl/daemon/handler/chat.rs`。
+**注意:** `chat` 方法现已完整走 `ReActLoop::run_streaming()` 推理循环，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/chat.rs`。
 
 ### 4.3 会话状态管理
 
-会话管理通过 `SessionManager` (`crates/runtime/src/impl/daemon/session_manager.rs`) 提供多会话支持:
+会话管理通过 `SessionManager` (`crates/executive/src/impl/daemon/session_manager.rs`) 提供多会话支持:
 
 - `session.create` — 创建新会话（UUID），持久化到 SQLite
 - `session.list` — 列出所有活跃会话
@@ -334,22 +334,22 @@ model = "claude-sonnet-4-20250514"
 
 ~~`chat` 方法直接调用 `llm.complete()`，绕过了 `AletheonRuntime` 的 ReAct 推理循环。~~
 
-现已通过 `ReActLoop::run_streaming()` 完整集成，支持工具调用、多轮推理和安全策略检查。详见 `crates/runtime/src/impl/daemon/handler/chat.rs`。
+现已通过 `ReActLoop::run_streaming()` 完整集成，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/chat.rs`。
 
 ### 6.2 无流式响应 ✅ 已修复
 
 ~~同步 request-response 模式，CLI 必须等待完整响应才能显示。~~
 
-现已通过 `ChannelEventSink` → JSON-RPC notification 实现流式 chunk 推送（TextDelta, ToolCallStart, ToolCallEnd 等）。详见 `crates/runtime/src/core/react_loop/tool_exec.rs`。
+现已通过 `ChannelEventSink` → JSON-RPC notification 实现流式 chunk 推送（TextDelta, ToolCallStart, ToolCallEnd 等）。详见 `crates/executive/src/core/react_loop/tool_exec.rs`。
 
 ### 6.3 无优雅关闭 ✅ 已修复
 
 ~~无 SIGTERM/SIGINT 处理，无连接排空逻辑。~~
 
-现已实现：JoinSet 连接排空（5s 超时）、InterruptFlag 取消机制、per-turn cancel token。详见 `crates/runtime/src/impl/daemon/server.rs` 和 `crates/runtime/src/host/mod.rs`。
+现已实现：JoinSet 连接排空（5s 超时）、InterruptFlag 取消机制、per-turn cancel token。详见 `crates/executive/src/impl/daemon/server.rs` 和 `crates/executive/src/host/mod.rs`。
 
 ### 6.4 单会话限制 ✅ 已修复
 
 ~~每次 daemon 启动创建一个 session，无多会话或会话恢复支持。~~
 
-现已通过 `SessionManager` 实现 HashMap-based 多会话注册表，支持 `session.create/list/switch` RPC 方法。详见 `crates/runtime/src/impl/daemon/session_manager.rs`。
+现已通过 `SessionManager` 实现 HashMap-based 多会话注册表，支持 `session.create/list/switch` RPC 方法。详见 `crates/executive/src/impl/daemon/session_manager.rs`。

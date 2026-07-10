@@ -5,7 +5,7 @@
 > `interact` crate 保留为薄包装（向后兼容），实际逻辑在 corpus crate 中。
 
 **模块编号:** CLI
-**关联模块:** [daemon](../runtime/daemon.md), [body/ui](../corpus/ui.md)
+**关联模块:** [daemon](../executive/daemon.md), [body/ui](../corpus/ui.md)
 **Crate:** `corpus` (feature `cli`), `interact` (thin re-export)
 **最后更新:** 2026-06-14
 

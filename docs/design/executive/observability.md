@@ -1,10 +1,10 @@
 # Observability Stack
 
-> Migrated from `docs/design/observability/observability-stack.md` and observability sections of `docs/design/core/session-lifecycle.md` — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from `docs/design/observability/observability-stack.md` and observability sections of `docs/design/core/session-lifecycle.md` — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 > Aletheon's diagnostic core as a system-level service, including event classification, Fragment Accumulator, Debug CLI, Prometheus metrics, structured reasoning logs.
 
-**Crate:** `runtime`
+**Crate:** `executive`
 **Code location:** `runtime/src/impl/session/observability/`
 **Related modules:** [session.md](session.md)
 **Last Updated:** 2026-06-14

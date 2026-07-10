@@ -5,7 +5,7 @@
 > 定义工具分类、生命周期与沙箱隔离执行模型，确保工具调用安全可控。
 
 **模块编号:** 03
-**关联模块:** [cognitive-engine](../cognit/cognitive-engine.md), [memory-system](../memory/memory-system.md)
+**关联模块:** [cognitive-engine](../cognit/cognitive-engine.md), [memory-system](../mnemosyne/memory-system.md)
 **最后更新:** 2026-06-06
 **注:** 本文档为 `03-tool-system.md` 的副本，已更新跨文件引用路径。
 沙箱相关内容已拆分至 [sandbox.md](sandbox.md)。
@@ -116,7 +116,7 @@ MCP 集成相关内容已拆分至 [mcp-integration.md](mcp.md)。
 
 ### 2.2 工具 Trait
 
-> **See [shared/traits.md](../base/types.md) for the canonical `Tool` trait definition.**
+> **See [shared/traits.md](../fabric/types.md) for the canonical `Tool` trait definition.**
 > The fields described below are the design rationale for each method.
 
 **设计要点：**

@@ -1,11 +1,11 @@
 # Multi-Agent Orchestration Engine
 
-> Migrated from `docs/design/orchestration/orchestration-engine.md` — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from `docs/design/orchestration/orchestration-engine.md` — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 > Pluggable multi-agent collaboration orchestration system, supporting Selector/Handoff/DiGraph strategies, with delegation unified as Tool calls.
 
 **Module:** 06
-**Crate:** `runtime`
+**Crate:** `executive`
 **Code location:** `runtime/src/impl/orchestration/`
 **Related modules:** [react-loop.md](react-loop.md), [session.md](session.md)
 **Last Updated:** 2026-06-14
