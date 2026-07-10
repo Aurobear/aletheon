@@ -1,3 +1,20 @@
+//! Daemon layer — Gateway (transport/IO) and session management.
+//!
+//! ## Gateway (transport)
+//! - `server.rs` — Unix socket listener, connection accept loop
+//! - `handler/` — JSON-RPC dispatch (RequestHandler, chat, rpc methods)
+//! - `mcp_embedded.rs` — embedded MCP protocol server
+//! - `prefix_builder.rs` — cache-stable system prompt construction
+//! - `debug_handler.rs` — debug.* JSON-RPC namespace
+//! - `model_router.rs` — per-task-type model selection
+//! - `cache_shape.rs` — cache invalidation tracking
+//!
+//! ## Session management (core-adjacent)
+//! - `session_manager.rs` — conversation history, journaling, compaction
+//!
+//! Business logic lives in `crate::core/` (orchestrator, session_gateway)
+//! and in subsystem crates (cognit, dasein, corpus, memory, metacog).
+
 pub mod cache_shape;
 pub mod debug_handler;
 pub mod handler;
