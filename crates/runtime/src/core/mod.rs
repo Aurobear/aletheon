@@ -22,6 +22,7 @@ pub use config::{
     AgentConfig, AppConfig, DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig,
     ProviderConfig, RuntimeConfig, SandboxConfig, Transport,
 };
+pub use core_systems::CoreSystems;
 pub use evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 pub use interrupt::InterruptFlag;
 pub use mode_router::ModeRouter;
@@ -30,4 +31,3 @@ pub use react_loop::ReActLoop;
 pub use session::{ContextState, Session, TuiSessionManager};
 pub use sub_agent::SubAgentSpawner;
 pub use verdict_handler::{DefaultVerdictHandler, Modifications};
-pub use core_systems::CoreSystems;

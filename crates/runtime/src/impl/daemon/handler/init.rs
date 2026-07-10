@@ -16,7 +16,6 @@ use super::super::prefix_builder::PrefixBuilder;
 use super::super::session_manager::SessionManager;
 use super::super::DaemonConfig;
 use super::RequestHandler;
-use super::SessionState;
 use crate::core::config::RuntimeConfig;
 use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonRuntime;
@@ -64,12 +63,12 @@ use base::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 impl RequestHandler {
     /// Get a reference to the debug handler (for subscriber rx access).
     pub fn debug_handler(&self) -> &Arc<DebugHandler> {
-        &self.debug_handler
+        &self.subsystems.debug_handler
     }
 
     /// Get a reference to the tool registry (for MCP server).
     pub fn tools(&self) -> Arc<Mutex<ToolRegistry>> {
-        self.tools.clone()
+        self.subsystems.tools.clone()
     }
 
     /// Set the notification channel for out-of-band messages to the client.
@@ -531,54 +530,55 @@ impl RequestHandler {
             llm.clone(),
         ));
 
-        let handler = Self {
-            state: Arc::new(Mutex::new(SessionState {
-                runtime,
-                pending_input: None,
-            })),
-            llm,
-            model_router,
-            sessions,
-            default_session_id,
-            session_created_at,
-            recall_memory,
-            data_dir,
-            context_window,
-            started_at: Instant::now(),
-            active_connections,
-            reflector,
-            episodic_memory,
+        let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
+            runtime: Arc::new(Mutex::new(runtime)),
             self_field,
-            skill_loader: Arc::new(Mutex::new(skill_loader)),
-            cached_prefix: Arc::new(Mutex::new(cached_prefix)),
-            memory_queue: Arc::new(Mutex::new(Vec::new())),
-            config_prompt: config.system_prompt.clone(),
+            episodic_memory,
+            recall_memory,
             core_memory,
-            hook_registry,
-            bus: Some(bus),
-            tool_runner,
+            fact_store,
+            auto_memory,
+            objective_store,
+            reflector,
             tools,
+            tool_runner,
+            skill_loader: Arc::new(Mutex::new(skill_loader)),
+            skill_router,
+            hook_registry,
+            storm_breaker,
+            hooks_config,
+            pipeline,
             approval_rx: Arc::new(Mutex::new(approval_rx)),
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
-            notify_tx: None,
-            fact_store,
-            objective_store,
-            storm_breaker,
-            skill_router,
-            hooks_config,
             session_approvals: Arc::new(Mutex::new(HashMap::new())),
-            pipeline,
-            auto_memory,
             debug_handler,
             debug_perf,
             cancel_token: Arc::new(Mutex::new(None)),
-            daemon_cancel_token: Some(cancel_token),
+            cached_prefix: Arc::new(Mutex::new(cached_prefix)),
+            memory_queue: Arc::new(Mutex::new(Vec::new())),
+            config_prompt: config.system_prompt.clone(),
+            default_session_id,
+            session_created_at,
+            data_dir,
+            context_window,
+        });
+
+        let handler = Self {
+            subsystems,
+            sessions,
             session_gateway,
+            bus,
+            llm,
+            model_router,
+            notify_tx: None,
+            active_connections,
+            started_at: Instant::now(),
+            daemon_cancel_token: Some(cancel_token),
         };
 
         // Register initial params
         {
-            let data_dir_clone = handler.data_dir.clone();
+            let data_dir_clone = handler.subsystems.data_dir.clone();
             let started_at = std::time::Instant::now();
             param_registry
                 .declare(
@@ -636,7 +636,7 @@ impl RequestHandler {
 
         // Fire OnSessionStart hook
         {
-            let hr = handler.hook_registry.lock().await;
+            let hr = handler.subsystems.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnSessionStart,
                 session_id: session_id.clone(),

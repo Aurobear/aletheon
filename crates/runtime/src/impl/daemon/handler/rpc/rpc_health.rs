@@ -12,10 +12,15 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let state = self.state.lock().await;
-        let session_id = state.runtime.config().session_id.clone();
-        let iteration = state.runtime.iteration();
-        drop(state);
+        let session_id = self
+            .subsystems
+            .runtime
+            .lock()
+            .await
+            .config()
+            .session_id
+            .clone();
+        let iteration = self.subsystems.runtime.lock().await.iteration();
         let turn_count = {
             let (_sid, sm_arc) = self.get_or_create_session(None).await;
             let tc = sm_arc.lock().await.turn_count();
@@ -24,12 +29,14 @@ impl RequestHandler {
 
         // Reflection and evolution counts from episodic memory
         let reflection_count = self
+            .subsystems
             .episodic_memory
             .lock()
             .await
             .reflection_count()
             .unwrap_or(0);
         let evolution_count = self
+            .subsystems
             .episodic_memory
             .lock()
             .await
@@ -37,7 +44,7 @@ impl RequestHandler {
             .unwrap_or(0);
 
         // Care weights, boundary rules, and attention from SelfField
-        let sf = self.self_field.lock().await;
+        let sf = self.subsystems.self_field.lock().await;
         let care_weights: Vec<serde_json::Value> = sf
             .care()
             .all_cares()

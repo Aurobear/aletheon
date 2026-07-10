@@ -18,7 +18,7 @@ impl RequestHandler {
         let scope = p["scope"].as_str().unwrap_or("session");
         let subject = p["subject"].as_str().unwrap_or("");
         let tags = p["tags"].as_str().unwrap_or("");
-        let fs = self.fact_store.lock().await;
+        let fs = self.subsystems.fact_store.lock().await;
         match fs.add_fact_governed(
             content, "general", tags, scope, "explicit", subject, 0.7, "semantic", 0,
         ) {
@@ -43,7 +43,7 @@ impl RequestHandler {
         let p = &request["params"];
         let scope = p["scope"].as_str();
         let all = p["all"].as_bool().unwrap_or(false);
-        let fs = self.fact_store.lock().await;
+        let fs = self.subsystems.fact_store.lock().await;
         match fs.list_facts(scope, all, 50) {
             Ok(rows) => json!({
                 "jsonrpc": "2.0",
@@ -66,7 +66,7 @@ impl RequestHandler {
         let p = &request["params"];
         let query = p["query"].as_str().unwrap_or("");
         let scope = p["scope"].as_str();
-        let fs = self.fact_store.lock().await;
+        let fs = self.subsystems.fact_store.lock().await;
         match fs.search_facts_governed(query, scope, false, 0.15, 20) {
             Ok(rows) => json!({
                 "jsonrpc": "2.0",
@@ -87,7 +87,7 @@ impl RequestHandler {
         request: &serde_json::Value,
     ) -> serde_json::Value {
         let fact_id = request["params"]["id"].as_i64().unwrap_or(0);
-        let fs = self.fact_store.lock().await;
+        let fs = self.subsystems.fact_store.lock().await;
         match fs.get_fact(fact_id) {
             Ok(Some(row)) => json!({
                 "jsonrpc": "2.0",
@@ -115,7 +115,7 @@ impl RequestHandler {
         let p = &request["params"];
         let fact_id = p["id"].as_i64().unwrap_or(0);
         let hard = p["hard"].as_bool().unwrap_or(false);
-        let fs = self.fact_store.lock().await;
+        let fs = self.subsystems.fact_store.lock().await;
         let res = if hard {
             fs.delete_fact(fact_id)
         } else {
@@ -143,7 +143,7 @@ impl RequestHandler {
     ) -> serde_json::Value {
         let fact_id = request["params"]["id"].as_i64().unwrap_or(0);
         let pin = method == "memory.pin";
-        let fs = self.fact_store.lock().await;
+        let fs = self.subsystems.fact_store.lock().await;
         match fs.set_pinned(fact_id, pin) {
             Ok(ok) => json!({
                 "jsonrpc": "2.0",

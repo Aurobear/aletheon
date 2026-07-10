@@ -26,9 +26,9 @@ pub mod events;
 pub mod include;
 pub mod ipc;
 pub mod kernel;
+pub mod ops;
 pub mod policy;
 pub mod types;
-pub mod ops;
 
 // === Backward-compatible module re-exports ===
 // These allow `base::genome::*`, `base::self_field::*`, etc. to continue working.

@@ -15,7 +15,12 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let reflections = self.episodic_memory.lock().await.recall_reflections(10);
+        let reflections = self
+            .subsystems
+            .episodic_memory
+            .lock()
+            .await
+            .recall_reflections(10);
         match reflections {
             Ok(entries) => {
                 json!({
@@ -42,10 +47,15 @@ impl RequestHandler {
     ) -> serde_json::Value {
         // Run an immediate reflection on the current session state
         let (turn, session_id, iteration) = {
-            let state = self.state.lock().await;
-            let session_id = state.runtime.config().session_id.clone();
-            let iteration = state.runtime.iteration();
-            drop(state);
+            let session_id = self
+                .subsystems
+                .runtime
+                .lock()
+                .await
+                .config()
+                .session_id
+                .clone();
+            let iteration = self.subsystems.runtime.lock().await.iteration();
             let turn = {
                 let (_sid, sm_arc) = self.get_or_create_session(None).await;
                 let tc = sm_arc.lock().await.turn_count();
@@ -71,7 +81,13 @@ impl RequestHandler {
         }
 
         // Check if there are recent reflections to draw from
-        match self.episodic_memory.lock().await.recall_reflections(5) {
+        match self
+            .subsystems
+            .episodic_memory
+            .lock()
+            .await
+            .recall_reflections(5)
+        {
             Ok(recent) if !recent.is_empty() => {
                 learned.push(format!("Reviewed {} recent reflections", recent.len()));
                 // Aggregate failure patterns
@@ -92,7 +108,7 @@ impl RequestHandler {
         }
 
         let has_failures = !what_failed.is_empty() || turn == 0;
-        let entry = self.reflector.reflect_conversation(
+        let entry = self.subsystems.reflector.reflect_conversation(
             &task_summary,
             ReflectionTrigger::Manual,
             !has_failures,
@@ -100,7 +116,13 @@ impl RequestHandler {
             what_failed,
             learned,
         );
-        if let Err(e) = self.episodic_memory.lock().await.store_reflection(&entry) {
+        if let Err(e) = self
+            .subsystems
+            .episodic_memory
+            .lock()
+            .await
+            .store_reflection(&entry)
+        {
             warn!(error = %e, "Failed to store manual reflection");
             json!({
                 "jsonrpc": "2.0",
@@ -135,7 +157,7 @@ impl RequestHandler {
         _request: &serde_json::Value,
     ) -> serde_json::Value {
         // Read the genome dynamically from SelfField using SelfReader.
-        let self_field = self.self_field.lock().await;
+        let self_field = self.subsystems.self_field.lock().await;
         let reader = metacog::r#impl::meta_runtime::self_reader::SelfReader::new();
         match reader.read_genome(&*self_field).await {
             Ok(genome) => match serde_yaml::to_string(&genome) {
@@ -172,7 +194,13 @@ impl RequestHandler {
         _request: &serde_json::Value,
     ) -> serde_json::Value {
         // Return recent evolution log entries from episodic memory.
-        match self.episodic_memory.lock().await.recall_evolution_logs(20) {
+        match self
+            .subsystems
+            .episodic_memory
+            .lock()
+            .await
+            .recall_evolution_logs(20)
+        {
             Ok(entries) => {
                 json!({
                     "jsonrpc": "2.0",

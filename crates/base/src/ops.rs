@@ -4,8 +4,8 @@
 //! Implementations live in the respective subsystem crates and are wired
 //! through CoreSystems in the runtime (Group B).
 
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 
 // ---------------------------------------------------------------------------
 // Subsystem ops traits
@@ -26,11 +26,7 @@ pub trait CognitOps: Send + Sync {
 /// Dasein (self-field) operations — identity, boundary, narrative.
 #[async_trait]
 pub trait DaseinOps: Send + Sync {
-    async fn review(
-        &self,
-        intent: &crate::Intent,
-        ctx: &crate::Context,
-    ) -> Result<crate::Verdict>;
+    async fn review(&self, intent: &crate::Intent, ctx: &crate::Context) -> Result<crate::Verdict>;
     async fn narrate(&self, event: &str, detail: &str);
     async fn snapshot(&self) -> Result<serde_json::Value>;
 }
@@ -64,11 +60,7 @@ pub trait CorpusOps: Send + Sync {
 /// Tool executor — abstracts tool dispatch for harnesses.
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
-    async fn execute(
-        &self,
-        name: &str,
-        input: serde_json::Value,
-    ) -> Result<crate::ToolResult>;
+    async fn execute(&self, name: &str, input: serde_json::Value) -> Result<crate::ToolResult>;
 }
 
 /// A cognitive harness orchestrates a reasoning pipeline.

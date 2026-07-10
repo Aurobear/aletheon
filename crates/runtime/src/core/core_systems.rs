@@ -16,7 +16,6 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use base::kernel::debug_bus::PerfCounter;
-use base::CommunicationBus;
 use corpus::security::security::approval::ApprovalDecision;
 use corpus::security::security::runner::ToolRunnerWithGuard;
 use corpus::security::security::socket_approval::PendingApproval;
@@ -45,7 +44,7 @@ use cognit::core::reflector::Reflector;
 /// In Group B, each field transitions to Arc<dyn TraitOps>.
 pub struct CoreSystems {
     // --- Orchestrator ---
-    pub runtime: AletheonRuntime,
+    pub runtime: Arc<Mutex<AletheonRuntime>>,
 
     // --- Dasein (SelfField) ---
     pub self_field: Arc<Mutex<SelfField>>,
@@ -75,8 +74,7 @@ pub struct CoreSystems {
 
     // --- Approval / Security ---
     pub approval_rx: Arc<Mutex<mpsc::Receiver<PendingApproval>>>,
-    pub pending_approvals:
-        Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>,
+    pub pending_approvals: Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>,
     pub session_approvals: Arc<Mutex<HashMap<String, bool>>>,
 
     // --- Debug / Observability ---
