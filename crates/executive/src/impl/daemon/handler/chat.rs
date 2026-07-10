@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use fabric::hook::{HookContext, HookPoint, HookResult};
+use fabric::ops::AgoraOps;
 use fabric::{
     ContentBlock, Context as AbiContext, Intent, IntentSource, Message, ReflectionTrigger, Role,
     SelfFieldOps, Verdict,
@@ -430,9 +431,22 @@ impl RequestHandler {
         let turn_count = sm_arc.lock().await.turn_count();
         drop(sm_arc);
 
+        // RFC-014 recall injection: seed the Agora workspace for this turn.
+        if let Err(e) = self
+            .subsystems
+            .agora
+            .publish(&session_id, "turn_input", serde_json::json!(message))
+            .await
+        {
+            tracing::warn!("agora publish (recall injection) failed: {e}");
+        }
+
         // Clone self_field_arc before the execute_tool closure moves it,
         // so the tokio::spawn block below can also use it for per-turn Dasein injections.
         let self_field_arc_for_react = self_field_arc.clone();
+        // Clone session_id before the execute_tool closure moves it, so the
+        // Agora commit hook (turn end) can still reference it.
+        let session_id_for_agora = session_id.clone();
 
         let execute_tool = move |id: &str, name: &str, input: &serde_json::Value| {
             let runner = runner.clone();
@@ -1124,6 +1138,12 @@ impl RequestHandler {
             {
                 warn!(error = %e, "post_evolution failed");
             }
+        }
+
+        // RFC-014 commit: snapshot the Agora workspace at turn end.
+        match self.subsystems.agora.snapshot(&session_id_for_agora).await {
+            Ok(snap) => tracing::debug!(target: "agora", "workspace snapshot: {snap}"),
+            Err(e) => tracing::warn!("agora snapshot failed: {e}"),
         }
 
         json!({
