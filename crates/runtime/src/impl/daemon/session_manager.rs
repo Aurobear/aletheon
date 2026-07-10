@@ -6,8 +6,8 @@ use tracing::{debug, info, warn};
 use base::{ContentBlock, Message, Role};
 use cognit::r#impl::llm::LlmProvider;
 
-use crate::r#impl::memory::compressor::AdvancedCompressor;
 use crate::r#impl::session::journal::{EventJournal, SessionEvent};
+use memory::AdvancedCompressor;
 
 /// SessionManager: persists conversation history, journals events, and
 /// performs context compaction when the token budget is exceeded.

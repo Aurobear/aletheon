@@ -15,7 +15,7 @@ use tracing::{debug, info};
 use super::core_memory::CoreMemory;
 use super::recall_memory::RecallMemory;
 
-use memory::episodic::EpisodicMemory;
+use crate::EpisodicMemory;
 
 // ---------------------------------------------------------------------------
 // Types

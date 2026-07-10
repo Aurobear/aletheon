@@ -8,7 +8,6 @@ pub mod engine;
 pub mod goal;
 pub mod hooks;
 pub mod kernel;
-pub mod memory;
 pub mod orchestration;
 pub mod plugin;
 pub mod session;

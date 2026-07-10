@@ -17,6 +17,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+cognit = { path = "../cognit" }
+corpus = { path = "../corpus" }
+regex = { workspace = true }
+dirs = "5"
+reqwest = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
@@ -27,3 +32,5 @@ tempfile = "3"
 # are not used by the live daemon (M-H Option A). Enable to build them.
 default = []
 cognitive-memory = []
+vector-lance = []
+vector-qdrant = []

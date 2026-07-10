@@ -44,17 +44,9 @@ fn make_envelope_request(target_module: ModuleId, payload_json: serde_json::Valu
 
 fn core_memory_with_blocks() -> CoreMemory {
     let mut core = CoreMemory::new();
-    let persona = runtime::r#impl::memory::core_memory::MemoryBlock::new(
-        "persona",
-        "I am a test agent",
-        1024,
-    );
+    let persona = memory::MemoryBlock::new("persona", "I am a test agent", 1024);
     core.set_block(persona);
-    let context = runtime::r#impl::memory::core_memory::MemoryBlock::new(
-        "context",
-        "Running integration tests",
-        1024,
-    );
+    let context = memory::MemoryBlock::new("context", "Running integration tests", 1024);
     core.set_block(context);
     core
 }

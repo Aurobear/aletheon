@@ -12,8 +12,8 @@ use base::envelope::Payload;
 use base::envelope::*;
 use base::CommunicationBus;
 
-use crate::r#impl::memory::recall_memory::RecallMemory;
-use crate::r#impl::memory::CoreMemory;
+use memory::CoreMemory;
+use memory::RecallMemory;
 
 use super::{MemoryRequest, MemoryResponse, RecallEntry};
 

@@ -6,6 +6,7 @@
 //! off-by-default `cognitive-memory` feature (M-H Option A).
 
 pub mod backends;
+pub mod r#impl;
 pub mod ops;
 
 // Always-available exports
@@ -38,6 +39,17 @@ pub use backends::semantic;
 pub use ops::consolidation;
 #[cfg(feature = "cognitive-memory")]
 pub use ops::router;
+
+// Re-exports from impl (migrated from runtime, Group B Phase 2)
+pub use r#impl::auto_memory::AutoMemory;
+pub use r#impl::compaction::CompactionManager;
+pub use r#impl::compressor::AdvancedCompressor;
+pub use r#impl::core_memory::{CoreMemory, MemoryBlock};
+pub use r#impl::fact_store::FactStore;
+pub use r#impl::memory_pipeline::MemoryPipeline;
+pub use r#impl::recall_memory::RecallMemory;
+pub use r#impl::scope::MemoryScope;
+pub use r#impl::tools as memory_tools;
 
 #[cfg(test)]
 pub mod testing;

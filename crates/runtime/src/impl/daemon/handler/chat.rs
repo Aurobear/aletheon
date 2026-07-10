@@ -16,8 +16,8 @@ use std::collections::HashMap;
 
 use crate::core::event_sink::{ChannelEventSink, Event, EventSink};
 use crate::core::react_loop::ReActLoop;
-use crate::r#impl::memory::fact_store::FactStore;
 use cognit::r#impl::llm::LlmProvider;
+use memory::FactStore;
 
 const MAX_ACTIVATED_SKILL_CHARS: usize = 12 * 1024;
 const MAX_ACTIVATED_SKILLS_TOTAL_CHARS: usize = 24 * 1024;
