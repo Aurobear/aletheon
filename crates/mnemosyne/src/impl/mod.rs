@@ -27,7 +27,6 @@ pub use memory_pipeline::{
     MemoryPipelineConfig,
 };
 pub use scope::{
-    scope_metadata, MemoryScope, PendingWrite, PendingWriteType, RecallScopeFilter,
-    RetentionPolicy, ScopeFilter, ScopedCoreMemory, ScopedMemoryBlock, ScopedRecallFilter,
-    Scratchpad, ScratchpadEntry, WriteOutcome,
+    scope_metadata, MemoryScope, PendingWrite, PendingWriteType, RecallScopeFilter, ScopeFilter,
+    ScopedCoreMemory, ScopedMemoryBlock, ScopedRecallFilter, WriteOutcome,
 };

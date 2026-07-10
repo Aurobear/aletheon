@@ -6,9 +6,6 @@
 //! - **Global**: shared across all agents; only the parent (owner) writes.
 //! - **Session**: visible to parent and all children; children write only with approval.
 //! - **Agent(id)**: private to a single agent; only that agent reads/writes.
-//!
-//! Also includes `Scratchpad` for task-level ephemeral workspace with configurable
-//! retention policies.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -329,106 +326,6 @@ pub enum WriteOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// Scratchpad -- task-level ephemeral workspace
-// ---------------------------------------------------------------------------
-
-/// Retention policy for a scratchpad when the task completes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RetentionPolicy {
-    /// Discard all entries immediately.
-    Discard,
-    /// Archive entries into the owning agent's private memory.
-    ArchiveToAgent,
-    /// Archive entries into the session-scoped memory (visible to parent).
-    ArchiveToSession,
-}
-
-/// A single entry in a scratchpad.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScratchpadEntry {
-    pub key: String,
-    pub value: String,
-}
-
-/// Task-level scratch space for an agent.
-///
-/// Each agent-task pair gets its own scratchpad. When the task completes,
-/// the scratchpad contents are handled according to `retention`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Scratchpad {
-    pub agent_id: String,
-    pub task_id: String,
-    pub entries: Vec<ScratchpadEntry>,
-    pub retention: RetentionPolicy,
-}
-
-impl Scratchpad {
-    /// Create a new empty scratchpad.
-    pub fn new(
-        agent_id: impl Into<String>,
-        task_id: impl Into<String>,
-        retention: RetentionPolicy,
-    ) -> Self {
-        Self {
-            agent_id: agent_id.into(),
-            task_id: task_id.into(),
-            entries: Vec::new(),
-            retention,
-        }
-    }
-
-    /// Write a key-value entry. If the key already exists, its value is replaced.
-    pub fn set(&mut self, key: impl Into<String>, value: impl Into<String>) {
-        let key = key.into();
-        let value = value.into();
-        if let Some(entry) = self.entries.iter_mut().find(|e| e.key == key) {
-            entry.value = value;
-        } else {
-            self.entries.push(ScratchpadEntry { key, value });
-        }
-    }
-
-    /// Read a value by key.
-    pub fn get(&self, key: &str) -> Option<&str> {
-        self.entries
-            .iter()
-            .find(|e| e.key == key)
-            .map(|e| e.value.as_str())
-    }
-
-    /// Remove a key-value entry. Returns `true` if the key existed.
-    pub fn remove(&mut self, key: &str) -> bool {
-        let len_before = self.entries.len();
-        self.entries.retain(|e| e.key != key);
-        self.entries.len() < len_before
-    }
-
-    /// Clear all entries.
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-
-    /// Check if the scratchpad is empty.
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    /// Number of entries.
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Format all entries as a single string (for archival).
-    pub fn format_entries(&self) -> String {
-        self.entries
-            .iter()
-            .map(|e| format!("[{}]: {}", e.key, e.value))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-// ---------------------------------------------------------------------------
 // ScopedRecallMemory -- scope-filtered recall queries
 // ---------------------------------------------------------------------------
 
@@ -743,43 +640,6 @@ mod tests {
         assert!(scoped
             .append("notes", "intrusion", "agent-B", false)
             .is_err());
-    }
-
-    // -- Scratchpad tests --
-
-    #[test]
-    fn test_scratchpad_basic_operations() {
-        let mut sp = Scratchpad::new("agent-1", "task-42", RetentionPolicy::Discard);
-
-        sp.set("step", "1");
-        sp.set("result", "ok");
-        assert_eq!(sp.get("step"), Some("1"));
-        assert_eq!(sp.get("result"), Some("ok"));
-        assert_eq!(sp.len(), 2);
-
-        // Overwrite
-        sp.set("step", "2");
-        assert_eq!(sp.get("step"), Some("2"));
-        assert_eq!(sp.len(), 2);
-
-        // Remove
-        assert!(sp.remove("result"));
-        assert!(!sp.remove("nonexistent"));
-        assert_eq!(sp.len(), 1);
-
-        // Clear
-        sp.clear();
-        assert!(sp.is_empty());
-    }
-
-    #[test]
-    fn test_scratchpad_format_entries() {
-        let mut sp = Scratchpad::new("agent-1", "task-1", RetentionPolicy::ArchiveToAgent);
-        sp.set("a", "1");
-        sp.set("b", "2");
-        let formatted = sp.format_entries();
-        assert!(formatted.contains("[a]: 1"));
-        assert!(formatted.contains("[b]: 2"));
     }
 
     // -- ScopeFilter / recall scope tests --

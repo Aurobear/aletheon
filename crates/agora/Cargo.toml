@@ -1,0 +1,19 @@
+[package]
+name = "agora"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Aletheon Agora - shared cognitive workspace (working memory, blackboard, scratchpad)"
+
+[dependencies]
+fabric = { path = "../fabric" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
