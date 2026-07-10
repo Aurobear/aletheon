@@ -7,7 +7,6 @@ use super::RequestHandler;
 use serde_json::json;
 
 use crate::r#impl::orchestration::digraph::graph::{DiGraph, WorkflowDef};
-use crate::r#impl::orchestration::digraph::state::GraphState;
 use crate::r#impl::orchestration::store::WorkflowStore;
 
 impl RequestHandler {
@@ -172,34 +171,10 @@ impl RequestHandler {
                 "error": { "code": -32602, "message": "Missing 'name' parameter" }
             });
         }
-        match WorkflowStore::new(WorkflowStore::default_dir()) {
-            Ok(store) => {
-                let registry = &*self.agent_registry;
-                match store.run(name, registry, GraphState::new()).await {
-                    Ok(state) => match serde_json::to_value(&state) {
-                        Ok(v) => json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "result": { "state": v, "name": name }
-                        }),
-                        Err(e) => json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "error": { "code": -32040, "message": format!("Serialize error: {e}") }
-                        }),
-                    },
-                    Err(e) => json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": { "code": -32042, "message": format!("Run error: {e}") }
-                    }),
-                }
-            }
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32040, "message": format!("Store init error: {e}") }
-            }),
-        }
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32042, "message": "workflow.run not implemented — agent_registry parked (multi-agent unwired)" }
+        })
     }
 }

@@ -944,7 +944,8 @@ impl RequestHandler {
             sm.turn_count()
         } else {
             let (_sid, sm_arc) = self.get_or_create_session(None).await;
-            sm_arc.lock().await.turn_count()
+            let tc = sm_arc.lock().await.turn_count();
+            tc
         };
         // Persist assistant response to recall memory
         if turn_succeeded {

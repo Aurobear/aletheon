@@ -27,7 +27,6 @@ use tokio_util::sync::CancellationToken;
 use super::model_router::ModelRouter;
 use super::session_manager::SessionManager;
 use crate::core::orchestrator::AletheonRuntime;
-use crate::r#impl::orchestration::registry::AgentRegistry;
 use crate::CoreMemory;
 use crate::RecallMemory;
 use base::envelope::Payload;
@@ -47,10 +46,8 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::warn;
 
-use crate::core::checkpoint::CheckpointStore;
 use crate::core::config::HooksConfig;
 use crate::core::storm_breaker::StormBreaker;
-use crate::r#impl::agent_loader::AgentLoader;
 use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
 use crate::r#impl::goal::ObjectiveStore;
 use crate::r#impl::hooks::registry::HookRegistry;
@@ -96,10 +93,6 @@ pub struct RequestHandler {
     started_at: Instant,
     /// Active connection count.
     active_connections: Arc<AtomicUsize>,
-    /// Parked — multi-agent orchestration is unwired after the Engine removal.
-    /// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5 (roadmap T3).
-    #[allow(dead_code)]
-    agent_registry: Arc<AgentRegistry>,
     reflector: Reflector,
     episodic_memory: Arc<Mutex<EpisodicMemory>>,
     /// SelfField — the policy engine that provides identity, cares, and boundary data.
@@ -141,16 +134,8 @@ pub struct RequestHandler {
     objective_store: Arc<Mutex<ObjectiveStore>>,
     /// Loop detector: tracks consecutive tool failures/successes.
     storm_breaker: Arc<Mutex<StormBreaker>>,
-    /// Parked — future file-edit rewind.
-    /// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5.
-    #[allow(dead_code)]
-    checkpoint_store: Arc<Mutex<CheckpointStore>>,
     /// Keyword-based skill router for prompt-to-skill matching.
     skill_router: Arc<Mutex<SkillRouter>>,
-    /// Parked — multi-agent orchestration is unwired after the Engine removal.
-    /// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5 (roadmap T3).
-    #[allow(dead_code)]
-    agent_loader: Arc<Mutex<AgentLoader>>,
     /// Configured hook scripts from the [hooks] config section.
     hooks_config: HooksConfig,
     /// Per-session "always approve" cache: tool_name -> approved.
@@ -167,11 +152,6 @@ pub struct RequestHandler {
     debug_perf: Arc<PerfCounter>,
     /// Cancellation token for the current chat turn.
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
-    /// CommunicationBus for cross-subsystem event routing (DaseinEventBridge, etc.).
-    /// Used during boot (init.rs) to wire DaseinEventBridge, but the stored
-    /// field is not read thereafter.
-    #[allow(dead_code)]
-    event_bus: Option<Arc<CommunicationBus>>,
     /// Daemon-level cancellation token for graceful shutdown via daemon.shutdown RPC.
     daemon_cancel_token: Option<CancellationToken>,
     /// Session Gateway — unified facade for external agent debug access.

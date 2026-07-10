@@ -21,8 +21,6 @@ use crate::core::config::RuntimeConfig;
 use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonRuntime;
 use crate::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
-use crate::r#impl::orchestration::builtin::{CodeAgent, FsAgent, NetAgent};
-use crate::r#impl::orchestration::registry::AgentRegistry;
 use crate::session::store::SessionStore;
 use crate::CoreMemory;
 use crate::ProviderRegistry;
@@ -38,7 +36,6 @@ use corpus::security::sandbox::executor::{SandboxExecutor, SandboxPreference};
 use corpus::security::security::audit::AuditLogger;
 use corpus::security::security::runner::ToolRunnerWithGuard;
 use corpus::security::security::socket_approval::SocketApprovalGate;
-use corpus::tools::tools::Tool;
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
 use memory::episodic::EpisodicMemory;
@@ -48,7 +45,6 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
-use crate::core::checkpoint::CheckpointStore;
 use crate::core::storm_breaker::StormBreaker;
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::r#impl::goal::ObjectiveStore;
@@ -250,38 +246,6 @@ impl RequestHandler {
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
-
-        // Agent registry
-        let agents_dir = PathBuf::from("agents");
-        let default_tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(corpus::tools::tools::file_read::FileReadTool),
-            Box::new(corpus::tools::tools::file_write::FileWriteTool),
-            Box::new(corpus::tools::tools::bash_exec::BashExecTool),
-            Box::new(corpus::tools::tools::system_status::SystemStatusTool),
-            Box::new(corpus::tools::tools::process_list::ProcessListTool),
-        ];
-        let llm_factory = || registry.resolve_and_create("");
-        let agent_registry = Arc::new(
-            AgentRegistry::load_from_config(&agents_dir, &default_tools, &llm_factory).await,
-        );
-        if agent_registry.count().await == 0 {
-            info!("No config agents found, registering built-in agents");
-            agent_registry
-                .register(Arc::new(tokio::sync::RwLock::new(FsAgent::new(
-                    registry.resolve_and_create("")?,
-                ))))
-                .await;
-            agent_registry
-                .register(Arc::new(tokio::sync::RwLock::new(NetAgent::new(
-                    registry.resolve_and_create("")?,
-                ))))
-                .await;
-            agent_registry
-                .register(Arc::new(tokio::sync::RwLock::new(CodeAgent::new(
-                    registry.resolve_and_create("")?,
-                ))))
-                .await;
-        }
 
         let mut runtime = AletheonRuntime::new(runtime_config);
         let evo_config = EvolutionConfig {
@@ -491,10 +455,6 @@ impl RequestHandler {
                 .agent_loop
                 .storm_breaker_success_threshold,
         )));
-        let session_dir = aletheon_dir.join("sessions").join(&session_id);
-        std::fs::create_dir_all(&session_dir)?;
-        let checkpoint_store = CheckpointStore::new(&session_dir);
-        let checkpoint_store = Arc::new(Mutex::new(checkpoint_store));
         let mut skill_router = SkillRouter::new();
         let skills_dirs = vec![
             aletheon_dir.join("skills"),
@@ -506,13 +466,6 @@ impl RequestHandler {
             }
         }
         let skill_router = Arc::new(Mutex::new(skill_router));
-        let mut agent_loader = AgentLoader::new();
-        let agents_dir = aletheon_dir.join("agents");
-        if agents_dir.exists() {
-            let _ = agent_loader.load_from_dir(&agents_dir);
-            info!("Loaded {} agent roles", agent_loader.list().len());
-        }
-        let agent_loader = Arc::new(Mutex::new(agent_loader));
         let hooks_config = config.hooks.clone();
 
         // ModelRouter
@@ -593,7 +546,6 @@ impl RequestHandler {
             context_window,
             started_at: Instant::now(),
             active_connections,
-            agent_registry,
             reflector,
             episodic_memory,
             self_field,
@@ -612,9 +564,7 @@ impl RequestHandler {
             fact_store,
             objective_store,
             storm_breaker,
-            checkpoint_store,
             skill_router,
-            agent_loader,
             hooks_config,
             session_approvals: Arc::new(Mutex::new(HashMap::new())),
             pipeline,
@@ -622,7 +572,6 @@ impl RequestHandler {
             debug_handler,
             debug_perf,
             cancel_token: Arc::new(Mutex::new(None)),
-            event_bus,
             daemon_cancel_token: Some(cancel_token),
             session_gateway,
         };
