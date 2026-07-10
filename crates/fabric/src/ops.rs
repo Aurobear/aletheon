@@ -53,6 +53,23 @@ pub trait CorpusOps: Send + Sync {
     async fn run_hooks(&self, event: &crate::HookContext) -> Result<Vec<crate::HookResult>>;
 }
 
+/// Agora (working-memory) operations — the shared cognitive workspace.
+///
+/// Session-scoped, in-memory. Persists only via `snapshot()` → Mnemosyne.
+#[async_trait]
+pub trait AgoraOps: Send + Sync {
+    /// Write a value onto a session's blackboard.
+    async fn publish(&self, session: &str, key: &str, value: serde_json::Value) -> Result<()>;
+    /// Read a value from a session's blackboard.
+    async fn recall(&self, session: &str, key: &str) -> Result<Option<serde_json::Value>>;
+    /// Merge a JSON patch into the session workspace.
+    async fn update(&self, session: &str, patch: serde_json::Value) -> Result<()>;
+    /// Snapshot the entire session workspace (for debug / commit).
+    async fn snapshot(&self, session: &str) -> Result<serde_json::Value>;
+    /// Clear a session's workspace.
+    async fn clear(&self, session: &str) -> Result<()>;
+}
+
 // ---------------------------------------------------------------------------
 // Harness traits
 // ---------------------------------------------------------------------------
