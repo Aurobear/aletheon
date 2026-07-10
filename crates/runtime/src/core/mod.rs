@@ -10,7 +10,6 @@ pub mod permission_manager;
 pub mod runtime_core;
 pub mod session;
 pub mod session_gateway;
-pub mod storm_breaker;
 pub mod sub_agent;
 pub mod verdict_handler;
 

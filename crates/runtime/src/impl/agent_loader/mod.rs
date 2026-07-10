@@ -332,7 +332,7 @@ Body"#,
 
     #[test]
     fn test_agent_loader_and_skill_router_coexist() {
-        use crate::r#impl::skill_router::SkillRouter;
+        use corpus::SkillRouter;
 
         let tmp = TempDir::new().unwrap();
         let base_dir = tmp.path();

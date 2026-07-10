@@ -26,13 +26,13 @@ use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
 
 use crate::core::config::HooksConfig;
 use crate::core::orchestrator::AletheonRuntime;
-use crate::core::storm_breaker::StormBreaker;
 use crate::r#impl::goal::ObjectiveStore;
-use crate::r#impl::hooks::registry::HookRegistry;
-use crate::r#impl::skill_router::SkillRouter;
-use crate::r#impl::skills::loader::SkillLoader;
 use crate::CoreMemory;
 use crate::RecallMemory;
+use corpus::security::storm_breaker::StormBreaker;
+use corpus::HookRegistry;
+use corpus::SkillLoader;
+use corpus::SkillRouter;
 use memory::AutoMemory;
 use memory::FactStore;
 

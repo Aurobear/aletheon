@@ -7,7 +7,7 @@
 
 use tracing::info;
 
-use crate::r#impl::hooks::registry::{HookRegistry, RegisteredHook};
+use crate::hook::registry::{HookRegistry, RegisteredHook};
 use base::hook::HookPoint;
 
 /// Register the audit hook in the hook registry.
