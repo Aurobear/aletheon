@@ -5,7 +5,7 @@
 > 从内核事件到用户行为，Agent 的全栈感知引擎。
 
 **模块编号:** 04
-**关联模块:** [认知引擎](../cognit/cognitive-engine.md) · [记忆系统](../memory/memory-system.md) · [安全模型](security.md) · [系统管理](../dasein/perception-sources.md) · [FUSE 接口](fuse.md)
+**关联模块:** [认知引擎](../cognit/cognitive-engine.md) · [记忆系统](../mnemosyne/memory-system.md) · [安全模型](security.md) · [系统管理](../dasein/perception-sources.md) · [FUSE 接口](fuse.md)
 **最后更新:** 2026-06-06
 
 ---

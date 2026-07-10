@@ -1,8 +1,8 @@
-# Memory Crate — Backend Memory Storage
+# Mnemosyne Crate — Backend Memory Storage
 
-> Code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
-**Crate:** `memory`
+**Crate:** `mnemosyne`
 **Purpose:** Backend memory storage implementations. Provides episodic, semantic, procedural, and self-memory backends, plus a router that dispatches queries to the appropriate backend.
 
 ---
@@ -33,7 +33,7 @@ memory/src/
 
 ## Architecture Note
 
-This crate provides the **backend storage** layer. The **runtime-level memory** (CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline, scope) lives in `runtime/src/impl/memory/`. The ABI trait definitions (`MemoryBackend`, `MemoryEntry`, etc.) live in `base/src/memory.rs`.
+This crate provides the **backend storage** layer. The **executive-level memory** (CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline, scope) lives in `executive/src/impl/memory/`. The ABI trait definitions (`MemoryBackend`, `MemoryEntry`, etc.) live in `fabric/src/memory.rs`.
 
 ## Related Docs
 

@@ -7,7 +7,7 @@
 
 **Module:** 07 (User-Space part)
 **Crate:** base
-**Related modules:** [orchestration-engine](../runtime/orchestration.md), [platform/kernel-ipc.md](ipc.md)
+**Related modules:** [orchestration-engine](../executive/orchestration.md), [platform/kernel-ipc.md](ipc.md)
 **Last Updated:** 2026-06-14
 
 ---

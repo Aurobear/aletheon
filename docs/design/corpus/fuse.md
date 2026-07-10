@@ -5,7 +5,7 @@
 > 通过 FUSE 挂载点暴露 Agent 状态、感知数据和控制接口，让 shell 脚本和系统工具可以直接与 Agent 交互。
 
 **模块编号:** 08
-**关联模块:** [编排引擎](../runtime/orchestration.md), [IPC 与内核](../base/ipc.md), [感知层](perception.md)
+**关联模块:** [编排引擎](../executive/orchestration.md), [IPC 与内核](../fabric/ipc.md), [感知层](perception.md)
 **最后更新:** 2026-06-07
 
 ---

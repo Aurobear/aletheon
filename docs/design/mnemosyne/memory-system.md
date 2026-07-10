@@ -1,12 +1,12 @@
 # Memory System
 
-> Migrated from `docs/design/core/memory-system.md` — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from `docs/design/core/memory-system.md` — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 > Inspired by Letta (MemGPT)'s three-tier self-editing memory architecture, enabling agents to manage their own memory like an OS manages virtual memory. Self-learning loop.
 
 **Module:** 02
-**Crates:** `runtime` (runtime-level memory: CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline), `memory` (backend storage: episodic, semantic, procedural, self_memory, router)
-**Related modules:** [cognitive-engine](../runtime/react-loop.md), [tool-system](../runtime/orchestration.md)
+**Crates:** `executive` (executive-level memory: CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline), `mnemosyne` (backend storage: episodic, semantic, procedural, self_memory, router)
+**Related modules:** [cognitive-engine](../executive/react-loop.md), [tool-system](../executive/orchestration.md)
 **Last Updated:** 2026-06-14
 
 ---

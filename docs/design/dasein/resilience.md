@@ -23,9 +23,9 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| AgentError enum | ✅ Implemented | `crates/runtime/src/impl/error.rs` | Error severity, categories, degradation chain |
-| ErrorSeverity | ✅ Implemented | `crates/runtime/src/impl/error.rs` | Recoverable / Degraded / Unrecoverable / SecurityViolation |
-| DegradationChain | ✅ Implemented | `crates/runtime/src/impl/error.rs` | Retry with backoff, fallback strategies |
+| AgentError enum | ✅ Implemented | `crates/executive/src/impl/error.rs` | Error severity, categories, degradation chain |
+| ErrorSeverity | ✅ Implemented | `crates/executive/src/impl/error.rs` | Recoverable / Degraded / Unrecoverable / SecurityViolation |
+| DegradationChain | ✅ Implemented | `crates/executive/src/impl/error.rs` | Retry with backoff, fallback strategies |
 | RecoveryEngine | ⬜ Planned | — | Session restore from checkpoint not yet built |
 
 ---
@@ -236,7 +236,7 @@ struct RecoveryEngine {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| AgentError enum | ✅ Implemented | `crates/runtime/src/impl/error.rs` |
+| AgentError enum | ✅ Implemented | `crates/executive/src/impl/error.rs` |
 | ErrorSeverity | ✅ Implemented | Recoverable / Degraded / Unrecoverable / SecurityViolation |
 | DegradationChain | ✅ Implemented | Retry with exponential backoff + jitter |
 | ToolErrorAction | ✅ Implemented | Error-driven action selection |
@@ -250,7 +250,7 @@ struct RecoveryEngine {
 
 > Daemon 容错、自愈和状态恢复。`DaemonGuardian`、三层看门狗、`SafeMode` 和崩溃现场保存均已实现。
 
-**关联模块:** [错误处理](resilience.md), [会话管理](../runtime/session.md)
+**关联模块:** [错误处理](resilience.md), [会话管理](../executive/session.md)
 **最后更新:** 2026-06-07
 
 ---

@@ -107,7 +107,7 @@ Aletheon's memory is modeled after OS virtual memory (cache -> RAM -> disk):
 
 The agent manages its own memory through explicit tools (`core_memory_append`, `core_memory_replace`, `recall_search`). This is not a passive store -- the agent actively decides what to remember and what to forget.
 
-**Implementation:** `crates/memory/` + `crates/runtime/src/impl/memory/` -- see [Memory System](../design/memory/memory-system.md).
+**Implementation:** `crates/mnemosyne/` + `crates/executive/src/impl/memory/` -- see [Memory System](../design/mnemosyne/memory-system.md).
 
 ---
 
@@ -152,5 +152,5 @@ See [Linux Integration](../architecture/linux-integration.md) for details.
 
 - [Architecture Overview](../design/architecture-overview.md) -- full system architecture with crate graph
 - [Project Aletheon](../Aletheon.md) -- design philosophy and research foundations
-- [Hook System](../design/runtime/hook-system.md) -- 21 event types for lifecycle hooks
+- [Hook System](../design/executive/hook-system.md) -- 21 event types for lifecycle hooks
 - [Security Model](../design/corpus/security.md) -- policy engine, sandboxing, rollback

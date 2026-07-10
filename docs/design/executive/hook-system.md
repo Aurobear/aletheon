@@ -6,7 +6,7 @@
 >
 > **从 `session-lifecycle.md` 提取** — 原文 §4.2。
 
-**关联模块:** [Session 生命周期](../runtime/session.md), [安全模型](../corpus/security.md), [工具系统](../corpus/tools.md)
+**关联模块:** [Session 生命周期](../executive/session.md), [安全模型](../corpus/security.md), [工具系统](../corpus/tools.md)
 
 ---
 

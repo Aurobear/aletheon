@@ -1,10 +1,10 @@
 # Plugin Subsystem
 
-> New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> New document — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 > Plugin system for extending Aletheon with external tools and hooks, supporting command-based plugins with manifest-driven discovery and dependency resolution.
 
-**Crate:** `runtime`
+**Crate:** `executive`
 **Code location:** `runtime/src/impl/plugin/`
 **Last Updated:** 2026-06-14
 

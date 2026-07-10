@@ -66,7 +66,7 @@ The agent operates normally, accumulating performance data, tool call outcomes, 
 
 ### 2.2 Reflect
 
-The agent analyzes its own performance. This uses the `SelfFieldOps` trait from `base` to read the current state, and `BrainCoreOps` for reflection and critique.
+The agent analyzes its own performance. This uses the `SelfFieldOps` trait from `fabric` to read the current state, and `BrainCoreOps` for reflection and critique.
 
 Output: `MutationIntent` — a structured description of what should change.
 

@@ -1,8 +1,8 @@
 # Comm Crate — Inter-Process Communication
 
-> Code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
-**Crate:** `base`
+**Crate:** `fabric`
 **Purpose:** Agent-to-agent communication infrastructure, including IPC backends, event bus, routing, and transport.
 
 ---
@@ -10,7 +10,7 @@
 ## Internal Structure
 
 ```
-base/src/
+fabric/src/
   lib.rs
   core/                       # Core abstractions
     bus.rs                    # EventBus trait implementation
@@ -40,8 +40,8 @@ base/src/
 - `IpcManager` — Unified management with auto-detect and fallback
 - `UnixSocketBackend` — Full Unix socket server/client
 - `PriorityQueue` — Priority-based message routing
-- `AgentMessage` — Structured IPC message (defined in `base/src/ipc_types.rs`)
+- `AgentMessage` — Structured IPC message (defined in `fabric/src/ipc_types.rs`)
 
 ## Related Docs
 
-- [base/ipc.md](ipc.md) — Full IPC design (migrated from execution/ipc.md)
+- [fabric/ipc.md](ipc.md) — Full IPC design (migrated from execution/ipc.md)

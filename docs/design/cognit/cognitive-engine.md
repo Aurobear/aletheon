@@ -6,7 +6,7 @@
 > 驱动 Agent 推理与决策的核心循环，采用 ReAct 工具循环 + content-block 消息协议。主动行为引擎。
 
 **模块编号:** 01
-**关联模块:** [memory-system](../memory/memory-system.md), [tool-system](../corpus/tools.md)
+**关联模块:** [memory-system](../mnemosyne/memory-system.md), [tool-system](../corpus/tools.md)
 **最后更新:** 2026-06-06
 
 ---
