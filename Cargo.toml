@@ -8,6 +8,7 @@ members = [
     "crates/dasein",
     "crates/interact",
     "crates/mnemosyne",
+    "crates/agora",
     "crates/metacog",
     "crates/executive",
     "examples/basic-agent",
