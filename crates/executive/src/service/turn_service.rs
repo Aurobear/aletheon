@@ -1,8 +1,12 @@
-use crate::kernel::chronos::SystemClock;
+use crate::kernel::service_ports::ServicePorts;
 use crate::service::{PostTurnPipeline, PreTurnPipeline};
 use anyhow::Result;
 use cognit::harness::{CognitiveSession, HarnessConfig, LinearCognitiveSession};
-use fabric::{Clock, TurnEventSink, TurnMetrics, TurnRequest, TurnResult, TurnServices, TurnStop};
+use fabric::{
+    Clock, MonoDeadline, OperationKind, OperationManager, OperationRequest, ProcessManager,
+    ProcessSignal, SpawnSpec, TurnEventSink, TurnMetrics, TurnRequest, TurnResult, TurnServices,
+    TurnStop,
+};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,6 +16,8 @@ pub struct TurnService {
     post_turn: PostTurnPipeline,
     harness_config: HarnessConfig,
     clock: Arc<dyn Clock>,
+    /// Kernel service ports for process/operation lifecycle tracking (PR-2).
+    ports: Arc<ServicePorts>,
 }
 
 impl TurnService {
@@ -19,13 +25,15 @@ impl TurnService {
         services: Arc<dyn TurnServices>,
         pre_turn: PreTurnPipeline,
         post_turn: PostTurnPipeline,
+        ports: Arc<ServicePorts>,
     ) -> Self {
         Self {
             services,
             pre_turn,
             post_turn,
             harness_config: HarnessConfig::default(),
-            clock: Arc::new(SystemClock::new()),
+            clock: ports.clock.clone(),
+            ports,
         }
     }
 
@@ -41,14 +49,59 @@ impl TurnService {
 
     pub async fn submit(
         &self,
-        request: TurnRequest,
+        mut request: TurnRequest,
         events: &dyn TurnEventSink,
     ) -> Result<TurnResult> {
+        // --- PR-2: register process + operation in kernel tables ---
+        // Ensure the calling process exists in the ProcessTable.
+        if self
+            .ports
+            .process_table
+            .inspect(request.process_id)
+            .await
+            .is_err()
+        {
+            let handle = self
+                .ports
+                .process_table
+                .spawn(SpawnSpec {
+                    agent_id: fabric::AgentId::new(),
+                    namespace: fabric::NamespaceId(request.session_id.clone()),
+                    initial_operation: Some(OperationKind::Turn),
+                    ..SpawnSpec::default()
+                })
+                .await?;
+            self.ports
+                .process_table
+                .signal(handle.id, ProcessSignal::Start)
+                .await?;
+        }
+
+        // Create a real operation record for this turn.
+        let op = self
+            .ports
+            .operation_table
+            .submit(OperationRequest {
+                owner: request.process_id,
+                parent: None,
+                kind: OperationKind::Turn,
+                deadline: request
+                    .deadline
+                    .as_ref()
+                    .map(|d| MonoDeadline::after(self.clock.mono_now(), d.0)),
+            })
+            .await?;
+        self.ports.operation_table.start(op.id).await?;
+        request.operation_id = op.id;
+        // --- end PR-2 kernel wiring ---
+
         let request = self.pre_turn.run(request, self.services.as_ref()).await?;
         let deadline = request.deadline;
         let mut session = LinearCognitiveSession::new(self.harness_config.clone());
         let start = self.clock.mono_now();
 
+        // TODO(PR-3): replace tokio::time::timeout with Clock::sleep_until
+        // for deterministic deadline testing with TestClock.
         let mut result = match deadline {
             Some(deadline_millis) => {
                 let deadline_dur = Duration::from_millis(deadline_millis.0);
@@ -60,6 +113,11 @@ impl TurnService {
                 {
                     Ok(inner) => inner?,
                     Err(_elapsed) => {
+                        self.ports
+                            .operation_table
+                            .cancel(op.id, fabric::CancelReason::DeadlineExceeded)
+                            .await
+                            .ok();
                         let elapsed = self.clock.mono_now().0.saturating_sub(start.0);
                         TurnResult {
                             output: String::new(),
@@ -82,6 +140,18 @@ impl TurnService {
 
         // Use clock to compute elapsed time for consistent metrics
         result.metrics.elapsed_ms = self.clock.mono_now().0.saturating_sub(start.0);
+
+        // --- PR-2: settle operation ---
+        if result.stop == TurnStop::Cancelled || !result.metrics.completed_normally {
+            self.ports
+                .operation_table
+                .fail(op.id, format!("{:?}", result.stop))
+                .await
+                .ok();
+        } else {
+            self.ports.operation_table.succeed(op.id).await.ok();
+        }
+        // --- end PR-2 ---
 
         self.post_turn.run(result).await
     }
