@@ -915,7 +915,7 @@ impl DaemonTurnOrchestrator {
                     principal: PrincipalId("agent".into()),
                     capability: CapabilityId(n.clone()),
                     action: n.clone(),
-                    input_summary: format!("{:?}", &inp).chars().take(200).collect(),
+                    input_summary: format!("{:?}", inp).chars().take(200).collect(),
                     risk: RiskLevel::ReadOnly,
                     requested_scope: CapabilityScope::default(),
                     budget: None,

@@ -76,7 +76,7 @@ where
             principal: fabric::PrincipalId("agent".into()),
             capability: fabric::CapabilityId(request.name.clone()),
             action: request.name.clone(),
-            input_summary: format!("{:?}", &request.input).chars().take(200).collect(),
+            input_summary: format!("{:?}", request.input).chars().take(200).collect(),
             risk: RiskLevel::ReadOnly,
             requested_scope: CapabilityScope::default(),
             budget: None,
