@@ -47,8 +47,8 @@ use crate::RecallMemory;
 use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
 #[cfg(test)]
 use cognit::harness::linear::goal_tracker::GoalTracker;
-use cognit::r#impl::llm::LlmProvider;
 use dasein::SelfField;
+use fabric::LlmProvider;
 
 /// Session Gateway — unified facade for external debug access.
 ///

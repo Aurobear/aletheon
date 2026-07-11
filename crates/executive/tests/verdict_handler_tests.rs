@@ -4,12 +4,12 @@
 //! dispatched through `process_react()`.
 
 use async_trait::async_trait;
-use cognit::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
 use executive::{AletheonRuntime, DefaultVerdictHandler, RuntimeConfig};
 use fabric::context::Context;
 use fabric::message::{ContentBlock, Message};
 use fabric::self_field::{Intent, RiskLevel, Verdict};
 use fabric::ToolDefinition;
+use fabric::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;

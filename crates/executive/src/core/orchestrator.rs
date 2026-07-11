@@ -313,7 +313,7 @@ impl AletheonRuntime {
         execute_tool: F,
     ) -> Result<(String, TurnMetrics)>
     where
-        L: cognit::r#impl::llm::provider::LlmProvider,
+        L: fabric::LlmProvider,
         R: Fn(&Intent, &Context) -> Result<Verdict>,
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
         Fut: std::future::Future<Output = (String, bool)>,

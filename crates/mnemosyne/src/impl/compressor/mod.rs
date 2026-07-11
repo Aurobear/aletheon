@@ -5,8 +5,8 @@ use anyhow::Result;
 use tracing::info;
 
 use cognit::harness::linear::CompactorTrait;
-use cognit::r#impl::llm::LlmProvider;
 use fabric::message::{ContentBlock, Message};
+use fabric::LlmProvider;
 use tail::{find_tail_cut, TailProtectionConfig};
 use template::{SummaryTemplate, SUMMARY_PREFIX};
 
@@ -169,8 +169,8 @@ impl CompactorTrait for AdvancedCompressor {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use cognit::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
     use fabric::ToolDefinition;
+    use fabric::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
 
     #[test]
     fn test_new_compressor() {

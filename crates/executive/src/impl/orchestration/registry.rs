@@ -7,11 +7,11 @@ use tracing::info;
 use super::agent::Agent;
 use super::config_agent::ConfigAgent;
 use crate::r#impl::agent::{AgentProcess, AgentProcessConfig};
-use cognit::r#impl::llm::LlmProvider;
 use corpus::tools::tools::Tool;
 use fabric::agent::Pid;
 use fabric::evolution::CognitivePulseEvent;
 use fabric::CommunicationBus;
+use fabric::LlmProvider;
 
 /// Registry of available agents and running processes.
 pub struct AgentRegistry {

@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use tracing::{debug, info, warn};
 
-use cognit::r#impl::llm::LlmProvider;
+use fabric::LlmProvider;
 use fabric::{ContentBlock, Message, Role};
 
 use crate::r#impl::session::journal::{EventJournal, SessionEvent};
@@ -431,9 +431,9 @@ fn is_session_corrupted(events: &[SessionEvent]) -> bool {
 mod compaction_tests {
     use super::*;
     use async_trait::async_trait;
-    use cognit::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
     use fabric::message::is_tool_message;
     use fabric::ToolDefinition;
+    use fabric::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
 
     struct StubLlm;
 

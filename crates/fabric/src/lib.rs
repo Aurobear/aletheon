@@ -124,7 +124,9 @@ pub use types::context::{Context, TraceState};
 pub use types::genome::Genome;
 pub use types::hook::{HookContext, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
-pub use types::llm_types::ToolDefinition;
+pub use types::llm_types::{
+    LlmProvider, LlmResponse, LlmStream, ModelInfo, StopReason, StreamChunk, ToolDefinition, Usage,
+};
 pub use types::message::{ContentBlock, ImageSource, Message, Priority as MessagePriority, Role};
 pub use types::objective::{Objective, ObjectiveStatus, ObjectiveSummary};
 pub use types::permission::{

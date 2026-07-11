@@ -1,5 +1,5 @@
-use cognit::r#impl::llm::LlmProvider;
 use fabric::message::{ContentBlock, Message, Role};
+use fabric::LlmProvider;
 use tracing::info;
 
 /// Manages context compaction by summarizing old messages.
