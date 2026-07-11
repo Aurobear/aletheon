@@ -8,6 +8,7 @@
 pub mod attention;
 pub mod blackboard;
 pub mod ops;
+pub mod persistence;
 pub mod scratchpad;
 pub mod task_graph;
 pub mod trace;
@@ -16,7 +17,8 @@ pub mod workspace;
 pub use attention::Attention;
 pub use blackboard::Blackboard;
 pub use ops::AgoraRegistry;
+pub use persistence::{AgoraPersistence, InMemoryCommitLog};
 pub use scratchpad::{RetentionPolicy, Scratchpad, ScratchpadEntry};
 pub use task_graph::{TaskGraph, TaskNode, TaskStatus};
 pub use trace::{Trace, TraceEntry};
-pub use workspace::Workspace;
+pub use workspace::{AgoraCommit, AgoraOperation, AgoraProposal, VersionConflict, Workspace};

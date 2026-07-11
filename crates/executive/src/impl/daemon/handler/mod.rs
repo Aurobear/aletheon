@@ -11,11 +11,11 @@
 
 mod chat;
 mod connection;
-mod format;
+pub(crate) mod format;
 mod init;
 mod rpc;
 mod session_routing;
-mod tool_executor;
+pub(crate) mod tool_executor;
 mod turn_handler;
 
 use std::sync::atomic::AtomicUsize;
@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 use super::model_router::ModelRouter;
 use super::session_manager::SessionManager;
 use crate::core::core_systems::CoreSystems;
+use crate::service::DaemonTurnOrchestrator;
 use fabric::envelope::Payload;
 use fabric::envelope::*;
 use fabric::CommunicationBus;
@@ -63,6 +64,8 @@ pub struct RequestHandler {
     pub(crate) started_at: Instant,
     /// Daemon-level cancellation token for graceful shutdown.
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
+    /// Macro-kernel turn orchestrator — handles the full pre/core/post turn pipeline.
+    pub(crate) turn_orchestrator: Arc<DaemonTurnOrchestrator>,
 }
 
 impl RequestHandler {

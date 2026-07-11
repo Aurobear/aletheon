@@ -1,0 +1,40 @@
+use cognit::harness::build_harness;
+use cognit::harness::config::HarnessConfig;
+use cognit::harness::linear::ReActLoop;
+use mnemosyne::AdvancedCompressor;
+
+use crate::core::config::ExecutiveConfig;
+
+pub fn harness_config_from_executive(config: &ExecutiveConfig) -> HarnessConfig {
+    HarnessConfig {
+        max_iterations: config.max_iterations,
+        compaction_enabled: config.compaction_enabled,
+        tail_token_budget: config.tail_token_budget,
+        target_summary_chars: config.target_summary_chars,
+        context_window_tokens: config.context_window_tokens,
+        max_tool_calls: config.agent_loop.max_tool_calls,
+        reflection_interval: config.agent_loop.reflection_interval,
+        reflection_tool_call_limit: config.agent_loop.reflection_tool_call_limit,
+        circuit_breaker_max_repeats: config.circuit_breaker.max_repeats,
+        circuit_breaker_window_size: config.circuit_breaker.window_size,
+        learning_enabled: config.learning_enabled,
+    }
+}
+
+pub fn build_configured_react_loop(config: &ExecutiveConfig) -> ReActLoop {
+    build_react_loop(config, harness_config_from_executive(config))
+}
+
+pub fn build_react_loop(config: &ExecutiveConfig, harness_config: HarnessConfig) -> ReActLoop {
+    let effective_tail = if config.tail_token_budget * 4 < config.context_window_tokens {
+        config.context_window_tokens / 8
+    } else {
+        config.tail_token_budget
+    };
+    let compressor = Box::new(AdvancedCompressor::new(
+        effective_tail,
+        config.target_summary_chars,
+        config.context_window_tokens,
+    )) as Box<dyn cognit::harness::linear::CompactorTrait>;
+    build_harness(config.harness_kind, harness_config, compressor)
+}

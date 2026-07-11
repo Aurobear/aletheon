@@ -266,8 +266,10 @@ use corpus::security::security::approval::{ApprovalGate, TerminalApprovalGate};
 use corpus::security::security::audit::AuditLogger;
 use corpus::security::security::runner::ToolRunnerWithGuard;
 use corpus::tools::tools::{ToolContext, ToolRegistry};
-use fabric::{ContentBlock, Message, Role};
-use fabric::{LlmProvider, StopReason};
+use fabric::{
+    CapabilityRequest, CapabilityResult, LlmProvider, Message, OperationId, ProcessId, RecallSet,
+    ToolDefinition, TurnRequest, TurnServices,
+};
 
 /// Non-interactive exec logic — mirrors the old aletheon-exec binary.
 async fn run_exec(
@@ -303,7 +305,7 @@ async fn run_exec(
     info!(provider = llm.name(), model = %model, "LLM provider initialized");
 
     // Create tool registry with default tools
-    let tool_registry = ToolRegistry::default();
+    let tool_registry = Arc::new(ToolRegistry::default());
 
     // Guarded runner with terminal approval for risky (L2+) tools.
     let audit_path = working_dir.join(".aletheon-audit.jsonl");
@@ -318,11 +320,9 @@ async fn run_exec(
     let turn_id = uuid::Uuid::new_v4().to_string();
     runner.on_new_turn(&turn_id);
 
-    // Build tool definitions for LLM
-    let tool_defs = tool_registry.definitions();
-    info!(tool_count = tool_defs.len(), "Tools registered");
+    let tool_count = tool_registry.definitions().len();
+    info!(tool_count, "Tools registered");
 
-    // Build system prompt
     let system_prompt = format!(
         "You are Aletheon, an AI agent executing a task non-interactively. \
          You have access to tools. Complete the user's request and provide a final response. \
@@ -330,131 +330,138 @@ async fn run_exec(
         working_dir.display()
     );
 
-    // Initialize conversation
-    let mut messages: Vec<Message> = vec![Message::system(&system_prompt), Message::user(prompt)];
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let services = Arc::new(ExecTurnServices {
+        llm,
+        tool_registry,
+        runner: tokio::sync::Mutex::new(runner),
+        tool_ctx: ToolContext {
+            working_dir: working_dir.clone(),
+            session_id: session_id.clone(),
+        },
+        turn_id,
+        system_prompt,
+    });
 
-    // Tool execution context
-    let tool_ctx = ToolContext {
-        working_dir: working_dir.clone(),
-        session_id: uuid::Uuid::new_v4().to_string(),
+    let harness_config = cognit::harness::HarnessConfig {
+        max_iterations: max_turns,
+        ..Default::default()
     };
+    let turn_service = executive::service::TurnService::new(
+        services,
+        executive::service::PreTurnPipeline,
+        executive::service::PostTurnPipeline,
+    )
+    .with_harness_config(harness_config);
 
-    // Agent loop
-    let mut turns_used = 0;
-    let mut total_input_tokens = 0u32;
-    let mut total_output_tokens = 0u32;
-    let final_response;
+    let result = turn_service
+        .submit(
+            TurnRequest {
+                operation_id: OperationId::new(),
+                process_id: ProcessId::new(),
+                session_id,
+                input: prompt.to_string(),
+                working_dir,
+                model_policy: if model.is_empty() {
+                    None
+                } else {
+                    Some(model.to_string())
+                },
+                deadline: None,
+            },
+            &fabric::NoopTurnEventSink,
+        )
+        .await?;
 
-    loop {
-        if turns_used >= max_turns {
-            tracing::warn!(max_turns, "Max turns reached");
-            final_response = format!(
-                "Max turns ({}) reached without completing the task.",
-                max_turns
-            );
-            break;
-        }
-
-        info!(turn = turns_used + 1, "Starting turn");
-
-        // Call LLM
-        let response = llm.complete(&messages, &tool_defs).await?;
-        total_input_tokens += response.usage.input_tokens;
-        total_output_tokens += response.usage.output_tokens;
-
-        match response.stop_reason {
-            StopReason::EndTurn | StopReason::MaxTokens => {
-                // LLM is done, extract final text response
-                final_response = response
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-
-                // Add assistant message to history
-                messages.push(Message {
-                    role: Role::Assistant,
-                    content: response.content.clone(),
-                });
-                break;
-            }
-            StopReason::ToolUse => {
-                // LLM wants to call tools
-                let assistant_content = response.content.clone();
-                let mut tool_results = Vec::new();
-
-                for block in &response.content {
-                    if let ContentBlock::ToolUse { id, name, input } = block {
-                        info!(tool = %name, "Executing tool");
-                        let tool_result = if let Some(tool) = tool_registry.get(name) {
-                            let result = runner
-                                .run(tool.as_ref(), input.clone(), &tool_ctx, &turn_id)
-                                .await;
-                            if result.is_error {
-                                tracing::warn!(tool = %name, error = %result.content, "Tool failed/denied");
-                            } else {
-                                info!(tool = %name, "Tool succeeded");
-                            }
-                            ContentBlock::ToolResult {
-                                tool_use_id: id.clone(),
-                                content: result.content,
-                                is_error: result.is_error,
-                            }
-                        } else {
-                            tracing::warn!(tool = %name, "Unknown tool");
-                            ContentBlock::ToolResult {
-                                tool_use_id: id.clone(),
-                                content: format!("Error: Unknown tool '{}'", name),
-                                is_error: true,
-                            }
-                        };
-                        tool_results.push(tool_result);
-                    }
-                }
-
-                // Add assistant message (with tool_use) and tool results to history
-                messages.push(Message {
-                    role: Role::Assistant,
-                    content: assistant_content,
-                });
-                messages.push(Message {
-                    role: Role::User,
-                    content: tool_results,
-                });
-
-                turns_used += 1;
-            }
-        }
-    }
-
-    let success = turns_used < max_turns;
+    let success = result.metrics.completed_normally;
     info!(
-        turns = turns_used,
-        input_tokens = total_input_tokens,
-        output_tokens = total_output_tokens,
+        iterations = result.metrics.iterations,
+        tool_calls = result.metrics.tool_calls_made,
+        tool_errors = result.metrics.tool_errors,
         success = success,
         "Execution complete"
     );
 
     if output == "json" {
-        let result = serde_json::json!({
+        let response = serde_json::json!({
             "success": success,
-            "response": final_response,
-            "turns_used": turns_used,
-            "total_input_tokens": total_input_tokens,
-            "total_output_tokens": total_output_tokens,
+            "response": result.output,
+            "iterations": result.metrics.iterations,
+            "tool_calls_made": result.metrics.tool_calls_made,
+            "tool_errors": result.metrics.tool_errors,
+            "elapsed_ms": result.metrics.elapsed_ms,
         });
-        println!("{}", serde_json::to_string_pretty(&result)?);
+        println!("{}", serde_json::to_string_pretty(&response)?);
     } else {
-        println!("{}", final_response);
+        println!("{}", result.output);
     }
 
     if !success {
         std::process::exit(1);
     }
     Ok(())
+}
+
+struct ExecTurnServices {
+    llm: Arc<dyn LlmProvider>,
+    tool_registry: Arc<ToolRegistry>,
+    runner: tokio::sync::Mutex<ToolRunnerWithGuard>,
+    tool_ctx: ToolContext,
+    turn_id: String,
+    system_prompt: String,
+}
+
+#[async_trait::async_trait]
+impl TurnServices for ExecTurnServices {
+    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<RecallSet> {
+        Ok(RecallSet::default())
+    }
+
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+        Ok(fabric::DaseinView::default())
+    }
+
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+        Ok(fabric::AgoraView::default())
+    }
+
+    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
+        let Some(tool) = self.tool_registry.get(&req.name).cloned() else {
+            return CapabilityResult {
+                call_id: req.call_id,
+                output: format!("Error: Unknown tool '{}'", req.name),
+                is_error: true,
+            };
+        };
+
+        info!(tool = %req.name, "Executing tool");
+        let result = self
+            .runner
+            .lock()
+            .await
+            .run(tool.as_ref(), req.input, &self.tool_ctx, &self.turn_id)
+            .await;
+        if result.is_error {
+            tracing::warn!(tool = %req.name, error = %result.content, "Tool failed/denied");
+        } else {
+            info!(tool = %req.name, "Tool succeeded");
+        }
+        CapabilityResult {
+            call_id: req.call_id,
+            output: result.content,
+            is_error: result.is_error,
+        }
+    }
+
+    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
+        Some(self.llm.as_ref())
+    }
+
+    fn tool_definitions(&self) -> Vec<ToolDefinition> {
+        self.tool_registry.definitions()
+    }
+
+    fn seed_messages(&self, _request: &TurnRequest) -> Vec<Message> {
+        vec![Message::system(&self.system_prompt)]
+    }
 }

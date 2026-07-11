@@ -20,6 +20,7 @@ fabric = { path = "../fabric" }
 cognit = { path = "../cognit" }
 corpus = { path = "../corpus" }
 anyhow = { workspace = true }
+async-trait = "0.1"
 tokio = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 tracing = { workspace = true }

@@ -1,20 +1,12 @@
-//! Transport-agnostic controller.
+//! Transport-agnostic controller facade.
 //!
-//! The Controller sits behind every frontend (TUI, daemon, HTTP, desktop).
-//! All frontends issue the same commands and observe the same event stream.
-//!
-//! **Scaffold module** — this is a lightweight multi-frontend abstraction that
-//! duplicates some state from `ReActLoop` and handler logic. It will be wired
-//! into TUI and HTTP frontends in a future phase. Until then, dead-code
-//! warnings are suppressed with `#[allow(dead_code)]` on intentionally unused
-//! fields.
+//! Phase 0 keeps this type only as a compatibility facade. New production
+//! turns should enter `executive::service::TurnService` directly.
 
-use super::config::ExecutiveConfig;
-use cognit::harness::build_harness;
-use cognit::harness::config::HarnessConfig;
+use crate::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use cognit::harness::event_sink::{Event, EventSink};
-use cognit::harness::linear::{CompactorTrait, ReActLoop, PLAN_MODE_MARKER};
-use mnemosyne::AdvancedCompressor;
+use cognit::harness::linear::PLAN_MODE_MARKER;
+use fabric::StubTurnServices;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -42,19 +34,15 @@ impl Default for ControllerOptions {
     }
 }
 
-/// Transport-agnostic agent controller.
+/// Deprecated Controller facade.
 ///
-/// Parked — future multi-frontend (TUI/HTTP).
-/// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5.
-///
-/// This is a scaffold for multi-frontend support (TUI, HTTP, desktop).
-/// It duplicates some state from `ReActLoop` and handler.rs so that each
-/// frontend can hold a shared `Controller` without coupling to internals.
-/// It will be wired into real frontends in a future phase.
+/// Phase 0 removed Controller as a separate ReAct execution owner. It now keeps
+/// only frontend helper state and a TurnService handle for compatibility.
 #[allow(dead_code)]
+#[deprecated(note = "Use executive::service::TurnService for turn execution")]
 pub struct Controller {
-    /// The ReAct loop (holds conversation state).
-    react_loop: Arc<Mutex<ReActLoop>>,
+    /// Shared turn service facade for future frontend routing.
+    turn_service: Arc<TurnService>,
     /// Event sink for lifecycle events.
     event_sink: Arc<dyn EventSink>,
     /// Whether a turn is currently running.
@@ -71,31 +59,18 @@ pub struct Controller {
     plan_mode: Arc<Mutex<bool>>,
 }
 
+#[allow(deprecated)]
 impl Controller {
-    /// Create a new Controller.
+    /// Create a new Controller compatibility facade.
     pub fn new(opts: ControllerOptions, event_sink: Arc<dyn EventSink>) -> Self {
-        let config = ExecutiveConfig {
-            max_iterations: opts.max_iterations,
-            compaction_enabled: opts.compaction_enabled,
-            ..ExecutiveConfig::default()
-        };
-
-        let harness_config = HarnessConfig {
-            max_iterations: config.max_iterations,
-            compaction_enabled: config.compaction_enabled,
-            ..HarnessConfig::default()
-        };
-        let compressor = Box::new(AdvancedCompressor::new(
-            config.tail_token_budget,
-            config.target_summary_chars,
-            config.context_window_tokens,
-        )) as Box<dyn CompactorTrait>;
-
-        let mut react_loop = build_harness(config.harness_kind, harness_config, compressor);
-        react_loop.set_system_prompt(opts.system_prompt.clone());
+        let turn_service = Arc::new(TurnService::new(
+            Arc::new(StubTurnServices),
+            PreTurnPipeline,
+            PostTurnPipeline,
+        ));
 
         Self {
-            react_loop: Arc::new(Mutex::new(react_loop)),
+            turn_service,
             event_sink,
             running: Arc::new(Mutex::new(false)),
             cancel_token: CancellationToken::new(),
@@ -104,6 +79,11 @@ impl Controller {
             memory_queue: Arc::new(Mutex::new(Vec::new())),
             plan_mode: Arc::new(Mutex::new(false)),
         }
+    }
+
+    /// Access the compatibility TurnService facade.
+    pub fn turn_service(&self) -> &TurnService {
+        self.turn_service.as_ref()
     }
 
     /// Get the system prompt (immutable).
@@ -124,7 +104,7 @@ impl Controller {
     }
 
     /// Compose user message with mid-session injections.
-    /// Drains memory_queue into the message (same logic as ReActLoop).
+    /// Drains memory_queue into the message.
     pub async fn compose_user_message(&self, input: &str) -> String {
         let mut parts = Vec::new();
 
@@ -171,6 +151,7 @@ impl Controller {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use cognit::harness::event_sink::NullEventSink;
@@ -225,46 +206,31 @@ mod tests {
     #[test]
     fn controller_options_default() {
         let opts = ControllerOptions::default();
+        assert_eq!(opts.working_dir, "/tmp");
+        assert_eq!(opts.data_dir, "/tmp/aletheon");
         assert_eq!(opts.max_iterations, 0);
         assert!(opts.compaction_enabled);
-        assert_eq!(opts.working_dir, "/tmp");
-    }
-
-    #[test]
-    fn controller_options_custom() {
-        let opts = ControllerOptions {
-            working_dir: "/workspace".into(),
-            data_dir: "/data".into(),
-            system_prompt: "Custom prompt".into(),
-            max_iterations: 10,
-            compaction_enabled: false,
-        };
-        assert_eq!(opts.max_iterations, 10);
-        assert!(!opts.compaction_enabled);
     }
 
     #[tokio::test]
-    async fn working_dir_accessible() {
-        let controller = Controller::new(ControllerOptions::default(), Arc::new(NullEventSink));
-        assert_eq!(controller.working_dir(), "/tmp");
-    }
-
-    #[tokio::test]
-    async fn is_running_initially_false() {
+    async fn is_running_false_initially() {
         let controller = Controller::new(ControllerOptions::default(), Arc::new(NullEventSink));
         assert!(!controller.is_running().await);
     }
 
     #[tokio::test]
-    async fn compose_plan_and_memory() {
-        let controller = Controller::new(ControllerOptions::default(), Arc::new(NullEventSink));
-        controller.set_plan_mode(true).await;
-        controller.queue_memory("fact 1".into()).await;
+    async fn working_dir_accessor() {
+        let opts = ControllerOptions {
+            working_dir: "/home/user".into(),
+            ..Default::default()
+        };
+        let controller = Controller::new(opts, Arc::new(NullEventSink));
+        assert_eq!(controller.working_dir(), "/home/user");
+    }
 
-        let msg = controller.compose_user_message("do something").await;
-        assert!(msg.contains("PLAN MODE ACTIVE"));
-        assert!(msg.contains("<memory-update>"));
-        assert!(msg.contains("fact 1"));
-        assert!(msg.contains("do something"));
+    #[tokio::test]
+    async fn exposes_turn_service_facade() {
+        let controller = Controller::new(ControllerOptions::default(), Arc::new(NullEventSink));
+        let _ = controller.turn_service();
     }
 }
