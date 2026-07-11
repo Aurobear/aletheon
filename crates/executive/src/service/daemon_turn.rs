@@ -27,7 +27,7 @@ use crate::r#impl::daemon::session_manager::SessionManager;
 use cognit::harness::event_sink::{ChannelEventSink, Event};
 use cognit::harness::linear::TurnMetrics;
 use fabric::hook::{HookContext, HookPoint, HookResult};
-use fabric::include::agora::{AgoraOperation, AgoraOps};
+use fabric::include::agora::AgoraOperation;
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::{
     AdmissionController, AdmissionRequest, AgentId, CapabilityId, CapabilityScope, Clock,

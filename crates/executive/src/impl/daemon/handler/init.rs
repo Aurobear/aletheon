@@ -58,11 +58,106 @@ use mnemosyne::FactStore;
 use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
+use crate::core::sub_agent::SubAgentRuntime;
 use crate::kernel::admission::ProductionAdmissionController;
 use crate::kernel::chronos::SystemClock;
+use async_trait::async_trait;
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 use fabric::AdmissionController;
 use fabric::Clock;
+
+// ---------------------------------------------------------------------------
+// DaemonSubAgentRuntime — production sub-agent execution
+// ---------------------------------------------------------------------------
+
+/// Production sub-agent execution runtime: single-turn LLM completion with
+/// optional tool calls. Wired into [`SubAgentSpawner`] so spawned sub-agents
+/// perform real reasoning work instead of the cancellation-wait stub.
+struct DaemonSubAgentRuntime {
+    llm: Arc<dyn LlmProvider>,
+    tools: Arc<Mutex<ToolRegistry>>,
+}
+
+#[async_trait]
+impl SubAgentRuntime for DaemonSubAgentRuntime {
+    async fn run(&self, task: &str, cancel: CancellationToken) -> Result<String, String> {
+        let messages = vec![fabric::Message::user(task)];
+        // Run up to 8 reasoning steps; respect cancellation between each.
+        let mut current = messages;
+        let mut final_text = String::new();
+        for _step in 0..8 {
+            if cancel.is_cancelled() {
+                return Err("sub-agent cancelled".into());
+            }
+            let tool_defs: Vec<fabric::ToolDefinition> = {
+                let reg = self.tools.lock().await;
+                reg.definitions()
+            };
+            let response = self
+                .llm
+                .complete(&current, &tool_defs)
+                .await
+                .map_err(|e| format!("LLM error: {e}"))?;
+
+            let mut text_parts: Vec<String> = Vec::new();
+            let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
+            for block in &response.content {
+                match block {
+                    fabric::ContentBlock::Text { text } => text_parts.push(text.clone()),
+                    fabric::ContentBlock::ToolUse { id, name, input } => {
+                        tool_calls.push((id.clone(), name.clone(), input.clone()));
+                    }
+                    _ => {}
+                }
+            }
+
+            if tool_calls.is_empty() {
+                final_text = text_parts.join("\n");
+                break;
+            }
+
+            // Push assistant response with tool calls.
+            current.push(fabric::Message {
+                role: fabric::Role::Assistant,
+                content: response.content.clone(),
+            });
+
+            // Execute tools and push results.
+            for (call_id, name, input) in tool_calls {
+                if cancel.is_cancelled() {
+                    return Err("sub-agent cancelled".into());
+                }
+                let result = {
+                    let reg = self.tools.lock().await;
+                    match reg.get(&name) {
+                        Some(tool) => {
+                            let ctx = fabric::tool::ToolContext {
+                                working_dir: std::env::current_dir().unwrap_or_default(),
+                                session_id: "sub-agent".into(),
+                            };
+                            tool.execute(input, &ctx).await
+                        }
+                        None => fabric::tool::ToolResult {
+                            content: format!("Unknown tool: {name}"),
+                            is_error: true,
+                            metadata: fabric::tool::ToolResultMeta::default(),
+                        },
+                    }
+                };
+                current.push(fabric::Message::tool_result(
+                    &call_id,
+                    &result.content,
+                    result.is_error,
+                ));
+            }
+        }
+        if final_text.is_empty() {
+            Ok("(sub-agent produced no text output)".into())
+        } else {
+            Ok(final_text)
+        }
+    }
+}
 
 impl RequestHandler {
     /// Get a reference to the debug handler (for subscriber rx access).
@@ -574,6 +669,21 @@ impl RequestHandler {
             data_dir,
             context_window,
         });
+
+        // Wire sub-agent execution runtime so spawned sub-agents run real
+        // LLM + tool reasoning instead of the cancellation-wait stub.
+        {
+            let sub_agent_runtime = Arc::new(DaemonSubAgentRuntime {
+                llm: llm.clone(),
+                tools: subsystems.tools.clone(),
+            });
+            subsystems
+                .runtime
+                .lock()
+                .await
+                .sub_agent_spawner_mut()
+                .with_runtime(sub_agent_runtime);
+        }
 
         let shared_notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>> = Arc::new(Mutex::new(None));
 
