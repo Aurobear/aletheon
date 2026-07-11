@@ -7,14 +7,18 @@ use std::time::Duration;
 pub type EnvelopeId = u64;
 
 /// Module identifiers for intra-process routing.
+///
+/// Names track the 7-subsystem model / crate names (RFC-018 D3). `Perception`
+/// is retained as a routing endpoint for perception events (it is not a
+/// top-level crate). Not persisted to disk; purely in-process/same-build wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModuleId {
-    Brain,
-    SelfField,
-    Memory,
-    Body,
-    Meta,
-    Runtime,
+    Cognit,
+    Dasein,
+    Mnemosyne,
+    Corpus,
+    Metacog,
+    Executive,
     Perception,
 }
 

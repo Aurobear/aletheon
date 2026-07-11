@@ -17,7 +17,7 @@ async fn test_point_to_point_request_response() {
     let bus = Arc::new(CommunicationBus::new());
 
     // Register a "SelfField" module that responds to requests
-    let mut rx = bus.register_module(ModuleId::SelfField, Some(16));
+    let mut rx = bus.register_module(ModuleId::Dasein, Some(16));
 
     // Spawn a responder task: receives request from mailbox, sends response via bus
     let bus_clone = bus.clone();
@@ -35,8 +35,8 @@ async fn test_point_to_point_request_response() {
 
     // Send a request via the protocol layer (blocks until response arrives)
     let request = Envelope::request(
-        Endpoint::Module(ModuleId::Brain),
-        Target::Module(ModuleId::SelfField),
+        Endpoint::Module(ModuleId::Cognit),
+        Target::Module(ModuleId::Dasein),
         Payload::Json(serde_json::json!({
             "intent": "execute_tool",
             "tool": "bash"
@@ -70,7 +70,7 @@ async fn test_topic_publish_subscribe() {
 
     // Publish to the topic
     let envelope = Envelope::publish(
-        Endpoint::Module(ModuleId::Runtime),
+        Endpoint::Module(ModuleId::Executive),
         "tool.observation",
         Payload::Json(serde_json::json!({
             "tool": "bash",
@@ -98,8 +98,8 @@ async fn test_request_timeout() {
 
     // Send a request to a module that has no handler
     let request = Envelope::request(
-        Endpoint::Module(ModuleId::Brain),
-        Target::Module(ModuleId::SelfField), // No one is listening
+        Endpoint::Module(ModuleId::Cognit),
+        Target::Module(ModuleId::Dasein), // No one is listening
         Payload::Json(serde_json::json!({"test": true})),
         Duration::from_millis(100), // Short timeout
     );
@@ -120,7 +120,7 @@ async fn test_concurrent_request_response() {
     let bus = Arc::new(CommunicationBus::new());
 
     // Register a responder module
-    let mut rx = bus.register_module(ModuleId::SelfField, Some(64));
+    let mut rx = bus.register_module(ModuleId::Dasein, Some(64));
 
     // Spawn a responder that handles exactly 10 requests then exits
     let bus_clone = bus.clone();
@@ -147,8 +147,8 @@ async fn test_concurrent_request_response() {
         let bus = bus.clone();
         handles.push(tokio::spawn(async move {
             let request = Envelope::request(
-                Endpoint::Module(ModuleId::Brain),
-                Target::Module(ModuleId::SelfField),
+                Endpoint::Module(ModuleId::Cognit),
+                Target::Module(ModuleId::Dasein),
                 Payload::Json(serde_json::json!({"ping": true})),
                 Duration::from_secs(5),
             );
@@ -174,11 +174,11 @@ async fn test_concurrent_request_response() {
 async fn test_fire_and_forget() {
     let bus = CommunicationBus::new();
 
-    let mut rx = bus.register_module(ModuleId::Memory, Some(16));
+    let mut rx = bus.register_module(ModuleId::Mnemosyne, Some(16));
 
     let envelope = Envelope::fire_and_forget(
-        Endpoint::Module(ModuleId::Brain),
-        Target::Module(ModuleId::Memory),
+        Endpoint::Module(ModuleId::Cognit),
+        Target::Module(ModuleId::Mnemosyne),
         Payload::Json(serde_json::json!({"store": "episodic"})),
     );
 

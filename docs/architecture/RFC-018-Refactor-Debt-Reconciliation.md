@@ -62,14 +62,23 @@ outside fabric — the dictionary existed; nothing spoke it.
   not preemptively (that would re-create the "unused type" problem). The pattern
   (`record_*` default method + typed producer + snapshot round-trip) is now established.
 
-### 🟠 D3 — Naming drift, live in the wire format
-`ModuleId { Brain, SelfField, Memory, Body, Meta, Runtime, Perception }`
-(`fabric/src/ipc/envelope.rs:11-19`) is used in **39 routing sites**. It predates the
-7-subsystem model: old names, includes a non-subsystem (`Perception`), lacks
-`Agora`/`Cognit`. `include/` modules (`brain/memory/body/runtime/self_field`) and
-`AletheonRuntime`/`RuntimeConfig` in executive likewise lag the rename.
-- Problem: readers can't tell whether "runtime"/"memory"/"brain" means the concept or
-  the renamed subsystem. Changing the wire enum needs a protocol-version bump.
+### 🟡 D3 — Naming drift *(ModuleId done 2026-07-11; module/type renames pending)*
+`ModuleId` predated the 7-subsystem model. **Re-audit corrected two assumptions:** it is
+used in ~22 routing sites (not 39), and it is **never persisted to disk** — envelopes only
+cross the in-process bus / same-build unix socket, so a rename is compiler-checked with no
+protocol-version migration needed in practice.
+- **Done:** `ModuleId` variants renamed to the crate/subsystem names —
+  `Brain→Cognit`, `SelfField→Dasein`, `Memory→Mnemosyne`, `Body→Corpus`, `Meta→Metacog`,
+  `Runtime→Executive`. `Perception` kept (a live perception-event routing endpoint, not a
+  crate); `Agora` **not** added (accessed directly as `Arc<dyn AgoraOps>`, never routed to
+  — YAGNI).
+- **Pending:** `include/` module file names (`brain/memory/body/runtime/self_field/meta`)
+  and `AletheonRuntime`/`RuntimeConfig` still lag — mechanical, compiler-checked renames.
+- **Won't rename (would break things):** the subsystem ops **traits** don't map cleanly —
+  `SelfFieldOps→DaseinOps` collides with the existing phenomenological
+  `fabric::dasein::DaseinOps`; `MemoryBackend` is a descriptive backend trait with 6 impls,
+  not a subsystem-ops name; `RuntimeOps`/`MetaRuntimeOps` are metacog's, not executive's.
+  Only `BrainCoreOps→CognitOps` is a clean pair.
 
 ### 🟠 D4 — Cross-layer coupling (memory/self depend on reasoning)
 `mnemosyne → cognit` (`compressor/mod.rs:7-8`: `CompactorTrait`, `LlmProvider`) and

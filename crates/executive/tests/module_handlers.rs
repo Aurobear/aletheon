@@ -72,7 +72,7 @@ async fn test_memory_module_format_for_context() {
 
     // Send a FormatForContext request.
     let request = serde_json::to_value(MemoryRequest::FormatForContext).unwrap();
-    let envelope = make_envelope_request(ModuleId::Memory, request);
+    let envelope = make_envelope_request(ModuleId::Mnemosyne, request);
 
     let resp_envelope = bus.request(envelope).await.expect("request should succeed");
 
@@ -123,7 +123,7 @@ async fn test_body_module_definitions() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let request = serde_json::to_value(BodyRequest::Definitions).unwrap();
-    let envelope = make_envelope_request(ModuleId::Body, request);
+    let envelope = make_envelope_request(ModuleId::Corpus, request);
 
     let resp_envelope = bus.request(envelope).await.expect("request should succeed");
 
@@ -168,7 +168,7 @@ async fn test_body_module_list_tools() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let request = serde_json::to_value(BodyRequest::ListTools).unwrap();
-    let envelope = make_envelope_request(ModuleId::Body, request);
+    let envelope = make_envelope_request(ModuleId::Corpus, request);
 
     let resp_envelope = bus.request(envelope).await.expect("request should succeed");
 
@@ -217,7 +217,7 @@ async fn test_self_field_module_review() {
         "working_dir": "/tmp"
     });
     let request = serde_json::to_value(SelfFieldRequest::Review { intent, ctx }).unwrap();
-    let envelope = make_envelope_request(ModuleId::SelfField, request);
+    let envelope = make_envelope_request(ModuleId::Dasein, request);
 
     let resp_envelope = bus.request(envelope).await.expect("request should succeed");
 
@@ -262,7 +262,7 @@ async fn test_self_field_module_get_identity() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let request = serde_json::to_value(SelfFieldRequest::GetIdentity).unwrap();
-    let envelope = make_envelope_request(ModuleId::SelfField, request);
+    let envelope = make_envelope_request(ModuleId::Dasein, request);
 
     let resp_envelope = bus.request(envelope).await.expect("request should succeed");
 

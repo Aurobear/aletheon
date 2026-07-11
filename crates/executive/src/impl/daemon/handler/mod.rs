@@ -78,8 +78,8 @@ impl RequestHandler {
             ctx: serde_json::to_value(ctx).unwrap_or_default(),
         };
         let envelope = Envelope::request(
-            Endpoint::Module(ModuleId::Runtime),
-            Target::Module(ModuleId::SelfField),
+            Endpoint::Module(ModuleId::Executive),
+            Target::Module(ModuleId::Dasein),
             Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
             Duration::from_secs(5),
         );
@@ -123,8 +123,8 @@ impl RequestHandler {
             reason: reason.to_string(),
         };
         let envelope = Envelope::request(
-            Endpoint::Module(ModuleId::Runtime),
-            Target::Module(ModuleId::SelfField),
+            Endpoint::Module(ModuleId::Executive),
+            Target::Module(ModuleId::Dasein),
             Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
             Duration::from_secs(5),
         );

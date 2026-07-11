@@ -1,6 +1,6 @@
 //! BodyModule — bus handler wrapping ToolRegistry.
 //!
-//! Registers on `ModuleId::Body` and handles `BodyRequest` envelopes.
+//! Registers on `ModuleId::Corpus` and handles `BodyRequest` envelopes.
 
 use std::sync::Arc;
 
@@ -31,8 +31,8 @@ impl BodyModule {
 
     /// Run the module loop: receive envelopes, dispatch, reply.
     pub async fn run(self, bus: Arc<CommunicationBus>) {
-        let mut rx = bus.register_module(ModuleId::Body, None);
-        debug!("BodyModule: registered on ModuleId::Body");
+        let mut rx = bus.register_module(ModuleId::Corpus, None);
+        debug!("BodyModule: registered on ModuleId::Corpus");
 
         while let Some(envelope) = rx.recv().await {
             self.handle_envelope(&bus, envelope).await;

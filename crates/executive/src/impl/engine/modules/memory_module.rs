@@ -1,6 +1,6 @@
 //! MemoryModule — bus handler wrapping CoreMemory and RecallMemory.
 //!
-//! Registers on `ModuleId::Memory` and handles `MemoryRequest` envelopes.
+//! Registers on `ModuleId::Mnemosyne` and handles `MemoryRequest` envelopes.
 
 use std::sync::Arc;
 
@@ -34,8 +34,8 @@ impl MemoryModule {
 
     /// Run the module loop: receive envelopes, dispatch, reply.
     pub async fn run(self, bus: Arc<CommunicationBus>) {
-        let mut rx = bus.register_module(ModuleId::Memory, None);
-        debug!("MemoryModule: registered on ModuleId::Memory");
+        let mut rx = bus.register_module(ModuleId::Mnemosyne, None);
+        debug!("MemoryModule: registered on ModuleId::Mnemosyne");
 
         while let Some(envelope) = rx.recv().await {
             self.handle_envelope(&bus, envelope).await;
