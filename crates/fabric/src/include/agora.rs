@@ -8,8 +8,66 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::primitives::cognitive::Evidence;
+
+// ---------------------------------------------------------------------------
+// Versioned commit types (RFC-014 Phase 3B)
+// ---------------------------------------------------------------------------
+
+/// An operation that can be proposed and committed to the workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AgoraOperation {
+    PublishFact {
+        key: String,
+        value: serde_json::Value,
+    },
+    ProposePlan {
+        plan: serde_json::Value,
+    },
+    UpdateTask {
+        task_patch: serde_json::Value,
+    },
+    EmitObservation {
+        obs: serde_json::Value,
+    },
+    ClaimSharedObject {
+        oid: String,
+    },
+    ReleaseSharedObject {
+        oid: String,
+    },
+}
+
+/// A proposal to apply an operation at a specific workspace version.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgoraProposal {
+    pub id: Uuid,
+    pub base_version: u64,
+    pub operation: AgoraOperation,
+}
+
+/// A committed operation, permanently recorded in the workspace history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgoraCommit {
+    pub id: Uuid,
+    pub operation: AgoraOperation,
+    pub committed_at: i64,
+}
+
+/// Returned when a proposal's base_version does not match the workspace
+/// version (optimistic-concurrency conflict).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionConflict {
+    pub expected: u64,
+    pub actual: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Trait
+// ---------------------------------------------------------------------------
 
 /// Agora (working-memory) operations — the shared cognitive workspace.
 #[async_trait]
@@ -22,6 +80,14 @@ pub trait AgoraOps: Send + Sync {
     async fn update(&self, session: &str, patch: serde_json::Value) -> Result<()>;
     /// Snapshot the entire session workspace (for debug / commit).
     async fn snapshot(&self, session: &str) -> Result<serde_json::Value>;
+    /// Return the current workspace version (0-based, incremented on commit).
+    async fn version(&self, session: &str) -> Result<u64> {
+        let snap = self.snapshot(session).await?;
+        Ok(snap
+            .get("version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
     /// Clear a session's workspace.
     async fn clear(&self, session: &str) -> Result<()>;
     /// Append an entry onto a session's reasoning trace.
@@ -40,6 +106,37 @@ pub trait AgoraOps: Send + Sync {
     async fn record_evidence(&self, session: &str, evidence: &Evidence) -> Result<()> {
         let content = serde_json::to_value(evidence)?;
         self.trace(session, "evidence", content).await
+    }
+
+    // -- Versioned, proposal-based commits (RFC-014 Phase 3B) -------------
+
+    /// Propose an operation at a specific base version. Returns the proposal
+    /// on success, or a conflict error if the version is stale.
+    async fn propose(
+        &self,
+        session: &str,
+        base_version: u64,
+        operation: AgoraOperation,
+    ) -> std::result::Result<AgoraProposal, String> {
+        let _ = (session, base_version, operation);
+        unimplemented!("propose: not implemented")
+    }
+
+    /// Commit a previously-created proposal by id. Returns the resulting
+    /// commit.
+    async fn commit(
+        &self,
+        session: &str,
+        proposal_id: Uuid,
+    ) -> std::result::Result<AgoraCommit, String> {
+        let _ = (session, proposal_id);
+        unimplemented!("commit: not implemented")
+    }
+
+    /// Return all commits with version strictly greater than `since_version`.
+    async fn changes_since(&self, session: &str, since_version: u64) -> Vec<AgoraCommit> {
+        let _ = (session, since_version);
+        Vec::new()
     }
 }
 

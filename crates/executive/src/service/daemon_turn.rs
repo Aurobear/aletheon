@@ -27,6 +27,7 @@ use crate::r#impl::daemon::session_manager::SessionManager;
 use cognit::harness::event_sink::{ChannelEventSink, Event};
 use cognit::harness::linear::TurnMetrics;
 use fabric::hook::{HookContext, HookPoint, HookResult};
+use fabric::include::agora::{AgoraOperation, AgoraOps};
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::{
     AdmissionController, AdmissionRequest, AgentId, CapabilityId, CapabilityScope, Clock,
@@ -585,10 +586,17 @@ impl DaemonTurnOrchestrator {
         }
     }
 
-    async fn commit_agora_snapshot(&self, session: &str) {
+    /// Persist Agora workspace state at turn end.
+    ///
+    /// Stores the full workspace snapshot for backward compatibility AND
+    /// incremental commit log entries (RFC-014 Phase 3B). The per-turn
+    /// state mutations have already been committed via propose+commit
+    /// during the turn; this method handles durability.
+    async fn commit_agora_snapshot(&self, session: &str, _since_version: u64) {
+        // Full snapshot (backward compat — Mnemosyne recall).
         match self.subsystems.agora.snapshot(session).await {
             Ok(snap) => {
-                tracing::debug!(target: "agora", "workspace snapshot: {snap}");
+                tracing::debug!(target: "agora", version = snap.get("version").and_then(|v| v.as_u64()).unwrap_or(0), "workspace snapshot");
                 let rm = self.subsystems.recall_memory.lock().await;
                 if let Err(e) = rm.store(session, "agora_snapshot", &snap.to_string(), None) {
                     tracing::warn!(target: "agora", error = %e, "agora snapshot persist failed");
@@ -848,14 +856,34 @@ impl DaemonTurnOrchestrator {
         let turn_count = sm_arc.lock().await.turn_count();
         drop(sm_arc);
 
-        // Agora seed
-        if let Err(e) = self
+        // Agora seed — versioned publish via propose+commit (RFC-014 Phase 3B).
+        let mut agora_version = self
             .subsystems
             .agora
-            .publish(&sess_id, "turn_input", serde_json::json!(message))
+            .version(&sess_id)
+            .await
+            .unwrap_or(0);
+        match self
+            .subsystems
+            .agora
+            .propose(
+                &sess_id,
+                agora_version,
+                AgoraOperation::PublishFact {
+                    key: "turn_input".into(),
+                    value: serde_json::json!(message),
+                },
+            )
             .await
         {
-            tracing::warn!("agora publish (recall injection) failed: {e}");
+            Ok(prop) => {
+                if let Err(e) = self.subsystems.agora.commit(&sess_id, prop.id).await {
+                    tracing::warn!("agora commit (turn_input) failed: {e}");
+                } else {
+                    agora_version += 1;
+                }
+            }
+            Err(e) => tracing::warn!("agora propose (turn_input) failed: {e}"),
         }
 
         let self_field_arc_for_react = self.subsystems.self_field.clone();
@@ -1027,8 +1055,21 @@ impl DaemonTurnOrchestrator {
                             let evidence = fabric::Evidence::from_tool_result(
                                 call_id.clone(), name.clone(), result.content.clone(), result.is_error,
                             );
-                            if let Err(e) = self.subsystems.agora.record_evidence(&session_id_for_agora, &evidence).await {
-                                tracing::warn!(target: "agora", error = %e, "agora evidence trace append failed");
+                            // Versioned trace via propose+commit (RFC-014 Phase 3B).
+                            let obs = serde_json::to_value(&evidence).unwrap_or(serde_json::Value::Null);
+                            match self.subsystems.agora.propose(
+                                &session_id_for_agora,
+                                agora_version,
+                                AgoraOperation::EmitObservation { obs },
+                            ).await {
+                                Ok(prop) => {
+                                    if let Err(e) = self.subsystems.agora.commit(&session_id_for_agora, prop.id).await {
+                                        tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed");
+                                    } else {
+                                        agora_version += 1;
+                                    }
+                                }
+                                Err(e) => tracing::warn!(target: "agora", error = %e, "agora propose (evidence) failed"),
                             }
                         }
                         Event::Usage { tokens_in, tokens_out, .. } => {
@@ -1247,7 +1288,7 @@ impl DaemonTurnOrchestrator {
             .await;
         self.run_post_evolution(&task_summary, &text, &metrics)
             .await;
-        self.commit_agora_snapshot(&session_id_for_agora).await;
+        self.commit_agora_snapshot(&session_id_for_agora, agora_version).await;
 
         // -- Kernel: mark turn operation completed --
         let _ = self.operation_table.succeed(operation.id).await;

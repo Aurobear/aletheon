@@ -1,6 +1,7 @@
 //! AgoraRegistry — manages per-session Workspaces and implements AgoraOps.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -9,19 +10,65 @@ use tokio::sync::Mutex;
 
 use fabric::AgoraOps;
 
-use crate::workspace::Workspace;
+use crate::persistence::AgoraPersistence;
+use crate::workspace::{AgoraCommit, AgoraOperation, AgoraProposal, Workspace};
 
 /// Owns one `Workspace` per session id. Cheap to clone via `Arc`.
 #[derive(Default)]
 pub struct AgoraRegistry {
     sessions: Mutex<HashMap<String, Workspace>>,
+    persistence: Option<Arc<dyn AgoraPersistence>>,
 }
 
 impl AgoraRegistry {
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            persistence: None,
         }
+    }
+
+    /// Create a registry backed by a persistence adapter.
+    ///
+    /// Every `commit()` will also persist to the adapter. Call
+    /// [`recover_session`](Self::recover_session) to replay persisted commits
+    /// into a workspace after a restart.
+    pub fn new_with_persistence(persistence: Arc<dyn AgoraPersistence>) -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            persistence: Some(persistence),
+        }
+    }
+
+    /// Replay persisted commits for `session` into the workspace.
+    ///
+    /// After calling this, the workspace version will reflect all previously
+    /// committed operations. Returns the number of commits replayed.
+    pub async fn recover_session(&self, session: &str) -> Result<usize> {
+        let persistence = match &self.persistence {
+            Some(p) => p,
+            None => return Ok(0),
+        };
+
+        let commits = persistence.recover(session).await?;
+        let count = commits.len();
+        if count == 0 {
+            return Ok(0);
+        }
+
+        let mut map = self.sessions.lock().await;
+        let ws = map
+            .entry(session.to_string())
+            .or_insert_with(|| Workspace::new(session));
+
+        for commit in commits {
+            // Replay each persisted commit: push it into the workspace's
+            // commit log and bump the version counter to match.
+            ws.commits.push(commit);
+            ws.version += 1;
+        }
+
+        Ok(count)
     }
 }
 
@@ -60,6 +107,14 @@ impl AgoraOps for AgoraRegistry {
             .unwrap_or(Value::Null))
     }
 
+    async fn version(&self, session: &str) -> Result<u64> {
+        let map = self.sessions.lock().await;
+        Ok(map
+            .get(session)
+            .map(|ws| ws.version)
+            .unwrap_or(0))
+    }
+
     async fn clear(&self, session: &str) -> Result<()> {
         let mut map = self.sessions.lock().await;
         if let Some(ws) = map.get_mut(session) {
@@ -75,6 +130,51 @@ impl AgoraOps for AgoraRegistry {
             .or_insert_with(|| Workspace::new(session));
         ws.trace.push(kind, content);
         Ok(())
+    }
+
+    async fn propose(
+        &self,
+        session: &str,
+        base_version: u64,
+        operation: AgoraOperation,
+    ) -> Result<AgoraProposal, String> {
+        let mut map = self.sessions.lock().await;
+        let ws = map
+            .entry(session.to_string())
+            .or_insert_with(|| Workspace::new(session));
+        ws.propose(base_version, operation).map_err(|c| {
+            format!(
+                "version conflict: expected {}, actual {}",
+                c.expected, c.actual
+            )
+        })
+    }
+
+    async fn commit(&self, session: &str, proposal_id: uuid::Uuid) -> Result<AgoraCommit, String> {
+        let mut map = self.sessions.lock().await;
+        let ws = map
+            .entry(session.to_string())
+            .or_insert_with(|| Workspace::new(session));
+        let commit = ws
+            .commit(proposal_id)
+            .ok_or_else(|| format!("proposal {} not found in session {}", proposal_id, session))?;
+
+        // Persist the commit if a persistence adapter is configured.
+        if let Some(ref p) = self.persistence {
+            p.append_commit(session, &commit)
+                .await
+                .map_err(|e| format!("persistence write failed: {e}"))?;
+        }
+
+        Ok(commit)
+    }
+
+    async fn changes_since(&self, session: &str, since_version: u64) -> Vec<AgoraCommit> {
+        let map = self.sessions.lock().await;
+        match map.get(session) {
+            Some(ws) => ws.changes_since(since_version),
+            None => Vec::new(),
+        }
     }
 }
 
@@ -144,5 +244,227 @@ mod tests {
         assert_eq!(back.id, "c1");
         assert_eq!(back.source, "bash");
         assert_eq!(back.weight, 1.0);
+    }
+
+    #[tokio::test]
+    async fn propose_commit_changes_since_roundtrip() {
+        let reg = AgoraRegistry::new();
+        let op = AgoraOperation::PublishFact {
+            key: "x".into(),
+            value: json!(42),
+        };
+        let prop = reg.propose("s1", 0, op).await.unwrap();
+        assert_eq!(prop.base_version, 0);
+
+        let commit = reg.commit("s1", prop.id).await.unwrap();
+        assert_eq!(commit.id, prop.id);
+
+        let changes = reg.changes_since("s1", 0).await;
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].id, prop.id);
+    }
+
+    #[tokio::test]
+    async fn propose_conflict_returns_error() {
+        let reg = AgoraRegistry::new();
+        let op1 = AgoraOperation::PublishFact {
+            key: "a".into(),
+            value: json!(1),
+        };
+        let p1 = reg.propose("s1", 0, op1).await.unwrap();
+        reg.commit("s1", p1.id).await.unwrap();
+
+        let op2 = AgoraOperation::PublishFact {
+            key: "b".into(),
+            value: json!(2),
+        };
+        let err = reg.propose("s1", 0, op2).await.unwrap_err();
+        assert!(err.contains("version conflict"));
+    }
+
+    #[tokio::test]
+    async fn changes_since_missing_session_returns_empty() {
+        let reg = AgoraRegistry::new();
+        let changes = reg.changes_since("nope", 0).await;
+        assert!(changes.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3B tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn propose_then_commit_bumps_version() {
+        let reg = AgoraRegistry::new();
+        let op = AgoraOperation::PublishFact {
+            key: "z".into(),
+            value: json!(99),
+        };
+        let prop = reg.propose("s1", 0, op).await.unwrap();
+        assert_eq!(prop.base_version, 0);
+
+        let commit = reg.commit("s1", prop.id).await.unwrap();
+        assert_eq!(commit.id, prop.id);
+
+        // Version is reflected in the snapshot (version starts at 0, commit
+        // bumps to 1).
+        let snap = reg.snapshot("s1").await.unwrap();
+        assert_eq!(snap["version"], json!(1));
+
+        // changes_since(0) returns exactly 1 commit.
+        let changes = reg.changes_since("s1", 0).await;
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].id, prop.id);
+    }
+
+    #[tokio::test]
+    async fn propose_wrong_base_version_is_conflict() {
+        let reg = AgoraRegistry::new();
+
+        // Commit first to bump workspace version to 1.
+        let p1 = reg
+            .propose(
+                "s1",
+                0,
+                AgoraOperation::PublishFact {
+                    key: "first".into(),
+                    value: json!(1),
+                },
+            )
+            .await
+            .unwrap();
+        reg.commit("s1", p1.id).await.unwrap();
+
+        // Propose with stale base_version 0 — must return Conflict error.
+        let err = reg
+            .propose(
+                "s1",
+                0,
+                AgoraOperation::PublishFact {
+                    key: "second".into(),
+                    value: json!(2),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("version conflict"),
+            "expected version conflict, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn changes_since_returns_only_newer_commits() {
+        let reg = AgoraRegistry::new();
+
+        // Commit 3 ops: version goes 0→1→2→3.
+        for (i, key) in ["a", "b", "c"].iter().enumerate() {
+            let base = i as u64;
+            let prop = reg
+                .propose(
+                    "s1",
+                    base,
+                    AgoraOperation::PublishFact {
+                        key: key.to_string(),
+                        value: json!(i),
+                    },
+                )
+                .await
+                .unwrap();
+            reg.commit("s1", prop.id).await.unwrap();
+        }
+
+        // changes_since(1) returns last 2 commits (versions at index 1 and 2).
+        let changes = reg.changes_since("s1", 1).await;
+        assert_eq!(changes.len(), 2, "expected 2 commits since version 1");
+
+        // Verify the commit operation keys to confirm they're the later two.
+        let keys: Vec<&str> = changes
+            .iter()
+            .map(|c| match &c.operation {
+                AgoraOperation::PublishFact { key, .. } => key.as_str(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(keys, vec!["b", "c"]);
+
+        // Edge: changes_since(3) returns empty.
+        assert!(reg.changes_since("s1", 3).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn publish_still_works_alongside_new_api() {
+        let reg = AgoraRegistry::new();
+
+        // Old publish/recall API still works.
+        reg.publish("s1", "old_key", json!("old_val"))
+            .await
+            .unwrap();
+        assert_eq!(
+            reg.recall("s1", "old_key").await.unwrap(),
+            Some(json!("old_val"))
+        );
+
+        // New propose/commit API works on the same session.
+        let prop = reg
+            .propose(
+                "s1",
+                0,
+                AgoraOperation::PublishFact {
+                    key: "new_key".into(),
+                    value: json!("new_val"),
+                },
+            )
+            .await
+            .unwrap();
+        reg.commit("s1", prop.id).await.unwrap();
+
+        // Both values are independently visible.
+        let snap = reg.snapshot("s1").await.unwrap();
+        assert_eq!(snap["blackboard"]["old_key"], json!("old_val"));
+        // new_key was logged as a commit but the blackboard was populated
+        // directly via publish, not via commit application — verify commit
+        // count grew.
+        assert_eq!(snap["commit_count"], json!(1));
+        assert_eq!(snap["version"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn claim_then_release() {
+        let reg = AgoraRegistry::new();
+        let oid = "obj-1";
+
+        // Propose + commit ClaimSharedObject.
+        let claim_prop = reg
+            .propose(
+                "s1",
+                0,
+                AgoraOperation::ClaimSharedObject { oid: oid.into() },
+            )
+            .await
+            .unwrap();
+        let claim_commit = reg.commit("s1", claim_prop.id).await.unwrap();
+        assert_eq!(claim_commit.id, claim_prop.id);
+
+        // Propose + commit ReleaseSharedObject.
+        let release_prop = reg
+            .propose(
+                "s1",
+                1,
+                AgoraOperation::ReleaseSharedObject { oid: oid.into() },
+            )
+            .await
+            .unwrap();
+        let release_commit = reg.commit("s1", release_prop.id).await.unwrap();
+        assert_eq!(release_commit.id, release_prop.id);
+
+        // Both commits appear in the history.
+        let changes = reg.changes_since("s1", 0).await;
+        assert_eq!(changes.len(), 2);
+
+        // Snapshot reflects 2 commits and version 2.
+        let snap = reg.snapshot("s1").await.unwrap();
+        assert_eq!(snap["version"], json!(2));
+        assert_eq!(snap["commit_count"], json!(2));
     }
 }
