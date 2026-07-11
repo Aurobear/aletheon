@@ -243,6 +243,176 @@ impl RequestHandler {
         let _ = fs.decay_stale();
     }
 
+    // -- Post-turn phases (RFC-018 D5 / issue #4) --------------------------
+    // Cohesive tail-of-turn steps consuming loop outputs (text, metrics).
+    // None has early-return control flow, so each extracts cleanly.
+
+    /// Fire the PostTurn lifecycle hooks.
+    async fn run_post_turn_hooks(&self) {
+        // Gather session info before locking hook_registry
+        let (session_id, turn_count) = {
+            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let sm = sm_arc.lock().await;
+            (sm.session_id.clone(), sm.turn_count())
+        };
+        let hr = self.subsystems.hook_registry.lock().await;
+        let ctx = HookContext {
+            point: HookPoint::PostTurn,
+            session_id,
+            turn_count,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: HashMap::new(),
+        };
+        hr.execute(&ctx).await;
+    }
+
+    /// Auto-memory extraction: cheap-LLM fact extraction from the turn.
+    async fn extract_auto_memory(&self, message: &str, text: &str) {
+        let mut am = self.subsystems.auto_memory.lock().await;
+        if let Ok(facts) = am.analyze_and_store(message, text).await {
+            if !facts.is_empty() {
+                info!(count = facts.len(), "Auto-memory: stored facts");
+            }
+        }
+    }
+
+    /// Enhanced reflection: score question/response quality, store the
+    /// reflection, and run the periodic ExperienceSummarizer trigger.
+    async fn record_turn_reflection(&self, task_summary: &str, text: &str, turn: usize) {
+        let mut what_worked = Vec::new();
+        let mut what_failed = Vec::new();
+        let mut learned = Vec::new();
+
+        // Response length as a quality indicator
+        let resp_len = text.len();
+        if resp_len > 500 {
+            what_worked.push(format!("Detailed response ({} chars)", resp_len));
+        } else if resp_len > 100 {
+            what_worked.push(format!("Concise response ({} chars)", resp_len));
+        } else {
+            what_worked.push(format!("Brief response ({} chars)", resp_len));
+        }
+
+        // Detect error indicators in response
+        let text_lower = text.to_lowercase();
+        let error_indicators = [
+            "error",
+            "failed",
+            "unable",
+            "cannot",
+            "couldn't",
+            "sorry, i",
+            "i don't know",
+        ];
+        for indicator in &error_indicators {
+            if text_lower.contains(indicator) {
+                what_failed.push(format!("Response contains '{}'", indicator));
+            }
+        }
+
+        // Detect learning/self-correction indicators
+        let learning_indicators = [
+            "i learned",
+            "i now understand",
+            "i realize",
+            "correction:",
+            "actually,",
+        ];
+        for indicator in &learning_indicators {
+            if text_lower.contains(indicator) {
+                learned.push(format!("Self-correction detected: '{}'", indicator));
+            }
+        }
+
+        // Track turn context
+        what_worked.push(format!("Conversation turn #{}", turn));
+
+        let has_failures = !what_failed.is_empty();
+        let entry = self.subsystems.reflector.reflect_conversation(
+            task_summary,
+            ReflectionTrigger::TaskComplete,
+            !has_failures,
+            what_worked,
+            what_failed,
+            learned,
+        );
+        // Store reflection — drop lock guard before re-locking for evolution check
+        let store_result = {
+            let mem = self.subsystems.episodic_memory.lock().await;
+            mem.store_reflection(&entry)
+        };
+        if let Err(e) = store_result {
+            warn!(error = %e, "Failed to store chat reflection");
+        } else {
+            info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
+
+            // Periodic evolution trigger: every 10 reflections, run ExperienceSummarizer
+            let mem = self.subsystems.episodic_memory.lock().await;
+            if let Ok(count) = mem.reflection_count() {
+                if count > 0 && count % 10 == 0 {
+                    info!(
+                        count = count,
+                        "Running ExperienceSummarizer (periodic trigger)"
+                    );
+                    if let Ok(recent) = mem.recall_reflections(20) {
+                        if let Some(evo_entry) =
+                            cognit::core::ExperienceSummarizer::summarize(&recent)
+                        {
+                            if let Err(e) = mem.store_evolution_log(&evo_entry) {
+                                warn!(error = %e, "Failed to store evolution log");
+                            } else {
+                                info!(id = %evo_entry.id, patterns = evo_entry.patterns_detected.len(), "Evolution log stored");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// EvolutionCoordinator: post-turn evolution (accumulates reflections,
+    /// triggers every N turns).
+    async fn run_post_evolution(&self, task_summary: &str, text: &str, metrics: &TurnMetrics) {
+        let success = metrics.completed_normally && !text.starts_with("error:");
+        if let Err(e) = self
+            .subsystems
+            .runtime
+            .lock()
+            .await
+            .post_evolution(
+                task_summary,
+                text,
+                success,
+                metrics.tool_calls_made,
+                metrics.tool_errors,
+                metrics.elapsed_ms,
+                metrics.iterations,
+                &*self.subsystems.pipeline,
+            )
+            .await
+        {
+            warn!(error = %e, "post_evolution failed");
+        }
+    }
+
+    /// RFC-014 commit: snapshot the Agora workspace at turn end and persist it
+    /// to recall memory (best-effort, never propagated into the chat turn).
+    async fn commit_agora_snapshot(&self, session: &str) {
+        match self.subsystems.agora.snapshot(session).await {
+            Ok(snap) => {
+                tracing::debug!(target: "agora", "workspace snapshot: {snap}");
+                let rm = self.subsystems.recall_memory.lock().await;
+                if let Err(e) = rm.store(session, "agora_snapshot", &snap.to_string(), None) {
+                    tracing::warn!(target: "agora", error = %e, "agora snapshot persist failed");
+                }
+            }
+            Err(e) => tracing::warn!("agora snapshot failed: {e}"),
+        }
+    }
+
     pub(super) async fn handle_chat(
         &self,
         id: serde_json::Value,
@@ -936,38 +1106,12 @@ impl RequestHandler {
         )
         .await;
 
-        // --- PostTurn hooks ---
-        {
-            // Gather session info before locking hook_registry
-            let (session_id, turn_count) = {
-                let (_sid, sm_arc) = self.get_or_create_session(None).await;
-                let sm = sm_arc.lock().await;
-                (sm.session_id.clone(), sm.turn_count())
-            };
-            let hr = self.subsystems.hook_registry.lock().await;
-            let ctx = HookContext {
-                point: HookPoint::PostTurn,
-                session_id,
-                turn_count,
-                tool_name: None,
-                tool_input: None,
-                tool_result: None,
-                message: None,
-                metadata: HashMap::new(),
-            };
-            hr.execute(&ctx).await;
-        }
+        // --- Post-turn phases (extracted; RFC-018 D5 / issue #4) ---
+        self.run_post_turn_hooks().await;
 
-        // --- Auto-memory extraction ---
-        // Runs after PostTurn hooks, before compaction.
-        // Uses a cheap LLM to extract facts from the turn.
+        // Auto-memory: runs after PostTurn hooks, before compaction.
         if turn_succeeded {
-            let mut am = self.subsystems.auto_memory.lock().await;
-            if let Ok(facts) = am.analyze_and_store(message, &text).await {
-                if !facts.is_empty() {
-                    info!(count = facts.len(), "Auto-memory: stored facts");
-                }
-            }
+            self.extract_auto_memory(message, &text).await;
         }
 
         // Push tool call messages and assistant response to session manager
@@ -1055,138 +1199,13 @@ impl RequestHandler {
             message.to_string()
         };
 
-        let mut what_worked = Vec::new();
-        let mut what_failed = Vec::new();
-        let mut learned = Vec::new();
+        self.record_turn_reflection(&task_summary, &text, turn)
+            .await;
 
-        // Response length as a quality indicator
-        let resp_len = text.len();
-        if resp_len > 500 {
-            what_worked.push(format!("Detailed response ({} chars)", resp_len));
-        } else if resp_len > 100 {
-            what_worked.push(format!("Concise response ({} chars)", resp_len));
-        } else {
-            what_worked.push(format!("Brief response ({} chars)", resp_len));
-        }
+        self.run_post_evolution(&task_summary, &text, &metrics)
+            .await;
 
-        // Detect error indicators in response
-        let text_lower = text.to_lowercase();
-        let error_indicators = [
-            "error",
-            "failed",
-            "unable",
-            "cannot",
-            "couldn't",
-            "sorry, i",
-            "i don't know",
-        ];
-        for indicator in &error_indicators {
-            if text_lower.contains(indicator) {
-                what_failed.push(format!("Response contains '{}'", indicator));
-            }
-        }
-
-        // Detect learning/self-correction indicators
-        let learning_indicators = [
-            "i learned",
-            "i now understand",
-            "i realize",
-            "correction:",
-            "actually,",
-        ];
-        for indicator in &learning_indicators {
-            if text_lower.contains(indicator) {
-                learned.push(format!("Self-correction detected: '{}'", indicator));
-            }
-        }
-
-        // Track turn context
-        what_worked.push(format!("Conversation turn #{}", turn));
-
-        let has_failures = !what_failed.is_empty();
-        let entry = self.subsystems.reflector.reflect_conversation(
-            &task_summary,
-            ReflectionTrigger::TaskComplete,
-            !has_failures,
-            what_worked,
-            what_failed,
-            learned,
-        );
-        // Store reflection — drop lock guard before re-locking for evolution check
-        let store_result = {
-            let mem = self.subsystems.episodic_memory.lock().await;
-            mem.store_reflection(&entry)
-        };
-        if let Err(e) = store_result {
-            warn!(error = %e, "Failed to store chat reflection");
-        } else {
-            info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
-
-            // Periodic evolution trigger: every 10 reflections, run ExperienceSummarizer
-            let mem = self.subsystems.episodic_memory.lock().await;
-            if let Ok(count) = mem.reflection_count() {
-                if count > 0 && count % 10 == 0 {
-                    info!(
-                        count = count,
-                        "Running ExperienceSummarizer (periodic trigger)"
-                    );
-                    if let Ok(recent) = mem.recall_reflections(20) {
-                        if let Some(evo_entry) =
-                            cognit::core::ExperienceSummarizer::summarize(&recent)
-                        {
-                            if let Err(e) = mem.store_evolution_log(&evo_entry) {
-                                warn!(error = %e, "Failed to store evolution log");
-                            } else {
-                                info!(id = %evo_entry.id, patterns = evo_entry.patterns_detected.len(), "Evolution log stored");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // EvolutionCoordinator: post-turn evolution (accumulates reflections, triggers every N turns)
-        {
-            let success = metrics.completed_normally && !text.starts_with("error:");
-            if let Err(e) = self
-                .subsystems
-                .runtime
-                .lock()
-                .await
-                .post_evolution(
-                    &task_summary,
-                    &text,
-                    success,
-                    metrics.tool_calls_made,
-                    metrics.tool_errors,
-                    metrics.elapsed_ms,
-                    metrics.iterations,
-                    &*self.subsystems.pipeline,
-                )
-                .await
-            {
-                warn!(error = %e, "post_evolution failed");
-            }
-        }
-
-        // RFC-014 commit: snapshot the Agora workspace at turn end, then
-        // persist it to recall memory (RFC-018 Phase 1 — best-effort, never
-        // propagated into the chat turn).
-        match self.subsystems.agora.snapshot(&session_id_for_agora).await {
-            Ok(snap) => {
-                tracing::debug!(target: "agora", "workspace snapshot: {snap}");
-                let rm = self.subsystems.recall_memory.lock().await;
-                if let Err(e) = rm.store(
-                    &session_id_for_agora,
-                    "agora_snapshot",
-                    &snap.to_string(),
-                    None,
-                ) {
-                    tracing::warn!(target: "agora", error = %e, "agora snapshot persist failed");
-                }
-            }
-            Err(e) => tracing::warn!("agora snapshot failed: {e}"),
-        }
+        self.commit_agora_snapshot(&session_id_for_agora).await;
 
         json!({
             "jsonrpc": "2.0",
