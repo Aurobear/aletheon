@@ -4,8 +4,8 @@ pub mod template;
 use anyhow::Result;
 use tracing::info;
 
-use cognit::harness::linear::CompactorTrait;
 use fabric::message::{ContentBlock, Message};
+use fabric::CompactorTrait;
 use fabric::LlmProvider;
 use tail::{find_tail_cut, TailProtectionConfig};
 use template::{SummaryTemplate, SUMMARY_PREFIX};
@@ -92,7 +92,7 @@ impl AdvancedCompressor {
 
         // Prune tool outputs before summarization
         let mut pruned_messages = old_messages.to_vec();
-        corpus::tools::tools::output::pruner::prune_tool_outputs(&mut pruned_messages, 0);
+        fabric::prune_tool_outputs(&mut pruned_messages, 0);
 
         let summary = self.generate_summary(&pruned_messages, llm).await?;
 
