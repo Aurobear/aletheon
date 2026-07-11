@@ -392,12 +392,12 @@ impl OwnedEnvelopeEventAdapter {
     fn new(envelope: &Envelope) -> Self {
         let source = match &envelope.source {
             Endpoint::Module(m) => match m {
-                ModuleId::Brain => "brain".to_string(),
-                ModuleId::SelfField => "self".to_string(),
-                ModuleId::Memory => "memory".to_string(),
-                ModuleId::Body => "body".to_string(),
-                ModuleId::Meta => "meta".to_string(),
-                ModuleId::Runtime => "runtime".to_string(),
+                ModuleId::Cognit => "cognit".to_string(),
+                ModuleId::Dasein => "dasein".to_string(),
+                ModuleId::Mnemosyne => "mnemosyne".to_string(),
+                ModuleId::Corpus => "corpus".to_string(),
+                ModuleId::Metacog => "metacog".to_string(),
+                ModuleId::Executive => "executive".to_string(),
                 ModuleId::Perception => "perception".to_string(),
             },
             Endpoint::Agent(_) => "agent".to_string(),

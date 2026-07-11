@@ -1,6 +1,6 @@
 //! SelfFieldModule — bus handler wrapping SelfField.
 //!
-//! Registers on `ModuleId::SelfField` and handles `SelfFieldRequest` envelopes.
+//! Registers on `ModuleId::Dasein` and handles `SelfFieldRequest` envelopes.
 
 use std::sync::Arc;
 
@@ -32,8 +32,8 @@ impl SelfFieldModule {
 
     /// Run the module loop: receive envelopes, dispatch, reply.
     pub async fn run(self, bus: Arc<CommunicationBus>) {
-        let mut rx = bus.register_module(ModuleId::SelfField, None);
-        debug!("SelfFieldModule: registered on ModuleId::SelfField");
+        let mut rx = bus.register_module(ModuleId::Dasein, None);
+        debug!("SelfFieldModule: registered on ModuleId::Dasein");
 
         while let Some(envelope) = rx.recv().await {
             self.handle_envelope(&bus, envelope).await;

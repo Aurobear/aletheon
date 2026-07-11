@@ -386,7 +386,7 @@ mod tests {
         assert!(transport.can_reach(&Target::Broadcast));
 
         // Cannot reach Module or Topic targets.
-        assert!(!transport.can_reach(&Target::Module(ModuleId::Brain)));
+        assert!(!transport.can_reach(&Target::Module(ModuleId::Cognit)));
         assert!(!transport.can_reach(&Target::Topic("test".to_string())));
     }
 
