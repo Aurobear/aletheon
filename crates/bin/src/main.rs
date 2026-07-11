@@ -266,9 +266,12 @@ use corpus::security::security::approval::{ApprovalGate, TerminalApprovalGate};
 use corpus::security::security::audit::AuditLogger;
 use corpus::security::security::runner::ToolRunnerWithGuard;
 use corpus::tools::tools::{ToolContext, ToolRegistry};
+use executive::kernel::service_ports::ServicePorts;
+use fabric::types::admission::RiskLevel;
 use fabric::{
-    CapabilityRequest, CapabilityResult, LlmProvider, Message, OperationId, ProcessId, RecallSet,
-    ToolDefinition, TurnRequest, TurnServices,
+    AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,
+    CapabilityScope, LlmProvider, Message, NoopTurnEventSink, OperationId, PrincipalId, ProcessId,
+    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
 };
 
 /// Non-interactive exec logic — mirrors the old aletheon-exec binary.
@@ -331,6 +334,10 @@ async fn run_exec(
     );
 
     let session_id = uuid::Uuid::new_v4().to_string();
+
+    // Create kernel service ports for process/operation tracking + admission gating.
+    let ports = Arc::new(ServicePorts::new());
+
     let services = Arc::new(ExecTurnServices {
         llm,
         tool_registry,
@@ -341,6 +348,7 @@ async fn run_exec(
         },
         turn_id,
         system_prompt,
+        admission: ports.admission.clone(),
     });
 
     let harness_config = cognit::harness::HarnessConfig {
@@ -351,6 +359,7 @@ async fn run_exec(
         services,
         executive::service::PreTurnPipeline,
         executive::service::PostTurnPipeline,
+        ports,
     )
     .with_harness_config(harness_config);
 
@@ -369,7 +378,7 @@ async fn run_exec(
                 },
                 deadline: None,
             },
-            &fabric::NoopTurnEventSink,
+            &NoopTurnEventSink,
         )
         .await?;
 
@@ -409,6 +418,7 @@ struct ExecTurnServices {
     tool_ctx: ToolContext,
     turn_id: String,
     system_prompt: String,
+    admission: Arc<dyn AdmissionController>,
 }
 
 #[async_trait::async_trait]
@@ -426,7 +436,45 @@ impl TurnServices for ExecTurnServices {
     }
 
     async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
+        // PR-2: route all tool invocations through admission controller.
+        let adm_req = AdmissionRequest {
+            operation_id: Default::default(),
+            process_id: req.process_id,
+            principal: PrincipalId("exec".into()),
+            capability: CapabilityId(req.name.clone()),
+            action: req.name.clone(),
+            input_summary: format!("{:?}", req.input).chars().take(200).collect(),
+            risk: RiskLevel::ReadOnly,
+            requested_scope: CapabilityScope::default(),
+            budget: None,
+            lease: None,
+            sandbox: SandboxRequirement::NotRequired,
+        };
+
+        let permit = match self.admission.admit(adm_req).await {
+            Ok(p) => p,
+            Err(e) => {
+                return CapabilityResult {
+                    call_id: req.call_id,
+                    output: format!("admission denied: {e}"),
+                    is_error: true,
+                };
+            }
+        };
+
+        if !permit.is_valid_at(fabric::MonoTime(0)) {
+            return CapabilityResult {
+                call_id: req.call_id,
+                output: "admission permit invalid".into(),
+                is_error: true,
+            };
+        }
+
         let Some(tool) = self.tool_registry.get(&req.name).cloned() else {
+            let _ = self
+                .admission
+                .settle(permit.id, UsageReport::default())
+                .await;
             return CapabilityResult {
                 call_id: req.call_id,
                 output: format!("Error: Unknown tool '{}'", req.name),
@@ -434,13 +482,21 @@ impl TurnServices for ExecTurnServices {
             };
         };
 
-        info!(tool = %req.name, "Executing tool");
+        info!(tool = %req.name, "Executing tool (admitted)");
         let result = self
             .runner
             .lock()
             .await
             .run(tool.as_ref(), req.input, &self.tool_ctx, &self.turn_id)
             .await;
+
+        let usage = UsageReport {
+            output_bytes: result.content.len() as u64,
+            exit_code: if result.is_error { Some(1) } else { Some(0) },
+            ..Default::default()
+        };
+        let _ = self.admission.settle(permit.id, usage).await;
+
         if result.is_error {
             tracing::warn!(tool = %req.name, error = %result.content, "Tool failed/denied");
         } else {

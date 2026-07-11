@@ -2,12 +2,21 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use executive::kernel::chronos::TestClock;
+use executive::kernel::service_ports::ServicePorts;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
     CapabilityRequest, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
     NoopTurnEventSink, OperationId, ProcessId, RecallRequest, RecallSet, StopReason,
     ToolDefinition, TurnRequest, TurnServices, Usage,
 };
+
+fn test_ports() -> Arc<ServicePorts> {
+    let clock: Arc<dyn fabric::Clock> = Arc::new(TestClock::default());
+    let admission: Arc<dyn fabric::AdmissionController> =
+        Arc::new(executive::kernel::admission::AllowAllAdmissionController::new(clock.clone()));
+    Arc::new(ServicePorts::for_testing(clock, admission))
+}
 
 fn request() -> TurnRequest {
     TurnRequest {
@@ -144,7 +153,7 @@ impl TurnServices for PipelineServices {
 async fn turn_pipeline_runs_pre_cognit_capability_in_order() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let services = Arc::new(PipelineServices::new(events.clone(), false));
-    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline);
+    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports());
 
     let result = turn_service
         .submit(request(), &NoopTurnEventSink)
@@ -162,7 +171,7 @@ async fn turn_pipeline_runs_pre_cognit_capability_in_order() {
 async fn pre_turn_error_blocks_model_call() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let services = Arc::new(PipelineServices::new(events.clone(), true));
-    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline);
+    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports());
 
     let err = turn_service
         .submit(request(), &NoopTurnEventSink)
