@@ -15,10 +15,10 @@ use fabric::{
 };
 use std::collections::HashMap;
 
+use cognit::harness::build_harness;
 use cognit::harness::config::HarnessConfig;
 use cognit::harness::event_sink::{ChannelEventSink, Event, EventSink};
 use cognit::harness::linear::DynLlmRef;
-use cognit::harness::linear::ReActLoop;
 use cognit::harness::linear::TurnMetrics;
 use fabric::LlmProvider;
 use mnemosyne::AdvancedCompressor;
@@ -696,7 +696,7 @@ impl RequestHandler {
                 config.target_summary_chars,
                 config.context_window_tokens,
             )) as Box<dyn cognit::harness::linear::CompactorTrait>;
-            let mut react_loop = ReActLoop::new(harness_config, compressor);
+            let mut react_loop = build_harness(config.harness_kind, harness_config, compressor);
             let request_messages = build_request_messages(
                 system_prompt_for_react,
                 &existing_messages,

@@ -7,7 +7,9 @@ Wants=network-online.target
 Type=simple
 User=aletheon
 Group=aletheon
-ExecStartPre=/usr/bin/mkdir -p /var/lib/aletheon /run/aletheon
+# Directories are created by systemd's StateDirectory/RuntimeDirectory below
+# (owned by User/Group, with correct modes). A manual mkdir here would run as
+# the unprivileged service user and fail on /var/lib and /run.
 ExecStart=/usr/bin/aletheon daemon --socket /run/aletheon/aletheon.sock
 ExecStop=/bin/kill -TERM $MAINPID
 Restart=on-failure
