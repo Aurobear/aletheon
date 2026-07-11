@@ -38,7 +38,7 @@ use super::param_registry::ParamRegistry;
 pub use super::session_state::SessionStateRef;
 use super::subsystem_query::SubsystemRegistry;
 
-use crate::core::config::RuntimeConfig;
+use crate::core::config::ExecutiveConfig;
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::CoreMemory;
@@ -68,7 +68,7 @@ pub struct SessionGateway {
     pub(super) state: Arc<Mutex<SessionStateRef>>,
     pub(super) session_manager: Arc<Mutex<SessionManager>>,
     pub(super) started_at: Instant,
-    pub(super) runtime_config: RuntimeConfig,
+    pub(super) runtime_config: ExecutiveConfig,
 
     /// Memory and SelfField refs (Phase C).
     pub(super) core_memory: Arc<Mutex<CoreMemory>>,
@@ -88,7 +88,7 @@ impl SessionGateway {
         state: Arc<Mutex<SessionStateRef>>,
         session_manager: Arc<Mutex<SessionManager>>,
         started_at: Instant,
-        runtime_config: RuntimeConfig,
+        runtime_config: ExecutiveConfig,
         core_memory: Arc<Mutex<CoreMemory>>,
         recall_memory: Arc<Mutex<RecallMemory>>,
         self_field: Arc<Mutex<SelfField>>,
@@ -254,7 +254,7 @@ mod tests {
             state,
             Arc::new(Mutex::new(sm)),
             Instant::now(),
-            RuntimeConfig::default(),
+            ExecutiveConfig::default(),
             core_memory,
             recall_memory,
             self_field,

@@ -1,4 +1,4 @@
-use executive::{AletheonRuntime, RuntimeConfig};
+use executive::{AletheonExecutive, ExecutiveConfig};
 use fabric::body::{Action, ActionResult};
 use fabric::cognit::{CostEstimate, Plan, PlanStep};
 use fabric::context::Context;
@@ -9,13 +9,13 @@ fn test_ctx() -> Context {
     Context::new("test-session", PathBuf::from("/tmp"))
 }
 
-fn test_config() -> RuntimeConfig {
-    RuntimeConfig {
+fn test_config() -> ExecutiveConfig {
+    ExecutiveConfig {
         max_iterations: 10,
         session_id: "test".to_string(),
         learning_enabled: false,
         compaction_enabled: false,
-        ..RuntimeConfig::default()
+        ..ExecutiveConfig::default()
     }
 }
 
@@ -63,7 +63,7 @@ fn make_plan(steps: usize) -> Plan {
 /// Test the full cognitive path: Allow verdict -> think -> plan -> execute steps.
 #[tokio::test]
 async fn test_process_cognitive_path() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review =
@@ -86,7 +86,7 @@ async fn test_process_cognitive_path() {
 /// The think_fn should NOT be called.
 #[tokio::test]
 async fn test_process_denied_reflex() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
@@ -113,11 +113,11 @@ async fn test_process_denied_reflex() {
 /// Test max_iterations: plan has more steps than allowed, execution should stop early.
 #[tokio::test]
 async fn test_max_iterations() {
-    let config = RuntimeConfig {
+    let config = ExecutiveConfig {
         max_iterations: 2,
         ..test_config()
     };
-    let mut runtime = AletheonRuntime::new(config);
+    let mut runtime = AletheonExecutive::new(config);
     let ctx = test_ctx();
 
     let review =
@@ -138,7 +138,7 @@ async fn test_max_iterations() {
 /// Test step failure: when a step fails, execution should stop (even if more steps remain).
 #[tokio::test]
 async fn test_process_step_failure_stops() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review =
@@ -177,7 +177,7 @@ async fn test_process_step_failure_stops() {
 /// Test multiple steps produce concatenated output.
 #[tokio::test]
 async fn test_process_multiple_steps_concatenated() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review =
@@ -203,7 +203,7 @@ async fn test_process_multiple_steps_concatenated() {
 /// Test Volitional path: SandboxFirst verdict routes through think -> execute (same as Cognitive).
 #[tokio::test]
 async fn test_process_volitional_path() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
@@ -226,7 +226,7 @@ async fn test_process_volitional_path() {
 /// Test review error propagates as Err.
 #[tokio::test]
 async fn test_process_review_error() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Verdict> {
@@ -251,7 +251,7 @@ async fn test_process_review_error() {
 /// Test think error propagates as Err.
 #[tokio::test]
 async fn test_process_think_error() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review =
@@ -273,7 +273,7 @@ async fn test_process_think_error() {
 /// Test execute error: the step loop should break on Err from execute_fn.
 #[tokio::test]
 async fn test_process_execute_error_breaks_loop() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review =
@@ -302,7 +302,7 @@ async fn test_process_execute_error_breaks_loop() {
 /// Test rollback is attempted when a step fails and has a rollback_action.
 #[tokio::test]
 async fn test_process_rollback_on_failure() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review =
@@ -347,7 +347,7 @@ async fn test_process_rollback_on_failure() {
 /// Test process with empty plan (0 steps) returns empty string.
 #[tokio::test]
 async fn test_process_empty_plan() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
 
     let review =

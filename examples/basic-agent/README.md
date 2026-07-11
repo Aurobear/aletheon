@@ -6,7 +6,7 @@ crate. This is the recommended starting point for new Aletheon integrations.
 ## What It Does
 
 1. Loads configuration from `config.toml`
-2. Creates an `AletheonRuntime` instance
+2. Creates an `AletheonExecutive` instance
 3. Processes a single user input through the ReAct loop
 4. Prints the agent's response
 
@@ -35,7 +35,7 @@ full reference.
 
 The `main.rs` file demonstrates:
 
-- Constructing a `RuntimeConfig`
-- Creating an `AletheonRuntime`
+- Constructing a `ExecutiveConfig`
+- Creating an `AletheonExecutive`
 - Implementing the three callback traits (`review_fn`, `think_fn`, `execute_fn`)
 - Calling `runtime.process()` with a user prompt

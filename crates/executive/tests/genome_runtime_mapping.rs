@@ -2,8 +2,8 @@
 
 //! Integration tests for Genome -> Runtime behavior mapping.
 
-use executive::core::config::{GenomeConfig, RuntimeConfig};
-use executive::core::orchestrator::AletheonRuntime;
+use executive::core::config::{ExecutiveConfig, GenomeConfig};
+use executive::core::orchestrator::AletheonExecutive;
 
 #[test]
 fn test_genome_config_default() {
@@ -15,7 +15,7 @@ fn test_genome_config_default() {
 
 #[test]
 fn test_runtime_holds_genome_config() {
-    let mut runtime = AletheonRuntime::new(RuntimeConfig::default());
+    let mut runtime = AletheonExecutive::new(ExecutiveConfig::default());
     let mut gc = GenomeConfig::default();
     gc.care_weights.insert("safety".to_string(), 1.0);
     runtime.update_genome_config(gc);
@@ -27,7 +27,7 @@ fn test_runtime_holds_genome_config() {
 
 #[test]
 fn test_genome_config_update_changes_strategy() {
-    let mut runtime = AletheonRuntime::new(RuntimeConfig::default());
+    let mut runtime = AletheonExecutive::new(ExecutiveConfig::default());
     assert_eq!(
         runtime.genome_config().reasoning_strategy,
         "plan-then-execute"

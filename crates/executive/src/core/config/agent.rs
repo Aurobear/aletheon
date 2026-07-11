@@ -1,15 +1,15 @@
-//! Agent-level configuration: RuntimeConfig, AgentConfig, HooksConfig, PerceptionConfig,
+//! Agent-level configuration: ExecutiveConfig, AgentConfig, HooksConfig, PerceptionConfig,
 //! AgentLoopConfig, CircuitBreakerConfig.
 
 use cognit::harness::HarnessKind;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// RuntimeConfig — retained for orchestrator / react_loop backward compat
+// ExecutiveConfig — retained for orchestrator / react_loop backward compat
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeConfig {
+pub struct ExecutiveConfig {
     pub max_iterations: usize,
     pub session_id: String,
     pub learning_enabled: bool,
@@ -28,7 +28,7 @@ pub struct RuntimeConfig {
     pub harness_kind: HarnessKind,
 }
 
-impl Default for RuntimeConfig {
+impl Default for ExecutiveConfig {
     fn default() -> Self {
         Self {
             max_iterations: 50,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
-use crate::core::config::{GenomeConfig, RuntimeConfig};
+use crate::core::config::{ExecutiveConfig, GenomeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 use crate::core::mode_router::ModeRouter;
 use crate::core::sub_agent::SubAgentSpawner;
@@ -29,8 +29,8 @@ use tracing::{debug, warn};
 /// - Memory: state persistence
 /// - EventBus: event routing
 /// - Runtime: orchestration (this struct)
-pub struct AletheonRuntime {
-    config: RuntimeConfig,
+pub struct AletheonExecutive {
+    config: ExecutiveConfig,
     react_loop: ReActLoop,
     evolution: Option<EvolutionCoordinator>,
     genome_config: GenomeConfig,
@@ -40,8 +40,8 @@ pub struct AletheonRuntime {
     sub_agent_spawner: SubAgentSpawner,
 }
 
-impl AletheonRuntime {
-    pub fn new(config: RuntimeConfig) -> Self {
+impl AletheonExecutive {
+    pub fn new(config: ExecutiveConfig) -> Self {
         let harness_config = HarnessConfig {
             max_iterations: config.max_iterations,
             compaction_enabled: config.compaction_enabled,
@@ -373,7 +373,7 @@ impl AletheonRuntime {
     }
 
     /// Get config
-    pub fn config(&self) -> &RuntimeConfig {
+    pub fn config(&self) -> &ExecutiveConfig {
         &self.config
     }
 

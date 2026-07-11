@@ -6,8 +6,8 @@ mod infra;
 mod provider;
 
 pub use agent::{
-    AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, HooksConfig,
-    PerceptionConfig, RuntimeConfig,
+    AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, ExecutiveConfig,
+    HooksConfig, PerceptionConfig,
 };
 pub use genome::GenomeConfig;
 pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig};
@@ -259,7 +259,7 @@ sonnet = "anthropic/claude-sonnet-4-20250514"
 
     #[test]
     fn test_runtime_config_default() {
-        let config = RuntimeConfig::default();
+        let config = ExecutiveConfig::default();
         assert_eq!(config.max_iterations, 50);
         assert!(config.compaction_enabled);
     }
@@ -523,7 +523,7 @@ preference = "require"
 
     #[test]
     fn config_has_compaction_defaults() {
-        let config = RuntimeConfig::default();
+        let config = ExecutiveConfig::default();
         assert_eq!(config.tail_token_budget, 16_000);
         assert_eq!(config.target_summary_chars, 2_000);
         assert_eq!(config.context_window_tokens, 128_000);

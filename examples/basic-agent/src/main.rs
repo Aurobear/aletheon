@@ -6,7 +6,7 @@
 //! Run with:  cargo run -p basic-agent-example
 
 use anyhow::Result;
-use executive::{AletheonRuntime, RuntimeConfig};
+use executive::{AletheonExecutive, ExecutiveConfig};
 use fabric::body::{Action, ActionResult};
 use fabric::cognit::{CostEstimate, Plan, PlanStep};
 use fabric::context::Context;
@@ -64,8 +64,8 @@ fn execute(action: &Action, _ctx: &Context) -> Result<ActionResult> {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let config = RuntimeConfig::default();
-    let mut runtime = AletheonRuntime::new(config);
+    let config = ExecutiveConfig::default();
+    let mut runtime = AletheonExecutive::new(config);
     let ctx = Context::new("basic-agent-demo", PathBuf::from("."));
 
     let user_input = "Hello, Aletheon! What can you do?";

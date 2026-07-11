@@ -24,7 +24,7 @@ use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
 use mnemosyne::episodic::EpisodicMemory;
 
 use crate::core::config::HooksConfig;
-use crate::core::orchestrator::AletheonRuntime;
+use crate::core::orchestrator::AletheonExecutive;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::CoreMemory;
 use crate::RecallMemory;
@@ -43,7 +43,7 @@ use cognit::core::reflector::Reflector;
 /// In Group B, each field transitions to `Arc<dyn TraitOps>`.
 pub struct CoreSystems {
     // --- Orchestrator ---
-    pub runtime: Arc<Mutex<AletheonRuntime>>,
+    pub runtime: Arc<Mutex<AletheonExecutive>>,
 
     // --- Dasein (SelfField) ---
     pub self_field: Arc<Mutex<SelfField>>,
