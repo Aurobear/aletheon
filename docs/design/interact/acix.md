@@ -1,10 +1,10 @@
-> New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> New document — code paths updated to match the current crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive, agora, bin)
 
 # ACIX (Agent-Computer Interface)
 
 > High-level perception, action grounding, experience memory, and task management for computer-use agents.
 
-**Crate:** `corpus`
+**Crate:** `interact`
 **Module:** `crates/interact/src/acix/`
 **Last updated:** 2026-06-14
 

@@ -1,13 +1,12 @@
 # Aletheon CLI
 
 > 用户交互入口，支持单消息和 TUI 两种模式。通过 Unix socket 与 aletheon daemon 通信。
-> CLI 逻辑已合并到 `interact/src/tui/`，TUI 在 `interact/src/tui/`。
-> `interact` crate 保留为薄包装（向后兼容），实际逻辑在 corpus crate 中。
+> CLI 与 TUI 逻辑都在 `interact` crate（`interact/src/tui/`、`interact/src/acix/`）。
 
 **模块编号:** CLI
-**关联模块:** [daemon](../executive/daemon.md), [body/ui](../corpus/ui.md)
-**Crate:** `corpus` (feature `cli`), `interact` (thin re-export)
-**最后更新:** 2026-06-14
+**关联模块:** [daemon](../executive/daemon.md), [ui](ui.md)
+**Crate:** `interact`
+**最后更新:** 2026-07-11
 
 ---
 
