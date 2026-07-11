@@ -6,6 +6,8 @@
 //! Currently only `linear` (ReActLoop) is implemented. Future harnesses
 //! (ResearchHarness, CodingHarness, RobotHarness, OSHarness) will live here.
 
+use serde::{Deserialize, Serialize};
+
 pub mod config;
 pub mod event_sink;
 pub mod interrupt;
@@ -25,7 +27,11 @@ pub use linear::{CompactorTrait, ReActLoop};
 /// adding a new harness kind means adding a variant here and a construction
 /// arm in `build_harness`, without touching `executive`'s call sites beyond
 /// the `HarnessKind` selection itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// Selectable from TOML via `harness_kind = "linear"` (see
+/// `executive::core::config::RuntimeConfig::harness_kind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum HarnessKind {
     #[default]
     Linear,

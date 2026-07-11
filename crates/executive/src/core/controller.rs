@@ -10,6 +10,7 @@
 //! fields.
 
 use super::config::RuntimeConfig;
+use cognit::harness::build_harness;
 use cognit::harness::config::HarnessConfig;
 use cognit::harness::event_sink::{Event, EventSink};
 use cognit::harness::linear::{CompactorTrait, ReActLoop, PLAN_MODE_MARKER};
@@ -90,7 +91,7 @@ impl Controller {
             config.context_window_tokens,
         )) as Box<dyn CompactorTrait>;
 
-        let mut react_loop = ReActLoop::new(harness_config, compressor);
+        let mut react_loop = build_harness(config.harness_kind, harness_config, compressor);
         react_loop.set_system_prompt(opts.system_prompt.clone());
 
         Self {

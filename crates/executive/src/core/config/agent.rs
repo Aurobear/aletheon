@@ -1,6 +1,7 @@
 //! Agent-level configuration: RuntimeConfig, AgentConfig, HooksConfig, PerceptionConfig,
 //! AgentLoopConfig, CircuitBreakerConfig.
 
+use cognit::harness::HarnessKind;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -20,6 +21,11 @@ pub struct RuntimeConfig {
     pub agent_loop: AgentLoopConfig,
     #[serde(default)]
     pub circuit_breaker: CircuitBreakerConfig,
+    /// Which cognitive harness implementation to construct (see
+    /// `cognit::harness::build_harness`). Defaults to `Linear` (ReActLoop),
+    /// preserving current behavior. TOML key: `harness_kind = "linear"`.
+    #[serde(default)]
+    pub harness_kind: HarnessKind,
 }
 
 impl Default for RuntimeConfig {
@@ -34,6 +40,7 @@ impl Default for RuntimeConfig {
             context_window_tokens: 128_000,
             agent_loop: AgentLoopConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
+            harness_kind: HarnessKind::default(),
         }
     }
 }
