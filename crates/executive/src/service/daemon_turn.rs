@@ -17,6 +17,7 @@
 
 use crate::core::core_systems::CoreSystems;
 use crate::core::session_gateway::SessionGateway;
+use crate::kernel::operation::OperationScope;
 use crate::kernel::operation::OperationTable;
 use crate::kernel::process::ProcessTable;
 use crate::kernel::supervision::{RestartPolicy, SupervisorTree};
@@ -30,18 +31,18 @@ use fabric::include::agora::AgoraOperation;
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, AdmissionRequest, AgentId, CapabilityId, CapabilityScope, Clock,
-    ContentBlock, Context as AbiContext, Intent, IntentSource, LlmProvider, Message, NamespaceId,
-    OperationKind, OperationManager, OperationRequest, PrincipalId, ProcessId, ProcessManager,
-    ProcessSignal, ReflectionTrigger, Role, SandboxDecision, SandboxRequirement, SelfFieldOps,
-    SpawnSpec, TurnRequest, UsageReport, Verdict,
+    AdmissionController, AdmissionRequest, AgentId, CancelReason, CapabilityId, CapabilityScope,
+    Clock, ContentBlock, Context as AbiContext, Intent, IntentSource, LlmProvider, Message,
+    NamespaceId, OperationId, OperationKind, OperationManager, OperationRequest, PrincipalId,
+    ProcessId, ProcessManager, ProcessSignal, ReflectionTrigger, Role, SandboxDecision,
+    SandboxRequirement, SelfFieldOps, SpawnSpec, TurnRequest, UsageReport, Verdict,
 };
 use mnemosyne::FactStore;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -154,6 +155,12 @@ pub struct DaemonTurnOrchestrator {
     active_connections: Arc<AtomicUsize>,
     started_at: Instant,
     daemon_cancel_token: Option<CancellationToken>,
+    /// Per-turn operation scope for structured task cancellation (PR-3).
+    ///
+    /// Wraps the react task's CancellationToken so `cancel_turn()` can signal
+    /// cooperative cancellation. `execute_turn()` drains the scope at turn end
+    /// to guarantee no orphan tasks.
+    current_scope: Mutex<Option<OperationScope>>,
 }
 
 impl DaemonTurnOrchestrator {
@@ -195,6 +202,7 @@ impl DaemonTurnOrchestrator {
             active_connections,
             started_at,
             daemon_cancel_token,
+            current_scope: Mutex::new(None),
         }
     }
 
@@ -609,6 +617,49 @@ impl DaemonTurnOrchestrator {
     }
 
     // ==================================================================
+    // Public kernel API — wait / cancel / exit (PR-3)
+    // ==================================================================
+
+    /// Wait for an operation to reach a terminal state.
+    ///
+    /// Delegates to `OperationTable::wait()` which blocks until the operation
+    /// transitions to Succeeded, Failed, or Cancelled.
+    pub async fn wait_turn(
+        &self,
+        operation_id: OperationId,
+    ) -> anyhow::Result<fabric::OperationResult> {
+        self.operation_table.wait(operation_id).await
+    }
+
+    /// Cancel an in-flight turn operation.
+    ///
+    /// 1. Cancels the per-turn `OperationScope`'s `CancellationToken` so the
+    ///    react task can cooperatively exit before its next tool call.
+    /// 2. Propagates cancellation through the operation tree in the kernel
+    ///    `OperationTable` (parent → children).
+    pub async fn cancel_turn(&self, operation_id: OperationId) -> anyhow::Result<()> {
+        // Cancel the OperationScope token (cooperative cancellation).
+        if let Some(ref scope) = *self.current_scope.lock().await {
+            scope.cancel.cancel();
+        }
+        // Propagate through kernel operation tree.
+        self.operation_table
+            .cancel(operation_id, CancelReason::User)
+            .await
+    }
+
+    /// Signal a process to exit (Terminate).
+    ///
+    /// Delegates to the kernel `ProcessTable`. The process transitions through
+    /// Stopping → Exited/Failed, and any in-flight operations are cancelled via
+    /// the operation tree's parent-cancel propagation.
+    pub async fn exit_process(&self, process_id: ProcessId) -> anyhow::Result<()> {
+        self.process_table
+            .signal(process_id, ProcessSignal::Terminate)
+            .await
+    }
+
+    // ==================================================================
     // execute_turn — the main orchestration entry point
     // ==================================================================
 
@@ -660,8 +711,22 @@ impl DaemonTurnOrchestrator {
             deadline: None,
         };
 
-        // Per-turn cancel token
+        // Per-turn cancel token (existing path via subsystems.cancel_token)
         let _turn_token = self.begin_turn_token().await;
+
+        // PR-3: OperationScope for structured cancellation of the react task.
+        // Stored so cancel_turn() can signal cooperative cancellation.
+        {
+            let mut guard = self.current_scope.lock().await;
+            *guard = Some(OperationScope::new(operation.id));
+        }
+        let scope_token = {
+            let guard = self.current_scope.lock().await;
+            guard
+                .as_ref()
+                .map(|s| s.token())
+                .unwrap_or_else(CancellationToken::new)
+        };
 
         // -- SelfField review --
         let intent = Intent {
@@ -900,6 +965,8 @@ impl DaemonTurnOrchestrator {
         let adm_op_id = operation.id;
         let adm_pid = main_pid;
         let adm_sandbox = sandbox_requirement;
+        // PR-3: cooperative cancellation token from the per-turn OperationScope.
+        let cancel_tok = scope_token.clone();
 
         let execute_tool = move |tool_id: &str, name: &str, input: &serde_json::Value| {
             let exec = tool_executor.clone();
@@ -908,7 +975,12 @@ impl DaemonTurnOrchestrator {
             let op_id = adm_op_id;
             let pid = adm_pid;
             let sandbox_req = adm_sandbox;
+            let cancel_tok = cancel_tok.clone();
             async move {
+                // PR-3: cooperative cancellation before admission gate.
+                if cancel_tok.is_cancelled() {
+                    return (format!("turn cancelled before tool '{n}'"), true);
+                }
                 // Build admission request for this tool invocation.
                 let adm_req = AdmissionRequest {
                     operation_id: op_id,
@@ -1021,6 +1093,7 @@ impl DaemonTurnOrchestrator {
                 event_sink,
                 request_messages,
                 self_field: self_field_arc_for_react,
+                cancel_token: scope_token,
             },
         ));
 
@@ -1292,6 +1365,14 @@ impl DaemonTurnOrchestrator {
 
         // -- Kernel: mark turn operation completed --
         let _ = self.operation_table.succeed(operation.id).await;
+
+        // -- PR-3: drain the per-turn OperationScope (guarantees no orphan tasks) --
+        {
+            let mut guard = self.current_scope.lock().await;
+            if let Some(mut scope) = guard.take() {
+                scope.cancel_and_drain(Duration::from_secs(5)).await;
+            }
+        }
 
         json!({"jsonrpc": "2.0", "id": id, "result": {"response": text, "turn": turn}})
     }
