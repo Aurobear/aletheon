@@ -15,6 +15,7 @@ mod format;
 mod init;
 mod rpc;
 mod session_routing;
+mod tool_executor;
 mod turn_handler;
 
 use std::sync::atomic::AtomicUsize;

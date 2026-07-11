@@ -1,6 +1,7 @@
 // Handler module migrated to CommunicationBus — event_bus field is now Arc<CommunicationBus>.
 
 use super::format::{event_to_client_event, event_to_json};
+use super::tool_executor::TurnToolExecutor;
 use super::RequestHandler;
 
 use serde_json::json;
@@ -11,7 +12,7 @@ use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::AgoraOps;
 use fabric::{
     ContentBlock, Context as AbiContext, Intent, IntentSource, Message, ReflectionTrigger, Role,
-    SelfFieldOps, Verdict,
+    Verdict,
 };
 use std::collections::HashMap;
 
@@ -599,16 +600,8 @@ impl RequestHandler {
             tools.definitions()
         };
 
-        // Prepare execute_tool closure that runs tools through the guarded runner.
-        let runner = self.subsystems.tool_runner.clone();
-        let tools_arc = self.subsystems.tools.clone();
-        let hook_registry_arc = self.subsystems.hook_registry.clone();
-        let storm_breaker_arc = self.subsystems.storm_breaker.clone();
-        let memory_queue_arc = self.subsystems.memory_queue.clone();
-        let session_approvals_arc = self.subsystems.session_approvals.clone();
-        let notify_tx_arc = self.notify_tx.clone();
-        let debug_perf_arc = self.subsystems.debug_perf.clone();
-        let self_field_arc = self.subsystems.self_field.clone();
+        // Per-tool execution pipeline (RFC-018 D5 seam 3 / issue #4): the former
+        // inline execute_tool closure now lives in TurnToolExecutor.
         let working_dir = std::env::current_dir().unwrap_or_default();
         let (session_id, sm_arc) = self.get_or_create_session(None).await;
         let turn_count = sm_arc.lock().await.turn_count();
@@ -624,159 +617,26 @@ impl RequestHandler {
             tracing::warn!("agora publish (recall injection) failed: {e}");
         }
 
-        // Clone self_field_arc before the execute_tool closure moves it,
-        // so the tokio::spawn block below can also use it for per-turn Dasein injections.
-        let self_field_arc_for_react = self_field_arc.clone();
+        // Clone self_field for the tokio::spawn block's per-turn Dasein injections.
+        let self_field_arc_for_react = self.subsystems.self_field.clone();
         // Clone session_id before the execute_tool closure moves it, so the
         // Agora commit hook (turn end) can still reference it.
         let session_id_for_agora = session_id.clone();
 
+        // Per-tool pipeline lives in TurnToolExecutor; adapt it to the harness's
+        // `Fn(&str, &str, &Value) -> Future<(String, bool)>` executor param via a
+        // thin Arc-cloning wrapper (Fn, so it must be re-callable; Send + 'static
+        // for the tokio::spawn below).
+        let tool_executor = Arc::new(TurnToolExecutor::new(
+            &self.subsystems,
+            session_id.clone(),
+            turn_count,
+            working_dir,
+        ));
         let execute_tool = move |id: &str, name: &str, input: &serde_json::Value| {
-            let runner = runner.clone();
-            let tools_arc = tools_arc.clone();
-            let hook_registry_arc = hook_registry_arc.clone();
-            let storm_breaker_arc = storm_breaker_arc.clone();
-            let memory_queue_arc = memory_queue_arc.clone();
-            let session_approvals_arc = session_approvals_arc.clone();
-            let _notify_tx_arc = notify_tx_arc.clone();
-            let debug_perf = debug_perf_arc.clone();
-            let self_field_arc = self_field_arc.clone();
-            let _call_id = id.to_string();
-            let name = name.to_string();
-            let input = input.clone();
-            let working_dir = working_dir.clone();
-            let session_id = session_id.clone();
-            let turn_count = turn_count;
-            async move {
-                // --- PreTool hook ---
-                {
-                    let hr = hook_registry_arc.lock().await;
-                    let ctx = HookContext {
-                        point: HookPoint::PreTool,
-                        session_id: session_id.clone(),
-                        turn_count,
-                        tool_name: Some(name.clone()),
-                        tool_input: Some(input.clone()),
-                        tool_result: None,
-                        message: None,
-                        metadata: HashMap::new(),
-                    };
-                    if let HookResult::Block { reason } = hr.execute(&ctx).await {
-                        return (format!("Blocked by hook: {}", reason), true);
-                    }
-                }
-
-                // --- OnMemoryRecall hook (when memory_search tool is invoked) ---
-                if name == "memory_search" {
-                    let hr = hook_registry_arc.lock().await;
-                    let ctx = HookContext {
-                        point: HookPoint::OnMemoryRecall,
-                        session_id: session_id.clone(),
-                        turn_count,
-                        tool_name: Some(name.clone()),
-                        tool_input: Some(input.clone()),
-                        tool_result: None,
-                        message: None,
-                        metadata: HashMap::new(),
-                    };
-                    hr.execute(&ctx).await;
-                }
-
-                // --- Check session approvals (auto-approve if "always" was used) ---
-                {
-                    let approvals = session_approvals_arc.lock().await;
-                    if let Some(&approved) = approvals.get(&name) {
-                        if approved {
-                            info!(tool = %name, "Auto-approving tool from session approval cache");
-                        }
-                    }
-                }
-
-                // SelfField review per-tool
-                {
-                    let tool_intent = Intent {
-                        action: name.clone(),
-                        parameters: input.clone(),
-                        source: IntentSource::Body,
-                        description: format!("Tool call: {}", name),
-                    };
-                    let sf_ctx = AbiContext::new(&session_id, working_dir.clone());
-                    let sf = self_field_arc.lock().await;
-                    match sf.review(&tool_intent, &sf_ctx).await {
-                        Ok(Verdict::Deny { reason }) => {
-                            let _ = sf
-                                .narrate("tool_blocked", &format!("{}: {}", name, reason))
-                                .await;
-                            return (format!("Tool blocked by SelfField: {}", reason), true);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                tool = %name,
-                                "SelfField review error, proceeding"
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-
-                let tool = {
-                    let reg = tools_arc.lock().await;
-                    reg.get(&name).cloned()
-                };
-                let exec_ctx = fabric::tool::ToolContext {
-                    working_dir,
-                    session_id: session_id.clone(),
-                };
-                let (content, is_error) = match tool {
-                    Some(t) => {
-                        let mut r = runner.lock().await;
-                        let res = r
-                            .run(t.as_ref(), input.clone(), &exec_ctx, "chat-turn")
-                            .await;
-                        (res.content, res.is_error)
-                    }
-                    None => (format!("Unknown tool: {}", name), true),
-                };
-
-                // --- PerfCounter: record tool call and errors ---
-                debug_perf.record_tool_call(&name).await;
-                if is_error {
-                    debug_perf.record_error();
-                }
-
-                // --- StormBreaker: track consecutive failures ---
-                {
-                    let mut sb = storm_breaker_arc.lock().await;
-                    if let Some(directive) = sb.record(&name, is_error, &content) {
-                        let mut mq = memory_queue_arc.lock().await;
-                        mq.push(format!("\n[Storm Breaker] {}\n", directive));
-                    }
-                }
-
-                // --- PostTool hook ---
-                {
-                    let hr = hook_registry_arc.lock().await;
-                    let ctx = HookContext {
-                        point: HookPoint::PostTool,
-                        session_id,
-                        turn_count,
-                        tool_name: Some(name.clone()),
-                        tool_input: None,
-                        tool_result: Some(fabric::hook::HookToolResult {
-                            content: content.clone(),
-                            is_error,
-                            execution_time_ms: 0,
-                        }),
-                        message: None,
-                        metadata: HashMap::new(),
-                    };
-                    hr.execute(&ctx).await;
-                }
-
-                // tool_call_result is emitted via EventSink in ReActLoop (single source of truth).
-                (content, is_error)
-            }
+            let exec = tool_executor.clone();
+            let (id, name, input) = (id.to_string(), name.to_string(), input.clone());
+            async move { exec.execute(&id, &name, &input).await }
         };
 
         // Drive the ReAct loop.  SelfField review already ran above,
