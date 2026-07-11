@@ -126,4 +126,23 @@ mod tests {
         let after = reg.snapshot("s1").await.unwrap();
         assert_eq!(after["trace_len"], json!(1));
     }
+
+    #[tokio::test]
+    async fn record_evidence_survives_snapshot_as_typed() {
+        use fabric::Evidence;
+        let reg = AgoraRegistry::new();
+        let ev = Evidence::from_tool_result("c1", "bash", "exit 0", false);
+        reg.record_evidence("s1", &ev).await.unwrap();
+
+        let snap = reg.snapshot("s1").await.unwrap();
+        assert_eq!(snap["trace_len"], json!(1));
+        // Consumer half: the persisted snapshot carries the typed Evidence,
+        // recoverable as the same primitive the producer wrote.
+        let entry = &snap["trace"][0];
+        assert_eq!(entry["kind"], json!("evidence"));
+        let back: Evidence = serde_json::from_value(entry["content"].clone()).unwrap();
+        assert_eq!(back.id, "c1");
+        assert_eq!(back.source, "bash");
+        assert_eq!(back.weight, 1.0);
+    }
 }

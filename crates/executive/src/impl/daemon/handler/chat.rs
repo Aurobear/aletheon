@@ -755,23 +755,23 @@ impl RequestHandler {
                                 tc.2 = args.clone();
                             }
                         }
-                        Event::ToolResult { name: _, call_id, result } => {
+                        Event::ToolResult { name, call_id, result } => {
                             tool_results_for_session.push((call_id.clone(), result.content.clone(), result.is_error));
+                            // A tool result is Evidence (RFC-017): typed at the
+                            // producer, lowered onto the Agora trace by record_evidence.
+                            let evidence = fabric::Evidence::from_tool_result(
+                                call_id.clone(),
+                                name.clone(),
+                                result.content.clone(),
+                                result.is_error,
+                            );
                             if let Err(e) = self
                                 .subsystems
                                 .agora
-                                .trace(
-                                    &session_id_for_agora,
-                                    "tool_result",
-                                    serde_json::json!({
-                                        "call_id": call_id,
-                                        "content": result.content,
-                                        "is_error": result.is_error,
-                                    }),
-                                )
+                                .record_evidence(&session_id_for_agora, &evidence)
                                 .await
                             {
-                                tracing::warn!(target: "agora", error = %e, "agora trace append failed");
+                                tracing::warn!(target: "agora", error = %e, "agora evidence trace append failed");
                             }
                         }
                         Event::Usage {
