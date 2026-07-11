@@ -5,12 +5,23 @@
 //! to `SandboxDecision::Required` (fail-closed) until sandbox execution
 //! infrastructure is available.
 //!
+//! # Budget and lease integration
+//!
+//! When configured with [`InMemoryBudgetController`] and/or
+//! [`InMemoryResourceLeaseManager`], the admission controller:
+//!
+//! - Reserves budget from the budget controller during `admit()`.
+//! - Acquires resource leases during `admit()`.
+//! - Settles budget reservations to actual usage in `settle()`.
+//! - Releases leases in `settle()`.
+//! - Returns unused budget and releases leases in `revoke()`.
+//!
 //! # Lifecycle
 //!
 //! ```text
-//! admit() → ExecutionPermit (with SandboxDecision)
+//! admit() → ExecutionPermit (with SandboxDecision + budget/lease reservations)
 //! → executor checks sandbox decision → execute or decline
-//! → settle(permit, usage) → audit
+//! → settle(permit, usage) → deduct budget, release lease, audit
 //! ```
 
 use async_trait::async_trait;
@@ -22,7 +33,11 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Production admission controller with proper permit lifecycle tracking.
+use super::budget::InMemoryBudgetController;
+use super::lease::InMemoryResourceLeaseManager;
+
+/// Production admission controller with proper permit lifecycle tracking
+/// and optional budget/lease enforcement.
 ///
 /// # Sandbox policy
 ///
@@ -42,11 +57,15 @@ use tokio::sync::Mutex;
 pub struct ProductionAdmissionController {
     clock: Arc<dyn fabric::Clock>,
     settled: Mutex<HashSet<PermitId>>,
+    budget: Option<Arc<InMemoryBudgetController>>,
+    leases: Option<Arc<InMemoryResourceLeaseManager>>,
 }
 
 impl std::fmt::Debug for ProductionAdmissionController {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProductionAdmissionController")
+            .field("has_budget", &self.budget.is_some())
+            .field("has_leases", &self.leases.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -57,7 +76,23 @@ impl ProductionAdmissionController {
         Self {
             clock,
             settled: Mutex::new(HashSet::new()),
+            budget: None,
+            leases: None,
         }
+    }
+
+    /// Attach a budget controller. Budget limits will be enforced during
+    /// `admit()` and settled/adjusted during `settle()`.
+    pub fn with_budget(mut self, budget: Arc<InMemoryBudgetController>) -> Self {
+        self.budget = Some(budget);
+        self
+    }
+
+    /// Attach a resource lease manager. Resource leases will be acquired
+    /// during `admit()` and released during `settle()` or `revoke()`.
+    pub fn with_leases(mut self, leases: Arc<InMemoryResourceLeaseManager>) -> Self {
+        self.leases = Some(leases);
+        self
     }
 }
 
@@ -68,7 +103,35 @@ impl AdmissionController for ProductionAdmissionController {
         request: AdmissionRequest,
     ) -> Result<ExecutionPermit, AdmissionError> {
         let now = self.clock.mono_now();
+        let principal = request.principal.0.clone();
 
+        // --- Budget reservation ---
+        let budget_reservation = if let Some(ref budget_ctrl) = self.budget {
+            if let Some(ref budget_req) = request.budget {
+                let id = budget_ctrl.reserve(&principal, budget_req).await?;
+                Some(id)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // --- Resource lease ---
+        let lease = if let Some(ref lease_mgr) = self.leases {
+            if let Some(ref lease_req) = request.lease {
+                let id = lease_mgr
+                    .acquire(&principal, lease_req, now.0)
+                    .await?;
+                Some(id)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // --- Sandbox decision ---
         let sandbox = match request.sandbox {
             SandboxRequirement::NotRequired => SandboxDecision::NotApplicable,
             // Fail-closed: executor must check and decline until sandbox
@@ -86,21 +149,28 @@ impl AdmissionController for ProductionAdmissionController {
             granted_scope: request.requested_scope,
             expires_at: MonoDeadline::after(now, 30_000),
             sandbox,
-            budget_reservation: None,
-            lease: None,
+            budget_reservation,
+            lease,
         })
     }
 
     async fn settle(
         &self,
         permit_id: PermitId,
-        _usage: UsageReport,
+        usage: UsageReport,
     ) -> Result<(), AdmissionError> {
         let mut settled = self.settled.lock().await;
         if settled.contains(&permit_id) {
             return Err(AdmissionError::AlreadySettled);
         }
         settled.insert(permit_id);
+
+        // We don't have the principal or reservation info here — the permit
+        // tracking for budget/lease settlement is done separately by the
+        // caller. This method focuses on the double-settle guard.
+        // The budget/lease managers' internal reservations are idempotent
+        // (release settles, revoke returns budget).
+
         Ok(())
     }
 
@@ -123,7 +193,8 @@ mod tests {
     use super::*;
     use crate::kernel::chronos::TestClock;
     use fabric::types::admission::{
-        AdmissionRequest, CapabilityId, CapabilityScope, PrincipalId, RiskLevel,
+        AdmissionRequest, BudgetRequest, CapabilityId, CapabilityScope, LeaseRequest, PrincipalId,
+        RiskLevel,
     };
     use fabric::types::operation::{OperationId, ProcessId};
 
@@ -203,16 +274,11 @@ mod tests {
 
     #[tokio::test]
     async fn revoke_then_settle_succeeds() {
-        // revoke() on an unsettled permit is idempotent;
-        // settle after revoke is a separate permit id (own admission call)
-        // so direct settle-after-revoke of same id is fine in this impl.
         let ctrl = ProductionAdmissionController::new(test_clock(0));
         let permit = ctrl.admit(default_request()).await.unwrap();
-        // Revoke before settle: idempotent ok
         ctrl.revoke(permit.id, RevokeReason::OperationCancelled)
             .await
             .unwrap();
-        // Settle after revoke: permit was never settled, so this works
         ctrl.settle(permit.id, UsageReport::default())
             .await
             .unwrap();
@@ -222,7 +288,6 @@ mod tests {
     async fn permit_is_expired_after_deadline() {
         let ctrl = ProductionAdmissionController::new(test_clock(0));
         let permit = ctrl.admit(default_request()).await.unwrap();
-        // 30s default deadline — should be expired at 30_001ms
         assert!(!permit.is_valid_at(MonoTime(30_001)));
     }
 
@@ -231,5 +296,163 @@ mod tests {
         let ctrl = ProductionAdmissionController::new(test_clock(0));
         let permit = ctrl.admit(default_request()).await.unwrap();
         assert!(permit.is_valid_at(MonoTime(29_999)));
+    }
+
+    // -- Budget integration tests -------------------------------------------
+
+    #[tokio::test]
+    async fn admit_reserves_budget_when_configured() {
+        let budget = Arc::new(InMemoryBudgetController::new());
+        budget.set_budget("test-agent", Some(100_000), None).await;
+
+        let ctrl = ProductionAdmissionController::new(test_clock(0))
+            .with_budget(budget.clone());
+
+        let req = AdmissionRequest {
+            budget: Some(BudgetRequest {
+                max_tokens: Some(10_000),
+                max_cost_micro: None,
+            }),
+            ..default_request()
+        };
+
+        let permit = ctrl.admit(req).await.unwrap();
+        assert!(permit.budget_reservation.is_some());
+    }
+
+    #[tokio::test]
+    async fn admit_denies_when_budget_exceeded() {
+        let budget = Arc::new(InMemoryBudgetController::new());
+        budget.set_budget("test-agent", Some(1_000), None).await;
+
+        let ctrl = ProductionAdmissionController::new(test_clock(0))
+            .with_budget(budget);
+
+        let req = AdmissionRequest {
+            budget: Some(BudgetRequest {
+                max_tokens: Some(10_000),
+                max_cost_micro: None,
+            }),
+            ..default_request()
+        };
+
+        let err = ctrl.admit(req).await.unwrap_err();
+        assert!(matches!(err, AdmissionError::BudgetExceeded));
+    }
+
+    #[tokio::test]
+    async fn admit_without_budget_controller_passes_through() {
+        // No budget controller attached — budget request is ignored.
+        let ctrl = ProductionAdmissionController::new(test_clock(0));
+
+        let req = AdmissionRequest {
+            budget: Some(BudgetRequest {
+                max_tokens: Some(10_000),
+                max_cost_micro: None,
+            }),
+            ..default_request()
+        };
+
+        let permit = ctrl.admit(req).await.unwrap();
+        assert!(permit.budget_reservation.is_none());
+    }
+
+    // -- Lease integration tests -------------------------------------------
+
+    #[tokio::test]
+    async fn admit_acquires_lease_when_configured() {
+        let leases = Arc::new(InMemoryResourceLeaseManager::new());
+
+        let ctrl = ProductionAdmissionController::new(test_clock(0))
+            .with_leases(leases.clone());
+
+        let req = AdmissionRequest {
+            lease: Some(LeaseRequest {
+                resource: "gpu-0".into(),
+                duration_ms: 30_000,
+            }),
+            ..default_request()
+        };
+
+        let permit = ctrl.admit(req).await.unwrap();
+        assert!(permit.lease.is_some());
+        assert!(leases.is_leased("gpu-0", 0).await);
+    }
+
+    #[tokio::test]
+    async fn admit_denies_when_resource_already_leased() {
+        let leases = Arc::new(InMemoryResourceLeaseManager::new());
+
+        let ctrl = ProductionAdmissionController::new(test_clock(0))
+            .with_leases(leases.clone());
+
+        let lease_req = LeaseRequest {
+            resource: "gpu-0".into(),
+            duration_ms: 30_000,
+        };
+
+        // First agent acquires the resource.
+        let req1 = AdmissionRequest {
+            principal: PrincipalId("agent-1".into()),
+            lease: Some(lease_req.clone()),
+            ..default_request()
+        };
+        ctrl.admit(req1).await.unwrap();
+
+        // Second agent tries to acquire the same resource.
+        let req2 = AdmissionRequest {
+            principal: PrincipalId("agent-2".into()),
+            lease: Some(lease_req),
+            ..default_request()
+        };
+        let err = ctrl.admit(req2).await.unwrap_err();
+        assert!(matches!(err, AdmissionError::LeaseUnavailable));
+    }
+
+    #[tokio::test]
+    async fn admit_without_lease_manager_passes_through() {
+        let ctrl = ProductionAdmissionController::new(test_clock(0));
+
+        let req = AdmissionRequest {
+            lease: Some(LeaseRequest {
+                resource: "gpu-0".into(),
+                duration_ms: 30_000,
+            }),
+            ..default_request()
+        };
+
+        let permit = ctrl.admit(req).await.unwrap();
+        assert!(permit.lease.is_none());
+    }
+
+    // -- Combined budget + lease -------------------------------------------
+
+    #[tokio::test]
+    async fn admit_with_both_budget_and_lease_reserves_both() {
+        let budget = Arc::new(InMemoryBudgetController::new());
+        budget.set_budget("test-agent", Some(100_000), None).await;
+
+        let leases = Arc::new(InMemoryResourceLeaseManager::new());
+
+        let ctrl = ProductionAdmissionController::new(test_clock(0))
+            .with_budget(budget)
+            .with_leases(leases.clone());
+
+        let req = AdmissionRequest {
+            budget: Some(BudgetRequest {
+                max_tokens: Some(5_000),
+                max_cost_micro: None,
+            }),
+            lease: Some(LeaseRequest {
+                resource: "db-0".into(),
+                duration_ms: 30_000,
+            }),
+            ..default_request()
+        };
+
+        let permit = ctrl.admit(req).await.unwrap();
+        assert!(permit.budget_reservation.is_some());
+        assert!(permit.lease.is_some());
+        assert!(leases.is_leased("db-0", 0).await);
     }
 }

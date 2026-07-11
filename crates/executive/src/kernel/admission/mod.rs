@@ -4,7 +4,12 @@
 //! sandbox requirements, and audit. The `AllowAllAdmissionController` is
 //! **testing-only** and must never be wired into production paths.
 
+pub mod budget;
+pub mod lease;
 pub mod production;
+
+pub use budget::InMemoryBudgetController;
+pub use lease::InMemoryResourceLeaseManager;
 pub use production::ProductionAdmissionController;
 
 use async_trait::async_trait;
