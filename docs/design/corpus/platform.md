@@ -103,7 +103,7 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 
 ## Implementation Summary
 
-**Code location:** `crates/corpus/src/impl/platform/`
+**Code location:** `crates/corpus/src/drivers/platform/`
 
 **Key types/traits implemented:**
 - `PlatformAdapter` trait (`adapter.rs`) — cross-platform abstraction with send/recv, process spawn/kill, fs read/write/watch, permission check/elevate
@@ -300,11 +300,11 @@ Agent 检测到服务启动失败
 
 | Component | Code Location | Notes |
 |-----------|---------------|-------|
-| BootMonitor | `crates/corpus/src/impl/platform/boot.rs` | Boot phase FSM + dependency tracking + lazy stages |
-| BootPhase | `crates/corpus/src/impl/platform/boot.rs` | Initializing → Monitoring → Ready / Degraded |
-| ServiceDependencyGraph | `crates/corpus/src/impl/platform/boot.rs` | Topological sort + `would_create_cycle()` cycle detection |
-| LazyLoadStage | `crates/corpus/src/impl/platform/boot.rs` | 5 stages: immediate / 500ms / 2s / 5s / on-demand |
-| BootDiagnosis | `crates/corpus/src/impl/platform/boot.rs` | Resource/service/historical checks |
+| BootMonitor | `crates/corpus/src/drivers/platform/boot.rs` | Boot phase FSM + dependency tracking + lazy stages |
+| BootPhase | `crates/corpus/src/drivers/platform/boot.rs` | Initializing → Monitoring → Ready / Degraded |
+| ServiceDependencyGraph | `crates/corpus/src/drivers/platform/boot.rs` | Topological sort + `would_create_cycle()` cycle detection |
+| LazyLoadStage | `crates/corpus/src/drivers/platform/boot.rs` | 5 stages: immediate / 500ms / 2s / 5s / on-demand |
+| BootDiagnosis | `crates/corpus/src/drivers/platform/boot.rs` | Resource/service/historical checks |
 | systemd service | `config/aletheon.service` | Service file exists |
 
 
@@ -492,11 +492,11 @@ Registered → Active ↔ Idle ↔ Busy → Degraded → Offline
 
 | Component | Code Location | Notes |
 |-----------|---------------|-------|
-| Core types (AgentId, AgentInfo, etc.) | `crates/corpus/src/impl/platform/awareness/mod.rs` | AgentId, AgentKind, TrustLevel, Capability, Endpoint, AgentInfo |
-| AgentDiscovery | `crates/corpus/src/impl/platform/awareness/discovery.rs` | Unix socket scan, L2 local discovery |
-| ConflictDetector | `crates/corpus/src/impl/platform/awareness/conflict.rs` | File/service/resource/memory conflicts |
-| AgentLifecycle | `crates/corpus/src/impl/platform/awareness/lifecycle.rs` | FSM: Starting→Running→Paused/Degraded→Stopped/Crashed |
-| AgentCommunication trait | `crates/corpus/src/impl/platform/awareness/communication.rs` | JSON-RPC 2.0 over Unix socket |
+| Core types (AgentId, AgentInfo, etc.) | `crates/corpus/src/drivers/platform/awareness/mod.rs` | AgentId, AgentKind, TrustLevel, Capability, Endpoint, AgentInfo |
+| AgentDiscovery | `crates/corpus/src/drivers/platform/awareness/discovery.rs` | Unix socket scan, L2 local discovery |
+| ConflictDetector | `crates/corpus/src/drivers/platform/awareness/conflict.rs` | File/service/resource/memory conflicts |
+| AgentLifecycle | `crates/corpus/src/drivers/platform/awareness/lifecycle.rs` | FSM: Starting→Running→Paused/Degraded→Stopped/Crashed |
+| AgentCommunication trait | `crates/corpus/src/drivers/platform/awareness/communication.rs` | JSON-RPC 2.0 over Unix socket |
 | L3 mDNS discovery | — | 未实现 |
 | L4 WAN discovery | — | 未实现 |
 
@@ -956,7 +956,7 @@ io_uring 混合架构        可选内核模块            自定义 syscall
 
 ## Implementation Summary
 
-**Code location:** `crates/corpus/src/impl/platform/ipc/`
+**Code location:** `crates/fabric/src/ipc/`
 
 **Key types/traits implemented:**
 - `IpcBackend` trait (`backend.rs`) — unified backend interface with send/recv/probe

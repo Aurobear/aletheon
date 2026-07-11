@@ -5,7 +5,7 @@
 > High-level perception, action grounding, experience memory, and task management for computer-use agents.
 
 **Crate:** `corpus`
-**Module:** `crates/corpus/src/impl/acix/`
+**Module:** `crates/interact/src/acix/`
 **Last updated:** 2026-06-14
 
 ---
@@ -167,7 +167,7 @@ enum TaskStatus {
 
 ## 7. Implementation Notes
 
-**Code location:** `crates/corpus/src/impl/acix/` (5 files: `mod.rs`, `aci.rs`, `experience.rs`, `grounding.rs`, `task.rs`)
+**Code location:** `crates/interact/src/acix/` (5 files: `mod.rs`, `aci.rs`, `experience.rs`, `grounding.rs`, `task.rs`)
 
 **Key design decisions:**
 - Trait-based grounding allows multiple strategies (AT-SPI, OCR, coordinate)

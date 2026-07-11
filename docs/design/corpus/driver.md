@@ -5,7 +5,7 @@
 > Hardware and OS interface layer — display, input, OCR, accessibility, process, I/O, and sandbox drivers.
 
 **Crate:** `corpus`
-**Module:** `crates/corpus/src/impl/driver/`
+**Module:** `crates/corpus/src/drivers/driver/`
 **Last updated:** 2026-06-14
 
 ---
@@ -157,7 +157,7 @@ Provides low-level sandbox primitives used by the sandbox execution layer (see [
 
 ## 10. Implementation Notes
 
-**Code location:** `crates/corpus/src/impl/driver/` (8 subdirectories + `mod.rs`, `types.rs`, `factory.rs`)
+**Code location:** `crates/corpus/src/drivers/driver/` (8 subdirectories + `mod.rs`, `types.rs`, `factory.rs`)
 
 **Key design decisions:**
 - All drivers are optional — `DriverFactory::try_*()` returns `Option<Box<dyn Trait>>`

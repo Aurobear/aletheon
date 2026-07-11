@@ -10,7 +10,7 @@
 ## Internal Structure
 
 ```
-memory/src/
+mnemosyne/src/
   lib.rs                      # Crate root
   schema.rs                   # Schema definitions for memory storage
   router.rs                   # MemoryRouter — routes queries to backends

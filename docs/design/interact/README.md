@@ -1,7 +1,7 @@
 # Aletheon CLI
 
 > 用户交互入口，支持单消息和 TUI 两种模式。通过 Unix socket 与 aletheon daemon 通信。
-> CLI 逻辑已合并到 `corpus/src/impl/cli/`，TUI 在 `corpus/src/impl/ui/`。
+> CLI 逻辑已合并到 `interact/src/tui/`，TUI 在 `interact/src/tui/`。
 > `interact` crate 保留为薄包装（向后兼容），实际逻辑在 corpus crate 中。
 
 **模块编号:** CLI
@@ -18,15 +18,15 @@
 | CLI arg parsing | ✅ Implemented | `interact/src/main.rs` | clap, -m/--tui/--simple |
 | Single message mode | ✅ Implemented | `interact/src/main.rs` | `-m "text"` → send → print → exit |
 | Simple REPL mode | ✅ Implemented | `interact/src/main.rs` | `--simple`, stdin loop |
-| TUI mode (default) | ✅ Implemented | `corpus/src/impl/ui/mod.rs` | ratatui, alternate screen |
-| Chat widget | ✅ Implemented | `corpus/src/impl/ui/chat.rs` | Message list, scroll, streaming update |
-| Input handling | ✅ Implemented | `corpus/src/impl/ui/mod.rs` | CJK-aware, IME delay, cursor movement |
-| Command parser | ✅ Implemented | `corpus/src/impl/ui/command.rs` | /help, /clear, /quit, /status, /skills |
-| Skill loader | ✅ Implemented | `corpus/src/impl/ui/skill.rs` | ~/.aletheon/skills/ SKILL.md |
-| Status bar | ✅ Implemented | `corpus/src/impl/ui/status.rs` | Connection status, model name |
-| Markdown renderer | ✅ Implemented | `corpus/src/impl/ui/markdown.rs` | Styled text for ratatui |
-| Terminal compat | ✅ Implemented | `corpus/src/impl/ui/term_compat.rs` | Unicode/color detection |
-| Computer view | 🔶 Partial | `corpus/src/impl/ui/computer.rs` | Feature-gated (input+display+a11y) |
+| TUI mode (default) | ✅ Implemented | `interact/src/tui/mod.rs` | ratatui, alternate screen |
+| Chat widget | ✅ Implemented | `interact/src/tui/chat.rs` | Message list, scroll, streaming update |
+| Input handling | ✅ Implemented | `interact/src/tui/mod.rs` | CJK-aware, IME delay, cursor movement |
+| Command parser | ✅ Implemented | `interact/src/tui/command.rs` | /help, /clear, /quit, /status, /skills |
+| Skill loader | ✅ Implemented | `interact/src/tui/skill.rs` | ~/.aletheon/skills/ SKILL.md |
+| Status bar | ✅ Implemented | `interact/src/tui/status.rs` | Connection status, model name |
+| Markdown renderer | ✅ Implemented | `interact/src/tui/markdown.rs` | Styled text for ratatui |
+| Terminal compat | ✅ Implemented | `interact/src/tui/term_compat.rs` | Unicode/color detection |
+| Computer view | 🔶 Partial | `interact/src/tui/computer.rs` | Feature-gated (input+display+a11y) |
 | Streaming display | ⬜ Planned | — | Response chunks not streamed to TUI |
 | History persistence | ⬜ Planned | — | No command history across sessions |
 | Multi-line editor | ⬜ Planned | — | Only Shift+Enter newline, no real editor |
@@ -196,7 +196,7 @@ async fn simple_cli(socket: &PathBuf) -> Result<()> {
 
 ## 5. TUI 架构
 
-代码位置: `corpus/src/impl/ui/`
+代码位置: `interact/src/tui/`
 
 ### 5.1 App 状态
 
@@ -239,7 +239,7 @@ poll 超时:
 
 ### 5.3 输入处理
 
-代码位置: `corpus/src/impl/ui/mod.rs` `handle_key()`
+代码位置: `interact/src/tui/mod.rs` `handle_key()`
 
 | 按键 | 行为 |
 |------|------|
@@ -288,7 +288,7 @@ CJK 检测范围: `U+4E00-9FFF`, `U+3400-4DBF`, `U+3000-303F`, `U+FF00-FFEF`, `U
 
 ### 5.5 命令系统
 
-代码位置: `corpus/src/impl/ui/command.rs`
+代码位置: `interact/src/tui/command.rs`
 
 以 `/` 开头的输入被解析为命令:
 
@@ -304,7 +304,7 @@ CJK 检测范围: `U+4E00-9FFF`, `U+3400-4DBF`, `U+3000-303F`, `U+FF00-FFEF`, `U
 
 ### 5.6 技能系统
 
-代码位置: `corpus/src/impl/ui/skill.rs`
+代码位置: `interact/src/tui/skill.rs`
 
 技能目录: `~/.aletheon/skills/`
 

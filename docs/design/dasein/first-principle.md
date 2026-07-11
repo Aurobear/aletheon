@@ -161,7 +161,7 @@ Everything flows inward through the SelfField, is interpreted, and only then rea
 
 - Insert SelfField boundary check into PerceptionBridge before memory insertion
 - Enforce continuity chain verification on all rollback operations
-- Wire SelfAwareness into every reasoning action (BrainCore generates awareness)
+- Wire SelfAwareness into every reasoning action (Cognit generates awareness)
 - Deliverable: Invariants I3 and I4 fully enforced; first principle is architecturally complete
 
 ---
