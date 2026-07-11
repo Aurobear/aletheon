@@ -5,7 +5,7 @@
 > Terminal user interface — chat, commands, computer view, event handling, input, markdown rendering, skills, status.
 
 **Crate:** `corpus`
-**Module:** `crates/corpus/src/impl/ui/`
+**Module:** `crates/interact/src/tui/`
 **Last updated:** 2026-06-14
 
 ---
@@ -156,7 +156,7 @@ When stdin is not a TTY (piped input), the TUI falls back to simple line mode:
 
 ## 12. Implementation Notes
 
-**Code location:** `crates/corpus/src/impl/ui/` (11 files)
+**Code location:** `crates/interact/src/tui/` (11 files)
 
 **Key design decisions:**
 - ratatui + crossterm for cross-platform terminal rendering

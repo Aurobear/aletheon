@@ -71,7 +71,7 @@ pub trait MetaRuntimeOps: Subsystem {
 }
 ```
 
-Code location: `base/src/meta.rs` (trait), `metacog/src/core/traits.rs` (implementation)
+Code location: `fabric/src/include/meta.rs` (trait), `metacog/src/core/traits.rs` (implementation)
 
 ---
 
@@ -158,7 +158,7 @@ pub struct MigrationResult {
 }
 ```
 
-Code location: `base/src/meta.rs`
+Code location: `fabric/src/include/meta.rs`
 
 ---
 

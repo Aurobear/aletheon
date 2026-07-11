@@ -144,7 +144,7 @@ enum Commands {
 
 ### 3.2 配置加载
 
-代码位置: `runtime/src/impl/daemon/mod.rs`
+代码位置: `executive/src/impl/daemon/mod.rs`
 
 启动顺序:
 
@@ -184,7 +184,7 @@ let (default_provider_config, default_model) = registry.resolve("")?;
 
 ### 3.4 感知管理器启动
 
-代码位置: `runtime/src/impl/daemon/mod.rs` `run()` 函数
+代码位置: `executive/src/impl/daemon/mod.rs` `run()` 函数
 
 ```rust
 let (event_tx, event_rx) = mpsc::channel::<PerceptionEvent>(256);
@@ -207,7 +207,7 @@ tokio::spawn(async move { bridge.run().await; });
 
 ### 3.5 RequestHandler 初始化
 
-代码位置: `runtime/src/impl/daemon/handler.rs`
+代码位置: `executive/src/impl/daemon/handler/mod.rs`
 
 `RequestHandler::new()` 完成以下初始化:
 
@@ -234,7 +234,7 @@ unix_server.run().await?;
 
 ### 4.1 Unix Socket 服务器
 
-代码位置: `runtime/src/impl/daemon/server.rs`
+代码位置: `executive/src/impl/daemon/server.rs`
 
 协议: **行分隔 JSON-RPC**（每条消息以 `\n` 结尾）
 
@@ -268,7 +268,7 @@ client connect
 
 ### 4.2 RequestHandler 请求分发
 
-代码位置: `runtime/src/impl/daemon/handler.rs`
+代码位置: `executive/src/impl/daemon/handler/mod.rs`
 
 ```rust
 pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value

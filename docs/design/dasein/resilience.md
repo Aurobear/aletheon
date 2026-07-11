@@ -485,10 +485,10 @@ crash/{timestamp}/
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| TokenRateLimiter | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/token_limiter.rs` | Multi-tier token quota |
-| ToolCallLimiter | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/tool_limiter.rs` | Per-tool and concurrency limits |
-| FloodProtector | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/flood_protector.rs` | Per-source sliding window |
-| BackpressureController | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/backpressure.rs` | Signal propagation |
+| TokenRateLimiter | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/token_limiter.rs` | Multi-tier token quota |
+| ToolCallLimiter | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/tool_limiter.rs` | Per-tool and concurrency limits |
+| FloodProtector | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/flood_protector.rs` | Per-source sliding window |
+| BackpressureController | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/backpressure.rs` | Signal propagation |
 
 ---
 
@@ -707,10 +707,10 @@ enum BackpressureSignal {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| TokenRateLimiter | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/token_limiter.rs` |
-| ToolCallLimiter | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/tool_limiter.rs` |
-| FloodProtector | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/flood_protector.rs` |
-| BackpressureController | ✅ Implemented | `crates/corpus/src/impl/security/rate_limiting/backpressure.rs` |
+| TokenRateLimiter | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/token_limiter.rs` |
+| ToolCallLimiter | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/tool_limiter.rs` |
+| FloodProtector | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/flood_protector.rs` |
+| BackpressureController | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/backpressure.rs` |
 
 
 ---

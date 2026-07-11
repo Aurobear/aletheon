@@ -1,4 +1,4 @@
-> Migrated from docs/design/execution/tool-system.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from docs/design/execution/tool-system.md — code paths updated to match the current crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive, agora, bin)
 
 # 工具系统与沙箱执行 (Tool System & Sandbox Execution)
 
@@ -562,30 +562,27 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 
 | 项目 | 说明 |
 |------|------|
-| **工具 Trait** | `runtime/src/impl/tool.rs` — Tool trait + ToolRegistry + `ToolOutput` trait |
-| **输出处理** | `corpus/src/impl/tools/output/` — 三层防御: `capture.rs` (Layer 1), `persistence.rs` (Layer 2), `turn_budget.rs` (Layer 3) |
-| **截断策略** | `corpus/src/impl/tools/output/truncation.rs` — `TruncationPolicy` + UTF-8 安全的 head/tail 切分 |
-| **多模态输出** | `runtime/src/impl/tool_result.rs` — `ToolContent` enum + `ToolResult` |
-| **ToolExposure** | `runtime/src/impl/tool.rs` — 4 级枚举 + `visible_tools()` |
-| **阈值门控** | `runtime/src/impl/tool_search/config.rs` — `ToolSearchConfig`, `should_activate_tool_search()` |
-| **三工具桥接** | `runtime/src/impl/tool_search/bridge.rs` — `ToolSearchTool` + `ToolDescribeTool` + `ToolCallBridge` |
-| **BM25 搜索** | `runtime/src/impl/tool_search/catalog.rs` — `CatalogEntry`, `ToolCatalog` |
-| **工具集** | `runtime/src/impl/toolset.rs` — `Toolset`, `ToolsetRegistry` |
-| **注册增强** | `runtime/src/impl/tool.rs` — shadow 保护, `check_fn` TTL 缓存, `dynamic_schema_overrides` |
-| **工具循环防护** | `runtime/src/impl/tool_guardrails.rs` — `ToolGuardrailController` |
-| **并行执行** | `runtime/src/impl/tool_runner.rs` — ToolCallExecutor (RwLock gate + JoinSet + CancellationToken) |
-| **回合预算** | `corpus/src/impl/tools/output/turn_budget.rs` — `enforce_turn_budget()` |
-| **溢出清理** | `corpus/src/impl/tools/output/persistence.rs` — `cleanup_overflow_dir()` 7 天保留 |
-| **MCP 客户端** | `corpus/src/impl/mcp/client.rs` — McpClient + 三种 Transport |
-| **MCP 连接管理器** | `corpus/src/impl/mcp/manager.rs` — McpConnectionManager |
-| **MCP 工具适配** | `corpus/src/impl/mcp/tool_adapter.rs` — McpToolWrapper + normalize_tool_name |
-| **MCP 配置** | `corpus/src/impl/mcp/config.rs` — McpServerConfig |
-| **MCP 错误** | `corpus/src/impl/mcp/error.rs` — McpError enum |
-| **MCP 资源/提示词** | `corpus/src/impl/mcp/resources.rs` — list_all_resources + read_resource |
-| **沙箱执行器** | `runtime/src/impl/sandbox.rs` — SandboxExecutor + `CaptureConfig` + `SandboxResult` |
-| **MCP OAuth** | `corpus/src/impl/mcp/auth.rs` — `McpAuthProvider` trait + BearerTokenAuth + OAuthAuth 骨架 |
-| **沙箱后端** | `corpus/src/impl/sandbox/backend.rs` — `SandboxBackend` trait + 三后端 |
-| **工具名配置** | `corpus/src/impl/mcp/tool_name.rs` — `ToolNameConfig` + `CollisionStrategy` |
+| **工具 Trait** | `Tool` trait 在 `fabric/src/types/tool.rs`；`ToolRegistry` 在 `corpus/src/tools/tools/registry.rs` |
+| **输出处理** | `corpus/src/tools/tools/output/` — 三层防御: `capture.rs` (Layer 1), `persistence.rs` (Layer 2), `turn_budget.rs` (Layer 3) |
+| **截断策略** | `corpus/src/tools/tools/output/truncation.rs` — `TruncationPolicy` + UTF-8 安全的 head/tail 切分 |
+| **工具结果** | `ToolResult` 在 `fabric/src/types/tool.rs`（早期的 `ToolContent` 多模态枚举已简化移除） |
+| **ToolExposure** | `corpus/src/tools/tools/exposure.rs` — 分级暴露枚举 |
+| **工具搜索** | `corpus/src/tools/tools/search/` — `tool_search.rs` (`ToolSearchTool` + BM25 `CatalogEntry`), `agent_tool.rs`（早期的 config/bridge/catalog 三文件已合并至此） |
+| **工具集** | `corpus/src/tools/tools/toolset.rs` — `Toolset`, `ToolsetRegistry` |
+| **守卫执行** | `corpus/src/security/security/runner.rs` — `ToolRunnerWithGuard`（policy/loop/sandbox/guardrail/audit 管道；早期独立的 `ToolGuardrailController` 已并入） |
+| **并行执行** | `corpus/src/tools/tools/executor.rs` — ToolCallExecutor (RwLock gate + JoinSet + CancellationToken) |
+| **回合预算** | `corpus/src/tools/tools/output/turn_budget.rs` — `enforce_turn_budget()` |
+| **溢出清理** | `corpus/src/tools/tools/output/persistence.rs` — `cleanup_overflow_dir()` 7 天保留 |
+| **MCP 客户端** | `corpus/src/tools/mcp/client.rs` — McpClient + 三种 Transport |
+| **MCP 连接管理器** | `corpus/src/tools/mcp/manager.rs` — McpConnectionManager |
+| **MCP 工具适配** | `corpus/src/tools/mcp/tool_adapter.rs` — McpToolWrapper + normalize_tool_name |
+| **MCP 配置** | `corpus/src/tools/mcp/config.rs` — McpServerConfig |
+| **MCP 错误** | `corpus/src/tools/mcp/error.rs` — McpError enum |
+| **MCP 资源/提示词** | `corpus/src/tools/mcp/resources.rs` — list_all_resources + read_resource |
+| **沙箱执行器** | `corpus/src/security/sandbox/executor.rs` — SandboxExecutor + `CaptureConfig` + `SandboxResult` |
+| **MCP OAuth** | `corpus/src/tools/mcp/auth.rs` — `McpAuthProvider` trait + BearerTokenAuth + OAuthAuth 骨架 |
+| **沙箱后端** | `corpus/src/security/sandbox/backend.rs` — `SandboxBackend` trait + 三后端 |
+| **工具名配置** | `corpus/src/tools/mcp/tool_name.rs` — `ToolNameConfig` + `CollisionStrategy` |
 | **内置工具** | `agent-tools/src/` — bash, file_ops, system, memory_tools, delegate, file_search |
 
 ---
@@ -617,10 +614,10 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 ## Implementation Summary
 
 **Code Locations:**
-- `crates/corpus/src/impl/tools/mod.rs` — Tool trait definition, ToolRegistry, ToolOutput trait
-- `crates/corpus/src/impl/tools/registry.rs` — Registration, lookup, visibility filtering
-- `crates/corpus/src/impl/tools/bash_exec.rs`, `file_read.rs`, `file_write.rs`, `process_list.rs`, `system_status.rs` — 5 built-in tools
-- `crates/corpus/src/impl/tools/output/` — Three-layer output defense: `capture.rs`, `persistence.rs`, `turn_budget.rs`, `truncation.rs`, `pruner.rs`, `config.rs`
+- `crates/corpus/src/tools/tools/mod.rs` — Tool trait definition, ToolRegistry, ToolOutput trait
+- `crates/corpus/src/tools/tools/registry.rs` — Registration, lookup, visibility filtering
+- `crates/corpus/src/tools/tools/bash_exec.rs`, `file_read.rs`, `file_write.rs`, `process_list.rs`, `system_status.rs` — 5 built-in tools
+- `crates/corpus/src/tools/tools/output/` — Three-layer output defense: `capture.rs`, `persistence.rs`, `turn_budget.rs`, `truncation.rs`, `pruner.rs`, `config.rs`
 
 **Key Types/Traits Implemented:**
 - `Tool` trait — unified tool interface with `input_schema()`, `permission_level()`, `needs_sandbox()`, `exposure()`, `concurrency_class()`

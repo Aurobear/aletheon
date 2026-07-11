@@ -164,14 +164,16 @@ aletheon/
 ├── Cargo.toml                  # workspace 根
 │
 ├── crates/
-│   ├── base/              # ABI 层: 共享类型、Trait 接口、IPC 层
-│   ├── memory/            # 记忆系统: self-memory, episodic/semantic
+│   ├── fabric/            # ABI 层: 共享类型、Trait 接口 (include/)、IPC 层、primitives
+│   ├── mnemosyne/         # 记忆系统: episodic/semantic/procedural/self-memory
+│   ├── agora/             # 共享认知工作区: blackboard/attention/task_graph/trace
 │   ├── dasein/            # SelfField: identity, boundary, care, narrative
-│   ├── cognit/            # BrainCore: reasoning, planning, reflection
-│   ├── corpus/            # BodyRuntime: tools, sandbox, perception, MCP
-│   ├── runtime/           # Runtime engine: cognitive loop, orchestration, daemon
+│   ├── cognit/            # Cognit: reasoning, planning, reflection (CognitOps)
+│   ├── corpus/            # Body: tools, sandbox, perception, MCP
+│   ├── executive/         # 编排层: harness, cognitive loop, orchestration, daemon
 │   ├── metacog/           # MetaRuntime: self-update, self-generation
-│   └── interact/          # CLI + TUI 客户端 (aletheon binary)
+│   ├── interact/          # CLI + TUI 客户端
+│   └── bin/               # aletheon-bin: aletheond/aletheon 二进制
 │
 ├── agents/                     # Agent 定义文件 (TOML + .md)
 │   ├── fs-agent.md
@@ -266,5 +268,5 @@ crates/*/
 
 ---
 
-*文档版本: 3.0.0*
-*最后更新: 2026-06-14*
+*文档版本: 3.1.0*
+*最后更新: 2026-07-11 (RFC-018 重构反映: 依赖解耦、trait 归位、命名对齐、handle_chat 分解)*

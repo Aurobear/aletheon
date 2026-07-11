@@ -13,18 +13,18 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| ContentBlock | Implemented | `base/src/message.rs` | Text, ToolUse, ToolResult, Image |
-| Message | Implemented | `base/src/message.rs` | Conversation message wrapper |
-| ToolCall | Implemented | `base/src/message.rs` | Tool invocation request |
-| ToolResult | Implemented | `base/src/tool.rs` | Tool execution result |
+| ContentBlock | Implemented | `fabric/src/types/message.rs` | Text, ToolUse, ToolResult, Image |
+| Message | Implemented | `fabric/src/types/message.rs` | Conversation message wrapper |
+| ToolCall | Implemented | `fabric/src/types/message.rs` | Tool invocation request |
+| ToolResult | Implemented | `fabric/src/types/tool.rs` | Tool execution result |
 | PerceptionEvent | Implemented | `dasein/src/impl/perception/event.rs` | System event type |
-| AgentError | Implemented | `base/src/error.rs` | Typed error with severity/category |
+| AgentError | Implemented | `fabric/src/kernel/error/mod.rs` | Typed error with severity/category |
 
 ### 1.1 Message Types
 
 - **ContentBlock** — Content-block message protocol (Anthropic SDK compatible), with Text, ToolUse, ToolResult, Image variants
 - **Message** — Conversation message wrapper (role: System/User/Assistant + content: Vec<ContentBlock>)
-- Code location: `base/src/message.rs`
+- Code location: `fabric/src/types/message.rs`
 
 ### 1.2 Tool Calls
 
@@ -34,7 +34,7 @@
 - **ToolResult** — Tool execution result (tool_call_id, content: Vec<ToolContent>, is_error, exit_code, metadata)
 - **ToolContent** — Output content variant: Text / Image / Binary
 - **ToolResultMeta** — Metadata (execution_time_ms, tokens_used, truncated)
-- Code location: `base/src/message.rs`, `base/src/tool.rs`
+- Code location: `fabric/src/types/message.rs`, `fabric/src/types/tool.rs`
 
 ### 1.3 Perception Events
 
@@ -48,14 +48,14 @@
 - **AgentError** — Typed error (category, severity, message, source, context)
 - **ErrorSeverity** — Warning / Error / Critical / Fatal
 - **ErrorCategory** — Tool / Llm / Session / Memory / Permission / System
-- Code location: `base/src/error.rs`
+- Code location: `fabric/src/kernel/error/mod.rs`
 
 ### Implementation Summary
 
 | Component | Code Location | Key Types |
 |-----------|---------------|-----------|
-| ContentBlock / Message / ToolCall | `base/src/message.rs` | `ContentBlock`, `Message`, `ToolCall` |
-| ToolResult / ToolContent | `base/src/tool.rs` | `ToolResult`, `ToolContent`, `ToolResultMeta` |
+| ContentBlock / Message / ToolCall | `fabric/src/types/message.rs` | `ContentBlock`, `Message`, `ToolCall` |
+| ToolResult / ToolContent | `fabric/src/types/tool.rs` | `ToolResult`, `ToolContent`, `ToolResultMeta` |
 | PerceptionEvent | `dasein/src/impl/perception/event.rs` | `PerceptionEvent`, `EventSource`, `EventKind` |
 
 ---
@@ -69,8 +69,8 @@
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
 | LlmProvider | Implemented | `fabric/src/types/llm_types.rs` (trait); concrete providers in `cognit/src/impl/llm/` | Provider trait with complete/complete_stream |
-| Tool | Implemented | `base/src/tool.rs` | Includes permission_level(), exposure(), concurrency_class() |
-| PlatformAdapter | Implemented | `corpus/src/impl/platform/adapter.rs`, `corpus/src/impl/platform/linux.rs`, `corpus/src/impl/platform/android.rs` | Linux (systemd/D-Bus) + Android (getprop/dumpsys) |
+| Tool | Implemented | `fabric/src/types/tool.rs` | Includes permission_level(), exposure(), concurrency_class() |
+| PlatformAdapter | Implemented | `corpus/src/drivers/platform/adapter.rs`, `corpus/src/drivers/platform/linux.rs`, `corpus/src/drivers/platform/android.rs` | Linux (systemd/D-Bus) + Android (getprop/dumpsys) |
 | MemoryStore | Planned | — | Memory uses different API than this trait |
 
 ### 2.1 LLM Provider
@@ -84,15 +84,15 @@
 > **Canonical definition** — superset of all fields from tool-system, platform-adapter, and loop-detector docs.
 
 **Tool** — Unified tool interface, including name, description, input_schema, permission_level (L0-L3), needs_sandbox, exposure (ToolExposure), concurrency_class (ConcurrencyClass), execute.
-- Code location: `base/src/tool.rs`
-- `ToolExposure` and `ConcurrencyClass` enums defined in `corpus/src/impl/tools/`
+- Code location: `fabric/src/types/tool.rs`
+- `ToolExposure` and `ConcurrencyClass` enums defined in `corpus/src/tools/tools/`
 
 ### 2.3 PlatformAdapter
 
 > Implemented — Linux and Android adapters complete.
 
 **PlatformAdapter** — Platform adapter interface, covering IPC (send/recv), process lifecycle (spawn/kill), filesystem (read/write/watch), permissions (check/elevate).
-- Code location: `corpus/src/impl/platform/adapter.rs` (trait), `corpus/src/impl/platform/linux.rs` (Linux/D-Bus), `corpus/src/impl/platform/android.rs` (Android stub)
+- Code location: `corpus/src/drivers/platform/adapter.rs` (trait), `corpus/src/drivers/platform/linux.rs` (Linux/D-Bus), `corpus/src/drivers/platform/android.rs` (Android stub)
 
 ### 2.4 MemoryStore
 
@@ -106,10 +106,10 @@
 | Component | Code Location | Key Types |
 |-----------|---------------|-----------|
 | LlmProvider trait | `fabric/src/types/llm_types.rs` | `LlmProvider`, `LlmRequest`, `LlmResponse` |
-| Tool trait | `base/src/tool.rs` | `Tool`, `ToolExposure`, `ConcurrencyClass` |
-| PlatformAdapter trait | `corpus/src/impl/platform/adapter.rs` | `PlatformAdapter` |
-| Linux adapter | `corpus/src/impl/platform/linux.rs` | `LinuxPlatformAdapter` (systemd/D-Bus) |
-| Android adapter | `corpus/src/impl/platform/android.rs` | `AndroidPlatformAdapter` (getprop/dumpsys) |
+| Tool trait | `fabric/src/types/tool.rs` | `Tool`, `ToolExposure`, `ConcurrencyClass` |
+| PlatformAdapter trait | `corpus/src/drivers/platform/adapter.rs` | `PlatformAdapter` |
+| Linux adapter | `corpus/src/drivers/platform/linux.rs` | `LinuxPlatformAdapter` (systemd/D-Bus) |
+| Android adapter | `corpus/src/drivers/platform/android.rs` | `AndroidPlatformAdapter` (getprop/dumpsys) |
 
 ---
 
@@ -197,7 +197,7 @@ ToolResult + UserFeedback -> OutcomeRecorder.record()
 
 | Interface | Code Location | Notes |
 |-----------|---------------|-------|
-| Engine -> ToolRegistry | `runtime/src/impl/engine/cognitive_loop.rs`, `corpus/src/impl/tools/` | Engine calls tools via `ToolRegistry::execute()` |
-| Security -> ToolRunner | `corpus/src/impl/security/policy.rs`, `corpus/src/impl/security/runner.rs` | Policy + LoopDetector checks before execution |
-| DelegateTool | `runtime/src/impl/orchestration/` | Delegation as tool call |
-| Perception -> Engine | `dasein/src/impl/perception/bridge.rs`, `runtime/src/impl/engine/cognitive_loop.rs` | PerceptionBridge wired via injection_tx |
+| Engine -> ToolRegistry | `cognit/src/harness/linear/step.rs`, `corpus/src/tools/tools/` | Engine calls tools via `ToolRegistry::execute()` |
+| Security -> ToolRunner | `corpus/src/security/security/policy.rs`, `corpus/src/security/security/runner.rs` | Policy + LoopDetector checks before execution |
+| DelegateTool | `executive/src/impl/orchestration/` | Delegation as tool call |
+| Perception -> Engine | `dasein/src/impl/perception/bridge.rs`, `cognit/src/harness/linear/step.rs` | PerceptionBridge wired via injection_tx |

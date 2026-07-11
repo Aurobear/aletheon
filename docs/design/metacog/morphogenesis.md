@@ -118,7 +118,7 @@ pub struct Genome {
 }
 ```
 
-Code location: `base/src/genome.rs`
+Code location: `fabric/src/types/genome.rs`
 
 ### 3.1 Topology
 
@@ -178,7 +178,7 @@ The `LineageRecorder` in the MetaRuntime preserves these invariants across all m
 - `metacog/src/impl/morphogenesis/candidate.rs` — Candidate model
 - `metacog/src/impl/morphogenesis/mutation_intent.rs` — Mutation intent model
 - `metacog/src/impl/genome/loader.rs` — `GenomeLoader`
-- `base/src/genome.rs` — `Genome` struct definition
+- `fabric/src/types/genome.rs` — `Genome` struct definition
 
 **Key types:**
 - `MorphogenesisPipeline` — orchestrates the full pipeline
