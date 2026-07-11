@@ -45,6 +45,7 @@ pub use include::meta;
 pub use include::plugin;
 pub use include::runtime;
 pub use include::self_field;
+pub use include::space;
 pub use include::subsystem;
 
 // Shared type modules (from types/)
@@ -93,8 +94,11 @@ pub use policy::verifier;
 // These preserve the flat API surface so external consumers don't need to change.
 
 // Subsystem traits (from include/)
-pub use include::agora::AgoraOps;
+pub use include::admission::AdmissionController;
+pub use include::agora::{AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, VersionConflict};
 pub use include::body::{Action, ActionResult, BodyRuntime};
+pub use include::capability_invoker::CapabilityInvoker;
+pub use include::chronos::Clock;
 pub use include::cognit::{
     BehaviorAdjustment, CognitOps, CostEstimate, Critique, EvolutionLogEntry, ExecutionResult,
     Experience, LearnedRule, Observation, Plan, PlanStep, Reflection, ReflectionEntry,
@@ -109,6 +113,7 @@ pub use include::meta::{
     Evaluation, MetaRuntimeOps, MigrationResult, RuntimeCandidate, TestResult,
 };
 pub use include::plugin::{Plugin, PluginContext};
+pub use include::process::{OperationHandle, OperationManager, ProcessHandle, ProcessManager};
 pub use include::runtime::{
     AgentInfo, AgentStatus, RuntimeOps, ScheduleKind, ScheduledTask, StepResult,
 };
@@ -117,9 +122,19 @@ pub use include::self_field::{
     Conflict, Identity, Intent, IntentSource, MutationIntent, Resolution, RiskLevel, SelfAwareness,
     SelfFieldOps, SelfState, Verdict, VerdictAction, VerdictHandler,
 };
+pub use include::space::SpaceManager;
 pub use include::subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
+pub use include::turn::{
+    AgoraView, CapabilityRequest, CapabilityResult, DaseinView, NoopTurnEventSink, RecallRequest,
+    RecallSet, StubTurnServices, TurnEventSink, TurnServices,
+};
 
 // Shared types (from types/)
+pub use types::admission::{
+    AdmissionError, AdmissionRequest, AuditEventId, BudgetRequest, BudgetReservationId,
+    CapabilityId, CapabilityScope, ExecutionPermit, LeaseRequest, PermitId, PrincipalId,
+    ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
+};
 pub use types::agent::Pid;
 pub use types::capability::{Capability, CapabilitySet, PermissionLevel};
 pub use types::context::{Context, TraceState};
@@ -131,22 +146,34 @@ pub use types::llm_types::{
 };
 pub use types::message::{ContentBlock, ImageSource, Message, Priority as MessagePriority, Role};
 pub use types::objective::{Objective, ObjectiveStatus, ObjectiveSummary};
+pub use types::operation::{
+    CancelReason, MonoDeadlineMillis, OperationExitReason, OperationId, OperationKind,
+    OperationRecord, OperationRequest, OperationResult, OperationState, ProcessId,
+};
 pub use types::permission::{
     ModeConfig, PermissionBehavior, PermissionContext, PermissionMode, PermissionRule,
+};
+pub use types::process::{
+    AgentId, AgentProfileId, ExitReason, ExitStatus, MailboxId, NamespaceId, ProcessRecord,
+    ProcessSignal, ProcessSnapshot, ProcessState, SpaceId, SpawnSpec,
 };
 pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
 };
+pub use types::space::{AccessMode, AgoraSpaceId, AgoraVersion, ContextBinding};
+pub use types::time::{MonoDeadline, MonoTime, WallTime};
 pub use types::tool::{
     PermissionLevel as ToolPermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
 };
+pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 
 // Event types (from events/)
 pub use events::event::{
     AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
 };
 pub use events::event_bridge::EventBridge;
+pub use events::legacy_bridge::LegacyEventBridge;
 pub use events::event_log::{EventLog, LogEntry};
 pub use events::ui_event::{
     AwarenessLevel, ClientEvent, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate,
@@ -157,9 +184,14 @@ pub use events::ui_event::{
 pub use ipc::bus::communication_bus::{BusConfig, CommunicationBus};
 pub use ipc::bus::kernel_bus::KernelEventBus;
 pub use ipc::envelope::{Endpoint, Envelope, EnvelopeId, ModuleId, Pattern, Payload, Target};
+pub use ipc::envelope_v2::{
+    DeliveryPattern as EnvelopeV2Delivery, EnvelopeV2, MessageId, SchemaId,
+    Target as EnvelopeV2Target,
+};
 pub use ipc::ipc_msg::{ForkDirective, ForkResult, GroupId, IpcMessage, MessageKind, Signal};
 pub use ipc::ipc_types::{
-    AgentId, AgentMessage, IpcBackend, IpcPreference, IpcPriority, IpcProbeError, MessageType,
+    AgentId as IpcAgentId, AgentMessage, IpcBackend, IpcPreference, IpcPriority, IpcProbeError,
+    MessageType,
 };
 pub use ipc::protocol::Protocol;
 pub use ipc::transport::{

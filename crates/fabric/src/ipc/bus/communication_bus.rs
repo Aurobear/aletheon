@@ -12,11 +12,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use crate::events::event::Event;
+use crate::events::event::{Event, EventType};
 use crate::include::event_bus::EventBus;
 use crate::ipc::envelope::*;
+use crate::ipc::envelope_v2::{EnvelopeV2, SchemaId, Target as V2Target};
 use crate::ipc::protocol::Protocol;
 use crate::ipc::transport::Transport;
+use crate::NamespaceId;
 
 use crate::ipc::bus::in_process::InProcessTransport;
 use crate::ipc::bus::kernel_bus::KernelEventBus;
@@ -87,7 +89,13 @@ impl CommunicationBus {
     }
 
     /// Create a CommunicationBus wrapping an existing KernelEventBus.
-    /// Used for backward compatibility during migration.
+    ///
+    /// **Deprecated:** Use `CommunicationBus::new()` and migrate subscribers
+    /// to `subscribe_topic()` with `SchemaId`-based routing.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use CommunicationBus::new() with EnvelopeV2 topic routing"
+    )]
     pub fn from_event_bus(event_bus: Arc<KernelEventBus>) -> Self {
         let in_process = Arc::new(InProcessTransport::new(event_bus));
         let request_response = Arc::new(RequestResponseProtocol::new(in_process.clone()));
@@ -166,6 +174,52 @@ impl CommunicationBus {
         self.pubsub.publish(envelope).await
     }
 
+    /// Publish an `EnvelopeV2` through the bus.
+    ///
+    /// This is the preferred publishing API for new code. It converts the
+    /// V2 envelope to the legacy `Envelope` format for transport, preserving
+    /// the schema in the payload metadata so downstream consumers can
+    /// reconstruct the original.
+    pub async fn publish_envelope_v2(&self, env: EnvelopeV2) -> Result<()> {
+        // Embed schema + priority in the legacy envelope payload.
+        let payload = serde_json::json!({
+            "_schema": env.schema.0,
+            "_source": env.source.0,
+            "_target": env.target.0,
+            "_priority": env.priority,
+            "data": env.payload,
+        });
+        let legacy = Envelope::new(
+            Endpoint::System,
+            Target::Broadcast,
+            Pattern::Publish,
+            Payload::Json(payload),
+        );
+        self.publish(legacy).await
+    }
+
+    /// Publish an `EnvelopeV2` for a specific event type.
+    ///
+    /// Convenience method that constructs an `EnvelopeV2` with the correct
+    /// `SchemaId` for the given `EventType` and publishes it.
+    pub async fn publish_event_v2(
+        &self,
+        event_type: &EventType,
+        source: impl Into<String>,
+        payload: serde_json::Value,
+    ) -> Result<()> {
+        let schema = SchemaId::from_event_type(event_type);
+        let env = EnvelopeV2::new(
+            SchemaId::from(schema),
+            V2Target(source.into()),
+            V2Target("broadcast".into()),
+            crate::ipc::envelope_v2::DeliveryPattern::FanOut,
+            NamespaceId("default".into()),
+            payload,
+        );
+        self.publish_envelope_v2(env).await
+    }
+
     /// Send an envelope directly (point-to-point or topic).
     /// For Response envelopes, the request-response protocol gets first crack
     /// at completing any pending correlated request before transport delivery.
@@ -203,19 +257,32 @@ impl CommunicationBus {
         self.request_response.handle_response(response)
     }
 
-    // -- Backward Compatibility --
+    // -- Backward Compatibility (deprecated — migrate to EnvelopeV2) ---
 
     /// Get a reference to the underlying EventBus.
-    /// Used during migration to bridge old EventBus subscribers.
+    ///
+    /// **Deprecated:** Use `publish_envelope_v2()` and topic subscriptions
+    /// via `subscribe_topic()` instead. The underlying `KernelEventBus` will
+    /// be removed when all subscribers migrate to `EnvelopeV2`.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use publish_envelope_v2() and subscribe_topic() with SchemaId instead"
+    )]
     pub fn event_bus(&self) -> &Arc<KernelEventBus> {
         self.in_process.event_bus()
     }
 
     /// Publish an Event via the underlying EventBus.
-    /// Bridge method for backward compatibility with existing Event subscribers.
+    ///
+    /// **Deprecated:** Use `publish_envelope_v2()` which routes through the
+    /// new `EnvelopeV2` + `SchemaId` system.
     ///
     /// If a debug hook is attached, a corresponding `DebugEvent` is forwarded
     /// to the hook before the EventBus dispatch.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use publish_envelope_v2() with schema-based routing"
+    )]
     pub async fn publish_event(&self, event: Box<dyn Event>) -> Result<()> {
         // Notify debug hook (best-effort, non-blocking for the bus).
         if let Some(ref hook) = self.debug_hook {
