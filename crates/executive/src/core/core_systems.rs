@@ -26,6 +26,7 @@ use mnemosyne::episodic::EpisodicMemory;
 
 use crate::core::config::HooksConfig;
 use crate::core::orchestrator::AletheonExecutive;
+use crate::kernel::service_ports::ServicePorts;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::CoreMemory;
 use crate::RecallMemory;
@@ -42,7 +43,17 @@ use cognit::core::reflector::Reflector;
 /// Bundle of subsystem types.
 ///
 /// In Group B, each field transitions to `Arc<dyn TraitOps>`.
+/// New code should prefer `ports: ServicePorts` for kernel primitives;
+/// domain-specific services (memory, corpus, etc.) remain in `CoreSystems`
+/// until their port structs are defined.
 pub struct CoreSystems {
+    /// Kernel service ports — the canonical access point for process/operation/
+    /// supervision/clock/mailbox/admission/agora/budget/lease primitives.
+    ///
+    /// This field is the first step of Phase 6A contraction. Over time, more
+    /// services will migrate from `CoreSystems` into `ServicePorts`.
+    pub ports: ServicePorts,
+
     // --- Orchestrator ---
     pub runtime: Arc<Mutex<AletheonExecutive>>,
 

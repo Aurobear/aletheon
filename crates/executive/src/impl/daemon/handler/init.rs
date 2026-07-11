@@ -634,6 +634,8 @@ impl RequestHandler {
         ));
 
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
+            ports: crate::kernel::service_ports::ServicePorts::new()
+                .with_agora(Arc::new(agora::AgoraRegistry::new())),
             runtime: Arc::new(Mutex::new(runtime)),
             self_field,
             episodic_memory,
