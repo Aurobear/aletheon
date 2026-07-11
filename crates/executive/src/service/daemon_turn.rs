@@ -29,11 +29,13 @@ use cognit::harness::linear::TurnMetrics;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::{
-    AdmissionController, AgentId, Clock, ContentBlock, Context as AbiContext, Intent, IntentSource,
-    LlmProvider, Message, NamespaceId, OperationKind, OperationManager, OperationRequest,
-    ProcessId, ProcessManager, ProcessSignal, ReflectionTrigger, Role, SelfFieldOps, SpawnSpec,
-    TurnRequest, Verdict,
+    AdmissionController, AdmissionRequest, AgentId, CapabilityId, CapabilityScope, Clock,
+    ContentBlock, Context as AbiContext, Intent, IntentSource, LlmProvider, Message, NamespaceId,
+    OperationKind, OperationManager, OperationRequest, PrincipalId, ProcessId, ProcessManager,
+    ProcessSignal, ReflectionTrigger, Role, SandboxDecision, SandboxRequirement,
+    SelfFieldOps, SpawnSpec, TurnRequest, UsageReport, Verdict,
 };
+use fabric::types::admission::RiskLevel;
 use mnemosyne::FactStore;
 use serde_json::json;
 use std::collections::HashMap;
@@ -668,6 +670,9 @@ impl DaemonTurnOrchestrator {
         let sf_ctx = AbiContext::new(&session_id, std::env::current_dir().unwrap_or_default());
         let verdict = self.sf_review(&intent, &sf_ctx).await;
 
+        // Sandbox requirement from SelfField verdict — passed to tool admission.
+        let mut sandbox_requirement = SandboxRequirement::NotRequired;
+
         match verdict {
             Ok(Verdict::Deny { ref reason }) => {
                 warn!(reason = %reason, "SelfField denied chat intent");
@@ -675,10 +680,13 @@ impl DaemonTurnOrchestrator {
                 return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32010, "message": format!("Intent denied by SelfField: {}", reason)}});
             }
             Ok(Verdict::SandboxFirst { ref reason }) => {
-                warn!(reason = %reason, "SelfField requires sandbox; blocking");
-                self.sf_narrate("chat_sandbox_required_unavailable", reason)
-                    .await;
-                return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32011, "message": format!("SandboxRequiredUnavailable: SandboxFirst requested ({}) but no sandbox execution path is configured", reason)}});
+                warn!(reason = %reason, "SelfField requires sandbox; tools will be gated through admission");
+                self.sf_narrate("chat_sandbox_required", reason).await;
+                // Route through admission gate instead of failing here.
+                // Each tool call builds an AdmissionRequest with
+                // SandboxRequirement::Required, and ProductionAdmissionController
+                // returns SandboxDecision::Required (fail-closed).
+                sandbox_requirement = SandboxRequirement::Required;
             }
             _ => {}
         }
@@ -858,11 +866,70 @@ impl DaemonTurnOrchestrator {
             sess_id.clone(),
             turn_count,
             working_dir,
+            operation.id,
+            main_pid,
         ));
+
+        // Admission controller for tool gating.
+        let admission = self.subsystems.admission.clone();
+        let adm_op_id = operation.id;
+        let adm_pid = main_pid;
+        let adm_sandbox = sandbox_requirement;
+
         let execute_tool = move |tool_id: &str, name: &str, input: &serde_json::Value| {
             let exec = tool_executor.clone();
+            let adm = admission.clone();
             let (tid, n, inp) = (tool_id.to_string(), name.to_string(), input.clone());
-            async move { exec.execute(&tid, &n, &inp).await }
+            let op_id = adm_op_id;
+            let pid = adm_pid;
+            let sandbox_req = adm_sandbox;
+            async move {
+                // Build admission request for this tool invocation.
+                let adm_req = AdmissionRequest {
+                    operation_id: op_id,
+                    process_id: pid,
+                    principal: PrincipalId("agent".into()),
+                    capability: CapabilityId(n.clone()),
+                    action: n.clone(),
+                    input_summary: format!("{:?}", &inp).chars().take(200).collect(),
+                    risk: RiskLevel::ReadOnly,
+                    requested_scope: CapabilityScope::default(),
+                    budget: None,
+                    lease: None,
+                    sandbox: sandbox_req,
+                };
+
+                // Admit — must pass admission gate.
+                let permit = match adm.admit(adm_req).await {
+                    Ok(p) => p,
+                    Err(e) => return (format!("admission denied: {e}"), true),
+                };
+
+                // Check sandbox decision — fail closed.
+                if matches!(permit.sandbox, SandboxDecision::Required) {
+                    return (
+                        format!("Sandbox required but execution infrastructure not available for '{n}'"),
+                        true,
+                    );
+                }
+
+                // Execute the tool through the existing pipeline.
+                let (content, is_error) = exec.execute(&tid, &n, &inp).await;
+
+                // Settle the permit (best-effort audit).
+                let _ = adm
+                    .settle(
+                        permit.id,
+                        UsageReport {
+                            output_bytes: content.len() as u64,
+                            exit_code: if is_error { Some(1) } else { Some(0) },
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+
+                (content, is_error)
+            }
         };
 
         // LLM selection
