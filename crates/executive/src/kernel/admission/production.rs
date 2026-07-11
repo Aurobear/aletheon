@@ -188,6 +188,7 @@ mod tests {
         RiskLevel,
     };
     use fabric::types::operation::{OperationId, ProcessId};
+    use fabric::MonoTime;
 
     fn test_clock(mono_ms: u64) -> Arc<TestClock> {
         Arc::new(TestClock::new(0, mono_ms))
