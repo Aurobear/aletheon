@@ -1,10 +1,10 @@
-> New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> New document — code paths updated to match the current crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive, agora, bin)
 
 # UI Subsystem (TUI)
 
 > Terminal user interface — chat, commands, computer view, event handling, input, markdown rendering, skills, status.
 
-**Crate:** `corpus`
+**Crate:** `interact`
 **Module:** `crates/interact/src/tui/`
 **Last updated:** 2026-06-14
 
