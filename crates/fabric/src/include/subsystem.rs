@@ -1,6 +1,6 @@
 //! Subsystem lifecycle — like Linux kernel's module_init / module_exit.
 //!
-//! Every Aletheon subsystem (SelfField, BrainCore, BodyRuntime, Memory, etc.)
+//! Every Aletheon subsystem (SelfField, CognitCore, BodyRuntime, Memory, etc.)
 //! implements this trait. The runtime uses it for init, health checks, and
 //! graceful shutdown.
 

@@ -1,22 +1,22 @@
-//! BrainCoreOps implementation for BrainCore.
+//! CognitOps implementation for CognitCore.
 
 use anyhow::Result;
 use async_trait::async_trait;
 
-use fabric::brain::{
-    BrainCoreOps, Critique, ExecutionResult, Experience, LearnedRule, Observation, Plan, Reflection,
+use fabric::cognit::{
+    CognitOps, Critique, ExecutionResult, Experience, LearnedRule, Observation, Plan, Reflection,
 };
 use fabric::context::Context;
 use fabric::message::ContentBlock;
 use fabric::self_field::Intent;
 
-use super::BrainCore;
+use super::CognitCore;
 use crate::bridge::dual_model::TaskComplexity;
 use crate::bridge::learning::LearningBridge;
 use crate::bridge::llm::LlmBridge;
 
 #[async_trait]
-impl BrainCoreOps for BrainCore {
+impl CognitOps for CognitCore {
     /// Think about an intent and produce a plan.
     ///
     /// When a dual-model bridge is configured and the task is complex, the planner

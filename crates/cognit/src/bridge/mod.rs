@@ -1,4 +1,4 @@
-//! Bridge layer — adapts core infrastructure into BrainCore.
+//! Bridge layer — adapts core infrastructure into CognitCore.
 
 pub mod dual_model;
 pub mod inference;

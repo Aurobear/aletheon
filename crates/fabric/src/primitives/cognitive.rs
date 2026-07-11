@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 // -- Re-exports of existing cognitive objects (single source of truth) --
-pub use crate::include::brain::{Experience, Observation, Plan};
+pub use crate::include::cognit::{Experience, Observation, Plan};
 pub use crate::include::self_field::Intent;
 pub use crate::policy::execpolicy::Decision;
 

@@ -37,7 +37,7 @@ pub enum EventType {
     ConflictDetected,
     RejectionIssued,
 
-    // BrainCore
+    // CognitCore
     PlanGenerated,
     ReflectionComplete,
     CriticismRaised,

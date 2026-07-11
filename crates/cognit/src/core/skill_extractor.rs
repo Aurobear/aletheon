@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use chrono::Utc;
 
-use fabric::brain::ReflectionEntry;
+use fabric::cognit::ReflectionEntry;
 
 /// Category of an extracted skill.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -296,7 +296,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use fabric::brain::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+    use fabric::cognit::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
     fn make_reflection(
         id: &str,

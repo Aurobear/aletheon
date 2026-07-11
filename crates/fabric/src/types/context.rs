@@ -2,7 +2,7 @@
 //!
 //! A Context flows through the entire request lifecycle. It carries
 //! request identity, session state, permissions, and trace information
-//! from Intent Gateway through SelfField, BrainCore, and BodyRuntime.
+//! from Intent Gateway through SelfField, CognitCore, and BodyRuntime.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

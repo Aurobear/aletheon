@@ -4,7 +4,7 @@
 //! containing PlanSteps with rollback actions and cost estimates.
 
 use fabric::body::Action;
-use fabric::brain::{CostEstimate, Plan, PlanStep};
+use fabric::cognit::{CostEstimate, Plan, PlanStep};
 use fabric::context::Context;
 use fabric::dasein::Stimmung;
 use fabric::self_field::{Intent, RiskLevel};

@@ -3,11 +3,11 @@ use crate::r#impl::learning::{
 };
 use anyhow::Result;
 use fabric::body::{Action, ActionResult};
-use fabric::brain::{Experience, LearnedRule};
+use fabric::cognit::{Experience, LearnedRule};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-/// Bridges learning pipeline into BrainCore
+/// Bridges learning pipeline into CognitCore
 pub struct LearningBridge {
     outcome_recorder: OutcomeRecorder,
     pattern_extractor: PatternExtractor,

@@ -4,7 +4,7 @@
 //! risk, efficiency, consistency, and reversibility. Produces Critique
 //! items with severity levels and actionable suggestions.
 
-use fabric::brain::{CriticismDimension, CriticismSeverity, Critique, Plan};
+use fabric::cognit::{CriticismDimension, CriticismSeverity, Critique, Plan};
 
 /// The critic component.
 ///
@@ -280,7 +280,7 @@ impl Default for Critic {
 mod tests {
     use super::*;
     use fabric::body::Action;
-    use fabric::brain::{CostEstimate, PlanStep};
+    use fabric::cognit::{CostEstimate, PlanStep};
     use fabric::self_field::RiskLevel;
     use uuid::Uuid;
 

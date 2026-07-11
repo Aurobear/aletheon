@@ -1,4 +1,4 @@
-//! Coordinator — arbitration layer between BrainCore plans and SelfField verdicts.
+//! Coordinator — arbitration layer between CognitCore plans and SelfField verdicts.
 //!
 //! The Coordinator is a **temporary arbitrator**, not a supreme authority.
 //! It synthesizes the SelfField verdict, plan risk, execution history, and
@@ -12,7 +12,7 @@
 //!   Engine does NOT delegate control flow to Coordinator permanently.
 
 use anyhow::Result;
-use fabric::brain::Plan;
+use fabric::cognit::Plan;
 use fabric::self_field::{RiskLevel, Verdict};
 
 /// The outcome of arbitration — what the Engine should do next.
@@ -29,7 +29,7 @@ pub enum ArbitrationResult {
     /// Ask the user for explicit confirmation before proceeding.
     AskConfirmation { reason: String },
     /// The Coordinator wants to reflect (re-think) before deciding.
-    /// The Engine should feed this back to BrainCore for another think cycle.
+    /// The Engine should feed this back to CognitCore for another think cycle.
     Reflect { reason: String },
     /// The plan should be mutated (rewritten) before execution.
     Mutate {
@@ -58,7 +58,7 @@ pub struct MemoryContext {
 pub struct Coordinator;
 
 impl Coordinator {
-    /// Arbitrate between a SelfField verdict and a BrainCore plan.
+    /// Arbitrate between a SelfField verdict and a CognitCore plan.
     ///
     /// Decision tree (evaluated in order — first match wins):
     ///
@@ -156,7 +156,7 @@ impl Coordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::brain::CostEstimate;
+    use fabric::cognit::CostEstimate;
 
     fn make_plan(risk: RiskLevel, reasoning: &str) -> Plan {
         Plan {

@@ -1,7 +1,7 @@
 //! CoreSystems — concrete subsystem type bundle.
 //!
 //! Holds all subsystem types that RequestHandler currently owns directly.
-//! Subsystem contracts live in `fabric::include` (`BrainCoreOps`, `SelfFieldOps`,
+//! Subsystem contracts live in `fabric::include` (`CognitOps`, `SelfFieldOps`,
 //! `MemoryBackend`, `BodyRuntime`, `AgoraOps`, …); slimming these concrete fields
 //! toward `Arc<dyn …>` boundaries is tracked as RFC-018 D5.
 

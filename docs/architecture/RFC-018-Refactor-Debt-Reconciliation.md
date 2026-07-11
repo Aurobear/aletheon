@@ -67,18 +67,25 @@ outside fabric — the dictionary existed; nothing spoke it.
 used in ~22 routing sites (not 39), and it is **never persisted to disk** — envelopes only
 cross the in-process bus / same-build unix socket, so a rename is compiler-checked with no
 protocol-version migration needed in practice.
-- **Done:** `ModuleId` variants renamed to the crate/subsystem names —
+- **Done — `ModuleId`:** variants renamed to the crate/subsystem names —
   `Brain→Cognit`, `SelfField→Dasein`, `Memory→Mnemosyne`, `Body→Corpus`, `Meta→Metacog`,
   `Runtime→Executive`. `Perception` kept (a live perception-event routing endpoint, not a
   crate); `Agora` **not** added (accessed directly as `Arc<dyn AgoraOps>`, never routed to
   — YAGNI).
-- **Pending:** `include/` module file names (`brain/memory/body/runtime/self_field/meta`)
-  and `AletheonRuntime`/`RuntimeConfig` still lag — mechanical, compiler-checked renames.
-- **Won't rename (would break things):** the subsystem ops **traits** don't map cleanly —
-  `SelfFieldOps→DaseinOps` collides with the existing phenomenological
-  `fabric::dasein::DaseinOps`; `MemoryBackend` is a descriptive backend trait with 6 impls,
-  not a subsystem-ops name; `RuntimeOps`/`MetaRuntimeOps` are metacog's, not executive's.
-  Only `BrainCoreOps→CognitOps` is a clean pair.
+- **Done — `cognit` rename:** the one clean module/trait pair — `include/brain.rs` →
+  `include/cognit.rs`, trait `BrainCoreOps` → `CognitOps`, and the cognit-crate internals
+  (`BrainCore` → `CognitCore`, `BrainCoreConfig` → `CognitCoreConfig`,
+  `brain_core_ops.rs` → `cognit_ops.rs`).
+- **Pending:** `AletheonRuntime`/`RuntimeConfig` type renames in executive — mechanical,
+  compiler-checked.
+- **Blocked / won't rename:** the other module+trait pairs can't align cleanly:
+  `include/self_field` → `dasein` **collides** with the existing `fabric::dasein`
+  (phenomenological) module — same collision as `SelfFieldOps→DaseinOps`; and renaming
+  `memory`/`body`/`runtime`/`meta` modules while their traits (`MemoryBackend` — a
+  descriptive backend with 6 impls; `BodyRuntime`; `RuntimeOps`/`MetaRuntimeOps` which are
+  metacog's, not executive's) can't rename would only create module/trait mismatches.
+  The provenance enums `IntentSource::Brain` / `ConflictSource::Brain` keep "Brain" — a
+  separate concept (reasoning-as-source), not the renamed trait.
 
 ### 🟠 D4 — Cross-layer coupling (memory/self depend on reasoning)
 `mnemosyne → cognit` (`compressor/mod.rs:7-8`: `CompactorTrait`, `LlmProvider`) and

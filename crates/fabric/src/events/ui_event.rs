@@ -64,7 +64,7 @@ pub enum AwarenessLevel {
     Confused,
     /// Domain shift or new direction detected.
     Curious,
-    /// BrainCore generating plan.
+    /// CognitCore generating plan.
     Planning,
     /// Post-turn reflection running.
     Reflecting,

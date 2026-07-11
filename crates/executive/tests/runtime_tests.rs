@@ -1,6 +1,6 @@
 use executive::{AletheonRuntime, RuntimeConfig};
 use fabric::body::{Action, ActionResult};
-use fabric::brain::{CostEstimate, Plan, PlanStep};
+use fabric::cognit::{CostEstimate, Plan, PlanStep};
 use fabric::context::Context;
 use fabric::self_field::{Intent, RiskLevel, Verdict};
 use std::path::PathBuf;
@@ -95,7 +95,7 @@ async fn test_process_denied_reflex() {
         })
     };
 
-    // Should NOT be called: Deny routes to Reflex, skipping BrainCore
+    // Should NOT be called: Deny routes to Reflex, skipping CognitCore
     let think = |_intent: &Intent, _ctx: &Context| -> anyhow::Result<Plan> {
         panic!("think should not be called when verdict is Deny");
     };

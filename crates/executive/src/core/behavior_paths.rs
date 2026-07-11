@@ -5,9 +5,9 @@ use fabric::self_field::{Intent, Verdict};
 pub enum BehaviorPath {
     /// Emergency: Event -> BodyRuntime.execute() (no Brain involved).
     Reflex,
-    /// Normal: Intent -> BrainCore.think() -> Plan -> BodyRuntime.execute().
+    /// Normal: Intent -> CognitCore.think() -> Plan -> BodyRuntime.execute().
     Cognitive,
-    /// Self-modification: Intent -> SelfField.review -> BrainCore.think -> execute.
+    /// Self-modification: Intent -> SelfField.review -> CognitCore.think -> execute.
     Volitional,
 }
 
@@ -38,7 +38,7 @@ impl BehaviorPathRouter {
         }
     }
 
-    /// Check if an intent is an emergency that should bypass BrainCore.
+    /// Check if an intent is an emergency that should bypass CognitCore.
     pub fn is_emergency(intent: &Intent) -> bool {
         intent.action.starts_with("emergency_")
             || intent.action == "abort"

@@ -5,7 +5,7 @@
 //! Provides snapshot summaries for the Reasoner to use as context.
 
 use chrono::{DateTime, Utc};
-use fabric::brain::Observation;
+use fabric::cognit::Observation;
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
 

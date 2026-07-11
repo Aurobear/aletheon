@@ -5,7 +5,7 @@ Demonstrates the full closed loop for agent self-evolution through the EventBus.
 ## Architecture
 
 ```
-ToolExecution --> [EventBus] --> BrainCore (reflect via LLM)
+ToolExecution --> [EventBus] --> CognitCore (reflect via LLM)
                                      |
                                      v
                               [ReflectionEvent]
@@ -51,8 +51,8 @@ cargo run -p self-evolution-loop-example
 
 1. Creates a `KernelEventBus` with async handler support
 2. Configures an `LlmScheduler` with DeepSeek as the reflector provider
-3. Subscribes a `ToolObservationHandler` (BrainCore) to `ToolObservationEvent`
+3. Subscribes a `ToolObservationHandler` (CognitCore) to `ToolObservationEvent`
 4. Simulates 4 tool observations (1 success, 3 failures)
-5. BrainCore reflects on each via LLM, extracts rules after batch threshold,
+5. CognitCore reflects on each via LLM, extracts rules after batch threshold,
    and triggers evolution after consecutive failure threshold
 6. Prints the full event flow as it happens

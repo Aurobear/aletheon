@@ -1,6 +1,6 @@
 use std::io;
 
-use fabric::brain::{Critique, Plan};
+use fabric::cognit::{Critique, Plan};
 use fabric::ui_event::{
     AwarenessLevel, ClientEvent, CollaborationMode, SubAgentHandle, SubAgentStatus,
 };

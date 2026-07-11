@@ -4,7 +4,7 @@
 //! core invariants (identity immutability, safety floors, weight ranges).
 //! Provides snapshot/compare/rollback for safe experimentation.
 
-use fabric::brain::BehaviorAdjustment;
+use fabric::cognit::BehaviorAdjustment;
 use serde::{Deserialize, Serialize};
 
 use crate::core::attention::FocusTopic;

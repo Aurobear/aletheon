@@ -3,7 +3,7 @@
 ## Definition
 
 The Coordinator is a **temporary arbitrator**, not a supreme authority. It
-sits between BrainCore (which produces plans) and SelfField (which reviews
+sits between CognitCore (which produces plans) and SelfField (which reviews
 intents) and synthesizes their outputs into a single actionable decision for
 the Engine.
 
@@ -18,7 +18,7 @@ reconfigured without data loss — all state it uses comes from external sources
 User Intent
     |
     v
-BrainCore.think() -> Plan
+CognitCore.think() -> Plan
     |
     v
 SelfField.review() -> Verdict
@@ -33,7 +33,7 @@ Engine acts on result
     - Delay           -> re-queue
     - SandboxFirst    -> sandbox.run() -> if pass -> Body.execute()
     - AskConfirmation -> prompt user
-    - Reflect         -> BrainCore.think() again
+    - Reflect         -> CognitCore.think() again
     - Mutate          -> rewrite plan, re-arbitrate
 ```
 
@@ -53,7 +53,7 @@ Each arbitration is a single call. The Engine retains scheduling authority.
 | `SandboxFirst` | Must prove safe in sandbox before real execution |
 | `Delay` | Wait until a condition is met |
 
-### Plan (from BrainCore)
+### Plan (from CognitCore)
 
 - `risk_level: RiskLevel` — aggregated risk assessment (None/Low/Medium/High/Critical)
 - `reasoning: String` — why this plan was chosen
@@ -79,7 +79,7 @@ Each arbitration is a single call. The Engine retains scheduling authority.
 | `Delay { reason, until }` | Re-queue with condition |
 | `SandboxFirst { reason }` | Run in sandbox, promote on pass |
 | `AskConfirmation { reason }` | Prompt user for explicit approval |
-| `Reflect { reason }` | Feed back to BrainCore for another think cycle |
+| `Reflect { reason }` | Feed back to CognitCore for another think cycle |
 | `Mutate { reason, suggested_modification }` | Rewrite plan, then re-arbitrate |
 
 ## Decision Tree

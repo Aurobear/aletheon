@@ -1,10 +1,10 @@
 # cognit
 
-BrainCore cognitive engine — the "brain" of the Aletheon agent.
+CognitCore cognitive engine — the "brain" of the Aletheon agent.
 
 ## Overview
 
-The `cognit` crate implements the cognitive architecture that enables agents to think, reason, learn, and reflect. It contains the BrainCore and its six cognitive components.
+The `cognit` crate implements the cognitive architecture that enables agents to think, reason, learn, and reflect. It contains the CognitCore and its six cognitive components.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ impl/
 
 ## Key Types
 
-- `BrainCore` — Main cognitive orchestrator
+- `CognitCore` — Main cognitive orchestrator
 - `Planner` — Goal decomposition
 - `Reasoner` — Chain-of-thought reasoning
 - `Critic` — Quality evaluation
@@ -39,7 +39,7 @@ impl/
 ## Usage
 
 ```rust
-use cognit::{BrainCore, Planner, Reasoner, Critic};
+use cognit::{CognitCore, Planner, Reasoner, Critic};
 ```
 
 ## Dependencies

@@ -36,7 +36,7 @@ pub struct SubsystemSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SubsystemType {
     Policy,         // SelfField
-    Cognitive,      // BrainCore
+    Cognitive,      // CognitCore
     Execution,      // BodyRuntime
     Storage,        // Memory
     Infrastructure, // EventBus

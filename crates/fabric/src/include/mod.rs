@@ -4,7 +4,7 @@
 
 pub mod agora;
 pub mod body;
-pub mod brain;
+pub mod cognit;
 pub mod event_bus;
 pub mod memory;
 pub mod meta;
