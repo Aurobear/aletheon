@@ -180,17 +180,18 @@ See [the architecture overview](docs/design/architecture-overview.md) and [desig
 
 ## 5. Crate Architecture
 
-Aletheon is organized as eight domain crates plus one executable assembly package:
+Aletheon is organized as nine domain crates plus one executable assembly package:
 
 | Crate | Concept | Role |
 |---|---|---|
-| `base` | ABI | IPC, tool/message/sandbox/LLM types, `paths` |
+| `fabric` | ABI | IPC, tool/message/sandbox/LLM types, `paths` |
 | `dasein` | Self | identity, boundary, care, narrative |
 | `cognit` | Brain | reasoning, planning, reflection, provider routing |
 | `corpus` | Body | tools, sandbox, perception, MCP, drivers |
-| `runtime` | Runtime | cognitive loop, orchestration, and daemon implementation |
+| `agora` | Workspace | shared cognitive workspace: blackboard, attention, task graph, scratchpad, trace |
+| `executive` | Executive | minimal orchestration and daemon implementation (cognitive loop lives in `cognit`) |
 | `interact` | Interface | reusable CLI and TUI implementation |
-| `memory` | Memory | cognitive memory backends (episodic/semantic/procedural/self) |
+| `mnemosyne` | Memory | cognitive memory backends (episodic/semantic/procedural/self) |
 | `metacog` | Meta | self-evolution scaffolding |
 | `bin` | Assembly | unified `aletheon` executable entry point; no domain logic |
 
@@ -200,13 +201,13 @@ Executable entry point:
 ### Crate Dependency Graph
 
 ```
-aletheon (crates/bin) ---> interact, runtime, base, cognit, corpus
-interact               ---> base, corpus
-runtime                ---> base, cognit, corpus, dasein, memory, metacog
-cognit                 ---> base
+aletheon (crates/bin) ---> interact, executive, fabric, cognit, corpus
+interact               ---> fabric, corpus
+executive              ---> fabric, cognit, corpus, dasein, mnemosyne, metacog
+cognit                 ---> fabric
 ```
 
-> `crates/bin` is an assembly boundary only. Domain behavior remains in the eight domain crates.
+> `crates/bin` is an assembly boundary only. Domain behavior remains in the nine domain crates.
 
 ---
 
@@ -216,24 +217,24 @@ cognit                 ---> base
 
 | Capability | Status | Code Anchor | Tests |
 |---|---|---|---|
-| DaemonHost (Unix socket JSON-RPC) | ✅ Stable | `crates/runtime/src/host/mod.rs` | `crates/runtime/tests/` |
-| SystemdHost (sd_notify, watchdog) | ✅ Stable | `crates/runtime/src/host/systemd.rs` | `crates/runtime/tests/` |
-| ContainerHost (Docker/Podman) | 🔧 Experimental | `crates/runtime/src/host/container.rs` | `crates/runtime/tests/` |
-| JSON-RPC server (line-delimited) | ✅ Stable | `crates/runtime/src/impl/daemon/server.rs` | `crates/runtime/tests/` |
+| DaemonHost (Unix socket JSON-RPC) | ✅ Stable | `crates/executive/src/host/mod.rs` | `crates/executive/tests/` |
+| SystemdHost (sd_notify, watchdog) | ✅ Stable | `crates/executive/src/host/systemd.rs` | `crates/executive/tests/` |
+| ContainerHost (Docker/Podman) | 🔧 Experimental | `crates/executive/src/host/container.rs` | `crates/executive/tests/` |
+| JSON-RPC server (line-delimited) | ✅ Stable | `crates/executive/src/impl/daemon/server.rs` | `crates/executive/tests/` |
 | TUI client (`interact`, assembled by `bin`) | ✅ Stable | `crates/interact/src/tui/` | `crates/interact/src/tui/test_infra.rs` |
-| ReActLoop inference engine | ✅ Stable | `crates/runtime/src/core/react_loop/mod.rs` | `crates/runtime/tests/` |
-| Multi-session support | ✅ Stable | `crates/runtime/src/impl/daemon/session_manager.rs` | `crates/runtime/tests/` |
-| Health check endpoint | ✅ Stable | `crates/runtime/src/impl/daemon/handler/rpc.rs` | `crates/runtime/tests/` |
+| ReActLoop inference engine | ✅ Stable | `crates/cognit/src/harness/linear/mod.rs` | `crates/executive/tests/` |
+| Multi-session support | ✅ Stable | `crates/executive/src/impl/daemon/session_manager.rs` | `crates/executive/tests/` |
+| Health check endpoint | ✅ Stable | `crates/executive/src/impl/daemon/handler/rpc.rs` | `crates/executive/tests/` |
 | Bash/File/Grep tools | ✅ Stable | `crates/corpus/src/tools/tools/` | `crates/corpus/src/tools/` |
-| Provider abstraction (Anthropic / OpenAI compatible) | ✅ Stable | `crates/cognit/src/impl/provider_registry.rs` | `crates/runtime/tests/` |
-| Session persistence (SQLite) | ✅ Stable | `crates/runtime/src/impl/session/store.rs` | `crates/runtime/tests/` |
-| Hook system (lifecycle hooks) | ✅ Stable | `crates/runtime/src/impl/hooks/` | `crates/runtime/tests/` |
+| Provider abstraction (Anthropic / OpenAI compatible) | ✅ Stable | `crates/cognit/src/impl/provider_registry.rs` | `crates/executive/tests/` |
+| Session persistence (SQLite) | ✅ Stable | `crates/executive/src/impl/session/store.rs` | `crates/executive/tests/` |
+| Hook system (lifecycle hooks) | ✅ Stable | `crates/corpus/src/hook/` | `crates/executive/tests/` |
 | Bubblewrap Sandbox | ✅ Stable | `crates/corpus/src/security/sandbox/bubblewrap.rs` | `crates/corpus/tests/` |
-| Multi-agent Collaboration | ✅ Stable | `crates/runtime/src/impl/orchestration/agent.rs` | `crates/runtime/tests/` |
-| io_uring IPC backend | 🔧 Experimental | `crates/base/src/ipc/backends/io_uring.rs` | `crates/base/tests/` |
+| Multi-agent Collaboration | ✅ Stable | `crates/executive/src/impl/orchestration/agent.rs` | `crates/executive/tests/` |
+| io_uring IPC backend | 🔧 Experimental | `crates/fabric/src/ipc/backends/io_uring.rs` | `crates/fabric/tests/` |
 | Local/Offline Model | 🔧 Experimental | — | — |
-| Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/self-evolution-loop/` | `crates/runtime/tests/self_evolution_loop_test.rs` |
-| eBPF kernel awareness | 📋 Design | `crates/base/src/ipc/bus/kernel_bus.rs` | — |
+| Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/self-evolution-loop/` | `crates/executive/tests/self_evolution_loop_test.rs` |
+| eBPF kernel awareness | 📋 Design | `crates/fabric/src/ipc/bus/kernel_bus.rs` | — |
 | Android / Embedded targets | 📋 Design | — | — |
 | Cross-platform (macOS / Windows) | 📋 Design | — | — |
 
@@ -258,7 +259,7 @@ These capabilities have implementation and test coverage in the current reposito
 
 These have code but are gated behind features, environment variables, or exist only as examples:
 
-- **ContainerHost** — Docker/Podman container lifecycle management. Code exists at `crates/runtime/src/host/container.rs` and is selected through `aletheon daemon --container <runtime>`.
+- **ContainerHost** — Docker/Podman container lifecycle management. Code exists at `crates/executive/src/host/container.rs` and is selected through `aletheon daemon --container <runtime>`.
 - **io_uring backend** — High-performance IPC backend using Linux io_uring. Code exists but not yet the default transport.
 - **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/self-evolution-loop/`. Requires explicit opt-in.
 - **eBPF probes** — Kernel-level perception via eBPF. Partial implementation in `kernel_bus.rs`.
