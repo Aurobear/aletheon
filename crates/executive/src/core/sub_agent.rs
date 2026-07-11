@@ -367,6 +367,39 @@ impl SubAgentSpawner {
                         );
                         self.restart_agent(id).await?;
                     }
+                    RestartDecision::RestartGroup { attempt, ref siblings } => {
+                        warn!(
+                            agent_id = %id,
+                            attempt,
+                            sibling_count = siblings.len(),
+                            reason = ?exit_reason,
+                            "Sub-agent failed; supervisor restarting group",
+                        );
+                        self.restart_agent(id).await?;
+                        // Restart siblings: look up their agent-id strings
+                        // from the process table.
+                        let sibling_ids: Vec<String> = siblings
+                            .iter()
+                            .filter_map(|&pid| {
+                                self.agents.iter().find_map(|(aid, entry)| {
+                                    if entry.process_id == pid {
+                                        Some(aid.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        for sid in &sibling_ids {
+                            if let Err(e) = self.restart_agent(sid).await {
+                                warn!(
+                                    sibling_agent_id = %sid,
+                                    error = %e,
+                                    "Failed to restart sibling agent",
+                                );
+                            }
+                        }
+                    }
                     RestartDecision::FailedLimitReached => {
                         warn!(
                             agent_id = %id,
