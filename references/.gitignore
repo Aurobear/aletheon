@@ -1,8 +1,0 @@
-# 大项目不上传 GitHub，只保留 setup.sh 和 README.md
-papers/
-projects/
-runtime/
-agent-framework/
-cli-agent/
-sdk/
-DeepSeek-Reasonix/
