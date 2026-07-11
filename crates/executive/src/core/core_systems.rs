@@ -19,6 +19,7 @@ use corpus::security::security::socket_approval::PendingApproval;
 use corpus::tools::tools::ToolRegistry;
 use dasein::SelfField;
 use fabric::kernel::debug_bus::PerfCounter;
+use fabric::AdmissionController;
 use fabric::AgoraOps;
 use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
 use mnemosyne::episodic::EpisodicMemory;
@@ -64,6 +65,11 @@ pub struct CoreSystems {
     /// behind a trait object, so it can be swapped/mocked without the concrete
     /// `AgoraRegistry`.
     pub agora: Arc<dyn AgoraOps>,
+
+    /// Admission controller for capability gating (Phase 5A).
+    /// All side-effecting tool invocations route through this controller
+    /// via `admit() → execute → settle()`.
+    pub admission: Arc<dyn AdmissionController>,
 
     // --- Corpus ---
     pub tools: Arc<Mutex<ToolRegistry>>,

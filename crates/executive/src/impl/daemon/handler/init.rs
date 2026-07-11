@@ -58,7 +58,11 @@ use mnemosyne::FactStore;
 use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
+use crate::kernel::admission::ProductionAdmissionController;
+use crate::kernel::chronos::SystemClock;
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
+use fabric::AdmissionController;
+use fabric::Clock;
 
 impl RequestHandler {
     /// Get a reference to the debug handler (for subscriber rx access).
@@ -73,14 +77,18 @@ impl RequestHandler {
 
     /// Set the notification channel for out-of-band messages to the client.
     pub fn set_notify_channel(&mut self, tx: mpsc::Sender<String>) {
-        self.notify_tx = Some(tx);
+        self.notify_tx = Some(tx.clone());
+        // Propagate to the shared orchestrator handle
+        if let Ok(mut guard) = self.turn_orchestrator.notify_tx().try_lock() {
+            *guard = Some(tx);
+        }
     }
 
     /// Create a notification channel and wire it to the handler.
     /// Returns the receiver for the server to consume out-of-band notifications.
     pub fn create_notify_channel(&mut self) -> mpsc::Receiver<String> {
         let (tx, rx) = mpsc::channel(64);
-        self.notify_tx = Some(tx);
+        self.set_notify_channel(tx);
         rx
     }
 
@@ -541,6 +549,9 @@ impl RequestHandler {
             objective_store,
             reflector,
             agora: Arc::new(agora::AgoraRegistry::new()),
+            admission: Arc::new(ProductionAdmissionController::new(
+                Arc::new(SystemClock::new()),
+            )) as Arc<dyn AdmissionController>,
             tools,
             tool_runner,
             skill_loader: Arc::new(Mutex::new(skill_loader)),
@@ -564,6 +575,20 @@ impl RequestHandler {
             context_window,
         });
 
+        let shared_notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>> = Arc::new(Mutex::new(None));
+
+        let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(
+            subsystems.clone(),
+            sessions.clone(),
+            session_gateway.clone(),
+            llm.clone(),
+            model_router.clone(),
+            shared_notify_tx.clone(),
+            active_connections.clone(),
+            Instant::now(),
+            Some(cancel_token.clone()),
+        ));
+
         let handler = Self {
             subsystems,
             sessions,
@@ -575,6 +600,7 @@ impl RequestHandler {
             active_connections,
             started_at: Instant::now(),
             daemon_cancel_token: Some(cancel_token),
+            turn_orchestrator,
         };
 
         // Register initial params
