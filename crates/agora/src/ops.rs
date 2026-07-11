@@ -169,6 +169,20 @@ impl AgoraOps for AgoraRegistry {
         Ok(commit)
     }
 
+    async fn reject(
+        &self,
+        session: &str,
+        proposal_id: uuid::Uuid,
+        reason: fabric::RejectReason,
+    ) -> Result<(), String> {
+        let mut map = self.sessions.lock().await;
+        let ws = map
+            .entry(session.to_string())
+            .or_insert_with(|| Workspace::new(session));
+        ws.reject(proposal_id, reason)
+            .ok_or_else(|| format!("proposal {} not found in session {}", proposal_id, session))
+    }
+
     async fn changes_since(&self, session: &str, since_version: u64) -> Vec<AgoraCommit> {
         let map = self.sessions.lock().await;
         match map.get(session) {
@@ -466,5 +480,108 @@ mod tests {
         let snap = reg.snapshot("s1").await.unwrap();
         assert_eq!(snap["version"], json!(2));
         assert_eq!(snap["commit_count"], json!(2));
+    }
+
+    // -----------------------------------------------------------------------
+    // Reject tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn reject_removes_pending_proposal() {
+        let reg = AgoraRegistry::new();
+        let prop = reg
+            .propose(
+                "s1",
+                0,
+                AgoraOperation::PublishFact {
+                    key: "k".into(),
+                    value: json!("v"),
+                },
+            )
+            .await
+            .unwrap();
+        reg.reject("s1", prop.id, fabric::RejectReason::Cancelled)
+            .await
+            .unwrap();
+
+        // Commit of the rejected proposal should fail.
+        let err = reg.commit("s1", prop.id).await.unwrap_err();
+        assert!(err.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn reject_unknown_proposal_returns_error() {
+        let reg = AgoraRegistry::new();
+        let err = reg
+            .reject("s1", uuid::Uuid::new_v4(), fabric::RejectReason::Timeout)
+            .await
+            .unwrap_err();
+        assert!(err.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn reject_then_propose_new_works() {
+        let reg = AgoraRegistry::new();
+        // Propose at v0, then reject.
+        let prop1 = reg
+            .propose(
+                "s1",
+                0,
+                AgoraOperation::PublishFact {
+                    key: "first".into(),
+                    value: json!(1),
+                },
+            )
+            .await
+            .unwrap();
+        reg.reject("s1", prop1.id, fabric::RejectReason::Superseded)
+            .await
+            .unwrap();
+
+        // Propose something new at v0 — still valid (version wasn't bumped).
+        let prop2 = reg
+            .propose(
+                "s1",
+                0,
+                AgoraOperation::PublishFact {
+                    key: "second".into(),
+                    value: json!(2),
+                },
+            )
+            .await
+            .unwrap();
+        let commit = reg.commit("s1", prop2.id).await.unwrap();
+        assert_eq!(commit.id, prop2.id);
+
+        let snap = reg.snapshot("s1").await.unwrap();
+        assert_eq!(snap["version"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn reject_records_reason_in_trace() {
+        let reg = AgoraRegistry::new();
+        let prop = reg
+            .propose(
+                "s1",
+                0,
+                AgoraOperation::PublishFact {
+                    key: "k".into(),
+                    value: json!("v"),
+                },
+            )
+            .await
+            .unwrap();
+        reg.reject(
+            "s1",
+            prop.id,
+            fabric::RejectReason::Invalid("malformed key".into()),
+        )
+        .await
+        .unwrap();
+
+        let snap = reg.snapshot("s1").await.unwrap();
+        assert_eq!(snap["trace_len"], json!(1));
+        let reason = snap["trace"][0]["content"]["reason"].as_str().unwrap();
+        assert!(reason.contains("Invalid"), "expected Invalid in reason: {reason}");
     }
 }

@@ -65,6 +65,23 @@ pub struct VersionConflict {
     pub actual: u64,
 }
 
+/// Reason for rejecting a proposal. Carried alongside the proposal id in
+/// [`AgoraOps::reject`] so consumers can distinguish between timed-out,
+/// invalid, and superseded proposals.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RejectReason {
+    /// The proposal timed out before it could be committed.
+    Timeout,
+    /// The proposal was invalid (e.g. failed validation, malformed operation).
+    Invalid(String),
+    /// The proposal was superseded by a newer proposal.
+    Superseded,
+    /// The proposal was explicitly cancelled by the proposer.
+    Cancelled,
+    /// Catch-all for other rejection reasons.
+    Other(String),
+}
+
 // ---------------------------------------------------------------------------
 // Trait
 // ---------------------------------------------------------------------------
@@ -133,6 +150,24 @@ pub trait AgoraOps: Send + Sync {
         unimplemented!("commit: not implemented")
     }
 
+    /// Reject a pending proposal by id, removing it from the proposal set.
+    ///
+    /// After rejection the proposal can no longer be committed. The `reason`
+    /// is recorded in the workspace trace for auditability.
+    ///
+    /// Returns `Ok(())` if the proposal was found and rejected, or an error
+    /// string if the proposal does not exist (already committed, already
+    /// rejected, or never proposed).
+    async fn reject(
+        &self,
+        session: &str,
+        proposal_id: Uuid,
+        reason: RejectReason,
+    ) -> std::result::Result<(), String> {
+        let _ = (session, proposal_id, reason);
+        unimplemented!("reject: not implemented")
+    }
+
     /// Return all commits with version strictly greater than `since_version`.
     async fn changes_since(&self, session: &str, since_version: u64) -> Vec<AgoraCommit> {
         let _ = (session, since_version);
@@ -171,6 +206,14 @@ mod tests {
         }
         async fn trace(&self, session: &str, kind: &str, content: serde_json::Value) -> Result<()> {
             *self.last.lock().unwrap() = Some((session.into(), kind.into(), content));
+            Ok(())
+        }
+        async fn reject(
+            &self,
+            _session: &str,
+            _proposal_id: Uuid,
+            _reason: RejectReason,
+        ) -> std::result::Result<(), String> {
             Ok(())
         }
     }

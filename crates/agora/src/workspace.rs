@@ -13,7 +13,7 @@ use crate::trace::Trace;
 
 // Re-export versioned commit types from fabric (single source of truth for
 // the trait contract), so consumers can import them from `agora::workspace`.
-pub use fabric::include::agora::{AgoraCommit, AgoraOperation, AgoraProposal, VersionConflict};
+pub use fabric::include::agora::{AgoraCommit, AgoraOperation, AgoraProposal, RejectReason, VersionConflict};
 
 // ---------------------------------------------------------------------------
 // Workspace
@@ -92,6 +92,25 @@ impl Workspace {
         self.version += 1;
         self.commits.push(commit.clone());
         Some(commit)
+    }
+
+    /// Reject a pending proposal by id. Returns `Some(())` if the proposal
+    /// was found and removed, or `None` if it does not exist (already
+    /// committed, already rejected, or never proposed).
+    ///
+    /// The rejection reason is recorded in the trace for auditability.
+    pub fn reject(&mut self, proposal_id: Uuid, reason: RejectReason) -> Option<()> {
+        let proposal = self.proposals.remove(&proposal_id)?;
+        let reason_str = format!("{:?}", reason);
+        self.trace.push(
+            "proposal_rejected",
+            serde_json::json!({
+                "proposal_id": proposal.id.to_string(),
+                "reason": reason_str,
+                "operation": format!("{:?}", proposal.operation),
+            }),
+        );
+        Some(())
     }
 
     /// Apply the semantic effect of an operation to workspace state.
@@ -440,5 +459,90 @@ mod tests {
         assert_eq!(node.status, crate::task_graph::TaskStatus::Done);
         // Trace records the update.
         assert_eq!(ws.trace.entries()[0].kind, "task_update");
+    }
+
+    // -- reject behaviour ---------------------------------------------------
+
+    #[test]
+    fn reject_removes_pending_proposal() {
+        let mut ws = Workspace::new("s1");
+        let prop = ws
+            .propose(
+                0,
+                AgoraOperation::PublishFact {
+                    key: "k".into(),
+                    value: json!("v"),
+                },
+            )
+            .unwrap();
+        assert_eq!(ws.proposals.len(), 1);
+
+        let result = ws.reject(prop.id, RejectReason::Cancelled);
+        assert!(result.is_some());
+        assert!(ws.proposals.is_empty());
+    }
+
+    #[test]
+    fn reject_unknown_proposal_returns_none() {
+        let mut ws = Workspace::new("s1");
+        assert!(ws.reject(Uuid::new_v4(), RejectReason::Timeout).is_none());
+    }
+
+    #[test]
+    fn reject_records_trace_entry() {
+        let mut ws = Workspace::new("s1");
+        let prop = ws
+            .propose(
+                0,
+                AgoraOperation::PublishFact {
+                    key: "k".into(),
+                    value: json!("v"),
+                },
+            )
+            .unwrap();
+        ws.reject(prop.id, RejectReason::Invalid("bad input".into()));
+        assert_eq!(ws.trace.len(), 1);
+        let entry = &ws.trace.entries()[0];
+        assert_eq!(entry.kind, "proposal_rejected");
+        assert!(entry.content["reason"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid"));
+    }
+
+    #[test]
+    fn reject_does_not_bump_version() {
+        let mut ws = Workspace::new("s1");
+        let prop = ws
+            .propose(
+                0,
+                AgoraOperation::PublishFact {
+                    key: "k".into(),
+                    value: json!("v"),
+                },
+            )
+            .unwrap();
+        ws.reject(prop.id, RejectReason::Superseded);
+        // Reject should NOT bump the version — it's not a commit.
+        assert_eq!(ws.version, 0);
+        assert!(ws.commits.is_empty());
+    }
+
+    #[test]
+    fn reject_prevents_later_commit() {
+        let mut ws = Workspace::new("s1");
+        let prop = ws
+            .propose(
+                0,
+                AgoraOperation::PublishFact {
+                    key: "k".into(),
+                    value: json!("v"),
+                },
+            )
+            .unwrap();
+        let prop_id = prop.id;
+        ws.reject(prop_id, RejectReason::Cancelled);
+        // Committing the same id after reject should fail.
+        assert!(ws.commit(prop_id).is_none());
     }
 }

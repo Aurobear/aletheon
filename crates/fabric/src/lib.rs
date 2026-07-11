@@ -95,7 +95,7 @@ pub use policy::verifier;
 
 // Subsystem traits (from include/)
 pub use include::admission::AdmissionController;
-pub use include::agora::{AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, VersionConflict};
+pub use include::agora::{AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, RejectReason, VersionConflict};
 pub use include::body::{Action, ActionResult, BodyRuntime};
 pub use include::capability_invoker::CapabilityInvoker;
 pub use include::chronos::Clock;
