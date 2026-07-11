@@ -101,8 +101,14 @@ God-object decomposition.
   control-flow-bearing pre-turn gate/hook parts, the session-manager/turn-count
   bookkeeping, the `tokio::spawn` react task, and the `tokio::select!` event/approval loop
   — the genuinely tangled orchestration, which is legitimately `handle_chat`'s runner role.
-  The `CoreSystems`→`Arc<dyn …>` half (issue #3) is deferred until `chat.rs` is fully
-  decomposed.
+- **Issue #3 first field (2026-07-11):** `CoreSystems.agora` is now `Arc<dyn AgoraOps>`
+  (was `Arc<AgoraRegistry>`) — the first concrete subsystem field moved behind a trait
+  object, proving the God-object can be incrementally dyn-ified and letting agora be
+  mocked/swapped. The remaining ~27 fields do **not** convert cleanly yet: their concrete
+  types expose rich APIs the narrow `include/*` traits don't (e.g.
+  `FactStore::search_facts_governed` is not on `MemoryBackend`), so each needs a
+  per-subsystem trait-widening pass before it can go behind `dyn`. That is the long tail of
+  issue #3, done one subsystem at a time — not a big-bang.
 
 ### ⚪ D6 — Placement debates (not clearly wrong)
 `orchestration/`, `coordinator.rs`, `goal/ObjectiveStore` live in executive. Verdict:

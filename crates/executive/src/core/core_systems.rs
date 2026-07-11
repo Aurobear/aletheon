@@ -13,13 +13,13 @@ use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 
-use agora::AgoraRegistry;
 use corpus::security::security::approval::ApprovalDecision;
 use corpus::security::security::runner::ToolRunnerWithGuard;
 use corpus::security::security::socket_approval::PendingApproval;
 use corpus::tools::tools::ToolRegistry;
 use dasein::SelfField;
 use fabric::kernel::debug_bus::PerfCounter;
+use fabric::AgoraOps;
 use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
 use mnemosyne::episodic::EpisodicMemory;
 
@@ -60,7 +60,10 @@ pub struct CoreSystems {
     pub reflector: Reflector,
 
     /// Shared cognitive workspace (RFC-014). Session-isolated working memory.
-    pub agora: Arc<AgoraRegistry>,
+    /// Held as `dyn AgoraOps` (RFC-018 issue #3): the first `CoreSystems` field
+    /// behind a trait object, so it can be swapped/mocked without the concrete
+    /// `AgoraRegistry`.
+    pub agora: Arc<dyn AgoraOps>,
 
     // --- Corpus ---
     pub tools: Arc<Mutex<ToolRegistry>>,
