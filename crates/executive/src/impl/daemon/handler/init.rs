@@ -59,11 +59,8 @@ use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use crate::core::sub_agent::SubAgentRuntime;
-use crate::kernel::admission::ProductionAdmissionController;
-use crate::kernel::chronos::SystemClock;
 use async_trait::async_trait;
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
-use fabric::AdmissionController;
 
 // ---------------------------------------------------------------------------
 // DaemonSubAgentRuntime — production sub-agent execution
@@ -632,9 +629,16 @@ impl RequestHandler {
             llm.clone(),
         ));
 
+        let ports = crate::kernel::service_ports::ServicePorts::new()
+            .with_agora(Arc::new(agora::AgoraRegistry::new()));
+        let shared_agora = ports
+            .agora
+            .clone()
+            .expect("ports.agora must be set via with_agora");
+        let shared_admission = ports.admission.clone();
+
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
-            ports: crate::kernel::service_ports::ServicePorts::new()
-                .with_agora(Arc::new(agora::AgoraRegistry::new())),
+            ports,
             runtime: Arc::new(Mutex::new(runtime)),
             self_field,
             episodic_memory,
@@ -644,10 +648,10 @@ impl RequestHandler {
             auto_memory,
             objective_store,
             reflector,
-            agora: Arc::new(agora::AgoraRegistry::new()),
-            admission: Arc::new(ProductionAdmissionController::new(Arc::new(
-                SystemClock::new(),
-            ))) as Arc<dyn AdmissionController>,
+            // Transitional: use ports.agora instead (PR-1 deduplication).
+            agora: shared_agora,
+            // Transitional: use ports.admission instead (PR-1 deduplication).
+            admission: shared_admission,
             tools,
             tool_runner,
             skill_loader: Arc::new(Mutex::new(skill_loader)),
