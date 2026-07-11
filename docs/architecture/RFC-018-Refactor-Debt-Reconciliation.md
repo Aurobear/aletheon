@@ -83,9 +83,17 @@ outside fabric — the dictionary existed; nothing spoke it.
 
 ### 🟡 D5 — Executive not yet minimal (known intermediate state)
 `CoreSystems` still bundles ~28 concrete subsystem fields
-(`executive/src/core/core_systems.rs:46-99`); `chat.rs:225-380` orchestrates
-fact/memory/skill/hook inline. This was explicitly the documented "intermediate step";
-the refactor renamed but did not finish the God-object decomposition.
+(`executive/src/core/core_systems.rs:46-99`); `handle_chat` was a single ~1080-line
+method orchestrating fact/memory/skill/hook/loop/evolution inline. This was explicitly
+the documented "intermediate step"; the refactor renamed but did not finish the
+God-object decomposition.
+- **In progress (2026-07-11):** `handle_chat`'s pre-turn *injection cluster*
+  (keyword-skill / fact-recall / core-memory / skill-suggestion / stale-decay) is
+  extracted into focused private methods on `RequestHandler` (`handle_chat` 1080→950
+  lines). Extraction proceeds one seam at a time — the control-flow-bearing gate/hook
+  parts and Acts 2/3 (ReAct loop, post-turn) remain inline, to be carved in follow-up
+  PRs. The `CoreSystems`→`Arc<dyn …>` half (issue #3) is deferred until `chat.rs` is
+  decomposed.
 
 ### ⚪ D6 — Placement debates (not clearly wrong)
 `orchestration/`, `coordinator.rs`, `goal/ObjectiveStore` live in executive. Verdict:

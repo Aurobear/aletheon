@@ -104,6 +104,145 @@ fn build_request_messages(
 }
 
 impl RequestHandler {
+    // -- Pre-turn injection phases (RFC-018 D5 / issue #4) -----------------
+    // Each appends to the effective user message; none has early-return
+    // control flow, so they extract cleanly out of `handle_chat`.
+
+    /// Keyword-triggered skill injection: match loaded skills against the user
+    /// message and append their bodies (bounded).
+    async fn inject_keyword_skills(&self, message: &str, effective_message: &mut String) {
+        let loader = self.subsystems.skill_loader.lock().await;
+        let skill_keywords: Vec<corpus::skill::keyword_matcher::SkillKeywords> = loader
+            .plugins()
+            .iter()
+            .filter(|p| !p.keywords.is_empty())
+            .map(|p| corpus::skill::keyword_matcher::SkillKeywords {
+                name: p.name.clone(),
+                keywords: p.keywords.clone(),
+                body: p.system_prompt.clone(),
+            })
+            .collect();
+        drop(loader);
+        let matched = corpus::skill::keyword_matcher::match_skills(message, &skill_keywords);
+        let mut remaining = MAX_ACTIVATED_SKILLS_TOTAL_CHARS;
+        for body in matched {
+            if remaining == 0 {
+                break;
+            }
+            effective_message.push_str("\n<activated-skill>\n");
+            append_bounded_text(
+                effective_message,
+                &body,
+                MAX_ACTIVATED_SKILL_CHARS,
+                &mut remaining,
+            );
+            effective_message.push_str("\n</activated-skill>\n");
+        }
+    }
+
+    /// Recall relevant facts from the FactStore (keyword search + entity-graph
+    /// boost) and append them to the user turn.
+    async fn inject_fact_recall(&self, message: &str, effective_message: &mut String) {
+        let fs = self.subsystems.fact_store.lock().await;
+        let keywords: Vec<String> = message
+            .split_whitespace()
+            .filter(|w| w.len() > 3)
+            .map(|w| w.to_lowercase())
+            .collect();
+        let query = keywords.join(" ");
+        if query.len() >= 8 {
+            if let Ok(facts) = fs.search_facts_governed(&query, None, false, 0.15, 4) {
+                if !facts.is_empty() {
+                    let mut recall_block = String::from("\n[Recalled memories]\n");
+                    let mut remaining = MAX_RECALL_TOTAL_CHARS;
+                    for fact in &facts {
+                        if remaining == 0 {
+                            break;
+                        }
+                        recall_block.push_str("- ");
+                        append_bounded_text(
+                            &mut recall_block,
+                            &fact.content,
+                            MAX_RECALLED_FACT_CHARS,
+                            &mut remaining,
+                        );
+                        recall_block.push_str(&format!(" (trust: {:.2})\n", fact.trust_score));
+                        let _ = fs.record_feedback(fact.fact_id, true);
+                    }
+                    // Entity graph boost
+                    let entities = FactStore::extract_entities(message);
+                    for entity in entities.iter().take(3) {
+                        if let Ok(eid) = fs.resolve_entity(entity) {
+                            if let Ok(related) = fs.get_entity_facts(eid) {
+                                for rf in related.iter().take(1) {
+                                    if !facts.iter().any(|f| f.fact_id == rf.fact_id) {
+                                        if remaining == 0 {
+                                            break;
+                                        }
+                                        recall_block.push_str("- ");
+                                        append_bounded_text(
+                                            &mut recall_block,
+                                            &rf.content,
+                                            MAX_RECALLED_FACT_CHARS,
+                                            &mut remaining,
+                                        );
+                                        recall_block.push_str(&format!(" (entity: {})\n", entity));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    info!(count = facts.len(), "Fact recall injected");
+                    effective_message.push_str(&recall_block);
+                }
+            }
+        }
+    }
+
+    /// Inject the current (post-boot) CoreMemory state so the model sees
+    /// up-to-date writable blocks (CoreMemory is baked into the boot prefix,
+    /// but core_memory_append / AutoMemory mutate it in-memory afterward).
+    async fn inject_core_memory(&self, effective_message: &mut String) {
+        let cm = self.subsystems.core_memory.lock().await;
+        let mut core_lines = Vec::new();
+        for (label, block) in cm.blocks() {
+            if block.read_only || block.value.is_empty() {
+                continue;
+            }
+            for line in block.value.lines() {
+                if !line.trim().is_empty() {
+                    core_lines.push(format!("[core:{}] {}", label, line));
+                }
+            }
+        }
+        if !core_lines.is_empty() {
+            effective_message.push_str("\n[Core Memory — current state]\n");
+            for line in &core_lines {
+                effective_message.push_str(line);
+                effective_message.push('\n');
+            }
+        }
+    }
+
+    /// Suggest a skill via the SkillRouter (advisory hint, not auto-activated).
+    async fn inject_skill_suggestion(&self, message: &str, effective_message: &mut String) {
+        let sr = self.subsystems.skill_router.lock().await;
+        let suggestions = sr.suggest(message, 0.6, 1);
+        if let Some(suggestion) = suggestions.first() {
+            info!(skill = %suggestion.name, confidence = suggestion.confidence, "Skill suggested");
+            effective_message.push_str(&format!(
+                "\n[Suggested skill] /{} (confidence: {:.2}) — {}\n",
+                suggestion.name, suggestion.confidence, suggestion.description
+            ));
+        }
+    }
+
+    /// Periodic stale-fact decay (fire-and-forget maintenance).
+    async fn decay_stale_facts(&self) {
+        let fs = self.subsystems.fact_store.lock().await;
+        let _ = fs.decay_stale();
+    }
+
     pub(super) async fn handle_chat(
         &self,
         id: serde_json::Value,
@@ -188,142 +327,16 @@ impl RequestHandler {
             warn!(error = %e, "SelfField review error, proceeding with caution");
         }
 
-        // --- Keyword skill injection ---
-        // Gather loaded skills with keywords and match against user message.
-        {
-            let loader = self.subsystems.skill_loader.lock().await;
-            let skill_keywords: Vec<corpus::skill::keyword_matcher::SkillKeywords> = loader
-                .plugins()
-                .iter()
-                .filter(|p| !p.keywords.is_empty())
-                .map(|p| corpus::skill::keyword_matcher::SkillKeywords {
-                    name: p.name.clone(),
-                    keywords: p.keywords.clone(),
-                    body: p.system_prompt.clone(),
-                })
-                .collect();
-            drop(loader);
-            let matched = corpus::skill::keyword_matcher::match_skills(message, &skill_keywords);
-            let mut remaining = MAX_ACTIVATED_SKILLS_TOTAL_CHARS;
-            for body in matched {
-                if remaining == 0 {
-                    break;
-                }
-                effective_message.push_str("\n<activated-skill>\n");
-                append_bounded_text(
-                    &mut effective_message,
-                    &body,
-                    MAX_ACTIVATED_SKILL_CHARS,
-                    &mut remaining,
-                );
-                effective_message.push_str("\n</activated-skill>\n");
-            }
-        }
+        // --- Pre-turn injection phases (extracted; RFC-018 D5 / issue #4) ---
+        self.inject_keyword_skills(message, &mut effective_message)
+            .await;
 
-        // --- Fact recall from FactStore ---
-        {
-            let fs = self.subsystems.fact_store.lock().await;
-            let keywords: Vec<String> = message
-                .split_whitespace()
-                .filter(|w| w.len() > 3)
-                .map(|w| w.to_lowercase())
-                .collect();
-            let query = keywords.join(" ");
-            if query.len() >= 8 {
-                if let Ok(facts) = fs.search_facts_governed(&query, None, false, 0.15, 4) {
-                    if !facts.is_empty() {
-                        let mut recall_block = String::from("\n[Recalled memories]\n");
-                        let mut remaining = MAX_RECALL_TOTAL_CHARS;
-                        for fact in &facts {
-                            if remaining == 0 {
-                                break;
-                            }
-                            recall_block.push_str("- ");
-                            append_bounded_text(
-                                &mut recall_block,
-                                &fact.content,
-                                MAX_RECALLED_FACT_CHARS,
-                                &mut remaining,
-                            );
-                            recall_block.push_str(&format!(" (trust: {:.2})\n", fact.trust_score));
-                            let _ = fs.record_feedback(fact.fact_id, true);
-                        }
-                        // Entity graph boost
-                        let entities = FactStore::extract_entities(message);
-                        for entity in entities.iter().take(3) {
-                            if let Ok(eid) = fs.resolve_entity(entity) {
-                                if let Ok(related) = fs.get_entity_facts(eid) {
-                                    for rf in related.iter().take(1) {
-                                        if !facts.iter().any(|f| f.fact_id == rf.fact_id) {
-                                            if remaining == 0 {
-                                                break;
-                                            }
-                                            recall_block.push_str("- ");
-                                            append_bounded_text(
-                                                &mut recall_block,
-                                                &rf.content,
-                                                MAX_RECALLED_FACT_CHARS,
-                                                &mut remaining,
-                                            );
-                                            recall_block
-                                                .push_str(&format!(" (entity: {})\n", entity));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        info!(count = facts.len(), "Fact recall injected");
-                        effective_message.push_str(&recall_block);
-                    }
-                }
-            }
-        }
-
-        // --- Inject current CoreMemory state ---
-        // CoreMemory is baked into the system prompt prefix at boot, but
-        // core_memory_append/AutoMemory updates it in-memory after that.
-        // Inject the current state so the model sees up-to-date facts.
-        {
-            let cm = self.subsystems.core_memory.lock().await;
-            let mut core_lines = Vec::new();
-            for (label, block) in cm.blocks() {
-                if block.read_only || block.value.is_empty() {
-                    continue;
-                }
-                // Only inject non-empty, writable blocks (human, learned, etc.)
-                for line in block.value.lines() {
-                    if !line.trim().is_empty() {
-                        core_lines.push(format!("[core:{}] {}", label, line));
-                    }
-                }
-            }
-            if !core_lines.is_empty() {
-                effective_message.push_str("\n[Core Memory — current state]\n");
-                for line in &core_lines {
-                    effective_message.push_str(line);
-                    effective_message.push('\n');
-                }
-            }
-        }
-
-        // --- Skill suggestion via SkillRouter ---
-        {
-            let sr = self.subsystems.skill_router.lock().await;
-            let suggestions = sr.suggest(message, 0.6, 1);
-            if let Some(suggestion) = suggestions.first() {
-                info!(skill = %suggestion.name, confidence = suggestion.confidence, "Skill suggested");
-                effective_message.push_str(&format!(
-                    "\n[Suggested skill] /{} (confidence: {:.2}) — {}\n",
-                    suggestion.name, suggestion.confidence, suggestion.description
-                ));
-            }
-        }
-
-        // --- Periodic stale fact decay ---
-        {
-            let fs = self.subsystems.fact_store.lock().await;
-            let _ = fs.decay_stale();
-        }
+        self.inject_fact_recall(message, &mut effective_message)
+            .await;
+        self.inject_core_memory(&mut effective_message).await;
+        self.inject_skill_suggestion(message, &mut effective_message)
+            .await;
+        self.decay_stale_facts().await;
 
         // --- Configured pre_turn hook scripts ---
         if !self.subsystems.hooks_config.pre_turn.is_empty() {
