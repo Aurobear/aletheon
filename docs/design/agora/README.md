@@ -81,7 +81,7 @@ crates/agora/src/
 
 `AgoraRegistry` (`ops.rs`) owns one `Workspace` per session id (`HashMap<String, Workspace>`
 behind a `tokio::sync::Mutex`) and implements the `AgoraOps` trait
-(`fabric::ops::AgoraOps`):
+(`fabric::AgoraOps`, defined in `crates/fabric/src/include/agora.rs`):
 
 | Method | Signature | Behavior |
 |--------|-----------|----------|
@@ -125,7 +125,7 @@ as of 2026-07-10):
 - Only `turn_input` is published in the live daemon path today; tool outputs
   and sub-agent results are not yet routinely written to the trace.
 - `snapshot()` output was only logged, not yet persisted to Mnemosyne via
-  `MnemosyneOps::store()` — closing this loop is tracked as RFC-018 Phase 1.
+  `MemoryBackend::store()` — closing this loop is tracked as RFC-018 Phase 1.
 - `Scratchpad` is migrated into this crate but not yet wired into `Workspace`
   as a field; it exists as a standalone type constructed directly by callers
   that need task-level scratch space.

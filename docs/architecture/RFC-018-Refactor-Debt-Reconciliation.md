@@ -26,18 +26,31 @@ unused beside it. Most findings below are facets of this one gap.
 
 ## 2. Findings (ranked, verified)
 
-### 🔴 D1 — Two parallel trait vocabularies
-`fabric::ops` defines `CognitOps / DaseinOps / MnemosyneOps / CorpusOps` (Group A,
-mostly unused). `fabric::include/*` defines `BrainCoreOps / SelfFieldOps /
-MemoryBackend / BodyRuntime` — the ones actually implemented and used.
-- Evidence: `cognit/src/core/brain_core_ops.rs:19` impls `BrainCoreOps`; `fabric/src/ops.rs:16` `CognitOps` has no implementor. `AgoraOps` is the one `ops.rs` trait that *is* wired (`agora/src/ops.rs`, called in `executive/.../chat.rs:11`).
-- Problem: every feature must be reconciled against two abstractions. Pick one.
+### ✅ D1 — Two parallel trait vocabularies *(resolved 2026-07-11)*
+`fabric::ops` defined `CognitOps / DaseinOps / MnemosyneOps / CorpusOps` (Group A).
+`fabric::include/*` defines `BrainCoreOps / SelfFieldOps / MemoryBackend / BodyRuntime`
+— the ones actually implemented and used.
+- Original evidence: `cognit/src/core/brain_core_ops.rs:19` impls `BrainCoreOps`;
+  `fabric/src/ops.rs:16` `CognitOps` had no implementor.
+- **Re-audit finding:** this was never a live duplication. Of the seven traits in
+  `ops.rs`, six had **zero implementors and zero consumers** — `CognitOps`,
+  `MnemosyneOps`, `CorpusOps`, `ops::DaseinOps` (a same-named-but-distinct trait from
+  the live phenomenological `fabric::dasein::DaseinOps`), plus the unused harness pair
+  `CognitiveHarness` / `ToolExecutor`. Only `AgoraOps` was wired (`agora/src/ops.rs`,
+  called in `executive/.../chat.rs`). The `include/*` set was always the sole live
+  contract layer.
+- **Resolution:** canonical home is `fabric::include`. Deleted the six dead traits and
+  removed `crates/fabric/src/ops.rs` entirely; moved the one live trait to
+  `fabric::include::agora`. Deleting `ops::DaseinOps` also removed the `DaseinOps`
+  name collision (a partial D3 fix). Zero behaviour change; `cargo build/test/clippy
+  --workspace` green.
 
 ### 🔴 D2 — Primitive vocabulary is decorative
 `fabric::primitives::cognitive` (Hypothesis/Evidence/Narrative/Commitment) and
 `::comm` (Command/Query/Event/Stream/Mailbox) have **zero consumers** outside fabric.
 Ops-trait methods cross boundaries as `serde_json::Value`, not typed primitives
-(13 of 16 methods in `fabric/src/ops.rs`).
+(e.g. most of `AgoraOps` in `fabric/src/include/agora.rs`, and the JSON-valued
+methods on the `include/*` contracts).
 - Problem: RFC-017's contract ("every subsystem communicates using these primitives")
   is unenforced. The dictionary exists; nothing speaks it.
 
@@ -77,7 +90,7 @@ multi-agent **orchestration** is a legitimate Executive/Supervisor concern — l
 
 | Area | Current reality | Gap | Priority |
 |------|-----------------|-----|----------|
-| **Harness graphs** | `CognitiveHarness` trait exists (`fabric/src/ops.rs`), but only `linear` ReAct impl; executive `orchestrator.rs:44` hardcodes construction | 2nd harness (Research/Coding/Robot) requires editing executive core | 🔴 highest future value |
+| **Harness graphs** | `HarnessKind` enum + `build_harness` factory select the harness by config (`cognit/src/harness/mod.rs`; no `dyn` trait — see D1), but only the `linear` ReAct harness is implemented | 2nd harness (Research/Coding/Robot) is now additive: add an enum variant + factory arm, no executive-core edits | 🟠 high |
 | **Mnemosyne background services** | consolidation/decay/activation are pure fns, **never scheduled**; Replay/Dream/Association/Forgetting absent | memory never consolidates or ages → bloat; no long-term continuity | 🟠 high |
 | **Agora shared workspace** | only `turn_input` published; tool outputs / sub-agent results **not** written; snapshot **logged, not persisted** (`chat.rs:1144`) | reasoning trace lost on restart; blackboard near-empty | 🟡 medium-high |
 | **Corpus capability layering** | flat Tools+Skills+Hooks; no Capability composition | can't compose/recompose tools | ⚪ low (YAGNI until needed) |
@@ -93,7 +106,7 @@ Ordered by value/risk. Each phase is independently shippable; every change goes 
 Additive and low-risk; fixes real incomplete behavior (reasoning trace lost on
 restart). In the tool-execution path, publish each tool result (and sub-agent result)
 to the Agora trace; at turn end persist `agora.snapshot()` to Mnemosyne via
-`MnemosyneOps::store()` instead of only logging. Closes the RFC-014 §5b deferral.
+`MemoryBackend::store()` instead of only logging. Closes the RFC-014 §5b deferral.
 
 > **Mnemosyne background scheduler (was 1b) — moved to Phase 3.5 (deferred).**
 > Scheduling `consolidate`/`decay` is not the low-risk additive change first assumed:
@@ -102,10 +115,12 @@ to the Agora trace; at turn end persist `agora.snapshot()` to Mnemosyne via
 > daemon or requires enabling untested feature-gated paths. Deserves its own design
 > (which services run in the default build, on what trigger, with what concurrency).
 
-### Phase 2 — Harness factory *(extension; doing now)*
-Make executive select a `CognitiveHarness` via a registry/factory keyed by config, so a
-second harness can be registered without touching executive core. Uses the existing
-trait; move the hardcoded `ReActLoop` construction behind the factory.
+### Phase 2 — Harness factory *(done)*
+Executive selects the harness via the `HarnessKind` enum + `build_harness` factory
+(`cognit/src/harness/mod.rs`), keyed by the `harness_kind` config field; the hardcoded
+`ReActLoop` construction now runs through the factory. A `dyn CognitiveHarness` trait
+was *not* used — `run()` is generic over its executor and so not object-safe (see D1) —
+so a second harness is added as a new enum variant + factory arm, not a trait impl.
 
 ### Phase 3.5 — Mnemosyne background services *(deferred)*
 A `BackgroundTaskScheduler` running the memory-maintenance services that are available
@@ -113,13 +128,17 @@ in the default build, on turn-completion or timer events, wired at daemon startu
 Design must first settle which of consolidate/decay/activation/replay run without the
 `cognitive-memory` feature and their trigger/concurrency model.
 
-### Phase 3 — Trait-vocabulary reconciliation *(deferred — large, staged separately)*
-Resolve D1+D2: converge on **one** boundary vocabulary. Recommended direction: adopt
-the RFC-017-aligned `fabric::ops` traits as canonical, implement them as thin adapters
-over the existing subsystem cores (as `AgoraOps` already demonstrates), and begin
-typing the hottest boundary payloads with `fabric::primitives` instead of
-`serde_json::Value`. High blast radius — deserves its own RFC and incremental PRs; do
-NOT big-bang.
+### Phase 3 — Trait-vocabulary reconciliation *(D1 done 2026-07-11; D2 still open)*
+**D1 resolved** — but in the *opposite* direction to what this section originally
+recommended. The re-audit (see D1 above) showed the `fabric::ops` traits were dead
+scaffolding, not a live competing vocabulary, so the correct move was to **keep
+`fabric::include` as canonical and delete `ops.rs`** rather than adopt the ops traits.
+No big-bang was needed; it was a single dead-code-deletion + one-trait-relocation PR.
+
+**D2 still open:** boundary payloads still cross as `serde_json::Value` rather than the
+typed `fabric::primitives` (Hypothesis/Evidence/…). Typing the hottest boundaries is
+the remaining, genuinely incremental work here — and now unambiguous, since there is
+only one trait layer (`include/`) to type against.
 
 ### Phase 4 — Decouple LlmProvider *(deferred)*
 Resolve D4: move `LlmProvider` out of `cognit` into `fabric` (or a standalone `llm`
