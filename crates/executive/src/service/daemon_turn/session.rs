@@ -1,0 +1,64 @@
+//! Session-management methods on `DaemonTurnOrchestrator`.
+
+use super::orchestrator::DaemonTurnOrchestrator;
+use crate::r#impl::daemon::session_manager::SessionManager;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
+
+impl DaemonTurnOrchestrator {
+    pub(crate) async fn get_or_create_session(
+        &self,
+        session_id: Option<&str>,
+    ) -> (String, Arc<Mutex<SessionManager>>) {
+        let id = if let Some(sid) = session_id {
+            sid.to_string()
+        } else {
+            self.subsystems.default_session_id.lock().await.clone()
+        };
+        {
+            let sessions = self.sessions.lock().await;
+            if let Some(sm) = sessions.get(&id) {
+                return (id, sm.clone());
+            }
+        }
+        match SessionManager::new(
+            &self.subsystems.data_dir,
+            id.clone(),
+            self.subsystems.context_window,
+        )
+        .await
+        {
+            Ok(sm) => {
+                let sm_arc = Arc::new(Mutex::new(sm));
+                self.sessions
+                    .lock()
+                    .await
+                    .insert(id.clone(), sm_arc.clone());
+                self.subsystems
+                    .session_created_at
+                    .lock()
+                    .await
+                    .insert(id.clone(), Instant::now());
+                info!(session_id = %id, "Session created on demand");
+                (id, sm_arc)
+            }
+            Err(e) => {
+                warn!(error = %e, session_id = %id, "Failed to create session on demand, using default");
+                let default_id = self.subsystems.default_session_id.lock().await.clone();
+                let sessions = self.sessions.lock().await;
+                let sm = sessions.get(&default_id).cloned().unwrap();
+                (default_id, sm)
+            }
+        }
+    }
+
+    pub(crate) async fn begin_turn_token(&self) -> CancellationToken {
+        let ct = CancellationToken::new();
+        let mut token = self.subsystems.cancel_token.lock().await;
+        *token = Some(ct.clone());
+        ct
+    }
+}
