@@ -1,9 +1,9 @@
-//! # Aletheon BrainCore
+//! # Aletheon CognitCore
 //!
 //! The cognitive computation engine — handles "how do I?" reasoning, planning,
 //! critique, reflection, and learning.
 //!
-//! BrainCore has NO self. It does not decide "should I?" (that is SelfField's job).
+//! CognitCore has NO self. It does not decide "should I?" (that is SelfField's job).
 //! It produces plans, evaluates them, reflects on outcomes, and extracts rules.
 //!
 //! ## Components
@@ -14,7 +14,7 @@
 //! - **Critic** — multi-dimensional critique (correctness, completeness, risk, efficiency, reversibility)
 //! - **Learner** — experience → learned rules
 //! - **WorldModel** — environment state tracking via observations
-//! - **BrainCore** — wires all components, implements BrainCoreOps + Subsystem
+//! - **CognitCore** — wires all components, implements CognitOps + Subsystem
 
 pub mod bridge;
 pub mod config;
@@ -29,7 +29,7 @@ pub use core::planner::Planner;
 pub use core::reasoner::{Reasoner, ReasoningStrategy};
 pub use core::reflector::Reflector;
 pub use core::world_model::WorldModel;
-pub use core::{BrainCore, BrainCoreConfig};
+pub use core::{CognitCore, CognitCoreConfig};
 
 // Re-export bridge components
 pub use bridge::dual_model::{DualModelBridge, DualModelConfig, TaskComplexity};

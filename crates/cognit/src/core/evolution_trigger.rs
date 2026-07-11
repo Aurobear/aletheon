@@ -5,7 +5,7 @@
 //! to `ExperienceSummarizer` to produce an `EvolutionLogEntry`.
 
 use chrono::{DateTime, Duration, Utc};
-use fabric::brain::{EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+use fabric::cognit::{EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
 /// Configuration for the evolution trigger.
 #[derive(Debug, Clone)]

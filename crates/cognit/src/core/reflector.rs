@@ -7,7 +7,7 @@
 //! Also produces structured ReflectionEntry for persistent self-evolution.
 
 use chrono::Utc;
-use fabric::brain::{
+use fabric::cognit::{
     ExecutionResult, Reflection, ReflectionEntry, ReflectionOutcome, ReflectionTrigger,
 };
 use uuid::Uuid;

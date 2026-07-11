@@ -1,4 +1,4 @@
-//! Subsystem implementation for BrainCore.
+//! Subsystem implementation for CognitCore.
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -6,16 +6,16 @@ use tracing::info;
 
 use fabric::{Subsystem, SubsystemContext, SubsystemHealth, Version};
 
-use super::BrainCore;
+use super::CognitCore;
 
 #[async_trait]
-impl Subsystem for BrainCore {
+impl Subsystem for CognitCore {
     fn name(&self) -> &str {
         "brain_core"
     }
 
     async fn init(&mut self, _ctx: &SubsystemContext) -> Result<()> {
-        info!("BrainCore initializing");
+        info!("CognitCore initializing");
         self.initialized = true;
         Ok(())
     }
@@ -30,7 +30,7 @@ impl Subsystem for BrainCore {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        info!("BrainCore shutting down");
+        info!("CognitCore shutting down");
         self.world_model.clear();
         self.initialized = false;
         Ok(())

@@ -19,7 +19,7 @@
 | `body` | `fabric/src/body.rs` | `Action`, `ActionResult`, `BodyRuntime` trait |
 | `memory` | `fabric/src/memory.rs` | `MemoryBackend`, `MemoryEntry`, `MemoryHandle`, `MemoryQuery`, `MemoryType`, `MemoryFilter`, `CompactStrategy`, `CompactResult`, `MemoryStats` |
 | `self_field` | `fabric/src/self_field.rs` | `SelfFieldOps` trait, `Verdict`, `Intent`, `Identity`, `Care`, `Conflict`, `Resolution`, `MutationIntent` |
-| `brain` | `fabric/src/brain.rs` | `BrainCoreOps` trait, `Plan`, `PlanStep`, `CostEstimate`, `ExecutionResult`, `Reflection`, `Critique`, `LearnedRule`, `Experience`, `Observation` |
+| `cognit` | `fabric/src/include/cognit.rs` | `CognitOps` trait, `Plan`, `PlanStep`, `CostEstimate`, `ExecutionResult`, `Reflection`, `Critique`, `LearnedRule`, `Experience`, `Observation` |
 | `meta` | `fabric/src/meta.rs` | `MetaRuntimeOps` trait, `RuntimeCandidate`, `TestResult`, `Evaluation`, `MigrationResult` |
 | `runtime` | `fabric/src/runtime.rs` | `RuntimeOps` trait, `AgentInfo`, `AgentStatus`, `ScheduledTask`, `ScheduleKind`, `StepResult` |
 | `genome` | `fabric/src/genome.rs` | `Genome` model (topology, identity, boundary, care, memory, mutation, lifecycle) |
@@ -40,7 +40,7 @@
 
 2. **Two PermissionLevel types** — `capability::PermissionLevel` (ReadOnly/SandboxWrite/...) for subsystem capabilities, and `tool::PermissionLevel` (L0-L3) for tool access control. The tool variant is re-exported as `ToolPermissionLevel` to avoid name conflicts.
 
-3. **Subsystem trait** — Every major subsystem implements `Subsystem` (name, version, init, shutdown, health). Higher-level traits (`BrainCoreOps`, `BodyRuntime`, `MetaRuntimeOps`, `SelfFieldOps`) extend this base.
+3. **Subsystem trait** — Every major subsystem implements `Subsystem` (name, version, init, shutdown, health). Higher-level traits (`CognitOps`, `BodyRuntime`, `MetaRuntimeOps`, `SelfFieldOps`) extend this base.
 
 ---
 

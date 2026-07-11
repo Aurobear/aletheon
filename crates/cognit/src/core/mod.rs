@@ -1,15 +1,15 @@
-//! BrainCore — the cognitive computation engine.
+//! CognitCore — the cognitive computation engine.
 //!
 //! Wires all components (Reasoner, Planner, Critic, Reflector, Learner, WorldModel)
-//! into a single struct that implements `BrainCoreOps` and `Subsystem`.
+//! into a single struct that implements `CognitOps` and `Subsystem`.
 //!
-//! BrainCore has NO self — it's a pure computation engine.
-//! "Should I?" is SelfField's job. "How do I?" is BrainCore's job.
+//! CognitCore has NO self — it's a pure computation engine.
+//! "Should I?" is SelfField's job. "How do I?" is CognitCore's job.
 
 pub mod awareness;
 pub mod awareness_signal;
-pub mod brain_core_ops;
 pub mod brain_core_subsystem;
+pub mod cognit_ops;
 pub mod critic;
 pub mod evolution_trigger;
 pub mod experience_summarizer;
@@ -40,10 +40,12 @@ use self::world_model::WorldModel;
 use crate::bridge::dual_model::{DualModelBridge, TaskComplexity};
 use crate::bridge::learning::LearningBridge;
 use crate::bridge::llm::LlmBridge;
-use fabric::{brain::Plan, context::Context, self_field::AwarenessGrowthSuggestion, SelfAwareness};
+use fabric::{
+    cognit::Plan, context::Context, self_field::AwarenessGrowthSuggestion, SelfAwareness,
+};
 
-/// Configuration for BrainCore construction.
-pub struct BrainCoreConfig {
+/// Configuration for CognitCore construction.
+pub struct CognitCoreConfig {
     /// Default reasoning strategy.
     pub reasoning_strategy: ReasoningStrategy,
     /// Maximum number of learned rules.
@@ -52,7 +54,7 @@ pub struct BrainCoreConfig {
     pub max_world_observations: usize,
 }
 
-impl Default for BrainCoreConfig {
+impl Default for CognitCoreConfig {
     fn default() -> Self {
         Self {
             reasoning_strategy: ReasoningStrategy::ChainOfThought,
@@ -62,10 +64,10 @@ impl Default for BrainCoreConfig {
     }
 }
 
-/// BrainCore — the cognitive computation engine.
+/// CognitCore — the cognitive computation engine.
 ///
-/// Wires all components and implements `BrainCoreOps` + `Subsystem`.
-pub struct BrainCore {
+/// Wires all components and implements `CognitOps` + `Subsystem`.
+pub struct CognitCore {
     // Keep existing components (they provide structure)
     reasoner: Reasoner,
     planner: Planner,
@@ -82,8 +84,8 @@ pub struct BrainCore {
     awareness_generator: AwarenessGenerator,
 }
 
-impl BrainCore {
-    pub fn new(config: BrainCoreConfig) -> Self {
+impl CognitCore {
+    pub fn new(config: CognitCoreConfig) -> Self {
         Self {
             reasoner: Reasoner::new(config.reasoning_strategy),
             planner: Planner::new(),
@@ -301,7 +303,7 @@ impl BrainCore {
     /// Generate self-awareness for a reasoning act.
     ///
     /// This is a side-channel method — it does NOT change the
-    /// BrainCoreOps::think() return type. Instead, awareness
+    /// CognitOps::think() return type. Instead, awareness
     /// is generated alongside reasoning and stored separately.
     ///
     /// Call this after think() to produce awareness for the

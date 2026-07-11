@@ -25,7 +25,7 @@ trait, defined in `crates/fabric/src/include/`.
 | Primitive | Role | Owns | Ops trait |
 |-----------|------|------|-----------|
 | **Executive** | Orchestrates; never reasons. | Lifecycle, Scheduling, Supervision, Resource, Authority | — (drives the others) |
-| **Cognit** | The cognitive core — how to think. | Planner, Reasoner, Verifier, Reflector, Learner, Harness | `BrainCoreOps` |
+| **Cognit** | The cognitive core — how to think. | Planner, Reasoner, Verifier, Reflector, Learner, Harness | `CognitOps` |
 | **Dasein** | The self — identity & boundaries. | Identity, Values, Boundary, Narrative, Authority-to-refuse | `SelfFieldOps` |
 | **Agora** | Shared cognitive workspace (working memory). | Blackboard, Attention, Task graph, Scratchpad, Trace | `AgoraOps` |
 | **Mnemosyne** | Experience across time. | Episodic/Semantic/Procedural/Self memory, Index, Association, Replay | `MemoryBackend` |
@@ -34,7 +34,7 @@ trait, defined in `crates/fabric/src/include/`.
 | **fabric** | The ABI + communication substrate. | Primitives, ops traits, Envelope, EventBus | (the layer itself) |
 
 > **Trait names (RFC-018 D1, resolved 2026-07-11):** the canonical subsystem contracts
-> are the live traits in `fabric::include` shown above — `BrainCoreOps`, `SelfFieldOps`,
+> are the live traits in `fabric::include` shown above — `CognitOps`, `SelfFieldOps`,
 > `MemoryBackend`, `BodyRuntime`, `AgoraOps`, `RuntimeOps`/`MetaRuntimeOps`. The earlier
 > aspirational names (`CognitOps` / `MnemosyneOps` / `CorpusOps` and a duplicate
 > `ops::DaseinOps`) were scaffolded but never wired, and have been deleted along with

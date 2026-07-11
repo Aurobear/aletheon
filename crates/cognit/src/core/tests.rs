@@ -1,8 +1,10 @@
 use super::*;
 use async_trait::async_trait;
 use fabric::body::{Action, ActionResult};
-use fabric::brain::BrainCoreOps;
-use fabric::brain::{ExecutionResult, Experience, Observation, ReflectionEntry, ReflectionOutcome};
+use fabric::cognit::CognitOps;
+use fabric::cognit::{
+    ExecutionResult, Experience, Observation, ReflectionEntry, ReflectionOutcome,
+};
 use fabric::context::Context;
 use fabric::self_field::Intent;
 use fabric::Subsystem;
@@ -12,8 +14,8 @@ use std::path::PathBuf;
 
 use super::experience_summarizer::ExperienceSummarizer;
 
-fn make_config() -> BrainCoreConfig {
-    BrainCoreConfig::default()
+fn make_config() -> CognitCoreConfig {
+    CognitCoreConfig::default()
 }
 
 fn make_intent() -> Intent {
@@ -31,7 +33,7 @@ fn make_ctx() -> Context {
 
 #[tokio::test]
 async fn think_produces_plan() {
-    let bc = BrainCore::new(make_config());
+    let bc = CognitCore::new(make_config());
     let plan = bc.think(&make_intent(), &make_ctx()).await.unwrap();
     assert!(!plan.steps.is_empty());
     assert!(!plan.reasoning.is_empty());
@@ -39,7 +41,7 @@ async fn think_produces_plan() {
 
 #[tokio::test]
 async fn think_uses_world_state() {
-    let bc = BrainCore::new(make_config());
+    let bc = CognitCore::new(make_config());
     bc.world_model().update(Observation {
         what: "disk full".to_string(),
         source: "system".to_string(),
@@ -51,18 +53,18 @@ async fn think_uses_world_state() {
 
 #[tokio::test]
 async fn critique_plan() {
-    let bc = BrainCore::new(make_config());
+    let bc = CognitCore::new(make_config());
     let plan = bc.think(&make_intent(), &make_ctx()).await.unwrap();
     let critiques = bc.critique(&plan).await.unwrap();
     // A simple plan should have minimal critiques
     assert!(critiques
         .iter()
-        .all(|c| c.severity <= fabric::brain::CriticismSeverity::Info));
+        .all(|c| c.severity <= fabric::cognit::CriticismSeverity::Info));
 }
 
 #[tokio::test]
 async fn reflect_on_execution() {
-    let bc = BrainCore::new(make_config());
+    let bc = CognitCore::new(make_config());
     let execution = ExecutionResult {
         plan_id: uuid::Uuid::new_v4(),
         success: true,
@@ -79,7 +81,7 @@ async fn reflect_on_execution() {
 
 #[tokio::test]
 async fn learn_from_experience() {
-    let bc = BrainCore::new(make_config());
+    let bc = CognitCore::new(make_config());
     let experience = Experience {
         action: Action {
             name: "shell.execute".to_string(),
@@ -104,7 +106,7 @@ async fn learn_from_experience() {
 
 #[tokio::test]
 async fn update_world() {
-    let bc = BrainCore::new(make_config());
+    let bc = CognitCore::new(make_config());
     let obs = Observation {
         what: "test event".to_string(),
         source: "test".to_string(),
@@ -116,7 +118,7 @@ async fn update_world() {
 
 #[tokio::test]
 async fn subsystem_lifecycle() {
-    let mut bc = BrainCore::new(make_config());
+    let mut bc = CognitCore::new(make_config());
     assert_eq!(bc.name(), "brain_core");
     assert!(matches!(
         bc.health().await,
@@ -142,7 +144,7 @@ async fn subsystem_lifecycle() {
 
 #[tokio::test]
 async fn full_pipeline_think_critique_execute_reflect_learn() {
-    let bc = BrainCore::new(make_config());
+    let bc = CognitCore::new(make_config());
 
     // 1. Think
     let intent = make_intent();
@@ -155,7 +157,7 @@ async fn full_pipeline_think_critique_execute_reflect_learn() {
     // Should be clean for a simple plan
     assert!(critiques
         .iter()
-        .all(|c| c.severity <= fabric::brain::CriticismSeverity::Warning));
+        .all(|c| c.severity <= fabric::cognit::CriticismSeverity::Warning));
 
     // 3. Simulate execution
     let execution = ExecutionResult {
@@ -195,7 +197,7 @@ async fn full_pipeline_think_critique_execute_reflect_learn() {
 
 #[tokio::test]
 async fn think_with_multiple_observations() {
-    let bc = BrainCore::new(make_config());
+    let bc = CognitCore::new(make_config());
 
     // Add several observations
     for i in 0..5 {
@@ -366,7 +368,7 @@ impl LlmProvider for StubProvider {
     }
 }
 
-fn make_dual_brain_core() -> BrainCore {
+fn make_dual_brain_core() -> CognitCore {
     let planner = LlmBridge::new(Arc::new(StubProvider {
         tag: "planner".into(),
     }));
@@ -374,7 +376,7 @@ fn make_dual_brain_core() -> BrainCore {
         tag: "executor".into(),
     }));
     let dm = DualModelBridge::new(planner, executor, DualModelConfig::default());
-    BrainCore::new(make_config()).with_dual_model(dm)
+    CognitCore::new(make_config()).with_dual_model(dm)
 }
 
 #[tokio::test]
@@ -405,7 +407,7 @@ async fn dual_model_think_complex_uses_planner_then_executor() {
 fn estimate_complexity_simple() {
     let intent = make_intent(); // short description
     assert_eq!(
-        BrainCore::estimate_complexity(&intent),
+        CognitCore::estimate_complexity(&intent),
         TaskComplexity::Simple
     );
 }
@@ -419,7 +421,7 @@ fn estimate_complexity_complex() {
         description: "y".repeat(600),
     };
     assert_eq!(
-        BrainCore::estimate_complexity(&intent),
+        CognitCore::estimate_complexity(&intent),
         TaskComplexity::Complex
     );
 }
@@ -433,7 +435,7 @@ fn estimate_complexity_medium() {
         description: "z".repeat(200),
     };
     assert_eq!(
-        BrainCore::estimate_complexity(&intent),
+        CognitCore::estimate_complexity(&intent),
         TaskComplexity::Medium
     );
 }
@@ -450,7 +452,7 @@ async fn dual_model_fallback_single_llm() {
 
 #[tokio::test]
 async fn think_with_refinement_template_fallback() {
-    let mut bc = BrainCore::new(make_config());
+    let mut bc = CognitCore::new(make_config());
     let (plan, reasoning) = bc
         .think_with_refinement(&make_intent(), &make_ctx())
         .await
@@ -469,7 +471,7 @@ async fn think_with_refinement_with_llm() {
         tag: "executor".into(),
     }));
     let dm = DualModelBridge::new(planner_prov, executor_prov, DualModelConfig::default());
-    let mut bc = BrainCore::new(make_config()).with_dual_model(dm);
+    let mut bc = CognitCore::new(make_config()).with_dual_model(dm);
     let (plan, reasoning) = bc
         .think_with_refinement(&make_intent(), &make_ctx())
         .await
@@ -483,7 +485,7 @@ async fn think_with_refinement_with_llm() {
 async fn think_with_refinement_stops_on_no_critical() {
     // A simple read-only plan should not have critical critiques,
     // so refinement loop should exit after round 0
-    let mut bc = BrainCore::new(make_config());
+    let mut bc = CognitCore::new(make_config());
     let intent = Intent {
         action: "file.read".to_string(),
         parameters: json!({"path": "/tmp/test"}),

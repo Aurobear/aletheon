@@ -4,7 +4,7 @@
 //! reusable LearnedRule structs. Maintains a history for dedup and
 //! confidence tracking.
 
-use fabric::brain::{Experience, LearnedRule};
+use fabric::cognit::{Experience, LearnedRule};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 
@@ -206,7 +206,7 @@ impl Learner {
 mod tests {
     use super::*;
     use fabric::body::{Action, ActionResult};
-    use fabric::brain::Experience;
+    use fabric::cognit::Experience;
     use fabric::context::Context;
     use serde_json::json;
     use std::path::PathBuf;

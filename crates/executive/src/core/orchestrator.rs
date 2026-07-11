@@ -13,7 +13,7 @@ use cognit::harness::interrupt::InterruptFlag;
 use cognit::harness::linear::ReActLoop;
 use cognit::harness::linear::TurnMetrics;
 use fabric::body::{Action, ActionResult};
-use fabric::brain::Plan;
+use fabric::cognit::Plan;
 use fabric::context::Context;
 use fabric::runtime::StepResult;
 use fabric::self_field::{Intent, Verdict, VerdictAction, VerdictHandler};
@@ -24,7 +24,7 @@ use tracing::{debug, warn};
 ///
 /// Replaces the Engine god-object. Each layer handles its own concern:
 /// - SelfField: policy review
-/// - BrainCore: reasoning + planning
+/// - CognitCore: reasoning + planning
 /// - BodyRuntime: tool execution
 /// - Memory: state persistence
 /// - EventBus: event routing
@@ -164,10 +164,10 @@ impl AletheonRuntime {
     /// 1. Build Intent from input
     /// 2. SelfField.review(intent) → Verdict
     /// 3. Select behavior path based on Verdict
-    /// 4. If Cognitive/Volitional: BrainCore.think(intent) → Plan
+    /// 4. If Cognitive/Volitional: CognitCore.think(intent) → Plan
     /// 5. Execute Plan steps via BodyRuntime
-    /// 6. BrainCore.reflect(execution) → Reflection
-    /// 7. BrainCore.learn(experience) → LearnedRules
+    /// 6. CognitCore.reflect(execution) → Reflection
+    /// 7. CognitCore.learn(experience) → LearnedRules
     /// 8. EventBus.publish(events)
     pub async fn process<F, G, H>(
         &mut self,
@@ -200,7 +200,7 @@ impl AletheonRuntime {
         match path {
             BehaviorPath::Reflex => {
                 // Emergency: direct execution, no Brain involved
-                warn!("Reflex path: executing directly without BrainCore");
+                warn!("Reflex path: executing directly without CognitCore");
                 let action = Action {
                     name: intent.action.clone(),
                     parameters: intent.parameters.clone(),
@@ -252,7 +252,7 @@ impl AletheonRuntime {
                 }
 
                 // Step 6-8: Reflection and learning happen at the caller level
-                // (BrainCore.reflect() and BrainCore.learn() are called externally)
+                // (CognitCore.reflect() and CognitCore.learn() are called externally)
 
                 let output = all_output.join("\n");
                 Ok(output)

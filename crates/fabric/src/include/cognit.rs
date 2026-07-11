@@ -1,6 +1,6 @@
-//! BrainCore trait — like Linux kernel's CFS scheduler.
+//! CognitCore trait — like Linux kernel's CFS scheduler.
 //!
-//! BrainCore is the cognitive computation layer. It doesn't decide
+//! CognitCore is the cognitive computation layer. It doesn't decide
 //! "should I?" (that's SelfField). It decides "how do I?" and
 //! "what should I do?"
 
@@ -12,7 +12,7 @@ use crate::Action;
 use crate::Context;
 use crate::Subsystem;
 
-/// A plan — the output of BrainCore's thinking.
+/// A plan — the output of CognitCore's thinking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
     pub id: uuid::Uuid,
@@ -53,7 +53,7 @@ pub struct ExecutionResult {
     pub elapsed_ms: u64,
 }
 
-/// Reflection on an execution — BrainCore's self-assessment.
+/// Reflection on an execution — CognitCore's self-assessment.
 #[derive(Debug, Clone)]
 pub struct Reflection {
     pub what_worked: Vec<String>,
@@ -170,7 +170,7 @@ impl ReflectionEntry {
 
 use chrono::{DateTime, Utc};
 
-/// Critique of a plan — BrainCore's self-criticism.
+/// Critique of a plan — CognitCore's self-criticism.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Critique {
     pub dimension: CriticismDimension,
@@ -266,13 +266,13 @@ pub struct Experience {
     pub context: Context,
 }
 
-/// BrainCore trait — the cognitive scheduler.
+/// CognitCore trait — the cognitive scheduler.
 ///
-/// Like CFS decides how to schedule processes, BrainCore decides
+/// Like CFS decides how to schedule processes, CognitCore decides
 /// how to approach problems: what to think about, how to plan,
 /// how to critique, and how to learn.
 #[async_trait]
-pub trait BrainCoreOps: Subsystem {
+pub trait CognitOps: Subsystem {
     /// Think about an intent and produce a plan.
     async fn think(&self, intent: &crate::Intent, ctx: &Context) -> Result<Plan>;
 

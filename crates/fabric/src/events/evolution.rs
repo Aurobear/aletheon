@@ -1,6 +1,6 @@
 //! Self-evolution loop event types.
 //!
-//! These events flow through the EventBus to decouple BrainCore, SelfField, and MetaRuntime.
+//! These events flow through the EventBus to decouple CognitCore, SelfField, and MetaRuntime.
 
 use crate::MutationIntent;
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ pub struct LearnedRule {
 }
 
 /// Emitted by Engine after a tool call completes.
-/// Subscribed by BrainCore for reflection.
+/// Subscribed by CognitCore for reflection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolObservationPayload {
     pub turn_id: Uuid,
@@ -37,7 +37,7 @@ pub struct ToolObservationPayload {
     pub rules_applied: Vec<LearnedRule>,
 }
 
-/// Emitted by BrainCore after LLM reflection.
+/// Emitted by CognitCore after LLM reflection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReflectionPayload {
     pub turn_id: Uuid,
@@ -47,14 +47,14 @@ pub struct ReflectionPayload {
     pub confidence: f64,
 }
 
-/// Emitted when BrainCore accumulates enough reflections to extract generalized rules.
+/// Emitted when CognitCore accumulates enough reflections to extract generalized rules.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleExtractedPayload {
     pub rules: Vec<LearnedRule>,
     pub source_reflections: Vec<Uuid>,
 }
 
-/// Emitted when BrainCore detects evolution conditions are met.
+/// Emitted when CognitCore detects evolution conditions are met.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionTriggeredPayload {
     pub trigger_reason: String,

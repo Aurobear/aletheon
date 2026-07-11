@@ -38,7 +38,7 @@ pub mod types;
 // Subsystem trait modules (from include/)
 pub use include::agora;
 pub use include::body;
-pub use include::brain;
+pub use include::cognit;
 pub use include::event_bus;
 pub use include::memory;
 pub use include::meta;
@@ -95,8 +95,8 @@ pub use policy::verifier;
 // Subsystem traits (from include/)
 pub use include::agora::AgoraOps;
 pub use include::body::{Action, ActionResult, BodyRuntime};
-pub use include::brain::{
-    BehaviorAdjustment, BrainCoreOps, CostEstimate, Critique, EvolutionLogEntry, ExecutionResult,
+pub use include::cognit::{
+    BehaviorAdjustment, CognitOps, CostEstimate, Critique, EvolutionLogEntry, ExecutionResult,
     Experience, LearnedRule, Observation, Plan, PlanStep, Reflection, ReflectionEntry,
     ReflectionOutcome, ReflectionTrigger,
 };

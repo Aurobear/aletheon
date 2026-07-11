@@ -341,7 +341,7 @@ impl LlmScheduler {
         })
     }
 
-    /// Get the provider for reflection (BrainCore use).
+    /// Get the provider for reflection (CognitCore use).
     pub fn reflector_provider(&self) -> &Arc<dyn LlmProvider> {
         let name = self.resolve_provider(&LlmPurpose::Reflect);
         self.providers.get(name).unwrap_or_else(|| {

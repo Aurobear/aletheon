@@ -4,7 +4,7 @@
 //!
 //! Demonstrates the full closed loop:
 //! 1. Engine executes tool -> emits ToolObservationEvent
-//! 2. BrainCore reflects via LLM -> emits ReflectionEvent
+//! 2. CognitCore reflects via LLM -> emits ReflectionEvent
 //! 3. After batch -> extracts rules -> emits RuleExtractedEvent
 //! 4. After consecutive failures -> emits EvolutionTriggeredEvent
 //!
@@ -114,7 +114,7 @@ async fn main() -> Result<()> {
     println!("[Init] LlmScheduler created");
 
     // -----------------------------------------------------------------------
-    // 3. Create ToolObservationHandler (BrainCore reflection)
+    // 3. Create ToolObservationHandler (CognitCore reflection)
     // -----------------------------------------------------------------------
     let observer_config = ObserverConfig {
         batch_size: 3,
@@ -269,7 +269,7 @@ async fn main() -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     println!("\n=== Demo Complete ===");
-    println!("Event flow: ToolObservation -> BrainCore Reflection -> Rule Extraction -> Evolution Trigger");
+    println!("Event flow: ToolObservation -> CognitCore Reflection -> Rule Extraction -> Evolution Trigger");
     println!("In a full system, this would continue to SelfField validation and MetaRuntime morphogenesis.");
 
     Ok(())

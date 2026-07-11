@@ -10,7 +10,7 @@ use crate::core::config::GenomeConfig;
 use anyhow::Result;
 use cognit::core::awareness_signal::{signals_to_awareness, AwarenessSignal};
 use cognit::core::reflector::Reflector;
-use fabric::brain::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
+use fabric::cognit::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
 use fabric::dasein::Stimmung;
 use fabric::meta::MetaRuntimeOps;
 use fabric::self_field::SelfAwareness;

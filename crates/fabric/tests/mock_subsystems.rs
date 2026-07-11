@@ -194,12 +194,12 @@ impl SelfFieldOps for MockSelfField {
     }
 }
 
-// ===== Mock BrainCore =====
+// ===== Mock CognitCore =====
 
-struct MockBrainCore;
+struct MockCognitCore;
 
 #[async_trait]
-impl Subsystem for MockBrainCore {
+impl Subsystem for MockCognitCore {
     fn name(&self) -> &str {
         "mock_brain_core"
     }
@@ -218,7 +218,7 @@ impl Subsystem for MockBrainCore {
 }
 
 #[async_trait]
-impl BrainCoreOps for MockBrainCore {
+impl CognitOps for MockCognitCore {
     async fn think(&self, _intent: &Intent, _ctx: &Context) -> Result<Plan> {
         Ok(Plan {
             id: uuid::Uuid::new_v4(),
@@ -256,7 +256,7 @@ async fn test_all_traits_compile() {
     let _body: Box<dyn BodyRuntime> = Box::new(MockBodyRuntime);
     let _memory: Box<dyn MemoryBackend> = Box::new(MockMemory);
     let _self_field: Box<dyn SelfFieldOps> = Box::new(MockSelfField);
-    let _brain: Box<dyn BrainCoreOps> = Box::new(MockBrainCore);
+    let _brain: Box<dyn CognitOps> = Box::new(MockCognitCore);
 }
 
 #[tokio::test]

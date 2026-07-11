@@ -3,7 +3,7 @@ use anyhow::Result;
 use fabric::{ContentBlock, Message, Role};
 use std::sync::Arc;
 
-/// Wraps LlmProvider for use by BrainCore.
+/// Wraps LlmProvider for use by CognitCore.
 pub struct LlmBridge {
     provider: Arc<dyn LlmProvider>,
 }

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Aletheon Brain core - reasoning, planning, and reflection"
+description = "Aletheon Cognit core - reasoning, planning, and reflection"
 
 [dependencies]
 fabric = { path = "../fabric" }

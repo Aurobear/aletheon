@@ -3,7 +3,7 @@
 //! Detects behavioral patterns (repeated topics, repeated failures, success strategies)
 //! and generates behavior adjustment suggestions.
 
-use fabric::brain::{BehaviorAdjustment, EvolutionLogEntry, ReflectionEntry, ReflectionOutcome};
+use fabric::cognit::{BehaviorAdjustment, EvolutionLogEntry, ReflectionEntry, ReflectionOutcome};
 
 /// ExperienceSummarizer — analyzes accumulated reflections and produces evolution log entries.
 ///
