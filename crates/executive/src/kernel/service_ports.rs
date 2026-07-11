@@ -32,7 +32,9 @@ use crate::kernel::admission::ProductionAdmissionController;
 use crate::kernel::chronos::SystemClock;
 use crate::kernel::operation::OperationTable;
 use crate::kernel::process::ProcessTable;
+use crate::kernel::space::InMemorySpaceManager;
 use crate::kernel::supervision::SupervisorTree;
+use tokio::sync::Mutex as TokioMutex;
 
 /// Bundled kernel service ports.
 ///
@@ -53,7 +55,9 @@ pub struct ServicePorts {
     /// Monotonic/wall clock for deadline enforcement.
     pub clock: Arc<dyn Clock>,
     /// Process supervision with restart policies.
-    pub supervisor: SupervisorTree,
+    /// Shared via Arc<Mutex<>> so both ServicePorts tests and the daemon
+    /// orchestrator can share the same supervisor instance.
+    pub supervisor: Arc<TokioMutex<SupervisorTree>>,
     /// Inter-process mailbox routing (EnvelopeV2).
     pub mailbox_service: Arc<InProcessMailboxService>,
     /// Admission controller for capability gating.
@@ -67,6 +71,8 @@ pub struct ServicePorts {
     pub budget: Arc<InMemoryBudgetController>,
     /// Resource lease manager (Phase 5B).
     pub leases: Arc<InMemoryResourceLeaseManager>,
+    /// Context space manager (fork/attach — Phase 3A).
+    pub space_manager: InMemorySpaceManager,
 }
 
 impl ServicePorts {
@@ -78,12 +84,13 @@ impl ServicePorts {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
         let process_table = Arc::new(ProcessTable::new(clock.clone()));
         let operation_table = Arc::new(OperationTable::new(clock.clone()));
-        let supervisor = SupervisorTree::new();
+        let supervisor = Arc::new(TokioMutex::new(SupervisorTree::new()));
         let mailbox_service = Arc::new(InProcessMailboxService::new());
         let admission: Arc<dyn AdmissionController> =
             Arc::new(ProductionAdmissionController::new(clock.clone()));
         let budget = Arc::new(InMemoryBudgetController::new());
         let leases = Arc::new(InMemoryResourceLeaseManager::new());
+        let space_manager = InMemorySpaceManager::new();
 
         Self {
             process_table,
@@ -95,6 +102,7 @@ impl ServicePorts {
             agora: None,
             budget,
             leases,
+            space_manager,
         }
     }
 
@@ -111,10 +119,11 @@ impl ServicePorts {
     pub fn for_testing(clock: Arc<dyn Clock>, admission: Arc<dyn AdmissionController>) -> Self {
         let process_table = Arc::new(ProcessTable::new(clock.clone()));
         let operation_table = Arc::new(OperationTable::new(clock.clone()));
-        let supervisor = SupervisorTree::new();
+        let supervisor = Arc::new(TokioMutex::new(SupervisorTree::new()));
         let mailbox_service = Arc::new(InProcessMailboxService::new());
         let budget = Arc::new(InMemoryBudgetController::new());
         let leases = Arc::new(InMemoryResourceLeaseManager::new());
+        let space_manager = InMemorySpaceManager::new();
 
         Self {
             process_table,
@@ -126,6 +135,7 @@ impl ServicePorts {
             agora: None,
             budget,
             leases,
+            space_manager,
         }
     }
 }

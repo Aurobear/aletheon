@@ -17,7 +17,6 @@
 
 use crate::core::core_systems::CoreSystems;
 use crate::core::session_gateway::SessionGateway;
-use crate::kernel::chronos::SystemClock;
 use crate::kernel::operation::OperationTable;
 use crate::kernel::process::ProcessTable;
 use crate::kernel::supervision::{RestartPolicy, SupervisorTree};
@@ -139,7 +138,7 @@ pub struct DaemonTurnOrchestrator {
     // --- Kernel primitives ---
     process_table: Arc<ProcessTable>,
     operation_table: Arc<OperationTable>,
-    supervisor: Mutex<SupervisorTree>,
+    supervisor: Arc<Mutex<SupervisorTree>>,
     clock: Arc<dyn Clock>,
     admission: Arc<dyn AdmissionController>,
     mailbox_service: Arc<InProcessMailboxService>,
@@ -170,12 +169,14 @@ impl DaemonTurnOrchestrator {
         started_at: Instant,
         daemon_cancel_token: Option<CancellationToken>,
     ) -> Self {
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-        let process_table = Arc::new(ProcessTable::new(clock.clone()));
-        let operation_table = Arc::new(OperationTable::new(clock.clone()));
-        let supervisor = Mutex::new(SupervisorTree::new());
-        let admission = subsystems.admission.clone();
-        let mailbox_service = Arc::new(InProcessMailboxService::new());
+        // Clone kernel primitives from the canonical ServicePorts instead of
+        // constructing independent instances (PR-1: fix double-instance).
+        let clock = subsystems.ports.clock.clone();
+        let process_table = subsystems.ports.process_table.clone();
+        let operation_table = subsystems.ports.operation_table.clone();
+        let supervisor = subsystems.ports.supervisor.clone();
+        let admission = subsystems.ports.admission.clone();
+        let mailbox_service = subsystems.ports.mailbox_service.clone();
 
         Self {
             process_table,
