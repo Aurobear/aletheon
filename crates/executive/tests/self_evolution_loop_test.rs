@@ -12,12 +12,12 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
-use cognit::r#impl::llm::provider::{LlmProvider, StopReason};
 use cognit::r#impl::llm::scheduler::LlmScheduler;
 use cognit::testing::mock_llm::MockLlmProvider;
 use dasein::core::mutation::MutationLayer;
 use dasein::r#impl::mutation::MutationApprover;
 use fabric::evolution::*;
+use fabric::{LlmProvider, StopReason};
 use uuid::Uuid;
 
 /// Build a LlmScheduler backed by a MockLlmProvider.

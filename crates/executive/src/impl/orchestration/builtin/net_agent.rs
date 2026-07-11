@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
 use super::super::agent::{Agent, AgentConfig, Capability};
-use cognit::r#impl::llm::{LlmProvider, ToolDefinition};
 use corpus::tools::tools::process_list::ProcessListTool;
 use corpus::tools::tools::system_status::SystemStatusTool;
 use corpus::tools::tools::Tool;
 use fabric::message::{ContentBlock, Message};
+use fabric::{LlmProvider, ToolDefinition};
 
 /// Network agent — handles network operations and monitoring.
 pub struct NetAgent {

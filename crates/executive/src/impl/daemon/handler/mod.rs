@@ -26,10 +26,10 @@ use tokio_util::sync::CancellationToken;
 use super::model_router::ModelRouter;
 use super::session_manager::SessionManager;
 use crate::core::core_systems::CoreSystems;
-use cognit::r#impl::llm::LlmProvider;
 use fabric::envelope::Payload;
 use fabric::envelope::*;
 use fabric::CommunicationBus;
+use fabric::LlmProvider;
 use fabric::{Context as AbiContext, Intent, SelfFieldOps, Verdict};
 
 use std::collections::HashMap;

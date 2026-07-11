@@ -1,5 +1,5 @@
-use cognit::llm::LlmProvider;
 use cognit::r#impl::provider_registry::ProviderRegistry;
+use fabric::LlmProvider;
 use std::sync::Arc;
 
 use crate::core::config::ModelRoutingConfig;

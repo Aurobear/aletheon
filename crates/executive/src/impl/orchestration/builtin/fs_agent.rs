@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
 use super::super::agent::{Agent, AgentConfig, Capability};
-use cognit::r#impl::llm::{LlmProvider, ToolDefinition};
 use corpus::tools::tools::file_read::FileReadTool;
 use corpus::tools::tools::file_write::FileWriteTool;
 use corpus::tools::tools::Tool;
 use fabric::message::{ContentBlock, Message};
+use fabric::{LlmProvider, ToolDefinition};
 
 /// File system agent — handles file operations.
 pub struct FsAgent {

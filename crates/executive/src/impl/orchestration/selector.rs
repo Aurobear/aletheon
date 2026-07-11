@@ -3,8 +3,8 @@ use tracing::{debug, info};
 
 use super::agent::AgentResponse;
 use super::registry::AgentRegistry;
-use cognit::r#impl::llm::LlmProvider;
 use fabric::message::{ContentBlock, Message};
+use fabric::LlmProvider;
 
 /// Selector configuration.
 pub struct SelectorConfig {

@@ -5,9 +5,9 @@ use std::path::Path;
 use tracing::info;
 
 use super::agent::{Agent, Capability};
-use cognit::r#impl::llm::{LlmProvider, ToolDefinition};
 use corpus::tools::tools::Tool;
 use fabric::message::{ContentBlock, Message};
+use fabric::{LlmProvider, ToolDefinition};
 
 /// TOML agent configuration (loaded from `agents/<id>.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize)]

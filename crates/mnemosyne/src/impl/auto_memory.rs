@@ -10,8 +10,8 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use cognit::r#impl::llm::LlmProvider;
 use fabric::message::{ContentBlock, Message, Role};
+use fabric::LlmProvider;
 
 use super::core_memory::CoreMemory;
 
@@ -253,8 +253,8 @@ fn normalize_label(label: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cognit::r#impl::llm::{LlmResponse, StopReason, Usage};
     use fabric::message::ContentBlock;
+    use fabric::{LlmResponse, StopReason, Usage};
 
     /// Stub LLM that returns a fixed response.
     struct StubLlm {
@@ -286,7 +286,7 @@ mod tests {
             &self,
             _messages: &[Message],
             _tools: &[fabric::ToolDefinition],
-        ) -> Result<cognit::r#impl::llm::LlmStream> {
+        ) -> Result<fabric::LlmStream> {
             anyhow::bail!("mock(StubLlm): streaming not implemented")
         }
 
@@ -316,7 +316,7 @@ mod tests {
             &self,
             _messages: &[Message],
             _tools: &[fabric::ToolDefinition],
-        ) -> Result<cognit::r#impl::llm::LlmStream> {
+        ) -> Result<fabric::LlmStream> {
             anyhow::bail!("mock(ErrorLlm): streaming not implemented")
         }
 

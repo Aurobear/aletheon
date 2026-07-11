@@ -20,7 +20,7 @@ use cognit::harness::event_sink::{ChannelEventSink, Event, EventSink};
 use cognit::harness::linear::DynLlmRef;
 use cognit::harness::linear::ReActLoop;
 use cognit::harness::linear::TurnMetrics;
-use cognit::r#impl::llm::LlmProvider;
+use fabric::LlmProvider;
 use mnemosyne::AdvancedCompressor;
 use mnemosyne::FactStore;
 
