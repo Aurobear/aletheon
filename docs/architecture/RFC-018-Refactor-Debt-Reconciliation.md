@@ -62,7 +62,7 @@ outside fabric — the dictionary existed; nothing spoke it.
   not preemptively (that would re-create the "unused type" problem). The pattern
   (`record_*` default method + typed producer + snapshot round-trip) is now established.
 
-### 🟡 D3 — Naming drift *(ModuleId done 2026-07-11; module/type renames pending)*
+### 🟢 D3 — Naming drift *(cleanly-doable renames done 2026-07-11; rest collision-blocked)*
 `ModuleId` predated the 7-subsystem model. **Re-audit corrected two assumptions:** it is
 used in ~22 routing sites (not 39), and it is **never persisted to disk** — envelopes only
 cross the in-process bus / same-build unix socket, so a rename is compiler-checked with no
@@ -76,8 +76,9 @@ protocol-version migration needed in practice.
   `include/cognit.rs`, trait `BrainCoreOps` → `CognitOps`, and the cognit-crate internals
   (`BrainCore` → `CognitCore`, `BrainCoreConfig` → `CognitCoreConfig`,
   `brain_core_ops.rs` → `cognit_ops.rs`).
-- **Pending:** `AletheonRuntime`/`RuntimeConfig` type renames in executive — mechanical,
-  compiler-checked.
+- **Done — executive type renames:** `AletheonRuntime` → `AletheonExecutive`,
+  `RuntimeConfig` → `ExecutiveConfig` (the single `struct RuntimeConfig`, in executive;
+  cognit only doc-referenced it). serde field names unchanged, so config TOML is unaffected.
 - **Blocked / won't rename:** the other module+trait pairs can't align cleanly:
   `include/self_field` → `dasein` **collides** with the existing `fabric::dasein`
   (phenomenological) module — same collision as `SelfFieldOps→DaseinOps`; and renaming

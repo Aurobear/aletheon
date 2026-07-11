@@ -21,10 +21,10 @@ pub mod host;
 pub use cognit::harness::linear::{ReActLoop, TurnMetrics};
 pub use core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use core::config::{
-    AgentConfig, AppConfig, DaemonConfig, HooksConfig, McpServerConfig, MemoryConfig,
-    PluginsConfig, ProviderConfig, RuntimeConfig, SandboxConfig, Transport,
+    AgentConfig, AppConfig, DaemonConfig, ExecutiveConfig, HooksConfig, McpServerConfig,
+    MemoryConfig, PluginsConfig, ProviderConfig, SandboxConfig, Transport,
 };
-pub use core::orchestrator::AletheonRuntime;
+pub use core::orchestrator::AletheonExecutive;
 pub use core::verdict_handler::DefaultVerdictHandler;
 
 // Re-export from impl for backward compatibility

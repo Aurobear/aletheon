@@ -9,7 +9,7 @@
 //! warnings are suppressed with `#[allow(dead_code)]` on intentionally unused
 //! fields.
 
-use super::config::RuntimeConfig;
+use super::config::ExecutiveConfig;
 use cognit::harness::build_harness;
 use cognit::harness::config::HarnessConfig;
 use cognit::harness::event_sink::{Event, EventSink};
@@ -74,10 +74,10 @@ pub struct Controller {
 impl Controller {
     /// Create a new Controller.
     pub fn new(opts: ControllerOptions, event_sink: Arc<dyn EventSink>) -> Self {
-        let config = RuntimeConfig {
+        let config = ExecutiveConfig {
             max_iterations: opts.max_iterations,
             compaction_enabled: opts.compaction_enabled,
-            ..RuntimeConfig::default()
+            ..ExecutiveConfig::default()
         };
 
         let harness_config = HarnessConfig {

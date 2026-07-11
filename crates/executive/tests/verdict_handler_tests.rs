@@ -1,10 +1,10 @@
-//! Integration tests for the VerdictHandler → AletheonRuntime wiring.
+//! Integration tests for the VerdictHandler → AletheonExecutive wiring.
 //!
 //! Each test verifies that a specific SelfField verdict type is correctly
 //! dispatched through `process_react()`.
 
 use async_trait::async_trait;
-use executive::{AletheonRuntime, DefaultVerdictHandler, RuntimeConfig};
+use executive::{AletheonExecutive, DefaultVerdictHandler, ExecutiveConfig};
 use fabric::context::Context;
 use fabric::message::{ContentBlock, Message};
 use fabric::self_field::{Intent, RiskLevel, Verdict};
@@ -18,13 +18,13 @@ fn test_ctx() -> Context {
     Context::new("test-session", PathBuf::from("/tmp"))
 }
 
-fn test_config() -> RuntimeConfig {
-    RuntimeConfig {
+fn test_config() -> ExecutiveConfig {
+    ExecutiveConfig {
         max_iterations: 5,
         session_id: "test".to_string(),
         learning_enabled: false,
         compaction_enabled: false,
-        ..RuntimeConfig::default()
+        ..ExecutiveConfig::default()
     }
 }
 
@@ -69,7 +69,7 @@ fn fixed_verdict(verdict: Verdict) -> impl Fn(&Intent, &Context) -> anyhow::Resu
 
 #[tokio::test]
 async fn allow_verdict_proceeds_to_llm() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
     let tool_defs: Vec<ToolDefinition> = vec![];
 
@@ -91,7 +91,7 @@ async fn allow_verdict_proceeds_to_llm() {
 
 #[tokio::test]
 async fn allow_with_modification_proceeds_to_llm() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
     let tool_defs: Vec<ToolDefinition> = vec![];
     let verdict = Verdict::AllowWithModification {
@@ -119,7 +119,7 @@ async fn allow_with_modification_proceeds_to_llm() {
 
 #[tokio::test]
 async fn deny_verdict_short_circuits() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
     let tool_defs: Vec<ToolDefinition> = vec![];
     let verdict = Verdict::Deny {
@@ -155,7 +155,7 @@ async fn require_confirmation_with_approving_callback() {
     let handler = Arc::new(DefaultVerdictHandler::with_confirm_callback(Box::new(
         |_, _| true,
     )));
-    let mut runtime = AletheonRuntime::new(test_config()).with_verdict_handler(handler);
+    let mut runtime = AletheonExecutive::new(test_config()).with_verdict_handler(handler);
     let ctx = test_ctx();
     let tool_defs: Vec<ToolDefinition> = vec![];
     let verdict = Verdict::RequireConfirmation {
@@ -187,7 +187,7 @@ async fn require_confirmation_with_denying_callback() {
     let handler = Arc::new(DefaultVerdictHandler::with_confirm_callback(Box::new(
         |_, _| false,
     )));
-    let mut runtime = AletheonRuntime::new(test_config()).with_verdict_handler(handler);
+    let mut runtime = AletheonExecutive::new(test_config()).with_verdict_handler(handler);
     let ctx = test_ctx();
     let tool_defs: Vec<ToolDefinition> = vec![];
     let verdict = Verdict::RequireConfirmation {
@@ -218,7 +218,7 @@ async fn require_confirmation_with_denying_callback() {
 #[tokio::test]
 async fn require_confirmation_without_callback_short_circuits() {
     // Default handler has no confirm_callback -> auto-deny
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
     let tool_defs: Vec<ToolDefinition> = vec![];
     let verdict = Verdict::RequireConfirmation {
@@ -248,7 +248,7 @@ async fn require_confirmation_without_callback_short_circuits() {
 
 #[tokio::test]
 async fn sandbox_first_proceeds_to_llm() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
     let tool_defs: Vec<ToolDefinition> = vec![];
     let verdict = Verdict::SandboxFirst {
@@ -277,7 +277,7 @@ async fn sandbox_first_proceeds_to_llm() {
 
 #[tokio::test]
 async fn delay_verdict_short_circuits() {
-    let mut runtime = AletheonRuntime::new(test_config());
+    let mut runtime = AletheonExecutive::new(test_config());
     let ctx = test_ctx();
     let tool_defs: Vec<ToolDefinition> = vec![];
     let verdict = Verdict::Delay {

@@ -29,7 +29,7 @@ pub use linear::{CompactorTrait, ReActLoop};
 /// the `HarnessKind` selection itself.
 ///
 /// Selectable from TOML via `harness_kind = "linear"` (see
-/// `executive::core::config::RuntimeConfig::harness_kind`).
+/// `executive::core::config::ExecutiveConfig::harness_kind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HarnessKind {

@@ -7,7 +7,7 @@ fn live_runtime_does_not_reference_cognitive_memory_router() {
     let orchestrator = include_str!("../src/core/orchestrator.rs");
     assert!(
         !orchestrator.contains("MemoryRouter"),
-        "Option A: MemoryRouter must not be wired into AletheonRuntime"
+        "Option A: MemoryRouter must not be wired into AletheonExecutive"
     );
     assert!(
         !orchestrator.contains("with_memory"),
@@ -20,7 +20,7 @@ fn daemon_never_wires_a_memory_router_into_the_runtime() {
     let handler = include_str!("../src/impl/daemon/handler/mod.rs");
     assert!(
         !handler.contains("with_memory("),
-        "Option A: daemon must build AletheonRuntime without a MemoryRouter"
+        "Option A: daemon must build AletheonExecutive without a MemoryRouter"
     );
     let core_systems = include_str!("../src/core/core_systems.rs");
     assert!(

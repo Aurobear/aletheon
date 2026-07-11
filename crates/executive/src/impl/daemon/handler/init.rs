@@ -16,9 +16,9 @@ use super::super::prefix_builder::PrefixBuilder;
 use super::super::session_manager::SessionManager;
 use super::super::DaemonConfig;
 use super::RequestHandler;
-use crate::core::config::RuntimeConfig;
+use crate::core::config::ExecutiveConfig;
 use crate::core::evolution_coordinator::EvolutionConfig;
-use crate::core::orchestrator::AletheonRuntime;
+use crate::core::orchestrator::AletheonExecutive;
 use crate::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
 use crate::session::store::SessionStore;
 use crate::CoreMemory;
@@ -239,14 +239,14 @@ impl RequestHandler {
                 .with_approval_gate(Arc::new(approval_gate)),
         ));
 
-        let runtime_config = RuntimeConfig {
+        let runtime_config = ExecutiveConfig {
             session_id: session_id.clone(),
             context_window_tokens: context_window,
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
 
-        let mut runtime = AletheonRuntime::new(runtime_config);
+        let mut runtime = AletheonExecutive::new(runtime_config);
         let evo_config = EvolutionConfig {
             enabled: evolution_enabled,
             evolution_permitted: false,

@@ -63,7 +63,7 @@
 2. 初始化 LLM Provider 注册表
 3. 启动感知管理器（procfs polling、journald）
 4. 通过 Unix socket 接收 CLI 的 JSON-RPC 请求
-5. 将请求分发到认知引擎（AletheonRuntime）处理
+5. 将请求分发到认知引擎（AletheonExecutive）处理
 6. 返回 JSON-RPC 响应
 
 设计目标：单一进程、单一会话、低开销常驻服务。
@@ -96,7 +96,7 @@
 │  └──────────────────────┬──────────────────────────────┘ │
 │                         ▼                                │
 │  ┌─────────────────────────────────────────────────────┐ │
-│  │              AletheonRuntime                         │ │
+│  │              AletheonExecutive                         │ │
 │  │  (ReAct loop, tool execution, agent dispatch)        │ │
 │  └─────────────────────────────────────────────────────┘ │
 │                                                          │
@@ -217,7 +217,7 @@ tokio::spawn(async move { bridge.run().await; });
 4. **Tools** — 注册 CoreMemoryAppend/Replace + MemorySearch 工具
 5. **Security** — `SandboxExecutor` + `AuditLogger`（`data_dir/audit.jsonl`）+ `ToolRunnerWithGuard`
 6. **Agent Registry** — 尝试从 `agents/` 目录加载配置 agent，回退到内置 FsAgent/NetAgent/CodeAgent
-7. **AletheonRuntime** — 创建 runtime 实例
+7. **AletheonExecutive** — 创建 runtime 实例
 
 ### 3.6 Unix Socket 服务启动
 
@@ -332,7 +332,7 @@ model = "claude-sonnet-4-20250514"
 
 ### 6.1 Chat 未走 ReAct 循环 ✅ 已修复
 
-~~`chat` 方法直接调用 `llm.complete()`，绕过了 `AletheonRuntime` 的 ReAct 推理循环。~~
+~~`chat` 方法直接调用 `llm.complete()`，绕过了 `AletheonExecutive` 的 ReAct 推理循环。~~
 
 现已通过 `ReActLoop::run_streaming()` 完整集成，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/chat.rs`。
 

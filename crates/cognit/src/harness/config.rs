@@ -1,7 +1,7 @@
-//! Harness configuration — extracted subset of RuntimeConfig used by ReActLoop.
+//! Harness configuration — extracted subset of ExecutiveConfig used by ReActLoop.
 //!
 //! Lives in the cognit crate to avoid a circular dependency (runtime → cognit).
-//! The orchestrator converts RuntimeConfig → HarnessConfig when creating the harness.
+//! The orchestrator converts ExecutiveConfig → HarnessConfig when creating the harness.
 
 /// Configuration for a cognitive harness (e.g. ReActLoop).
 #[derive(Debug, Clone)]

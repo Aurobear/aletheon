@@ -3,7 +3,7 @@
 //! Used by `SessionGateway::handle_snapshot()` to produce a human/Claude-readable
 //! overview of the agent's current "mental state".
 
-use crate::core::config::RuntimeConfig;
+use crate::core::config::ExecutiveConfig;
 use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
 use cognit::harness::linear::goal_tracker::GoalTracker;
 use fabric::kernel::debug_bus::PerfCounter;
@@ -21,7 +21,7 @@ impl SnapshotBuilder {
         session_id: &str,
         goal_tracker: &GoalTracker,
         perf: &PerfCounter,
-        config: &RuntimeConfig,
+        config: &ExecutiveConfig,
         started_at: Instant,
         circuit_breaker_status: CircuitBreakerStatus,
         tool_budget_remaining: usize,
@@ -216,7 +216,7 @@ mod tests {
     fn snapshot_with_no_goal() {
         let goal_tracker = GoalTracker::new();
         let perf = PerfCounter::default();
-        let config = RuntimeConfig::default();
+        let config = ExecutiveConfig::default();
 
         let md = SnapshotBuilder::build(
             "test-session",
@@ -256,7 +256,7 @@ mod tests {
         perf.error_count
             .store(2, std::sync::atomic::Ordering::SeqCst);
 
-        let config = RuntimeConfig::default();
+        let config = ExecutiveConfig::default();
         let md = SnapshotBuilder::build(
             "test-session-2",
             &goal_tracker,
@@ -288,7 +288,7 @@ mod tests {
     fn snapshot_with_circuit_tripped() {
         let goal_tracker = GoalTracker::new();
         let perf = PerfCounter::default();
-        let config = RuntimeConfig::default();
+        let config = ExecutiveConfig::default();
 
         let md = SnapshotBuilder::build(
             "tripped",

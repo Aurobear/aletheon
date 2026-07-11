@@ -15,13 +15,13 @@ pub mod verdict_handler;
 
 pub use behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use config::{
-    AgentConfig, AppConfig, DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig,
-    ProviderConfig, RuntimeConfig, SandboxConfig, Transport,
+    AgentConfig, AppConfig, DaemonConfig, ExecutiveConfig, McpServerConfig, MemoryConfig,
+    PluginsConfig, ProviderConfig, SandboxConfig, Transport,
 };
 pub use core_systems::CoreSystems;
 pub use evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 pub use mode_router::ModeRouter;
-pub use orchestrator::AletheonRuntime;
+pub use orchestrator::AletheonExecutive;
 pub use session::{ContextState, Session, TuiSessionManager};
 pub use sub_agent::SubAgentSpawner;
 pub use verdict_handler::{DefaultVerdictHandler, Modifications};
