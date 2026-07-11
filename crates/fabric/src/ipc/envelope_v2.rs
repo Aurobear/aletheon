@@ -403,11 +403,14 @@ impl SchemaId {
     pub const EVENT_AGENT_STARTED_V1: &'static str = "aletheon.event.agent_started/v1";
     pub const EVENT_AGENT_STOPPED_V1: &'static str = "aletheon.event.agent_stopped/v1";
     pub const EVENT_AGENT_FAILED_V1: &'static str = "aletheon.event.agent_failed/v1";
-    pub const EVENT_SCHEDULED_TASK_FIRED_V1: &'static str = "aletheon.event.scheduled_task_fired/v1";
+    pub const EVENT_SCHEDULED_TASK_FIRED_V1: &'static str =
+        "aletheon.event.scheduled_task_fired/v1";
     pub const EVENT_BOOT_PHASE_CHANGED_V1: &'static str = "aletheon.event.boot_phase_changed/v1";
-    pub const EVENT_REACT_ITERATION_START_V1: &'static str = "aletheon.event.react_iteration_start/v1";
+    pub const EVENT_REACT_ITERATION_START_V1: &'static str =
+        "aletheon.event.react_iteration_start/v1";
     pub const EVENT_REACT_ITERATION_END_V1: &'static str = "aletheon.event.react_iteration_end/v1";
-    pub const EVENT_AGENT_FORK_COMPLETED_V1: &'static str = "aletheon.event.agent_fork_completed/v1";
+    pub const EVENT_AGENT_FORK_COMPLETED_V1: &'static str =
+        "aletheon.event.agent_fork_completed/v1";
     // Self-evolution
     pub const EVENT_RULE_EXTRACTED_V1: &'static str = "aletheon.event.rule_extracted/v1";
     pub const EVENT_EVOLUTION_TRIGGERED_V1: &'static str = "aletheon.event.evolution_triggered/v1";
@@ -640,10 +643,7 @@ mod tests {
         for v in &variants {
             let schema = SchemaId::from_event_type(v);
             assert!(!schema.is_empty(), "empty schema for {v:?}");
-            assert!(
-                seen.insert(schema),
-                "duplicate schema '{schema}' for {v:?}"
-            );
+            assert!(seen.insert(schema), "duplicate schema '{schema}' for {v:?}");
         }
         assert_eq!(seen.len(), variants.len(), "schema count mismatch");
     }

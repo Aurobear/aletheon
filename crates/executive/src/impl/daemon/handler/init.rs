@@ -64,7 +64,6 @@ use crate::kernel::chronos::SystemClock;
 use async_trait::async_trait;
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 use fabric::AdmissionController;
-use fabric::Clock;
 
 // ---------------------------------------------------------------------------
 // DaemonSubAgentRuntime — production sub-agent execution
@@ -646,9 +645,9 @@ impl RequestHandler {
             objective_store,
             reflector,
             agora: Arc::new(agora::AgoraRegistry::new()),
-            admission: Arc::new(ProductionAdmissionController::new(
-                Arc::new(SystemClock::new()),
-            )) as Arc<dyn AdmissionController>,
+            admission: Arc::new(ProductionAdmissionController::new(Arc::new(
+                SystemClock::new(),
+            ))) as Arc<dyn AdmissionController>,
             tools,
             tool_runner,
             skill_loader: Arc::new(Mutex::new(skill_loader)),

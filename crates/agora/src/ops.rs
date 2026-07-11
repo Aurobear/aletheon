@@ -109,10 +109,7 @@ impl AgoraOps for AgoraRegistry {
 
     async fn version(&self, session: &str) -> Result<u64> {
         let map = self.sessions.lock().await;
-        Ok(map
-            .get(session)
-            .map(|ws| ws.version)
-            .unwrap_or(0))
+        Ok(map.get(session).map(|ws| ws.version).unwrap_or(0))
     }
 
     async fn clear(&self, session: &str) -> Result<()> {
@@ -582,6 +579,9 @@ mod tests {
         let snap = reg.snapshot("s1").await.unwrap();
         assert_eq!(snap["trace_len"], json!(1));
         let reason = snap["trace"][0]["content"]["reason"].as_str().unwrap();
-        assert!(reason.contains("Invalid"), "expected Invalid in reason: {reason}");
+        assert!(
+            reason.contains("Invalid"),
+            "expected Invalid in reason: {reason}"
+        );
     }
 }

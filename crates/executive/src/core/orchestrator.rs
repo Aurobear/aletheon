@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::core::config::{ExecutiveConfig, GenomeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 use crate::core::mode_router::ModeRouter;
@@ -7,7 +5,6 @@ use crate::core::sub_agent::SubAgentSpawner;
 use anyhow::Result;
 use cognit::harness::interrupt::InterruptFlag;
 use cognit::harness::linear::ReActLoop;
-use cognit::harness::linear::TurnMetrics;
 use fabric::body::{Action, ActionResult};
 use fabric::context::Context;
 use fabric::runtime::StepResult;

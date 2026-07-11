@@ -5,17 +5,14 @@
 // These remain for backward compatibility during migration and will be removed
 // in a follow-up cleanup PR.
 
+#![allow(dead_code)]
+
 use super::RequestHandler;
 
-use std::sync::Arc;
 use tracing::{info, warn};
 
-use fabric::hook::{HookContext, HookPoint, HookResult};
-use fabric::LlmProvider;
-use fabric::{
-    ContentBlock, Context as AbiContext, Intent, IntentSource, Message, ReflectionTrigger, Role,
-    Verdict,
-};
+use fabric::hook::{HookContext, HookPoint};
+use fabric::{ContentBlock, Message, ReflectionTrigger, Role};
 use std::collections::HashMap;
 
 use cognit::harness::linear::TurnMetrics;

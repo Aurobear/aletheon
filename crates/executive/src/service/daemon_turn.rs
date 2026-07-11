@@ -29,14 +29,14 @@ use cognit::harness::linear::TurnMetrics;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::include::agora::AgoraOperation;
 use fabric::ipc::mailbox::InProcessMailboxService;
+use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, AdmissionRequest, AgentId, CapabilityId, CapabilityScope, Clock,
     ContentBlock, Context as AbiContext, Intent, IntentSource, LlmProvider, Message, NamespaceId,
     OperationKind, OperationManager, OperationRequest, PrincipalId, ProcessId, ProcessManager,
-    ProcessSignal, ReflectionTrigger, Role, SandboxDecision, SandboxRequirement,
-    SelfFieldOps, SpawnSpec, TurnRequest, UsageReport, Verdict,
+    ProcessSignal, ReflectionTrigger, Role, SandboxDecision, SandboxRequirement, SelfFieldOps,
+    SpawnSpec, TurnRequest, UsageReport, Verdict,
 };
-use fabric::types::admission::RiskLevel;
 use mnemosyne::FactStore;
 use serde_json::json;
 use std::collections::HashMap;
@@ -134,6 +134,7 @@ fn build_request_messages(
 /// Created once per daemon instance (or per `RequestHandler`) and reused across
 /// turns. The process table tracks the main agent across its entire lifecycle;
 /// per-turn operations are created in `execute_turn()`.
+#[allow(dead_code)]
 pub struct DaemonTurnOrchestrator {
     // --- Kernel primitives ---
     process_table: Arc<ProcessTable>,
@@ -857,12 +858,7 @@ impl DaemonTurnOrchestrator {
         drop(sm_arc);
 
         // Agora seed — versioned publish via propose+commit (RFC-014 Phase 3B).
-        let mut agora_version = self
-            .subsystems
-            .agora
-            .version(&sess_id)
-            .await
-            .unwrap_or(0);
+        let mut agora_version = self.subsystems.agora.version(&sess_id).await.unwrap_or(0);
         match self
             .subsystems
             .agora
@@ -936,7 +932,9 @@ impl DaemonTurnOrchestrator {
                 // Check sandbox decision — fail closed.
                 if matches!(permit.sandbox, SandboxDecision::Required) {
                     return (
-                        format!("Sandbox required but execution infrastructure not available for '{n}'"),
+                        format!(
+                            "Sandbox required but execution infrastructure not available for '{n}'"
+                        ),
                         true,
                     );
                 }
@@ -1288,7 +1286,8 @@ impl DaemonTurnOrchestrator {
             .await;
         self.run_post_evolution(&task_summary, &text, &metrics)
             .await;
-        self.commit_agora_snapshot(&session_id_for_agora, agora_version).await;
+        self.commit_agora_snapshot(&session_id_for_agora, agora_version)
+            .await;
 
         // -- Kernel: mark turn operation completed --
         let _ = self.operation_table.succeed(operation.id).await;

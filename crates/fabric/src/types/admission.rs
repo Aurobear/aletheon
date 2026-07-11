@@ -37,7 +37,7 @@ pub struct PrincipalId(pub String);
 pub struct CapabilityId(pub String);
 
 /// Scope limits for a capability invocation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CapabilityScope {
     /// Allowed paths (for filesystem operations). Empty = any.
     pub allowed_paths: Vec<String>,
@@ -47,17 +47,6 @@ pub struct CapabilityScope {
     pub max_runtime_ms: Option<u64>,
     /// Maximum output bytes.
     pub max_output_bytes: Option<u64>,
-}
-
-impl Default for CapabilityScope {
-    fn default() -> Self {
-        Self {
-            allowed_paths: vec![],
-            allowed_targets: vec![],
-            max_runtime_ms: None,
-            max_output_bytes: None,
-        }
-    }
 }
 
 /// Risk classification for a capability invocation.
@@ -112,6 +101,12 @@ impl BudgetReservationId {
     }
 }
 
+impl Default for BudgetReservationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Budget request during admission.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetRequest {
@@ -128,6 +123,12 @@ pub struct ResourceLeaseId(pub Uuid);
 impl ResourceLeaseId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+}
+
+impl Default for ResourceLeaseId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -188,12 +189,12 @@ impl ExecutionPermit {
         if self.is_expired_at(now) {
             return false;
         }
-        match self.sandbox {
+        !matches!(
+            self.sandbox,
             SandboxDecision::Failed { .. }
-            | SandboxDecision::Unavailable
-            | SandboxDecision::Required => false,
-            _ => true,
-        }
+                | SandboxDecision::Unavailable
+                | SandboxDecision::Required
+        )
     }
 }
 
@@ -219,6 +220,12 @@ pub struct AuditEventId(pub Uuid);
 impl AuditEventId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+}
+
+impl Default for AuditEventId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

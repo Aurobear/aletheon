@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Daemon request handler — JSON-RPC dispatcher for the Unix socket server.
 //! Handles chat, RPC, session management, and lifecycle events.
 //!

@@ -26,8 +26,8 @@
 
 use async_trait::async_trait;
 use fabric::{
-    AdmissionController, AdmissionError, AdmissionRequest, ExecutionPermit, MonoDeadline, MonoTime,
-    PermitId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
+    AdmissionController, AdmissionError, AdmissionRequest, ExecutionPermit, MonoDeadline, PermitId,
+    RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -98,10 +98,7 @@ impl ProductionAdmissionController {
 
 #[async_trait]
 impl AdmissionController for ProductionAdmissionController {
-    async fn admit(
-        &self,
-        request: AdmissionRequest,
-    ) -> Result<ExecutionPermit, AdmissionError> {
+    async fn admit(&self, request: AdmissionRequest) -> Result<ExecutionPermit, AdmissionError> {
         let now = self.clock.mono_now();
         let principal = request.principal.0.clone();
 
@@ -120,9 +117,7 @@ impl AdmissionController for ProductionAdmissionController {
         // --- Resource lease ---
         let lease = if let Some(ref lease_mgr) = self.leases {
             if let Some(ref lease_req) = request.lease {
-                let id = lease_mgr
-                    .acquire(&principal, lease_req, now.0)
-                    .await?;
+                let id = lease_mgr.acquire(&principal, lease_req, now.0).await?;
                 Some(id)
             } else {
                 None
@@ -154,11 +149,7 @@ impl AdmissionController for ProductionAdmissionController {
         })
     }
 
-    async fn settle(
-        &self,
-        permit_id: PermitId,
-        usage: UsageReport,
-    ) -> Result<(), AdmissionError> {
+    async fn settle(&self, permit_id: PermitId, _usage: UsageReport) -> Result<(), AdmissionError> {
         let mut settled = self.settled.lock().await;
         if settled.contains(&permit_id) {
             return Err(AdmissionError::AlreadySettled);
@@ -252,7 +243,9 @@ mod tests {
     async fn double_settle_fails() {
         let ctrl = ProductionAdmissionController::new(test_clock(0));
         let permit = ctrl.admit(default_request()).await.unwrap();
-        ctrl.settle(permit.id, UsageReport::default()).await.unwrap();
+        ctrl.settle(permit.id, UsageReport::default())
+            .await
+            .unwrap();
         let err = ctrl
             .settle(permit.id, UsageReport::default())
             .await
@@ -264,7 +257,9 @@ mod tests {
     async fn revoke_after_settle_fails() {
         let ctrl = ProductionAdmissionController::new(test_clock(0));
         let permit = ctrl.admit(default_request()).await.unwrap();
-        ctrl.settle(permit.id, UsageReport::default()).await.unwrap();
+        ctrl.settle(permit.id, UsageReport::default())
+            .await
+            .unwrap();
         let err = ctrl
             .revoke(permit.id, RevokeReason::OperationCancelled)
             .await
@@ -305,8 +300,7 @@ mod tests {
         let budget = Arc::new(InMemoryBudgetController::new());
         budget.set_budget("test-agent", Some(100_000), None).await;
 
-        let ctrl = ProductionAdmissionController::new(test_clock(0))
-            .with_budget(budget.clone());
+        let ctrl = ProductionAdmissionController::new(test_clock(0)).with_budget(budget.clone());
 
         let req = AdmissionRequest {
             budget: Some(BudgetRequest {
@@ -325,8 +319,7 @@ mod tests {
         let budget = Arc::new(InMemoryBudgetController::new());
         budget.set_budget("test-agent", Some(1_000), None).await;
 
-        let ctrl = ProductionAdmissionController::new(test_clock(0))
-            .with_budget(budget);
+        let ctrl = ProductionAdmissionController::new(test_clock(0)).with_budget(budget);
 
         let req = AdmissionRequest {
             budget: Some(BudgetRequest {
@@ -363,8 +356,7 @@ mod tests {
     async fn admit_acquires_lease_when_configured() {
         let leases = Arc::new(InMemoryResourceLeaseManager::new());
 
-        let ctrl = ProductionAdmissionController::new(test_clock(0))
-            .with_leases(leases.clone());
+        let ctrl = ProductionAdmissionController::new(test_clock(0)).with_leases(leases.clone());
 
         let req = AdmissionRequest {
             lease: Some(LeaseRequest {
@@ -383,8 +375,7 @@ mod tests {
     async fn admit_denies_when_resource_already_leased() {
         let leases = Arc::new(InMemoryResourceLeaseManager::new());
 
-        let ctrl = ProductionAdmissionController::new(test_clock(0))
-            .with_leases(leases.clone());
+        let ctrl = ProductionAdmissionController::new(test_clock(0)).with_leases(leases.clone());
 
         let lease_req = LeaseRequest {
             resource: "gpu-0".into(),

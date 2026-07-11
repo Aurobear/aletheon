@@ -36,7 +36,7 @@ use tokio::sync::Mutex;
 use crate::events::event::{Event, EventType, Priority};
 use crate::include::event_bus::EventBus;
 use crate::ipc::bus::communication_bus::CommunicationBus;
-use crate::ipc::envelope::{Envelope, Payload, Pattern, Target};
+use crate::ipc::envelope::{Envelope, Pattern, Payload, Target};
 use crate::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId};
 use crate::{EventHandler, SubscriptionId};
 
@@ -312,10 +312,13 @@ mod tests {
 
         // Subscribe through the EventBus trait.
         let sid = bridge
-            .subscribe(EventType::UserIntent, Box::new(move |_event| {
-                r.fetch_add(1, Ordering::SeqCst);
-                true
-            }))
+            .subscribe(
+                EventType::UserIntent,
+                Box::new(move |_event| {
+                    r.fetch_add(1, Ordering::SeqCst);
+                    true
+                }),
+            )
             .await
             .unwrap();
 

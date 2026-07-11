@@ -10,9 +10,7 @@
 //! expected to be called sequentially within the admission pipeline (admit →
 //! settle/revoke), so lock contention is minimal.
 
-use fabric::{
-    AdmissionError, BudgetRequest, BudgetReservationId, UsageReport,
-};
+use fabric::{AdmissionError, BudgetRequest, BudgetReservationId, UsageReport};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 
@@ -23,7 +21,7 @@ use tokio::sync::Mutex;
 /// Per-principal budget state.
 #[derive(Debug, Clone)]
 struct BudgetAccount {
-    tokens_remaining: Option<u64>, // None = unlimited
+    tokens_remaining: Option<u64>,     // None = unlimited
     cost_remaining_micro: Option<u64>, // None = unlimited
     active_reservations: HashMap<BudgetReservationId, BudgetHold>,
 }
@@ -178,7 +176,12 @@ impl InMemoryBudgetController {
     }
 
     /// Settle a reservation with actual usage data.
-    pub async fn settle(&self, principal: &str, reservation: BudgetReservationId, usage: &UsageReport) {
+    pub async fn settle(
+        &self,
+        principal: &str,
+        reservation: BudgetReservationId,
+        usage: &UsageReport,
+    ) {
         let mut accounts = self.accounts.lock().await;
         if let Some(account) = accounts.get_mut(principal) {
             if let Some(hold) = account.active_reservations.remove(&reservation) {
@@ -248,7 +251,8 @@ mod tests {
     #[tokio::test]
     async fn limited_account_approves_within_budget() {
         let ctrl = InMemoryBudgetController::new();
-        ctrl.set_budget("agent-1", Some(100_000), Some(1_000_000)).await;
+        ctrl.set_budget("agent-1", Some(100_000), Some(1_000_000))
+            .await;
 
         let req = BudgetRequest {
             max_tokens: Some(10_000),

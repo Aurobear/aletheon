@@ -8,6 +8,8 @@
 //! Supervision: when a sub-agent transitions to `Failed`, the spawner consults
 //! a `SupervisorTree`. If the policy permits restart, a replacement is spawned;
 //! if the restart limit is reached, the failure is logged and propagated.
+
+#![allow(dead_code)]
 //!
 //! # Execution
 //!
@@ -367,7 +369,10 @@ impl SubAgentSpawner {
                         );
                         self.restart_agent(id).await?;
                     }
-                    RestartDecision::RestartGroup { attempt, ref siblings } => {
+                    RestartDecision::RestartGroup {
+                        attempt,
+                        ref siblings,
+                    } => {
                         warn!(
                             agent_id = %id,
                             attempt,

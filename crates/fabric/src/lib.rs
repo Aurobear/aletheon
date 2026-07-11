@@ -95,7 +95,9 @@ pub use policy::verifier;
 
 // Subsystem traits (from include/)
 pub use include::admission::AdmissionController;
-pub use include::agora::{AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, RejectReason, VersionConflict};
+pub use include::agora::{
+    AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, RejectReason, VersionConflict,
+};
 pub use include::body::{Action, ActionResult, BodyRuntime};
 pub use include::capability_invoker::CapabilityInvoker;
 pub use include::chronos::Clock;
@@ -173,8 +175,8 @@ pub use events::event::{
     AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
 };
 pub use events::event_bridge::EventBridge;
-pub use events::legacy_bridge::LegacyEventBridge;
 pub use events::event_log::{EventLog, LogEntry};
+pub use events::legacy_bridge::LegacyEventBridge;
 pub use events::ui_event::{
     AwarenessLevel, ClientEvent, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate,
     SubAgentHandle, SubAgentState, SubAgentStatus,

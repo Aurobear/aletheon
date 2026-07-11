@@ -13,7 +13,9 @@ use crate::trace::Trace;
 
 // Re-export versioned commit types from fabric (single source of truth for
 // the trait contract), so consumers can import them from `agora::workspace`.
-pub use fabric::include::agora::{AgoraCommit, AgoraOperation, AgoraProposal, RejectReason, VersionConflict};
+pub use fabric::include::agora::{
+    AgoraCommit, AgoraOperation, AgoraProposal, RejectReason, VersionConflict,
+};
 
 // ---------------------------------------------------------------------------
 // Workspace
@@ -134,10 +136,7 @@ impl Workspace {
                 // task-graph nodes when the patch carries an "id" field.
                 self.trace.push("task_update", task_patch.clone());
                 if let Some(id) = task_patch.get("id").and_then(|v| v.as_str()) {
-                    if let Some(status) = task_patch
-                        .get("status")
-                        .and_then(|v| v.as_str())
-                    {
+                    if let Some(status) = task_patch.get("status").and_then(|v| v.as_str()) {
                         let s = match status {
                             "pending" => crate::task_graph::TaskStatus::Pending,
                             "running" => crate::task_graph::TaskStatus::Running,

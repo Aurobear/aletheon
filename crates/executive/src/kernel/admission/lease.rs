@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! In-memory resource lease manager — Phase 5A.
 //!
 //! Manages exclusive/shared access to named resources (e.g. "gpu",
@@ -10,9 +12,7 @@
 //! If a resource is already leased, new requests are denied with
 //! `AdmissionError::LeaseUnavailable`.
 
-use fabric::{
-    AdmissionError, LeaseRequest, ResourceLeaseId,
-};
+use fabric::{AdmissionError, LeaseRequest, ResourceLeaseId};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 
@@ -215,8 +215,26 @@ mod tests {
     #[tokio::test]
     async fn active_count_tracks_only_non_expired() {
         let mgr = InMemoryResourceLeaseManager::new();
-        mgr.acquire("agent-1", &LeaseRequest { resource: "r1".into(), duration_ms: 5_000 }, 0).await.unwrap();
-        mgr.acquire("agent-1", &LeaseRequest { resource: "r2".into(), duration_ms: 1_000 }, 0).await.unwrap();
+        mgr.acquire(
+            "agent-1",
+            &LeaseRequest {
+                resource: "r1".into(),
+                duration_ms: 5_000,
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        mgr.acquire(
+            "agent-1",
+            &LeaseRequest {
+                resource: "r2".into(),
+                duration_ms: 1_000,
+            },
+            0,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(mgr.active_count(500).await, 2);
 

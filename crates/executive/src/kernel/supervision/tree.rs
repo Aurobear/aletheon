@@ -14,7 +14,9 @@ pub enum RestartPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestartDecision {
     DoNotRestart,
-    Restart { attempt: usize },
+    Restart {
+        attempt: usize,
+    },
     FailedLimitReached,
     /// Group-strategy restarts: the failed process AND additional siblings
     /// must restart according to the group's strategy.
@@ -173,10 +175,7 @@ impl SupervisorTree {
                     for &sibling in &siblings {
                         self.restarts.remove(&sibling);
                     }
-                    return RestartDecision::RestartGroup {
-                        attempt,
-                        siblings,
-                    };
+                    return RestartDecision::RestartGroup { attempt, siblings };
                 }
             }
         }
@@ -333,7 +332,13 @@ mod tests {
         tree.supervise(pid(2), RestartPolicy::RestartOnFailure { max_restarts: 3 });
 
         // pid(2) had a previous restart attempt.
-        assert_eq!(tree.record_exit(pid(2), &failed()), RestartDecision::RestartGroup { attempt: 1, siblings: vec![pid(1)] });
+        assert_eq!(
+            tree.record_exit(pid(2), &failed()),
+            RestartDecision::RestartGroup {
+                attempt: 1,
+                siblings: vec![pid(1)]
+            }
+        );
 
         // pid(1) fails → OneForAll triggers. pid(2)'s counter should reset.
         let d = tree.record_exit(pid(1), &failed());

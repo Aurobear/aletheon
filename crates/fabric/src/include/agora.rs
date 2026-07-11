@@ -100,10 +100,7 @@ pub trait AgoraOps: Send + Sync {
     /// Return the current workspace version (0-based, incremented on commit).
     async fn version(&self, session: &str) -> Result<u64> {
         let snap = self.snapshot(session).await?;
-        Ok(snap
-            .get("version")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0))
+        Ok(snap.get("version").and_then(|v| v.as_u64()).unwrap_or(0))
     }
     /// Clear a session's workspace.
     async fn clear(&self, session: &str) -> Result<()>;

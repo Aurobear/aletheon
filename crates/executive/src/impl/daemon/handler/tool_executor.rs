@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! `TurnToolExecutor` — the per-tool execution pipeline for a chat turn.
 //!
 //! Extracted from the former inline `execute_tool` closure in `chat.rs`
