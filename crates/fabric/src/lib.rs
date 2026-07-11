@@ -27,7 +27,6 @@ pub mod events;
 pub mod include;
 pub mod ipc;
 pub mod kernel;
-pub mod ops;
 pub mod policy;
 pub mod primitives;
 pub mod types;
@@ -37,6 +36,7 @@ pub mod types;
 // Downstream crates can also use the new paths: `fabric::include::genome::*`, `fabric::types::tool::*`, etc.
 
 // Subsystem trait modules (from include/)
+pub use include::agora;
 pub use include::body;
 pub use include::brain;
 pub use include::event_bus;
@@ -93,6 +93,7 @@ pub use policy::verifier;
 // These preserve the flat API surface so external consumers don't need to change.
 
 // Subsystem traits (from include/)
+pub use include::agora::AgoraOps;
 pub use include::body::{Action, ActionResult, BodyRuntime};
 pub use include::brain::{
     BehaviorAdjustment, BrainCoreOps, CostEstimate, Critique, EvolutionLogEntry, ExecutionResult,
@@ -191,9 +192,6 @@ pub use policy::execpolicy::{
 pub use primitives::{
     Command, Commitment, Evidence, Hypothesis, Mailbox, Narrative, Query, Stream,
 };
-
-// Ops traits (from ops/)
-pub use ops::{CognitOps, CognitiveHarness, CorpusOps, DaseinOps, MnemosyneOps, ToolExecutor};
 
 // Compaction (shared context-compaction interface + pruning helpers)
 pub use compaction::{prune_tool_outputs, CompactorTrait};

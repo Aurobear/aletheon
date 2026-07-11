@@ -81,7 +81,7 @@
 │ executive — Orchestrator (NOT cognition)                        │
 │   Lifecycle · Scheduler · Supervisor · Resource · Authority     │
 │   daemon, sessions, multi-agent orchestration                   │
-│      │ drives subsystems via fabric::ops traits                 │
+│      │ drives subsystems via fabric::include traits             │
 ├────────────────────────────────────────────────────────────────┤
 │ Subsystems (each owns its state; no cross-mutation):            │
 │   dasein     self-field: identity, boundary, care, narrative    │

@@ -1,11 +1,9 @@
 //! CoreSystems — concrete subsystem type bundle.
 //!
 //! Holds all subsystem types that RequestHandler currently owns directly.
-//! During Group B, each field transitions to `Arc<dyn TraitOps>` from
-//! fabric::ops as each subsystem gets its trait implementation migrated.
-//!
-//! This is the intermediate step between the God Object and the final
-//! trait-based architecture defined in RFC-010~013.
+//! Subsystem contracts live in `fabric::include` (`BrainCoreOps`, `SelfFieldOps`,
+//! `MemoryBackend`, `BodyRuntime`, `AgoraOps`, …); slimming these concrete fields
+//! toward `Arc<dyn …>` boundaries is tracked as RFC-018 D5.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

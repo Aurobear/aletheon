@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use fabric::hook::{HookContext, HookPoint, HookResult};
-use fabric::ops::AgoraOps;
+use fabric::AgoraOps;
 use fabric::{
     ContentBlock, Context as AbiContext, Intent, IntentSource, Message, ReflectionTrigger, Role,
     SelfFieldOps, Verdict,

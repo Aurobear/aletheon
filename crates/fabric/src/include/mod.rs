@@ -2,6 +2,7 @@
 //!
 //! Each file defines the trait contract for one subsystem.
 
+pub mod agora;
 pub mod body;
 pub mod brain;
 pub mod event_bus;

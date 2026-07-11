@@ -11,7 +11,7 @@
 > here first — do not leak an internal struct across a boundary.
 >
 > **Source of truth in code:** `crates/fabric/src/primitives/` (cognitive objects +
-> communication) and `crates/fabric/src/ops.rs` (subsystem ops traits). This document
+> communication) and `crates/fabric/src/include/` (subsystem ops traits). This document
 > and that code must agree; if they drift, the code wins and this document is fixed.
 
 ---
@@ -20,18 +20,26 @@
 
 The seven cognitive subsystems plus the fabric they communicate over. Each owns its
 state; none may mutate another's — interaction is only through the subsystem's ops
-trait (`crates/fabric/src/ops.rs`).
+trait, defined in `crates/fabric/src/include/`.
 
 | Primitive | Role | Owns | Ops trait |
 |-----------|------|------|-----------|
 | **Executive** | Orchestrates; never reasons. | Lifecycle, Scheduling, Supervision, Resource, Authority | — (drives the others) |
-| **Cognit** | The cognitive core — how to think. | Planner, Reasoner, Verifier, Reflector, Learner, Harness | `CognitOps` |
-| **Dasein** | The self — identity & boundaries. | Identity, Values, Boundary, Narrative, Authority-to-refuse | `DaseinOps` |
+| **Cognit** | The cognitive core — how to think. | Planner, Reasoner, Verifier, Reflector, Learner, Harness | `BrainCoreOps` |
+| **Dasein** | The self — identity & boundaries. | Identity, Values, Boundary, Narrative, Authority-to-refuse | `SelfFieldOps` |
 | **Agora** | Shared cognitive workspace (working memory). | Blackboard, Attention, Task graph, Scratchpad, Trace | `AgoraOps` |
-| **Mnemosyne** | Experience across time. | Episodic/Semantic/Procedural/Self memory, Index, Association, Replay | `MnemosyneOps` |
-| **Corpus** | The body — acting on the world. | Tools, Skills, Hooks, Sandbox, Drivers | `CorpusOps` |
-| **Metacog** | Self-modification. | Evaluation, Morphogenesis, Migration, Rollback | (meta-runtime) |
+| **Mnemosyne** | Experience across time. | Episodic/Semantic/Procedural/Self memory, Index, Association, Replay | `MemoryBackend` |
+| **Corpus** | The body — acting on the world. | Tools, Skills, Hooks, Sandbox, Drivers | `BodyRuntime` |
+| **Metacog** | Self-modification. | Evaluation, Morphogenesis, Migration, Rollback | `RuntimeOps` / `MetaRuntimeOps` |
 | **fabric** | The ABI + communication substrate. | Primitives, ops traits, Envelope, EventBus | (the layer itself) |
+
+> **Trait names (RFC-018 D1, resolved 2026-07-11):** the canonical subsystem contracts
+> are the live traits in `fabric::include` shown above — `BrainCoreOps`, `SelfFieldOps`,
+> `MemoryBackend`, `BodyRuntime`, `AgoraOps`, `RuntimeOps`/`MetaRuntimeOps`. The earlier
+> aspirational names (`CognitOps` / `MnemosyneOps` / `CorpusOps` and a duplicate
+> `ops::DaseinOps`) were scaffolded but never wired, and have been deleted along with
+> `crates/fabric/src/ops.rs`. `AgoraOps` — the one live trait that lived there — moved to
+> `fabric::include::agora`.
 
 **Invariants**
 - The Executive contains none of Lifecycle/Scheduling/etc.'s *cognitive* logic — it
@@ -39,8 +47,11 @@ trait (`crates/fabric/src/ops.rs`).
   Executive. (See [RFC-001 §5](RFC-001-Philosophy.md).)
 - Agora is **session-scoped and in-memory**; it never persists by itself. Mnemosyne is
   the only subsystem that persists cognitive state across restarts.
-- A harness (in Cognit) is pluggable: `CognitiveHarness` in `ops.rs`. ReAct is one
-  harness, not the fixed architecture.
+- A harness (in Cognit) is pluggable via the `HarnessKind` enum + `build_harness`
+  factory (`cognit/src/harness/mod.rs`), selected by config. ReAct is one harness, not
+  the fixed architecture. (A `dyn CognitiveHarness` trait was tried but dropped —
+  `run()` is generic over its executor and so not object-safe; the enum+factory gives
+  the same pluggability. See RFC-018 D1.)
 
 ---
 
