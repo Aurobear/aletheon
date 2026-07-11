@@ -27,7 +27,6 @@ use fabric::message::Message;
 use fabric::policy::verifier::Verifier;
 use fabric::self_field::{Intent, IntentSource};
 use fabric::ToolDefinition;
-use std::pin::Pin;
 use std::sync::Arc;
 
 /// Thin wrapper to allow passing `&dyn LlmProvider` to generic functions
@@ -59,20 +58,10 @@ impl LlmProvider for DynLlmRef<'_> {
 }
 
 /// Trait for context compaction into the message buffer.
-/// Decouples cognit from the memory crate (avoids cyclic dependency).
-pub trait CompactorTrait: Send {
-    fn maybe_compact<'a>(
-        &'a mut self,
-        messages: &'a mut Vec<Message>,
-        llm: &'a dyn LlmProvider,
-    ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>>;
-
-    fn force_compact<'a>(
-        &'a mut self,
-        messages: &'a mut Vec<Message>,
-        llm: &'a dyn LlmProvider,
-    ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>>;
-}
+/// Re-exported from `fabric`, the shared compaction interface, so both
+/// `cognit` and concrete compaction strategies (e.g. `mnemosyne`) depend
+/// on the same abstract contract without depending on each other.
+pub use fabric::CompactorTrait;
 
 /// Marker injected into user messages when plan mode is active.
 /// Shared between `ReActLoop` and `Controller` to keep them in sync.

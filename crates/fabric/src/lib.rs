@@ -21,6 +21,7 @@
 
 // === Module declarations ===
 
+pub mod compaction;
 pub mod dasein;
 pub mod events;
 pub mod include;
@@ -193,3 +194,6 @@ pub use primitives::{
 
 // Ops traits (from ops/)
 pub use ops::{CognitOps, CognitiveHarness, CorpusOps, DaseinOps, MnemosyneOps, ToolExecutor};
+
+// Compaction (shared context-compaction interface + pruning helpers)
+pub use compaction::{prune_tool_outputs, CompactorTrait};

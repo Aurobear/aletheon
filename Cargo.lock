@@ -2002,8 +2002,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "cognit",
- "corpus",
  "dirs",
  "fabric",
  "regex",
