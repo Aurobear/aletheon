@@ -36,9 +36,9 @@ pub enum RestartDecision {
 ///
 /// These are the standard OTP-style restart strategies:
 ///
-/// - [`OneForOne`]: Only the failed process is restarted (default).
-/// - [`OneForAll`]: All members of the group are restarted.
-/// - [`RestForOne`]: The failed process and all members started *after* it
+/// - `OneForOne`: Only the failed process is restarted (default).
+/// - `OneForAll`: All members of the group are restarted.
+/// - `RestForOne`: The failed process and all members started *after* it
 ///   are restarted (in start order).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroupStrategy {
@@ -114,7 +114,7 @@ impl SupervisorTree {
     /// Record a process exit and decide whether/how to restart.
     ///
     /// If the process belongs to a supervised group with a strategy other
-    /// than [`OneForOne`], the decision includes sibling restarts.
+    /// than `OneForOne`, the decision includes sibling restarts.
     pub fn record_exit(&mut self, id: ProcessId, reason: &ExitReason) -> RestartDecision {
         let is_failure = matches!(
             reason,
