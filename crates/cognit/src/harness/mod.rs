@@ -12,10 +12,12 @@ pub mod config;
 pub mod event_sink;
 pub mod interrupt;
 pub mod linear;
+pub mod session;
 
 pub use config::HarnessConfig;
 pub use linear as react_loop; // backward-compat: ReActLoop is the linear harness
 pub use linear::{CompactorTrait, ReActLoop};
+pub use session::{CognitiveSession, LinearCognitiveSession};
 
 /// Selects which concrete harness implementation `build_harness` constructs.
 ///

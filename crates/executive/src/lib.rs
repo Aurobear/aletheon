@@ -13,19 +13,21 @@
 pub mod bridge;
 pub mod core;
 pub mod r#impl;
+pub mod service;
 pub mod tools;
 
 pub mod host;
+pub mod kernel;
 
 // Re-export from core for backward compatibility
 pub use cognit::harness::linear::{ReActLoop, TurnMetrics};
-pub use core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use core::config::{
     AgentConfig, AppConfig, DaemonConfig, ExecutiveConfig, HooksConfig, McpServerConfig,
     MemoryConfig, PluginsConfig, ProviderConfig, SandboxConfig, Transport,
 };
 pub use core::orchestrator::AletheonExecutive;
 pub use core::verdict_handler::DefaultVerdictHandler;
+pub use kernel::admission::ProductionAdmissionController;
 
 // Re-export from impl for backward compatibility
 pub use r#impl::agent::AgentRuntime;

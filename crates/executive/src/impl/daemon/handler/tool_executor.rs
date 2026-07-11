@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! `TurnToolExecutor` — the per-tool execution pipeline for a chat turn.
 //!
 //! Extracted from the former inline `execute_tool` closure in `chat.rs`
@@ -25,6 +27,7 @@ use corpus::HookRegistry;
 use dasein::SelfField;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::kernel::debug_bus::PerfCounter;
+use fabric::types::operation::{OperationId, ProcessId};
 use fabric::{Context as AbiContext, Intent, IntentSource, SelfFieldOps, Verdict};
 
 use crate::core::core_systems::CoreSystems;
@@ -45,6 +48,10 @@ pub(crate) struct TurnToolExecutor {
     working_dir: PathBuf,
     session_id: String,
     turn_count: usize,
+    /// Kernel operation id for this turn (used by admission controller).
+    operation_id: OperationId,
+    /// Kernel process id for the main agent (used by admission controller).
+    process_id: ProcessId,
 }
 
 impl TurnToolExecutor {
@@ -54,6 +61,8 @@ impl TurnToolExecutor {
         session_id: String,
         turn_count: usize,
         working_dir: PathBuf,
+        operation_id: OperationId,
+        process_id: ProcessId,
     ) -> Self {
         Self {
             tool_runner: subsystems.tool_runner.clone(),
@@ -67,10 +76,22 @@ impl TurnToolExecutor {
             working_dir,
             session_id,
             turn_count,
+            operation_id,
+            process_id,
         }
     }
 
-    /// Run one tool call. Returns `(content, is_error)`.
+    /// Return the kernel operation id for this turn.
+    pub(crate) fn operation_id(&self) -> OperationId {
+        self.operation_id
+    }
+
+    /// Return the kernel process id for the main agent.
+    pub(crate) fn process_id(&self) -> ProcessId {
+        self.process_id
+    }
+
+    /// Run one tool call. Returns `(content, is_error)`.`
     pub(crate) async fn execute(
         &self,
         _id: &str,

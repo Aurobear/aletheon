@@ -1,4 +1,3 @@
-pub mod behavior_paths;
 pub mod checkpoint;
 pub mod config;
 pub mod controller;
@@ -13,7 +12,6 @@ pub mod session_gateway;
 pub mod sub_agent;
 pub mod verdict_handler;
 
-pub use behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use config::{
     AgentConfig, AppConfig, DaemonConfig, ExecutiveConfig, McpServerConfig, MemoryConfig,
     PluginsConfig, ProviderConfig, SandboxConfig, Transport,

@@ -77,6 +77,7 @@ impl LlmPulse {
     }
 
     /// Emit one cognitive pulse.
+    #[allow(deprecated)]
     async fn pulse(&self) -> Result<()> {
         let health = self.scheduler.health_check().await;
 

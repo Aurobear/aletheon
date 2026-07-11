@@ -22,7 +22,7 @@ pub struct ExecutiveConfig {
     #[serde(default)]
     pub circuit_breaker: CircuitBreakerConfig,
     /// Which cognitive harness implementation to construct (see
-    /// `cognit::harness::build_harness`). Defaults to `Linear` (ReActLoop),
+    /// the configured cognitive harness. Defaults to `Linear`.
     /// preserving current behavior. TOML key: `harness_kind = "linear"`.
     #[serde(default)]
     pub harness_kind: HarnessKind,

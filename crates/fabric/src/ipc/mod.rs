@@ -3,8 +3,10 @@
 pub mod backends;
 pub mod bus;
 pub mod envelope;
+pub mod envelope_v2;
 pub mod ipc_msg;
 pub mod ipc_types;
+pub mod mailbox;
 pub mod protocol;
 pub mod transport;
 

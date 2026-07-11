@@ -1,24 +1,14 @@
-use std::sync::Arc;
-
-use crate::core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 use crate::core::config::{ExecutiveConfig, GenomeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 use crate::core::mode_router::ModeRouter;
 use crate::core::sub_agent::SubAgentSpawner;
-use crate::core::verdict_handler::DefaultVerdictHandler;
 use anyhow::Result;
-use cognit::harness::build_harness;
-use cognit::harness::config::HarnessConfig;
 use cognit::harness::interrupt::InterruptFlag;
 use cognit::harness::linear::ReActLoop;
-use cognit::harness::linear::TurnMetrics;
 use fabric::body::{Action, ActionResult};
-use fabric::cognit::Plan;
 use fabric::context::Context;
 use fabric::runtime::StepResult;
-use fabric::self_field::{Intent, Verdict, VerdictAction, VerdictHandler};
-use mnemosyne::AdvancedCompressor;
-use tracing::{debug, warn};
+use fabric::self_field::{Intent, Verdict};
 
 /// Top-level Aletheon runtime — decomposes Engine::run_turn() into 6 layers
 ///
@@ -34,7 +24,6 @@ pub struct AletheonExecutive {
     react_loop: ReActLoop,
     evolution: Option<EvolutionCoordinator>,
     genome_config: GenomeConfig,
-    verdict_handler: Arc<dyn VerdictHandler>,
     mode_router: ModeRouter,
     interrupt_flag: InterruptFlag,
     sub_agent_spawner: SubAgentSpawner,
@@ -42,48 +31,16 @@ pub struct AletheonExecutive {
 
 impl AletheonExecutive {
     pub fn new(config: ExecutiveConfig) -> Self {
-        let harness_config = HarnessConfig {
-            max_iterations: config.max_iterations,
-            compaction_enabled: config.compaction_enabled,
-            tail_token_budget: config.tail_token_budget,
-            target_summary_chars: config.target_summary_chars,
-            context_window_tokens: config.context_window_tokens,
-            max_tool_calls: config.agent_loop.max_tool_calls,
-            reflection_interval: config.agent_loop.reflection_interval,
-            reflection_tool_call_limit: config.agent_loop.reflection_tool_call_limit,
-            circuit_breaker_max_repeats: config.circuit_breaker.max_repeats,
-            circuit_breaker_window_size: config.circuit_breaker.window_size,
-            learning_enabled: config.learning_enabled,
-        };
-        // Scale tail_token_budget proportionally to context_window_tokens.
-        let effective_tail = if config.tail_token_budget * 4 < config.context_window_tokens {
-            config.context_window_tokens / 8
-        } else {
-            config.tail_token_budget
-        };
-        let compressor = Box::new(AdvancedCompressor::new(
-            effective_tail,
-            config.target_summary_chars,
-            config.context_window_tokens,
-        )) as Box<dyn cognit::harness::linear::CompactorTrait>;
-        let harness_kind = config.harness_kind;
-        let react_loop = build_harness(harness_kind, harness_config, compressor);
+        let react_loop = crate::service::harness_factory::build_configured_react_loop(&config);
         Self {
             config,
             react_loop,
             evolution: None,
             genome_config: GenomeConfig::default(),
-            verdict_handler: Arc::new(DefaultVerdictHandler::new()),
             mode_router: ModeRouter::new(),
             interrupt_flag: InterruptFlag::new(),
             sub_agent_spawner: SubAgentSpawner::new(),
         }
-    }
-
-    /// Set a custom verdict handler.
-    pub fn with_verdict_handler(mut self, handler: Arc<dyn VerdictHandler>) -> Self {
-        self.verdict_handler = handler;
-        self
     }
 
     /// Set the genome configuration.
@@ -157,109 +114,6 @@ impl AletheonExecutive {
         self.evolution.as_ref()
     }
 
-    /// Process a user input through the full Aletheon pipeline.
-    /// This replaces Engine::run_turn().
-    ///
-    /// Flow:
-    /// 1. Build Intent from input
-    /// 2. SelfField.review(intent) → Verdict
-    /// 3. Select behavior path based on Verdict
-    /// 4. If Cognitive/Volitional: CognitCore.think(intent) → Plan
-    /// 5. Execute Plan steps via BodyRuntime
-    /// 6. CognitCore.reflect(execution) → Reflection
-    /// 7. CognitCore.learn(experience) → LearnedRules
-    /// 8. EventBus.publish(events)
-    pub async fn process<F, G, H>(
-        &mut self,
-        input: &str,
-        ctx: &Context,
-        review_fn: F,
-        think_fn: G,
-        execute_fn: H,
-    ) -> Result<String>
-    where
-        F: Fn(&Intent, &Context) -> Result<Verdict>,
-        G: Fn(&Intent, &Context) -> Result<Plan>,
-        H: Fn(&Action, &Context) -> Result<ActionResult>,
-    {
-        self.react_loop.reset();
-        let mut all_output = Vec::new();
-
-        // Step 1: Build Intent
-        let intent = self.react_loop.build_intent(input);
-        debug!("Processing intent: {}", intent.description);
-
-        // Step 2: SelfField review
-        let verdict = review_fn(&intent, ctx)?;
-        debug!("SelfField verdict: {:?}", verdict);
-
-        // Step 3: Select behavior path
-        let path = BehaviorPathRouter::select_path(&intent, &verdict);
-        debug!("Selected path: {:?}", path);
-
-        match path {
-            BehaviorPath::Reflex => {
-                // Emergency: direct execution, no Brain involved
-                warn!("Reflex path: executing directly without CognitCore");
-                let action = Action {
-                    name: intent.action.clone(),
-                    parameters: intent.parameters.clone(),
-                    requires_sandbox: false,
-                    timeout: None,
-                };
-                let result = execute_fn(&action, ctx)?;
-                Ok(result.output)
-            }
-            BehaviorPath::Cognitive | BehaviorPath::Volitional => {
-                // Normal path: think → plan → execute → reflect
-                let plan = think_fn(&intent, ctx)?;
-                debug!("Plan generated: {} steps", plan.steps.len());
-
-                // Step 5: Execute plan steps
-                let mut _steps_completed = 0;
-                for step in &plan.steps {
-                    if !self.react_loop.should_continue() {
-                        warn!(
-                            "Max iterations ({}) reached",
-                            self.react_loop.max_iterations()
-                        );
-                        break;
-                    }
-
-                    debug!("Executing step: {}", step.action.name);
-                    match execute_fn(&step.action, ctx) {
-                        Ok(result) => {
-                            _steps_completed += 1;
-                            all_output.push(result.output.clone());
-
-                            if !result.success {
-                                warn!("Step failed: {:?}", result.error);
-                                // Try rollback if available
-                                if let Some(rollback) = &step.rollback_action {
-                                    debug!("Attempting rollback: {}", rollback.name);
-                                    let _ = execute_fn(rollback, ctx);
-                                }
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Step execution error: {}", e);
-                            break;
-                        }
-                    }
-
-                    self.react_loop.advance();
-                }
-
-                // Step 6-8: Reflection and learning happen at the caller level
-                // (CognitCore.reflect() and CognitCore.learn() are called externally)
-
-                let output = all_output.join("\n");
-                Ok(output)
-            }
-        }
-    }
-
     /// Process a single step (for streaming/incremental execution)
     pub async fn step<F, H>(
         &mut self,
@@ -299,77 +153,6 @@ impl AletheonExecutive {
     /// Must be called before the first turn.
     pub fn seed_goal(&mut self, description: &str, sub_goals: &[String]) {
         self.react_loop.seed_goal(description, sub_goals);
-    }
-
-    /// Process input via the interleaved ReAct loop.
-    pub async fn process_react<L, R, F, Fut>(
-        &mut self,
-        input: &str,
-        ctx: &Context,
-        review_fn: R,
-        llm: &L,
-        tool_defs: &[fabric::ToolDefinition],
-        execute_tool: F,
-    ) -> Result<(String, TurnMetrics)>
-    where
-        L: fabric::LlmProvider,
-        R: Fn(&Intent, &Context) -> Result<Verdict>,
-        F: Fn(&str, &str, &serde_json::Value) -> Fut,
-        Fut: std::future::Future<Output = (String, bool)>,
-    {
-        self.react_loop.reset();
-        let intent = self.react_loop.build_intent(input);
-        let verdict = review_fn(&intent, ctx)?;
-        debug!("SelfField verdict: {:?}", verdict);
-
-        let action = self.verdict_handler.handle(&verdict, &intent, ctx);
-        // Effective input: use modified intent's description when available,
-        // otherwise fall back to the original user input.
-        let effective_input: String;
-        match action {
-            VerdictAction::Proceed { modified_intent } => {
-                if let Some(modified) = modified_intent {
-                    debug!(
-                        action = %modified.action,
-                        description = %modified.description,
-                        "Using SelfField-modified intent"
-                    );
-                    effective_input = modified.description.clone();
-                } else {
-                    effective_input = input.to_string();
-                }
-            }
-            VerdictAction::ShortCircuit { response } => {
-                let metrics = TurnMetrics {
-                    tool_calls_made: 0,
-                    tool_errors: 0,
-                    elapsed_ms: 0,
-                    iterations: 0,
-                    completed_normally: false,
-                };
-                return Ok((response, metrics));
-            }
-            VerdictAction::SandboxThenProceed { reason } => {
-                // Sandbox infrastructure exists but is complex to wire here.
-                // Log and proceed without sandbox for now.
-                warn!(
-                    "SandboxFirst requested: {}. Proceeding without sandbox.",
-                    reason
-                );
-                effective_input = input.to_string();
-            }
-        }
-        // Inject genome care weights into system prompt before LLM calls
-        let care_prompt = self.genome_config.care_weights_prompt();
-        if !care_prompt.is_empty() {
-            let current = self.react_loop.system_prompt().to_string();
-            self.react_loop
-                .set_system_prompt(format!("{}\n\n{}", current, care_prompt));
-        }
-
-        self.react_loop
-            .run(&effective_input, llm, tool_defs, execute_tool)
-            .await
     }
 
     /// Get config
