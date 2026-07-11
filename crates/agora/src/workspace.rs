@@ -40,6 +40,10 @@ impl Workspace {
             },
             "task_count": self.task_graph.len(),
             "trace_len": self.trace.len(),
+            // Full trace entries (incl. typed RFC-017 objects like Evidence)
+            // so the persisted snapshot carries the reasoning trace, not just
+            // its length.
+            "trace": self.trace.entries(),
         })
     }
 

@@ -92,10 +92,13 @@ behind a `tokio::sync::Mutex`) and implements the `AgoraOps` trait
 | `clear` | `(session) -> Result<()>` | Clears the session's workspace state (no-op if the session doesn't exist). |
 | `trace` | `(session, kind, content: Value) -> Result<()>` | Appends an entry to the session's trace (creates the workspace if absent). |
 
-All boundary payloads are `serde_json::Value` today, not the typed
-`fabric::primitives::cognitive` objects (Hypothesis/Evidence/etc.) — see
-RFC-018 §2 (D2) for the tracked gap between the primitive vocabulary and
-what actually crosses the wire.
+Tool results are recorded as the typed `fabric::primitives::cognitive::Evidence`
+object via `AgoraOps::record_evidence` (which lowers to `trace(_, "evidence", _)`);
+the persisted snapshot carries them round-trip. Other boundary payloads
+(the generic blackboard `publish`/`recall`/`update`) remain `serde_json::Value`
+by design — schema-flexible. See RFC-018 §2 (D2): the primitive vocabulary is now
+spoken on its first live boundary, and further boundaries are typed as real
+producers appear.
 
 ## Lifecycle: recall → publish → reason → trace → snapshot → commit
 
@@ -106,7 +109,7 @@ Input → Context Build
   → Mnemosyne.recall()                       (past experience)
   → AgoraOps::publish(session, key, value)    (recall injection onto the blackboard)
   → Reasoning (Planner → Reasoner; Hypothesis/Evidence land on the blackboard)
-  → Tool execution (Corpus) → AgoraOps::trace(session, "tool_output"/"sub_agent", ...)
+  → Tool execution (Corpus) → AgoraOps::record_evidence(session, Evidence)   (typed)
   → Reflection
   → AgoraOps::snapshot(session) → Mnemosyne.store()   (commit)
 ```
@@ -122,10 +125,11 @@ it holds no state that survives on its own.
 
 Per RFC-018 (§3 "Agora shared workspace" gap, Phase 1 roadmap item, current
 as of 2026-07-10):
-- Only `turn_input` is published in the live daemon path today; tool outputs
-  and sub-agent results are not yet routinely written to the trace.
-- `snapshot()` output was only logged, not yet persisted to Mnemosyne via
-  `MemoryBackend::store()` — closing this loop is tracked as RFC-018 Phase 1.
+- `turn_input` is published and tool results are written to the trace as typed
+  `Evidence`; sub-agent results are not yet routinely written to the trace.
+- `snapshot()` now serializes full trace entries (not just `trace_len`), so the
+  reasoning trace survives the snapshot; persisting that snapshot to Mnemosyne via
+  `MemoryBackend::store()` (vs. only logging) is still tracked as RFC-018 Phase 1.
 - `Scratchpad` is migrated into this crate but not yet wired into `Workspace`
   as a field; it exists as a standalone type constructed directly by callers
   that need task-level scratch space.

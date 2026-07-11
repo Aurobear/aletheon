@@ -36,6 +36,26 @@ pub struct Evidence {
     pub weight: f64,
 }
 
+impl Evidence {
+    /// Build `Evidence` from a tool result — the canonical producer today.
+    ///
+    /// A successful result carries full weight (1.0); an error carries none
+    /// (0.0) so downstream reasoning can discount it.
+    pub fn from_tool_result(
+        call_id: impl Into<String>,
+        source: impl Into<String>,
+        content: impl Into<String>,
+        is_error: bool,
+    ) -> Self {
+        Self {
+            id: call_id.into(),
+            source: source.into(),
+            content: content.into(),
+            weight: if is_error { 0.0 } else { 1.0 },
+        }
+    }
+}
+
 /// A running self-narrative summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Narrative {
@@ -86,5 +106,16 @@ mod tests {
             serde_json::to_string(&CommitmentStatus::Open).unwrap(),
             "\"Open\""
         );
+    }
+
+    #[test]
+    fn evidence_from_tool_result_weights_by_error() {
+        let ok = Evidence::from_tool_result("c1", "bash", "exit 0", false);
+        assert_eq!(ok.id, "c1");
+        assert_eq!(ok.source, "bash");
+        assert_eq!(ok.weight, 1.0);
+
+        let err = Evidence::from_tool_result("c2", "bash", "boom", true);
+        assert_eq!(err.weight, 0.0);
     }
 }

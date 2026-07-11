@@ -45,14 +45,22 @@ unused beside it. Most findings below are facets of this one gap.
   name collision (a partial D3 fix). Zero behaviour change; `cargo build/test/clippy
   --workspace` green.
 
-### 🔴 D2 — Primitive vocabulary is decorative
+### 🟡 D2 — Primitive vocabulary was decorative *(first boundary typed 2026-07-11)*
 `fabric::primitives::cognitive` (Hypothesis/Evidence/Narrative/Commitment) and
-`::comm` (Command/Query/Event/Stream/Mailbox) have **zero consumers** outside fabric.
-Ops-trait methods cross boundaries as `serde_json::Value`, not typed primitives
-(e.g. most of `AgoraOps` in `fabric/src/include/agora.rs`, and the JSON-valued
-methods on the `include/*` contracts).
-- Problem: RFC-017's contract ("every subsystem communicates using these primitives")
-  is unenforced. The dictionary exists; nothing speaks it.
+`::comm` (Command/Query/Event/Stream/Mailbox) originally had **zero consumers**
+outside fabric — the dictionary existed; nothing spoke it.
+- **Resolved on the hottest live boundary:** the Agora tool-result trace. A tool result
+  is now constructed as a typed `Evidence` (`Evidence::from_tool_result`) and recorded
+  via the new `AgoraOps::record_evidence` default method (lowers to `trace(_, "evidence",
+  _)`); `executive/.../chat.rs` uses it in place of the hand-rolled JSON blob. To make the
+  consumer half real, `Workspace::snapshot()` now serializes full trace entries (not just
+  `trace_len`), so the persisted snapshot carries the typed object round-trip
+  (`agora::ops` test `record_evidence_survives_snapshot_as_typed`).
+- **Deliberately left as `Value`:** the generic blackboard (`publish`/`recall`/`update`)
+  is schema-flexible by design, and Cognit does not yet produce `Hypothesis`/`Plan` as
+  first-class runtime objects. Remaining boundaries get typed as real producers appear —
+  not preemptively (that would re-create the "unused type" problem). The pattern
+  (`record_*` default method + typed producer + snapshot round-trip) is now established.
 
 ### 🟠 D3 — Naming drift, live in the wire format
 `ModuleId { Brain, SelfField, Memory, Body, Meta, Runtime, Perception }`
@@ -135,10 +143,10 @@ scaffolding, not a live competing vocabulary, so the correct move was to **keep
 `fabric::include` as canonical and delete `ops.rs`** rather than adopt the ops traits.
 No big-bang was needed; it was a single dead-code-deletion + one-trait-relocation PR.
 
-**D2 still open:** boundary payloads still cross as `serde_json::Value` rather than the
-typed `fabric::primitives` (Hypothesis/Evidence/…). Typing the hottest boundaries is
-the remaining, genuinely incremental work here — and now unambiguous, since there is
-only one trait layer (`include/`) to type against.
+**D2 first boundary typed (2026-07-11):** the Agora tool-result trace now speaks the
+RFC-017 vocabulary via `Evidence` + `AgoraOps::record_evidence` (see D2 above). The
+`record_*`-default-method pattern is established; remaining boundaries get typed as real
+producers appear, not preemptively. The generic blackboard stays `Value` by design.
 
 ### Phase 4 — Decouple LlmProvider *(deferred)*
 Resolve D4: move `LlmProvider` out of `cognit` into `fabric` (or a standalone `llm`
