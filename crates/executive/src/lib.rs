@@ -21,7 +21,6 @@ pub mod kernel;
 
 // Re-export from core for backward compatibility
 pub use cognit::harness::linear::{ReActLoop, TurnMetrics};
-pub use core::behavior_paths::{BehaviorPath, BehaviorPathRouter};
 pub use core::config::{
     AgentConfig, AppConfig, DaemonConfig, ExecutiveConfig, HooksConfig, McpServerConfig,
     MemoryConfig, PluginsConfig, ProviderConfig, SandboxConfig, Transport,
