@@ -87,17 +87,22 @@ outside fabric — the dictionary existed; nothing spoke it.
 method orchestrating fact/memory/skill/hook/loop/evolution inline. This was explicitly
 the documented "intermediate step"; the refactor renamed but did not finish the
 God-object decomposition.
-- **In progress (2026-07-11):** two seams extracted into focused private methods on
-  `RequestHandler`, `handle_chat` **1080→799 lines**:
+- **In progress (2026-07-11):** three seams extracted, `handle_chat` **1080→658 lines**:
   - *seam 1* — pre-turn injection cluster (keyword-skill / fact-recall / core-memory /
-    skill-suggestion / stale-decay).
+    skill-suggestion / stale-decay), private methods on `RequestHandler`.
   - *seam 2* — post-turn phases (PostTurn hooks / auto-memory / reflection scoring +
-    storage / post-evolution / Agora snapshot commit).
-  Extraction proceeds one seam at a time. What remains inline: the control-flow-bearing
-  pre-turn gate/hook parts, the session-manager/turn-count bookkeeping, and **Act 2**
-  (the ReAct `tokio::select!` loop + per-tool hooks — deliberately left, it is the
-  tangled core). The `CoreSystems`→`Arc<dyn …>` half (issue #3) is deferred until
-  `chat.rs` is fully decomposed.
+    storage / post-evolution / Agora snapshot commit), private methods on `RequestHandler`.
+  - *seam 3* — the per-tool execution pipeline (PreTool → OnMemoryRecall → approval →
+    SelfField → guarded runner → PerfCounter → StormBreaker → PostTool) extracted from the
+    ~150-line inline `execute_tool` closure into `TurnToolExecutor`
+    (`handler/tool_executor.rs`), adapted to the harness's `Fn(&str,&str,&Value)->Fut`
+    executor param via a thin `Arc<Self>` wrapper.
+  Extraction proceeds one seam at a time. What remains inline in `handle_chat`: the
+  control-flow-bearing pre-turn gate/hook parts, the session-manager/turn-count
+  bookkeeping, the `tokio::spawn` react task, and the `tokio::select!` event/approval loop
+  — the genuinely tangled orchestration, which is legitimately `handle_chat`'s runner role.
+  The `CoreSystems`→`Arc<dyn …>` half (issue #3) is deferred until `chat.rs` is fully
+  decomposed.
 
 ### ⚪ D6 — Placement debates (not clearly wrong)
 `orchestration/`, `coordinator.rs`, `goal/ObjectiveStore` live in executive. Verdict:
