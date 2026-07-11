@@ -68,7 +68,7 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| LlmProvider | Implemented | `cognit/src/impl/inference/provider.rs` | Provider trait with complete/complete_stream |
+| LlmProvider | Implemented | `fabric/src/types/llm_types.rs` (trait); concrete providers in `cognit/src/impl/llm/` | Provider trait with complete/complete_stream |
 | Tool | Implemented | `base/src/tool.rs` | Includes permission_level(), exposure(), concurrency_class() |
 | PlatformAdapter | Implemented | `corpus/src/impl/platform/adapter.rs`, `corpus/src/impl/platform/linux.rs`, `corpus/src/impl/platform/android.rs` | Linux (systemd/D-Bus) + Android (getprop/dumpsys) |
 | MemoryStore | Planned | — | Memory uses different API than this trait |
@@ -76,7 +76,7 @@
 ### 2.1 LLM Provider
 
 **LlmProvider** — LLM provider interface, supporting complete (sync) and complete_stream (streaming) inference modes.
-- Code location: `cognit/src/impl/inference/provider.rs`
+- Code location: `fabric/src/types/llm_types.rs` (trait + `LlmRequest`/`LlmResponse`/`LlmStream` types); concrete providers (Anthropic, OpenAI-compatible, Ollama) in `cognit/src/impl/llm/`
 - Methods: complete, complete_stream, name, max_context_length
 
 ### 2.2 Tool
@@ -105,7 +105,7 @@
 
 | Component | Code Location | Key Types |
 |-----------|---------------|-----------|
-| LlmProvider trait | `cognit/src/impl/inference/provider.rs` | `LlmProvider`, `LlmRequest`, `LlmResponse` |
+| LlmProvider trait | `fabric/src/types/llm_types.rs` | `LlmProvider`, `LlmRequest`, `LlmResponse` |
 | Tool trait | `base/src/tool.rs` | `Tool`, `ToolExposure`, `ConcurrencyClass` |
 | PlatformAdapter trait | `corpus/src/impl/platform/adapter.rs` | `PlatformAdapter` |
 | Linux adapter | `corpus/src/impl/platform/linux.rs` | `LinuxPlatformAdapter` (systemd/D-Bus) |

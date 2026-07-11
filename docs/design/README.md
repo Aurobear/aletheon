@@ -16,7 +16,7 @@
 
 | Subsystem | Implemented | Partial | Planned | Not Started |
 |-----------|-------------|---------|---------|-------------|
-| **Core (cognitive-engine, memory, session)** | ReAct loop, ContentBlock, CoreMemory, RecallMemory, SessionStore, EventJournal, Context compaction, Streaming, MemoryScope (Global/Session/Agent), Memory Pipeline | ArchivalMemory, Session recovery | InterruptManager, ProactiveGoal, IdleScheduler | — |
+| **Core (cognitive-engine, memory, session)** | Harness-driven cognitive loop (linear ReAct harness via factory), ContentBlock, CoreMemory, RecallMemory, SessionStore, EventJournal, Context compaction, Streaming, MemoryScope (Global/Session/Agent), Memory Pipeline | ArchivalMemory, Session recovery | InterruptManager, ProactiveGoal, IdleScheduler | — |
 | **Execution (tool, sandbox, IPC, MCP)** | Tool trait, 9 built-in tools, OutputManager, BubblewrapBackend, ProcessBackend, NoopBackend, SplitSandbox, ContainerSandbox, UnixSocket, PriorityQueue, IpcManager, MCP stdio/StreamableHTTP/SSE transports, BM25+TF-IDF tool search, parallel execution (RwLock+PathConflictDetector) | IoUringBackend (feature gate), SharedMemBackend (stub) | Tool exposure layers | — |
 | **Security** | PolicyEngine, LoopDetector, CircuitBreaker, RiskClassifier, OutputGuardrail, Audit, ToolRunnerWithGuard, RollbackEngine, WritableRoot, IntegrityMonitor, SelfProtection, ErrorHandling | — | File-level rollback, NetworkSandboxPolicy | — |
 | **Orchestration** | Agent trait, Registry, DelegateTool, Selector, Handoff, DiGraph, Termination, Budget | — | — | — |
@@ -46,10 +46,11 @@
 |-------|------|----------|
 | `fabric` | [fabric/](fabric/) | 共享类型定义、Trait 接口、ABI 契约、IPC 层（EventBus、Unix Socket、消息路由） |
 | `mnemosyne` | [mnemosyne/](mnemosyne/) | 记忆系统：episodic/semantic/procedural/self-memory |
+| `agora` | [agora/](agora/) | 共享认知工作区（黑板/注意力/任务图/推理轨迹/scratchpad），会话隔离 |
 | `corpus` | [corpus/](corpus/) | 执行层：工具、沙箱、MCP、平台、驱动 |
 | `dasein` | [dasein/](dasein/) | SelfField：身份、边界、关切、叙事、感知、安全、容错 |
 | `cognit` | [cognit/](cognit/) | 认知引擎：推理、规划、反思、学习、推理路由 |
-| `executive` | [executive/](executive/) | 运行时：ReAct 循环、会话、编排、可观测、插件、自动化、守护进程 |
+| `executive` | [executive/](executive/) | 运行时：Harness（当前 linear ReAct）、会话、编排、可观测、插件、自动化、守护进程 |
 | `metacog` | [metacog/](metacog/) | MetaRuntime：自我更新、形态演化、基因组 |
 | `interact` | [interact/](interact/) | CLI/TUI 客户端（aletheon binary） |
 
@@ -72,45 +73,34 @@
 ## 整体架构
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Aletheon System                           │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              runtime (Orchestrator)           │  │
-│  │                                                       │  │
-│  │  ┌─────────────┐ ┌──────────────┐ ┌───────────────┐  │  │
-│  │  │ ReAct Loop  │ │ Memory       │ │ Orchestration │  │  │
-│  │  │ Engine      │ │ L1+L2+L3     │ │ Selector      │  │  │
-│  │  │             │ │ Compressor   │ │ Handoff       │  │  │
-│  │  └──────┬──────┘ └──────┬───────┘ └───────┬───────┘  │  │
-│  │         │               │                 │           │  │
-│  │  ┌──────┴───────────────┴─────────────────┴────────┐  │  │
-│  │  │              EventBus (base)            │  │  │
-│  │  └──────┬───────────────┬─────────────────┬────────┘  │  │
-│  └─────────┼───────────────┼─────────────────┼──────────┘  │
-│            │               │                 │              │
-│  ┌─────────┴──────┐ ┌──────┴───────┐ ┌──────┴───────────┐  │
-│  │ corpus  │ │ dasein│ │ cognit   │  │
-│  │                │ │              │ │                  │  │
-│  │ Tools/Sandbox  │ │ Identity     │ │ Reasoning        │  │
-│  │ MCP/Perception │ │ Boundary     │ │ Planning         │  │
-│  │ Platform/UI    │ │ Care/Hook    │ │ Reflection       │  │
-│  │ Driver/ACIX    │ │ Security     │ │ Learning         │  │
-│  └────────────────┘ │ Resilience   │ │ Inference        │  │
-│                     └──────────────┘ └──────────────────┘  │
-│                                                             │
-│  ┌──────────────────────┐  ┌────────────────────────────┐  │
-│  │ memory      │  │ base               │  │
-│  │ episodic/semantic/   │  │ Shared types, traits,      │  │
-│  │ procedural/self      │  │ message, tool, sandbox     │  │
-│  └──────────────────────┘  └────────────────────────────┘  │
-│                                                             │
-│  ┌──────────────────────┐  ┌────────────────────────────┐  │
-│  │ metacog        │  │ Entry Points               │  │
-│  │ MetaRuntime          │  │ aletheond (daemon)         │  │
-│  │ Morphogenesis        │  │ interact (CLI/TUI)     │  │
-│  └──────────────────────┘  └────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                        Aletheon System                          │
+├────────────────────────────────────────────────────────────────┤
+│ Entry points:  bin (aletheond daemon)  ·  interact (CLI/TUI)    │
+├────────────────────────────────────────────────────────────────┤
+│ executive — Orchestrator (NOT cognition)                        │
+│   Lifecycle · Scheduler · Supervisor · Resource · Authority     │
+│   daemon, sessions, multi-agent orchestration                   │
+│      │ drives subsystems via fabric::ops traits                 │
+├────────────────────────────────────────────────────────────────┤
+│ Subsystems (each owns its state; no cross-mutation):            │
+│   dasein     self-field: identity, boundary, care, narrative    │
+│   cognit     reasoning, planning, reflection, learning;         │
+│              harness (linear ReAct, pluggable via factory)      │
+│   agora      shared working memory: blackboard, attention,      │
+│              task-graph, trace, scratchpad (session-scoped)     │
+│   corpus     tools, skills, hooks, sandbox, MCP, drivers        │
+│   mnemosyne  episodic/semantic/procedural/self memory;          │
+│              recall, association, consolidation                 │
+│   metacog    self-evolution: meta-runtime, morphogenesis        │
+│                                                                 │
+│   reasoning layering (RFC-014):                                 │
+│     Executive ↓ Dasein ↓ Cognit ↓ Agora ↓ Corpus ↓ Mnemosyne   │
+├────────────────────────────────────────────────────────────────┤
+│ fabric — ABI layer (zero business logic)                        │
+│   primitives (cognitive objects + Command/Query/Event/Stream),  │
+│   ops traits, Envelope, EventBus, LlmProvider                   │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -212,6 +202,7 @@ aletheon/
 | **fabric** | [fabric/types.md](fabric/types.md) | 共享类型、Trait 定义、接口规范 |
 | **fabric** | [fabric/ipc.md](fabric/ipc.md) | Unix Socket、io_uring、优先队列、消息路由 |
 | **mnemosyne** | [mnemosyne/memory-system.md](mnemosyne/memory-system.md) | 三级记忆、上下文预算、记忆管道、向量存储 |
+| **agora** | [agora/README.md](agora/README.md) | 共享认知工作区：blackboard/attention/task_graph/trace/scratchpad，`AgoraOps`（session 隔离，非持久） |
 | **corpus** | [corpus/tools.md](corpus/tools.md) | Tool trait、并行执行、分层暴露 |
 | | [corpus/sandbox.md](corpus/sandbox.md) | bubblewrap、seccomp、cgroups |
 | | [corpus/mcp.md](corpus/mcp.md) | MCP 集成、OAuth、工具转换 |
