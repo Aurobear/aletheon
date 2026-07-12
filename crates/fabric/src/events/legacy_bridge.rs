@@ -33,7 +33,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::events::event::{Event, EventType, Priority};
+use crate::event::{Event, EventType, Priority};
 use crate::include::event_bus::EventBus;
 use crate::ipc::bus::communication_bus::CommunicationBus;
 use crate::ipc::envelope::{Envelope, Pattern, Payload, Target};
@@ -174,7 +174,7 @@ impl EventBus for LegacyEventBridge {
                 };
                 let event = EventFromJson {
                     event_type: event_type.clone(),
-                    priority: crate::events::event::Priority::Normal,
+                    priority: crate::event::Priority::Normal,
                     source: "legacy-bridge".to_string(),
                     json,
                 };
@@ -254,7 +254,7 @@ impl Event for EventFromJson {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::event::EventType;
+    use crate::event::EventType;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]

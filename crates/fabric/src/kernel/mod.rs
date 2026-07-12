@@ -2,6 +2,8 @@
 
 pub mod debug;
 pub mod debug_bus;
-pub mod error;
 pub mod observable;
 pub mod registry;
+
+// error module extracted to aletheon-abi; re-export for backward compat
+pub use aletheon_abi::error;

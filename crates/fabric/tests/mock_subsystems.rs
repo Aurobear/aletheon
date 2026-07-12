@@ -308,7 +308,7 @@ async fn test_mock_subsystem_lifecycle() {
         name: "test".to_string(),
         working_dir: PathBuf::from("/tmp"),
         config: serde_json::json!({}),
-        bus: std::sync::Arc::new(fabric::CommunicationBus::new()),
+        bus: None,
     };
 
     assert_eq!(body.name(), "mock_body");

@@ -651,7 +651,7 @@ mod tests {
             name: "self_field".to_string(),
             working_dir: PathBuf::from("/tmp"),
             config: json!({}),
-            bus: std::sync::Arc::new(fabric::CommunicationBus::new()),
+            bus: None,
         };
         sf.init(&ctx).await.unwrap();
         assert!(matches!(sf.health().await, SubsystemHealth::Healthy));

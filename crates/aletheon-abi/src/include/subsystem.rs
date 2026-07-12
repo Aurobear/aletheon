@@ -10,7 +10,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::CommunicationBus;
+use crate::bus_handle::BusHandle;
 
 /// Semantic version for ABI compatibility checks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,7 +71,10 @@ pub struct SubsystemContext {
     ///
     /// Subsystems should use `context.bus` for all inter-subsystem
     /// communication instead of creating their own EventBus instances.
-    pub bus: Arc<CommunicationBus>,
+    ///
+    /// Made optional during ABI extraction (Phase 6A); set to `None` by callers.
+    /// Implementations that need bus access receive it through their constructor.
+    pub bus: Option<Arc<dyn BusHandle>>,
 }
 
 /// Unified subsystem lifecycle — every Aletheon subsystem implements this.

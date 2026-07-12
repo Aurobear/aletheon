@@ -267,7 +267,7 @@ mod tests {
             name: "test".into(),
             working_dir: PathBuf::from("/tmp"),
             config: json!({}),
-            bus: std::sync::Arc::new(fabric::CommunicationBus::new()),
+            bus: None,
         };
         backend.init(&ctx).await.unwrap();
         backend

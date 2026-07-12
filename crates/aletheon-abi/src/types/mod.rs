@@ -4,6 +4,7 @@ pub mod admission;
 pub mod agent;
 pub mod capability;
 pub mod context;
+pub mod evidence;
 pub mod genome;
 pub mod grounding;
 pub mod hook;

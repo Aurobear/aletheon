@@ -7,6 +7,7 @@ license.workspace = true
 description = "Aletheon ABI layer - public API interfaces for agent runtime"
 
 [dependencies]
+aletheon-abi = { path = "../aletheon-abi" }
 async-trait = "0.1"
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }

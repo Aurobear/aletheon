@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::primitives::cognitive::Evidence;
+use crate::types::evidence::Evidence;
 
 // ---------------------------------------------------------------------------
 // Versioned commit types (RFC-014 Phase 3B)

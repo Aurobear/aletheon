@@ -1,8 +1,7 @@
 //! Cognitive objects — the canonical vocabulary of RFC-017.
 //!
 //! Existing types are re-exported from their current homes (no redefinition).
-//! The four objects that had no home before (Hypothesis, Evidence, Narrative,
-//! Commitment) are defined here as simple serde structs.
+//! Evidence is now defined in `aletheon-abi` for broader access.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -11,6 +10,9 @@ use serde::{Deserialize, Serialize};
 pub use crate::include::cognit::{Experience, Observation, Plan};
 pub use crate::include::self_field::Intent;
 pub use crate::policy::execpolicy::Decision;
+
+// Evidence is now defined in aletheon-abi (consumed by include::agora::AgoraOps).
+pub use aletheon_abi::Evidence;
 
 // -- New cognitive objects --
 
@@ -23,37 +25,6 @@ pub struct Hypothesis {
     pub confidence: f64,
     /// IDs of `Evidence` supporting or refuting this hypothesis.
     pub evidence_ids: Vec<String>,
-}
-
-/// A piece of evidence bearing on a hypothesis or decision.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Evidence {
-    pub id: String,
-    /// Where the evidence came from (tool name, memory id, observation id).
-    pub source: String,
-    pub content: String,
-    /// Relative weight in [0.0, 1.0].
-    pub weight: f64,
-}
-
-impl Evidence {
-    /// Build `Evidence` from a tool result — the canonical producer today.
-    ///
-    /// A successful result carries full weight (1.0); an error carries none
-    /// (0.0) so downstream reasoning can discount it.
-    pub fn from_tool_result(
-        call_id: impl Into<String>,
-        source: impl Into<String>,
-        content: impl Into<String>,
-        is_error: bool,
-    ) -> Self {
-        Self {
-            id: call_id.into(),
-            source: source.into(),
-            content: content.into(),
-            weight: if is_error { 0.0 } else { 1.0 },
-        }
-    }
 }
 
 /// A running self-narrative summary.

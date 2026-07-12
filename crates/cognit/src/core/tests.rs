@@ -129,7 +129,7 @@ async fn subsystem_lifecycle() {
         name: "brain_core".to_string(),
         working_dir: PathBuf::from("/tmp"),
         config: json!({}),
-        bus: std::sync::Arc::new(fabric::CommunicationBus::new()),
+        bus: None,
     };
     bc.init(&ctx).await.unwrap();
     assert!(matches!(bc.health().await, SubsystemHealth::Healthy));

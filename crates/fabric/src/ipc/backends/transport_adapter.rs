@@ -49,11 +49,11 @@ impl IpcBackendAdapter {
 
         // Map envelope priority to IPC priority
         let priority = match envelope.priority {
-            crate::events::event::Priority::Critical => IpcPriority::Urgent,
-            crate::events::event::Priority::High => IpcPriority::ToolCall,
-            crate::events::event::Priority::Normal => IpcPriority::Normal,
-            crate::events::event::Priority::Low => IpcPriority::Background,
-            crate::events::event::Priority::Background => IpcPriority::Batch,
+            crate::event::Priority::Critical => IpcPriority::Urgent,
+            crate::event::Priority::High => IpcPriority::ToolCall,
+            crate::event::Priority::Normal => IpcPriority::Normal,
+            crate::event::Priority::Low => IpcPriority::Background,
+            crate::event::Priority::Background => IpcPriority::Batch,
         };
 
         // Serialize envelope as payload
