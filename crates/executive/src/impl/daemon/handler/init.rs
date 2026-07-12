@@ -629,7 +629,7 @@ impl RequestHandler {
             llm.clone(),
         ));
 
-        let ports = crate::kernel::service_ports::ServicePorts::new()
+        let ports = aletheon_kernel::service_ports::ServicePorts::new()
             .with_agora(Arc::new(agora::AgoraRegistry::new()));
         let shared_agora = ports
             .agora

@@ -1,7 +1,7 @@
 //! Kernel process-management methods on `DaemonTurnOrchestrator`.
 
 use super::orchestrator::DaemonTurnOrchestrator;
-use crate::kernel::supervision::RestartPolicy;
+use aletheon_kernel::supervision::RestartPolicy;
 use fabric::{
     AgentId, NamespaceId, OperationKind, ProcessId, ProcessManager, ProcessSignal, SpawnSpec,
 };

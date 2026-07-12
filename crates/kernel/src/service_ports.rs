@@ -26,14 +26,14 @@ use std::sync::Arc;
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::{AdmissionController, AgoraOps, Clock};
 
-use crate::kernel::admission::budget::InMemoryBudgetController;
-use crate::kernel::admission::lease::InMemoryResourceLeaseManager;
-use crate::kernel::admission::ProductionAdmissionController;
-use crate::kernel::chronos::SystemClock;
-use crate::kernel::operation::OperationTable;
-use crate::kernel::process::ProcessTable;
-use crate::kernel::space::InMemorySpaceManager;
-use crate::kernel::supervision::SupervisorTree;
+use crate::admission::budget::InMemoryBudgetController;
+use crate::admission::lease::InMemoryResourceLeaseManager;
+use crate::admission::ProductionAdmissionController;
+use crate::chronos::SystemClock;
+use crate::operation::OperationTable;
+use crate::process::ProcessTable;
+use crate::space::InMemorySpaceManager;
+use crate::supervision::SupervisorTree;
 use tokio::sync::Mutex as TokioMutex;
 
 /// Bundled kernel service ports.
@@ -157,7 +157,7 @@ impl std::fmt::Debug for ServicePorts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::chronos::TestClock;
+    use crate::chronos::TestClock;
     use fabric::{
         AdmissionError, AdmissionRequest, ExecutionPermit, PermitId, ProcessManager, RevokeReason,
         SpawnSpec, UsageReport,

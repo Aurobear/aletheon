@@ -1,6 +1,6 @@
 //! ContextSpace integration tests — InMemorySpaceManager fork, attach, and isolation.
 
-use executive::kernel::space::InMemorySpaceManager;
+use aletheon_kernel::space::InMemorySpaceManager;
 use fabric::{ContextBinding, ProcessId, SpaceId, SpaceManager};
 
 /// Test 1: fork_preserves_bindings — parent has binding, fork, child has same binding.

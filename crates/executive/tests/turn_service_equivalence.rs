@@ -1,5 +1,5 @@
-use executive::kernel::chronos::TestClock;
-use executive::kernel::service_ports::ServicePorts;
+use aletheon_kernel::chronos::TestClock;
+use aletheon_kernel::service_ports::ServicePorts;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{NoopTurnEventSink, OperationId, ProcessId, StubTurnServices, TurnRequest, TurnStop};
 use std::path::PathBuf;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 fn test_ports() -> Arc<ServicePorts> {
     let clock: Arc<dyn fabric::Clock> = Arc::new(TestClock::default());
     let admission: Arc<dyn fabric::AdmissionController> =
-        Arc::new(executive::kernel::admission::AllowAllAdmissionController::new(clock.clone()));
+        Arc::new(aletheon_kernel::admission::AllowAllAdmissionController::new(clock.clone()));
     Arc::new(ServicePorts::for_testing(clock, admission))
 }
 

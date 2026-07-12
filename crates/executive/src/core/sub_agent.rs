@@ -21,10 +21,10 @@ use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::kernel::chronos::SystemClock;
-use crate::kernel::operation::{OperationScope, OperationTable};
-use crate::kernel::process::ProcessTable;
-use crate::kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
+use aletheon_kernel::chronos::SystemClock;
+use aletheon_kernel::operation::{OperationScope, OperationTable};
+use aletheon_kernel::process::ProcessTable;
+use aletheon_kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
 use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use fabric::{
     AgentProfileId, CancelReason, ExitReason, NamespaceId, OperationExitReason, OperationKind,

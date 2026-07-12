@@ -4,8 +4,8 @@
 //! end-to-end: spawning processes with mailboxes, routing messages between them,
 //! and handling edge cases (unknown targets, backpressure, closed mailboxes).
 
-use executive::kernel::chronos::TestClock;
-use executive::kernel::process::ProcessTable;
+use aletheon_kernel::chronos::TestClock;
+use aletheon_kernel::process::ProcessTable;
 use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use fabric::ipc::mailbox::{
     DeliveryReceipt, InProcessMailbox, InProcessMailboxService, Mailbox, MailboxService,

@@ -1,5 +1,5 @@
-use executive::kernel::chronos::TestClock;
-use executive::kernel::process::ProcessTable;
+use aletheon_kernel::chronos::TestClock;
+use aletheon_kernel::process::ProcessTable;
 use fabric::{ExitReason, ProcessManager, ProcessSignal, ProcessState, SpawnSpec};
 use std::sync::Arc;
 

@@ -182,7 +182,7 @@ impl AdmissionController for ProductionAdmissionController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::chronos::TestClock;
+    use crate::chronos::TestClock;
     use fabric::types::admission::{
         AdmissionRequest, BudgetRequest, CapabilityId, CapabilityScope, LeaseRequest, PrincipalId,
         RiskLevel,

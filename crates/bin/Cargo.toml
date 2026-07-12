@@ -15,6 +15,7 @@ integration-tests = []
 
 [dependencies]
 executive = { path = "../executive" }
+aletheon-kernel = { path = "../kernel" }
 interact = { path = "../interact" }
 fabric = { path = "../fabric" }
 cognit = { path = "../cognit" }

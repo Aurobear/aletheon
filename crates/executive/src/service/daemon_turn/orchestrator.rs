@@ -6,11 +6,11 @@
 
 use crate::core::core_systems::CoreSystems;
 use crate::core::session_gateway::SessionGateway;
-use crate::kernel::operation::{OperationScope, OperationTable};
-use crate::kernel::process::ProcessTable;
-use crate::kernel::supervision::SupervisorTree;
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::r#impl::daemon::session_manager::SessionManager;
+use aletheon_kernel::operation::{OperationScope, OperationTable};
+use aletheon_kernel::process::ProcessTable;
+use aletheon_kernel::supervision::SupervisorTree;
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::{
     AdmissionController, CancelReason, Clock, LlmProvider, OperationId, OperationManager,

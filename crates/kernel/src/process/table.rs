@@ -202,6 +202,6 @@ impl ProcessManager for ProcessTable {
 
 impl Default for ProcessTable {
     fn default() -> Self {
-        Self::new(Arc::new(crate::kernel::chronos::SystemClock::new()))
+        Self::new(Arc::new(crate::chronos::SystemClock::new()))
     }
 }

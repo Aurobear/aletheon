@@ -47,6 +47,7 @@ dependencies = [
 name = "aletheon-bin"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "async-trait",
  "clap",
@@ -62,6 +63,20 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "aletheon-kernel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "fabric",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -1026,6 +1041,7 @@ name = "executive"
 version = "0.1.0"
 dependencies = [
  "agora",
+ "aletheon-kernel",
  "anyhow",
  "async-trait",
  "chrono",

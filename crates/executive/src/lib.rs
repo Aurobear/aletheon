@@ -17,7 +17,7 @@ pub mod service;
 pub mod tools;
 
 pub mod host;
-pub mod kernel;
+pub use aletheon_kernel as kernel;
 
 // Re-export from core for backward compatibility
 pub use cognit::harness::linear::{ReActLoop, TurnMetrics};
