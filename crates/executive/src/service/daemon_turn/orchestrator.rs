@@ -6,13 +6,16 @@
 
 use crate::core::core_systems::CoreSystems;
 use crate::core::session_gateway::SessionGateway;
-use crate::kernel::operation::OperationTable;
+use crate::kernel::operation::{OperationScope, OperationTable};
 use crate::kernel::process::ProcessTable;
 use crate::kernel::supervision::SupervisorTree;
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::r#impl::daemon::session_manager::SessionManager;
 use fabric::ipc::mailbox::InProcessMailboxService;
-use fabric::{AdmissionController, Clock, LlmProvider, ProcessId};
+use fabric::{
+    AdmissionController, CancelReason, Clock, LlmProvider, OperationId, OperationManager,
+    ProcessId, ProcessManager, ProcessSignal,
+};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -46,6 +49,12 @@ pub struct DaemonTurnOrchestrator {
     pub(crate) active_connections: Arc<AtomicUsize>,
     pub(crate) started_at: Instant,
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
+    /// Per-turn operation scope for structured task cancellation (PR-3).
+    ///
+    /// Wraps the react task's CancellationToken so `cancel_turn()` can signal
+    /// cooperative cancellation. `execute_turn()` drains the scope at turn end
+    /// to guarantee no orphan tasks.
+    pub(crate) current_scope: Mutex<Option<OperationScope>>,
 }
 
 impl DaemonTurnOrchestrator {
@@ -87,11 +96,53 @@ impl DaemonTurnOrchestrator {
             active_connections,
             started_at,
             daemon_cancel_token,
+            current_scope: Mutex::new(None),
         }
     }
 
     /// Access the shared notify_tx for external updates (e.g. set_notify_channel).
     pub fn notify_tx(&self) -> &Arc<Mutex<Option<mpsc::Sender<String>>>> {
         &self.notify_tx
+    }
+
+    // ── Public kernel API — wait / cancel / exit (PR-3) ──────────────────
+
+    /// Wait for an operation to reach a terminal state.
+    ///
+    /// Delegates to `OperationTable::wait()` which blocks until the operation
+    /// transitions to Succeeded, Failed, or Cancelled.
+    pub async fn wait_turn(
+        &self,
+        operation_id: OperationId,
+    ) -> anyhow::Result<fabric::OperationResult> {
+        self.operation_table.wait(operation_id).await
+    }
+
+    /// Cancel an in-flight turn operation.
+    ///
+    /// 1. Cancels the per-turn `OperationScope`'s `CancellationToken` so the
+    ///    react task can cooperatively exit before its next tool call.
+    /// 2. Propagates cancellation through the operation tree in the kernel
+    ///    `OperationTable` (parent → children).
+    pub async fn cancel_turn(&self, operation_id: OperationId) -> anyhow::Result<()> {
+        // Cancel the OperationScope token (cooperative cancellation).
+        if let Some(ref scope) = *self.current_scope.lock().await {
+            scope.cancel.cancel();
+        }
+        // Propagate through kernel operation tree.
+        self.operation_table
+            .cancel(operation_id, CancelReason::User)
+            .await
+    }
+
+    /// Signal a process to exit (Terminate).
+    ///
+    /// Delegates to the kernel `ProcessTable`. The process transitions through
+    /// Stopping → Exited/Failed, and any in-flight operations are cancelled via
+    /// the operation tree's parent-cancel propagation.
+    pub async fn exit_process(&self, process_id: ProcessId) -> anyhow::Result<()> {
+        self.process_table
+            .signal(process_id, ProcessSignal::Terminate)
+            .await
     }
 }

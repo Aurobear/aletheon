@@ -9,6 +9,7 @@ mod rpc_health;
 mod rpc_memory;
 mod rpc_reflection;
 mod rpc_session;
+mod rpc_turn;
 mod rpc_workflow;
 
 use super::RequestHandler;
@@ -77,6 +78,11 @@ impl RequestHandler {
             "goal.show" => self.handle_goal_show(&id, &request).await,
             "goal.status" => self.handle_goal_status(&id, &request).await,
             "goal.resume" => self.handle_goal_resume(&id, &request).await,
+
+            // ── Turn lifecycle (PR-3) ─────────────────────────────────
+            "turn.wait" => self.handle_turn_wait(&id, &request).await,
+            "turn.cancel" => self.handle_turn_cancel(&id, &request).await,
+            "turn.exit" => self.handle_turn_exit(&id, &request).await,
 
             _ => serde_json::json!({
                 "jsonrpc": "2.0",
