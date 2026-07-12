@@ -27,7 +27,7 @@ impl DaemonTurnOrchestrator {
     }
 
     pub(crate) async fn compose_memory_block(&self) -> String {
-        let mut queue = self.subsystems.memory_queue.lock().await;
+        let mut queue = self.subsystems.session.memory_queue.lock().await;
         if queue.is_empty() {
             return String::new();
         }

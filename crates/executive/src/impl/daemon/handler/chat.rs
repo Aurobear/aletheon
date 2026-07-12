@@ -105,7 +105,7 @@ impl RequestHandler {
     /// Keyword-triggered skill injection: match loaded skills against the user
     /// message and append their bodies (bounded).
     async fn inject_keyword_skills(&self, message: &str, effective_message: &mut String) {
-        let loader = self.subsystems.skill_loader.lock().await;
+        let loader = self.subsystems.corpus.skill_loader.lock().await;
         let skill_keywords: Vec<corpus::skill::keyword_matcher::SkillKeywords> = loader
             .plugins()
             .iter()
@@ -137,7 +137,7 @@ impl RequestHandler {
     /// Recall relevant facts from the FactStore (keyword search + entity-graph
     /// boost) and append them to the user turn.
     async fn inject_fact_recall(&self, message: &str, effective_message: &mut String) {
-        let fs = self.subsystems.fact_store.lock().await;
+        let fs = self.subsystems.memory.fact_store.lock().await;
         let keywords: Vec<String> = message
             .split_whitespace()
             .filter(|w| w.len() > 3)
@@ -197,7 +197,7 @@ impl RequestHandler {
     /// up-to-date writable blocks (CoreMemory is baked into the boot prefix,
     /// but core_memory_append / AutoMemory mutate it in-memory afterward).
     async fn inject_core_memory(&self, effective_message: &mut String) {
-        let cm = self.subsystems.core_memory.lock().await;
+        let cm = self.subsystems.memory.core_memory.lock().await;
         let mut core_lines = Vec::new();
         for (label, block) in cm.blocks() {
             if block.read_only || block.value.is_empty() {
@@ -220,7 +220,7 @@ impl RequestHandler {
 
     /// Suggest a skill via the SkillRouter (advisory hint, not auto-activated).
     async fn inject_skill_suggestion(&self, message: &str, effective_message: &mut String) {
-        let sr = self.subsystems.skill_router.lock().await;
+        let sr = self.subsystems.corpus.skill_router.lock().await;
         let suggestions = sr.suggest(message, 0.6, 1);
         if let Some(suggestion) = suggestions.first() {
             info!(skill = %suggestion.name, confidence = suggestion.confidence, "Skill suggested");
@@ -233,7 +233,7 @@ impl RequestHandler {
 
     /// Periodic stale-fact decay (fire-and-forget maintenance).
     async fn decay_stale_facts(&self) {
-        let fs = self.subsystems.fact_store.lock().await;
+        let fs = self.subsystems.memory.fact_store.lock().await;
         let _ = fs.decay_stale();
     }
 
@@ -249,7 +249,7 @@ impl RequestHandler {
             let sm = sm_arc.lock().await;
             (sm.session_id.clone(), sm.turn_count())
         };
-        let hr = self.subsystems.hook_registry.lock().await;
+        let hr = self.subsystems.corpus.hook_registry.lock().await;
         let ctx = HookContext {
             point: HookPoint::PostTurn,
             session_id,
@@ -265,7 +265,7 @@ impl RequestHandler {
 
     /// Auto-memory extraction: cheap-LLM fact extraction from the turn.
     async fn extract_auto_memory(&self, message: &str, text: &str) {
-        let mut am = self.subsystems.auto_memory.lock().await;
+        let mut am = self.subsystems.memory.auto_memory.lock().await;
         if let Ok(facts) = am.analyze_and_store(message, text).await {
             if !facts.is_empty() {
                 info!(count = facts.len(), "Auto-memory: stored facts");
@@ -335,7 +335,7 @@ impl RequestHandler {
         );
         // Store reflection — drop lock guard before re-locking for evolution check
         let store_result = {
-            let mem = self.subsystems.episodic_memory.lock().await;
+            let mem = self.subsystems.memory.episodic_memory.lock().await;
             mem.store_reflection(&entry)
         };
         if let Err(e) = store_result {
@@ -344,7 +344,7 @@ impl RequestHandler {
             info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
 
             // Periodic evolution trigger: every 10 reflections, run ExperienceSummarizer
-            let mem = self.subsystems.episodic_memory.lock().await;
+            let mem = self.subsystems.memory.episodic_memory.lock().await;
             if let Ok(count) = mem.reflection_count() {
                 if count > 0 && count % 10 == 0 {
                     info!(

@@ -17,7 +17,7 @@ impl DaemonTurnOrchestrator {
         message: &str,
         effective_message: &mut String,
     ) {
-        let loader = self.subsystems.skill_loader.lock().await;
+        let loader = self.subsystems.corpus.skill_loader.lock().await;
         let skill_keywords: Vec<corpus::skill::keyword_matcher::SkillKeywords> = loader
             .plugins()
             .iter()
@@ -47,7 +47,7 @@ impl DaemonTurnOrchestrator {
     }
 
     pub(crate) async fn inject_fact_recall(&self, message: &str, effective_message: &mut String) {
-        let fs = self.subsystems.fact_store.lock().await;
+        let fs = self.subsystems.memory.fact_store.lock().await;
         let keywords: Vec<String> = message
             .split_whitespace()
             .filter(|w| w.len() > 3)
@@ -104,7 +104,7 @@ impl DaemonTurnOrchestrator {
     }
 
     pub(crate) async fn inject_core_memory(&self, effective_message: &mut String) {
-        let cm = self.subsystems.core_memory.lock().await;
+        let cm = self.subsystems.memory.core_memory.lock().await;
         let mut core_lines = Vec::new();
         for (label, block) in cm.blocks() {
             if block.read_only || block.value.is_empty() {
@@ -130,7 +130,7 @@ impl DaemonTurnOrchestrator {
         message: &str,
         effective_message: &mut String,
     ) {
-        let sr = self.subsystems.skill_router.lock().await;
+        let sr = self.subsystems.corpus.skill_router.lock().await;
         let suggestions = sr.suggest(message, 0.6, 1);
         if let Some(suggestion) = suggestions.first() {
             info!(skill = %suggestion.name, confidence = suggestion.confidence, "Skill suggested");
@@ -142,7 +142,7 @@ impl DaemonTurnOrchestrator {
     }
 
     pub(crate) async fn decay_stale_facts(&self) {
-        let fs = self.subsystems.fact_store.lock().await;
+        let fs = self.subsystems.memory.fact_store.lock().await;
         let _ = fs.decay_stale();
     }
 }

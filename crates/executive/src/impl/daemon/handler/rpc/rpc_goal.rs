@@ -16,7 +16,7 @@ impl RequestHandler {
         let description = p["description"].as_str().unwrap_or("");
         let scope = p["scope"].as_str().unwrap_or("session");
         let session_id = self.get_or_create_session(None).await.0;
-        let store = self.subsystems.objective_store.lock().await;
+        let store = self.subsystems.memory.objective_store.lock().await;
         match store.create(description, None, &session_id, scope) {
             Ok(oid) => json!({
                 "jsonrpc": "2.0",
@@ -37,7 +37,7 @@ impl RequestHandler {
         request: &serde_json::Value,
     ) -> serde_json::Value {
         let oid = request["params"]["id"].as_i64().unwrap_or(0);
-        let store = self.subsystems.objective_store.lock().await;
+        let store = self.subsystems.memory.objective_store.lock().await;
         match store.get(oid) {
             Ok(Some(obj)) => {
                 let subs = store.sub_goals(oid).unwrap_or_default();
@@ -67,7 +67,7 @@ impl RequestHandler {
         request: &serde_json::Value,
     ) -> serde_json::Value {
         let p = &request["params"];
-        let store = self.subsystems.objective_store.lock().await;
+        let store = self.subsystems.memory.objective_store.lock().await;
         // With an id: update status. Without: list objectives.
         if let Some(oid) = p["id"].as_i64() {
             let new_status = p["status"].as_str().unwrap_or("in_progress");
@@ -108,7 +108,7 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let store = self.subsystems.objective_store.lock().await;
+        let store = self.subsystems.memory.objective_store.lock().await;
         match store.resume() {
             Ok(Some((obj, subs))) => {
                 let summaries: Vec<_> = subs.iter().map(|s| s.to_summary()).collect();

@@ -163,7 +163,7 @@ impl RequestHandler {
 
     /// Get a reference to the tool registry (for MCP server).
     pub fn tools(&self) -> Arc<Mutex<ToolRegistry>> {
-        self.subsystems.tools.clone()
+        self.subsystems.corpus.tools.clone()
     }
 
     /// Set the notification channel for out-of-band messages to the client.
@@ -635,34 +635,42 @@ impl RequestHandler {
             ports,
             runtime: Arc::new(Mutex::new(runtime)),
             self_field,
-            episodic_memory,
-            recall_memory,
-            core_memory,
-            fact_store,
-            auto_memory,
-            objective_store,
             reflector,
-            tools,
-            tool_runner,
-            skill_loader: Arc::new(Mutex::new(skill_loader)),
-            skill_router,
-            hook_registry,
-            storm_breaker,
-            hooks_config,
+            memory: crate::core::MemoryGroup {
+                episodic_memory,
+                recall_memory,
+                core_memory,
+                fact_store,
+                auto_memory,
+                objective_store,
+            },
+            security: crate::core::SecurityGroup {
+                tool_runner,
+                storm_breaker,
+                approval_rx: Arc::new(Mutex::new(approval_rx)),
+                pending_approvals: Arc::new(Mutex::new(HashMap::new())),
+                session_approvals: Arc::new(Mutex::new(HashMap::new())),
+            },
+            corpus: crate::core::CorpusGroup {
+                tools,
+                skill_loader: Arc::new(Mutex::new(skill_loader)),
+                skill_router,
+                hook_registry,
+                hooks_config,
+            },
+            session: crate::core::SessionGroup {
+                default_session_id,
+                session_created_at,
+                cached_prefix: Arc::new(Mutex::new(cached_prefix)),
+                memory_queue: Arc::new(Mutex::new(Vec::new())),
+                context_window,
+                config_prompt: config.system_prompt.clone(),
+                data_dir,
+            },
             pipeline,
-            approval_rx: Arc::new(Mutex::new(approval_rx)),
-            pending_approvals: Arc::new(Mutex::new(HashMap::new())),
-            session_approvals: Arc::new(Mutex::new(HashMap::new())),
             debug_handler,
             debug_perf,
             cancel_token: Arc::new(Mutex::new(None)),
-            cached_prefix: Arc::new(Mutex::new(cached_prefix)),
-            memory_queue: Arc::new(Mutex::new(Vec::new())),
-            config_prompt: config.system_prompt.clone(),
-            default_session_id,
-            session_created_at,
-            data_dir,
-            context_window,
         });
 
         // Wire sub-agent execution runtime so spawned sub-agents run real
@@ -670,7 +678,7 @@ impl RequestHandler {
         {
             let sub_agent_runtime = Arc::new(DaemonSubAgentRuntime {
                 llm: llm.clone(),
-                tools: subsystems.tools.clone(),
+                tools: subsystems.corpus.tools.clone(),
             });
             subsystems
                 .runtime
@@ -710,7 +718,7 @@ impl RequestHandler {
 
         // Register initial params
         {
-            let data_dir_clone = handler.subsystems.data_dir.clone();
+            let data_dir_clone = handler.subsystems.session.data_dir.clone();
             let started_at = std::time::Instant::now();
             param_registry
                 .declare(
@@ -768,7 +776,7 @@ impl RequestHandler {
 
         // Fire OnSessionStart hook
         {
-            let hr = handler.subsystems.hook_registry.lock().await;
+            let hr = handler.subsystems.corpus.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnSessionStart,
                 session_id: session_id.clone(),

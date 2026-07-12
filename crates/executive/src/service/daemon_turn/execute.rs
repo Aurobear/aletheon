@@ -66,7 +66,13 @@ impl DaemonTurnOrchestrator {
             }
         };
 
-        let session_id = self.subsystems.default_session_id.lock().await.clone();
+        let session_id = self
+            .subsystems
+            .session
+            .default_session_id
+            .lock()
+            .await
+            .clone();
 
         // Build TurnRequest with kernel ids
         let turn_request = TurnRequest {
@@ -132,12 +138,12 @@ impl DaemonTurnOrchestrator {
 
         // -- Memory composition --
         let system_prompt = {
-            let prefix = self.subsystems.cached_prefix.lock().await;
+            let prefix = self.subsystems.session.cached_prefix.lock().await;
             prefix.clone()
         };
         let memory_block = self.compose_memory_block().await;
         {
-            let mut sb = self.subsystems.storm_breaker.lock().await;
+            let mut sb = self.subsystems.security.storm_breaker.lock().await;
             sb.reset();
         }
         let mut effective_message = String::new();
@@ -158,10 +164,10 @@ impl DaemonTurnOrchestrator {
         self.decay_stale_facts().await;
 
         // -- Configured pre_turn hook scripts --
-        if !self.subsystems.hooks_config.pre_turn.is_empty() {
+        if !self.subsystems.corpus.hooks_config.pre_turn.is_empty() {
             let hook_session_id = self.get_or_create_session(None).await.0;
             let hook_input = serde_json::json!({"prompt": message, "session_id": hook_session_id});
-            for script_path in &self.subsystems.hooks_config.pre_turn {
+            for script_path in &self.subsystems.corpus.hooks_config.pre_turn {
                 let path = crate::r#impl::daemon::handler::format::expand_tilde(script_path);
                 if !std::path::Path::new(&path).exists() {
                     tracing::warn!(path = %path, "Hook script not found, skipping");
@@ -226,7 +232,7 @@ impl DaemonTurnOrchestrator {
                 let sm = sm_arc.lock().await;
                 (sm.session_id.clone(), sm.turn_count())
             };
-            let hr = self.subsystems.hook_registry.lock().await;
+            let hr = self.subsystems.corpus.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::PreTurn,
                 session_id: sess_id,
@@ -259,9 +265,9 @@ impl DaemonTurnOrchestrator {
         // Persist user message to recall memory
         {
             let (sess_id, sm_arc) = self.get_or_create_session(None).await;
-            let rm = self.subsystems.recall_memory.lock().await;
+            let rm = self.subsystems.memory.recall_memory.lock().await;
             let _ = rm.store(&sess_id, "user_message", message, None);
-            let hr = self.subsystems.hook_registry.lock().await;
+            let hr = self.subsystems.corpus.hook_registry.lock().await;
             let turn_count = sm_arc.lock().await.turn_count();
             let ctx = HookContext {
                 point: HookPoint::OnMemoryStore,
@@ -278,7 +284,7 @@ impl DaemonTurnOrchestrator {
 
         // -- Tool setup --
         let tool_defs = {
-            let tools = self.subsystems.tools.lock().await;
+            let tools = self.subsystems.corpus.tools.lock().await;
             tools.definitions()
         };
         let working_dir = std::env::current_dir().unwrap_or_default();
@@ -495,8 +501,8 @@ impl DaemonTurnOrchestrator {
         ));
 
         // -- Event + approval pumping loop --
-        let approval_rx = self.subsystems.approval_rx.clone();
-        let pending_approvals = self.subsystems.pending_approvals.clone();
+        let approval_rx = self.subsystems.security.approval_rx.clone();
+        let pending_approvals = self.subsystems.security.pending_approvals.clone();
         let notify_tx = self.notify_tx.clone();
 
         let mut tool_calls_for_session: Vec<(String, String, serde_json::Value)> = Vec::new();
@@ -661,7 +667,7 @@ impl DaemonTurnOrchestrator {
                 .iter()
                 .map(|(_, name, _)| name.clone())
                 .collect();
-            let sb = self.subsystems.storm_breaker.lock().await;
+            let sb = self.subsystems.security.storm_breaker.lock().await;
             self.session_gateway
                 .update_turn_state(
                     turn_count,
@@ -745,9 +751,9 @@ impl DaemonTurnOrchestrator {
 
         if turn_succeeded {
             let sess_id = self.get_or_create_session(None).await.0;
-            let rm = self.subsystems.recall_memory.lock().await;
+            let rm = self.subsystems.memory.recall_memory.lock().await;
             let _ = rm.store(&sess_id, "assistant_message", &text, None);
-            let hr = self.subsystems.hook_registry.lock().await;
+            let hr = self.subsystems.corpus.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnMemoryStore,
                 session_id: sess_id.clone(),

@@ -30,6 +30,7 @@ impl RequestHandler {
         // Reflection and evolution counts from episodic memory
         let reflection_count = self
             .subsystems
+            .memory
             .episodic_memory
             .lock()
             .await
@@ -37,6 +38,7 @@ impl RequestHandler {
             .unwrap_or(0);
         let evolution_count = self
             .subsystems
+            .memory
             .episodic_memory
             .lock()
             .await
