@@ -1,37 +1,30 @@
-//! # Aletheon Base
+//! # Aletheon ABI
 //!
-//! Core trait definitions for the Aletheon persistent self-evolving runtime.
-//! This crate contains **zero implementations** — only interfaces.
+//! Shared traits, types, and error handling for the Aletheon macro-kernel.
+//! This crate is the foundation — all other Aletheon crates depend on it.
 //!
-//! Like Linux kernel header files define the contract between subsystems
-//! (`file_operations`, `net_proto_ops`), this crate defines the contracts
-//! between Aletheon subsystems.
+//! ## Module Layout
 //!
-//! ## Module Layout (Linux kernel style)
-//!
-//! - `include/` — Subsystem trait contracts (like kernel `include/`)
+//! - `include/` — Subsystem trait contracts
 //! - `types/` — Shared data types
-//! - `events/` — Event system (types + infrastructure)
-//! - `ipc/` — Inter-process communication (like kernel `net/`)
-//! - `kernel/` — Core infrastructure (observability, registry, debug, errors)
-//! - `policy/` — Execution policy engine
-//! - `dasein/` — Phenomenological module
+//! - `event.rs` — Event trait and handler types
+//! - `compaction.rs` — Context compaction interface
+//! - `error.rs` — AgentError and error handling types
+//! - `bus_handle.rs` — BusHandle trait for subsystem communication
 
 #![allow(deprecated)]
 
 // === Module declarations ===
 
-pub use aletheon_abi::{compaction, event, include, types};
-pub mod dasein;
-pub mod events;
-pub mod ipc;
-pub mod kernel;
-pub mod policy;
-pub mod primitives;
+pub mod bus_handle;
+pub mod compaction;
+pub mod error;
+pub mod event;
+pub mod include;
+pub mod types;
 
-// === Backward-compatible module re-exports ===
-// These allow `fabric::genome::*`, `fabric::self_field::*`, etc. to continue working.
-// Downstream crates can also use the new paths: `fabric::include::genome::*`, `fabric::types::tool::*`, etc.
+// === Module-level re-exports (backward compat) ===
+// These let `crate::agora::*`, `crate::context::*`, etc. resolve.
 
 // Subsystem trait modules (from include/)
 pub use include::agora;
@@ -47,6 +40,7 @@ pub use include::space;
 pub use include::subsystem;
 
 // Shared type modules (from types/)
+pub use types::admission;
 pub use types::agent;
 pub use types::capability;
 pub use types::context;
@@ -64,33 +58,11 @@ pub use types::sandbox;
 pub use types::tool;
 pub use types::vision;
 
-// Event modules (from events/ + aletheon-abi)
-pub use events::evolution;
-pub use events::ui_event;
+// === Type-level re-exports ===
+// These let `crate::Context`, `crate::Subsystem`, etc. resolve.
 
-// IPC modules (from ipc/)
-// Note: `fabric::ipc` is already the directory module (pub mod ipc above).
-// Old `fabric::ipc::IpcMessage` etc. are now at `fabric::ipc::ipc_msg::IpcMessage`.
-// Re-export ipc_msg types at ipc level for backward compatibility.
-pub use ipc::envelope;
-pub use ipc::ipc_types;
-pub use ipc::protocol;
-pub use ipc::transport;
+pub use compaction::{prune_tool_outputs, CompactorTrait};
 
-// Kernel modules (from kernel/)
-pub use kernel::debug;
-pub use kernel::observable;
-pub use kernel::registry;
-
-// Policy modules (from policy/)
-pub use policy::execpolicy;
-pub use policy::permission_authority;
-pub use policy::verifier;
-
-// === Re-exports for backward compatibility ===
-// These preserve the flat API surface so external consumers don't need to change.
-
-// Subsystem traits (from include/)
 pub use include::admission::AdmissionController;
 pub use include::agora::{
     AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, RejectReason, VersionConflict,
@@ -137,6 +109,7 @@ pub use types::admission::{
 pub use types::agent::Pid;
 pub use types::capability::{Capability, CapabilitySet, PermissionLevel};
 pub use types::context::{Context, TraceState};
+pub use types::evidence::Evidence;
 pub use types::genome::Genome;
 pub use types::hook::{HookContext, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
@@ -167,63 +140,16 @@ pub use types::tool::{
 };
 pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 
-// Event types (from aletheon-abi)
+// Event types
 pub use event::{
-    AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
-};
-pub use events::event_bridge::EventBridge;
-pub use events::event_log;
-pub use events::event_log::{EventLog, LogEntry};
-pub use events::legacy_bridge::LegacyEventBridge;
-pub use events::ui_event::{
-    AwarenessLevel, ClientEvent, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate,
-    SubAgentHandle, SubAgentState, SubAgentStatus,
+    AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority as EventPriority,
+    SubscriptionId,
 };
 
-// IPC types (from ipc/)
-pub use ipc::bus::communication_bus::{BusConfig, CommunicationBus};
-pub use ipc::bus::kernel_bus::KernelEventBus;
-pub use ipc::envelope::{Endpoint, Envelope, EnvelopeId, ModuleId, Pattern, Payload, Target};
-pub use ipc::envelope_v2::{
-    DeliveryPattern as EnvelopeV2Delivery, EnvelopeV2, MessageId, SchemaId,
-    Target as EnvelopeV2Target,
-};
-pub use ipc::ipc_msg::{ForkDirective, ForkResult, GroupId, IpcMessage, MessageKind, Signal};
-pub use ipc::ipc_types::{
-    AgentId as IpcAgentId, AgentMessage, IpcBackend, IpcPreference, IpcPriority, IpcProbeError,
-    MessageType,
-};
-pub use ipc::protocol::Protocol;
-pub use ipc::transport::{
-    HealthStatus, Transport as EnvelopeTransport, TransportHealth, TransportKind,
-};
-
-// Kernel foundations (from kernel/)
-pub use kernel::debug::{DebugEvent, DebugLevel, DebugSink, Tracepoint};
-pub use kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
-pub use kernel::error::{
+// Error types
+pub use error::{
     handle_tool_error, llm_backoff, llm_degradation_chain, tool_backoff, tool_degradation_chain,
     AgentError, BackoffStrategy, DegradationChain, DegradationStrategy, ErrorCategory,
-    ErrorSeverity, RegistryErrorKind, ToolErrorAction,
+    ErrorSeverity, LlmErrorKind, RegistryErrorKind, SandboxErrorKind, ToolErrorAction,
+    ToolErrorKind,
 };
-pub use kernel::observable::{Observable, SubsystemStatus};
-pub use kernel::registry::{RegistrationId, Registry};
-
-// Policy (from policy/)
-pub use policy::execpolicy::{
-    default_heuristics, load_policy_from_str, load_policy_layered, Decision, NetworkProtocol,
-    NetworkRule, PatternToken, Policy, PrefixRule,
-};
-// Note: policy::execpolicy::Evaluation is not re-exported at crate root
-// to avoid conflict with include::meta::Evaluation.
-// Access via fabric::policy::execpolicy::Evaluation or fabric::execpolicy::Evaluation.
-
-// Primitives (RFC-017 canonical vocabulary)
-// Note: primitives::Event is not re-exported at crate root to avoid conflict
-// with events::event::Event (the trait). Access via fabric::primitives::Event.
-pub use primitives::{
-    Command, Commitment, Evidence, Hypothesis, Mailbox, Narrative, Query, Stream,
-};
-
-// Compaction (shared context-compaction interface + pruning helpers)
-pub use compaction::{prune_tool_outputs, CompactorTrait};

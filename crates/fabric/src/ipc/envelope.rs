@@ -87,7 +87,7 @@ pub struct Envelope {
     /// Communication pattern.
     pub pattern: Pattern,
     /// Priority (reuses existing Priority from event.rs).
-    pub priority: crate::events::event::Priority,
+    pub priority: crate::event::Priority,
     /// Message time-to-live in milliseconds. None = no expiry.
     pub ttl_ms: Option<u64>,
     /// Actual data.
@@ -107,7 +107,7 @@ impl Envelope {
             source,
             target,
             pattern,
-            priority: crate::events::event::Priority::Normal,
+            priority: crate::event::Priority::Normal,
             ttl_ms: None,
             payload,
             timestamp_ms: millis_now(),
@@ -157,7 +157,7 @@ impl Envelope {
     }
 
     /// Set priority.
-    pub fn with_priority(mut self, priority: crate::events::event::Priority) -> Self {
+    pub fn with_priority(mut self, priority: crate::event::Priority) -> Self {
         self.priority = priority;
         self
     }
@@ -214,7 +214,7 @@ pub trait EventEnvelopeExt {
     fn into_envelope(self, source: Endpoint, target: Target, pattern: Pattern) -> Envelope;
 }
 
-impl<E: crate::events::event::Event> EventEnvelopeExt for E {
+impl<E: crate::event::Event> EventEnvelopeExt for E {
     fn into_envelope(self, source: Endpoint, target: Target, pattern: Pattern) -> Envelope {
         let priority = self.priority();
         let json = self.to_json();

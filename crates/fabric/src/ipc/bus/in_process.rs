@@ -14,11 +14,11 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::events::event::{Event, EventType, Priority};
+use crate::event::{Event, EventType, Priority};
 use crate::ipc::envelope::*;
 use crate::ipc::transport::{HealthStatus, Transport, TransportHealth, TransportKind};
 
-use crate::events::event_log::EventLog;
+use crate::event_log::EventLog;
 use crate::events::routing_policy::{RouteAction, RoutingPolicy};
 use crate::ipc::bus::kernel_bus::KernelEventBus;
 

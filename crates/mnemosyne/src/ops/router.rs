@@ -428,7 +428,7 @@ mod tests {
             name: "test".into(),
             working_dir: std::env::temp_dir(),
             config: serde_json::Value::Null,
-            bus: std::sync::Arc::new(fabric::CommunicationBus::new()),
+            bus: None,
         };
         router.init(&ctx).await.unwrap();
         (dir, router)
