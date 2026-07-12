@@ -11,8 +11,7 @@ use fabric::evolution::{
     AgentSpawnedPayload, AgentStartedPayload, AgentStoppedPayload, CognitivePulseEvent,
 };
 use fabric::CommunicationBus;
-use fabric::ConcreteEvent;
-use fabric::{EventType, Priority};
+use fabric::EventType;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -126,15 +125,15 @@ impl AgentProcess {
         self.state = AgentState::Idle;
 
         if let Some(bus) = &self.bus {
-            bus.publish_event(Box::new(ConcreteEvent::new(
-                EventType::AgentStarted,
-                Priority::Normal,
+            let payload = serde_json::to_value(&AgentStartedPayload {
+                pid: self.pid.as_u64(),
+                task: self.task.clone(),
+            })?;
+            bus.publish_event_v2(
+                &EventType::AgentStarted,
                 format!("agent:{}", self.pid),
-                Box::new(AgentStartedPayload {
-                    pid: self.pid.as_u64(),
-                    task: self.task.clone(),
-                }),
-            )))
+                payload,
+            )
             .await?;
         }
 
@@ -190,15 +189,15 @@ impl AgentProcess {
 
         self.children.write().await.push(child_pid);
 
-        bus.publish_event(Box::new(ConcreteEvent::new(
-            EventType::AgentSpawned,
-            Priority::Normal,
+        let spayload = serde_json::to_value(&AgentSpawnedPayload {
+            parent: self.pid.as_u64(),
+            child: child_pid.as_u64(),
+        })?;
+        bus.publish_event_v2(
+            &EventType::AgentSpawned,
             format!("agent:{}", self.pid),
-            Box::new(AgentSpawnedPayload {
-                parent: self.pid.as_u64(),
-                child: child_pid.as_u64(),
-            }),
-        )))
+            spayload,
+        )
         .await?;
 
         Ok(child_pid)
@@ -209,14 +208,14 @@ impl AgentProcess {
         self.state = AgentState::Terminated;
 
         if let Some(bus) = &self.bus {
-            bus.publish_event(Box::new(ConcreteEvent::new(
-                EventType::AgentStopped,
-                Priority::Normal,
+            let payload = serde_json::to_value(&AgentStoppedPayload {
+                pid: self.pid.as_u64(),
+            })?;
+            bus.publish_event_v2(
+                &EventType::AgentStopped,
                 format!("agent:{}", self.pid),
-                Box::new(AgentStoppedPayload {
-                    pid: self.pid.as_u64(),
-                }),
-            )))
+                payload,
+            )
             .await?;
         }
 

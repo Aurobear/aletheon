@@ -13,8 +13,7 @@ use uuid::Uuid;
 
 use fabric::evolution::CognitivePulseEvent;
 use fabric::CommunicationBus;
-use fabric::ConcreteEvent;
-use fabric::{EventType, Priority};
+use fabric::EventType;
 
 use super::scheduler::LlmScheduler;
 
@@ -77,7 +76,6 @@ impl LlmPulse {
     }
 
     /// Emit one cognitive pulse.
-    #[allow(deprecated)]
     async fn pulse(&self) -> Result<()> {
         let health = self.scheduler.health_check().await;
 
@@ -90,14 +88,9 @@ impl LlmPulse {
 
         let json_payload = serde_json::to_value(&event)?;
 
-        let concrete = ConcreteEvent::new(
-            EventType::CognitivePulse,
-            Priority::High,
-            "llm_pulse".to_string(),
-            Box::new(json_payload),
-        );
-
-        self.bus.publish_event(Box::new(concrete)).await
+        self.bus
+            .publish_event_v2(&EventType::CognitivePulse, "llm_pulse", json_payload)
+            .await
     }
 
     /// Emit a single pulse (for testing).

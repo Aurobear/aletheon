@@ -1,7 +1,4 @@
-#![allow(deprecated)]
-
 use anyhow::Result;
-use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +9,7 @@ use crate::events::routing_policy::{RouteAction, RoutingPolicy};
 use crate::events::subscription::SubscriptionRegistry;
 use crate::ipc::envelope::{Endpoint, Payload, Target};
 use crate::ipc::transport::Transport;
-use crate::{AsyncEventHandler, Event, EventBus, EventHandler, EventType, SubscriptionId};
+use crate::{AsyncEventHandler, Event, EventHandler, EventType, SubscriptionId};
 
 pub struct KernelEventBus {
     subscriptions: SubscriptionRegistry,
@@ -48,9 +45,8 @@ impl KernelEventBus {
     }
 }
 
-#[async_trait]
-impl EventBus for KernelEventBus {
-    async fn publish(&self, event: Box<dyn Event>) -> Result<()> {
+impl KernelEventBus {
+    pub async fn publish(&self, event: Box<dyn Event>) -> Result<()> {
         // 1. Record in event log
         self.event_log.write().record(&*event);
 
@@ -95,7 +91,7 @@ impl EventBus for KernelEventBus {
         Ok(())
     }
 
-    async fn subscribe(
+    pub async fn subscribe(
         &self,
         event_type: EventType,
         handler: EventHandler,
@@ -105,7 +101,7 @@ impl EventBus for KernelEventBus {
         Ok(id)
     }
 
-    async fn subscribe_async(
+    pub async fn subscribe_async(
         &self,
         event_type: EventType,
         handler: AsyncEventHandler,
@@ -124,7 +120,7 @@ impl EventBus for KernelEventBus {
         Ok(id)
     }
 
-    async fn request(&self, event: Box<dyn Event>, timeout: Duration) -> Result<Box<dyn Event>> {
+    pub async fn request(&self, event: Box<dyn Event>, timeout: Duration) -> Result<Box<dyn Event>> {
         // Phase 1: request-response not fully implemented.
         // For now, publish the event and return error after timeout.
         // Full implementation will use oneshot channels when response events are supported.
@@ -136,7 +132,7 @@ impl EventBus for KernelEventBus {
         ))
     }
 
-    async fn unsubscribe(&self, id: SubscriptionId) -> Result<()> {
+    pub async fn unsubscribe(&self, id: SubscriptionId) -> Result<()> {
         let found = self.subscriptions.unsubscribe(id);
         if found {
             debug!(subscription_id = id.0, "Unsubscribed");
@@ -146,7 +142,7 @@ impl EventBus for KernelEventBus {
         Ok(())
     }
 
-    async fn has_subscribers(&self, event_type: &EventType) -> bool {
+    pub async fn has_subscribers(&self, event_type: &EventType) -> bool {
         self.subscriptions.has_subscribers(event_type)
     }
 }

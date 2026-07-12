@@ -12,8 +12,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use crate::events::types::{Event, EventType};
-use crate::include::event_bus::EventBus;
+use crate::events::types::EventType;
 use crate::ipc::envelope::*;
 use crate::ipc::envelope_v2::{EnvelopeV2, SchemaId, Target as V2Target};
 use crate::ipc::protocol::Protocol;
@@ -88,28 +87,6 @@ impl CommunicationBus {
         }
     }
 
-    /// Create a CommunicationBus wrapping an existing KernelEventBus.
-    ///
-    /// **Deprecated:** Use `CommunicationBus::new()` and migrate subscribers
-    /// to `subscribe_topic()` with `SchemaId`-based routing.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use CommunicationBus::new() with EnvelopeV2 topic routing"
-    )]
-    pub fn from_event_bus(event_bus: Arc<KernelEventBus>) -> Self {
-        let in_process = Arc::new(InProcessTransport::new(event_bus));
-        let request_response = Arc::new(RequestResponseProtocol::new(in_process.clone()));
-        let pubsub = Arc::new(PubSubProtocol::new(in_process.clone()));
-
-        Self {
-            in_process,
-            transports: Vec::new(),
-            request_response,
-            pubsub,
-            debug_hook: None,
-        }
-    }
-
     /// Add a cross-process transport to the bus.
     /// Transports are tried in order for `Target::Agent(pid)` routing.
     pub fn add_transport(&mut self, transport: Arc<dyn Transport>) {
@@ -118,7 +95,7 @@ impl CommunicationBus {
 
     /// Attach a debug hook to observe published events.
     ///
-    /// The hook is called on every `publish()` and `publish_event()` invocation,
+    /// The hook is called on every `publish()` invocation,
     /// forwarding matching events to registered sinks and optionally recording
     /// them to a bag file.
     pub fn with_debug_hook(mut self, hook: DebugBusHook) -> Self {
@@ -189,9 +166,10 @@ impl CommunicationBus {
             "_priority": env.priority,
             "data": env.payload,
         });
+        let topic = env.schema.0.clone();
         let legacy = Envelope::new(
             Endpoint::System,
-            Target::Broadcast,
+            Target::Topic(topic),
             Pattern::Publish,
             Payload::Json(payload),
         );
@@ -255,52 +233,6 @@ impl CommunicationBus {
     /// Handle an incoming response (complete a pending request).
     pub fn handle_response(&self, response: &Envelope) -> bool {
         self.request_response.handle_response(response)
-    }
-
-    // -- Backward Compatibility (deprecated — migrate to EnvelopeV2) ---
-
-    /// Get a reference to the underlying EventBus.
-    ///
-    /// **Deprecated:** Use `publish_envelope_v2()` and topic subscriptions
-    /// via `subscribe_topic()` instead. The underlying `KernelEventBus` will
-    /// be removed when all subscribers migrate to `EnvelopeV2`.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use publish_envelope_v2() and subscribe_topic() with SchemaId instead"
-    )]
-    pub fn event_bus(&self) -> &Arc<KernelEventBus> {
-        self.in_process.event_bus()
-    }
-
-    /// Publish an Event via the underlying EventBus.
-    ///
-    /// **Deprecated:** Use `publish_envelope_v2()` which routes through the
-    /// new `EnvelopeV2` + `SchemaId` system.
-    ///
-    /// If a debug hook is attached, a corresponding `DebugEvent` is forwarded
-    /// to the hook before the EventBus dispatch.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use publish_envelope_v2() with schema-based routing"
-    )]
-    pub async fn publish_event(&self, event: Box<dyn Event>) -> Result<()> {
-        // Notify debug hook (best-effort, non-blocking for the bus).
-        if let Some(ref hook) = self.debug_hook {
-            let debug_event = crate::kernel::debug::DebugEvent {
-                ts: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64,
-                tracepoint: format!("{:?}", event.event_type()),
-                module: event.source().to_string(),
-                level: crate::kernel::debug::DebugLevel::Info,
-                data: event.to_json(),
-                session_id: None,
-                agent_id: None,
-            };
-            hook.lock().await.on_event(&debug_event).await;
-        }
-        self.event_bus().publish(event).await
     }
 
     // -- Diagnostics --
