@@ -15,7 +15,7 @@ sub-files per concern. Single-file domain dumps are prohibited.
 | Crate | Domains (each under `src/<domain>/`) |
 |-------|--------------------------------------|
 | `fabric` | `types/`, `include/`, `ipc/`, `events/`, `kernel/`, `policy/`, `primitives/`, `contract/`, `dasein/` |
-| `kernel` | `admission/`, `capability/`, `chronos/`, `operation/`, `process/`, `space/`, `supervision/` |
+| `kernel` | `admission/`, `capability/`, `chronos/`, `operation/`, `process/`, `service/`, `space/`, `supervision/` |
 | `executive` | `core/`, `service/`, `impl/`, `bridge/`, `tools/`, `host/` |
 | `agora` | single crate concern (workspace, ops, persistence, attention, etc.) |
 | `cognit` | `core/`, `harness/`, `impl/`, `bridge/`, `testing/` |
