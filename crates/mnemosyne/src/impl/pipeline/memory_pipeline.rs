@@ -12,8 +12,8 @@ use fabric::ReflectionEntry;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
-use super::core_memory::CoreMemory;
-use super::recall_memory::RecallMemory;
+use crate::r#impl::core_memory::CoreMemory;
+use crate::r#impl::recall_memory::RecallMemory;
 
 use crate::EpisodicMemory;
 
@@ -213,7 +213,7 @@ impl MemoryPipeline {
 
 /// Extract facts from conversation messages using pattern matching.
 fn extract_facts_from_messages(
-    messages: &[super::recall_memory::MemoryEntry],
+    messages: &[super::super::recall_memory::MemoryEntry],
 ) -> Vec<ExtractedFact> {
     use regex::Regex;
 
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn extract_facts_from_messages_detects_preferences() {
-        use super::super::recall_memory::MemoryEntry;
+        use super::super::super::recall_memory::MemoryEntry;
 
         let messages = vec![
             MemoryEntry {
@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn extract_facts_ignores_assistant_messages_for_preferences() {
-        use super::super::recall_memory::MemoryEntry;
+        use super::super::super::recall_memory::MemoryEntry;
 
         let messages = vec![MemoryEntry {
             id: 1,
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn extract_facts_deduplicates() {
-        use super::super::recall_memory::MemoryEntry;
+        use super::super::super::recall_memory::MemoryEntry;
 
         let messages = vec![
             MemoryEntry {

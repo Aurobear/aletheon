@@ -1,4 +1,4 @@
-use super::core_memory::{CoreMemory, MemoryBlock};
+use super::{CoreMemory, MemoryBlock};
 use rusqlite::Connection;
 
 /// SQLite-backed persistence for CoreMemory blocks.
