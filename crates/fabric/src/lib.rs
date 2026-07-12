@@ -22,7 +22,6 @@
 
 pub mod contract;
 pub mod dasein;
-pub mod event;
 pub mod events;
 pub mod include;
 pub mod ipc;
@@ -175,7 +174,8 @@ pub use types::tool::{
 pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 
 // Event types
-pub use event::{
+pub use events::types as event;
+pub use events::types::{
     AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
 };
 pub use events::event_bridge::EventBridge;
@@ -227,7 +227,7 @@ pub use policy::execpolicy::{
 
 // Primitives (RFC-017 canonical vocabulary)
 // Note: primitives::Event is not re-exported at crate root to avoid conflict
-// with events::event::Event (the trait). Access via fabric::primitives::Event.
+// with events::types::Event (the trait). Access via fabric::primitives::Event.
 pub use primitives::{
     Command, Commitment, Evidence, Hypothesis, Mailbox, Narrative, Query, Stream,
 };

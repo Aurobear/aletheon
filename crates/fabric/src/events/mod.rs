@@ -6,4 +6,5 @@ pub mod evolution;
 pub mod legacy_bridge;
 pub mod routing_policy;
 pub mod subscription;
+pub mod types;
 pub mod ui_event;

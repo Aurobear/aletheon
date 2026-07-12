@@ -14,7 +14,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::event::{Event, EventType, Priority};
+use crate::events::types::{Event, EventType, Priority};
 use crate::ipc::envelope::*;
 use crate::ipc::transport::{HealthStatus, Transport, TransportHealth, TransportKind};
 

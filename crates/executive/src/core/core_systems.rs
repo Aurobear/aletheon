@@ -19,7 +19,7 @@ use crate::core::memory_group::MemoryGroup;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::core::security_group::SecurityGroup;
 use crate::core::session_group::SessionGroup;
-use aletheon_kernel::service_ports::ServicePorts;
+use aletheon_kernel::service::ServicePorts;
 
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use cognit::core::reflector::Reflector;

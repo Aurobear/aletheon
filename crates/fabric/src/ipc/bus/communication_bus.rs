@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use crate::event::{Event, EventType};
+use crate::events::types::{Event, EventType};
 use crate::include::event_bus::EventBus;
 use crate::ipc::envelope::*;
 use crate::ipc::envelope_v2::{EnvelopeV2, SchemaId, Target as V2Target};
