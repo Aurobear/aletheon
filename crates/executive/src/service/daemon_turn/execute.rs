@@ -294,7 +294,7 @@ impl DaemonTurnOrchestrator {
 
         // Context Space seed — user turn input is private overlay data, not
         // shared Agora fact. Shared visibility requires an explicit proposal.
-        let agora = self.subsystems.ports.agora.clone();
+        let agora = self.agora.clone();
         let mut agora_version = if let Some(ref agora) = agora {
             agora.version(&sess_id).await.unwrap_or(0)
         } else {

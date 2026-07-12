@@ -1,8 +1,16 @@
 //! Agent-level configuration: ExecutiveConfig, AgentConfig, HooksConfig, PerceptionConfig,
 //! AgentLoopConfig, CircuitBreakerConfig.
+//!
+//! AgentConfig, PerceptionConfig, and EvolutionSettings are re-exported from aletheon-cognit.
+//! ExecutiveConfig, HooksConfig, AgentLoopConfig, CircuitBreakerConfig remain executive-specific.
 
 use cognit::harness::HarnessKind;
 use serde::{Deserialize, Serialize};
+
+// Re-exports from cognit to avoid duplication.
+pub use cognit::config::AgentConfig;
+pub use cognit::config::EvolutionSettings;
+pub use cognit::config::PerceptionConfig;
 
 // ---------------------------------------------------------------------------
 // ExecutiveConfig — retained for orchestrator / react_loop backward compat
@@ -46,67 +54,6 @@ impl Default for ExecutiveConfig {
 }
 
 // ---------------------------------------------------------------------------
-// AgentConfig
-// ---------------------------------------------------------------------------
-
-/// Agent-level settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentConfig {
-    pub default_provider: Option<String>,
-    pub default_model: Option<String>,
-    #[serde(default = "default_max_iterations")]
-    pub max_iterations: usize,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: usize,
-    #[serde(default = "default_true")]
-    pub compaction_enabled: bool,
-    #[serde(default = "default_compaction_keep_recent")]
-    pub compaction_keep_recent: usize,
-    #[serde(default = "default_compaction_threshold")]
-    pub compaction_threshold: usize,
-    #[serde(default = "default_system_prompt")]
-    pub system_prompt: String,
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            default_provider: None,
-            default_model: None,
-            max_iterations: default_max_iterations(),
-            max_tokens: default_max_tokens(),
-            compaction_enabled: true,
-            compaction_keep_recent: default_compaction_keep_recent(),
-            compaction_threshold: default_compaction_threshold(),
-            system_prompt: default_system_prompt(),
-        }
-    }
-}
-
-/// 0 means "no iteration cap" — termination then relies on the LLM stopping,
-/// the circuit breaker, repeated-call detection, and the tool budget.
-pub(crate) fn default_max_iterations() -> usize {
-    0
-}
-pub(crate) fn default_max_tokens() -> usize {
-    100_000
-}
-pub(crate) fn default_true() -> bool {
-    true
-}
-pub(crate) fn default_compaction_keep_recent() -> usize {
-    10
-}
-pub(crate) fn default_compaction_threshold() -> usize {
-    30
-}
-
-pub(crate) fn default_system_prompt() -> String {
-    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user."
-        .to_string()
-}
-
-// ---------------------------------------------------------------------------
 // HooksConfig
 // ---------------------------------------------------------------------------
 
@@ -128,68 +75,6 @@ pub struct HooksConfig {
     /// Scripts to run before each tool call (can block execution).
     #[serde(default)]
     pub pre_tool: Vec<String>,
-}
-
-// ---------------------------------------------------------------------------
-// PerceptionConfig
-// ---------------------------------------------------------------------------
-
-/// Perception subsystem configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerceptionConfig {
-    /// Master switch. Off by default: the perception→behavior loop is not yet
-    /// wired (see roadmap §T3). When false, no watchers are spawned.
-    #[serde(default)]
-    pub enabled: bool,
-    /// Filesystem paths to watch with inotify.
-    #[serde(default = "default_perception_watch_paths")]
-    pub watch_paths: Vec<String>,
-    /// Whether to enable journald log monitoring.
-    #[serde(default = "default_true")]
-    pub enable_journald: bool,
-}
-
-fn default_perception_watch_paths() -> Vec<String> {
-    vec!["/etc".to_string(), "/var/log".to_string()]
-}
-
-impl Default for PerceptionConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            watch_paths: default_perception_watch_paths(),
-            enable_journald: true,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// EvolutionSettings
-// ---------------------------------------------------------------------------
-
-/// Self-evolution loop settings. Default OFF (HIGH-risk autonomy).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvolutionSettings {
-    /// Master switch for the self-evolution loop.
-    /// When false (default), the loop is inert regardless of other settings.
-    #[serde(default)] // bool default = false
-    pub enabled: bool,
-    /// Trigger evolution every N turns.
-    #[serde(default = "default_evolution_trigger_every_n_turns")]
-    pub trigger_every_n_turns: usize,
-}
-
-fn default_evolution_trigger_every_n_turns() -> usize {
-    10
-}
-
-impl Default for EvolutionSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            trigger_every_n_turns: 10,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
