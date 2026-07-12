@@ -47,7 +47,7 @@ impl Tool for GlobTool {
     }
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = ctx.clock.mono_now();
 
         let pattern = match input.get("pattern").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
@@ -56,7 +56,7 @@ impl Tool for GlobTool {
                     content: "Error: 'pattern' parameter is required".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -79,7 +79,7 @@ impl Tool for GlobTool {
                     content: format!("Error: invalid glob pattern '{}': {}", pattern, e),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -122,7 +122,7 @@ impl Tool for GlobTool {
                 ),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             }
@@ -132,7 +132,7 @@ impl Tool for GlobTool {
                 content,
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated,
                 },
             }
@@ -255,6 +255,7 @@ mod tests {
                 &ToolContext {
                     working_dir: root.to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
                 },
             )
             .await;
@@ -298,6 +299,7 @@ mod tests {
                 &ToolContext {
                     working_dir: root.to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
                 },
             )
             .await;
@@ -325,6 +327,7 @@ mod tests {
                 &ToolContext {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
                 },
             )
             .await;
@@ -345,6 +348,7 @@ mod tests {
                 &ToolContext {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
                 },
             )
             .await;

@@ -58,9 +58,12 @@ impl AgoraRegistry {
         }
 
         let mut map = self.sessions.lock().await;
-        let ws = map
-            .entry(session.to_string())
-            .or_insert_with(|| Workspace::new(session));
+        let ws = map.entry(session.to_string()).or_insert_with(|| {
+            Workspace::new(
+                session,
+                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            )
+        });
 
         let mut replayed = 0;
         for commit in commits {
@@ -77,9 +80,12 @@ impl AgoraRegistry {
 impl AgoraOps for AgoraRegistry {
     async fn publish(&self, session: &str, key: &str, value: Value) -> Result<()> {
         let mut map = self.sessions.lock().await;
-        let ws = map
-            .entry(session.to_string())
-            .or_insert_with(|| Workspace::new(session));
+        let ws = map.entry(session.to_string()).or_insert_with(|| {
+            Workspace::new(
+                session,
+                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            )
+        });
         ws.blackboard.set(key, value);
         Ok(())
     }
@@ -93,9 +99,12 @@ impl AgoraOps for AgoraRegistry {
 
     async fn update(&self, session: &str, patch: Value) -> Result<()> {
         let mut map = self.sessions.lock().await;
-        let ws = map
-            .entry(session.to_string())
-            .or_insert_with(|| Workspace::new(session));
+        let ws = map.entry(session.to_string()).or_insert_with(|| {
+            Workspace::new(
+                session,
+                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            )
+        });
         ws.blackboard.merge(patch);
         Ok(())
     }
@@ -123,9 +132,12 @@ impl AgoraOps for AgoraRegistry {
 
     async fn trace(&self, session: &str, kind: &str, content: Value) -> Result<()> {
         let mut map = self.sessions.lock().await;
-        let ws = map
-            .entry(session.to_string())
-            .or_insert_with(|| Workspace::new(session));
+        let ws = map.entry(session.to_string()).or_insert_with(|| {
+            Workspace::new(
+                session,
+                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            )
+        });
         ws.trace.push(kind, content);
         Ok(())
     }
@@ -137,9 +149,12 @@ impl AgoraOps for AgoraRegistry {
         operation: AgoraOperation,
     ) -> Result<AgoraProposal, String> {
         let mut map = self.sessions.lock().await;
-        let ws = map
-            .entry(session.to_string())
-            .or_insert_with(|| Workspace::new(session));
+        let ws = map.entry(session.to_string()).or_insert_with(|| {
+            Workspace::new(
+                session,
+                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            )
+        });
         ws.propose(base_version, operation).map_err(|c| {
             format!(
                 "version conflict: expected {}, actual {}",
@@ -150,9 +165,12 @@ impl AgoraOps for AgoraRegistry {
 
     async fn commit(&self, session: &str, proposal_id: uuid::Uuid) -> Result<AgoraCommit, String> {
         let mut map = self.sessions.lock().await;
-        let ws = map
-            .entry(session.to_string())
-            .or_insert_with(|| Workspace::new(session));
+        let ws = map.entry(session.to_string()).or_insert_with(|| {
+            Workspace::new(
+                session,
+                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            )
+        });
         let commit = ws
             .commit(proposal_id)
             .ok_or_else(|| format!("proposal {} not found in session {}", proposal_id, session))?;
@@ -174,9 +192,12 @@ impl AgoraOps for AgoraRegistry {
         reason: fabric::RejectReason,
     ) -> Result<(), String> {
         let mut map = self.sessions.lock().await;
-        let ws = map
-            .entry(session.to_string())
-            .or_insert_with(|| Workspace::new(session));
+        let ws = map.entry(session.to_string()).or_insert_with(|| {
+            Workspace::new(
+                session,
+                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            )
+        });
         ws.reject(proposal_id, reason)
             .ok_or_else(|| format!("proposal {} not found in session {}", proposal_id, session))
     }
@@ -206,9 +227,12 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
     async fn propose(&self, proposal: AgoraProposal) -> Result<uuid::Uuid> {
         let session = proposal.space.0.clone();
         let mut map = self.sessions.lock().await;
-        let ws = map
-            .entry(session.clone())
-            .or_insert_with(|| Workspace::new(session));
+        let ws = map.entry(session.clone()).or_insert_with(|| {
+            Workspace::new(
+                session,
+                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            )
+        });
         let id = proposal.id;
         ws.propose_full(proposal).map_err(|c| {
             anyhow::anyhow!(
@@ -262,6 +286,7 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use serde_json::json;

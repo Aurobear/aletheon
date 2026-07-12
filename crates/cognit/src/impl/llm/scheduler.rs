@@ -5,13 +5,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
-use tokio::time::sleep;
 
 use fabric::evolution::{LlmPurpose, ProviderHealth};
 use fabric::message::Message;
+use fabric::Clock;
 
 use super::provider::{LlmProvider, LlmResponse, ToolDefinition};
 use super::provider_factory::create_provider_by_kind;
@@ -109,6 +109,7 @@ pub struct LlmScheduler {
     failover_order: Vec<String>,
     /// Per-provider health snapshot (updated by `probe_provider`, consumed by `candidates`).
     health: Mutex<HashMap<String, ProviderHealth>>,
+    clock: Arc<dyn Clock>,
 }
 
 /// Bounded exponential-backoff retry policy for transient errors.
@@ -150,6 +151,7 @@ impl LlmScheduler {
             retry_policy: RetryPolicy::default(),
             failover_order,
             health: Mutex::new(HashMap::new()),
+            clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
         }
     }
 
@@ -194,6 +196,7 @@ impl LlmScheduler {
             retry_policy: RetryPolicy::default(),
             failover_order,
             health: Mutex::new(HashMap::new()),
+            clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
         })
     }
 
@@ -311,7 +314,11 @@ impl LlmScheduler {
                                 .saturating_mul(1u64 << shift)
                                 .min(self.retry_policy.max_backoff_ms);
                             if backoff > 0 {
-                                sleep(Duration::from_millis(backoff)).await;
+                                aletheon_kernel::chronos::Timer::sleep(
+                                    &*self.clock,
+                                    Duration::from_millis(backoff),
+                                )
+                                .await;
                             }
                             attempt += 1;
                             continue;
@@ -360,12 +367,12 @@ impl LlmScheduler {
     /// Lightweight liveness probe: a tiny `complete` call, recording latency
     /// and availability into `self.health`. Circuit-breaks on failure.
     pub async fn probe_provider(&self, name: &str) -> ProviderHealth {
-        let started = Instant::now();
+        let started = self.clock.mono_now();
         let result = match self.providers.get(name) {
             Some(p) => p.complete(&[Message::user("ping")], &[]).await.map(|_| ()),
             None => Err(anyhow::anyhow!("unknown provider '{}'", name)),
         };
-        let latency_ms = started.elapsed().as_millis() as u64;
+        let latency_ms = self.clock.mono_now().0.saturating_sub(started.0);
         let health = ProviderHealth {
             name: name.to_string(),
             available: result.is_ok(),

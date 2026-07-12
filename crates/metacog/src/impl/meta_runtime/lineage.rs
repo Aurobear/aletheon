@@ -5,8 +5,10 @@
 //! Optionally persists to a JSONL file via `with_path()`.
 
 use anyhow::Result;
+use fabric::{wall_to_datetime, Clock};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// A record of a runtime version in the lineage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,19 +27,21 @@ pub struct LineageEntry {
 pub struct LineageTracker {
     entries: std::sync::Mutex<Vec<LineageEntry>>,
     path: Option<PathBuf>,
+    clock: Arc<dyn Clock>,
 }
 
 impl LineageTracker {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             entries: std::sync::Mutex::new(Vec::new()),
             path: None,
+            clock,
         }
     }
 
     /// Create a tracker backed by a JSONL file. If the file exists, its
     /// entries are loaded into memory on construction.
-    pub fn with_path(path: PathBuf) -> anyhow::Result<Self> {
+    pub fn with_path(path: PathBuf, clock: Arc<dyn Clock>) -> anyhow::Result<Self> {
         let mut entries = Vec::new();
         if path.exists() {
             let file = std::fs::File::open(&path)?;
@@ -58,6 +62,7 @@ impl LineageTracker {
         Ok(Self {
             entries: std::sync::Mutex::new(entries),
             path: Some(path),
+            clock,
         })
     }
 
@@ -67,7 +72,7 @@ impl LineageTracker {
             version: version.to_string(),
             parent_version: parent_version.map(|s| s.to_string()),
             description: description.to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: wall_to_datetime(self.clock.wall_now()),
         };
         self.append_to_file(&entry);
         let mut entries = self.entries.lock().unwrap();
@@ -121,28 +126,27 @@ impl LineageTracker {
     }
 }
 
-impl Default for LineageTracker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
 
     #[test]
     fn test_persistence_roundtrip() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().with_extension("jsonl");
         {
-            let tracker = LineageTracker::with_path(path.clone()).unwrap();
+            let tracker = LineageTracker::with_path(path.clone(), test_clock()).unwrap();
             tracker.record("0.1.0", None, "initial");
             tracker.record("0.2.0", Some("0.1.0"), "first evolution");
             assert_eq!(tracker.count(), 2);
         }
         {
-            let tracker = LineageTracker::with_path(path.clone()).unwrap();
+            let tracker = LineageTracker::with_path(path.clone(), test_clock()).unwrap();
             assert_eq!(tracker.count(), 2);
             let history = tracker.history();
             assert_eq!(history[0].version, "0.1.0");
@@ -152,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_memory_only_tracker() {
-        let tracker = LineageTracker::new();
+        let tracker = LineageTracker::new(test_clock());
         tracker.record("0.1.0", None, "test");
         assert_eq!(tracker.count(), 1);
     }

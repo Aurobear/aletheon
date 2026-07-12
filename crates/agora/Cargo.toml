@@ -8,6 +8,7 @@ description = "Aletheon Agora - shared cognitive workspace (working memory, blac
 
 [dependencies]
 fabric = { path = "../fabric" }
+aletheon-kernel = { path = "../kernel" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 async-trait = "0.1"

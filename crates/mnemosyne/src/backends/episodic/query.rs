@@ -6,9 +6,9 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use fabric::{
-    AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, EvolutionLogEntry, MemoryEntry,
-    MemoryFilter, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, ReflectionTrigger,
-    SelfAwareness,
+    wall_to_datetime, AwarenessCore, AwarenessExtension, AwarenessExtensionCounts,
+    EvolutionLogEntry, MemoryEntry, MemoryFilter, MemoryQuery, MemoryStats, MemoryType,
+    ReflectionEntry, ReflectionTrigger, SelfAwareness,
 };
 use rusqlite::params;
 use uuid::Uuid;
@@ -51,7 +51,9 @@ impl EpisodicMemory {
 
                     Ok(ReflectionEntry {
                         id,
-                        timestamp: created_at.parse().unwrap_or_else(|_| Utc::now()),
+                        timestamp: created_at
+                            .parse()
+                            .unwrap_or_else(|_| wall_to_datetime(self.clock.wall_now())),
                         trigger,
                         task_summary,
                         outcome,
@@ -115,7 +117,9 @@ impl EpisodicMemory {
                     Ok((
                         ReflectionEntry {
                             id,
-                            timestamp: created_at.parse().unwrap_or_else(|_| Utc::now()),
+                            timestamp: created_at
+                                .parse()
+                                .unwrap_or_else(|_| wall_to_datetime(self.clock.wall_now())),
                             trigger,
                             task_summary,
                             outcome,
@@ -270,7 +274,9 @@ impl EpisodicMemory {
 
                     Ok(EvolutionLogEntry {
                         id,
-                        timestamp: created_at.parse().unwrap_or_else(|_| Utc::now()),
+                        timestamp: created_at
+                            .parse()
+                            .unwrap_or_else(|_| wall_to_datetime(self.clock.wall_now())),
                         trigger,
                         basis: serde_json::from_str(&basis_str).unwrap_or_default(),
                         patterns_detected: serde_json::from_str(&patterns_str).unwrap_or_default(),
@@ -285,7 +291,10 @@ impl EpisodicMemory {
 }
 
 /// Convert a rusqlite Row into a MemoryEntry.
-pub(super) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
+pub(super) fn row_to_entry(
+    row: &rusqlite::Row,
+    clock: &std::sync::Arc<dyn fabric::Clock>,
+) -> rusqlite::Result<MemoryEntry> {
     let id_str: String = row.get("id")?;
     let tags_str: String = row.get("tags")?;
     let assoc_str: String = row.get("associations")?;
@@ -298,7 +307,7 @@ pub(super) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry>
         tags: serde_json::from_str(&tags_str).unwrap_or_default(),
         created_at: created_at_str
             .parse::<DateTime<Utc>>()
-            .unwrap_or_else(|_| Utc::now()),
+            .unwrap_or_else(|_| wall_to_datetime(clock.wall_now())),
         access_count: row.get::<_, i64>("access_count")? as u64,
         importance: row.get("importance")?,
         decay_rate: row.get("decay_rate")?,
@@ -366,10 +375,10 @@ pub(super) fn recall_impl(mem: &EpisodicMemory, query: &MemoryQuery) -> Result<V
             param_values.iter().map(|p| p.as_ref()).collect();
 
         let mut entries = stmt
-            .query_map(params_refs.as_slice(), row_to_entry)?
+            .query_map(params_refs.as_slice(), |row| row_to_entry(row, &mem.clock))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        let now = Utc::now().timestamp();
+        let now = mem.clock.wall_now().0 / 1000;
         entries.sort_by(|a, b| {
             let sa = compute_activation(
                 &ActivationEntry::new(
@@ -432,7 +441,7 @@ pub(super) fn list_impl(mem: &EpisodicMemory, filter: &MemoryFilter) -> Result<V
             param_values.iter().map(|p| p.as_ref()).collect();
 
         let entries = stmt
-            .query_map(params_refs.as_slice(), row_to_entry)?
+            .query_map(params_refs.as_slice(), |row| row_to_entry(row, &mem.clock))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(entries)

@@ -4,7 +4,8 @@
 //! - Stable region: committed content in scrollback (immutable)
 //! - Tail region: currently-streaming content (mutable, real-time)
 
-use std::time::Instant;
+use fabric::{Clock, MonoTime};
+use std::sync::Arc;
 
 const THINKING_VIEW_MAX: usize = 4096; // 4KB cap for thinking tail
 const THINKING_TAIL_LINES: usize = 12; // max visual lines for thinking
@@ -54,21 +55,23 @@ pub struct StreamController {
     /// Whether currently in thinking phase
     thinking: bool,
     /// Thinking start time
-    thinking_start: Option<Instant>,
+    thinking_start: Option<MonoTime>,
     /// Thinking collapsed state
     thinking_collapsed: bool,
     /// Table holdback state for flicker-free markdown table streaming
     table_holdback: TableHoldbackState,
+    /// Clock for time-based operations
+    clock: Arc<dyn Clock>,
 }
 
 impl Default for StreamController {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
     }
 }
 
 impl StreamController {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             committed: String::new(),
             tail: String::new(),
@@ -77,6 +80,7 @@ impl StreamController {
             thinking_start: None,
             thinking_collapsed: true,
             table_holdback: TableHoldbackState::None,
+            clock,
         }
     }
 
@@ -92,7 +96,7 @@ impl StreamController {
     pub fn push_thinking(&mut self, text: &str) {
         if !self.thinking {
             self.thinking = true;
-            self.thinking_start = Some(Instant::now());
+            self.thinking_start = Some(self.clock.mono_now());
         }
         self.thinking_buf.push_str(text);
         // Bounded tail: keep only last THINKING_VIEW_MAX bytes
@@ -238,7 +242,10 @@ impl StreamController {
     }
 
     pub fn thinking_elapsed(&self) -> Option<f64> {
-        self.thinking_start.map(|s| s.elapsed().as_secs_f64())
+        self.thinking_start.map(|s| {
+            let elapsed_ms = self.clock.mono_now().0.saturating_sub(s.0);
+            elapsed_ms as f64 / 1000.0
+        })
     }
 
     pub fn is_thinking(&self) -> bool {
@@ -251,7 +258,8 @@ impl StreamController {
 
     fn commit_thinking(&mut self) {
         if let Some(start) = self.thinking_start {
-            let elapsed = start.elapsed().as_secs_f64();
+            let elapsed_ms = self.clock.mono_now().0.saturating_sub(start.0);
+            let elapsed = elapsed_ms as f64 / 1000.0;
             if self.thinking_collapsed {
                 self.committed
                     .push_str(&format!("✻ Thought for {:.1}s\n\n", elapsed));

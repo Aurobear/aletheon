@@ -3,12 +3,13 @@
 //! Wraps the manual wiring previously duplicated in `crates/bin/src/main.rs`
 //! so the binary crate only depends on `executive + interact`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
 use tracing::info;
 
+use aletheon_kernel::chronos::SystemClock;
 use aletheon_kernel::service::ServicePorts;
 use cognit::config::AppConfig;
 use cognit::harness::HarnessConfig;
@@ -103,9 +104,11 @@ impl ExecSessionBuilder {
         let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
         let sandbox_preference = SandboxPreference::from_str(&self.sandbox);
         info!(preference = ?sandbox_preference, "sandbox configured");
+        let clock = Arc::new(SystemClock::new());
         let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
             AuditLogger::new(audit_path)?,
             sandbox_preference,
+            clock,
         )
         .with_approval_gate(approval);
         let turn_id = uuid::Uuid::new_v4().to_string();
@@ -133,6 +136,7 @@ impl ExecSessionBuilder {
             tool_ctx: ToolContext {
                 working_dir: working_dir.clone(),
                 session_id: session_id.clone(),
+                clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
             },
             turn_id,
             system_prompt,

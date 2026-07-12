@@ -1,6 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::time::{Duration, Instant};
+use fabric::Clock;
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::sandbox::{
@@ -11,11 +13,12 @@ use crate::sandbox::{
 /// Requires: bwrap binary, user namespace support.
 pub struct BubblewrapBackend {
     bwrap_path: String,
+    clock: Arc<dyn Clock>,
 }
 
 impl BubblewrapBackend {
     /// Probe for bubblewrap availability.
-    pub fn probe() -> Option<Self> {
+    pub fn probe(clock: Arc<dyn Clock>) -> Option<Self> {
         let bwrap_path = which::which("bwrap").ok()?;
         let path_str = bwrap_path.to_string_lossy().to_string();
 
@@ -28,6 +31,7 @@ impl BubblewrapBackend {
                 info!(version = version.trim(), path = %path_str, "Bubblewrap detected");
                 Some(Self {
                     bwrap_path: path_str,
+                    clock,
                 })
             }
             Err(e) => {
@@ -129,9 +133,9 @@ impl SandboxBackend for BubblewrapBackend {
         info!(command = cmd, "Executing command in bubblewrap sandbox");
 
         let args = self.build_args(cmd, config);
-        let start = Instant::now();
+        let start = self.clock.mono_now();
 
-        let result = tokio::time::timeout(timeout, async {
+        let result = aletheon_kernel::chronos::Timer::timeout(&*self.clock, timeout, async {
             tokio::process::Command::new(&self.bwrap_path)
                 .args(&args)
                 .current_dir(&config.working_dir)
@@ -140,7 +144,7 @@ impl SandboxBackend for BubblewrapBackend {
         })
         .await;
 
-        let elapsed = start.elapsed();
+        let elapsed = self.clock.mono_now().0.saturating_sub(start.0);
 
         match result {
             Ok(Ok(output)) => Ok(SandboxResult {
@@ -149,7 +153,7 @@ impl SandboxBackend for BubblewrapBackend {
                 exit_code: output.status.code().unwrap_or(-1),
                 backend_used: "bubblewrap".to_string(),
                 isolation_level: IsolationLevel::Namespace,
-                elapsed_ms: elapsed.as_millis() as u64,
+                elapsed_ms: elapsed,
             }),
             Ok(Err(e)) => Err(anyhow::anyhow!("Bubblewrap execution failed: {}", e)),
             Err(_) => Ok(SandboxResult {
@@ -158,7 +162,7 @@ impl SandboxBackend for BubblewrapBackend {
                 exit_code: -1,
                 backend_used: "bubblewrap".to_string(),
                 isolation_level: IsolationLevel::Namespace,
-                elapsed_ms: elapsed.as_millis() as u64,
+                elapsed_ms: elapsed,
             }),
         }
     }

@@ -166,25 +166,32 @@ pub struct SemanticMemory {
     pub(super) conn: Mutex<Option<Connection>>,
     pub(super) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub(super) vector_index: VectorIndex,
+    pub(super) clock: Arc<dyn fabric::Clock>,
 }
 
 impl SemanticMemory {
-    pub fn new(db_path: PathBuf) -> Self {
+    pub fn new(db_path: PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),
             embedding_provider: None,
             vector_index: VectorIndex::new(),
+            clock,
         }
     }
 
     /// Create a SemanticMemory with an embedding provider for vector search.
-    pub fn with_embedding_provider(db_path: PathBuf, provider: Arc<dyn EmbeddingProvider>) -> Self {
+    pub fn with_embedding_provider(
+        db_path: PathBuf,
+        provider: Arc<dyn EmbeddingProvider>,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),
             embedding_provider: Some(provider),
             vector_index: VectorIndex::new(),
+            clock,
         }
     }
 
@@ -213,7 +220,7 @@ impl SemanticMemory {
                 let result = conn.query_row(
                     "SELECT * FROM memory WHERE id = ?1",
                     rusqlite::params![id_str],
-                    super::query::row_to_entry,
+                    |row| super::query::row_to_entry(row, &self.clock),
                 );
                 if let Ok(entry) = result {
                     entries.push(entry);

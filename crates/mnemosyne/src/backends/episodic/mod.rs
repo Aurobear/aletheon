@@ -14,11 +14,16 @@ mod tests {
         BehaviorAdjustment, CompactStrategy, EvolutionLogEntry, MemoryBackend, MemoryEntry,
         MemoryQuery, MemoryType, ReflectionEntry, ReflectionTrigger, Subsystem, SubsystemContext,
     };
+    use std::sync::Arc;
     use uuid::Uuid;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
 
     fn setup() -> (tempfile::NamedTempFile, EpisodicMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        let mem = EpisodicMemory::new(tmp.path().to_path_buf());
+        let mem = EpisodicMemory::new(tmp.path().to_path_buf(), test_clock());
         (tmp, mem)
     }
 

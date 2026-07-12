@@ -34,7 +34,7 @@ impl ReActLoop {
             step: StepType::LoopStart,
             action: action.to_string(),
             detected_state: detected,
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
         });
     }
 
@@ -46,7 +46,7 @@ impl ReActLoop {
             step: StepType::ThinkingComplete,
             action: action.to_string(),
             detected_state: detected,
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
         });
     }
 
@@ -77,7 +77,7 @@ impl ReActLoop {
             step: StepType::ToolCallEnd,
             action: format!("tool:{}", tool_name),
             detected_state: detected,
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
         });
     }
 
@@ -87,7 +87,7 @@ impl ReActLoop {
             step: StepType::FinalResponse,
             action: action.to_string(),
             detected_state: Some(SelfState::Focused),
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
         });
     }
 }

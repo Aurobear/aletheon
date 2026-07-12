@@ -5,14 +5,22 @@
 use crate::core::types::{CareExt, GenomeMeta, ReasoningConfig};
 use anyhow::Result;
 use fabric::genome::Genome;
+use fabric::Clock;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::r#impl::genome::loader::GenomeLoader;
 
 /// Bridge between GenomeMeta (extended metadata) and Genome (ABI level).
-pub struct GenomeBridge;
+pub struct GenomeBridge {
+    clock: Arc<dyn Clock>,
+}
 
 impl GenomeBridge {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self { clock }
+    }
+
     /// Load a Genome from a YAML file path.
     pub fn load_genome(path: &Path) -> Result<Genome> {
         let loader = GenomeLoader::new();
@@ -20,11 +28,11 @@ impl GenomeBridge {
     }
 
     /// Wrap a Genome into a GenomeMeta with default extensions.
-    pub fn genome_to_meta(genome: Genome) -> GenomeMeta {
+    pub fn genome_to_meta(&self, genome: Genome) -> GenomeMeta {
         GenomeMeta {
             genome,
             genome_version: "0.1.0".to_string(),
-            lineage_id: format!("lineage-{}", chrono::Utc::now().timestamp_millis()),
+            lineage_id: format!("lineage-{}", self.clock.wall_now().0),
             parent_version: None,
             identity_ext: crate::core::types::IdentityExt {
                 core_values: vec!["truthfulness".into(), "safety".into()],
@@ -66,12 +74,18 @@ impl Default for CareExt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
 
     #[test]
     fn test_genome_to_meta_roundtrip() {
         let loader = GenomeLoader::new();
         let genome = loader.load(Path::new("/nonexistent")).unwrap(); // returns default
-        let meta = GenomeBridge::genome_to_meta(genome);
+        let bridge = GenomeBridge::new(test_clock());
+        let meta = bridge.genome_to_meta(genome);
         assert_eq!(meta.genome_version, "0.1.0");
         assert!(meta.parent_version.is_none());
 

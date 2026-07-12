@@ -1,5 +1,7 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use fabric::Clock;
 use tracing::warn;
 
 use super::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest, AutoDenyGate};
@@ -55,10 +57,12 @@ pub struct ToolRunnerWithGuard {
     permission_ctx: PermissionContext,
     /// Independent execpolicy engine. When set, takes precedence over the inline PolicyEngine.
     exec_policy: Option<ExecPolicy>,
+    /// Injected clock for deterministic time in tests.
+    clock: Arc<dyn Clock>,
 }
 
 impl ToolRunnerWithGuard {
-    pub fn new(sandbox: SandboxExecutor, audit_logger: AuditLogger) -> Self {
+    pub fn new(sandbox: SandboxExecutor, audit_logger: AuditLogger, clock: Arc<dyn Clock>) -> Self {
         Self {
             sandbox,
             loop_detector: LoopDetector::new(LoopDetectorConfig::default()),
@@ -70,15 +74,17 @@ impl ToolRunnerWithGuard {
             session_approvals: std::collections::HashSet::new(),
             permission_ctx: PermissionContext::default(),
             exec_policy: None,
+            clock,
         }
     }
 
     /// Create with default sandbox (Auto preference).
-    pub fn with_default_sandbox(audit_logger: AuditLogger) -> Self {
+    pub fn with_default_sandbox(audit_logger: AuditLogger, clock: Arc<dyn Clock>) -> Self {
         use crate::sandbox::SandboxPreference;
         Self::new(
-            create_default_executor(SandboxPreference::Auto),
+            create_default_executor(SandboxPreference::Auto, clock.clone()),
             audit_logger,
+            clock,
         )
     }
 
@@ -86,8 +92,13 @@ impl ToolRunnerWithGuard {
     pub fn with_sandbox_preference(
         audit_logger: AuditLogger,
         preference: SandboxPreference,
+        clock: Arc<dyn Clock>,
     ) -> Self {
-        Self::new(create_default_executor(preference), audit_logger)
+        Self::new(
+            create_default_executor(preference, clock.clone()),
+            audit_logger,
+            clock,
+        )
     }
 
     /// Set the approval gate used for actions that require approval.
@@ -162,7 +173,7 @@ impl ToolRunnerWithGuard {
         turn_id: &str,
     ) -> std::result::Result<ToolResult, ToolError> {
         let tool_name = tool.name();
-        let start = Instant::now();
+        let start = self.clock.mono_now();
 
         // 1. Policy check
         let policy_verdict = self.check_policy(tool_name, &input);
@@ -338,7 +349,8 @@ impl ToolRunnerWithGuard {
         } else {
             // Direct execution for L0 tools with timeout
             const L0_TIMEOUT_SECS: u64 = 60;
-            match tokio::time::timeout(
+            match aletheon_kernel::chronos::Timer::timeout(
+                &*self.clock,
                 Duration::from_secs(L0_TIMEOUT_SECS),
                 tool.execute(input.clone(), ctx),
             )
@@ -422,12 +434,12 @@ impl ToolRunnerWithGuard {
         level: PermissionLevel,
         turn_id: &str,
         result: Option<&ToolResult>,
-        start: &Instant,
+        start: &fabric::MonoTime,
         verdict: &str,
     ) {
         let category = self.risk_classifier.classify(tool_name);
         let record = AuditRecord {
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
             session_id: String::new(), // Will be filled by caller or context
             turn_id: turn_id.to_string(),
             tool_name: tool_name.to_string(),
@@ -438,7 +450,7 @@ impl ToolRunnerWithGuard {
             result_summary: result.map(|r| r.content.chars().take(200).collect()),
             is_error: result.map(|r| r.is_error).unwrap_or(false),
             sandbox_backend: None,
-            elapsed_ms: start.elapsed().as_millis() as u64,
+            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
         };
         let _ = self.audit_logger.log(record).await;
     }
@@ -452,6 +464,7 @@ impl ToolRunnerWithGuard {
 mod tests {
     use super::super::approval::{AutoApproveGate, AutoDenyGate};
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use async_trait::async_trait;
     use fabric::execpolicy::{Decision as ExecDecision, PrefixRule as ExecPrefixRule};
     use fabric::tool::{
@@ -496,10 +509,18 @@ mod tests {
         }
     }
 
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
+
     fn make_runner(gate: Arc<dyn ApprovalGate>) -> ToolRunnerWithGuard {
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        ToolRunnerWithGuard::with_sandbox_preference(audit_logger, SandboxPreference::Forbid)
-            .with_approval_gate(gate)
+        ToolRunnerWithGuard::with_sandbox_preference(
+            audit_logger,
+            SandboxPreference::Forbid,
+            test_clock(),
+        )
+        .with_approval_gate(gate)
     }
 
     fn make_input_rm() -> serde_json::Value {
@@ -510,6 +531,7 @@ mod tests {
         ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test-session".into(),
+            clock: test_clock(),
         }
     }
 
@@ -556,10 +578,13 @@ mod tests {
             ..Default::default()
         };
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner =
-            ToolRunnerWithGuard::with_sandbox_preference(audit_logger, SandboxPreference::Forbid)
-                .with_approval_gate(Arc::new(AutoDenyGate))
-                .with_permission_context(ctx);
+        let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
+            audit_logger,
+            SandboxPreference::Forbid,
+            test_clock(),
+        )
+        .with_approval_gate(Arc::new(AutoDenyGate))
+        .with_permission_context(ctx);
         let tool = DummyL2Tool;
         let result = runner
             .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
@@ -580,7 +605,7 @@ mod tests {
             ..Default::default()
         };
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger, test_clock())
             .with_approval_gate(Arc::new(AutoApproveGate))
             .with_permission_context(ctx);
         let tool = DummyL2Tool;
@@ -607,8 +632,8 @@ mod tests {
         policy.add_rule(ExecPrefixRule::new("bash_exec", ExecDecision::Forbidden));
 
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner =
-            ToolRunnerWithGuard::with_default_sandbox(audit_logger).with_policy(policy);
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger, test_clock())
+            .with_policy(policy);
 
         let tool = DummyL2Tool;
         let result = runner
@@ -630,7 +655,7 @@ mod tests {
         policy.add_rule(ExecPrefixRule::new("bash_exec", ExecDecision::Prompt));
 
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger, test_clock())
             .with_approval_gate(Arc::new(AutoApproveGate))
             .with_policy(policy);
 
@@ -649,7 +674,7 @@ mod tests {
     async fn runner_no_execpolicy_falls_back_to_policy_engine() {
         // Without with_policy(), the inline PolicyEngine is used.
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger, test_clock())
             .with_approval_gate(Arc::new(AutoApproveGate));
 
         let tool = DummyL2Tool;

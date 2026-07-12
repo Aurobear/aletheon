@@ -6,6 +6,8 @@
 
 use chrono::{DateTime, Duration, Utc};
 use fabric::cognit::{EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+use fabric::Clock;
+use std::sync::Arc;
 
 /// Configuration for the evolution trigger.
 #[derive(Debug, Clone)]
@@ -49,14 +51,19 @@ pub struct EvolutionTrigger {
     last_evolution: Option<DateTime<Utc>>,
     /// Whether an evolution cycle is currently in progress.
     running: bool,
+    clock: Arc<dyn Clock>,
+    summarizer: super::ExperienceSummarizer,
 }
 
 impl EvolutionTrigger {
-    pub fn new(config: EvolutionTriggerConfig) -> Self {
+    pub fn new(config: EvolutionTriggerConfig, clock: Arc<dyn Clock>) -> Self {
+        let summarizer = super::ExperienceSummarizer::new(clock.clone());
         Self {
             config,
             last_evolution: None,
             running: false,
+            clock,
+            summarizer,
         }
     }
 
@@ -92,12 +99,11 @@ impl EvolutionTrigger {
         }
 
         // Not yet — compute next check time
+        let now = fabric::wall_to_datetime(self.clock.wall_now());
         let next_check = self
             .last_evolution
             .map(|t| t + Duration::hours(self.config.periodic_interval_hours as i64))
-            .unwrap_or_else(|| {
-                Utc::now() + Duration::hours(self.config.periodic_interval_hours as i64)
-            });
+            .unwrap_or_else(|| now + Duration::hours(self.config.periodic_interval_hours as i64));
 
         EvolutionDecision::NotYet { next_check }
     }
@@ -116,11 +122,11 @@ impl EvolutionTrigger {
             .determine_trigger_reason(reflections)
             .unwrap_or_else(|| "manual".to_string());
 
-        let result = match super::ExperienceSummarizer::summarize(reflections) {
+        let result = match self.summarizer.summarize(reflections) {
             Some(mut entry) => {
                 // Override the trigger field with the actual reason from EvolutionTrigger
                 entry.trigger = trigger_reason;
-                self.last_evolution = Some(Utc::now());
+                self.last_evolution = Some(fabric::wall_to_datetime(self.clock.wall_now()));
                 Some(entry)
             }
             None => None,
@@ -190,9 +196,10 @@ impl EvolutionTrigger {
     }
 
     fn check_periodic(&self) -> Option<String> {
+        let now = fabric::wall_to_datetime(self.clock.wall_now());
         match self.last_evolution {
             Some(last) => {
-                let elapsed = Utc::now() - last;
+                let elapsed = now - last;
                 let interval = Duration::hours(self.config.periodic_interval_hours as i64);
                 if elapsed >= interval {
                     Some(format!(
@@ -219,13 +226,24 @@ impl EvolutionTrigger {
 
 impl Default for EvolutionTrigger {
     fn default() -> Self {
-        Self::new(EvolutionTriggerConfig::default())
+        Self::new(
+            EvolutionTriggerConfig::default(),
+            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    fn make_trigger() -> EvolutionTrigger {
+        EvolutionTrigger::new(
+            EvolutionTriggerConfig::default(),
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
+    }
 
     fn make_entry(
         outcome: ReflectionOutcome,
@@ -234,7 +252,7 @@ mod tests {
     ) -> ReflectionEntry {
         ReflectionEntry {
             id: format!("ref-{}", uuid::Uuid::new_v4()),
-            timestamp: Utc::now(),
+            timestamp: fabric::wall_to_datetime(fabric::WallTime(0)),
             trigger,
             task_summary: "test task".to_string(),
             outcome,
@@ -262,7 +280,7 @@ mod tests {
 
     #[test]
     fn already_running_returns_already_running() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
         trigger.set_running(true);
 
         let decision = trigger.check_should_evolve(&[]);
@@ -271,7 +289,7 @@ mod tests {
 
     #[test]
     fn no_reflections_and_no_last_evolution_triggers_first_cycle() {
-        let trigger = EvolutionTrigger::default();
+        let trigger = make_trigger();
         let decision = trigger.check_should_evolve(&[]);
         match decision {
             EvolutionDecision::TriggerNow { reason } => {
@@ -283,9 +301,9 @@ mod tests {
 
     #[test]
     fn consecutive_failures_triggers() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
         // Set last evolution to the past so periodic doesn't fire first
-        trigger.set_last_evolution(Utc::now());
+        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
 
         let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
 
@@ -300,8 +318,8 @@ mod tests {
 
     #[test]
     fn two_failures_not_enough() {
-        let mut trigger = EvolutionTrigger::default();
-        trigger.set_last_evolution(Utc::now());
+        let mut trigger = make_trigger();
+        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
 
         let reflections = vec![failure_entry(), failure_entry(), success_entry(0.9)];
 
@@ -312,9 +330,10 @@ mod tests {
 
     #[test]
     fn periodic_triggers_when_interval_exceeded() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
         // Set last evolution to 7 hours ago
-        trigger.set_last_evolution(Utc::now() - Duration::hours(7));
+        trigger
+            .set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)) - Duration::hours(7));
 
         let reflections = vec![success_entry(0.9)];
         let decision = trigger.check_should_evolve(&reflections);
@@ -328,8 +347,9 @@ mod tests {
 
     #[test]
     fn periodic_does_not_trigger_within_interval() {
-        let mut trigger = EvolutionTrigger::default();
-        trigger.set_last_evolution(Utc::now() - Duration::hours(2));
+        let mut trigger = make_trigger();
+        trigger
+            .set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)) - Duration::hours(2));
 
         let reflections = vec![success_entry(0.9)];
         let decision = trigger.check_should_evolve(&reflections);
@@ -338,8 +358,8 @@ mod tests {
 
     #[test]
     fn confidence_drop_triggers() {
-        let mut trigger = EvolutionTrigger::default();
-        trigger.set_last_evolution(Utc::now());
+        let mut trigger = make_trigger();
+        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
 
         // Older batch (high confidence) then recent batch (low confidence)
         let reflections = vec![
@@ -360,8 +380,8 @@ mod tests {
 
     #[test]
     fn confidence_drop_not_enough_data() {
-        let mut trigger = EvolutionTrigger::default();
-        trigger.set_last_evolution(Utc::now());
+        let mut trigger = make_trigger();
+        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
 
         // Only 3 entries — not enough for two batches
         let reflections = vec![success_entry(0.1), success_entry(0.9), success_entry(0.9)];
@@ -373,9 +393,9 @@ mod tests {
 
     #[test]
     fn consecutive_failures_priority_over_periodic() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
         // Recently evolved, so periodic won't fire
-        trigger.set_last_evolution(Utc::now());
+        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
 
         let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
 
@@ -393,7 +413,7 @@ mod tests {
 
     #[test]
     fn evolution_cycle_produces_entry_with_consecutive_failures() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
 
         let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
 
@@ -406,14 +426,14 @@ mod tests {
 
     #[test]
     fn evolution_cycle_empty_reflections_returns_none() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
         let entry = trigger.run_evolution_cycle(&[]);
         assert!(entry.is_none());
     }
 
     #[test]
     fn evolution_cycle_single_reflection_returns_none() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
         let reflections = vec![success_entry(0.9)];
         // ExperienceSummarizer::summarize returns None for a single entry with no pattern
         let entry = trigger.run_evolution_cycle(&reflections);
@@ -422,7 +442,7 @@ mod tests {
 
     #[test]
     fn evolution_cycle_clears_running_flag() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
         let reflections = vec![success_entry(0.9)];
 
         // Even if summarize returns None, running should be cleared
@@ -432,7 +452,7 @@ mod tests {
 
     #[test]
     fn evolution_cycle_updates_last_evolution() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
         assert!(trigger.last_evolution.is_none());
 
         let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
@@ -443,7 +463,7 @@ mod tests {
 
     #[test]
     fn evolution_cycle_with_high_failure_reflections() {
-        let mut trigger = EvolutionTrigger::default();
+        let mut trigger = make_trigger();
 
         let reflections = vec![
             failure_entry(),
@@ -473,7 +493,10 @@ mod tests {
             periodic_interval_hours: 12,
             confidence_drop_threshold: 0.3,
         };
-        let trigger = EvolutionTrigger::new(config.clone());
+        let trigger = EvolutionTrigger::new(
+            config.clone(),
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         trigger.check_should_evolve(&[]);
         // Just verifying construction succeeds with custom values
         assert_eq!(config.failure_threshold, 5);

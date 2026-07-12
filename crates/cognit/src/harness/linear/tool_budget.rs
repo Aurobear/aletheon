@@ -1,12 +1,12 @@
 // crates/runtime/src/core/react_loop/tool_budget.rs
-use std::time::Instant;
+use fabric::MonoTime;
 use tracing::warn;
 
 /// Record of a single tool call for budget tracking.
 #[derive(Debug, Clone)]
 pub struct ToolCallRecord {
     pub tool_name: String,
-    pub timestamp: Instant,
+    pub timestamp: MonoTime,
     pub success: bool,
 }
 
@@ -98,19 +98,19 @@ mod tests {
 
         budget.record_call(ToolCallRecord {
             tool_name: "test".into(),
-            timestamp: Instant::now(),
+            timestamp: MonoTime(0),
             success: true,
         });
         assert_eq!(budget.remaining(), 2);
 
         budget.record_call(ToolCallRecord {
             tool_name: "test".into(),
-            timestamp: Instant::now(),
+            timestamp: MonoTime(0),
             success: true,
         });
         budget.record_call(ToolCallRecord {
             tool_name: "test".into(),
-            timestamp: Instant::now(),
+            timestamp: MonoTime(0),
             success: true,
         });
 
@@ -125,12 +125,12 @@ mod tests {
 
         budget.record_call(ToolCallRecord {
             tool_name: "test".into(),
-            timestamp: Instant::now(),
+            timestamp: MonoTime(0),
             success: true,
         });
         budget.record_call(ToolCallRecord {
             tool_name: "test".into(),
-            timestamp: Instant::now(),
+            timestamp: MonoTime(0),
             success: true,
         });
 

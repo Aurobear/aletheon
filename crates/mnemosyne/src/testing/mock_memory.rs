@@ -1,12 +1,12 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
 use fabric::{
-    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
-    MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext, SubsystemHealth, Version,
+    wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
+    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext,
+    SubsystemHealth, Version, WallTime,
 };
 use uuid::Uuid;
 
@@ -19,36 +19,42 @@ pub struct MockMemoryBackend {
     memory_type: MemoryType,
     entries: Mutex<Vec<MemoryEntry>>,
     initialized: Mutex<bool>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl MockMemoryBackend {
-    pub fn new(name: impl Into<String>, memory_type: MemoryType) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        memory_type: MemoryType,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
         Self {
             name: name.into(),
             memory_type,
             entries: Mutex::new(Vec::new()),
             initialized: Mutex::new(false),
+            clock,
         }
     }
 
     /// Create a mock for episodic memory.
-    pub fn episodic() -> Self {
-        Self::new("mock_episodic", MemoryType::Episodic)
+    pub fn episodic(clock: Arc<dyn fabric::Clock>) -> Self {
+        Self::new("mock_episodic", MemoryType::Episodic, clock)
     }
 
     /// Create a mock for semantic memory.
-    pub fn semantic() -> Self {
-        Self::new("mock_semantic", MemoryType::Semantic)
+    pub fn semantic(clock: Arc<dyn fabric::Clock>) -> Self {
+        Self::new("mock_semantic", MemoryType::Semantic, clock)
     }
 
     /// Create a mock for procedural memory.
-    pub fn procedural() -> Self {
-        Self::new("mock_procedural", MemoryType::Procedural)
+    pub fn procedural(clock: Arc<dyn fabric::Clock>) -> Self {
+        Self::new("mock_procedural", MemoryType::Procedural, clock)
     }
 
     /// Create a mock for self memory.
-    pub fn self_memory() -> Self {
-        Self::new("mock_self", MemoryType::SelfMemory)
+    pub fn self_memory(clock: Arc<dyn fabric::Clock>) -> Self {
+        Self::new("mock_self", MemoryType::SelfMemory, clock)
     }
 
     /// Number of entries currently stored.
@@ -68,7 +74,7 @@ impl MockMemoryBackend {
             memory_type: self.memory_type,
             content: content.to_vec(),
             tags,
-            created_at: Utc::now(),
+            created_at: wall_to_datetime(self.clock.wall_now()),
             access_count: 0,
             importance,
             decay_rate: 0.0,
@@ -79,7 +85,7 @@ impl MockMemoryBackend {
 
 impl Default for MockMemoryBackend {
     fn default() -> Self {
-        Self::episodic()
+        Self::episodic(Arc::new(aletheon_kernel::chronos::TestClock::default()))
     }
 }
 
@@ -222,7 +228,9 @@ impl MemoryBackend for MockMemoryBackend {
                 max_age,
                 min_access_count,
             } => {
-                let cutoff = Utc::now() - max_age;
+                let cutoff = wall_to_datetime(WallTime(
+                    self.clock.wall_now().0 - max_age.num_milliseconds(),
+                ));
                 entries.retain(|e| e.created_at >= cutoff || e.access_count >= min_access_count);
             }
         }
@@ -262,7 +270,8 @@ mod tests {
     use std::path::PathBuf;
 
     async fn setup_backend() -> MockMemoryBackend {
-        let mut backend = MockMemoryBackend::episodic();
+        let mut backend =
+            MockMemoryBackend::episodic(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let ctx = SubsystemContext {
             name: "test".into(),
             working_dir: PathBuf::from("/tmp"),

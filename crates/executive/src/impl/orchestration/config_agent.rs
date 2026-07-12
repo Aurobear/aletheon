@@ -202,6 +202,7 @@ impl Agent for ConfigAgent {
                     let ctx = fabric::tool::ToolContext {
                         working_dir: std::path::PathBuf::from("."),
                         session_id: String::new(),
+                        clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
                     };
                     let result = tool.execute((*input).clone(), &ctx).await;
                     result.content

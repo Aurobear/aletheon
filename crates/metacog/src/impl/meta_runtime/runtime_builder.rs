@@ -4,19 +4,16 @@
 //! and potentially adopted by the morphogenesis pipeline.
 
 use anyhow::Result;
-use fabric::{Genome, RuntimeCandidate};
+use fabric::{wall_to_datetime, Clock, Genome, RuntimeCandidate};
+use std::sync::Arc;
 
-pub struct RuntimeBuilder;
-
-impl Default for RuntimeBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct RuntimeBuilder {
+    clock: Arc<dyn Clock>,
 }
 
 impl RuntimeBuilder {
-    pub fn new() -> Self {
-        Self
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self { clock }
     }
 
     /// Build a RuntimeCandidate from a genome.
@@ -28,7 +25,7 @@ impl RuntimeBuilder {
             id: uuid::Uuid::new_v4(),
             genome: genome.clone(),
             changes: Vec::new(),
-            generated_at: chrono::Utc::now(),
+            generated_at: wall_to_datetime(self.clock.wall_now()),
         })
     }
 
@@ -42,7 +39,7 @@ impl RuntimeBuilder {
             id: uuid::Uuid::new_v4(),
             genome: genome.clone(),
             changes,
-            generated_at: chrono::Utc::now(),
+            generated_at: wall_to_datetime(self.clock.wall_now()),
         })
     }
 }

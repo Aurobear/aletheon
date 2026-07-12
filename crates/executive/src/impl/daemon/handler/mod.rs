@@ -13,6 +13,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use aletheon_kernel::chronos::Timer;
 use tokio_util::sync::CancellationToken;
 
 use super::model_router::ModelRouter;
@@ -42,10 +43,12 @@ pub struct RequestHandler {
     /// Session gateway for external agent debug access.
     pub(crate) session_gateway: Arc<SessionGateway>,
     /// Communication bus (always available after init).
+    #[allow(dead_code)]
     pub(crate) bus: Arc<CommunicationBus>,
     /// Default LLM provider.
     pub(crate) llm: Arc<dyn LlmProvider>,
     /// Model router for per-task-type model selection.
+    #[allow(dead_code)]
     pub(crate) model_router: Arc<ModelRouter>,
     /// Per-connection notification channel for JSON-RPC push.
     pub(crate) notify_tx: Option<mpsc::Sender<String>>,
@@ -62,6 +65,7 @@ pub struct RequestHandler {
 impl RequestHandler {
     /// Review an intent through SelfField via CommunicationBus.
     /// Falls back to direct lock if bus is not configured.
+    #[allow(dead_code)]
     pub(crate) async fn sf_review(
         &self,
         intent: &Intent,
@@ -111,6 +115,7 @@ impl RequestHandler {
 
     /// Record a narrative entry in SelfField via CommunicationBus.
     /// Falls back to direct lock if bus is not configured.
+    #[allow(dead_code)]
     pub(crate) async fn sf_narrate(&self, event: &str, reason: &str) {
         let req = SelfFieldRequest::Narrate {
             event: event.to_string(),
@@ -145,6 +150,7 @@ impl RequestHandler {
     }
 
     /// Post-turn coordination: update Dasein mood from turn output.
+    #[allow(dead_code)]
     pub(crate) async fn coordinate(&self, turn: &usize, turn_text: &str) {
         let sf = self.subsystems.self_field.lock().await;
         if let Some(dasein) = sf.dasein() {
@@ -162,6 +168,7 @@ impl RequestHandler {
     /// byte-stable for provider cache hits.
     ///
     /// Returns empty string if the queue is empty (no injections needed).
+    #[allow(dead_code)]
     pub(crate) async fn compose_memory_block(&self) -> String {
         let mut queue = self.subsystems.session.memory_queue.lock().await;
         if queue.is_empty() {
@@ -211,7 +218,13 @@ impl RequestHandler {
                     // Capture stdout before waiting
                     let mut stdout_pipe = child.stdout.take();
                     // Wait with 30-second timeout
-                    match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+                    match Timer::timeout(
+                        &*self.subsystems.ports.clock,
+                        Duration::from_secs(30),
+                        child.wait(),
+                    )
+                    .await
+                    {
                         Ok(Ok(status)) if status.success() => {
                             // Read captured stdout
                             if let Some(ref mut stdout) = stdout_pipe {

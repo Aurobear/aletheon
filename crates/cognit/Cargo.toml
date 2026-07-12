@@ -7,6 +7,7 @@ license.workspace = true
 description = "Aletheon Cognit core - reasoning, planning, and reflection"
 
 [dependencies]
+aletheon-kernel = { path = "../kernel" }
 fabric = { path = "../fabric" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"

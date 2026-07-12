@@ -50,7 +50,7 @@ pub fn restore_terminal() {
 }
 
 use std::io;
-use std::time::Instant;
+use std::sync::Arc;
 
 use crossterm::{
     event::{
@@ -60,6 +60,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use fabric::Clock;
 use ratatui::{
     backend::{CrosstermBackend, TestBackend},
     Terminal,
@@ -90,6 +91,7 @@ pub async fn run_tui(socket_path: &str) -> anyhow::Result<()> {
 /// Run the full TUI with optional test configuration.
 pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
+    let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::SystemClock::new());
 
     let stream = match UnixStream::connect(socket_path).await {
         Ok(s) => s,
@@ -113,7 +115,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
     if (!atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout))
         && test_config.test_input.is_none()
     {
-        return simple_line_mode(stream, caps, model_name).await;
+        return simple_line_mode(stream, caps, model_name, clock).await;
     }
 
     // Check if we're in test mode (no TTY needed)
@@ -123,7 +125,16 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         // In test mode, use a test backend (no real terminal)
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend)?;
-        run_app(&mut terminal, stream, caps, model_name, test_config, true).await
+        run_app(
+            &mut terminal,
+            stream,
+            caps,
+            model_name,
+            test_config,
+            true,
+            clock,
+        )
+        .await
     } else {
         // RAII guard that restores terminal state on drop.
         // Handles normal exit, panic, and signal-driven exit.
@@ -190,7 +201,16 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         })
         .expect("Error setting Ctrl-C handler");
 
-        let result = run_app(&mut terminal, stream, caps, model_name, test_config, false).await;
+        let result = run_app(
+            &mut terminal,
+            stream,
+            caps,
+            model_name,
+            test_config,
+            false,
+            clock,
+        )
+        .await;
 
         // TerminalGuard::drop() handles terminal cleanup.
         // Explicitly drop the guard before returning to ensure clean state.
@@ -224,11 +244,11 @@ struct App {
     model_name: String,
     status: StatusBar,
     /// Last Ctrl+C press time (for double-press detection).
-    last_ctrl_c: Option<Instant>,
+    last_ctrl_c: Option<fabric::MonoTime>,
     /// Whether input has CJK characters (affects Enter behavior).
     has_cjk: bool,
     /// Pending submit (delayed for IME composition).
-    pending_submit: Option<Instant>,
+    pending_submit: Option<fabric::MonoTime>,
     /// First render flag.
     first_render: bool,
     /// Pending approval dialog (shown as modal overlay).
@@ -255,10 +275,12 @@ struct App {
     sub_agents: Vec<SubAgentHandle>,
     /// Current ReAct loop iteration (0 = first call, 1+ = after tool calls).
     current_iteration: usize,
+    /// Clock for time-based operations (injectable for testing).
+    pub clock: Arc<dyn Clock>,
 }
 
 impl App {
-    fn new(stream: UnixStream, caps: TermCaps, model_name: String) -> Self {
+    fn new(stream: UnixStream, caps: TermCaps, model_name: String, clock: Arc<dyn Clock>) -> Self {
         let mut skill_loader = SkillLoader::new(SkillLoader::default_dir());
         if let Err(e) = skill_loader.load_all() {
             eprintln!("Warning: failed to load skills: {}", e);
@@ -286,7 +308,7 @@ impl App {
             pending_submit: None,
             first_render: true,
             pending_approval: None,
-            stream_ctrl: StreamController::new(),
+            stream_ctrl: StreamController::new(Arc::clone(&clock)),
             turn_tokens: None,
             total_tokens: 0,
             history: CommandHistory::new(),
@@ -297,6 +319,7 @@ impl App {
             plan_view: PlanViewState::default(),
             sub_agents: Vec::new(),
             current_iteration: 0,
+            clock,
         }
     }
 

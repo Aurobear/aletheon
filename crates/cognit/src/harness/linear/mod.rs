@@ -26,7 +26,7 @@ use fabric::body::Action;
 use fabric::message::Message;
 use fabric::policy::verifier::Verifier;
 use fabric::self_field::{Intent, IntentSource};
-use fabric::ToolDefinition;
+use fabric::{Clock, ToolDefinition};
 use std::sync::Arc;
 
 /// Thin wrapper to allow passing `&dyn LlmProvider` to generic functions
@@ -104,16 +104,19 @@ pub struct ReActLoop {
     max_verify_attempts: usize,
     /// Optional Dasein context provider — called each turn to inject SelfField state.
     dasein_ctx_provider: Option<Box<dyn Fn() -> Option<String> + Send + Sync>>,
+    /// Clock for deterministic time (mono/wall).
+    clock: Arc<dyn Clock>,
 }
 
 impl ReActLoop {
     pub fn new(config: HarnessConfig, compressor: Box<dyn CompactorTrait>) -> Self {
+        let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::SystemClock::new());
         let tool_budget = ToolBudget::new(config.max_tool_calls);
         let circuit_breaker = CircuitBreaker::new(
             config.circuit_breaker_max_repeats,
             config.circuit_breaker_window_size,
         );
-        let goal_tracker = GoalTracker::new();
+        let goal_tracker = GoalTracker::new(clock.clone());
         let reflection_engine = ReflectionEngine::new(
             config.reflection_interval,
             config.reflection_tool_call_limit,
@@ -139,6 +142,7 @@ impl ReActLoop {
             verify_attempts: 0,
             max_verify_attempts: 2,
             dasein_ctx_provider: None,
+            clock,
         }
     }
 

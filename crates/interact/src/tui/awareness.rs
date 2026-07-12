@@ -46,8 +46,12 @@ impl AwarenessWidget {
 
     /// Render an inline message for notable awareness transitions.
     /// Returns None if no inline message should be shown.
-    pub fn render_inline(awareness: &AwarenessState, caps: &TermCaps) -> Option<Line<'static>> {
-        if !awareness.should_show_inline() {
+    pub fn render_inline(
+        awareness: &AwarenessState,
+        caps: &TermCaps,
+        now: fabric::MonoTime,
+    ) -> Option<Line<'static>> {
+        if !awareness.should_show_inline(now) {
             return None;
         }
 

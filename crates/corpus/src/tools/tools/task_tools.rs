@@ -175,8 +175,8 @@ impl Tool for TaskCreateTool {
         ConcurrencyClass::SideEffect
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let subject = match input["subject"].as_str() {
             Some(s) if !s.is_empty() => s.to_string(),
@@ -185,7 +185,7 @@ impl Tool for TaskCreateTool {
                     content: "Missing or empty 'subject'".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -200,7 +200,7 @@ impl Tool for TaskCreateTool {
             content: serde_json::to_string_pretty(&task).unwrap_or_default(),
             is_error: false,
             metadata: ToolResultMeta {
-                execution_time_ms: start.elapsed().as_millis() as u64,
+                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
             },
         }
@@ -259,8 +259,8 @@ impl Tool for TaskUpdateTool {
         ConcurrencyClass::SideEffect
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let id = match input["id"].as_str() {
             Some(s) if !s.is_empty() => s,
@@ -269,7 +269,7 @@ impl Tool for TaskUpdateTool {
                     content: "Missing or empty 'id'".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -283,7 +283,7 @@ impl Tool for TaskUpdateTool {
                     content: "Missing 'status'".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -300,7 +300,7 @@ impl Tool for TaskUpdateTool {
                     ),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -312,7 +312,7 @@ impl Tool for TaskUpdateTool {
                 content: serde_json::to_string_pretty(&task).unwrap_or_default(),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },
@@ -320,7 +320,7 @@ impl Tool for TaskUpdateTool {
                 content: format!("Task not found: {}", id),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },
@@ -369,8 +369,8 @@ impl Tool for TaskListTool {
         ConcurrencyClass::ReadOnly
     }
 
-    async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, _input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let tasks = self.store.lock().list();
 
@@ -378,7 +378,7 @@ impl Tool for TaskListTool {
             content: serde_json::to_string_pretty(&tasks).unwrap_or_default(),
             is_error: false,
             metadata: ToolResultMeta {
-                execution_time_ms: start.elapsed().as_millis() as u64,
+                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
             },
         }
@@ -432,8 +432,8 @@ impl Tool for TaskGetTool {
         ConcurrencyClass::ReadOnly
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let id = match input["id"].as_str() {
             Some(s) if !s.is_empty() => s,
@@ -442,7 +442,7 @@ impl Tool for TaskGetTool {
                     content: "Missing or empty 'id'".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -454,7 +454,7 @@ impl Tool for TaskGetTool {
                 content: serde_json::to_string_pretty(&task).unwrap_or_default(),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },
@@ -462,7 +462,7 @@ impl Tool for TaskGetTool {
                 content: format!("Task not found: {}", id),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },
@@ -483,6 +483,7 @@ mod tests {
         ToolContext {
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         }
     }
 

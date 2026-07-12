@@ -1,7 +1,7 @@
 //! EpisodicMemory schema, constructors, and Subsystem lifecycle.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -14,13 +14,15 @@ use crate::ops::schema;
 pub struct EpisodicMemory {
     pub(crate) db_path: PathBuf,
     pub(crate) conn: Mutex<Option<Connection>>,
+    pub(crate) clock: Arc<dyn fabric::Clock>,
 }
 
 impl EpisodicMemory {
-    pub fn new(db_path: PathBuf) -> Self {
+    pub fn new(db_path: PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),
+            clock,
         }
     }
 

@@ -211,10 +211,12 @@ fn format_duration(d: std::time::Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn snapshot_with_no_goal() {
-        let goal_tracker = GoalTracker::new();
+        let goal_tracker =
+            GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let perf = PerfCounter::default();
         let config = ExecutiveConfig::default();
 
@@ -242,7 +244,8 @@ mod tests {
 
     #[test]
     fn snapshot_with_goal_and_errors() {
-        let mut goal_tracker = GoalTracker::new();
+        let mut goal_tracker =
+            GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         goal_tracker.set_goal("Fix all the bugs".into());
         goal_tracker.add_sub_goal("Find the bugs".into());
         goal_tracker.add_sub_goal("Fix the bugs".into());
@@ -286,7 +289,8 @@ mod tests {
 
     #[test]
     fn snapshot_with_circuit_tripped() {
-        let goal_tracker = GoalTracker::new();
+        let goal_tracker =
+            GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let perf = PerfCounter::default();
         let config = ExecutiveConfig::default();
 

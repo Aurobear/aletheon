@@ -4,6 +4,7 @@ pub mod phase2;
 pub mod state_db;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tracing::info;
 
@@ -79,6 +80,7 @@ pub struct MemoryPipeline {
     memory_root: PathBuf,
     phase1_config: Phase1Config,
     phase2_config: Phase2Config,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl MemoryPipeline {
@@ -87,21 +89,24 @@ impl MemoryPipeline {
         memory_root: PathBuf,
         phase1_config: Phase1Config,
         phase2_config: Phase2Config,
+        clock: Arc<dyn fabric::Clock>,
     ) -> Self {
         Self {
             state_db: StateDatabase::new(),
             memory_root,
             phase1_config,
             phase2_config,
+            clock,
         }
     }
 
     /// Create a pipeline with default configurations.
-    pub fn with_defaults(memory_root: PathBuf) -> Self {
+    pub fn with_defaults(memory_root: PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
         Self::new(
             memory_root,
             Phase1Config::default(),
             Phase2Config::default(),
+            clock,
         )
     }
 
@@ -122,7 +127,7 @@ impl MemoryPipeline {
 
     /// Register a session for tracking.
     pub fn register_session(&mut self, session_id: String, session_path: PathBuf) {
-        let now = current_timestamp();
+        let now = self.clock.wall_now().0 as u64 / 1000;
         let record = SessionRecord::new(session_id.clone(), session_path, now);
         self.state_db.upsert_session(record);
         info!(session_id, "Session registered in pipeline");
@@ -130,13 +135,13 @@ impl MemoryPipeline {
 
     /// Run Phase 1 extraction on eligible sessions.
     pub async fn run_phase1(&mut self) -> anyhow::Result<usize> {
-        let extractor = Phase1Extractor::new(self.phase1_config.clone());
+        let extractor = Phase1Extractor::new(self.phase1_config.clone(), self.clock.clone());
         extractor.run(&mut self.state_db, &self.memory_root).await
     }
 
     /// Run Phase 2 consolidation.
     pub async fn run_phase2(&mut self) -> anyhow::Result<ConsolidationResult> {
-        let consolidator = Phase2Consolidator::new(self.phase2_config.clone());
+        let consolidator = Phase2Consolidator::new(self.phase2_config.clone(), self.clock.clone());
         consolidator
             .run(&mut self.state_db, &self.memory_root)
             .await
@@ -152,14 +157,6 @@ impl MemoryPipeline {
     }
 }
 
-/// Current Unix timestamp in seconds.
-fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,9 +164,13 @@ mod tests {
     use tempfile::TempDir;
     use tokio::fs;
 
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
+
     #[test]
     fn test_pipeline_creation() {
-        let pipeline = MemoryPipeline::with_defaults(PathBuf::from("/tmp/memories"));
+        let pipeline = MemoryPipeline::with_defaults(PathBuf::from("/tmp/memories"), test_clock());
         assert_eq!(pipeline.memory_root(), Path::new("/tmp/memories"));
         assert_eq!(pipeline.state_db().session_count(), 0);
     }
@@ -190,14 +191,16 @@ mod tests {
             max_unused_days: 7,
             model: "gpt-4".to_string(),
         };
-        let pipeline = MemoryPipeline::new(PathBuf::from("/tmp/test"), phase1, phase2);
+        let pipeline =
+            MemoryPipeline::new(PathBuf::from("/tmp/test"), phase1, phase2, test_clock());
         assert_eq!(pipeline.phase1_config.concurrency_limit, 4);
         assert_eq!(pipeline.phase2_config.max_raw_memories, 10);
     }
 
     #[test]
     fn test_register_session() {
-        let mut pipeline = MemoryPipeline::with_defaults(PathBuf::from("/tmp/memories"));
+        let mut pipeline =
+            MemoryPipeline::with_defaults(PathBuf::from("/tmp/memories"), test_clock());
         pipeline.register_session("sess-1".into(), PathBuf::from("/tmp/sessions/sess-1"));
 
         assert_eq!(pipeline.state_db().session_count(), 1);
@@ -250,10 +253,14 @@ mod tests {
         };
         let phase2 = Phase2Config::default();
 
-        let mut pipeline = MemoryPipeline::new(memory_root.clone(), phase1, phase2);
+        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::new(
+            1000000000000,
+            1000000000000,
+        ));
+        let mut pipeline = MemoryPipeline::new(memory_root.clone(), phase1, phase2, clock.clone());
 
         // Register sessions with old timestamps so they're eligible.
-        let now = current_timestamp();
+        let now = pipeline.clock.wall_now().0 as u64 / 1000;
         for sid in &["sess-a", "sess-b"] {
             pipeline.register_session(sid.to_string(), sessions_dir.join(sid));
             // Backdate to make them idle.

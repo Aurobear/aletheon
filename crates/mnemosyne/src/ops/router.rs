@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use fabric::{
-    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
-    MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, Subsystem, SubsystemContext,
-    SubsystemHealth, Version,
+    wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
+    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, Subsystem,
+    SubsystemContext, SubsystemHealth, Version, WallTime,
 };
 
 use crate::backends::episodic::EpisodicMemory;
@@ -101,31 +101,33 @@ impl MemoryContext {
 /// Routes memory operations to dynamically registered backends.
 pub struct MemoryRouter {
     backends: Vec<(MemoryType, Box<dyn MemoryBackend + Send + Sync>)>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl MemoryRouter {
     /// Create a new router with DB files in the given directory.
     ///
     /// Registers the 4 default backends (episodic, semantic, procedural, self).
-    pub fn new(db_dir: &std::path::Path) -> Self {
+    pub fn new(db_dir: &std::path::Path, clock: Arc<dyn fabric::Clock>) -> Self {
         let mut router = Self {
             backends: Vec::new(),
+            clock,
         };
         router.register(
             MemoryType::Episodic,
-            EpisodicMemory::new(db_dir.join("episodic.db")),
+            EpisodicMemory::new(db_dir.join("episodic.db"), router.clock.clone()),
         );
         router.register(
             MemoryType::Semantic,
-            SemanticMemory::new(db_dir.join("semantic.db")),
+            SemanticMemory::new(db_dir.join("semantic.db"), router.clock.clone()),
         );
         router.register(
             MemoryType::Procedural,
-            ProceduralMemory::new(db_dir.join("procedural.db")),
+            ProceduralMemory::new(db_dir.join("procedural.db"), router.clock.clone()),
         );
         router.register(
             MemoryType::SelfMemory,
-            SelfMemory::new(db_dir.join("self.db")),
+            SelfMemory::new(db_dir.join("self.db"), router.clock.clone()),
         );
         router
     }
@@ -302,7 +304,7 @@ impl MemoryBackend for MemoryRouter {
         }
 
         // Cross-type fan-out: sort by activation (importance + recency + frequency)
-        let now = chrono::Utc::now().timestamp();
+        let now = self.clock.wall_now().0 / 1000;
         all.sort_by(|a, b| {
             let sa = compute_activation(
                 &ActivationEntry::new(
@@ -421,9 +423,13 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
+
     async fn setup_router() -> (tempfile::TempDir, MemoryRouter) {
         let dir = tempfile::tempdir().unwrap();
-        let mut router = MemoryRouter::new(dir.path());
+        let mut router = MemoryRouter::new(dir.path(), test_clock());
         let ctx = SubsystemContext {
             name: "test".into(),
             working_dir: std::env::temp_dir(),

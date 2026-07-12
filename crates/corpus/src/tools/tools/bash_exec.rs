@@ -47,9 +47,10 @@ impl Tool for BashExecTool {
         let command = input["command"].as_str().unwrap_or("");
         let timeout_secs = input["timeout_seconds"].as_u64().unwrap_or(10);
 
-        let start = std::time::Instant::now();
+        let start = ctx.clock.mono_now();
 
-        let result = tokio::time::timeout(
+        let result = aletheon_kernel::chronos::Timer::timeout(
+            &*ctx.clock,
             std::time::Duration::from_secs(timeout_secs),
             Command::new("bash")
                 .arg("-c")
@@ -59,7 +60,7 @@ impl Tool for BashExecTool {
         )
         .await;
 
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 
         match result {
             Ok(Ok(output)) => {

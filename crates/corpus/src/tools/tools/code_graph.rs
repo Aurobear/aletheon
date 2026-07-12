@@ -54,8 +54,8 @@ impl Tool for CodeGraphTool {
         Box::new(CodeGraphTool)
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let result = run_operation(&input).await;
 
@@ -66,7 +66,7 @@ impl Tool for CodeGraphTool {
                     content,
                     is_error: false,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 }
@@ -75,7 +75,7 @@ impl Tool for CodeGraphTool {
                 content: format!("Error: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },

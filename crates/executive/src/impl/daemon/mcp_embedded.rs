@@ -169,6 +169,7 @@ impl McpEmbedded {
         let ctx = fabric::tool::ToolContext {
             working_dir: std::env::current_dir().unwrap_or_default(),
             session_id: "mcp-session".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
         };
 
         let result = tool.execute(arguments, &ctx).await;

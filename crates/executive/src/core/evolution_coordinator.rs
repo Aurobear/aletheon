@@ -14,6 +14,7 @@ use fabric::cognit::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
 use fabric::dasein::Stimmung;
 use fabric::meta::MetaRuntimeOps;
 use fabric::self_field::SelfAwareness;
+use fabric::Clock;
 use metacog::r#impl::meta_runtime::lineage::LineageTracker;
 use metacog::r#impl::morphogenesis::mutation_intent::MutationIntentGenerator;
 use metacog::r#impl::morphogenesis::pipeline::{MorphogenesisPipeline, PipelineResult};
@@ -107,11 +108,12 @@ pub struct EvolutionCoordinator {
 }
 
 impl EvolutionCoordinator {
-    pub fn new(config: EvolutionConfig) -> Result<Self> {
-        let lineage = LineageTracker::with_path(config.lineage_dir.join("lineage.jsonl"))?;
+    pub fn new(config: EvolutionConfig, clock: Arc<dyn Clock>) -> Result<Self> {
+        let lineage =
+            LineageTracker::with_path(config.lineage_dir.join("lineage.jsonl"), clock.clone())?;
         Ok(Self {
             config,
-            reflector: Reflector::new(),
+            reflector: Reflector::new(clock.clone()),
             intent_generator: MutationIntentGenerator::new(),
             lineage,
             recent_reflections: Arc::new(Mutex::new(Vec::new())),

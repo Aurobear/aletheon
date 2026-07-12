@@ -38,10 +38,11 @@ pub struct AgentFs {
     mount_point: std::path::PathBuf,
     nodes: Arc<RwLock<HashMap<String, FsNode>>>,
     paused: Arc<RwLock<bool>>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl AgentFs {
-    pub fn new(mount_point: std::path::PathBuf) -> Self {
+    pub fn new(mount_point: std::path::PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
         let mut nodes = HashMap::new();
 
         // Create directory structure
@@ -213,6 +214,7 @@ impl AgentFs {
             mount_point,
             nodes: Arc::new(RwLock::new(nodes)),
             paused: Arc::new(RwLock::new(false)),
+            clock,
         }
     }
 
@@ -284,7 +286,7 @@ impl AgentFs {
                 let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
                 let cpu_info = serde_json::json!({
                     "load_avg": load.trim(),
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&cpu_info)?.into_bytes())
             }
@@ -298,7 +300,9 @@ impl AgentFs {
                             serde_json::Value::String(parts[1].trim().to_string());
                     }
                 }
-                mem["timestamp"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+                mem["timestamp"] = serde_json::Value::String(
+                    fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                );
                 Ok(serde_json::to_string_pretty(&mem)?.into_bytes())
             }
             "sensor_disk" => {
@@ -316,7 +320,7 @@ impl AgentFs {
                 }
                 let disk_info = serde_json::json!({
                     "disks": disks,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&disk_info)?.into_bytes())
             }
@@ -335,7 +339,7 @@ impl AgentFs {
                 }
                 let net_info = serde_json::json!({
                     "interfaces": interfaces,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&net_info)?.into_bytes())
             }
@@ -354,7 +358,7 @@ impl AgentFs {
                     "agent": "main",
                     "state": "running",
                     "uptime_seconds": 0,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&status)?.into_bytes())
             }
@@ -369,11 +373,16 @@ impl AgentFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use std::path::PathBuf;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
 
     #[tokio::test]
     async fn test_fuse_read_root() {
-        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"));
+        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"), test_clock());
         let content = fs.read("/").await.unwrap();
         let listing = String::from_utf8(content).unwrap();
         assert!(listing.contains("context"));
@@ -383,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fuse_read_sensor_cpu() {
-        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"));
+        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"), test_clock());
         let content = fs.read("/sensors/cpu.json").await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&content).unwrap();
         assert!(json["load_avg"].is_string());
@@ -391,7 +400,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fuse_write_pause() {
-        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"));
+        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"), test_clock());
         assert!(!fs.is_paused().await);
 
         fs.write("/controls/pause", b"1").await.unwrap();
@@ -403,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fuse_readdir() {
-        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"));
+        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"), test_clock());
         let entries = fs.readdir("/sensors").await.unwrap();
         assert!(entries.contains(&"cpu.json".to_string()));
         assert!(entries.contains(&"memory.json".to_string()));
@@ -411,7 +420,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fuse_readonly_file() {
-        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"));
+        let fs = AgentFs::new(PathBuf::from("/tmp/test-fuse"), test_clock());
         let result = fs.write("/sensors/cpu.json", b"hack").await;
         assert!(result.is_err());
     }

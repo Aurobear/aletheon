@@ -12,8 +12,10 @@
 //!
 //! Design: `docs/plans/2026-06-19-aletheon-debug-system-design.md` (Layer 3).
 
+use aletheon_kernel::chronos::Timer;
 use anyhow::{Context, Result};
 use clap::Subcommand;
+use fabric::Clock;
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -658,7 +660,11 @@ async fn perf_stats(socket: &std::path::Path, interval: Option<u64>) -> Result<(
             Some(secs) => {
                 println!();
                 println!("Refreshing in {}s (Ctrl+C to stop)...", secs);
-                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                Timer::sleep(
+                    &*std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                    std::time::Duration::from_secs(secs),
+                )
+                .await;
                 // Clear screen
                 print!("\x1B[2J\x1B[H");
             }
@@ -1008,15 +1014,17 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
     println!();
 
     // Count events in the window
-    let start = std::time::Instant::now();
+    let clock = std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new());
+    let start = clock.mono_now();
     let mut count: u64 = 0;
-    let mut last_report = std::time::Instant::now();
+    let mut last_report = clock.mono_now();
     let report_interval = std::time::Duration::from_secs(window_secs);
 
     let mut line = String::new();
     loop {
         line.clear();
-        match tokio::time::timeout(
+        match Timer::timeout(
+            &*clock,
             std::time::Duration::from_millis(100),
             reader.read_line(&mut line),
         )
@@ -1032,14 +1040,15 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
             Err(_) => {} // Timeout — check if we should report
         }
 
-        if last_report.elapsed() >= report_interval {
-            let elapsed = start.elapsed().as_secs_f64();
+        if (clock.mono_now().0 - last_report.0) >= report_interval.as_millis() as u64 {
+            let elapsed_ms = clock.mono_now().0 - start.0;
+            let elapsed = elapsed_ms as f64 / 1000.0;
             let hz = count as f64 / elapsed;
             println!(
                 "average rate: {:.3} Hz\t{} messages in {:.1}s",
                 hz, count, elapsed
             );
-            last_report = std::time::Instant::now();
+            last_report = clock.mono_now();
         }
     }
 

@@ -25,11 +25,12 @@ pub struct ExtractionResult {
 /// and truncating to fit within 70% of the context window.
 pub struct Phase1Extractor {
     config: Phase1Config,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl Phase1Extractor {
-    pub fn new(config: Phase1Config) -> Self {
-        Self { config }
+    pub fn new(config: Phase1Config, clock: Arc<dyn fabric::Clock>) -> Self {
+        Self { config, clock }
     }
 
     /// Run Phase 1 extraction on eligible sessions.
@@ -41,7 +42,7 @@ impl Phase1Extractor {
         memory_root: &Path,
     ) -> anyhow::Result<usize> {
         let claim_id = Uuid::new_v4().to_string();
-        let now = current_timestamp();
+        let now = self.clock.wall_now().0 as u64 / 1000;
 
         let max_age_secs = self.config.max_age_days as u64 * 86400;
         let min_idle_secs = self.config.min_idle_hours as u64 * 3600;
@@ -242,14 +243,6 @@ fn generate_slug(session_id: &str) -> String {
         .collect()
 }
 
-/// Current Unix timestamp in seconds.
-fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,7 +377,11 @@ mod tests {
         }
 
         let mut db = StateDatabase::new();
-        let now = current_timestamp();
+        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::new(
+            1000000000000,
+            1000000000000,
+        ));
+        let now = clock.wall_now().0 as u64 / 1000;
         for sid in &["sess-a", "sess-b"] {
             let mut r = SessionRecord::new(
                 sid.to_string(),
@@ -396,7 +393,7 @@ mod tests {
         }
 
         let config = default_phase1_config();
-        let extractor = Phase1Extractor::new(config);
+        let extractor = Phase1Extractor::new(config, clock);
         let count = extractor.run(&mut db, memory_root).await.unwrap();
 
         assert_eq!(count, 2);

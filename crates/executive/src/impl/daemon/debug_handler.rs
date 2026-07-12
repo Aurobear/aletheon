@@ -8,6 +8,7 @@ use fabric::kernel::debug::{DebugEvent, DebugLevel};
 use fabric::kernel::debug_bus::{
     DebugBusHook, EventFilter, EventRecorder, PerfCounter, RecorderSink, SubscriberSink,
 };
+use fabric::Clock;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -66,19 +67,26 @@ pub struct DebugHandler {
     subscribers: Mutex<HashMap<String, mpsc::Sender<DebugEvent>>>,
     recordings: Mutex<HashMap<String, ActiveRecording>>,
     started_at: Instant,
+    /// Clock for timestamp/sleep operations routed through kernel Timer.
+    clock: Arc<dyn Clock>,
     /// Pending subscriber receivers, waiting for the server to drain them.
     /// Populated by `subscribe()`, consumed by `take_pending_subscriber_rx()`.
     pending_subscriber_rx: Mutex<Option<mpsc::Receiver<DebugEvent>>>,
 }
 
 impl DebugHandler {
-    pub fn new(hook: Arc<Mutex<DebugBusHook>>, perf: Arc<PerfCounter>) -> Self {
+    pub fn new(
+        hook: Arc<Mutex<DebugBusHook>>,
+        perf: Arc<PerfCounter>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             hook,
             perf,
             subscribers: Mutex::new(HashMap::new()),
             recordings: Mutex::new(HashMap::new()),
             started_at: Instant::now(),
+            clock,
             pending_subscriber_rx: Mutex::new(None),
         }
     }
@@ -220,10 +228,8 @@ impl DebugHandler {
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
             .unwrap_or_else(|| {
-                let ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
+                // wall_now returns ms since epoch; convert to seconds for bag path
+                let ts = (self.clock.wall_now().0 / 1000) as u64;
                 PathBuf::from(format!("/tmp/aletheon/bag_{}.jsonl", ts))
             });
 
@@ -340,6 +346,7 @@ impl DebugHandler {
         let event_count = events.len();
         let hook = self.hook.clone();
         let _perf = self.perf.clone();
+        let clock = self.clock.clone();
 
         // Spawn async replay task — re-publish events with timing
         tokio::spawn(async move {
@@ -349,7 +356,11 @@ impl DebugHandler {
                 if speed > 0.0 && prev_ts > 0 && event.ts > prev_ts {
                     let delay_ms = (event.ts - prev_ts) as f64 / speed;
                     if delay_ms > 0.0 && delay_ms < 60_000.0 {
-                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
+                        aletheon_kernel::chronos::Timer::sleep(
+                            &*clock,
+                            std::time::Duration::from_millis(delay_ms as u64),
+                        )
+                        .await;
                     }
                 }
                 prev_ts = event.ts;

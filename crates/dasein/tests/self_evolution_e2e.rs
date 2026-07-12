@@ -16,7 +16,12 @@ use dasein::core::store::SelfFieldStore;
 use fabric::self_field::RiskLevel;
 use fabric::{MutationIntent, Verdict};
 use serde_json::json;
+use std::sync::Arc;
 use tempfile::NamedTempFile;
+
+fn test_clock() -> Arc<dyn fabric::Clock> {
+    Arc::new(aletheon_kernel::chronos::TestClock::default())
+}
 
 /// Approximate f64 comparison for test assertions.
 fn approx_eq(a: f64, b: f64) -> bool {
@@ -39,7 +44,7 @@ fn cycle1_narrative_roundtrip() {
     let (_tmp, store) = temp_store();
 
     // -- Phase 1: create and populate --
-    let narrative = NarrativeLayer::new(1000);
+    let narrative = NarrativeLayer::new(1000, test_clock());
     narrative.narrate("task_started", "user requested file analysis");
     narrative.narrate("boundary_check", "allowed: no matching rule");
     narrative.narrate("task_completed", "analysis finished");
@@ -47,7 +52,7 @@ fn cycle1_narrative_roundtrip() {
     narrative.save_to_store(&store).expect("save narrative");
 
     // -- Phase 2: simulate restart --
-    let mut loaded = NarrativeLayer::new(1000);
+    let mut loaded = NarrativeLayer::new(1000, test_clock());
     loaded.load_from_store(&store).expect("load narrative");
 
     assert_eq!(loaded.len(), 3);
@@ -63,13 +68,13 @@ fn cycle1_narrative_roundtrip() {
 fn cycle1_attention_roundtrip() {
     let (_tmp, store) = temp_store();
 
-    let attention = AttentionLayer::new(0.0); // no decay for deterministic test
+    let attention = AttentionLayer::new(0.0, test_clock()); // no decay for deterministic test
     attention.attend("code_review", 0.9);
     attention.attend("bug_triage", 0.6);
 
     attention.save_to_store(&store).expect("save attention");
 
-    let mut loaded = AttentionLayer::new(0.0);
+    let mut loaded = AttentionLayer::new(0.0, test_clock());
     loaded.load_from_store(&store).expect("load attention");
 
     let topics = loaded.all_topics();
@@ -167,7 +172,12 @@ fn cycle1_boundary_rule_roundtrip() {
 fn cycle1_identity_roundtrip() {
     let (_tmp, store) = temp_store();
 
-    let identity = IdentityLayer::new("aletheon", "persistent self-evolving runtime", "0.1.0");
+    let identity = IdentityLayer::new(
+        "aletheon",
+        "persistent self-evolving runtime",
+        "0.1.0",
+        test_clock(),
+    );
 
     // Apply a mutation to build history
     identity.mutate(
@@ -185,7 +195,7 @@ fn cycle1_identity_roundtrip() {
     identity.save_to_store(&store).expect("save identity");
 
     // Simulate restart
-    let mut loaded = IdentityLayer::new("temp", "temp", "0.0.0");
+    let mut loaded = IdentityLayer::new("temp", "temp", "0.0.0", test_clock());
     loaded.load_from_store(&store).expect("load identity");
 
     let loaded_current = loaded.current();
@@ -208,7 +218,7 @@ fn cycle1_identity_roundtrip() {
 fn cycle1_mutation_records_roundtrip() {
     let (_tmp, store) = temp_store();
 
-    let mutation = MutationLayer::new();
+    let mutation = MutationLayer::new(test_clock());
 
     // Review a reversible mutation (auto-approved)
     let m1 = MutationIntent {
@@ -235,7 +245,7 @@ fn cycle1_mutation_records_roundtrip() {
     mutation.save_to_store(&store).expect("save mutation");
 
     // Simulate restart
-    let mut loaded = MutationLayer::new();
+    let mut loaded = MutationLayer::new(test_clock());
     loaded.load_from_store(&store).expect("load mutation");
 
     let records = loaded.records();
@@ -258,7 +268,7 @@ fn cycle1_mutation_records_roundtrip() {
 fn cycle1_continuity_roundtrip() {
     let (_tmp, store) = temp_store();
 
-    let continuity = ContinuityLayer::new(Duration::hours(24));
+    let continuity = ContinuityLayer::new(Duration::hours(24), test_clock());
     continuity.record("aletheon", "0.1.0", "initialized");
     continuity.record("aletheon", "0.1.0", "first_task_completed");
 
@@ -268,7 +278,7 @@ fn cycle1_continuity_roundtrip() {
     continuity.save_to_store(&store).expect("save continuity");
 
     // Simulate restart
-    let mut loaded = ContinuityLayer::new(Duration::hours(24));
+    let mut loaded = ContinuityLayer::new(Duration::hours(24), test_clock());
     loaded.load_from_store(&store).expect("load continuity");
 
     assert_eq!(loaded.len(), 2);
@@ -292,12 +302,12 @@ fn full_e2e_two_cycles() {
     // ================================================================
 
     // -- Narrative: record task decisions --
-    let narrative = NarrativeLayer::new(1000);
+    let narrative = NarrativeLayer::new(1000, test_clock());
     narrative.narrate("task_started", "analyze codebase structure");
     narrative.narrate("review", "allowed: care_score=0.35");
 
     // -- Attention: focus on code review --
-    let attention = AttentionLayer::new(0.0);
+    let attention = AttentionLayer::new(0.0, test_clock());
     attention.attend("code_review", 0.9);
     attention.attend("refactoring", 0.5);
 
@@ -318,10 +328,10 @@ fn full_e2e_two_cycles() {
     });
 
     // -- Identity: initial state --
-    let identity = IdentityLayer::new("aletheon", "persistent runtime", "0.1.0");
+    let identity = IdentityLayer::new("aletheon", "persistent runtime", "0.1.0", test_clock());
 
     // -- Mutation: record a reversible mutation review --
-    let mutation = MutationLayer::new();
+    let mutation = MutationLayer::new(test_clock());
     mutation.review(&MutationIntent {
         target: "care_priorities".to_string(),
         change: json!({"efficiency": 0.7}),
@@ -330,7 +340,7 @@ fn full_e2e_two_cycles() {
     });
 
     // -- Continuity: record lineage --
-    let continuity = ContinuityLayer::new(Duration::hours(24));
+    let continuity = ContinuityLayer::new(Duration::hours(24), test_clock());
     continuity.record("aletheon", "0.1.0", "initialized");
     continuity.record("aletheon", "0.1.0", "cycle_1_complete");
 
@@ -347,13 +357,13 @@ fn full_e2e_two_cycles() {
     // SIMULATE RESTART: load all layers fresh from store
     // ================================================================
 
-    let mut narrative2 = NarrativeLayer::new(1000);
-    let mut attention2 = AttentionLayer::new(0.0);
+    let mut narrative2 = NarrativeLayer::new(1000, test_clock());
+    let mut attention2 = AttentionLayer::new(0.0, test_clock());
     let mut care2 = CareLayer::new();
     let mut boundary2 = BoundaryLayer::new();
-    let mut identity2 = IdentityLayer::new("temp", "temp", "0.0.0");
-    let mut mutation2 = MutationLayer::new();
-    let mut continuity2 = ContinuityLayer::new(Duration::hours(24));
+    let mut identity2 = IdentityLayer::new("temp", "temp", "0.0.0", test_clock());
+    let mut mutation2 = MutationLayer::new(test_clock());
+    let mut continuity2 = ContinuityLayer::new(Duration::hours(24), test_clock());
 
     narrative2.load_from_store(&store).unwrap();
     attention2.load_from_store(&store).unwrap();
@@ -458,13 +468,13 @@ fn full_e2e_two_cycles() {
     // SIMULATE SECOND RESTART: verify accumulated evolution
     // ================================================================
 
-    let mut narrative3 = NarrativeLayer::new(1000);
-    let mut attention3 = AttentionLayer::new(0.0);
+    let mut narrative3 = NarrativeLayer::new(1000, test_clock());
+    let mut attention3 = AttentionLayer::new(0.0, test_clock());
     let mut care3 = CareLayer::new();
     let mut boundary3 = BoundaryLayer::new();
-    let mut identity3 = IdentityLayer::new("temp", "temp", "0.0.0");
-    let mut mutation3 = MutationLayer::new();
-    let mut continuity3 = ContinuityLayer::new(Duration::hours(24));
+    let mut identity3 = IdentityLayer::new("temp", "temp", "0.0.0", test_clock());
+    let mut mutation3 = MutationLayer::new(test_clock());
+    let mut continuity3 = ContinuityLayer::new(Duration::hours(24), test_clock());
 
     narrative3.load_from_store(&store).unwrap();
     attention3.load_from_store(&store).unwrap();

@@ -49,8 +49,8 @@ impl Tool for WebFetchTool {
         Box::new(WebFetchTool)
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let url = match input.get("url").and_then(|v| v.as_str()) {
             Some(u) => u.to_string(),
@@ -59,7 +59,7 @@ impl Tool for WebFetchTool {
                     content: "Error: 'url' parameter is required".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -95,14 +95,14 @@ impl Tool for WebFetchTool {
                     content: format!("Error: unsupported method '{}'. Use GET or POST.", method),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
             }
         };
 
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 
         match request.send().await {
             Ok(response) => {
@@ -208,6 +208,7 @@ mod tests {
                 &ToolContext {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
                 },
             )
             .await;
@@ -231,6 +232,7 @@ mod tests {
                 &ToolContext {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
                 },
             )
             .await;

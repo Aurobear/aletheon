@@ -2,6 +2,7 @@ use cognit::harness::event_sink::Event;
 use fabric::events::ui_event::ClientEvent;
 
 /// Convert a `ClientEvent` to a JSON-RPC 2.0 notification string.
+#[allow(dead_code)]
 pub fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
     let notification = serde_json::json!({
         "jsonrpc": "2.0",
@@ -13,6 +14,7 @@ pub fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
 
 /// Convert an internal `Event` to a client-facing `ClientEvent`, if applicable.
 /// Returns `None` for internal-only events (compaction, memory, approval, etc.).
+#[allow(dead_code)]
 pub fn event_to_client_event(event: &Event) -> Option<ClientEvent> {
     match event {
         Event::TurnStarted { iteration } => Some(ClientEvent::TurnStarted {

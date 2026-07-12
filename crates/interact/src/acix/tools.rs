@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use fabric::Clock;
 use serde_json::json;
 
 use crate::acix::Aci;
@@ -47,6 +48,7 @@ fn err(msg: impl Into<String>, elapsed_ms: u64) -> ToolResult {
 
 pub struct ScreenshotTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -74,11 +76,12 @@ impl Tool for ScreenshotTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(ScreenshotTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         match self.aci.screenshot() {
             Ok(img) => ok(
                 format!(
@@ -87,9 +90,9 @@ impl Tool for ScreenshotTool {
                     img.height,
                     img.data.len()
                 ),
-                start.elapsed().as_millis() as u64,
+                self.clock.mono_now().0 - start.0,
             ),
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -100,6 +103,7 @@ impl Tool for ScreenshotTool {
 
 pub struct TreeTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -127,20 +131,21 @@ impl Tool for TreeTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(TreeTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         match self.aci.get_accessibility_tree() {
             Ok(tree) => {
                 let formatted = format_element(&tree.root, 0);
                 ok(
                     format!("app: {}\n{}", tree.app_name, formatted),
-                    start.elapsed().as_millis() as u64,
+                    self.clock.mono_now().0 - start.0,
                 )
             }
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -169,6 +174,7 @@ fn format_element(elem: &corpus::drivers::types::Element, depth: usize) -> Strin
 
 pub struct ClickTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -200,19 +206,20 @@ impl Tool for ClickTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(ClickTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         let x = input["x"].as_i64().unwrap_or(0) as i32;
         let y = input["y"].as_i64().unwrap_or(0) as i32;
         match self.aci.click(x, y) {
             Ok(()) => ok(
                 format!("Clicked at ({}, {})", x, y),
-                start.elapsed().as_millis() as u64,
+                self.clock.mono_now().0 - start.0,
             ),
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -223,6 +230,7 @@ impl Tool for ClickTool {
 
 pub struct TypeTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -253,18 +261,19 @@ impl Tool for TypeTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(TypeTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         let text = input["text"].as_str().unwrap_or("");
         match self.aci.type_text(text) {
             Ok(()) => ok(
                 format!("Typed: {:?}", text),
-                start.elapsed().as_millis() as u64,
+                self.clock.mono_now().0 - start.0,
             ),
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -275,6 +284,7 @@ impl Tool for TypeTool {
 
 pub struct FindTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -308,18 +318,19 @@ impl Tool for FindTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(FindTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         let desc = input["description"].as_str().unwrap_or("");
         match self.aci.find_element(desc) {
             Ok(elems) => {
                 if elems.is_empty() {
                     ok(
                         "No elements found.".to_string(),
-                        start.elapsed().as_millis() as u64,
+                        self.clock.mono_now().0 - start.0,
                     )
                 } else {
                     let mut out = format!("Found {} element(s):\n", elems.len());
@@ -335,10 +346,10 @@ impl Tool for FindTool {
                             e.bounds.height,
                         );
                     }
-                    ok(out, start.elapsed().as_millis() as u64)
+                    ok(out, self.clock.mono_now().0 - start.0)
                 }
             }
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -349,6 +360,7 @@ impl Tool for FindTool {
 
 pub struct ObserveTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -376,11 +388,12 @@ impl Tool for ObserveTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(ObserveTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         match self.aci.smart_observe() {
             Ok(observation) => {
                 let text = match observation {
@@ -404,9 +417,9 @@ impl Tool for ObserveTool {
                         )
                     }
                 };
-                ok(text, start.elapsed().as_millis() as u64)
+                ok(text, self.clock.mono_now().0 - start.0)
             }
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -417,6 +430,7 @@ impl Tool for ObserveTool {
 
 pub struct DragTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -450,11 +464,12 @@ impl Tool for DragTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(DragTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         let x1 = input["x1"].as_i64().unwrap_or(0) as i32;
         let y1 = input["y1"].as_i64().unwrap_or(0) as i32;
         let x2 = input["x2"].as_i64().unwrap_or(0) as i32;
@@ -462,9 +477,9 @@ impl Tool for DragTool {
         match self.aci.drag(x1, y1, x2, y2) {
             Ok(()) => ok(
                 format!("Dragged from ({}, {}) to ({}, {})", x1, y1, x2, y2),
-                start.elapsed().as_millis() as u64,
+                self.clock.mono_now().0 - start.0,
             ),
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -475,6 +490,7 @@ impl Tool for DragTool {
 
 pub struct HotkeyTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 fn parse_key(s: &str) -> Option<Key> {
@@ -581,11 +597,12 @@ impl Tool for HotkeyTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(HotkeyTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         let keys_input: Vec<String> = input["keys"]
             .as_array()
             .map(|arr| {
@@ -602,7 +619,7 @@ impl Tool for HotkeyTool {
                 None => {
                     return err(
                         format!("Unknown key: {:?}", k),
-                        start.elapsed().as_millis() as u64,
+                        self.clock.mono_now().0 - start.0,
                     )
                 }
             }
@@ -611,9 +628,9 @@ impl Tool for HotkeyTool {
         match self.aci.hotkey(&parsed) {
             Ok(()) => ok(
                 format!("Pressed: {}", keys_input.join(" + ")),
-                start.elapsed().as_millis() as u64,
+                self.clock.mono_now().0 - start.0,
             ),
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -624,6 +641,7 @@ impl Tool for HotkeyTool {
 
 pub struct ScrollTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 fn parse_scroll_direction(s: &str) -> Option<ScrollDirection> {
@@ -675,11 +693,12 @@ impl Tool for ScrollTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(ScrollTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         let x = input["x"].as_i64().unwrap_or(0) as i32;
         let y = input["y"].as_i64().unwrap_or(0) as i32;
         let dir_str = input["direction"].as_str().unwrap_or("down");
@@ -690,7 +709,7 @@ impl Tool for ScrollTool {
             None => {
                 return err(
                     format!("Unknown scroll direction: {:?}", dir_str),
-                    start.elapsed().as_millis() as u64,
+                    self.clock.mono_now().0 - start.0,
                 )
             }
         };
@@ -698,9 +717,9 @@ impl Tool for ScrollTool {
         match self.aci.scroll(x, y, direction, amount) {
             Ok(()) => ok(
                 format!("Scrolled {} x{} at ({}, {})", dir_str, amount, x, y),
-                start.elapsed().as_millis() as u64,
+                self.clock.mono_now().0 - start.0,
             ),
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -711,6 +730,7 @@ impl Tool for ScrollTool {
 
 pub struct RightClickTool {
     aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -742,19 +762,20 @@ impl Tool for RightClickTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(RightClickTool {
             aci: Arc::clone(&self.aci),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         let x = input["x"].as_i64().unwrap_or(0) as i32;
         let y = input["y"].as_i64().unwrap_or(0) as i32;
         match self.aci.right_click(x, y) {
             Ok(()) => ok(
                 format!("Right-clicked at ({}, {})", x, y),
-                start.elapsed().as_millis() as u64,
+                self.clock.mono_now().0 - start.0,
             ),
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -766,11 +787,20 @@ impl Tool for RightClickTool {
 pub struct AcixGroundTool {
     aci: Arc<Aci>,
     grounding: Arc<dyn GroundingProvider>,
+    clock: Arc<dyn Clock>,
 }
 
 impl AcixGroundTool {
-    pub fn new(aci: Arc<Aci>, grounding: Arc<dyn GroundingProvider>) -> Self {
-        Self { aci, grounding }
+    pub fn new(
+        aci: Arc<Aci>,
+        grounding: Arc<dyn GroundingProvider>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            aci,
+            grounding,
+            clock,
+        }
     }
 }
 
@@ -806,16 +836,17 @@ impl Tool for AcixGroundTool {
         Box::new(AcixGroundTool {
             aci: Arc::clone(&self.aci),
             grounding: Arc::clone(&self.grounding),
+            clock: Arc::clone(&self.clock),
         })
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         let desc = input["description"].as_str().unwrap_or("");
 
         let image = match self.aci.screenshot() {
             Ok(img) => img,
-            Err(e) => return err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => return err(e.to_string(), self.clock.mono_now().0 - start.0),
         };
 
         match self.grounding.locate(&image, desc).await {
@@ -829,9 +860,9 @@ impl Tool for AcixGroundTool {
                     "label": result.label,
                 }))
                 .unwrap_or_default(),
-                start.elapsed().as_millis() as u64,
+                self.clock.mono_now().0 - start.0,
             ),
-            Err(e) => err(e.to_string(), start.elapsed().as_millis() as u64),
+            Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
         }
     }
 }
@@ -858,43 +889,60 @@ pub fn default_aci() -> Arc<Aci> {
     ))
 }
 
-/// Register all ACIX tools into the given `ToolRegistry` using a caller-provided `Aci`.
-pub fn register_acix_tools_with(registry: &mut corpus::tools::tools::ToolRegistry, aci: Arc<Aci>) {
+/// Register all ACIX tools into the given `ToolRegistry` using a caller-provided `Aci` and `Clock`.
+pub fn register_acix_tools_with(
+    registry: &mut corpus::tools::tools::ToolRegistry,
+    aci: Arc<Aci>,
+    clock: Arc<dyn Clock>,
+) {
     let _ = registry.register(Arc::new(ScreenshotTool {
         aci: Arc::clone(&aci),
+        clock: Arc::clone(&clock),
     }));
     let _ = registry.register(Arc::new(TreeTool {
         aci: Arc::clone(&aci),
+        clock: Arc::clone(&clock),
     }));
     let _ = registry.register(Arc::new(ClickTool {
         aci: Arc::clone(&aci),
+        clock: Arc::clone(&clock),
     }));
     let _ = registry.register(Arc::new(TypeTool {
         aci: Arc::clone(&aci),
+        clock: Arc::clone(&clock),
     }));
     let _ = registry.register(Arc::new(FindTool {
         aci: Arc::clone(&aci),
+        clock: Arc::clone(&clock),
     }));
     let _ = registry.register(Arc::new(ObserveTool {
         aci: Arc::clone(&aci),
+        clock: Arc::clone(&clock),
     }));
     let _ = registry.register(Arc::new(DragTool {
         aci: Arc::clone(&aci),
+        clock: Arc::clone(&clock),
     }));
     let _ = registry.register(Arc::new(HotkeyTool {
         aci: Arc::clone(&aci),
+        clock: Arc::clone(&clock),
     }));
     let _ = registry.register(Arc::new(ScrollTool {
         aci: Arc::clone(&aci),
+        clock: Arc::clone(&clock),
     }));
-    let _ = registry.register(Arc::new(RightClickTool { aci }));
+    let _ = registry.register(Arc::new(RightClickTool { aci, clock }));
 }
 
 /// Register all ACIX tools into the given `ToolRegistry` with mock drivers.
 ///
 /// Convenience for testing. For production, use `register_acix_tools_with`.
 pub fn register_acix_tools(registry: &mut corpus::tools::tools::ToolRegistry) {
-    register_acix_tools_with(registry, default_aci());
+    register_acix_tools_with(
+        registry,
+        default_aci(),
+        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+    );
 }
 
 /// Register the `acix_ground` tool into the given `ToolRegistry`.
@@ -905,6 +953,7 @@ pub fn register_acix_ground_tool(
     registry: &mut corpus::tools::tools::ToolRegistry,
     aci: Arc<Aci>,
     grounding: Arc<dyn GroundingProvider>,
+    clock: Arc<dyn Clock>,
 ) {
-    let _ = registry.register(Arc::new(AcixGroundTool::new(aci, grounding)));
+    let _ = registry.register(Arc::new(AcixGroundTool::new(aci, grounding, clock)));
 }

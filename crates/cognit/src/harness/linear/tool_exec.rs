@@ -26,7 +26,7 @@ impl ReActLoop {
     {
         use futures::StreamExt;
 
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
         let mut tool_calls_made: usize = 0;
         let mut tool_errors: usize = 0;
 
@@ -49,7 +49,7 @@ impl ReActLoop {
                     let metrics = TurnMetrics {
                         tool_calls_made,
                         tool_errors,
-                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
                     };
@@ -189,7 +189,7 @@ impl ReActLoop {
                 let metrics = TurnMetrics {
                     tool_calls_made,
                     tool_errors,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: true,
                 };
@@ -289,7 +289,7 @@ impl ReActLoop {
                     let metrics = TurnMetrics {
                         tool_calls_made,
                         tool_errors,
-                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
                     };
@@ -340,7 +340,7 @@ impl ReActLoop {
                         let metrics = TurnMetrics {
                             tool_calls_made,
                             tool_errors,
-                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                             iterations: self.iteration,
                             completed_normally: false,
                         };
@@ -381,7 +381,7 @@ impl ReActLoop {
                 // Record call in budget tracker
                 self.tool_budget.record_call(tool_budget::ToolCallRecord {
                     tool_name: name.clone(),
-                    timestamp: std::time::Instant::now(),
+                    timestamp: self.clock.mono_now(),
                     success: !is_error,
                 });
                 // Emit awareness signal for tool completion
@@ -491,7 +491,7 @@ impl ReActLoop {
                 let metrics = TurnMetrics {
                     tool_calls_made,
                     tool_errors,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: false,
                 };
@@ -534,7 +534,7 @@ impl ReActLoop {
         let metrics = TurnMetrics {
             tool_calls_made,
             tool_errors,
-            elapsed_ms: start.elapsed().as_millis() as u64,
+            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
             iterations: self.iteration,
             completed_normally: false,
         };

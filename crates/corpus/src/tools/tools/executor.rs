@@ -369,14 +369,18 @@ mod tests {
         fn boxed_clone(&self) -> Box<dyn Tool> {
             panic!("mock tool boxed_clone should not be called in tests")
         }
-        async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+        async fn execute(&self, _input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
             let seq = self.invocation_counter.fetch_add(1, Ordering::SeqCst);
             self.invocation_log
                 .lock()
                 .unwrap()
                 .push((self.tool_name.clone(), seq));
             if self.delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+                aletheon_kernel::chronos::Timer::sleep(
+                    &*ctx.clock,
+                    Duration::from_millis(self.delay_ms),
+                )
+                .await;
             }
             ToolResult {
                 content: format!("{}:ok:seq{}", self.tool_name, seq),
@@ -390,6 +394,7 @@ mod tests {
         ToolContext {
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         }
     }
 
@@ -480,13 +485,13 @@ mod tests {
 
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 3);
         // 3 calls each sleeping 100ms should complete in ~100ms if parallel,
         // not ~300ms if serial. Use 200ms as generous bound.
         assert!(
-            elapsed < Duration::from_millis(200),
+            elapsed < 200,
             "Expected parallel execution, took {:?}",
             elapsed
         );
@@ -599,12 +604,12 @@ mod tests {
 
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 2);
         // Same-path writes must be serialized => ~200ms not ~100ms.
         assert!(
-            elapsed >= Duration::from_millis(180),
+            elapsed >= 180,
             "Expected serialized execution for same-path writes, took {:?}",
             elapsed
         );
@@ -657,12 +662,12 @@ mod tests {
 
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 3);
         // Disjoint-path writes should run in parallel.
         assert!(
-            elapsed < Duration::from_millis(200),
+            elapsed < 200,
             "Expected parallel execution for disjoint writes, took {:?}",
             elapsed
         );
@@ -697,12 +702,12 @@ mod tests {
 
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 3);
         // Serialized: 3 x 100ms = ~300ms.
         assert!(
-            elapsed >= Duration::from_millis(280),
+            elapsed >= 280,
             "Expected serialized execution for side effects, took {:?}",
             elapsed
         );
@@ -870,17 +875,17 @@ mod tests {
 
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 4);
         // With concurrency=2 and 4 tasks of 100ms each, should take ~200ms.
         assert!(
-            elapsed >= Duration::from_millis(180),
+            elapsed >= 180,
             "Expected concurrency limit to enforce batching, took {:?}",
             elapsed
         );
         assert!(
-            elapsed < Duration::from_millis(350),
+            elapsed < 350,
             "But should not be fully serial, took {:?}",
             elapsed
         );

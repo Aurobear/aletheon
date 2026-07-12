@@ -4,6 +4,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Permission level for tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -22,6 +23,7 @@ pub enum PermissionLevel {
 pub struct ToolContext {
     pub working_dir: std::path::PathBuf,
     pub session_id: String,
+    pub clock: Arc<dyn crate::Clock>,
 }
 
 /// Result of a tool execution.

@@ -2,6 +2,7 @@ use fabric::body::{Action, ActionResult};
 use fabric::capability::{Capability, PermissionLevel as AbiPermissionLevel};
 use fabric::context::Context;
 use fabric::tool::{PermissionLevel as ToolPermissionLevel, ToolContext, ToolResult};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Convert Action to tool name + JSON input
@@ -26,10 +27,11 @@ pub fn tool_result_to_action_result(result: &ToolResult) -> ActionResult {
 }
 
 /// Convert Context to ToolContext
-pub fn context_to_tool_context(ctx: &Context) -> ToolContext {
+pub fn context_to_tool_context(ctx: &Context, clock: Arc<dyn fabric::Clock>) -> ToolContext {
     ToolContext {
         working_dir: ctx.working_dir.clone(),
         session_id: ctx.session_id.clone(),
+        clock,
     }
 }
 

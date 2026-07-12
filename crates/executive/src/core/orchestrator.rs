@@ -9,6 +9,8 @@ use fabric::body::{Action, ActionResult};
 use fabric::context::Context;
 use fabric::runtime::StepResult;
 use fabric::self_field::{Intent, Verdict};
+use fabric::Clock;
+use std::sync::Arc;
 
 /// Top-level Aletheon runtime — decomposes Engine::run_turn() into 6 layers
 ///
@@ -63,8 +65,12 @@ impl AletheonExecutive {
     ///
     /// Returns `Err` if the coordinator cannot be initialized (e.g., lineage
     /// directory creation fails).
-    pub fn with_evolution(mut self, evo_config: EvolutionConfig) -> Result<Self> {
-        self.evolution = Some(EvolutionCoordinator::new(evo_config)?);
+    pub fn with_evolution(
+        mut self,
+        evo_config: EvolutionConfig,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        self.evolution = Some(EvolutionCoordinator::new(evo_config, clock)?);
         Ok(self)
     }
 

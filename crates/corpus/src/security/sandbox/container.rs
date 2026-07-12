@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use std::time::{Duration, Instant};
+use fabric::Clock;
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::sandbox::{
@@ -78,6 +80,7 @@ pub struct ContainerBackend {
     default_image: String,
     network_mode: NetworkMode,
     resource_limits: ContainerResourceLimits,
+    clock: Arc<dyn Clock>,
 }
 
 impl ContainerBackend {
@@ -87,18 +90,20 @@ impl ContainerBackend {
         default_image: String,
         network_mode: NetworkMode,
         resource_limits: ContainerResourceLimits,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             runtime,
             default_image,
             network_mode,
             resource_limits,
+            clock,
         }
     }
 
     /// Probe for an available container runtime and build a default backend.
     /// Returns `None` if neither Docker nor Podman is found.
-    pub fn probe() -> Option<Self> {
+    pub fn probe(clock: Arc<dyn Clock>) -> Option<Self> {
         for runtime in [ContainerRuntime::Docker, ContainerRuntime::Podman] {
             if which::which(runtime.binary()).is_ok() {
                 info!(runtime = runtime.binary(), "Container runtime detected");
@@ -107,6 +112,7 @@ impl ContainerBackend {
                     "ubuntu:22.04".to_string(),
                     NetworkMode::None,
                     ContainerResourceLimits::default(),
+                    clock,
                 ));
             }
         }
@@ -254,9 +260,9 @@ impl SandboxBackend for ContainerBackend {
         self.ensure_image().await?;
 
         let args = self.build_run_args(cmd, config);
-        let start = Instant::now();
+        let start = self.clock.mono_now();
 
-        let result = tokio::time::timeout(timeout, async {
+        let result = aletheon_kernel::chronos::Timer::timeout(&*self.clock, timeout, async {
             tokio::process::Command::new(&runtime)
                 .args(&args)
                 .current_dir(&config.working_dir)
@@ -265,7 +271,7 @@ impl SandboxBackend for ContainerBackend {
         })
         .await;
 
-        let elapsed = start.elapsed();
+        let elapsed = self.clock.mono_now().0.saturating_sub(start.0);
 
         match result {
             Ok(Ok(output)) => Ok(SandboxResult {
@@ -274,7 +280,7 @@ impl SandboxBackend for ContainerBackend {
                 exit_code: output.status.code().unwrap_or(-1),
                 backend_used: "container".to_string(),
                 isolation_level: IsolationLevel::Container,
-                elapsed_ms: elapsed.as_millis() as u64,
+                elapsed_ms: elapsed,
             }),
             Ok(Err(e)) => Err(anyhow::anyhow!("Container execution failed: {}", e)),
             Err(_) => Ok(SandboxResult {
@@ -283,7 +289,7 @@ impl SandboxBackend for ContainerBackend {
                 exit_code: -1,
                 backend_used: "container".to_string(),
                 isolation_level: IsolationLevel::Container,
-                elapsed_ms: elapsed.as_millis() as u64,
+                elapsed_ms: elapsed,
             }),
         }
     }
@@ -312,6 +318,7 @@ mod tests {
                 pids_limit: Some(256),
                 timeout: Duration::from_secs(60),
             },
+            std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         )
     }
 
@@ -334,6 +341,7 @@ mod tests {
             "ubuntu:22.04".to_string(),
             NetworkMode::Bridge,
             ContainerResourceLimits::default(),
+            std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         );
         let caps = backend.capabilities();
 
@@ -406,6 +414,7 @@ mod tests {
                 pids_limit: None,
                 timeout: Duration::from_secs(30),
             },
+            std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         );
         let config = default_config();
         let args = backend.build_run_args("ls", &config);

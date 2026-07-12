@@ -203,6 +203,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fabric::Clock;
 
     fn make_experience(desc: &str, embedding: Vec<f32>, success: bool) -> Experience {
         Experience {
@@ -214,7 +215,9 @@ mod tests {
             success,
             level: ExperienceLevel::Narrative,
             embedding,
-            created_at: chrono::Utc::now(),
+            created_at: fabric::wall_to_datetime(
+                aletheon_kernel::chronos::SystemClock::new().wall_now(),
+            ),
         }
     }
 

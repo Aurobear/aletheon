@@ -438,11 +438,12 @@ fn parse_key(s: &str) -> Option<Key> {
 /// Task executor: runs nodes against an Aci instance.
 pub struct TaskWorker {
     aci: Arc<Aci>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl TaskWorker {
-    pub fn new(aci: Arc<Aci>) -> Self {
-        Self { aci }
+    pub fn new(aci: Arc<Aci>, clock: Arc<dyn fabric::Clock>) -> Self {
+        Self { aci, clock }
     }
 
     /// Execute a single task node.
@@ -501,7 +502,11 @@ impl TaskWorker {
                     Ok("Composite executed".into())
                 }
                 TaskAction::Wait(ms) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(*ms)).await;
+                    aletheon_kernel::chronos::Timer::sleep(
+                        &*self.clock,
+                        std::time::Duration::from_millis(*ms),
+                    )
+                    .await;
                     Ok(format!("Waited {ms}ms"))
                 }
             }
@@ -707,7 +712,8 @@ mod tests {
     #[tokio::test]
     async fn test_task_worker_run() {
         let aci = Arc::new(mock_aci());
-        let worker = TaskWorker::new(aci);
+        let clock = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+        let worker = TaskWorker::new(aci, clock);
 
         let mut graph = TaskGraph::new("test");
         graph.add_node("Screenshot", TaskAction::Screenshot, vec![]);
@@ -723,7 +729,8 @@ mod tests {
     #[tokio::test]
     async fn test_task_worker_execute_node_types() {
         let aci = Arc::new(mock_aci());
-        let worker = TaskWorker::new(aci);
+        let clock = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+        let worker = TaskWorker::new(aci, clock);
 
         // Test each action type
         let node = TaskNode {
@@ -812,7 +819,8 @@ mod tests {
     #[tokio::test]
     async fn test_task_worker_composite() {
         let aci = Arc::new(mock_aci());
-        let worker = TaskWorker::new(aci);
+        let clock = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+        let worker = TaskWorker::new(aci, clock);
 
         let node = TaskNode {
             id: 0,

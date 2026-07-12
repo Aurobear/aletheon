@@ -8,6 +8,7 @@ use chrono::Utc;
 use fabric::Identity;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Record of a past identity state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +22,7 @@ pub struct IdentityRecord {
 pub struct IdentityLayer {
     current: RwLock<Identity>,
     history: RwLock<Vec<IdentityRecord>>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl IdentityLayer {
@@ -28,17 +30,19 @@ impl IdentityLayer {
         name: impl Into<String>,
         description: impl Into<String>,
         version: impl Into<String>,
+        clock: Arc<dyn fabric::Clock>,
     ) -> Self {
         let identity = Identity {
             name: name.into(),
             description: description.into(),
             version: version.into(),
-            created_at: Utc::now(),
+            created_at: fabric::wall_to_datetime(clock.wall_now()),
             last_mutation: None,
         };
         Self {
             current: RwLock::new(identity),
             history: RwLock::new(Vec::new()),
+            clock,
         }
     }
 
@@ -61,7 +65,7 @@ impl IdentityLayer {
         // Push old to history
         self.history.write().push(IdentityRecord {
             identity: old,
-            mutated_at: Utc::now(),
+            mutated_at: fabric::wall_to_datetime(self.clock.wall_now()),
             reason: reason.into(),
         });
 
@@ -75,7 +79,7 @@ impl IdentityLayer {
         if let Some(ver) = new_version {
             current.version = ver;
         }
-        current.last_mutation = Some(Utc::now());
+        current.last_mutation = Some(fabric::wall_to_datetime(self.clock.wall_now()));
 
         current.clone()
     }
@@ -149,7 +153,7 @@ impl IdentityLayer {
                     version: row.get(2)?,
                     created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
                         .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
                     last_mutation: last_mutation
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                         .map(|dt| dt.with_timezone(&Utc)),
@@ -175,14 +179,16 @@ impl IdentityLayer {
                             version: row.get(2)?,
                             created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
                                 .map(|dt| dt.with_timezone(&Utc))
-                                .unwrap_or_else(|_| Utc::now()),
+                                .unwrap_or_else(|_| {
+                                    fabric::wall_to_datetime(self.clock.wall_now())
+                                }),
                             last_mutation: last_mutation
                                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                                 .map(|dt| dt.with_timezone(&Utc)),
                         },
                         mutated_at: chrono::DateTime::parse_from_rfc3339(&mutated_at)
                             .map(|dt| dt.with_timezone(&Utc))
-                            .unwrap_or_else(|_| Utc::now()),
+                            .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
                         reason: row.get(6)?,
                     })
                 })?
@@ -197,10 +203,19 @@ impl IdentityLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
+    fn test_layer(name: &str, desc: &str, ver: &str) -> IdentityLayer {
+        IdentityLayer::new(name, desc, ver, test_clock())
+    }
 
     #[test]
     fn new_identity() {
-        let layer = IdentityLayer::new("aurb", "An AI agent", "0.1.0");
+        let layer = test_layer("aurb", "An AI agent", "0.1.0");
         let id = layer.current();
         assert_eq!(id.name, "aurb");
         assert_eq!(id.description, "An AI agent");
@@ -211,7 +226,7 @@ mod tests {
 
     #[test]
     fn mutate_preserves_history() {
-        let layer = IdentityLayer::new("aurb", "desc", "0.1.0");
+        let layer = test_layer("aurb", "desc", "0.1.0");
         let updated = layer.mutate(
             Some("aurb-v2".to_string()),
             None,
@@ -232,7 +247,7 @@ mod tests {
 
     #[test]
     fn multiple_mutations_chain() {
-        let layer = IdentityLayer::new("v0", "desc", "0.0.1");
+        let layer = test_layer("v0", "desc", "0.0.1");
 
         layer.mutate(Some("v1".to_string()), None, None, "step1");
         layer.mutate(Some("v2".to_string()), None, None, "step2");

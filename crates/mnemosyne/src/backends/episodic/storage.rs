@@ -1,10 +1,10 @@
 //! EpisodicMemory storage (write) operations and MemoryBackend trait impl.
 
 use anyhow::Result;
-use chrono::Utc;
 use fabric::{
-    CompactResult, CompactStrategy, EvolutionLogEntry, MemoryBackend, MemoryEntry, MemoryFilter,
-    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, SelfAwareness,
+    wall_to_datetime, CompactResult, CompactStrategy, EvolutionLogEntry, MemoryBackend,
+    MemoryEntry, MemoryFilter, MemoryHandle, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry,
+    SelfAwareness, WallTime,
 };
 use rusqlite::params;
 use uuid::Uuid;
@@ -73,7 +73,7 @@ impl EpisodicMemory {
     pub fn store_awareness(&self, memory_id: &str, awareness: &SelfAwareness) -> Result<()> {
         self.with_conn(|conn| {
             let id = Uuid::new_v4().to_string();
-            let now = Utc::now().to_rfc3339();
+            let now = wall_to_datetime(self.clock.wall_now()).to_rfc3339();
 
             conn.execute(
                 "INSERT INTO awareness_events (id, memory_id, action, aware, extensions, created_at)
@@ -201,7 +201,10 @@ impl MemoryBackend for EpisodicMemory {
                     max_age,
                     min_access_count,
                 } => {
-                    let cutoff = (Utc::now() - max_age).to_rfc3339();
+                    let cutoff = wall_to_datetime(WallTime(
+                        self.clock.wall_now().0 - max_age.num_milliseconds(),
+                    ))
+                    .to_rfc3339();
                     conn.execute(
                         "DELETE FROM memory WHERE memory_type = 'episodic'
                          AND created_at < ?1 AND access_count < ?2",

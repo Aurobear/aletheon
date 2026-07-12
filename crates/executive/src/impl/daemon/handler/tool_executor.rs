@@ -1,4 +1,3 @@
-
 //! `TurnToolExecutor` — the per-tool execution pipeline for a chat turn.
 //!
 //! Extracted from the former inline `execute_tool` closure (previously in chat.rs, now deleted)
@@ -83,11 +82,13 @@ impl TurnToolExecutor {
     }
 
     /// Return the kernel operation id for this turn.
+    #[allow(dead_code)]
     pub(crate) fn operation_id(&self) -> OperationId {
         self.operation_id
     }
 
     /// Return the kernel process id for the main agent.
+    #[allow(dead_code)]
     pub(crate) fn process_id(&self) -> ProcessId {
         self.process_id
     }
@@ -208,6 +209,7 @@ impl TurnToolExecutor {
         let exec_ctx = fabric::tool::ToolContext {
             working_dir,
             session_id: session_id.clone(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
         };
         let (content, is_error) = match tool {
             Some(t) => {

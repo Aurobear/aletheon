@@ -3,7 +3,6 @@
 use super::orchestrator::DaemonTurnOrchestrator;
 use crate::r#impl::daemon::session_manager::SessionManager;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -47,7 +46,7 @@ impl DaemonTurnOrchestrator {
                     .session_created_at
                     .lock()
                     .await
-                    .insert(id.clone(), Instant::now());
+                    .insert(id.clone(), self.clock.mono_now());
                 info!(session_id = %id, "Session created on demand");
                 (id, sm_arc)
             }

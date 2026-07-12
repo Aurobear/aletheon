@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use chrono::Utc;
+use fabric::Clock;
 use tokio::sync::watch;
 use uuid::Uuid;
 
@@ -40,6 +40,7 @@ pub struct LlmPulse {
     scheduler: Arc<LlmScheduler>,
     bus: Arc<CommunicationBus>,
     config: PulseConfig,
+    clock: Arc<dyn Clock>,
 }
 
 impl LlmPulse {
@@ -47,11 +48,13 @@ impl LlmPulse {
         scheduler: Arc<LlmScheduler>,
         bus: Arc<CommunicationBus>,
         config: PulseConfig,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             scheduler,
             bus,
             config,
+            clock,
         }
     }
 
@@ -81,7 +84,7 @@ impl LlmPulse {
 
         let event = CognitivePulseEvent {
             pulse_id: Uuid::new_v4(),
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
             available_tokens: self.config.token_budget_per_pulse,
             provider_health: health,
         };

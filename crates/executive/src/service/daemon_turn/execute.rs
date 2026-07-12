@@ -9,6 +9,7 @@ use super::helpers::{bounded_text_history, build_request_messages};
 use super::orchestrator::DaemonTurnOrchestrator;
 
 use crate::r#impl::daemon::handler::tool_executor::TurnToolExecutor;
+use aletheon_kernel::chronos::Timer;
 use aletheon_kernel::operation::OperationScope;
 use cognit::harness::event_sink::{ChannelEventSink, Event};
 use cognit::harness::linear::TurnMetrics;
@@ -190,8 +191,12 @@ impl DaemonTurnOrchestrator {
                             });
                         }
                         let mut stdout_pipe = child.stdout.take();
-                        match tokio::time::timeout(std::time::Duration::from_secs(30), child.wait())
-                            .await
+                        match Timer::timeout(
+                            &*self.clock,
+                            std::time::Duration::from_secs(30),
+                            child.wait(),
+                        )
+                        .await
                         {
                             Ok(Ok(status)) if status.success() => {
                                 if let Some(ref mut stdout) = stdout_pipe {

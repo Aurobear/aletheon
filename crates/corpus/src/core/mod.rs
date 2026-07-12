@@ -8,7 +8,9 @@ use fabric::body::{Action, ActionResult, BodyRuntime};
 use fabric::capability::Capability;
 use fabric::context::Context;
 use fabric::subsystem::{Subsystem, SubsystemContext, SubsystemHealth, Version};
+use fabric::Clock;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -18,14 +20,15 @@ pub struct AletheonBodyRuntime {
     runner: Mutex<ToolRunnerWithGuard>,
     capabilities: Vec<Capability>,
     initialized: bool,
+    clock: Arc<dyn Clock>,
 }
 
 impl AletheonBodyRuntime {
     /// Create a new AletheonBodyRuntime with default tools and security.
-    pub fn new(working_dir: PathBuf) -> Result<Self> {
+    pub fn new(working_dir: PathBuf, clock: Arc<dyn Clock>) -> Result<Self> {
         let registry = ToolRegistry::default();
         let audit_logger = AuditLogger::new(working_dir.join("audit.jsonl"))?;
-        let runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger);
+        let runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger, clock.clone());
 
         let capabilities = Self::build_capabilities(&registry);
 
@@ -34,11 +37,16 @@ impl AletheonBodyRuntime {
             runner: Mutex::new(runner),
             capabilities,
             initialized: false,
+            clock,
         })
     }
 
     /// Create with explicit runner (for testing).
-    pub fn with_runner(registry: ToolRegistry, runner: ToolRunnerWithGuard) -> Self {
+    pub fn with_runner(
+        registry: ToolRegistry,
+        runner: ToolRunnerWithGuard,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         let capabilities = Self::build_capabilities(&registry);
 
         Self {
@@ -46,6 +54,7 @@ impl AletheonBodyRuntime {
             runner: Mutex::new(runner),
             capabilities,
             initialized: false,
+            clock,
         }
     }
 
@@ -113,7 +122,7 @@ impl Subsystem for AletheonBodyRuntime {
 #[async_trait]
 impl BodyRuntime for AletheonBodyRuntime {
     async fn execute(&self, action: Action, ctx: &Context) -> Result<ActionResult> {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
 
         // 1. Find the tool
         let tool = self
@@ -122,7 +131,7 @@ impl BodyRuntime for AletheonBodyRuntime {
             .ok_or_else(|| anyhow::anyhow!("Tool not found: {}", action.name))?;
 
         // 2. Convert context
-        let tool_ctx = conversions::context_to_tool_context(ctx);
+        let tool_ctx = conversions::context_to_tool_context(ctx, self.clock.clone());
 
         // 3. Execute through the security runner
         let turn_id = format!("body-{}", ctx.request_id);
@@ -135,7 +144,7 @@ impl BodyRuntime for AletheonBodyRuntime {
         match result {
             Ok(tool_result) => {
                 let mut action_result = conversions::tool_result_to_action_result(&tool_result);
-                action_result.elapsed_ms = start.elapsed().as_millis() as u64;
+                action_result.elapsed_ms = self.clock.mono_now().0.saturating_sub(start.0);
                 Ok(action_result)
             }
             Err(e) => {
@@ -145,7 +154,7 @@ impl BodyRuntime for AletheonBodyRuntime {
                     success: false,
                     output: String::new(),
                     error: Some(err_display),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                     side_effects: Vec::new(),
                 })
@@ -169,16 +178,20 @@ impl BodyRuntime for AletheonBodyRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use fabric::context::Context;
     use std::path::PathBuf;
 
     #[tokio::test]
     async fn test_runtime_init_and_health() {
+        let clock = Arc::new(TestClock::default());
         let rt = AletheonBodyRuntime::with_runner(
             ToolRegistry::default(),
             ToolRunnerWithGuard::with_default_sandbox(
                 AuditLogger::new(PathBuf::from("/dev/null")).unwrap(),
+                clock.clone(),
             ),
+            clock,
         );
         // Not yet initialized
         assert_eq!(
@@ -203,22 +216,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_capabilities_populated() {
+        let clock = Arc::new(TestClock::default());
         let rt = AletheonBodyRuntime::with_runner(
             ToolRegistry::default(),
             ToolRunnerWithGuard::with_default_sandbox(
                 AuditLogger::new(PathBuf::from("/dev/null")).unwrap(),
+                clock.clone(),
             ),
+            clock,
         );
         assert!(!rt.capabilities().is_empty());
     }
 
     #[tokio::test]
     async fn test_check_unknown_tool() {
+        let clock = Arc::new(TestClock::default());
         let rt = AletheonBodyRuntime::with_runner(
             ToolRegistry::default(),
             ToolRunnerWithGuard::with_default_sandbox(
                 AuditLogger::new(PathBuf::from("/dev/null")).unwrap(),
+                clock.clone(),
             ),
+            clock,
         );
         let action = Action {
             name: "nonexistent_tool".to_string(),
@@ -232,11 +251,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_version() {
+        let clock = Arc::new(TestClock::default());
         let rt = AletheonBodyRuntime::with_runner(
             ToolRegistry::default(),
             ToolRunnerWithGuard::with_default_sandbox(
                 AuditLogger::new(PathBuf::from("/dev/null")).unwrap(),
+                clock.clone(),
             ),
+            clock,
         );
         assert_eq!(rt.version(), Version::new(0, 1, 0));
     }

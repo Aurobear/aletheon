@@ -56,7 +56,7 @@ impl Tool for FileReadTool {
             ctx.working_dir.join(path)
         };
 
-        let start = std::time::Instant::now();
+        let start = ctx.clock.mono_now();
 
         match fs::read_to_string(&full_path).await {
             Ok(content) => {
@@ -76,7 +76,7 @@ impl Tool for FileReadTool {
                     content: result,
                     is_error: false,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated,
                     },
                 }
@@ -85,7 +85,7 @@ impl Tool for FileReadTool {
                 content: format!("Failed to read {}: {}", full_path.display(), e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },

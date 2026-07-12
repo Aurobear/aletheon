@@ -202,6 +202,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool.execute(json!({"query": "mood"}), &ctx).await;
         assert!(result.content.contains("Gelassenheit"));
@@ -214,6 +215,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool.execute(json!({"query": "full"}), &ctx).await;
         assert!(result.content.contains("DaseinContext"));
@@ -226,6 +228,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool.execute(json!({"query": "bogus"}), &ctx).await;
         assert!(result.content.contains("Unknown query"));
@@ -237,6 +240,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(result.content.contains("DaseinContext"));

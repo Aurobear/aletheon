@@ -1,6 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::time::{Duration, Instant};
+use fabric::Clock;
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
 
 use crate::sandbox::{
@@ -9,7 +11,9 @@ use crate::sandbox::{
 
 /// Process-level sandbox backend — uses resource limits but no namespace isolation.
 /// Compatible with Docker, WSL2, and environments without user namespace support.
-pub struct ProcessBackend;
+pub struct ProcessBackend {
+    pub clock: Arc<dyn Clock>,
+}
 
 #[async_trait]
 impl SandboxBackend for ProcessBackend {
@@ -50,10 +54,10 @@ impl SandboxBackend for ProcessBackend {
             "Executing command with process-level sandbox"
         );
 
-        let start = Instant::now();
+        let start = self.clock.mono_now();
 
         // Wrap the spawned process with a timeout.
-        let result = tokio::time::timeout(timeout, async {
+        let result = aletheon_kernel::chronos::Timer::timeout(&*self.clock, timeout, async {
             tokio::process::Command::new("bash")
                 .arg("-c")
                 .arg(cmd)
@@ -64,7 +68,7 @@ impl SandboxBackend for ProcessBackend {
         })
         .await;
 
-        let elapsed = start.elapsed();
+        let elapsed = self.clock.mono_now().0.saturating_sub(start.0);
 
         match result {
             Ok(Ok(output)) => Ok(SandboxResult {
@@ -73,7 +77,7 @@ impl SandboxBackend for ProcessBackend {
                 exit_code: output.status.code().unwrap_or(-1),
                 backend_used: "process".to_string(),
                 isolation_level: IsolationLevel::Process,
-                elapsed_ms: elapsed.as_millis() as u64,
+                elapsed_ms: elapsed,
             }),
             Ok(Err(e)) => Err(anyhow::anyhow!("Process execution failed: {}", e)),
             Err(_) => Ok(SandboxResult {
@@ -82,7 +86,7 @@ impl SandboxBackend for ProcessBackend {
                 exit_code: -1,
                 backend_used: "process".to_string(),
                 isolation_level: IsolationLevel::Process,
-                elapsed_ms: elapsed.as_millis() as u64,
+                elapsed_ms: elapsed,
             }),
         }
     }

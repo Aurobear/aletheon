@@ -104,9 +104,10 @@ impl DaemonTurnOrchestrator {
                         "Running ExperienceSummarizer (periodic trigger)"
                     );
                     if let Ok(recent) = mem.recall_reflections(20) {
-                        if let Some(evo_entry) =
-                            cognit::core::ExperienceSummarizer::summarize(&recent)
-                        {
+                        let summarizer = cognit::core::ExperienceSummarizer::new(
+                            self.subsystems.ports.clock.clone(),
+                        );
+                        if let Some(evo_entry) = summarizer.summarize(&recent) {
                             if let Err(e) = mem.store_evolution_log(&evo_entry) {
                                 warn!(error = %e, "Failed to store evolution log");
                             } else {

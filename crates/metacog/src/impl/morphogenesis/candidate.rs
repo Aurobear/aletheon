@@ -3,20 +3,17 @@
 //! Applies mutation intents to a genome to produce RuntimeCandidates.
 
 use anyhow::Result;
-use fabric::{Genome, MutationIntent, RuntimeCandidate};
+use fabric::{wall_to_datetime, Clock, Genome, MutationIntent, RuntimeCandidate};
+use std::sync::Arc;
 
 /// Generates candidate runtimes from genome mutations.
-pub struct CandidateGenerator;
-
-impl Default for CandidateGenerator {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct CandidateGenerator {
+    clock: Arc<dyn Clock>,
 }
 
 impl CandidateGenerator {
-    pub fn new() -> Self {
-        Self
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self { clock }
     }
 
     /// Generate a candidate runtime from a genome and mutation intent.
@@ -97,7 +94,7 @@ impl CandidateGenerator {
             id: uuid::Uuid::new_v4(),
             genome: candidate_genome,
             changes,
-            generated_at: chrono::Utc::now(),
+            generated_at: wall_to_datetime(self.clock.wall_now()),
         })
     }
 }

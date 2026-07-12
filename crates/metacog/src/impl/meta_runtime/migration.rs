@@ -8,9 +8,9 @@ use crate::core::types::{ChangeType, Genome, GenomeChange};
 use crate::r#impl::genome::loader::GenomeLoader;
 use crate::r#impl::meta_runtime::lineage::LineageTracker;
 use anyhow::Result;
-use fabric::{MigrationResult, RuntimeCandidate};
+use fabric::{Clock, MigrationResult, RuntimeCandidate};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Manages migration from one genome/runtime version to another.
 ///
@@ -23,11 +23,11 @@ pub struct MigrationManager {
 }
 
 impl MigrationManager {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             previous_version: Mutex::new(None),
             genome_path: Mutex::new(None),
-            lineage: Mutex::new(LineageTracker::new()),
+            lineage: Mutex::new(LineageTracker::new(clock)),
         }
     }
 
@@ -199,11 +199,5 @@ impl MigrationManager {
                 candidate.changes.len()
             ),
         })
-    }
-}
-
-impl Default for MigrationManager {
-    fn default() -> Self {
-        Self::new()
     }
 }
