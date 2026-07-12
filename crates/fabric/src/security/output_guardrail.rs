@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use fabric::tool::ToolResult;
+use crate::types::tool::ToolResult;
 
 #[derive(Debug)]
 pub enum ValidationError {
