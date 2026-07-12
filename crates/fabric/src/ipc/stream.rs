@@ -1,5 +1,6 @@
 //! Bounded stream primitives for token/log/telemetry delivery.
 
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -108,5 +109,253 @@ impl<T: Send + 'static> BoundedStream<T> {
 
     pub fn try_recv(&mut self) -> Option<T> {
         self.rx.try_recv().ok()
+    }
+
+    /// Clone the sender half, usable for feeding this stream from another task.
+    pub fn sender(&self) -> mpsc::Sender<T> {
+        self.tx.clone()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Turn event stream — EnvelopeV2-based typed event channel
+// ---------------------------------------------------------------------------
+
+/// Simplified configuration for creating a `TurnEventStream`.
+#[derive(Debug, Clone)]
+pub struct StreamConfig {
+    pub capacity: usize,
+    pub overflow: OverflowPolicy,
+}
+
+impl StreamConfig {
+    pub fn turn_events(capacity: usize) -> Self {
+        Self {
+            capacity,
+            overflow: OverflowPolicy::BlockProducer,
+        }
+    }
+}
+
+/// Well-known schema identifier for turn events.
+pub const TURN_EVENT_SCHEMA: &str = "aletheon.turn.event/v1";
+
+/// Structured error returned when a received envelope does not match the
+/// expected schema or the payload cannot be deserialized.
+#[derive(Debug, Clone)]
+pub struct SchemaRejection {
+    pub expected: String,
+    pub actual: String,
+    pub payload_preview: String,
+}
+
+impl std::fmt::Display for SchemaRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "schema rejection: expected '{}', got '{}' (preview: {})",
+            self.expected, self.actual, self.payload_preview
+        )
+    }
+}
+
+impl std::error::Error for SchemaRejection {}
+
+/// Typed event payload for turn-level streaming.
+///
+/// Mirrors the `cognit::harness::event_sink::Event` variants that are relevant
+/// for turn orchestration and client forwarding. All variants carry enough
+/// structured data to reconstruct `ClientEvent` for TUI delivery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TurnEventV1 {
+    // -- Turn lifecycle --
+    TurnStarted {
+        iteration: usize,
+    },
+    TurnDone {
+        result: Option<String>,
+    },
+
+    // -- Streaming text --
+    TextDelta {
+        delta: String,
+    },
+    TextDeltaStop,
+
+    // -- Tool calls --
+    ToolCallStart {
+        name: String,
+        call_id: String,
+    },
+    ToolCallComplete {
+        call_id: String,
+        name: String,
+        args: serde_json::Value,
+    },
+    ToolResult {
+        name: String,
+        call_id: String,
+        content: String,
+        is_error: bool,
+        execution_time_ms: u64,
+    },
+
+    // -- Bookkeeping --
+    Usage {
+        tokens_in: u32,
+        tokens_out: u32,
+        cache_hit_tokens: u32,
+        cache_miss_tokens: u32,
+    },
+    ContextUpdate {
+        used_tokens: u32,
+        max_tokens: u32,
+    },
+    GoalSet {
+        goal: String,
+        sub_goals: Vec<String>,
+    },
+    ModelSwitch {
+        model_name: String,
+    },
+
+    // -- Awareness / collaboration --
+    Approval {
+        id: String,
+        tool: String,
+        args: serde_json::Value,
+        reason: String,
+    },
+    AwarenessChanged {
+        level: String,
+        context: String,
+    },
+    PlanUpdate {
+        version: u32,
+        plan: String,
+        critique: Option<String>,
+        ready_for_approval: bool,
+    },
+    SubAgentStatusChanged {
+        agent_id: String,
+        status: String,
+        task: String,
+    },
+    ModeChanged {
+        mode: String,
+    },
+
+    // -- Limits / interruptions --
+    Error {
+        message: String,
+    },
+    Interrupted {
+        reason: String,
+    },
+    BudgetExceeded {
+        used: usize,
+        max: usize,
+    },
+    CircuitBreakerTripped {
+        reason: String,
+    },
+    CompactionTriggered {
+        used_tokens: usize,
+        threshold: usize,
+        reason: String,
+    },
+    Reflection {
+        summary: String,
+        recommendation: String,
+    },
+
+    /// Catch-all for internal-only events not directly relevant to turn orchestration.
+    Generic {
+        payload: serde_json::Value,
+    },
+}
+
+/// Sender half of a `TurnEventStream`.
+///
+/// Serializes `TurnEventV1` into an `EnvelopeV2` and pushes it into the
+/// underlying mpsc channel.
+pub struct TurnEventSender {
+    tx: mpsc::Sender<crate::ipc::envelope_v2::EnvelopeV2>,
+}
+
+impl TurnEventSender {
+    /// Serialize and send a turn event.
+    pub fn send(&self, event: &TurnEventV1) -> Result<(), StreamSendError> {
+        let payload = serde_json::to_value(event).map_err(|_| StreamSendError::ReceiverClosed)?;
+        let envelope = crate::ipc::envelope_v2::EnvelopeV2::new(
+            crate::ipc::envelope_v2::SchemaId::from(TURN_EVENT_SCHEMA),
+            crate::ipc::envelope_v2::Target::from("executive"),
+            crate::ipc::envelope_v2::Target::from("turn-service"),
+            crate::ipc::envelope_v2::DeliveryPattern::Direct,
+            crate::types::process::NamespaceId("turn-events".into()),
+            payload,
+        );
+        self.tx
+            .try_send(envelope)
+            .map_err(|_| StreamSendError::ReceiverClosed)
+    }
+}
+
+/// Receiver half of a `TurnEventStream`.
+///
+/// Wraps a `BoundedStream<EnvelopeV2>` and performs schema validation and
+/// deserialization on every received envelope.
+pub struct TurnEventStream {
+    inner: BoundedStream<crate::ipc::envelope_v2::EnvelopeV2>,
+}
+
+impl TurnEventStream {
+    /// Create a new `TurnEventStream` and its paired `TurnEventSender`.
+    pub fn new(config: StreamConfig) -> (Self, TurnEventSender) {
+        let spec = StreamSpec {
+            capacity: config.capacity,
+            overflow: config.overflow,
+            cancel: CancellationToken::new(),
+        };
+        let inner = BoundedStream::<crate::ipc::envelope_v2::EnvelopeV2>::new(spec);
+        let tx = inner.sender();
+        (Self { inner }, TurnEventSender { tx })
+    }
+
+    /// Receive the next event, validating the schema and deserializing the payload.
+    pub async fn recv(&mut self) -> Result<TurnEventV1, SchemaRejection> {
+        let envelope = self.inner.recv().await.ok_or_else(|| SchemaRejection {
+            expected: TURN_EVENT_SCHEMA.to_string(),
+            actual: "stream closed".to_string(),
+            payload_preview: String::new(),
+        })?;
+
+        Self::decode_envelope(envelope)
+    }
+
+    /// Non-blocking receive of the next event.
+    pub fn try_recv(&mut self) -> Option<Result<TurnEventV1, SchemaRejection>> {
+        self.inner.try_recv().map(Self::decode_envelope)
+    }
+
+    fn decode_envelope(
+        envelope: crate::ipc::envelope_v2::EnvelopeV2,
+    ) -> Result<TurnEventV1, SchemaRejection> {
+        if envelope.schema.0 != TURN_EVENT_SCHEMA {
+            return Err(SchemaRejection {
+                expected: TURN_EVENT_SCHEMA.to_string(),
+                actual: envelope.schema.0.clone(),
+                payload_preview: format!("{:?}", envelope.payload)
+                    .chars()
+                    .take(200)
+                    .collect(),
+            });
+        }
+        serde_json::from_value::<TurnEventV1>(envelope.payload).map_err(|e| SchemaRejection {
+            expected: TURN_EVENT_SCHEMA.to_string(),
+            actual: format!("deserialization error: {}", e),
+            payload_preview: String::new(),
+        })
     }
 }

@@ -14,3 +14,8 @@ pub mod transport;
 // Backward compatibility: re-export ipc_msg types at this level
 // so `fabric::ipc::IpcMessage` still works (was `fabric::ipc::IpcMessage` before).
 pub use ipc_msg::*;
+
+// Turn event stream types
+pub use stream::{
+    SchemaRejection, StreamConfig, TurnEventSender, TurnEventStream, TurnEventV1, TURN_EVENT_SCHEMA,
+};

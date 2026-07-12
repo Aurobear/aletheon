@@ -16,7 +16,12 @@ impl DaemonTurnOrchestrator {
         let id = if let Some(sid) = session_id {
             sid.to_string()
         } else {
-            self.subsystems.default_session_id.lock().await.clone()
+            self.subsystems
+                .session
+                .default_session_id
+                .lock()
+                .await
+                .clone()
         };
         {
             let sessions = self.sessions.lock().await;
@@ -25,9 +30,9 @@ impl DaemonTurnOrchestrator {
             }
         }
         match SessionManager::new(
-            &self.subsystems.data_dir,
+            &self.subsystems.session.data_dir,
             id.clone(),
-            self.subsystems.context_window,
+            self.subsystems.session.context_window,
         )
         .await
         {
@@ -38,6 +43,7 @@ impl DaemonTurnOrchestrator {
                     .await
                     .insert(id.clone(), sm_arc.clone());
                 self.subsystems
+                    .session
                     .session_created_at
                     .lock()
                     .await
@@ -47,7 +53,13 @@ impl DaemonTurnOrchestrator {
             }
             Err(e) => {
                 warn!(error = %e, session_id = %id, "Failed to create session on demand, using default");
-                let default_id = self.subsystems.default_session_id.lock().await.clone();
+                let default_id = self
+                    .subsystems
+                    .session
+                    .default_session_id
+                    .lock()
+                    .await
+                    .clone();
                 let sessions = self.sessions.lock().await;
                 let sm = sessions.get(&default_id).cloned().unwrap();
                 (default_id, sm)

@@ -12,8 +12,10 @@ use crate::r#impl::daemon::handler::tool_executor::TurnToolExecutor;
 use aletheon_kernel::operation::OperationScope;
 use cognit::harness::event_sink::{ChannelEventSink, Event};
 use cognit::harness::linear::TurnMetrics;
+use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::include::agora::AgoraOperation;
+use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionRequest, CapabilityId, CapabilityScope, ContentBlock, Intent, IntentSource,
@@ -64,7 +66,13 @@ impl DaemonTurnOrchestrator {
             }
         };
 
-        let session_id = self.subsystems.default_session_id.lock().await.clone();
+        let session_id = self
+            .subsystems
+            .session
+            .default_session_id
+            .lock()
+            .await
+            .clone();
 
         // Build TurnRequest with kernel ids
         let turn_request = TurnRequest {
@@ -130,12 +138,12 @@ impl DaemonTurnOrchestrator {
 
         // -- Memory composition --
         let system_prompt = {
-            let prefix = self.subsystems.cached_prefix.lock().await;
+            let prefix = self.subsystems.session.cached_prefix.lock().await;
             prefix.clone()
         };
         let memory_block = self.compose_memory_block().await;
         {
-            let mut sb = self.subsystems.storm_breaker.lock().await;
+            let mut sb = self.subsystems.security.storm_breaker.lock().await;
             sb.reset();
         }
         let mut effective_message = String::new();
@@ -156,10 +164,10 @@ impl DaemonTurnOrchestrator {
         self.decay_stale_facts().await;
 
         // -- Configured pre_turn hook scripts --
-        if !self.subsystems.hooks_config.pre_turn.is_empty() {
+        if !self.subsystems.corpus.hooks_config.pre_turn.is_empty() {
             let hook_session_id = self.get_or_create_session(None).await.0;
             let hook_input = serde_json::json!({"prompt": message, "session_id": hook_session_id});
-            for script_path in &self.subsystems.hooks_config.pre_turn {
+            for script_path in &self.subsystems.corpus.hooks_config.pre_turn {
                 let path = crate::r#impl::daemon::handler::format::expand_tilde(script_path);
                 if !std::path::Path::new(&path).exists() {
                     tracing::warn!(path = %path, "Hook script not found, skipping");
@@ -224,7 +232,7 @@ impl DaemonTurnOrchestrator {
                 let sm = sm_arc.lock().await;
                 (sm.session_id.clone(), sm.turn_count())
             };
-            let hr = self.subsystems.hook_registry.lock().await;
+            let hr = self.subsystems.corpus.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::PreTurn,
                 session_id: sess_id,
@@ -257,9 +265,9 @@ impl DaemonTurnOrchestrator {
         // Persist user message to recall memory
         {
             let (sess_id, sm_arc) = self.get_or_create_session(None).await;
-            let rm = self.subsystems.recall_memory.lock().await;
+            let rm = self.subsystems.memory.recall_memory.lock().await;
             let _ = rm.store(&sess_id, "user_message", message, None);
-            let hr = self.subsystems.hook_registry.lock().await;
+            let hr = self.subsystems.corpus.hook_registry.lock().await;
             let turn_count = sm_arc.lock().await.turn_count();
             let ctx = HookContext {
                 point: HookPoint::OnMemoryStore,
@@ -276,7 +284,7 @@ impl DaemonTurnOrchestrator {
 
         // -- Tool setup --
         let tool_defs = {
-            let tools = self.subsystems.tools.lock().await;
+            let tools = self.subsystems.corpus.tools.lock().await;
             tools.definitions()
         };
         let working_dir = std::env::current_dir().unwrap_or_default();
@@ -425,9 +433,23 @@ impl DaemonTurnOrchestrator {
             }
         };
 
-        // Event channel
+        // Event channel — kept for ReAct loop (ChannelEventSink)
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(64);
-        let event_sink = ChannelEventSink::new(event_tx);
+        let event_sink = ChannelEventSink::new(event_tx.clone());
+        drop(event_tx); // Only ChannelEventSink holds a sender; drops when react_task completes
+
+        // Turn event stream — EnvelopeV2-typed channel for turn orchestration
+        let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
+
+        // Bridge task: convert Event → TurnEventV1 → EnvelopeV2
+        let _bridge_task = tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                let turn_event = convert_event_to_turn_event(event);
+                if turn_sender.send(&turn_event).is_err() {
+                    break;
+                }
+            }
+        });
 
         // Dasein injection
         let effective_message = {
@@ -479,8 +501,8 @@ impl DaemonTurnOrchestrator {
         ));
 
         // -- Event + approval pumping loop --
-        let approval_rx = self.subsystems.approval_rx.clone();
-        let pending_approvals = self.subsystems.pending_approvals.clone();
+        let approval_rx = self.subsystems.security.approval_rx.clone();
+        let pending_approvals = self.subsystems.security.pending_approvals.clone();
         let notify_tx = self.notify_tx.clone();
 
         let mut tool_calls_for_session: Vec<(String, String, serde_json::Value)> = Vec::new();
@@ -493,20 +515,27 @@ impl DaemonTurnOrchestrator {
                 result = &mut react_task => {
                     break result.unwrap_or_else(|e| Err(anyhow::anyhow!("react task panicked: {e}")));
                 }
-                Some(event) = event_rx.recv() => {
+                event_result = turn_stream.recv() => {
+                    let event = match event_result {
+                        Ok(ev) => ev,
+                        Err(rejection) => {
+                            warn!(schema = %rejection.actual, "Schema mismatch in turn event stream, skipping event");
+                            continue;
+                        }
+                    };
                     match &event {
-                        Event::ToolCallStart { name, call_id } => {
+                        TurnEventV1::ToolCallStart { name, call_id } => {
                             tool_calls_for_session.push((call_id.clone(), name.clone(), serde_json::Value::Null));
                         }
-                        Event::ToolCallComplete { call_id, name: _, args } => {
+                        TurnEventV1::ToolCallComplete { call_id, name: _, args } => {
                             if let Some(tc) = tool_calls_for_session.iter_mut().find(|(id, _, _)| id == call_id) {
                                 tc.2 = args.clone();
                             }
                         }
-                        Event::ToolResult { name, call_id, result } => {
-                            tool_results_for_session.push((call_id.clone(), result.content.clone(), result.is_error));
+                        TurnEventV1::ToolResult { name, call_id, content, is_error, .. } => {
+                            tool_results_for_session.push((call_id.clone(), content.clone(), *is_error));
                             let evidence = fabric::Evidence::from_tool_result(
-                                call_id.clone(), name.clone(), result.content.clone(), result.is_error,
+                                call_id.clone(), name.clone(), content.clone(), *is_error,
                             );
                             if let Some(ref agora) = agora_for_events {
                                 match agora.propose(
@@ -530,7 +559,7 @@ impl DaemonTurnOrchestrator {
                                 );
                             }
                         }
-                        Event::Usage { tokens_in, tokens_out, .. } => {
+                        TurnEventV1::Usage { tokens_in, tokens_out, .. } => {
                             acc_tokens_in += *tokens_in as u64;
                             acc_tokens_out += *tokens_out as u64;
                         }
@@ -540,8 +569,7 @@ impl DaemonTurnOrchestrator {
                     {
                         let guard = notify_tx.lock().await;
                         if let Some(ref tx) = *guard {
-                            use crate::r#impl::daemon::handler::format::{event_to_client_event, event_to_json};
-                            if let Some(client_event) = event_to_client_event(&event) {
+                            if let Some(client_event) = turn_event_to_client_event(&event) {
                                 if let Ok(json_str) = event_to_json(&client_event) {
                                     let _ = tx.send(json_str).await;
                                 }
@@ -583,24 +611,31 @@ impl DaemonTurnOrchestrator {
             }
         };
 
-        // Drain remaining events
+        // Drain remaining events from turn stream
+        // Yield once to allow the bridge task to forward inflight events
+        tokio::task::yield_now().await;
         let mut had_turn_done = false;
-        while let Ok(event) = event_rx.try_recv() {
-            if matches!(event, Event::TurnDone { .. }) {
-                had_turn_done = true;
-            }
-            {
-                let guard = notify_tx.lock().await;
-                if let Some(ref tx) = *guard {
-                    use crate::r#impl::daemon::handler::format::{
-                        event_to_client_event, event_to_json,
-                    };
-                    if let Some(client_event) = event_to_client_event(&event) {
-                        if let Ok(json_str) = event_to_json(&client_event) {
-                            let _ = tx.send(json_str).await;
+        loop {
+            match turn_stream.try_recv() {
+                Some(Ok(event)) => {
+                    if matches!(event, TurnEventV1::TurnDone { .. }) {
+                        had_turn_done = true;
+                    }
+                    {
+                        let guard = notify_tx.lock().await;
+                        if let Some(ref tx) = *guard {
+                            if let Some(client_event) = turn_event_to_client_event(&event) {
+                                if let Ok(json_str) = event_to_json(&client_event) {
+                                    let _ = tx.send(json_str).await;
+                                }
+                            }
                         }
                     }
                 }
+                Some(Err(rejection)) => {
+                    warn!(schema = %rejection.actual, "Schema mismatch in event drain, skipping");
+                }
+                None => break,
             }
         }
         if !had_turn_done {
@@ -632,7 +667,7 @@ impl DaemonTurnOrchestrator {
                 .iter()
                 .map(|(_, name, _)| name.clone())
                 .collect();
-            let sb = self.subsystems.storm_breaker.lock().await;
+            let sb = self.subsystems.security.storm_breaker.lock().await;
             self.session_gateway
                 .update_turn_state(
                     turn_count,
@@ -716,9 +751,9 @@ impl DaemonTurnOrchestrator {
 
         if turn_succeeded {
             let sess_id = self.get_or_create_session(None).await.0;
-            let rm = self.subsystems.recall_memory.lock().await;
+            let rm = self.subsystems.memory.recall_memory.lock().await;
             let _ = rm.store(&sess_id, "assistant_message", &text, None);
-            let hr = self.subsystems.hook_registry.lock().await;
+            let hr = self.subsystems.corpus.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnMemoryStore,
                 session_id: sess_id.clone(),
@@ -762,4 +797,237 @@ impl DaemonTurnOrchestrator {
 
         json!({"jsonrpc": "2.0", "id": id, "result": {"response": text, "turn": turn}})
     }
+}
+
+// ---------------------------------------------------------------------------
+// TurnEventV1 conversion helpers (bridge from cognit::Event to fabric TurnEventV1)
+// ---------------------------------------------------------------------------
+
+/// Convert a `cognit::Event` into a `TurnEventV1` for EnvelopeV2 streaming.
+fn convert_event_to_turn_event(event: Event) -> TurnEventV1 {
+    match event {
+        Event::TurnStarted { iteration } => TurnEventV1::TurnStarted { iteration },
+        Event::TextDelta { delta } => TurnEventV1::TextDelta { delta },
+        Event::ToolCallStart { name, call_id } => TurnEventV1::ToolCallStart { name, call_id },
+        Event::ToolCallComplete {
+            call_id,
+            name,
+            args,
+        } => TurnEventV1::ToolCallComplete {
+            call_id,
+            name,
+            args,
+        },
+        Event::ToolResult {
+            name,
+            call_id,
+            result,
+        } => TurnEventV1::ToolResult {
+            name,
+            call_id,
+            content: result.content,
+            is_error: result.is_error,
+            execution_time_ms: result.execution_time_ms,
+        },
+        Event::Usage {
+            tokens_in,
+            tokens_out,
+            cache_hit_tokens,
+            cache_miss_tokens,
+        } => TurnEventV1::Usage {
+            tokens_in,
+            tokens_out,
+            cache_hit_tokens,
+            cache_miss_tokens,
+        },
+        Event::TurnDone { result } => TurnEventV1::TurnDone {
+            result: match result {
+                Ok(text) => Some(text),
+                Err(e) => Some(format!("error: {}", e)),
+            },
+        },
+        Event::Error { message } => TurnEventV1::Error { message },
+        Event::AwarenessChanged { level, context } => {
+            TurnEventV1::AwarenessChanged { level, context }
+        }
+        Event::ModeChanged { mode } => TurnEventV1::ModeChanged { mode },
+        Event::SubAgentStatusChanged {
+            agent_id,
+            status,
+            task,
+        } => TurnEventV1::SubAgentStatusChanged {
+            agent_id,
+            status,
+            task,
+        },
+        Event::PlanUpdate {
+            version,
+            plan,
+            critique,
+            ready_for_approval,
+        } => TurnEventV1::PlanUpdate {
+            version,
+            plan,
+            critique,
+            ready_for_approval,
+        },
+        Event::Interrupted { reason } => TurnEventV1::Interrupted { reason },
+        Event::ContextUpdate {
+            used_tokens,
+            max_tokens,
+        } => TurnEventV1::ContextUpdate {
+            used_tokens,
+            max_tokens,
+        },
+        Event::ModelSwitch { model_name } => TurnEventV1::ModelSwitch { model_name },
+        Event::GoalSet { goal, sub_goals } => TurnEventV1::GoalSet { goal, sub_goals },
+        Event::Reflection {
+            summary,
+            recommendation,
+        } => TurnEventV1::Reflection {
+            summary,
+            recommendation,
+        },
+        Event::BudgetExceeded { used, max } => TurnEventV1::BudgetExceeded { used, max },
+        Event::CircuitBreakerTripped { reason } => TurnEventV1::CircuitBreakerTripped { reason },
+        Event::CompactionTriggered {
+            used_tokens,
+            threshold,
+            reason,
+        } => TurnEventV1::CompactionTriggered {
+            used_tokens,
+            threshold,
+            reason,
+        },
+        Event::ApprovalRequest {
+            id,
+            tool,
+            args,
+            reason,
+        } => TurnEventV1::Approval {
+            id,
+            tool,
+            args,
+            reason,
+        },
+        // Internal-only events → Generic catch-all (no serialization needed)
+        _ => TurnEventV1::Generic {
+            payload: serde_json::Value::Null,
+        },
+    }
+}
+
+/// Convert a `TurnEventV1` into a `ClientEvent` for TUI forwarding.
+fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
+    match event {
+        TurnEventV1::TurnStarted { iteration } => Some(ClientEvent::TurnStarted {
+            iteration: *iteration,
+        }),
+        TurnEventV1::TextDelta { delta } => Some(ClientEvent::TextDelta {
+            text: delta.clone(),
+        }),
+        TurnEventV1::ToolCallStart { name, call_id } => Some(ClientEvent::ToolCallStart {
+            call_id: call_id.clone(),
+            tool: name.clone(),
+            args: serde_json::Value::Null,
+        }),
+        TurnEventV1::ToolCallComplete {
+            call_id,
+            name,
+            args,
+        } => Some(ClientEvent::ToolCallComplete {
+            call_id: call_id.clone(),
+            tool: name.clone(),
+            args: args.clone(),
+        }),
+        TurnEventV1::ToolResult {
+            name,
+            call_id,
+            content,
+            is_error,
+            execution_time_ms,
+        } => Some(ClientEvent::ToolCallResult {
+            call_id: call_id.clone(),
+            tool: name.clone(),
+            output: content.clone(),
+            is_error: *is_error,
+            elapsed_ms: *execution_time_ms,
+        }),
+        TurnEventV1::Usage {
+            tokens_in,
+            tokens_out,
+            ..
+        } => Some(ClientEvent::Usage {
+            tokens_in: *tokens_in as u64,
+            tokens_out: *tokens_out as u64,
+        }),
+        TurnEventV1::TurnDone { .. } => Some(ClientEvent::TurnDone),
+        TurnEventV1::Error { message } => Some(ClientEvent::Error {
+            message: message.clone(),
+        }),
+        TurnEventV1::AwarenessChanged { level, context } => Some(ClientEvent::AwarenessChanged {
+            level: level.clone(),
+            context: context.clone(),
+        }),
+        TurnEventV1::ModeChanged { mode } => Some(ClientEvent::ModeChanged { new: mode.clone() }),
+        TurnEventV1::SubAgentStatusChanged {
+            agent_id,
+            status,
+            task,
+        } => Some(ClientEvent::SubAgentStatus {
+            agent_id: agent_id.clone(),
+            task: task.clone(),
+            status: status.clone(),
+        }),
+        TurnEventV1::PlanUpdate {
+            version,
+            plan,
+            critique,
+            ready_for_approval,
+        } => Some(ClientEvent::PlanUpdate {
+            version: *version,
+            plan: plan.clone(),
+            critique: critique.clone(),
+            ready_for_approval: *ready_for_approval,
+        }),
+        TurnEventV1::Interrupted { .. } => Some(ClientEvent::Interrupted),
+        TurnEventV1::ContextUpdate {
+            used_tokens,
+            max_tokens,
+        } => Some(ClientEvent::ContextUpdate {
+            used_tokens: *used_tokens as u64,
+            max_tokens: *max_tokens as u64,
+        }),
+        TurnEventV1::ModelSwitch { model_name } => Some(ClientEvent::ModelSwitch {
+            model: model_name.clone(),
+        }),
+        TurnEventV1::GoalSet { goal, sub_goals } => Some(ClientEvent::GoalSet {
+            goal: goal.clone(),
+            sub_goals: sub_goals.clone(),
+        }),
+        TurnEventV1::Reflection { summary, .. } => Some(ClientEvent::Reflection {
+            summary: summary.clone(),
+        }),
+        TurnEventV1::BudgetExceeded { max, .. } => {
+            Some(ClientEvent::BudgetExceeded { limit: *max as u64 })
+        }
+        TurnEventV1::CircuitBreakerTripped { reason } => Some(ClientEvent::CircuitBreakerTripped {
+            reason: reason.clone(),
+        }),
+        TurnEventV1::CompactionTriggered { .. } => Some(ClientEvent::CompactionTriggered),
+        // TextDeltaStop, Approval, Generic → no client-facing event
+        TurnEventV1::TextDeltaStop | TurnEventV1::Approval { .. } | TurnEventV1::Generic { .. } => {
+            None
+        }
+    }
+}
+
+/// Serialize a `ClientEvent` into a JSON-RPC notification string.
+fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
+    let notification = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "event",
+        "params": event,
+    });
+    serde_json::to_string(&notification)
 }

@@ -17,6 +17,7 @@ impl RequestHandler {
     ) -> serde_json::Value {
         let reflections = self
             .subsystems
+            .memory
             .episodic_memory
             .lock()
             .await
@@ -83,6 +84,7 @@ impl RequestHandler {
         // Check if there are recent reflections to draw from
         match self
             .subsystems
+            .memory
             .episodic_memory
             .lock()
             .await
@@ -118,6 +120,7 @@ impl RequestHandler {
         );
         if let Err(e) = self
             .subsystems
+            .memory
             .episodic_memory
             .lock()
             .await
@@ -196,6 +199,7 @@ impl RequestHandler {
         // Return recent evolution log entries from episodic memory.
         match self
             .subsystems
+            .memory
             .episodic_memory
             .lock()
             .await

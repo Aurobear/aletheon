@@ -18,7 +18,7 @@ impl DaemonTurnOrchestrator {
             let sm = sm_arc.lock().await;
             (sm.session_id.clone(), sm.turn_count())
         };
-        let hr = self.subsystems.hook_registry.lock().await;
+        let hr = self.subsystems.corpus.hook_registry.lock().await;
         let ctx = HookContext {
             point: HookPoint::PostTurn,
             session_id,
@@ -33,7 +33,7 @@ impl DaemonTurnOrchestrator {
     }
 
     pub(crate) async fn extract_auto_memory(&self, message: &str, text: &str) {
-        let mut am = self.subsystems.auto_memory.lock().await;
+        let mut am = self.subsystems.memory.auto_memory.lock().await;
         if let Ok(facts) = am.analyze_and_store(message, text).await {
             if !facts.is_empty() {
                 info!(count = facts.len(), "Auto-memory: stored facts");
@@ -89,14 +89,14 @@ impl DaemonTurnOrchestrator {
             learned,
         );
         let store_result = {
-            let mem = self.subsystems.episodic_memory.lock().await;
+            let mem = self.subsystems.memory.episodic_memory.lock().await;
             mem.store_reflection(&entry)
         };
         if let Err(e) = store_result {
             warn!(error = %e, "Failed to store chat reflection");
         } else {
             info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
-            let mem = self.subsystems.episodic_memory.lock().await;
+            let mem = self.subsystems.memory.episodic_memory.lock().await;
             if let Ok(count) = mem.reflection_count() {
                 if count > 0 && count % 10 == 0 {
                     info!(
@@ -161,7 +161,7 @@ impl DaemonTurnOrchestrator {
         if commits.is_empty() {
             return;
         }
-        let rm = self.subsystems.recall_memory.lock().await;
+        let rm = self.subsystems.memory.recall_memory.lock().await;
         for commit in commits {
             match serde_json::to_string(&commit) {
                 Ok(serialized) => {

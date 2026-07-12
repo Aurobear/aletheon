@@ -67,12 +67,12 @@ impl TurnToolExecutor {
         process_id: ProcessId,
     ) -> Self {
         Self {
-            tool_runner: subsystems.tool_runner.clone(),
-            tools: subsystems.tools.clone(),
-            hook_registry: subsystems.hook_registry.clone(),
-            storm_breaker: subsystems.storm_breaker.clone(),
-            memory_queue: subsystems.memory_queue.clone(),
-            session_approvals: subsystems.session_approvals.clone(),
+            tool_runner: subsystems.security.tool_runner.clone(),
+            tools: subsystems.corpus.tools.clone(),
+            hook_registry: subsystems.corpus.hook_registry.clone(),
+            storm_breaker: subsystems.security.storm_breaker.clone(),
+            memory_queue: subsystems.session.memory_queue.clone(),
+            session_approvals: subsystems.security.session_approvals.clone(),
             debug_perf: subsystems.debug_perf.clone(),
             self_field: subsystems.self_field.clone(),
             working_dir,
