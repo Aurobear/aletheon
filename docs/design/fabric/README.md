@@ -11,10 +11,8 @@
 
 | Module | File | Purpose |
 |--------|------|---------|
-| `subsystem` | `fabric/src/subsystem.rs` | `Subsystem` trait, `SubsystemHealth`, `SubsystemContext`, `Version` |
-| `event` | `fabric/src/event.rs` | `Event`, `EventType`, `Priority`, `SubscriptionId`, `EventHandler` |
-| `event_bus` | `fabric/src/event_bus.rs` | `EventBus` trait for inter-subsystem event routing |
-| `context` | `fabric/src/context.rs` | `Context`, `TraceState` |
+| `subsystem` | `fabric/src/include/subsystem.rs` | `Subsystem` trait, `SubsystemHealth`, `SubsystemContext`, `Version` |
+| `context` | `fabric/src/types/context.rs` | `Context`, `TraceState` |
 | `capability` | `fabric/src/capability.rs` | `Capability`, `CapabilitySet`, `PermissionLevel` |
 | `body` | `fabric/src/body.rs` | `Action`, `ActionResult`, `BodyRuntime` trait |
 | `memory` | `fabric/src/memory.rs` | `MemoryBackend`, `MemoryEntry`, `MemoryHandle`, `MemoryQuery`, `MemoryType`, `MemoryFilter`, `CompactStrategy`, `CompactResult`, `MemoryStats` |
@@ -41,6 +39,8 @@
 2. **Two PermissionLevel types** — `capability::PermissionLevel` (ReadOnly/SandboxWrite/...) for subsystem capabilities, and `tool::PermissionLevel` (L0-L3) for tool access control. The tool variant is re-exported as `ToolPermissionLevel` to avoid name conflicts.
 
 3. **Subsystem trait** — Every major subsystem implements `Subsystem` (name, version, init, shutdown, health). Higher-level traits (`CognitOps`, `BodyRuntime`, `MetaRuntimeOps`, `SelfFieldOps`) extend this base.
+
+4. **CommunicationBus** — The single event bus system lives at `fabric/src/ipc/bus/communication_bus.rs`. It replaces the earlier `EventBus` trait and `KernelEventBus` wrapper.
 
 ---
 

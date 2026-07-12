@@ -11,16 +11,43 @@
 
 ```
 executive/src/
+  bridge/
+    mod.rs                      # Cross-crate integration points
+  core/
+    mod.rs                      # Core types
+    config/                     # Configuration (agent, genome, infra, provider)
+    session_gateway/            # Session gateway and turn context
+    runtime_core.rs             # RuntimeCore (host-agnostic bootstrap)
+    core_systems.rs             # CoreSystems (aggregated subsystem wiring)
+    orchestrator.rs             # Orchestrator
+    ...
+  host/
+    mod.rs                      # Host types
+    systemd.rs                  # SystemdHost
+    container.rs                # ContainerHost
+  service/
+    mod.rs
+    turn_service.rs             # TurnService stream coordination
+    daemon_turn/                # DaemonTurnOrchestrator
+      mod.rs
+      orchestrator.rs
+      session.rs
+      execute.rs
+      ...
+  tools/
+    mod.rs                      # Bridge tool registry
   impl/
     mod.rs
     coordinator.rs              # Runtime coordinator
     engine/                     # Cognitive engine (ReAct loop)
       mod.rs
-      cognitive_loop.rs         # Core ReAct loop implementation
       config.rs                 # Engine configuration
-      memory_integration.rs     # Memory integration
-      streaming.rs              # Streaming support
-      tool_dispatch.rs          # Tool dispatch logic
+      modules/                  # Pluggable engine modules
+        mod.rs
+        body_module.rs          # Corpus/tool integration
+        memory_module.rs        # Memory subsystem integration
+        perception_module.rs    # Perception feed integration
+        self_field_module.rs    # Dasein self-field integration
     memory/                     # Runtime-level memory (L1/L2/L3)
       mod.rs
       core_memory.rs            # CoreMemory (L1) — block-based in-context
@@ -106,9 +133,8 @@ executive/src/
 
 ## Related Crates
 
-- `fabric` — Trait definitions and shared types
+- `fabric` — Trait definitions, shared types, IPC (CommunicationBus)
 - `mnemosyne` — Backend memory storage (episodic, semantic, procedural)
-- `fabric` — IPC and inter-process communication
 - `corpus` — Tools, sandbox, security, platform adapters
 - `cognit` — LLM inference
 - `dasein` — Perception, hooks

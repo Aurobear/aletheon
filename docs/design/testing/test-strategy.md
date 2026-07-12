@@ -12,7 +12,7 @@
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
 | Unit tests | ✅ Implemented | `crates/*/src/` | 614 tests pass |
-| Mock infrastructure | ✅ Implemented | `crates/*/src/testing/` | MockLlm, MockSandbox, MockMemory, MockPerception |
+| Mock infrastructure | ✅ Implemented | `crates/*/src/testing/` | MockLlm, MockMemory, MockPerception |
 | Integration tests | 🟡 Partial | inline `#[cfg(test)]` | 模块内集成测试存在 |
 | E2E tests | ⬜ Planned | — | 待 CI 落地后实现 |
 | Performance benchmarks | ⬜ Planned | — | criterion 未集成 |
@@ -178,7 +178,7 @@ fn test_crash_recovery_from_checkpoint() {
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Unit tests | ✅ Implemented | 614 tests pass across all crates |
-| Mock infrastructure | ✅ Implemented | MockLlm, MockSandbox, MockMemory, MockPerception in `crates/*/src/testing/` |
+| Mock infrastructure | ✅ Implemented | MockLlm, MockMemory, MockPerception in `crates/*/src/testing/` |
 | Integration tests | 🟡 Partial | 模块内 `#[cfg(test)]` 集成测试存在，无 dedicated test suite |
 | E2E tests | 未实现 | — |
 | Performance benchmarks | 未实现 | criterion 未集成 |

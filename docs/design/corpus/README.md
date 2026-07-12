@@ -13,18 +13,11 @@
 ```
 crates/corpus/
 ├── core/           — Core types and traits
-├── bridge/         — FFI and cross-crate bridges
-├── impl/           — Implementation modules
-│   ├── tools/      — Tool system (Tool trait, registry, built-in tools, output defense)
-│   ├── sandbox/    — Sandbox execution (bubblewrap, process, noop backends)
-│   ├── mcp/        — MCP client (stdio, HTTP, SSE transports, OAuth)
-│   ├── security/   — Security policy (PolicyEngine, RiskClassifier, AuditLogger, RollbackEngine)
-│   ├── platform/   — Platform adaptation (Linux, Android, boot, IPC, awareness)
-│   ├── driver/     — Hardware drivers (display, input, OCR, a11y, process, I/O)
-│   ├── ui/         — Terminal UI (chat, commands, markdown, skills, status)
-│   ├── acix/       — Agent-Computer Interface (grounding, experience, task management)
-│   └── mod.rs      — Module entry point
-└── testing/        — Test utilities and fixtures
+├── drivers/        — Hardware drivers (display, input, OCR, a11y, process, I/O)
+├── hook/           — Hook lifecycle system
+├── security/       — Security policy (PolicyEngine, RiskClassifier, AuditLogger, RollbackEngine)
+├── skill/          — Skill system
+└── tools/          — Tool system (Tool trait, registry, built-in tools, output defense)
 ```
 
 ## Documents
@@ -44,9 +37,11 @@ crates/corpus/
 
 ## Internal Pattern
 
-Each `impl/` module follows the core/bridge/impl/testing pattern:
+The corpus crate follows a flat module layout — each module directory contains its own types, implementations, and tests in a self-contained structure:
 
 - **core/** — shared types and trait definitions
-- **bridge/** — cross-crate integration points
-- **impl/** — concrete implementations
-- **testing/** — test utilities and mocks
+- **drivers/** — hardware/platform drivers
+- **hook/** — hook lifecycle system
+- **security/** — security policy and enforcement
+- **skill/** — skill definitions
+- **tools/** — tool system and registry

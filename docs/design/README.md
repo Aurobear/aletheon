@@ -25,7 +25,7 @@
 | **Platform** | PlatformAdapter (Linux+Android), Boot, Agent Awareness | — | Multi-Device | Kernel IPC module (agent_ipc.ko) |
 | **Resilience** | Error handling, Panic recovery | — | Rate limiting | — |
 | **Observability** | EventJournal, Observability modules | — | Durable/Ephemeral split, Prometheus metrics, Debug CLI | — |
-| **Testing** | 614 unit tests, Mock infrastructure (MockLlm, MockSandbox, MockMemory, MockPerception) | Integration tests (inline) | CI pipeline (GitHub Actions), E2E tests, Performance benchmarks | — |
+| **Testing** | 614 unit tests, Mock infrastructure (MockLlm, MockMemory, MockPerception) | Integration tests (inline) | CI pipeline (GitHub Actions), E2E tests, Performance benchmarks | — |
 | **Automation** | Automation system | — | — | — |
 | **MCP** | MCP OAuth 2.0, StreamableHTTP + SSE transports | — | — | — |
 
@@ -44,7 +44,7 @@
 
 | Crate | 目录 | 核心内容 |
 |-------|------|----------|
-| `fabric` | [fabric/](fabric/) | 共享类型定义、Trait 接口、ABI 契约、IPC 层（EventBus、Unix Socket、消息路由） |
+| `fabric` | [fabric/](fabric/) | 共享类型定义、Trait 接口、ABI 契约、IPC 层（CommunicationBus、Unix Socket、消息路由） |
 | `mnemosyne` | [mnemosyne/](mnemosyne/) | 记忆系统：episodic/semantic/procedural/self-memory |
 | `agora` | [agora/](agora/) | 共享认知工作区（黑板/注意力/任务图/推理轨迹/scratchpad），会话隔离 |
 | `corpus` | [corpus/](corpus/) | 执行层：工具、沙箱、MCP、平台、驱动 |
@@ -99,7 +99,7 @@
 ├────────────────────────────────────────────────────────────────┤
 │ fabric — ABI layer (zero business logic)                        │
 │   primitives (cognitive objects + Command/Query/Event/Stream),  │
-│   ops traits, Envelope, EventBus, LlmProvider                   │
+│   ops traits, Envelope, CommunicationBus, LlmProvider              │
 └────────────────────────────────────────────────────────────────┘
 ```
 

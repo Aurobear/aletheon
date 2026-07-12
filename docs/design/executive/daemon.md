@@ -19,7 +19,7 @@
 | Provider registry init | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | `ProviderRegistry::from_config()` |
 | Unix socket server | ✅ Implemented | `crates/executive/src/impl/daemon/server.rs` | Line-delimited JSON-RPC, concurrent connections |
 | RequestHandler | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | chat/clear/status/health/session.* methods |
-| Chat → ReAct loop | ✅ Implemented | `crates/executive/src/impl/daemon/handler/chat.rs` | `ReActLoop::run_streaming()` with full tool calling |
+| Chat → ReAct loop | ✅ Implemented | `crates/executive/src/impl/daemon/handler/chat.rs` | `handle_chat` routes through `TurnService` / `DaemonTurnOrchestrator` with full tool calling |
 | Streaming responses | ✅ Implemented | `crates/executive/src/core/react_loop/tool_exec.rs` | `ChannelEventSink` → JSON-RPC notifications (TextDelta, ToolCallStart, etc.) |
 | Perception manager | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Spawns in background task via bootstrap |
 | Perception bridge | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Event→Engine injection channel |
@@ -278,7 +278,7 @@ pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value
 
 | 方法 | 参数 | 响应 | 说明 |
 |------|------|------|------|
-| `chat` | `params.message: string` | `result.response: string` (streaming via notifications) | 调用 ReActLoop 推理循环，支持工具调用 |
+| `chat` | `params.message: string` | `result.response: string` (streaming via notifications) | 调用 TurnService/DaemonTurnOrchestrator 推理循环，支持工具调用 |
 | `clear` | 无 | `result.status: "ok"` | 清除 pending_input |
 | `status` | 无 | `result.iteration, config` | 查询 runtime 状态 |
 | `health` | 无 | `result.uptime, connections, sessions, version` | 健康检查端点 |
@@ -290,7 +290,7 @@ pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value
 
 错误响应: JSON-RPC 标准错误格式，`code: -32000` (LLM error) 或 `-32601` (unknown method)。
 
-**注意:** `chat` 方法现已完整走 `ReActLoop::run_streaming()` 推理循环，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/chat.rs`。
+**注意:** `chat` 方法现已通过 `TurnService` / `DaemonTurnOrchestrator` 路由，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/chat.rs`。
 
 ### 4.3 会话状态管理
 
@@ -334,7 +334,7 @@ model = "claude-sonnet-4-20250514"
 
 ~~`chat` 方法直接调用 `llm.complete()`，绕过了 `AletheonExecutive` 的 ReAct 推理循环。~~
 
-现已通过 `ReActLoop::run_streaming()` 完整集成，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/chat.rs`。
+现已通过 `handle_chat` 路由到 `TurnService`/`DaemonTurnOrchestrator` 完整集成，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/chat.rs`。
 
 ### 6.2 无流式响应 ✅ 已修复
 
