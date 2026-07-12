@@ -6,7 +6,7 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::error::AgentError;
+use crate::kernel::error::AgentError;
 
 /// Lifecycle state of a managed resource.
 #[repr(u8)]

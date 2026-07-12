@@ -1,6 +1,5 @@
 pub mod checkpoint;
 pub mod config;
-pub mod controller;
 pub mod core_systems;
 pub mod corpus_group;
 pub mod evolution_coordinator;
