@@ -27,16 +27,12 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 rusqlite = { workspace = true }
 parking_lot = "0.12"
-futures = "0.3"
 toml = "0.8"
 reqwest = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 urlencoding = { workspace = true }
-regex = { workspace = true }
 dirs = "5"
-clap = { version = "4", features = ["derive"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 nix = { workspace = true }
 
 [dev-dependencies]

@@ -1,6 +1,6 @@
 //! LlmPulse — the heart of the system.
 //!
-//! Periodically broadcasts cognitive energy to EventBus.
+//! Periodically broadcasts cognitive energy to the event bus.
 //! Agents consume this energy to think and act.
 
 use std::sync::Arc;
@@ -35,7 +35,7 @@ impl Default for PulseConfig {
     }
 }
 
-/// The heart — periodically broadcasts cognitive energy to EventBus.
+/// The heart — periodically broadcasts cognitive energy to the event bus.
 pub struct LlmPulse {
     scheduler: Arc<LlmScheduler>,
     bus: Arc<CommunicationBus>,

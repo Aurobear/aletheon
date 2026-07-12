@@ -21,8 +21,6 @@ tokio = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-dirs = "5"
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
-toml = { workspace = true }

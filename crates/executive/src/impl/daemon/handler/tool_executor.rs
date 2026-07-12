@@ -1,8 +1,7 @@
-#![allow(dead_code)]
 
 //! `TurnToolExecutor` — the per-tool execution pipeline for a chat turn.
 //!
-//! Extracted from the former inline `execute_tool` closure in `chat.rs`
+//! Extracted from the former inline `execute_tool` closure (previously in chat.rs, now deleted)
 //! (RFC-018 D5 seam 3 / issue #4). Runs one tool through the full pipeline:
 //! PreTool hook → OnMemoryRecall hook → session-approval check → SelfField
 //! review → registry lookup → `ExecutionPermit`-guarded
@@ -12,7 +11,7 @@
 //! Behaviour is identical to the previous closure; this only gives the pipeline
 //! a name and a home. It is adapted to the harness's
 //! `Fn(&str, &str, &Value) -> Future<Output=(String, bool)>` executor parameter
-//! by a thin `Arc<Self>` closure wrapper at the `chat.rs` call site.
+//! by a thin `Arc<Self>` closure wrapper.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
