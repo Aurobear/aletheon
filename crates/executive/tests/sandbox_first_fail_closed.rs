@@ -77,10 +77,12 @@ async fn sandbox_first_required_fail_closed_via_invoker() {
 
     let result = invoker
         .invoke(CapabilityRequest {
+            operation_id: fabric::OperationId::new(),
             process_id: fabric::ProcessId::new(),
             name: "dangerous.tool".into(),
             input: serde_json::json!({"action": "rm -rf /"}),
             call_id: "sandbox-required-1".into(),
+            deadline: None,
         })
         .await;
 
@@ -114,10 +116,12 @@ async fn sandbox_first_request_with_required_sandbox_fails_closed() {
 
     let result = invoker
         .invoke(CapabilityRequest {
+            operation_id: fabric::OperationId::new(),
             process_id: fabric::ProcessId::new(),
             name: "shell.execute".into(),
             input: serde_json::json!({"cmd": "whoami"}),
             call_id: "sf-1".into(),
+            deadline: None,
         })
         .await;
 
@@ -141,10 +145,12 @@ async fn allow_all_still_passes_without_sandbox() {
 
     let result = invoker
         .invoke(CapabilityRequest {
+            operation_id: fabric::OperationId::new(),
             process_id: fabric::ProcessId::new(),
             name: "safe.readonly".into(),
             input: serde_json::json!({"query": "hello"}),
             call_id: "safe-1".into(),
+            deadline: None,
         })
         .await;
 
@@ -190,10 +196,12 @@ async fn sandbox_required_on_destructive_request_fails_closed() {
 
     let result = invoker
         .invoke(CapabilityRequest {
+            operation_id: fabric::OperationId::new(),
             process_id: fabric::ProcessId::new(),
             name: "filesystem.delete_all".into(),
             input: serde_json::json!({"path": "/important/data"}),
             call_id: "destructive-1".into(),
+            deadline: None,
         })
         .await;
 

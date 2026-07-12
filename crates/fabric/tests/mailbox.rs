@@ -229,3 +229,53 @@ async fn many_mailboxes_concurrent_routing() {
         assert_eq!(msg.payload["body"], format!("to-{i}"));
     }
 }
+
+#[tokio::test]
+async fn route_at_rejects_expired_envelope() {
+    let svc = InProcessMailboxService::new();
+    let mb: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::new());
+    svc.register(Target::from("dst"), mb).await.unwrap();
+    let env = make_envelope("src", "dst", "late").with_deadline(fabric::MonoDeadlineMillis(10));
+
+    let receipt = svc.route_at(env, 10).await;
+    assert!(matches!(receipt, DeliveryReceipt::Expired { .. }));
+}
+
+#[tokio::test]
+async fn unknown_schema_rejected_structurally() {
+    let svc = InProcessMailboxService::new();
+    let mb: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::new());
+    svc.register(Target::from("dst"), mb).await.unwrap();
+    let env = EnvelopeV2::new(
+        SchemaId::from("aletheon.unknown/v9"),
+        Target::from("src"),
+        Target::from("dst"),
+        DeliveryPattern::Direct,
+        NamespaceId("integration-test".into()),
+        serde_json::json!({}),
+    );
+    let receipt = svc.route_at(env, 0).await;
+    assert!(
+        matches!(receipt, DeliveryReceipt::Rejected { reason, .. } if reason.contains("unsupported schema"))
+    );
+}
+
+#[tokio::test]
+async fn process_signal_has_priority_over_ordinary_messages() {
+    let svc = InProcessMailboxService::new();
+    let mb: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(4));
+    svc.register(Target::from("agent"), mb.clone())
+        .await
+        .unwrap();
+
+    svc.route(make_envelope("src", "agent", "ordinary")).await;
+    let signal_receipt = svc
+        .signal_process(Target::from("agent"), fabric::ProcessSignal::Terminate)
+        .await;
+    assert!(signal_receipt.is_ok());
+
+    let first = mb.recv().await.unwrap();
+    assert_eq!(first.schema.0, SchemaId::PROCESS_SIGNAL_V1);
+    let second = mb.recv().await.unwrap();
+    assert_eq!(second.payload["body"], "ordinary");
+}

@@ -64,6 +64,22 @@ impl From<&str> for SchemaId {
     }
 }
 
+/// Structured schema compatibility error. Unknown cross-process schemas are
+/// rejected instead of being interpreted as untyped JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsupportedSchema {
+    pub schema: SchemaId,
+    pub supported: Vec<String>,
+}
+
+impl std::fmt::Display for UnsupportedSchema {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unsupported schema: {}", self.schema)
+    }
+}
+
+impl std::error::Error for UnsupportedSchema {}
+
 // ---------------------------------------------------------------------------
 // Routing target (string-based, simpler than the legacy enum)
 // ---------------------------------------------------------------------------
@@ -227,6 +243,10 @@ impl EnvelopeV2 {
             Some(MonoDeadlineMillis(d)) => now_mono_millis >= d,
             None => false,
         }
+    }
+
+    pub fn validate_known_schema(&self) -> Result<(), UnsupportedSchema> {
+        self.schema.validate_known()
     }
 
     // ------------------------------------------------------------------
@@ -419,6 +439,37 @@ impl SchemaId {
     pub const EVENT_COGNITIVE_PULSE_V1: &'static str = "aletheon.event.cognitive_pulse/v1";
     pub const EVENT_AGENT_SPAWNED_V1: &'static str = "aletheon.event.agent_spawned/v1";
 
+    pub fn supported_cross_process() -> &'static [&'static str] {
+        &[
+            Self::TURN_REQUEST_V1,
+            Self::TURN_EVENT_V1,
+            Self::PROCESS_SIGNAL_V1,
+            Self::CAPABILITY_REQUEST_V1,
+            Self::CAPABILITY_RESULT_V1,
+            Self::LEGACY_ENVELOPE_V0,
+        ]
+    }
+
+    pub fn is_supported_cross_process(&self) -> bool {
+        Self::supported_cross_process().contains(&self.0.as_str())
+            || self.0.starts_with("aletheon.event.")
+            || self.0.starts_with("aletheon.test")
+    }
+
+    pub fn validate_known(&self) -> Result<(), UnsupportedSchema> {
+        if self.is_supported_cross_process() {
+            Ok(())
+        } else {
+            Err(UnsupportedSchema {
+                schema: self.clone(),
+                supported: Self::supported_cross_process()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            })
+        }
+    }
+
     /// Map a legacy `EventType` to its corresponding `SchemaId` string.
     ///
     /// This is the migration bridge: old code that used `EventType` routing
@@ -559,6 +610,23 @@ mod tests {
 
         let env: EnvelopeV2 = serde_json::from_value(json_with_schema).expect("with schema");
         assert_eq!(env.schema.0, "aletheon.turn.request/v1");
+    }
+
+    #[test]
+    fn unsupported_schema_is_structured_error() {
+        let env = EnvelopeV2::new(
+            SchemaId::from("aletheon.unknown/v99"),
+            Target::from("a"),
+            Target::from("b"),
+            DeliveryPattern::Direct,
+            NamespaceId("test".into()),
+            serde_json::json!({}),
+        );
+        let err = env.validate_known_schema().unwrap_err();
+        assert_eq!(err.schema.0, "aletheon.unknown/v99");
+        assert!(err
+            .supported
+            .contains(&SchemaId::TURN_REQUEST_V1.to_string()));
     }
 
     #[test]

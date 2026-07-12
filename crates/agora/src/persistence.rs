@@ -67,26 +67,28 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
+    fn commit(id: Uuid, version: u64, key: &str, value: serde_json::Value, at: i64) -> AgoraCommit {
+        AgoraCommit {
+            id,
+            space: fabric::AgoraSpaceId("s".into()),
+            author: fabric::ProcessId(uuid::Uuid::nil()),
+            version,
+            operation: AgoraOperation::PublishFact {
+                key: key.into(),
+                value,
+            },
+            evidence: Vec::new(),
+            confidence: 1.0,
+            committed_at: at,
+        }
+    }
+
     #[tokio::test]
     async fn append_then_recover_single_session() {
         let log = InMemoryCommitLog::new();
 
-        let c1 = AgoraCommit {
-            id: Uuid::new_v4(),
-            operation: AgoraOperation::PublishFact {
-                key: "x".into(),
-                value: json!(1),
-            },
-            committed_at: 1000,
-        };
-        let c2 = AgoraCommit {
-            id: Uuid::new_v4(),
-            operation: AgoraOperation::PublishFact {
-                key: "y".into(),
-                value: json!(2),
-            },
-            committed_at: 1001,
-        };
+        let c1 = commit(Uuid::new_v4(), 1, "x", json!(1), 1000);
+        let c2 = commit(Uuid::new_v4(), 2, "y", json!(2), 1001);
 
         log.append_commit("s1", &c1).await.unwrap();
         log.append_commit("s1", &c2).await.unwrap();
@@ -101,22 +103,8 @@ mod tests {
     async fn append_then_recover_multi_session() {
         let log = InMemoryCommitLog::new();
 
-        let c1 = AgoraCommit {
-            id: Uuid::new_v4(),
-            operation: AgoraOperation::PublishFact {
-                key: "a".into(),
-                value: json!(1),
-            },
-            committed_at: 1000,
-        };
-        let c2 = AgoraCommit {
-            id: Uuid::new_v4(),
-            operation: AgoraOperation::PublishFact {
-                key: "b".into(),
-                value: json!(2),
-            },
-            committed_at: 1001,
-        };
+        let c1 = commit(Uuid::new_v4(), 1, "a", json!(1), 1000);
+        let c2 = commit(Uuid::new_v4(), 2, "b", json!(2), 1001);
 
         log.append_commit("s1", &c1).await.unwrap();
         log.append_commit("s2", &c2).await.unwrap();

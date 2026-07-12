@@ -438,7 +438,7 @@ impl TurnServices for ExecTurnServices {
     async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
         // PR-2: route all tool invocations through admission controller.
         let adm_req = AdmissionRequest {
-            operation_id: Default::default(),
+            operation_id: req.operation_id,
             process_id: req.process_id,
             principal: PrincipalId("exec".into()),
             capability: CapabilityId(req.name.clone()),
@@ -458,6 +458,8 @@ impl TurnServices for ExecTurnServices {
                     call_id: req.call_id,
                     output: format!("admission denied: {e}"),
                     is_error: true,
+                    usage: UsageReport::default(),
+                    audit_id: None,
                 };
             }
         };
@@ -467,6 +469,11 @@ impl TurnServices for ExecTurnServices {
                 call_id: req.call_id,
                 output: "admission permit invalid".into(),
                 is_error: true,
+                usage: UsageReport {
+                    permit_id: permit.id,
+                    ..Default::default()
+                },
+                audit_id: Some(fabric::AuditEventId::new()),
             };
         }
 
@@ -479,6 +486,11 @@ impl TurnServices for ExecTurnServices {
                 call_id: req.call_id,
                 output: format!("Error: Unknown tool '{}'", req.name),
                 is_error: true,
+                usage: UsageReport {
+                    permit_id: permit.id,
+                    ..Default::default()
+                },
+                audit_id: Some(fabric::AuditEventId::new()),
             };
         };
 
@@ -491,11 +503,12 @@ impl TurnServices for ExecTurnServices {
             .await;
 
         let usage = UsageReport {
+            permit_id: permit.id,
             output_bytes: result.content.len() as u64,
             exit_code: if result.is_error { Some(1) } else { Some(0) },
             ..Default::default()
         };
-        let _ = self.admission.settle(permit.id, usage).await;
+        let _ = self.admission.settle(permit.id, usage.clone()).await;
 
         if result.is_error {
             tracing::warn!(tool = %req.name, error = %result.content, "Tool failed/denied");
@@ -506,6 +519,8 @@ impl TurnServices for ExecTurnServices {
             call_id: req.call_id,
             output: result.content,
             is_error: result.is_error,
+            usage,
+            audit_id: Some(fabric::AuditEventId::new()),
         }
     }
 

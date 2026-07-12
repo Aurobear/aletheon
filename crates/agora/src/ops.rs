@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
+use fabric::include::agora::{AgoraView, AgoraViewRequest, CommitPermit, CommitReceipt};
 use fabric::AgoraOps;
 
 use crate::persistence::AgoraPersistence;
@@ -61,14 +62,14 @@ impl AgoraRegistry {
             .entry(session.to_string())
             .or_insert_with(|| Workspace::new(session));
 
+        let mut replayed = 0;
         for commit in commits {
-            // Replay each persisted commit: push it into the workspace's
-            // commit log and bump the version counter to match.
-            ws.commits.push(commit);
-            ws.version += 1;
+            if ws.apply_commit(commit) {
+                replayed += 1;
+            }
         }
 
-        Ok(count)
+        Ok(replayed)
     }
 }
 
@@ -186,6 +187,77 @@ impl AgoraOps for AgoraRegistry {
             Some(ws) => ws.changes_since(since_version),
             None => Vec::new(),
         }
+    }
+}
+
+#[async_trait]
+impl fabric::include::agora::AgoraService for AgoraRegistry {
+    async fn view(&self, req: AgoraViewRequest) -> Result<AgoraView> {
+        let session = req.space.0.clone();
+        let snapshot = self.snapshot(&session).await?;
+        let version = self.version(&session).await?;
+        Ok(AgoraView {
+            space: req.space,
+            version,
+            snapshot,
+        })
+    }
+
+    async fn propose(&self, proposal: AgoraProposal) -> Result<uuid::Uuid> {
+        let session = proposal.space.0.clone();
+        let mut map = self.sessions.lock().await;
+        let ws = map
+            .entry(session.clone())
+            .or_insert_with(|| Workspace::new(session));
+        let id = proposal.id;
+        ws.propose_full(proposal).map_err(|c| {
+            anyhow::anyhow!(
+                "version conflict: expected {}, actual {}",
+                c.expected,
+                c.actual
+            )
+        })?;
+        Ok(id)
+    }
+
+    async fn commit(&self, id: uuid::Uuid, permit: CommitPermit) -> Result<CommitReceipt> {
+        if !permit.authorized {
+            anyhow::bail!("commit rejected: unauthorized");
+        }
+        let mut map = self.sessions.lock().await;
+        let Some((session, ws)) = map
+            .iter_mut()
+            .find(|(_, ws)| ws.proposals.contains_key(&id))
+        else {
+            anyhow::bail!("proposal {id} not found");
+        };
+        let commit = ws
+            .commit(id)
+            .ok_or_else(|| anyhow::anyhow!("proposal {id} expired or not found"))?;
+        if let Some(ref p) = self.persistence {
+            p.append_commit(session, &commit).await?;
+        }
+        Ok(CommitReceipt { commit })
+    }
+
+    async fn reject(&self, id: uuid::Uuid, reason: fabric::RejectReason) -> Result<()> {
+        let mut map = self.sessions.lock().await;
+        let Some((_session, ws)) = map
+            .iter_mut()
+            .find(|(_, ws)| ws.proposals.contains_key(&id))
+        else {
+            anyhow::bail!("proposal {id} not found");
+        };
+        ws.reject(id, reason)
+            .ok_or_else(|| anyhow::anyhow!("proposal {id} not found"))
+    }
+
+    async fn changes_since(
+        &self,
+        space: fabric::AgoraSpaceId,
+        version: u64,
+    ) -> Result<Vec<AgoraCommit>> {
+        Ok(<Self as AgoraOps>::changes_since(self, &space.0, version).await)
     }
 }
 
@@ -583,5 +655,125 @@ mod tests {
             reason.contains("Invalid"),
             "expected Invalid in reason: {reason}"
         );
+    }
+}
+
+#[cfg(test)]
+mod phase3_service_tests {
+    use super::*;
+    use fabric::include::agora::{AgoraService, AgoraViewRequest, CommitPermit};
+    use fabric::{AgoraSpaceId, Evidence, ProcessId};
+    use serde_json::json;
+
+    fn proposal(space: &str, base_version: u64, op: AgoraOperation) -> AgoraProposal {
+        AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: AgoraSpaceId(space.into()),
+            author: ProcessId(uuid::Uuid::nil()),
+            base_version,
+            operation: op,
+            evidence: Vec::new(),
+            confidence: 1.0,
+            expires_at_ms: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn unauthorized_commit_is_rejected() {
+        let reg = AgoraRegistry::new();
+        let p = proposal(
+            "s1",
+            0,
+            AgoraOperation::PublishFact {
+                key: "k".into(),
+                value: json!(1),
+            },
+        );
+        let id = AgoraService::propose(&reg, p).await.unwrap();
+        let err = AgoraService::commit(
+            &reg,
+            id,
+            CommitPermit {
+                process: ProcessId(uuid::Uuid::nil()),
+                authorized: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("unauthorized"));
+    }
+
+    #[tokio::test]
+    async fn expired_proposal_cannot_commit() {
+        let reg = AgoraRegistry::new();
+        let mut p = proposal(
+            "s1",
+            0,
+            AgoraOperation::PublishFact {
+                key: "k".into(),
+                value: json!(1),
+            },
+        );
+        p.expires_at_ms = Some(0);
+        let id = AgoraService::propose(&reg, p).await.unwrap();
+        let err = AgoraService::commit(
+            &reg,
+            id,
+            CommitPermit {
+                process: ProcessId(uuid::Uuid::nil()),
+                authorized: true,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("expired") || err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn uncommitted_evidence_is_not_in_shared_view() {
+        let reg = AgoraRegistry::new();
+        let evidence = Evidence::from_tool_result("c1", "bash", "ok", false);
+        let p = proposal("s1", 0, AgoraOperation::AcceptEvidence { evidence });
+        AgoraService::propose(&reg, p).await.unwrap();
+
+        let view = AgoraService::view(
+            &reg,
+            AgoraViewRequest {
+                space: AgoraSpaceId("s1".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(view.snapshot["trace_len"], json!(0));
+        assert_eq!(view.version, 0);
+    }
+
+    #[tokio::test]
+    async fn committed_evidence_enters_shared_view() {
+        let reg = AgoraRegistry::new();
+        let evidence = Evidence::from_tool_result("c1", "bash", "ok", false);
+        let p = proposal("s1", 0, AgoraOperation::AcceptEvidence { evidence });
+        let id = AgoraService::propose(&reg, p).await.unwrap();
+        AgoraService::commit(
+            &reg,
+            id,
+            CommitPermit {
+                process: ProcessId(uuid::Uuid::nil()),
+                authorized: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        let view = AgoraService::view(
+            &reg,
+            AgoraViewRequest {
+                space: AgoraSpaceId("s1".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(view.snapshot["trace_len"], json!(1));
+        assert_eq!(view.snapshot["trace"][0]["kind"], json!("evidence"));
     }
 }

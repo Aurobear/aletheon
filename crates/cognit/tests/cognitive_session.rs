@@ -113,6 +113,8 @@ impl TurnServices for ScriptedTurnServices {
             call_id: req.call_id,
             output: req.input["text"].as_str().unwrap_or_default().to_string(),
             is_error: false,
+            usage: fabric::UsageReport::default(),
+            audit_id: None,
         }
     }
 

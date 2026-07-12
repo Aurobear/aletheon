@@ -84,10 +84,12 @@ impl CognitiveSession for LinearCognitiveSession {
                     &tool_defs,
                     |call_id, name, input| {
                         let req = CapabilityRequest {
+                            operation_id: request.operation_id,
                             process_id,
                             name: name.to_string(),
                             input: input.clone(),
                             call_id: call_id.to_string(),
+                            deadline: None,
                         };
                         async move {
                             let result = services.invoke(req).await;

@@ -26,10 +26,11 @@
 
 use async_trait::async_trait;
 use fabric::{
-    AdmissionController, AdmissionError, AdmissionRequest, ExecutionPermit, MonoDeadline, PermitId,
-    RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
+    AdmissionController, AdmissionError, AdmissionRequest, BudgetReservationId, ExecutionPermit,
+    MonoDeadline, PermitId, ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement,
+    UsageReport,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -56,9 +57,17 @@ use super::lease::InMemoryResourceLeaseManager;
 /// - `revoke()` after `settle()` returns `AlreadySettled`.
 pub struct ProductionAdmissionController {
     clock: Arc<dyn fabric::Clock>,
+    active: Mutex<HashMap<PermitId, PermitRecord>>,
     settled: Mutex<HashSet<PermitId>>,
     budget: Option<Arc<InMemoryBudgetController>>,
     leases: Option<Arc<InMemoryResourceLeaseManager>>,
+}
+
+#[derive(Debug, Clone)]
+struct PermitRecord {
+    principal: String,
+    budget_reservation: Option<BudgetReservationId>,
+    lease: Option<ResourceLeaseId>,
 }
 
 impl std::fmt::Debug for ProductionAdmissionController {
@@ -75,6 +84,7 @@ impl ProductionAdmissionController {
     pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             clock,
+            active: Mutex::new(HashMap::new()),
             settled: Mutex::new(HashSet::new()),
             budget: None,
             leases: None,
@@ -117,8 +127,17 @@ impl AdmissionController for ProductionAdmissionController {
         // --- Resource lease ---
         let lease = if let Some(ref lease_mgr) = self.leases {
             if let Some(ref lease_req) = request.lease {
-                let id = lease_mgr.acquire(&principal, lease_req, now.0).await?;
-                Some(id)
+                match lease_mgr.acquire(&principal, lease_req, now.0).await {
+                    Ok(id) => Some(id),
+                    Err(err) => {
+                        if let (Some(ref budget_ctrl), Some(reservation)) =
+                            (&self.budget, budget_reservation)
+                        {
+                            budget_ctrl.revoke(&principal, reservation).await;
+                        }
+                        return Err(err);
+                    }
+                }
             } else {
                 None
             }
@@ -136,7 +155,7 @@ impl AdmissionController for ProductionAdmissionController {
             }
         };
 
-        Ok(ExecutionPermit {
+        let permit = ExecutionPermit {
             id: PermitId::new(),
             operation_id: request.operation_id,
             process_id: request.process_id,
@@ -146,21 +165,42 @@ impl AdmissionController for ProductionAdmissionController {
             sandbox,
             budget_reservation,
             lease,
-        })
+        };
+        self.active.lock().await.insert(
+            permit.id,
+            PermitRecord {
+                principal,
+                budget_reservation: permit.budget_reservation,
+                lease: permit.lease,
+            },
+        );
+        Ok(permit)
     }
 
-    async fn settle(&self, permit_id: PermitId, _usage: UsageReport) -> Result<(), AdmissionError> {
+    async fn settle(&self, permit_id: PermitId, usage: UsageReport) -> Result<(), AdmissionError> {
+        let record = {
+            let mut active = self.active.lock().await;
+            active.remove(&permit_id)
+        };
+        let Some(record) = record else {
+            return Err(AdmissionError::AlreadySettled);
+        };
         let mut settled = self.settled.lock().await;
         if settled.contains(&permit_id) {
             return Err(AdmissionError::AlreadySettled);
         }
         settled.insert(permit_id);
 
-        // We don't have the principal or reservation info here — the permit
-        // tracking for budget/lease settlement is done separately by the
-        // caller. This method focuses on the double-settle guard.
-        // The budget/lease managers' internal reservations are idempotent
-        // (release settles, revoke returns budget).
+        if let (Some(ref budget_ctrl), Some(reservation)) =
+            (&self.budget, record.budget_reservation)
+        {
+            budget_ctrl
+                .settle(&record.principal, reservation, &usage)
+                .await;
+        }
+        if let (Some(ref lease_mgr), Some(lease)) = (&self.leases, record.lease) {
+            lease_mgr.release(lease).await;
+        }
 
         Ok(())
     }
@@ -170,11 +210,25 @@ impl AdmissionController for ProductionAdmissionController {
         permit_id: PermitId,
         _reason: RevokeReason,
     ) -> Result<(), AdmissionError> {
-        let settled = self.settled.lock().await;
-        if settled.contains(&permit_id) {
+        if self.settled.lock().await.contains(&permit_id) {
             return Err(AdmissionError::AlreadySettled);
         }
-        // Permit was never issued or already consumed: idempotent.
+        let record = {
+            let mut active = self.active.lock().await;
+            active.remove(&permit_id)
+        };
+        let Some(record) = record else {
+            // Permit was never issued or already consumed: idempotent.
+            return Ok(());
+        };
+        if let (Some(ref budget_ctrl), Some(reservation)) =
+            (&self.budget, record.budget_reservation)
+        {
+            budget_ctrl.revoke(&record.principal, reservation).await;
+        }
+        if let (Some(ref lease_mgr), Some(lease)) = (&self.leases, record.lease) {
+            lease_mgr.release(lease).await;
+        }
         Ok(())
     }
 }
@@ -269,15 +323,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn revoke_then_settle_succeeds() {
+    async fn revoke_then_settle_fails() {
         let ctrl = ProductionAdmissionController::new(test_clock(0));
         let permit = ctrl.admit(default_request()).await.unwrap();
         ctrl.revoke(permit.id, RevokeReason::OperationCancelled)
             .await
             .unwrap();
-        ctrl.settle(permit.id, UsageReport::default())
+        let err = ctrl
+            .settle(permit.id, UsageReport::default())
             .await
-            .unwrap();
+            .unwrap_err();
+        assert!(matches!(err, AdmissionError::AlreadySettled));
     }
 
     #[tokio::test]

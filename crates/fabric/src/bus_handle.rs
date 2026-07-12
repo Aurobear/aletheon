@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 /// Minimal handle to the communication bus for use by subsystems.
 ///
-/// This trait lives in `aletheon-abi` so the `Subsystem` trait can reference it
+/// This trait lives in `fabric` so the `Subsystem` trait can reference it
 /// without depending on fabric's heavy `ipc/bus/` implementation.
 ///
 /// The concrete `CommunicationBus` in fabric implements this trait.

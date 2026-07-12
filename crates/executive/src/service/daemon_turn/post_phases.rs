@@ -147,23 +147,32 @@ impl DaemonTurnOrchestrator {
         }
     }
 
-    /// Persist Agora workspace state at turn end.
+    /// Persist Agora commits at turn end.
     ///
-    /// Stores the full workspace snapshot for backward compatibility AND
-    /// incremental commit log entries (RFC-014 Phase 3B). The per-turn
-    /// state mutations have already been committed via propose+commit
-    /// during the turn; this method handles durability.
-    pub(crate) async fn commit_agora_snapshot(&self, session: &str, _since_version: u64) {
-        // Full snapshot (backward compat — Mnemosyne recall).
-        match self.subsystems.agora.snapshot(session).await {
-            Ok(snap) => {
-                tracing::debug!(target: "agora", version = snap.get("version").and_then(|v| v.as_u64()).unwrap_or(0), "workspace snapshot");
-                let rm = self.subsystems.recall_memory.lock().await;
-                if let Err(e) = rm.store(session, "agora_snapshot", &snap.to_string(), None) {
-                    tracing::warn!(target: "agora", error = %e, "agora snapshot persist failed");
+    /// Phase 3 stops writing full Agora snapshots into RecallMemory. The
+    /// workspace is durable as append-only commits; snapshots/checkpoints are
+    /// a separate storage concern.
+    pub(crate) async fn commit_agora_snapshot(&self, session: &str, since_version: u64) {
+        let Some(agora) = self.subsystems.ports.agora.as_ref() else {
+            tracing::warn!(target: "agora", "ServicePorts.agora missing; skipping agora commit persistence");
+            return;
+        };
+        let commits = agora.changes_since(session, since_version).await;
+        if commits.is_empty() {
+            return;
+        }
+        let rm = self.subsystems.recall_memory.lock().await;
+        for commit in commits {
+            match serde_json::to_string(&commit) {
+                Ok(serialized) => {
+                    if let Err(e) = rm.store(session, "agora_commit", &serialized, None) {
+                        tracing::warn!(target: "agora", error = %e, "agora commit persist failed");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(target: "agora", error = %e, "agora commit serialize failed")
                 }
             }
-            Err(e) => tracing::warn!("agora snapshot failed: {e}"),
         }
     }
 }

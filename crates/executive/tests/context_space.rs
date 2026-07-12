@@ -11,7 +11,7 @@ async fn fork_preserves_bindings() {
     let owner = ProcessId::new();
 
     // Attach a binding to the parent.
-    let binding = ContextBinding::Session("parent-session".into());
+    let binding = ContextBinding::Session(fabric::SessionId("parent-session".into()));
     mgr.attach_region(parent_id, binding.clone())
         .await
         .expect("attach to parent should succeed");
@@ -73,7 +73,7 @@ async fn attach_region_adds_binding() {
         "no entry should exist before first attach"
     );
 
-    let binding1 = ContextBinding::Session("s1".into());
+    let binding1 = ContextBinding::Session(fabric::SessionId("s1".into()));
     mgr.attach_region(space_id, binding1.clone())
         .await
         .expect("first attach should succeed");
@@ -89,7 +89,7 @@ async fn attach_region_adds_binding() {
     assert_eq!(bindings[0], binding1);
 
     // Attach a second binding to the same space.
-    let binding2 = ContextBinding::MemoryView("mem-view".into());
+    let binding2 = ContextBinding::MemoryView(fabric::MemoryViewId("mem-view".into()));
     mgr.attach_region(space_id, binding2.clone())
         .await
         .expect("second attach should succeed");
@@ -114,7 +114,7 @@ async fn child_overlay_isolated() {
     let owner = ProcessId::new();
 
     // Attach a binding to the parent.
-    let parent_binding = ContextBinding::Session("parent-session".into());
+    let parent_binding = ContextBinding::Session(fabric::SessionId("parent-session".into()));
     mgr.attach_region(parent_id, parent_binding.clone())
         .await
         .expect("attach to parent should succeed");
@@ -130,8 +130,10 @@ async fn child_overlay_isolated() {
         .expect("fork child2 should succeed");
 
     // Attach an additional binding ONLY to child1.
-    let child1_binding =
-        ContextBinding::Artifact("extra-artifact".into(), fabric::AccessMode::ReadOnly);
+    let child1_binding = ContextBinding::Artifact(
+        fabric::ArtifactId("extra-artifact".into()),
+        fabric::AccessMode::ReadOnly,
+    );
     mgr.attach_region(child1, child1_binding.clone())
         .await
         .expect("attach to child1 should succeed");
@@ -172,4 +174,44 @@ async fn child_overlay_isolated() {
         "parent must have only its original binding (isolated from child1)"
     );
     assert_eq!(p_bindings[0], parent_binding);
+}
+
+/// Forks inherit artifact visibility but downgrade write access to read-only.
+#[tokio::test]
+async fn fork_does_not_inherit_write_permission() {
+    let mgr = InMemorySpaceManager::new();
+    let parent_id = SpaceId::new();
+    let owner = ProcessId::new();
+    let binding = ContextBinding::Artifact(
+        fabric::ArtifactId("editable".into()),
+        fabric::AccessMode::ReadWrite,
+    );
+    mgr.attach_region(parent_id, binding).await.unwrap();
+
+    let child = mgr.fork_space(parent_id, owner).await.unwrap();
+    let child_bindings = mgr.get_bindings(child).unwrap();
+    assert_eq!(
+        child_bindings[0],
+        ContextBinding::Artifact(
+            fabric::ArtifactId("editable".into()),
+            fabric::AccessMode::ReadOnly
+        )
+    );
+}
+
+/// Private overlay data is not copied into children or siblings.
+#[tokio::test]
+async fn fork_creates_empty_private_overlay() {
+    let mgr = InMemorySpaceManager::new();
+    let parent_id = SpaceId::new();
+    let owner = ProcessId::new();
+    mgr.set_overlay(parent_id, "turn_input", serde_json::json!("secret"))
+        .unwrap();
+
+    let child = mgr.fork_space(parent_id, owner).await.unwrap();
+    let parent = mgr.get_space(parent_id).unwrap();
+    let child = mgr.get_space(child).unwrap();
+    assert!(parent.overlay.entries.contains_key("turn_input"));
+    assert!(child.overlay.entries.is_empty());
+    assert!(child.parent_snapshot.is_some());
 }

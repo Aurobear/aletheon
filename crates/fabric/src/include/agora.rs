@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::types::evidence::Evidence;
+use crate::types::operation::ProcessId;
+use crate::types::space::AgoraSpaceId;
 
 // ---------------------------------------------------------------------------
 // Versioned commit types (RFC-014 Phase 3B)
@@ -33,6 +35,9 @@ pub enum AgoraOperation {
     EmitObservation {
         obs: serde_json::Value,
     },
+    AcceptEvidence {
+        evidence: Evidence,
+    },
     ClaimSharedObject {
         oid: String,
     },
@@ -45,15 +50,33 @@ pub enum AgoraOperation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgoraProposal {
     pub id: Uuid,
+    pub space: AgoraSpaceId,
+    pub author: ProcessId,
     pub base_version: u64,
     pub operation: AgoraOperation,
+    pub evidence: Vec<String>,
+    pub confidence: f32,
+    /// Expiration deadline as unix milliseconds. `None` means no TTL.
+    pub expires_at_ms: Option<i64>,
+}
+
+impl AgoraProposal {
+    pub fn is_expired_at(&self, now_ms: i64) -> bool {
+        self.expires_at_ms
+            .is_some_and(|deadline| now_ms >= deadline)
+    }
 }
 
 /// A committed operation, permanently recorded in the workspace history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgoraCommit {
     pub id: Uuid,
+    pub space: AgoraSpaceId,
+    pub author: ProcessId,
+    pub version: u64,
     pub operation: AgoraOperation,
+    pub evidence: Vec<String>,
+    pub confidence: f32,
     pub committed_at: i64,
 }
 
@@ -83,6 +106,42 @@ pub enum RejectReason {
 }
 
 // ---------------------------------------------------------------------------
+// Transactional service API
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgoraViewRequest {
+    pub space: AgoraSpaceId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgoraView {
+    pub space: AgoraSpaceId,
+    pub version: u64,
+    pub snapshot: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitPermit {
+    pub process: ProcessId,
+    pub authorized: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitReceipt {
+    pub commit: AgoraCommit,
+}
+
+#[async_trait]
+pub trait AgoraService: Send + Sync {
+    async fn view(&self, req: AgoraViewRequest) -> Result<AgoraView>;
+    async fn propose(&self, proposal: AgoraProposal) -> Result<Uuid>;
+    async fn commit(&self, id: Uuid, permit: CommitPermit) -> Result<CommitReceipt>;
+    async fn reject(&self, id: Uuid, reason: RejectReason) -> Result<()>;
+    async fn changes_since(&self, space: AgoraSpaceId, version: u64) -> Result<Vec<AgoraCommit>>;
+}
+
+// ---------------------------------------------------------------------------
 // Trait
 // ---------------------------------------------------------------------------
 
@@ -90,10 +149,12 @@ pub enum RejectReason {
 #[async_trait]
 pub trait AgoraOps: Send + Sync {
     /// Write a value onto a session's blackboard.
+    #[deprecated(note = "Use AgoraService propose/commit; publish is backend compatibility only")]
     async fn publish(&self, session: &str, key: &str, value: serde_json::Value) -> Result<()>;
     /// Read a value from a session's blackboard.
     async fn recall(&self, session: &str, key: &str) -> Result<Option<serde_json::Value>>;
     /// Merge a JSON patch into the session workspace.
+    #[deprecated(note = "Use AgoraService propose/commit; update is backend compatibility only")]
     async fn update(&self, session: &str, patch: serde_json::Value) -> Result<()>;
     /// Snapshot the entire session workspace (for debug / commit).
     async fn snapshot(&self, session: &str) -> Result<serde_json::Value>;

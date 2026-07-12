@@ -1,8 +1,9 @@
 //! Turn service contracts shared by executive adapters and cognitive sessions.
 
+use crate::types::admission::{AuditEventId, UsageReport};
 use crate::types::llm_types::{LlmProvider, ToolDefinition};
 use crate::types::message::Message;
-use crate::types::operation::ProcessId;
+use crate::types::operation::{MonoDeadlineMillis, OperationId, ProcessId};
 use crate::types::turn::{TurnEvent, TurnRequest};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -31,10 +32,12 @@ pub struct AgoraView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilityRequest {
+    pub operation_id: OperationId,
     pub process_id: ProcessId,
     pub name: String,
     pub input: serde_json::Value,
     pub call_id: String,
+    pub deadline: Option<MonoDeadlineMillis>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +45,8 @@ pub struct CapabilityResult {
     pub call_id: String,
     pub output: String,
     pub is_error: bool,
+    pub usage: UsageReport,
+    pub audit_id: Option<AuditEventId>,
 }
 
 #[async_trait]
@@ -98,6 +103,8 @@ impl TurnServices for StubTurnServices {
             call_id: req.call_id,
             output: format!("tool {} is unavailable in stub", req.name),
             is_error: true,
+            usage: UsageReport::default(),
+            audit_id: None,
         }
     }
 }

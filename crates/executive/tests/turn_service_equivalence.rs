@@ -143,6 +143,8 @@ impl TurnServices for EquivalenceServices {
             call_id: req.call_id,
             output: req.input["text"].as_str().unwrap_or_default().to_string(),
             is_error: false,
+            usage: fabric::UsageReport::default(),
+            audit_id: None,
         }
     }
 
@@ -278,6 +280,8 @@ impl TurnServices for HangingServices {
             call_id: String::new(),
             output: String::new(),
             is_error: false,
+            usage: fabric::UsageReport::default(),
+            audit_id: None,
         }
     }
 

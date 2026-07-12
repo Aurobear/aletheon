@@ -5,5 +5,5 @@ pub mod debug_bus;
 pub mod observable;
 pub mod registry;
 
-// error module extracted to aletheon-abi; re-export for backward compat
-pub use aletheon_abi::error;
+// error module extracted to fabric; re-export for backward compat
+pub use crate::error;
