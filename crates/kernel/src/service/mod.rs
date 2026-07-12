@@ -327,6 +327,7 @@ mod tests {
                 _s: &str,
                 _b: u64,
                 _op: AgoraOperation,
+                _author: fabric::ProcessId,
             ) -> Result<fabric::AgoraProposal, String> {
                 Err("not implemented".into())
             }

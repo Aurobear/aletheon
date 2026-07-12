@@ -185,15 +185,16 @@ pub trait AgoraOps: Send + Sync {
 
     // -- Versioned, proposal-based commits (RFC-014 Phase 3B) -------------
 
-    /// Propose an operation at a specific base version. Returns the proposal
-    /// on success, or a conflict error if the version is stale.
+    /// Propose an operation at a specific base version by an identified process.
+    /// Returns the proposal on success, or a conflict error if the version is stale.
     async fn propose(
         &self,
         session: &str,
         base_version: u64,
         operation: AgoraOperation,
+        author: ProcessId,
     ) -> std::result::Result<AgoraProposal, String> {
-        let _ = (session, base_version, operation);
+        let _ = (session, base_version, operation, author);
         unimplemented!("propose: not implemented")
     }
 
