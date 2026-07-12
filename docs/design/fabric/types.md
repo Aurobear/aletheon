@@ -1,8 +1,8 @@
 # ABI: Shared Types, Traits, and Interfaces
 
-> Migrated from `docs/design/shared/types.md`, `docs/design/shared/traits.md`, `docs/design/shared/interfaces.md` — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from `docs/design/shared/types.md`, `docs/design/shared/traits.md`, `docs/design/shared/interfaces.md` — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
-**Module:** base
+**Module:** fabric
 **Last Updated:** 2026-06-14
 
 ---
