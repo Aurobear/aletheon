@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 //! In-memory resource lease manager — Phase 5A.
 //!

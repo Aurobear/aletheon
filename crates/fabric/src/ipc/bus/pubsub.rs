@@ -1,7 +1,7 @@
 // crates/aletheon-comm/src/impl/pubsub.rs
 
 //! Publish-Subscribe protocol.
-//! Wraps existing EventBus for backward-compatible event broadcast.
+//! Wraps KernelEventBus for backward-compatible event broadcast.
 
 use std::sync::Arc;
 
