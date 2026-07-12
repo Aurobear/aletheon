@@ -28,6 +28,7 @@ pub mod ipc;
 pub mod kernel;
 pub mod policy;
 pub mod primitives;
+pub mod security;
 pub mod types;
 
 // === Backward-compatible module re-exports ===
