@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use x11rb::connection::Connection;
 
 use super::DisplayDriver;
-use crate::driver::types::Image;
+use crate::drivers::types::Image;
 
 /// X11 screenshot driver using XGetImage
 pub struct X11DisplayDriver {

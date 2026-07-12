@@ -1,6 +1,6 @@
 use super::grounding::{GroundingProvider, GroundingResult};
 use anyhow::Result;
-use corpus::drivers::driver::{
+use corpus::drivers::{
     a11y::A11yDriver,
     display::{ClipboardDriver, DisplayDriver, WindowInfo, WindowManager},
     input::InputDriver,
@@ -202,7 +202,7 @@ impl Aci {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corpus::drivers::driver::{
+    use corpus::drivers::{
         a11y::MockA11yDriver,
         display::{MockClipboardDriver, MockDisplayDriver, MockWindowManager},
         input::MockInputDriver,

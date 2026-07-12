@@ -1,6 +1,6 @@
 //! Vision types -- image representation and codec.
 //!
-//! Moved from `corpus::drivers::driver::types` (Tier 2c) so that `cognit`
+//! Moved from `corpus::drivers::types` (Tier 2c) so that `cognit`
 //! (Brain) can depend only on `base`, not on `corpus` (Body).
 
 use serde::{Deserialize, Serialize};

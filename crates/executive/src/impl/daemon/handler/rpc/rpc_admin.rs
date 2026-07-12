@@ -8,7 +8,7 @@ use super::RequestHandler;
 use serde_json::json;
 use tracing::{info, warn};
 
-use corpus::security::security::approval::ApprovalDecision;
+use corpus::security::approval::ApprovalDecision;
 use fabric::ui_event::{CollaborationMode, InterruptReason};
 
 impl RequestHandler {

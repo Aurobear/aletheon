@@ -1,4 +1,4 @@
-use crate::driver::types::{Key, MouseButton, ScrollDirection};
+use crate::drivers::types::{Key, MouseButton, ScrollDirection};
 use anyhow::Result;
 
 /// Input device driver trait

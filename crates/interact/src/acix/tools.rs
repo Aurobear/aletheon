@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::acix::Aci;
 use crate::acix::GroundingProvider;
-use corpus::drivers::driver::types::{Key, ScrollDirection};
+use corpus::drivers::types::{Key, ScrollDirection};
 use corpus::tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use fabric::Registry;
 
@@ -145,7 +145,7 @@ impl Tool for TreeTool {
     }
 }
 
-fn format_element(elem: &corpus::drivers::driver::types::Element, depth: usize) -> String {
+fn format_element(elem: &corpus::drivers::types::Element, depth: usize) -> String {
     let indent = "  ".repeat(depth);
     let mut out = format!(
         "{}[{}] {:?} bounds=({},{}+{}x{})\n",
@@ -384,18 +384,18 @@ impl Tool for ObserveTool {
         match self.aci.smart_observe() {
             Ok(observation) => {
                 let text = match observation {
-                    corpus::drivers::driver::types::Observation::AccessibilityTree(tree) => {
+                    corpus::drivers::types::Observation::AccessibilityTree(tree) => {
                         format!(
                             "[AT-SPI2] app: {}\n{}",
                             tree.app_name,
                             format_element(&tree.root, 0),
                         )
                     }
-                    corpus::drivers::driver::types::Observation::OcrFallback(ocr) => {
+                    corpus::drivers::types::Observation::OcrFallback(ocr) => {
                         let words: Vec<&str> = ocr.words.iter().map(|w| w.text.as_str()).collect();
                         format!("[OCR] text: {}\nwords: {}", ocr.text, words.join(", "))
                     }
-                    corpus::drivers::driver::types::Observation::ScreenshotOnly(img) => {
+                    corpus::drivers::types::Observation::ScreenshotOnly(img) => {
                         format!(
                             "[Screenshot] {}x{} ({} bytes)",
                             img.width,
@@ -851,12 +851,12 @@ impl Tool for AcixGroundTool {
 /// Panics if called without the `input`, `display`, and `a11y` features enabled on the `drivers` crate.
 pub fn default_aci() -> Arc<Aci> {
     Arc::new(Aci::new_basic(
-        Box::new(corpus::drivers::driver::input::MockInputDriver::new()),
-        Box::new(corpus::drivers::driver::display::MockDisplayDriver::new(
+        Box::new(corpus::drivers::input::MockInputDriver::new()),
+        Box::new(corpus::drivers::display::MockDisplayDriver::new(
             1920, 1080,
         )),
-        Box::new(corpus::drivers::driver::a11y::MockA11yDriver::new()),
-        Some(Box::new(corpus::drivers::driver::ocr::MockOcrDriver)),
+        Box::new(corpus::drivers::a11y::MockA11yDriver::new()),
+        Some(Box::new(corpus::drivers::ocr::MockOcrDriver)),
     ))
 }
 

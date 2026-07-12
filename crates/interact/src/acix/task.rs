@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use corpus::drivers::driver::types::{Key, ScrollDirection};
+use corpus::drivers::types::{Key, ScrollDirection};
 use serde::{Deserialize, Serialize};
 
 use super::aci::Aci;
@@ -535,7 +535,7 @@ impl TaskWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corpus::drivers::driver::{
+    use corpus::drivers::{
         a11y::MockA11yDriver, display::MockDisplayDriver, input::MockInputDriver,
     };
 
