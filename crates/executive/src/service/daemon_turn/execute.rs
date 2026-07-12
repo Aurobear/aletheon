@@ -7,6 +7,7 @@
 use super::super::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use super::helpers::{bounded_text_history, build_request_messages};
 use super::orchestrator::DaemonTurnOrchestrator;
+use crate::core::core_systems::CoreSystems;
 
 use crate::r#impl::daemon::handler::tool_executor::TurnToolExecutor;
 use aletheon_kernel::chronos::Timer;
@@ -340,6 +341,23 @@ impl DaemonTurnOrchestrator {
         ) {
             tracing::warn!(target: "space", error = %e, "failed to store turn input overlay");
         }
+
+        // Release the ephemeral turn space on every exit path (including panics
+        // and any future early returns) so the space table does not grow
+        // unbounded across turns. See docs/plans/2026-07-12-space-lifecycle-phase1-design.md.
+        struct SpaceReleaseGuard {
+            subsystems: Arc<CoreSystems>,
+            space: SpaceId,
+        }
+        impl Drop for SpaceReleaseGuard {
+            fn drop(&mut self) {
+                self.subsystems.ports.space_manager.release(self.space);
+            }
+        }
+        let _space_guard = SpaceReleaseGuard {
+            subsystems: self.subsystems.clone(),
+            space: turn_space,
+        };
 
         let self_field_arc_for_react = self.subsystems.self_field.clone();
         let session_id_for_agora = sess_id.clone();
