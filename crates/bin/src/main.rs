@@ -8,7 +8,6 @@
 //!   version      Print version + git commit
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -260,21 +259,10 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
 
 // ── Exec ────────────────────────────────────────────────────────────────────
 
-use aletheon_kernel::service::ServicePorts;
-use cognit::r#impl::provider_registry::ProviderRegistry;
-use corpus::security::sandbox::executor::SandboxPreference;
-use corpus::security::approval::{ApprovalGate, TerminalApprovalGate};
-use corpus::security::audit::AuditLogger;
-use corpus::security::runner::ToolRunnerWithGuard;
-use corpus::tools::tools::{ToolContext, ToolRegistry};
-use fabric::types::admission::RiskLevel;
-use fabric::{
-    AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,
-    CapabilityScope, LlmProvider, Message, NoopTurnEventSink, OperationId, PrincipalId, ProcessId,
-    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
-};
+use executive::ExecSessionBuilder;
+use executive::{NoopTurnEventSink, OperationId, ProcessId, TurnRequest};
 
-/// Non-interactive exec logic — mirrors the old aletheon-exec binary.
+/// Non-interactive exec logic — powered by ExecSessionBuilder (shared factory).
 async fn run_exec(
     prompt: &str,
     model: &str,
@@ -283,85 +271,21 @@ async fn run_exec(
     working_dir: &Path,
     config: &Option<PathBuf>,
     output: &str,
-) -> Result<()> {
-    // Load ~/.aletheon/.env so provider API keys resolve.
-    if let Some(home) = std::env::var_os("HOME") {
-        executive::host::load_dotenv(&PathBuf::from(home).join(".aletheon").join(".env"));
-    }
-
+) -> anyhow::Result<()> {
     let working_dir = working_dir
         .canonicalize()
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
 
-    // Load config
-    let app_config = if let Some(ref path) = config {
-        cognit::config::AppConfig::load_or_default(path)
-    } else {
-        cognit::config::AppConfig::load_layered(None)
-    };
-
-    // Build provider registry
-    let registry = ProviderRegistry::from_config(&app_config)?;
-
-    // Create LLM provider
-    let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create(model)?);
-    info!(provider = llm.name(), model = %model, "LLM provider initialized");
-
-    // Create tool registry with default tools
-    let tool_registry = Arc::new(ToolRegistry::default());
-
-    // Guarded runner with terminal approval for risky (L2+) tools.
-    let audit_path = working_dir.join(".aletheon-audit.jsonl");
-    let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
-    let sandbox_preference = SandboxPreference::from_str(sandbox);
-    info!(preference = ?sandbox_preference, "sandbox configured");
-    let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
-        AuditLogger::new(audit_path)?,
-        sandbox_preference,
-    )
-    .with_approval_gate(approval);
-    let turn_id = uuid::Uuid::new_v4().to_string();
-    runner.on_new_turn(&turn_id);
-
-    let tool_count = tool_registry.definitions().len();
-    info!(tool_count, "Tools registered");
-
-    let system_prompt = format!(
-        "You are Aletheon, an AI agent executing a task non-interactively. \
-         You have access to tools. Complete the user's request and provide a final response. \
-         Working directory: {}",
-        working_dir.display()
-    );
+    let mut builder = ExecSessionBuilder::new(working_dir.clone())
+        .with_model(model.to_string())
+        .with_max_turns(max_turns)
+        .with_sandbox(sandbox.to_string());
+    if let Some(ref path) = config {
+        builder = builder.with_config(path.clone());
+    }
+    let (turn_service, _llm, _risk_level) = builder.build().await?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
-
-    // Create kernel service ports for process/operation tracking + admission gating.
-    let ports = Arc::new(ServicePorts::new());
-
-    let services = Arc::new(ExecTurnServices {
-        llm,
-        tool_registry,
-        runner: tokio::sync::Mutex::new(runner),
-        tool_ctx: ToolContext {
-            working_dir: working_dir.clone(),
-            session_id: session_id.clone(),
-        },
-        turn_id,
-        system_prompt,
-        admission: ports.admission.clone(),
-    });
-
-    let harness_config = cognit::harness::HarnessConfig {
-        max_iterations: max_turns,
-        ..Default::default()
-    };
-    let turn_service = executive::service::TurnService::new(
-        services,
-        executive::service::PreTurnPipeline,
-        executive::service::PostTurnPipeline,
-        ports,
-    )
-    .with_harness_config(harness_config);
 
     let result = turn_service
         .submit(
@@ -409,130 +333,4 @@ async fn run_exec(
         std::process::exit(1);
     }
     Ok(())
-}
-
-struct ExecTurnServices {
-    llm: Arc<dyn LlmProvider>,
-    tool_registry: Arc<ToolRegistry>,
-    runner: tokio::sync::Mutex<ToolRunnerWithGuard>,
-    tool_ctx: ToolContext,
-    turn_id: String,
-    system_prompt: String,
-    admission: Arc<dyn AdmissionController>,
-}
-
-#[async_trait::async_trait]
-impl TurnServices for ExecTurnServices {
-    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<RecallSet> {
-        Ok(RecallSet::default())
-    }
-
-    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
-        Ok(fabric::DaseinView::default())
-    }
-
-    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
-        Ok(fabric::AgoraView::default())
-    }
-
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
-        // PR-2: route all tool invocations through admission controller.
-        let adm_req = AdmissionRequest {
-            operation_id: req.operation_id,
-            process_id: req.process_id,
-            principal: PrincipalId("exec".into()),
-            capability: CapabilityId(req.name.clone()),
-            action: req.name.clone(),
-            input_summary: format!("{:?}", req.input).chars().take(200).collect(),
-            risk: RiskLevel::ReadOnly,
-            requested_scope: CapabilityScope::default(),
-            budget: None,
-            lease: None,
-            sandbox: SandboxRequirement::NotRequired,
-        };
-
-        let permit = match self.admission.admit(adm_req).await {
-            Ok(p) => p,
-            Err(e) => {
-                return CapabilityResult {
-                    call_id: req.call_id,
-                    output: format!("admission denied: {e}"),
-                    is_error: true,
-                    usage: UsageReport::default(),
-                    audit_id: None,
-                };
-            }
-        };
-
-        if !permit.is_valid_at(fabric::MonoTime(0)) {
-            return CapabilityResult {
-                call_id: req.call_id,
-                output: "admission permit invalid".into(),
-                is_error: true,
-                usage: UsageReport {
-                    permit_id: permit.id,
-                    ..Default::default()
-                },
-                audit_id: Some(fabric::AuditEventId::new()),
-            };
-        }
-
-        let Some(tool) = self.tool_registry.get(&req.name).cloned() else {
-            let _ = self
-                .admission
-                .settle(permit.id, UsageReport::default())
-                .await;
-            return CapabilityResult {
-                call_id: req.call_id,
-                output: format!("Error: Unknown tool '{}'", req.name),
-                is_error: true,
-                usage: UsageReport {
-                    permit_id: permit.id,
-                    ..Default::default()
-                },
-                audit_id: Some(fabric::AuditEventId::new()),
-            };
-        };
-
-        info!(tool = %req.name, "Executing tool (admitted)");
-        let result = self
-            .runner
-            .lock()
-            .await
-            .run(tool.as_ref(), req.input, &self.tool_ctx, &self.turn_id)
-            .await;
-
-        let usage = UsageReport {
-            permit_id: permit.id,
-            output_bytes: result.content.len() as u64,
-            exit_code: if result.is_error { Some(1) } else { Some(0) },
-            ..Default::default()
-        };
-        let _ = self.admission.settle(permit.id, usage.clone()).await;
-
-        if result.is_error {
-            tracing::warn!(tool = %req.name, error = %result.content, "Tool failed/denied");
-        } else {
-            info!(tool = %req.name, "Tool succeeded");
-        }
-        CapabilityResult {
-            call_id: req.call_id,
-            output: result.content,
-            is_error: result.is_error,
-            usage,
-            audit_id: Some(fabric::AuditEventId::new()),
-        }
-    }
-
-    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
-        Some(self.llm.as_ref())
-    }
-
-    fn tool_definitions(&self) -> Vec<ToolDefinition> {
-        self.tool_registry.definitions()
-    }
-
-    fn seed_messages(&self, _request: &TurnRequest) -> Vec<Message> {
-        vec![Message::system(&self.system_prompt)]
-    }
 }

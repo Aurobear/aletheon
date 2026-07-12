@@ -25,7 +25,7 @@ use crate::CoreMemory;
 use crate::ProviderRegistry;
 use crate::RecallMemory;
 use cognit::core::reflector::Reflector;
-use corpus::security::sandbox::executor::{SandboxExecutor, SandboxPreference};
+use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::socket_approval::SocketApprovalGate;
@@ -331,7 +331,7 @@ impl RequestHandler {
 
         // Security
         let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
-        let sandbox = SandboxExecutor::new(sandbox_pref);
+        let sandbox = create_default_executor(sandbox_pref);
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
         let (approval_gate, approval_rx) = SocketApprovalGate::new();

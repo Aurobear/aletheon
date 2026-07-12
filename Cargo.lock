@@ -47,15 +47,10 @@ dependencies = [
 name = "aletheon-bin"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
  "anyhow",
- "async-trait",
  "clap",
- "cognit",
- "corpus",
  "dirs",
  "executive",
- "fabric",
  "interact",
  "serde",
  "serde_json",
@@ -834,12 +829,10 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "corpus",
  "dirs",
  "fabric",
  "glob",
  "libc",
- "mnemosyne",
  "parking_lot",
  "regex",
  "rusqlite",

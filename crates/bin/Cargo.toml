@@ -15,13 +15,8 @@ integration-tests = []
 
 [dependencies]
 executive = { path = "../executive" }
-aletheon-kernel = { path = "../kernel" }
 interact = { path = "../interact" }
-fabric = { path = "../fabric" }
-cognit = { path = "../cognit" }
-corpus = { path = "../corpus" }
 anyhow = { workspace = true }
-async-trait = "0.1"
 tokio = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 tracing = { workspace = true }

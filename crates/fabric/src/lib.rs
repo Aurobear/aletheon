@@ -159,7 +159,8 @@ pub use types::process::{
 };
 pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
-    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxExecutor,
+    SandboxPreference, SandboxResult,
 };
 pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,
