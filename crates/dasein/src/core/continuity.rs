@@ -7,6 +7,7 @@
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// A lineage record — a snapshot of identity at a point in time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,13 +23,15 @@ pub struct ContinuityLayer {
     records: RwLock<Vec<LineageRecord>>,
     /// Maximum allowed gap between records (default 24 hours).
     max_gap: Duration,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl ContinuityLayer {
-    pub fn new(max_gap: Duration) -> Self {
+    pub fn new(max_gap: Duration, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             records: RwLock::new(Vec::new()),
             max_gap,
+            clock,
         }
     }
 
@@ -37,7 +40,7 @@ impl ContinuityLayer {
         let entry = LineageRecord {
             identity_name: identity_name.to_string(),
             identity_version: identity_version.to_string(),
-            recorded_at: Utc::now(),
+            recorded_at: fabric::wall_to_datetime(self.clock.wall_now()),
             event: event.to_string(),
         };
         self.records.write().push(entry);
@@ -134,7 +137,7 @@ impl ContinuityLayer {
             let (identity_name, identity_version, recorded_at_str, event) = row?;
             let recorded_at = chrono::DateTime::parse_from_rfc3339(&recorded_at_str)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now());
+                .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now()));
             loaded.push(LineageRecord {
                 identity_name,
                 identity_version,
@@ -147,33 +150,36 @@ impl ContinuityLayer {
     }
 }
 
-impl Default for ContinuityLayer {
-    fn default() -> Self {
-        Self::new(Duration::hours(24))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Duration;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
+    fn test_layer(max_gap: Duration) -> ContinuityLayer {
+        ContinuityLayer::new(max_gap, test_clock())
+    }
 
     #[test]
     fn single_record_is_continuous() {
-        let layer = ContinuityLayer::default();
+        let layer = test_layer(Duration::hours(24));
         layer.record("aurb", "0.1.0", "initialized");
         assert!(layer.is_continuous());
     }
 
     #[test]
     fn empty_is_continuous() {
-        let layer = ContinuityLayer::default();
+        let layer = test_layer(Duration::hours(24));
         assert!(layer.is_continuous());
     }
 
     #[test]
     fn no_gap_is_continuous() {
-        let layer = ContinuityLayer::new(Duration::hours(1));
+        let layer = test_layer(Duration::hours(1));
         layer.record("aurb", "0.1.0", "init");
         layer.record("aurb", "0.2.0", "upgrade");
         assert!(layer.is_continuous());
@@ -183,6 +189,7 @@ mod tests {
     fn gap_exceeds_threshold() {
         // We can't easily simulate time passing in a unit test,
         // but we can test the structure by manually constructing records.
+        let clock = test_clock();
         let layer = ContinuityLayer {
             records: RwLock::new(vec![
                 LineageRecord {
@@ -199,6 +206,7 @@ mod tests {
                 },
             ]),
             max_gap: Duration::hours(24),
+            clock,
         };
         assert!(!layer.is_continuous());
     }

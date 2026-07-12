@@ -61,6 +61,8 @@ pub struct SelfFieldConfig {
     pub dasein_retention_depth: usize,
     /// Decay rate for the DaseinModule's retention field (0.0-1.0).
     pub dasein_decay_rate: f64,
+    /// Clock for deterministic time. If None, uses SystemClock.
+    pub clock: Option<Arc<dyn fabric::Clock>>,
 }
 
 impl Default for SelfFieldConfig {
@@ -77,6 +79,7 @@ impl Default for SelfFieldConfig {
             enable_dasein: true,
             dasein_retention_depth: 50,
             dasein_decay_rate: 0.8,
+            clock: None,
         }
     }
 }
@@ -105,10 +108,16 @@ pub struct SelfField {
     /// the confirmation verdict to it instead of using the inline rule.
     permission_authority:
         Option<Arc<dyn fabric::policy::permission_authority::PermissionAuthority>>,
+    /// Clock for deterministic time in sub-modules.
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl SelfField {
     pub fn new(config: SelfFieldConfig) -> Self {
+        let clock: Arc<dyn fabric::Clock> = config
+            .clock
+            .unwrap_or_else(|| Arc::new(aletheon_kernel::chronos::SystemClock::new()));
+
         let mut boundary = BoundaryLayer::new();
         boundary.set_rules(config.boundary_rules);
 
@@ -116,11 +125,12 @@ impl SelfField {
             &config.agent_name,
             &config.agent_description,
             &config.agent_version,
+            clock.clone(),
         );
 
-        let narrative = NarrativeLayer::new(config.narrative_capacity);
-        let attention = AttentionLayer::new(config.attention_decay_rate);
-        let continuity = ContinuityLayer::new(config.continuity_max_gap);
+        let narrative = NarrativeLayer::new(config.narrative_capacity, clock.clone());
+        let attention = AttentionLayer::new(config.attention_decay_rate, clock.clone());
+        let continuity = ContinuityLayer::new(config.continuity_max_gap, clock.clone());
 
         // Record initial identity in continuity
         continuity.record(&config.agent_name, &config.agent_version, "initialized");
@@ -144,7 +154,7 @@ impl SelfField {
             conflict: ConflictLayer::new(),
             attention,
             continuity,
-            mutation: MutationLayer::new(),
+            mutation: MutationLayer::new(clock.clone()),
             initialized: false,
             store,
             policy_bridge: PolicyBridge::new(),
@@ -153,6 +163,7 @@ impl SelfField {
             dasein,
             permission_authority: None,
             dasein_event_tx,
+            clock,
         }
     }
 

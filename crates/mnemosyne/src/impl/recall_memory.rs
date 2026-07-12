@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
+use fabric::wall_to_datetime;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -16,10 +19,11 @@ pub struct MemoryEntry {
 /// L2 Recall Memory -- SQLite-backed conversation history and tool call records.
 pub struct RecallMemory {
     db: Connection,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl RecallMemory {
-    pub fn new(db_path: &std::path::Path) -> anyhow::Result<Self> {
+    pub fn new(db_path: &std::path::Path, clock: Arc<dyn fabric::Clock>) -> anyhow::Result<Self> {
         let db = Connection::open(db_path)?;
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS recall_memory (
@@ -60,7 +64,7 @@ impl RecallMemory {
             END;"
         )?;
 
-        Ok(Self { db })
+        Ok(Self { db, clock })
     }
 
     /// Store a memory entry.
@@ -71,7 +75,7 @@ impl RecallMemory {
         content: &str,
         metadata: Option<&str>,
     ) -> anyhow::Result<i64> {
-        let now = Utc::now().to_rfc3339();
+        let now = wall_to_datetime(self.clock.wall_now()).to_rfc3339();
         self.db.execute(
             "INSERT INTO recall_memory (timestamp, session_id, entry_type, content, metadata) VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params![now, session_id, entry_type, content, metadata],
@@ -236,7 +240,8 @@ mod tests {
 
     fn setup_recall() -> (RecallMemory, NamedTempFile) {
         let tmp = NamedTempFile::new().unwrap();
-        let recall = RecallMemory::new(tmp.path()).unwrap();
+        let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let recall = RecallMemory::new(tmp.path(), clock).unwrap();
         (recall, tmp)
     }
 

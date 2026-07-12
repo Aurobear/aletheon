@@ -3,8 +3,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use fabric::{
-    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
-    MemoryQuery, MemoryStats, MemoryType,
+    wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
+    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, WallTime,
 };
 use rusqlite::params;
 use uuid::Uuid;
@@ -126,11 +126,12 @@ impl MemoryBackend for SemanticMemory {
                     }
                 );
                 let mut stmt = conn.prepare(&sql)?;
-                let rows = stmt.query_map(params![text], row_to_entry)?;
+                let clock = &self.clock;
+                let rows = stmt.query_map(params![text], |row| row_to_entry(row, clock))?;
                 entries = rows.collect::<std::result::Result<Vec<_>, _>>()?;
 
                 // Activation-based tiebreaker
-                let now = Utc::now().timestamp();
+                let now = wall_to_datetime(self.clock.wall_now()).timestamp();
                 let scores: Vec<f64> = entries
                     .iter()
                     .map(|e| {
@@ -183,10 +184,10 @@ impl MemoryBackend for SemanticMemory {
                 let mut stmt = conn.prepare(&sql)?;
                 let params_refs: Vec<&dyn rusqlite::types::ToSql> =
                     param_values.iter().map(|p| p.as_ref()).collect();
-                let rows = stmt.query_map(params_refs.as_slice(), row_to_entry)?;
+                let rows = stmt.query_map(params_refs.as_slice(), |row| row_to_entry(row, &self.clock))?;
                 entries = rows.collect::<std::result::Result<Vec<_>, _>>()?;
 
-                let now = Utc::now().timestamp();
+                let now = wall_to_datetime(self.clock.wall_now()).timestamp();
                 entries.sort_by(|a, b| {
                     let sa = compute_activation(
                         &ActivationEntry::new(
@@ -249,7 +250,7 @@ impl MemoryBackend for SemanticMemory {
                 param_values.iter().map(|p| p.as_ref()).collect();
 
             let entries = stmt
-                .query_map(params_refs.as_slice(), row_to_entry)?
+                .query_map(params_refs.as_slice(), |row| row_to_entry(row, &self.clock))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(entries)
         })
@@ -376,7 +377,9 @@ impl MemoryBackend for SemanticMemory {
                     max_age,
                     min_access_count,
                 } => {
-                    let cutoff = (Utc::now() - max_age).to_rfc3339();
+                    let cutoff = wall_to_datetime(WallTime(
+                        self.clock.wall_now().0 - max_age.num_milliseconds(),
+                    )).to_rfc3339();
                     let ids: Vec<String> = conn
                         .prepare(
                             "SELECT id FROM memory WHERE memory_type = 'semantic'

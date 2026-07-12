@@ -208,6 +208,7 @@ impl TurnToolExecutor {
         let exec_ctx = fabric::tool::ToolContext {
             working_dir,
             session_id: session_id.clone(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
         };
         let (content, is_error) = match tool {
             Some(t) => {

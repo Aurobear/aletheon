@@ -52,8 +52,8 @@ impl Tool for EbpfCompileTool {
         Box::new(EbpfCompileTool)
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
-        let start = Instant::now();
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let source_path = match input["source_path"].as_str() {
             Some(p) => p,
@@ -62,7 +62,7 @@ impl Tool for EbpfCompileTool {
                     content: "Missing required parameter: source_path".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -75,7 +75,7 @@ impl Tool for EbpfCompileTool {
                 content: format!("Source file not found: {}", source_path),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             };
@@ -101,7 +101,7 @@ impl Tool for EbpfCompileTool {
                         .to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -111,7 +111,7 @@ impl Tool for EbpfCompileTool {
                     content: format!("Failed to check for clang: {}", e),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -158,7 +158,7 @@ impl Tool for EbpfCompileTool {
                         ),
                         is_error: false,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
                         },
                     }
@@ -168,7 +168,7 @@ impl Tool for EbpfCompileTool {
                         content: format!("eBPF compilation failed:\n{}", stderr),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
                         },
                     }
@@ -178,7 +178,7 @@ impl Tool for EbpfCompileTool {
                 content: format!("Failed to run clang: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },
@@ -237,6 +237,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool
             .execute(json!({"source_path": "/nonexistent.c"}), &ctx)

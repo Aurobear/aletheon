@@ -167,7 +167,7 @@ pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,
     ProjectionVersion, SessionId, SpaceSnapshotId, VersionedOverlay, WorldProjectionId,
 };
-pub use types::time::{MonoDeadline, MonoTime, WallTime};
+pub use types::time::{wall_to_datetime, MonoDeadline, MonoTime, WallTime};
 pub use types::tool::{
     PermissionLevel as ToolPermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
 };

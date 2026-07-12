@@ -4,14 +4,14 @@
 //! into a focused module for clarity and testability.
 
 use fabric::ui_event::{AwarenessLevel, CollaborationMode};
-use std::time::Instant;
+use fabric::MonoTime;
 
 /// Tracks the current awareness level from brain signals.
 #[derive(Debug, Clone)]
 pub struct AwarenessState {
     pub level: AwarenessLevel,
     pub context: String,
-    pub changed_at: Instant,
+    pub changed_at: MonoTime,
 }
 
 impl Default for AwarenessState {
@@ -19,21 +19,22 @@ impl Default for AwarenessState {
         Self {
             level: AwarenessLevel::Confident,
             context: String::new(),
-            changed_at: Instant::now(),
+            changed_at: MonoTime(0),
         }
     }
 }
 
 impl AwarenessState {
-    pub fn update(&mut self, level: AwarenessLevel, context: String) {
+    pub fn update(&mut self, level: AwarenessLevel, context: String, now: MonoTime) {
         self.level = level;
         self.context = context;
-        self.changed_at = Instant::now();
+        self.changed_at = now;
     }
 
     /// Whether to show an inline message (transitions to notable states).
-    pub fn should_show_inline(&self) -> bool {
-        self.level.is_notable() && self.changed_at.elapsed().as_secs() < 5
+    pub fn should_show_inline(&self, now: MonoTime) -> bool {
+        let elapsed_ms = now.0.saturating_sub(self.changed_at.0);
+        self.level.is_notable() && elapsed_ms < 5000
     }
 }
 

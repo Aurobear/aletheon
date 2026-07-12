@@ -13,6 +13,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use aletheon_kernel::chronos::Timer;
 use tokio_util::sync::CancellationToken;
 
 use super::model_router::ModelRouter;
@@ -211,7 +212,13 @@ impl RequestHandler {
                     // Capture stdout before waiting
                     let mut stdout_pipe = child.stdout.take();
                     // Wait with 30-second timeout
-                    match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+                    match Timer::timeout(
+                        &*self.subsystems.ports.clock,
+                        Duration::from_secs(30),
+                        child.wait(),
+                    )
+                    .await
+                    {
                         Ok(Ok(status)) if status.success() => {
                             // Read captured stdout
                             if let Some(ref mut stdout) = stdout_pipe {

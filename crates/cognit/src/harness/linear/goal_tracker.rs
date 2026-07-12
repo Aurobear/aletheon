@@ -1,6 +1,7 @@
 // crates/runtime/src/core/react_loop/goal_tracker.rs
 use std::collections::HashMap;
-use std::time::Instant;
+use fabric::Clock;
+use std::sync::Arc;
 use tracing::info;
 
 /// A human-editable spec file that drives agent execution.
@@ -54,7 +55,7 @@ pub enum GoalStatus {
 #[derive(Debug, Clone)]
 pub struct Goal {
     pub description: String,
-    pub created_at: Instant,
+    pub created_at: fabric::MonoTime,
     pub status: GoalStatus,
 }
 
@@ -66,31 +67,44 @@ pub struct SubGoal {
 }
 
 /// Tracks the current goal and sub-goals for the agent.
-#[derive(Debug)]
 pub struct GoalTracker {
     current_goal: Option<Goal>,
     sub_goals: Vec<SubGoal>,
     success_criteria: Vec<String>,
     constraints: Vec<String>,
     spec_source: Option<String>,
+    clock: Arc<dyn Clock>,
+}
+
+impl std::fmt::Debug for GoalTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GoalTracker")
+            .field("current_goal", &self.current_goal)
+            .field("sub_goals", &self.sub_goals)
+            .field("success_criteria", &self.success_criteria)
+            .field("constraints", &self.constraints)
+            .field("spec_source", &self.spec_source)
+            .finish()
+    }
 }
 
 impl GoalTracker {
     /// Create a new empty goal tracker.
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             current_goal: None,
             sub_goals: Vec::new(),
             success_criteria: Vec::new(),
             constraints: Vec::new(),
             spec_source: None,
+            clock,
         }
     }
 }
 
 impl Default for GoalTracker {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
     }
 }
 
@@ -100,7 +114,7 @@ impl GoalTracker {
         info!(goal = %goal, "Setting agent goal");
         self.current_goal = Some(Goal {
             description: goal,
-            created_at: Instant::now(),
+            created_at: self.clock.mono_now(),
             status: GoalStatus::InProgress,
         });
     }
@@ -291,9 +305,13 @@ impl GoalTracker {
 mod tests {
     use super::*;
 
+    fn make_tracker() -> GoalTracker {
+        GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+    }
+
     #[test]
     fn test_goal_setting() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         assert!(!tracker.is_complete());
 
         tracker.set_goal("Create a hello world program".into());
@@ -305,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_sub_goals() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         tracker.set_goal("Build a website".into());
         tracker.add_sub_goal("Create HTML file".into());
         tracker.add_sub_goal("Add CSS styling".into());
@@ -322,7 +340,7 @@ mod tests {
 
     #[test]
     fn test_max_sub_goals() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         tracker.add_sub_goal("1".into());
         tracker.add_sub_goal("2".into());
         tracker.add_sub_goal("3".into());
@@ -333,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_context_generation() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         tracker.set_goal("Write tests".into());
         tracker.add_sub_goal("Unit tests".into());
         tracker.add_success_criterion("All tests pass".into());
@@ -346,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_reset() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         tracker.set_goal("test".into());
         tracker.add_sub_goal("sub".into());
 
@@ -384,7 +402,7 @@ metadata:
 
     #[test]
     fn test_load_spec() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         let spec = SpecFile {
             goal: "Build API".into(),
             sub_goals: vec!["Design schema".into(), "Implement endpoints".into()],
@@ -403,7 +421,7 @@ metadata:
 
     #[test]
     fn test_to_spec() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         tracker.set_goal("Deploy service".into());
         tracker.add_sub_goal("Build image".into());
         tracker.add_success_criterion("Health check passes".into());
@@ -416,7 +434,7 @@ metadata:
 
     #[test]
     fn test_constraints_in_context() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         tracker.set_goal("Refactor module".into());
         tracker.add_success_criterion("Tests pass".into());
 
@@ -442,7 +460,7 @@ metadata:
 
     #[test]
     fn test_reset_preserves_spec_source() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         let spec = SpecFile {
             goal: "Test".into(),
             sub_goals: vec![],
@@ -459,7 +477,7 @@ metadata:
 
     #[test]
     fn hydrate_from_persisted_objective() {
-        let mut tracker = GoalTracker::new();
+        let mut tracker = make_tracker();
         tracker.hydrate_from(
             "ship goal layer",
             &["persist store".to_string(), "wire rpc".to_string()],

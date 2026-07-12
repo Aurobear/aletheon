@@ -15,6 +15,7 @@ pub mod container;
 pub mod systemd;
 
 use anyhow::Result;
+use aletheon_kernel::chronos::Timer;
 use std::path::PathBuf;
 
 use tracing::info;
@@ -152,6 +153,7 @@ impl RuntimeHost for DaemonHost {
         let socket = self.socket;
         let pulse_handle = core.pulse_handle;
         let pid_file = self.pid_file;
+        let clock = request_handler.subsystems.ports.clock.clone();
 
         // ── MCP embedded server ─────────────────────────────────────
         let mcp_socket = socket
@@ -197,7 +199,7 @@ impl RuntimeHost for DaemonHost {
         // ── Graceful shutdown: stop LlmPulse ────────────────────────
         if let Some((shutdown_tx, handle)) = pulse_handle {
             let _ = shutdown_tx.send(true);
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+            let _ = Timer::timeout(&*clock, std::time::Duration::from_secs(2), handle).await;
         }
 
         // ── Remove PID file ─────────────────────────────────────────

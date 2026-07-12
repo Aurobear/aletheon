@@ -4,14 +4,15 @@
 //! `forget()` requires the entry to be approved (approved != 0).
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use fabric::{
-    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
-    MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext, SubsystemHealth, Version,
+    wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
+    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext,
+    SubsystemHealth, Version, WallTime,
 };
 use rusqlite::{params, Connection};
 use uuid::Uuid;
@@ -22,13 +23,15 @@ use crate::ops::schema;
 pub struct SelfMemory {
     db_path: PathBuf,
     conn: Mutex<Option<Connection>>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl SelfMemory {
-    pub fn new(db_path: PathBuf) -> Self {
+    pub fn new(db_path: PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),
+            clock,
         }
     }
 
@@ -89,7 +92,7 @@ impl Subsystem for SelfMemory {
     }
 }
 
-fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
+fn row_to_entry(row: &rusqlite::Row, clock: &Arc<dyn fabric::Clock>) -> rusqlite::Result<MemoryEntry> {
     let id_str: String = row.get("id")?;
     let tags_str: String = row.get("tags")?;
     let assoc_str: String = row.get("associations")?;
@@ -102,7 +105,7 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
         tags: serde_json::from_str(&tags_str).unwrap_or_default(),
         created_at: created_at_str
             .parse::<DateTime<Utc>>()
-            .unwrap_or_else(|_| Utc::now()),
+            .unwrap_or_else(|_| wall_to_datetime(clock.wall_now())),
         access_count: row.get::<_, i64>("access_count")? as u64,
         importance: row.get("importance")?,
         decay_rate: row.get("decay_rate")?,
@@ -207,11 +210,11 @@ impl MemoryBackend for SelfMemory {
                 param_values.iter().map(|p| p.as_ref()).collect();
 
             let mut entries = stmt
-                .query_map(params_refs.as_slice(), row_to_entry)?
+                .query_map(params_refs.as_slice(), |row| row_to_entry(row, &self.clock))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
 
             // Re-sort by activation score (importance + recency + frequency)
-            let now = Utc::now().timestamp();
+            let now = self.clock.wall_now().0 / 1000;
             entries.sort_by(|a, b| {
                 let sa = compute_activation(
                     &ActivationEntry::new(
@@ -273,7 +276,7 @@ impl MemoryBackend for SelfMemory {
                 param_values.iter().map(|p| p.as_ref()).collect();
 
             let entries = stmt
-                .query_map(params_refs.as_slice(), row_to_entry)?
+                .query_map(params_refs.as_slice(), |row| row_to_entry(row, &self.clock))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(entries)
         })
@@ -371,9 +374,13 @@ impl MemoryBackend for SelfMemory {
 mod tests {
     use super::*;
 
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
+
     fn setup() -> (tempfile::NamedTempFile, SelfMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        let mem = SelfMemory::new(tmp.path().to_path_buf());
+        let mem = SelfMemory::new(tmp.path().to_path_buf(), test_clock());
         (tmp, mem)
     }
 

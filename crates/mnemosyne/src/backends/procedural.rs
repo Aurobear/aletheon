@@ -1,14 +1,15 @@
 //! ProceduralMemory — skills, workflows, reusable patterns.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use fabric::{
-    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
-    MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext, SubsystemHealth, Version,
+    wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
+    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext,
+    SubsystemHealth, Version, WallTime,
 };
 use rusqlite::{params, Connection};
 use uuid::Uuid;
@@ -19,13 +20,15 @@ use crate::ops::schema;
 pub struct ProceduralMemory {
     db_path: PathBuf,
     conn: Mutex<Option<Connection>>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl ProceduralMemory {
-    pub fn new(db_path: PathBuf) -> Self {
+    pub fn new(db_path: PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),
+            clock,
         }
     }
 
@@ -86,7 +89,7 @@ impl Subsystem for ProceduralMemory {
     }
 }
 
-fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
+fn row_to_entry(row: &rusqlite::Row, clock: &Arc<dyn fabric::Clock>) -> rusqlite::Result<MemoryEntry> {
     let id_str: String = row.get("id")?;
     let tags_str: String = row.get("tags")?;
     let assoc_str: String = row.get("associations")?;
@@ -99,7 +102,7 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
         tags: serde_json::from_str(&tags_str).unwrap_or_default(),
         created_at: created_at_str
             .parse::<DateTime<Utc>>()
-            .unwrap_or_else(|_| Utc::now()),
+            .unwrap_or_else(|_| wall_to_datetime(clock.wall_now())),
         access_count: row.get::<_, i64>("access_count")? as u64,
         importance: row.get("importance")?,
         decay_rate: row.get("decay_rate")?,
@@ -203,11 +206,11 @@ impl MemoryBackend for ProceduralMemory {
                 param_values.iter().map(|p| p.as_ref()).collect();
 
             let mut entries = stmt
-                .query_map(params_refs.as_slice(), row_to_entry)?
+                .query_map(params_refs.as_slice(), |row| row_to_entry(row, &self.clock))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
 
             // Re-sort by activation score (importance + recency + frequency)
-            let now = Utc::now().timestamp();
+            let now = self.clock.wall_now().0 / 1000;
             entries.sort_by(|a, b| {
                 let sa = compute_activation(
                     &ActivationEntry::new(
@@ -271,7 +274,7 @@ impl MemoryBackend for ProceduralMemory {
                 param_values.iter().map(|p| p.as_ref()).collect();
 
             let entries = stmt
-                .query_map(params_refs.as_slice(), row_to_entry)?
+                .query_map(params_refs.as_slice(), |row| row_to_entry(row, &self.clock))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(entries)
         })
@@ -331,7 +334,9 @@ impl MemoryBackend for ProceduralMemory {
                     max_age,
                     min_access_count,
                 } => {
-                    let cutoff = (Utc::now() - max_age).to_rfc3339();
+                    let cutoff = wall_to_datetime(WallTime(
+                        self.clock.wall_now().0 - max_age.num_milliseconds(),
+                    )).to_rfc3339();
                     conn.execute(
                         "DELETE FROM memory WHERE memory_type = 'procedural'
                          AND created_at < ?1 AND access_count < ?2",
@@ -409,9 +414,13 @@ impl MemoryBackend for ProceduralMemory {
 mod tests {
     use super::*;
 
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
+
     fn setup() -> (tempfile::NamedTempFile, ProceduralMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        let mem = ProceduralMemory::new(tmp.path().to_path_buf());
+        let mem = ProceduralMemory::new(tmp.path().to_path_buf(), test_clock());
         (tmp, mem)
     }
 

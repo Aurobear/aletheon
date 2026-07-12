@@ -5,9 +5,10 @@
 //! Provides snapshot summaries for the Reasoner to use as context.
 
 use chrono::{DateTime, Utc};
-use fabric::cognit::Observation;
+use fabric::{Clock, Observation};
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 /// Tracked entity state derived from observations.
 #[derive(Debug, Clone)]
@@ -33,15 +34,18 @@ pub struct WorldModel {
     entities: RwLock<HashMap<String, EntityState>>,
     /// Hash of the last entity snapshot for quick change detection.
     last_snapshot_hash: RwLock<u64>,
+    /// Clock for deterministic wall time.
+    clock: Arc<dyn Clock>,
 }
 
 impl WorldModel {
-    pub fn new(max_observations: usize) -> Self {
+    pub fn new(max_observations: usize, clock: Arc<dyn Clock>) -> Self {
         Self {
             observations: RwLock::new(VecDeque::with_capacity(max_observations)),
             max_observations,
             entities: RwLock::new(HashMap::new()),
             last_snapshot_hash: RwLock::new(0),
+            clock,
         }
     }
 
@@ -65,7 +69,7 @@ impl WorldModel {
     /// The observation's `data` is merged into the entity's properties,
     /// and the `what` field is recorded as the latest event.
     pub fn update_entity(&self, observation: &Observation) {
-        let now = Utc::now();
+        let now = fabric::wall_to_datetime(self.clock.wall_now());
         let mut entities = self.entities.write();
 
         let entity = entities
@@ -226,11 +230,18 @@ mod tests {
         }
     }
 
+    fn make_wm(max_obs: usize) -> WorldModel {
+        WorldModel::new(
+            max_obs,
+            std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
+    }
+
     // --- Existing tests (preserved) ---
 
     #[test]
     fn update_and_count() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         assert_eq!(wm.count(), 0);
         wm.update(make_obs("disk full", "system"));
         assert_eq!(wm.count(), 1);
@@ -238,7 +249,7 @@ mod tests {
 
     #[test]
     fn capacity_eviction() {
-        let wm = WorldModel::new(3);
+        let wm = make_wm(3);
         wm.update(make_obs("a", "src"));
         wm.update(make_obs("b", "src"));
         wm.update(make_obs("c", "src"));
@@ -252,13 +263,13 @@ mod tests {
 
     #[test]
     fn snapshot_empty() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         assert_eq!(wm.snapshot(), "");
     }
 
     #[test]
     fn snapshot_formats_observations() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("event1", "sensor"));
         wm.update(make_obs("event2", "sensor"));
         let snap = wm.snapshot();
@@ -269,7 +280,7 @@ mod tests {
 
     #[test]
     fn snapshot_limits_to_10() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         for i in 0..15 {
             wm.update(make_obs(&format!("event_{}", i), "src"));
         }
@@ -281,7 +292,7 @@ mod tests {
 
     #[test]
     fn from_source_filter() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("a", "sensor_a"));
         wm.update(make_obs("b", "sensor_b"));
         wm.update(make_obs("c", "sensor_a"));
@@ -292,7 +303,7 @@ mod tests {
 
     #[test]
     fn clear_empties() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("a", "src"));
         wm.clear();
         assert_eq!(wm.count(), 0);
@@ -300,7 +311,7 @@ mod tests {
 
     #[test]
     fn recent_respects_limit() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         for i in 0..5 {
             wm.update(make_obs(&format!("e{}", i), "src"));
         }
@@ -314,7 +325,7 @@ mod tests {
 
     #[test]
     fn update_creates_entity() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("disk full", "system"));
 
         let entity = wm.get_entity("system");
@@ -328,7 +339,7 @@ mod tests {
 
     #[test]
     fn multiple_observations_update_same_entity() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("event1", "sensor_a"));
         wm.update(make_obs("event2", "sensor_a"));
         wm.update(make_obs("event3", "sensor_a"));
@@ -341,7 +352,7 @@ mod tests {
 
     #[test]
     fn different_sources_create_different_entities() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("a", "src1"));
         wm.update(make_obs("b", "src2"));
 
@@ -352,7 +363,7 @@ mod tests {
 
     #[test]
     fn entity_properties_merge_data() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(Observation {
             what: "temp".to_string(),
             source: "sensor".to_string(),
@@ -372,7 +383,7 @@ mod tests {
 
     #[test]
     fn changed_since_detects_changes() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         let hash_before = wm.snapshot_hash();
         assert!(!wm.changed_since(hash_before));
 
@@ -382,7 +393,7 @@ mod tests {
 
     #[test]
     fn changed_since_no_change() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("event", "src"));
         let hash_after = wm.snapshot_hash();
         assert!(!wm.changed_since(hash_after));
@@ -390,7 +401,7 @@ mod tests {
 
     #[test]
     fn infer_state_empty() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         let state = wm.infer_state();
         assert_eq!(state.len(), 1);
         assert!(state[0].contains("No entities"));
@@ -398,7 +409,7 @@ mod tests {
 
     #[test]
     fn infer_state_all_healthy() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("ok", "src_a"));
         wm.update(make_obs("ok", "src_b"));
 
@@ -409,7 +420,7 @@ mod tests {
 
     #[test]
     fn infer_state_degraded() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("ok", "src_a"));
         wm.update(make_obs("ok", "src_b"));
         // Manually set low confidence on one entity
@@ -426,7 +437,7 @@ mod tests {
 
     #[test]
     fn clear_resets_entities() {
-        let wm = WorldModel::new(100);
+        let wm = make_wm(100);
         wm.update(make_obs("event", "src"));
         assert!(wm.get_entity("src").is_some());
 

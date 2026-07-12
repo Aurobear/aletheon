@@ -88,7 +88,7 @@ impl Tool for ScriptTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
-        let start = Instant::now();
+        let start = ctx.clock.mono_now();
 
         // Check script exists
         if !self.script_path.exists() {
@@ -113,7 +113,7 @@ impl Tool for ScriptTool {
             .output()
             .await;
 
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 
         match result {
             Ok(output) => {
@@ -231,6 +231,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(result.is_error);
@@ -257,6 +258,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(!result.is_error);
@@ -283,6 +285,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(result.is_error);
@@ -312,6 +315,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(!result.is_error);

@@ -1,10 +1,14 @@
 use std::io;
 use std::io::Write;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use crossterm::event::Event;
+use fabric::Clock;
 use ratatui::Terminal;
 use tokio::net::UnixStream;
+
+use aletheon_kernel::chronos::Timer;
 
 use super::super::chat::Role as ChatRole;
 use super::super::response::{
@@ -24,8 +28,9 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     model_name: String,
     test_config: TestConfig,
     is_test_mode: bool,
+    clock: Arc<dyn Clock>,
 ) -> anyhow::Result<()> {
-    let mut app = App::new(stream, caps, model_name.clone());
+    let mut app = App::new(stream, caps, model_name.clone(), clock);
 
     // ── Test infrastructure setup ──
     let mut frame_recorder: Option<FrameRecorder> = test_config
@@ -43,7 +48,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         .as_ref()
         .and_then(|p| TestInputReader::new(p, test_config.auto_submit).ok());
 
-    let test_start = Instant::now();
+    let test_start = app.clock.mono_now();
     let test_timeout = Duration::from_secs(test_config.test_timeout);
 
     // Clear daemon session on startup (avoids stale data from previous runs)
@@ -55,7 +60,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         .await;
     let _ = app.stream.flush().await;
     // Read and discard the clear response so it doesn't pollute the socket buffer
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    Timer::sleep(&*app.clock, Duration::from_millis(50)).await;
     let _ = app.stream.try_read(&mut app.read_buf);
 
     // Welcome message
@@ -75,7 +80,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
     while app.running {
         // Test timeout check
-        if test_input.is_some() && test_start.elapsed() >= test_timeout {
+        if test_input.is_some() && (app.clock.mono_now().0 - test_start.0) >= test_timeout.as_millis() as u64 {
             app.running = false;
             break;
         }
@@ -90,7 +95,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
         // Check pending submit (IME delay)
         if let Some(pending_time) = app.pending_submit {
-            if pending_time.elapsed() > Duration::from_millis(100) {
+            if (app.clock.mono_now().0 - pending_time.0) > 100 {
                 app.pending_submit = None;
                 let text = app.input_buf.trim().to_string();
                 if !text.is_empty() {
@@ -144,7 +149,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                         break;
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+                _ = Timer::sleep(&*app.clock, Duration::from_millis(200)) => {}
             }
         }
 
@@ -159,7 +164,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             if !app.turn_active && !reader.is_exhausted() {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Timer::sleep(&*app.clock, Duration::from_millis(100)).await;
                     submit_message(&mut app, next).await;
                 }
             }
@@ -182,6 +187,7 @@ pub async fn simple_line_mode(
     mut stream: UnixStream,
     _caps: TermCaps,
     model_name: String,
+    clock: Arc<dyn Clock>,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -268,10 +274,10 @@ pub async fn simple_line_mode(
 
         // Wait for response — drain out-of-band notifications until we get
         // the actual JSON-RPC response (identified by having "id" + "result"/"error").
-        // Use tokio::time::timeout for clean timeout handling.
+        // Use Timer::timeout for clean timeout handling.
         let timeout_duration = Duration::from_secs(120);
 
-        let result = tokio::time::timeout(timeout_duration, async {
+        let result = Timer::timeout(&*clock, timeout_duration, async {
             loop {
                 // Wait for stream to be readable
                 match stream.readable().await {
@@ -389,7 +395,7 @@ pub async fn simple_line_mode(
                         }
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        Timer::sleep(&*clock, Duration::from_millis(50)).await;
                     }
                     Err(_) => return Ok(()),
                 }

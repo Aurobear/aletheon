@@ -32,17 +32,19 @@ pub trait StateProvider: Send + Sync {
 ///
 /// Sensors read from `/proc`, context and logs are placeholder implementations
 /// ready to be wired to the actual agent subsystems.
-pub struct LiveStateProvider;
+pub struct LiveStateProvider {
+    clock: Arc<dyn fabric::Clock>,
+}
 
 impl LiveStateProvider {
-    pub fn new() -> Self {
-        Self
+    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
+        Self { clock }
     }
 }
 
 impl Default for LiveStateProvider {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
     }
 }
 
@@ -54,7 +56,7 @@ impl StateProvider for LiveStateProvider {
                 let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
                 let info = serde_json::json!({
                     "load_avg": load.trim(),
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&info)?.into_bytes())
             }
@@ -68,7 +70,7 @@ impl StateProvider for LiveStateProvider {
                             serde_json::Value::String(parts[1].trim().to_string());
                     }
                 }
-                mem["timestamp"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+                mem["timestamp"] = serde_json::Value::String(fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339());
                 Ok(serde_json::to_string_pretty(&mem)?.into_bytes())
             }
             "disk" => {
@@ -86,7 +88,7 @@ impl StateProvider for LiveStateProvider {
                 }
                 let info = serde_json::json!({
                     "disks": disks,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&info)?.into_bytes())
             }
@@ -105,7 +107,7 @@ impl StateProvider for LiveStateProvider {
                 }
                 let info = serde_json::json!({
                     "interfaces": interfaces,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&info)?.into_bytes())
             }
@@ -138,7 +140,7 @@ impl StateProvider for LiveStateProvider {
             "agent": agent_id,
             "state": "running",
             "uptime_seconds": 0,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
         });
         Ok(serde_json::to_string_pretty(&status)?.into_bytes())
     }

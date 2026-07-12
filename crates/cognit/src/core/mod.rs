@@ -27,6 +27,7 @@ mod tests;
 use anyhow::Result;
 use fabric::message::ContentBlock;
 use fabric::self_field::Intent;
+use std::sync::Arc;
 
 use self::awareness::{AwarenessContext, AwarenessGenerator};
 use self::critic::Critic;
@@ -41,7 +42,7 @@ use crate::bridge::dual_model::{DualModelBridge, TaskComplexity};
 use crate::bridge::learning::LearningBridge;
 use crate::bridge::llm::LlmBridge;
 use fabric::{
-    cognit::Plan, context::Context, self_field::AwarenessGrowthSuggestion, SelfAwareness,
+    cognit::Plan, context::Context, self_field::AwarenessGrowthSuggestion, Clock, SelfAwareness,
 };
 
 /// Configuration for CognitCore construction.
@@ -52,6 +53,8 @@ pub struct CognitCoreConfig {
     pub max_learned_rules: usize,
     /// Maximum number of world observations.
     pub max_world_observations: usize,
+    /// Clock for deterministic time (test harness injection).
+    pub clock: Arc<dyn Clock>,
 }
 
 impl Default for CognitCoreConfig {
@@ -60,6 +63,7 @@ impl Default for CognitCoreConfig {
             reasoning_strategy: ReasoningStrategy::ChainOfThought,
             max_learned_rules: 200,
             max_world_observations: 500,
+            clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
         }
     }
 }
@@ -82,23 +86,26 @@ pub struct CognitCore {
     dual_model: Option<DualModelBridge>,
     learning: Option<LearningBridge>,
     awareness_generator: AwarenessGenerator,
+    clock: Arc<dyn Clock>,
 }
 
 impl CognitCore {
     pub fn new(config: CognitCoreConfig) -> Self {
+        let clock = config.clock;
         Self {
             reasoner: Reasoner::new(config.reasoning_strategy),
             planner: Planner::new(),
             critic: Critic::new(),
-            reflector: Reflector::new(),
+            reflector: Reflector::new(clock.clone()),
             learner: Learner::new(config.max_learned_rules),
-            world_model: WorldModel::new(config.max_world_observations),
-            skill_extractor: SkillExtractor::new(),
+            world_model: WorldModel::new(config.max_world_observations, clock.clone()),
+            skill_extractor: SkillExtractor::new(clock.clone()),
             initialized: false,
             llm: None,
             dual_model: None,
             learning: None,
             awareness_generator: AwarenessGenerator::new(),
+            clock,
         }
     }
 

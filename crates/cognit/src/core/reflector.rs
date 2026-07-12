@@ -6,21 +6,24 @@
 //!
 //! Also produces structured ReflectionEntry for persistent self-evolution.
 
-use chrono::Utc;
 use fabric::cognit::{
     ExecutionResult, Reflection, ReflectionEntry, ReflectionOutcome, ReflectionTrigger,
 };
+use fabric::Clock;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// The reflector component.
 ///
 /// Performs post-execution analysis to extract lessons from outcomes.
 #[derive(Clone)]
-pub struct Reflector;
+pub struct Reflector {
+    clock: Arc<dyn Clock>,
+}
 
 impl Reflector {
-    pub fn new() -> Self {
-        Self
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self { clock }
     }
 
     /// Reflect on an execution result.
@@ -187,9 +190,11 @@ impl Reflector {
         // Derive learned lessons from what_to_improve
         let learned: Vec<String> = reflection.what_to_improve.to_vec();
 
+        let now = fabric::wall_to_datetime(self.clock.wall_now());
+
         ReflectionEntry {
             id: format!("reflect-{}", Uuid::new_v4()),
-            timestamp: Utc::now(),
+            timestamp: now,
             trigger,
             task_summary: task_summary.to_string(),
             outcome,
@@ -214,10 +219,11 @@ impl Reflector {
         learned: Vec<String>,
     ) -> ReflectionEntry {
         let confidence = if success { 0.8 } else { 0.3 };
+        let now = fabric::wall_to_datetime(self.clock.wall_now());
 
         ReflectionEntry {
             id: format!("reflect-{}", Uuid::new_v4()),
-            timestamp: Utc::now(),
+            timestamp: now,
             trigger,
             task_summary: task_summary.to_string(),
             outcome: if success {
@@ -234,15 +240,10 @@ impl Reflector {
     }
 }
 
-impl Default for Reflector {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use uuid::Uuid;
 
     fn make_execution(success: bool, completed: usize, total: usize) -> ExecutionResult {
@@ -261,9 +262,13 @@ mod tests {
         }
     }
 
+    fn make_reflector() -> Reflector {
+        Reflector::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+    }
+
     #[test]
     fn successful_full_reflection() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let result = reflector.reflect(&make_execution(true, 3, 3));
         assert!(!result.what_worked.is_empty());
         assert!(result.what_failed.is_empty());
@@ -272,7 +277,7 @@ mod tests {
 
     #[test]
     fn failed_reflection() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let result = reflector.reflect(&make_execution(false, 1, 3));
         assert!(!result.what_failed.is_empty());
         assert!(result.what_failed.iter().any(|f| f.contains("Error")));
@@ -282,14 +287,14 @@ mod tests {
 
     #[test]
     fn partial_completion_suggests_improvement() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let result = reflector.reflect(&make_execution(true, 2, 5));
         assert!(result.what_to_improve.iter().any(|i| i.contains("partial")));
     }
 
     #[test]
     fn slow_execution_suggests_optimization() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let mut exec = make_execution(true, 1, 1);
         exec.elapsed_ms = 45_000;
         let result = reflector.reflect(&exec);
@@ -301,7 +306,7 @@ mod tests {
 
     #[test]
     fn empty_output_noted() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let mut exec = make_execution(true, 1, 1);
         exec.output = String::new();
         let result = reflector.reflect(&exec);
@@ -313,7 +318,7 @@ mod tests {
 
     #[test]
     fn zero_steps_zero_confidence() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let exec = make_execution(true, 0, 0);
         let result = reflector.reflect(&exec);
         assert_eq!(result.confidence, 0.0);
@@ -321,7 +326,7 @@ mod tests {
 
     #[test]
     fn confidence_range() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         // Full success
         let r1 = reflector.reflect(&make_execution(true, 5, 5));
         assert!(r1.confidence <= 1.0);
@@ -334,7 +339,7 @@ mod tests {
 
     #[test]
     fn reflect_entry_success_outcome() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let entry = reflector.reflect_entry(
             "deploy service",
             ReflectionTrigger::TaskComplete,
@@ -351,7 +356,7 @@ mod tests {
 
     #[test]
     fn reflect_entry_failure_outcome() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let entry = reflector.reflect_entry(
             "run tests",
             ReflectionTrigger::TaskComplete,
@@ -365,7 +370,7 @@ mod tests {
 
     #[test]
     fn reflect_entry_partial_outcome() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let entry = reflector.reflect_entry(
             "partial task",
             ReflectionTrigger::Impasse,
@@ -378,7 +383,7 @@ mod tests {
 
     #[test]
     fn reflect_entry_behavior_changes_empty() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let entry = reflector.reflect_entry(
             "any task",
             ReflectionTrigger::Manual,
@@ -391,7 +396,7 @@ mod tests {
 
     #[test]
     fn reflect_conversation_success() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let entry = reflector.reflect_conversation(
             "explain architecture",
             ReflectionTrigger::Manual,
@@ -411,7 +416,7 @@ mod tests {
 
     #[test]
     fn reflect_conversation_failure() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let entry = reflector.reflect_conversation(
             "debug crash",
             ReflectionTrigger::Impasse,
@@ -429,7 +434,7 @@ mod tests {
 
     #[test]
     fn reflect_conversation_id_unique() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let e1 = reflector.reflect_conversation(
             "task a",
             ReflectionTrigger::Manual,
@@ -451,7 +456,7 @@ mod tests {
 
     #[test]
     fn reflect_conversation_empty_lists() {
-        let reflector = Reflector::new();
+        let reflector = make_reflector();
         let entry = reflector.reflect_conversation(
             "noop",
             ReflectionTrigger::TaskComplete,

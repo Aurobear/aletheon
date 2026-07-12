@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use fabric::wall_to_datetime;
 use serde::{Deserialize, Serialize};
 
 use super::vector_store::{Embedder, VectorStore};
@@ -50,20 +53,22 @@ pub trait ArchivalMemory: Send + Sync {
 pub struct InMemoryArchival {
     entries: Vec<ArchivalEntry>,
     next_id: u64,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl InMemoryArchival {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             entries: Vec::new(),
             next_id: 0,
+            clock,
         }
     }
 }
 
 impl Default for InMemoryArchival {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
     }
 }
 
@@ -81,7 +86,7 @@ impl ArchivalMemory for InMemoryArchival {
             content: content.to_string(),
             embedding: None,
             metadata,
-            created_at: chrono::Utc::now(),
+            created_at: wall_to_datetime(self.clock.wall_now()),
         });
         Ok(id)
     }
@@ -140,11 +145,20 @@ impl ArchivalMemory for InMemoryArchival {
 pub struct VectorArchival {
     store: Box<dyn VectorStore>,
     embedder: Box<dyn Embedder>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl VectorArchival {
-    pub fn new(store: Box<dyn VectorStore>, embedder: Box<dyn Embedder>) -> Self {
-        Self { store, embedder }
+    pub fn new(
+        store: Box<dyn VectorStore>,
+        embedder: Box<dyn Embedder>,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
+        Self {
+            store,
+            embedder,
+            clock,
+        }
     }
 }
 
@@ -172,7 +186,7 @@ impl ArchivalMemory for VectorArchival {
                 content: s.metadata["content"].as_str().unwrap_or("").to_string(),
                 embedding: None,
                 metadata: s.metadata,
-                created_at: chrono::Utc::now(),
+                created_at: wall_to_datetime(self.clock.wall_now()),
             })
             .collect())
     }
@@ -201,7 +215,7 @@ impl ArchivalMemory for VectorArchival {
                 content: s.metadata["content"].as_str().unwrap_or("").to_string(),
                 embedding: None,
                 metadata: s.metadata,
-                created_at: chrono::Utc::now(),
+                created_at: wall_to_datetime(self.clock.wall_now()),
             })
             .collect();
 

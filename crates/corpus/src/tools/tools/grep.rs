@@ -52,7 +52,7 @@ impl Tool for GrepTool {
     }
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = ctx.clock.mono_now();
 
         let pattern = match input.get("pattern").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
@@ -61,7 +61,7 @@ impl Tool for GrepTool {
                     content: "Error: 'pattern' parameter is required".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -85,7 +85,7 @@ impl Tool for GrepTool {
             None => try_grep(&pattern, &path, max_results, &ctx.working_dir).await,
         };
 
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 
         match result {
             Some(r) => ToolResult {
@@ -251,6 +251,7 @@ mod tests {
                 &ToolContext {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
                 },
             )
             .await;
@@ -286,6 +287,7 @@ mod tests {
                 &ToolContext {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
                 },
             )
             .await;
@@ -306,6 +308,7 @@ mod tests {
                 &ToolContext {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
                 },
             )
             .await;

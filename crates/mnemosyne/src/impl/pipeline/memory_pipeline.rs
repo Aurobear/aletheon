@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use fabric::ReflectionEntry;
+use fabric::{wall_to_datetime, ReflectionEntry};
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
@@ -84,6 +84,7 @@ pub struct MemoryPipeline {
     episodic_memory: Arc<Mutex<EpisodicMemory>>,
     last_extraction: Option<DateTime<Utc>>,
     config: MemoryPipelineConfig,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl MemoryPipeline {
@@ -92,6 +93,7 @@ impl MemoryPipeline {
         core_memory: Arc<Mutex<CoreMemory>>,
         episodic_memory: Arc<Mutex<EpisodicMemory>>,
         config: MemoryPipelineConfig,
+        clock: Arc<dyn fabric::Clock>,
     ) -> Self {
         Self {
             recall_memory,
@@ -99,6 +101,7 @@ impl MemoryPipeline {
             episodic_memory,
             last_extraction: None,
             config,
+            clock,
         }
     }
 
@@ -106,7 +109,7 @@ impl MemoryPipeline {
     pub fn should_extract(&self) -> bool {
         match self.last_extraction {
             Some(last) => {
-                let elapsed = Utc::now().signed_duration_since(last);
+                let elapsed = wall_to_datetime(self.clock.wall_now()).signed_duration_since(last);
                 elapsed.num_hours() >= self.config.extraction_interval_hours as i64
             }
             None => true,
@@ -121,7 +124,7 @@ impl MemoryPipeline {
     /// 4. Appends extracted facts to appropriate CoreMemory blocks.
     /// 5. Returns the ExtractionResult.
     pub async fn extract_and_consolidate(&mut self) -> anyhow::Result<ExtractionResult> {
-        let now = Utc::now();
+        let now = wall_to_datetime(self.clock.wall_now());
         info!("Starting memory extraction pipeline");
 
         // Gather recent messages.
@@ -313,6 +316,10 @@ mod tests {
     use super::*;
     use fabric::{ReflectionOutcome, ReflectionTrigger};
 
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
+
     fn make_reflection(
         what_worked: Vec<&str>,
         learned: Vec<&str>,
@@ -346,6 +353,7 @@ mod tests {
             episodic_memory: episodic,
             last_extraction: None,
             config: MemoryPipelineConfig::default(),
+            clock: test_clock(),
         };
 
         let reflections = vec![make_reflection(
@@ -385,6 +393,7 @@ mod tests {
             episodic_memory: episodic,
             last_extraction: None,
             config: MemoryPipelineConfig::default(),
+            clock: test_clock(),
         };
 
         let reflections = vec![make_reflection(
@@ -407,6 +416,7 @@ mod tests {
             episodic_memory: Arc::new(Mutex::new(dummy_episodic())),
             last_extraction: None,
             config: MemoryPipelineConfig::default(),
+            clock: test_clock(),
         };
         assert!(pipeline.should_extract());
     }
@@ -419,21 +429,26 @@ mod tests {
             episodic_memory: Arc::new(Mutex::new(dummy_episodic())),
             last_extraction: Some(Utc::now()),
             config: MemoryPipelineConfig::default(),
+            clock: test_clock(),
         };
         assert!(!pipeline.should_extract());
     }
 
     #[test]
     fn should_extract_true_when_interval_elapsed() {
+        let clock = test_clock();
+        // Use clock's time for last_extraction to be consistent
+        let seven_hours_ago = wall_to_datetime(clock.wall_now()) - chrono::Duration::hours(7);
         let pipeline = MemoryPipeline {
             recall_memory: Arc::new(Mutex::new(dummy_recall())),
             core_memory: Arc::new(Mutex::new(CoreMemory::with_defaults())),
             episodic_memory: Arc::new(Mutex::new(dummy_episodic())),
-            last_extraction: Some(Utc::now() - chrono::Duration::hours(7)),
+            last_extraction: Some(seven_hours_ago),
             config: MemoryPipelineConfig {
                 extraction_interval_hours: 6,
                 ..Default::default()
             },
+            clock,
         };
         assert!(pipeline.should_extract());
     }
@@ -557,12 +572,12 @@ mod tests {
     // Uses tempfile::TempDir so the directory persists for the test duration.
     fn dummy_recall() -> RecallMemory {
         let dir = tempfile::tempdir().unwrap();
-        RecallMemory::new(&dir.path().join("recall.db")).unwrap()
+        RecallMemory::new(&dir.path().join("recall.db"), test_clock()).unwrap()
     }
 
     // Helper: create a dummy EpisodicMemory using a temp directory.
     fn dummy_episodic() -> EpisodicMemory {
         let dir = tempfile::tempdir().unwrap();
-        EpisodicMemory::new(dir.path().join("episodic.db"))
+        EpisodicMemory::new(dir.path().join("episodic.db"), test_clock())
     }
 }

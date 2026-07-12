@@ -4,6 +4,7 @@ use crate::r#impl::learning::{
 use anyhow::Result;
 use fabric::body::{Action, ActionResult};
 use fabric::cognit::{Experience, LearnedRule};
+use fabric::Clock;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -12,14 +13,16 @@ pub struct LearningBridge {
     outcome_recorder: OutcomeRecorder,
     pattern_extractor: PatternExtractor,
     rule_store: Arc<Mutex<RuleStore>>,
+    clock: Arc<dyn Clock>,
 }
 
 impl LearningBridge {
-    pub fn new(db_path: PathBuf, max_rules: usize) -> Self {
+    pub fn new(db_path: PathBuf, max_rules: usize, clock: Arc<dyn Clock>) -> Self {
         Self {
-            outcome_recorder: OutcomeRecorder::new(db_path),
-            pattern_extractor: PatternExtractor::new(3, 0.7),
+            outcome_recorder: OutcomeRecorder::new(db_path, clock.clone()),
+            pattern_extractor: PatternExtractor::new(3, 0.7, clock.clone()),
             rule_store: Arc::new(Mutex::new(RuleStore::new(max_rules))),
+            clock,
         }
     }
 
@@ -39,7 +42,7 @@ impl LearningBridge {
             result_summary: result.output.chars().take(200).collect(),
             is_error: !result.success,
             user_feedback: None,
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
             context: OutcomeContext::default(),
         };
         self.outcome_recorder.record(&outcome)
@@ -69,7 +72,7 @@ impl LearningBridge {
     }
 
     /// Convert aletheon Experience to OutcomeRecord for learning
-    pub fn experience_to_outcome(experience: &Experience, session_id: &str) -> OutcomeRecord {
+    pub fn experience_to_outcome(&self, experience: &Experience, session_id: &str) -> OutcomeRecord {
         OutcomeRecord {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session_id.to_string(),
@@ -79,7 +82,7 @@ impl LearningBridge {
             result_summary: experience.result.output.chars().take(200).collect(),
             is_error: !experience.result.success,
             user_feedback: None,
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
             context: OutcomeContext::default(),
         }
     }

@@ -152,7 +152,12 @@ impl RuntimeCore {
             match LlmScheduler::new(&scheduler_config) {
                 Ok(scheduler) => {
                     let scheduler = Arc::new(scheduler);
-                    let pulse = LlmPulse::new(scheduler, bus.clone(), PulseConfig::default());
+                    let pulse = LlmPulse::new(
+                        scheduler,
+                        bus.clone(),
+                        PulseConfig::default(),
+                        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                    );
                     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
                     let handle = tokio::spawn(async move {

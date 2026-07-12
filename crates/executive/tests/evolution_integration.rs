@@ -20,6 +20,7 @@ use fabric::{Subsystem, SubsystemHealth, Version};
 use metacog::r#impl::morphogenesis::pipeline::MorphogenesisPipeline;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use aletheon_kernel::chronos::TestClock;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -172,7 +173,7 @@ async fn failure_triggers_evolution() {
         window_size: 20,
         lineage_dir: tmp.path().to_path_buf(),
     };
-    let coordinator = EvolutionCoordinator::new(config).unwrap();
+    let coordinator = EvolutionCoordinator::new(config, Arc::new(TestClock::default())).unwrap();
     let (mock, gen_calls, mig_calls) = MockMetaRuntime::new();
     let pipeline = MorphogenesisPipeline::new(mock);
 
@@ -230,7 +231,7 @@ async fn periodic_trigger_at_n_turns() {
         window_size: 20,
         lineage_dir: tmp.path().to_path_buf(),
     };
-    let coordinator = EvolutionCoordinator::new(config).unwrap();
+    let coordinator = EvolutionCoordinator::new(config, Arc::new(TestClock::default())).unwrap();
     let (mock, gen_calls, mig_calls) = MockMetaRuntime::new();
     let pipeline = MorphogenesisPipeline::new(mock);
 
@@ -285,7 +286,7 @@ async fn sliding_window_eviction() {
         window_size: 5,
         lineage_dir: tmp.path().to_path_buf(),
     };
-    let coordinator = EvolutionCoordinator::new(config).unwrap();
+    let coordinator = EvolutionCoordinator::new(config, Arc::new(TestClock::default())).unwrap();
     let (mock, _gen, _mig) = MockMetaRuntime::new();
     let pipeline = MorphogenesisPipeline::new(mock);
 
@@ -346,7 +347,7 @@ async fn disabled_coordinator_is_a_noop() {
         window_size: 20,
         lineage_dir: tmp.path().to_path_buf(),
     };
-    let coordinator = EvolutionCoordinator::new(config).unwrap();
+    let coordinator = EvolutionCoordinator::new(config, Arc::new(TestClock::default())).unwrap();
     let (mock, gen_calls, mig_calls) = MockMetaRuntime::new();
     let pipeline = MorphogenesisPipeline::new(mock);
 

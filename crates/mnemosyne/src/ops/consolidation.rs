@@ -5,6 +5,8 @@
 
 use anyhow::Result;
 use chrono::Utc;
+use fabric::wall_to_datetime;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use fabric::{MemoryBackend, MemoryEntry, MemoryType};
@@ -63,7 +65,7 @@ pub async fn consolidate(
     }
 
     // 2. Filter by activation score and access count.
-    let now = Utc::now().timestamp();
+    let now = episodic.clock.wall_now().0 / 1000;
     let mut qualified: Vec<(&fabric::ReflectionEntry, u64, &str)> = Vec::new();
 
     for (reflection, access_count, importance) in &reflections_with_access {
@@ -115,7 +117,7 @@ pub async fn consolidate(
                 "from_episodic".into(),
                 format!("source:{}", reflection.id),
             ],
-            created_at: Utc::now(),
+            created_at: wall_to_datetime(episodic.clock.wall_now()),
             access_count: 0,
             importance: knowledge.importance,
             decay_rate: 0.01, // slow decay for consolidated knowledge
@@ -185,6 +187,10 @@ mod tests {
     use fabric::{
         ReflectionEntry, ReflectionOutcome, ReflectionTrigger, Subsystem, SubsystemContext,
     };
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
 
     fn make_reflection(
         task_summary: &str,
@@ -257,8 +263,8 @@ mod tests {
     async fn test_empty_episodic_noop() {
         let tmp_ep = tempfile::NamedTempFile::new().unwrap();
         let tmp_se = tempfile::NamedTempFile::new().unwrap();
-        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf());
-        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf());
+        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf(), test_clock());
+        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf(), test_clock());
         init_episodic(&mut ep).await;
         init_semantic(&mut se).await;
 
@@ -272,8 +278,8 @@ mod tests {
     async fn test_low_activation_skipped() {
         let tmp_ep = tempfile::NamedTempFile::new().unwrap();
         let tmp_se = tempfile::NamedTempFile::new().unwrap();
-        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf());
-        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf());
+        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf(), test_clock());
+        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf(), test_clock());
         init_episodic(&mut ep).await;
         init_semantic(&mut se).await;
 
@@ -300,8 +306,8 @@ mod tests {
     async fn test_high_activation_promoted() {
         let tmp_ep = tempfile::NamedTempFile::new().unwrap();
         let tmp_se = tempfile::NamedTempFile::new().unwrap();
-        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf());
-        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf());
+        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf(), test_clock());
+        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf(), test_clock());
         init_episodic(&mut ep).await;
         init_semantic(&mut se).await;
 
@@ -330,8 +336,8 @@ mod tests {
     async fn test_promoted_entries_appear_in_semantic() {
         let tmp_ep = tempfile::NamedTempFile::new().unwrap();
         let tmp_se = tempfile::NamedTempFile::new().unwrap();
-        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf());
-        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf());
+        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf(), test_clock());
+        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf(), test_clock());
         init_episodic(&mut ep).await;
         init_semantic(&mut se).await;
 
@@ -370,8 +376,8 @@ mod tests {
     async fn test_source_episodic_lowered_importance() {
         let tmp_ep = tempfile::NamedTempFile::new().unwrap();
         let tmp_se = tempfile::NamedTempFile::new().unwrap();
-        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf());
-        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf());
+        let mut ep = EpisodicMemory::new(tmp_ep.path().to_path_buf(), test_clock());
+        let mut se = SemanticMemory::new(tmp_se.path().to_path_buf(), test_clock());
         init_episodic(&mut ep).await;
         init_semantic(&mut se).await;
 

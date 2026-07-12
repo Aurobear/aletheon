@@ -7,8 +7,10 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
+use fabric::Clock;
 use tracing::warn;
 
 use fabric::hook::{HookContext, HookPoint, HookResult};
@@ -31,12 +33,14 @@ pub struct RegisteredHook {
 /// Registry of lifecycle hooks.
 pub struct HookRegistry {
     hooks: HashMap<HookPoint, Vec<RegisteredHook>>,
+    clock: Arc<dyn Clock>,
 }
 
 impl HookRegistry {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             hooks: HashMap::new(),
+            clock,
         }
     }
 
@@ -138,7 +142,7 @@ impl HookRegistry {
 
         // Wait for the child with a 30-second timeout.
         // We use `child.wait()` so we retain ownership and can `kill()` on timeout.
-        let deadline = tokio::time::timeout(Duration::from_secs(30), async {
+        let deadline = aletheon_kernel::chronos::Timer::timeout(&*self.clock, Duration::from_secs(30), async {
             let stdout = child.stdout.take();
             let status = child.wait().await?;
             let mut out = Vec::new();
@@ -166,7 +170,7 @@ impl HookRegistry {
 
 impl Default for HookRegistry {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
     }
 }
 
@@ -226,7 +230,7 @@ mod tests {
 
     #[test]
     fn register_and_count() {
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         reg.register(make_hook("a", HookPoint::PreTool, 10));
         reg.register(make_hook("b", HookPoint::PreTool, 5));
         reg.register(make_hook("c", HookPoint::PostTool, 100));
@@ -238,7 +242,7 @@ mod tests {
 
     #[test]
     fn priority_ordering() {
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         reg.register(make_hook("low", HookPoint::PreTool, 100));
         reg.register(make_hook("high", HookPoint::PreTool, 1));
         reg.register(make_hook("mid", HookPoint::PreTool, 50));
@@ -251,7 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_no_hooks_returns_continue() {
-        let reg = HookRegistry::new();
+        let reg = HookRegistry::default();
         let ctx = HookContext {
             point: HookPoint::PreTool,
             session_id: "test".into(),
@@ -276,7 +280,7 @@ mod tests {
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         reg.register(RegisteredHook {
             name: "test:inject".into(),
             source: "test".into(),
@@ -317,7 +321,7 @@ mod tests {
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         reg.register(RegisteredHook {
             name: "test:block".into(),
             source: "test".into(),
@@ -385,7 +389,7 @@ mod tests {
 
     #[test]
     fn unregister_hook() {
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         reg.register(make_hook("a", HookPoint::PreTool, 10));
         reg.register(make_hook("b", HookPoint::PreTool, 5));
         reg.register(make_hook("a", HookPoint::PostTool, 100));
@@ -412,7 +416,7 @@ mod tests {
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         reg.register(RegisteredHook {
             name: "test:timeout".into(),
             source: "test".into(),
@@ -432,16 +436,16 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let start = std::time::Instant::now();
+        let start = reg.clock.mono_now();
         let result = reg.execute(&ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = reg.clock.mono_now().0.saturating_sub(start.0);
 
         // Should return Continue (not hang for 3600s).
         assert!(matches!(result, HookResult::Continue));
         // Should complete in roughly 30s, with some tolerance.
         assert!(
-            elapsed < std::time::Duration::from_secs(60),
-            "Expected timeout ~30s, but took {:?}",
+            elapsed < 60_000,
+            "Expected timeout ~30s, but took {} ms",
             elapsed
         );
     }

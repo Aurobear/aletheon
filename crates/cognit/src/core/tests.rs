@@ -11,11 +11,15 @@ use fabric::Subsystem;
 use fabric::{IntentSource, SubsystemHealth};
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::experience_summarizer::ExperienceSummarizer;
 
 fn make_config() -> CognitCoreConfig {
-    CognitCoreConfig::default()
+    CognitCoreConfig {
+        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        ..CognitCoreConfig::default()
+    }
 }
 
 fn make_intent() -> Intent {
@@ -220,10 +224,11 @@ fn make_reflection_entry(
     task: &str,
     confidence: f64,
 ) -> ReflectionEntry {
+    use chrono::DateTime;
     use fabric::ReflectionTrigger;
     ReflectionEntry {
         id: format!("ref-{}", uuid::Uuid::new_v4()),
-        timestamp: chrono::Utc::now(),
+        timestamp: DateTime::UNIX_EPOCH,
         trigger: ReflectionTrigger::TaskComplete,
         task_summary: task.to_string(),
         outcome,
@@ -235,30 +240,37 @@ fn make_reflection_entry(
     }
 }
 
+fn make_summarizer() -> ExperienceSummarizer {
+    ExperienceSummarizer::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+}
+
 #[test]
 fn summarizer_empty_input() {
-    assert!(ExperienceSummarizer::summarize(&[]).is_none());
+    let summarizer = make_summarizer();
+    assert!(summarizer.summarize(&[]).is_none());
 }
 
 #[test]
 fn summarizer_single_reflection_no_pattern() {
+    let summarizer = make_summarizer();
     let entries = vec![make_reflection_entry(
         ReflectionOutcome::Success,
         "deploy feature",
         0.9,
     )];
     // Single entry with no strong pattern -> None
-    assert!(ExperienceSummarizer::summarize(&entries).is_none());
+    assert!(summarizer.summarize(&entries).is_none());
 }
 
 #[test]
 fn summarizer_detects_high_failure_rate() {
+    let summarizer = make_summarizer();
     let entries = vec![
         make_reflection_entry(ReflectionOutcome::Failure, "parse input", 0.2),
         make_reflection_entry(ReflectionOutcome::Failure, "parse config", 0.1),
         make_reflection_entry(ReflectionOutcome::Success, "list files", 0.9),
     ];
-    let result = ExperienceSummarizer::summarize(&entries).unwrap();
+    let result = summarizer.summarize(&entries).unwrap();
     assert!(result
         .patterns_detected
         .iter()
@@ -271,12 +283,13 @@ fn summarizer_detects_high_failure_rate() {
 
 #[test]
 fn summarizer_detects_repeated_topics() {
+    let summarizer = make_summarizer();
     let entries = vec![
         make_reflection_entry(ReflectionOutcome::Success, "deploy the service", 0.8),
         make_reflection_entry(ReflectionOutcome::Success, "deploy the service", 0.8),
         make_reflection_entry(ReflectionOutcome::Success, "deploy the service", 0.8),
     ];
-    let result = ExperienceSummarizer::summarize(&entries).unwrap();
+    let result = summarizer.summarize(&entries).unwrap();
     assert!(result
         .patterns_detected
         .iter()
@@ -285,13 +298,14 @@ fn summarizer_detects_repeated_topics() {
 
 #[test]
 fn summarizer_detects_low_confidence() {
+    let summarizer = make_summarizer();
     let entries = vec![
         make_reflection_entry(ReflectionOutcome::Partial, "debug crash A", 0.2),
         make_reflection_entry(ReflectionOutcome::Partial, "debug crash B", 0.3),
         make_reflection_entry(ReflectionOutcome::Partial, "debug crash C", 0.1),
         make_reflection_entry(ReflectionOutcome::Partial, "debug crash D", 0.3),
     ];
-    let result = ExperienceSummarizer::summarize(&entries).unwrap();
+    let result = summarizer.summarize(&entries).unwrap();
     assert!(result
         .patterns_detected
         .iter()
@@ -304,13 +318,14 @@ fn summarizer_detects_low_confidence() {
 
 #[test]
 fn summarizer_success_strategy_with_common_lessons() {
+    let summarizer = make_summarizer();
     let mut e1 = make_reflection_entry(ReflectionOutcome::Success, "task A", 0.9);
     e1.learned = vec!["always validate inputs".to_string()];
     let mut e2 = make_reflection_entry(ReflectionOutcome::Success, "task B", 0.85);
     e2.learned = vec!["always validate inputs".to_string()];
     let entries = vec![e1, e2];
 
-    let result = ExperienceSummarizer::summarize(&entries).unwrap();
+    let result = summarizer.summarize(&entries).unwrap();
     assert!(result
         .patterns_detected
         .iter()
@@ -326,7 +341,6 @@ fn summarizer_success_strategy_with_common_lessons() {
 use crate::bridge::dual_model::{DualModelBridge, DualModelConfig, TaskComplexity};
 use crate::r#impl::llm::{LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage};
 use fabric::message::Message;
-use std::sync::Arc;
 
 /// Stub provider whose name appears in its response text.
 struct StubProvider {

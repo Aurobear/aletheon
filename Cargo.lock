@@ -12,6 +12,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agora"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "async-trait",
  "fabric",
@@ -601,6 +602,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 name = "cognit"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "async-trait",
  "chrono",
@@ -678,6 +680,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 name = "corpus"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "async-trait",
  "atspi",
@@ -823,6 +826,7 @@ dependencies = [
 name = "dasein"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "async-trait",
  "chrono",
@@ -1739,6 +1743,7 @@ dependencies = [
 name = "interact"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "async-trait",
  "atty",
@@ -1953,6 +1958,7 @@ dependencies = [
 name = "metacog"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "async-trait",
  "chrono",
@@ -2004,6 +2010,7 @@ dependencies = [
 name = "mnemosyne"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "async-trait",
  "chrono",

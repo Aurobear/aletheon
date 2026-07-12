@@ -46,14 +46,14 @@ impl Tool for ApplyPatchTool {
         let patch = input["patch"].as_str().unwrap_or("");
         let base_dir = input["base_dir"].as_str();
 
-        let start = std::time::Instant::now();
+        let start = ctx.clock.mono_now();
 
         if patch.is_empty() {
             return ToolResult {
                 content: "Error: empty patch content".to_string(),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             };
@@ -79,7 +79,7 @@ impl Tool for ApplyPatchTool {
                     content: summary,
                     is_error: false,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 }
@@ -91,7 +91,7 @@ impl Tool for ApplyPatchTool {
                         content: report,
                         is_error: false,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
                         },
                     },
@@ -102,7 +102,7 @@ impl Tool for ApplyPatchTool {
                         ),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
                         },
                     },
@@ -602,6 +602,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
 
         let patch = "--- /dev/null\n+++ b/new_file.txt\n@@ -0,0 +1,3 @@\n+line one\n+line two\n+line three\n";
@@ -628,6 +629,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
 
         let patch = "--- a/existing.txt\n+++ b/existing.txt\n@@ -1,3 +1,3 @@\n line one\n-line two\n+line TWO\n line three\n";
@@ -650,6 +652,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
 
         let patch = "--- a/doomed.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-delete me\n";
@@ -691,6 +694,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let tool = ApplyPatchTool;
         let input = json!({ "patch": "" });

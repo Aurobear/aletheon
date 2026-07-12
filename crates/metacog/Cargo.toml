@@ -8,6 +8,7 @@ description = "Aletheon Meta runtime - self-update and morphological evolution"
 
 [dependencies]
 fabric = { path = "../fabric" }
+aletheon-kernel = { path = "../kernel" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"

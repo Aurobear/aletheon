@@ -1,13 +1,17 @@
+use std::sync::Arc;
+
 use super::{CoreMemory, MemoryBlock};
+use fabric::wall_to_datetime;
 use rusqlite::Connection;
 
 /// SQLite-backed persistence for CoreMemory blocks.
 pub struct CoreMemoryStore {
     db: Connection,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl CoreMemoryStore {
-    pub fn new(db_path: &std::path::Path) -> anyhow::Result<Self> {
+    pub fn new(db_path: &std::path::Path, clock: Arc<dyn fabric::Clock>) -> anyhow::Result<Self> {
         let db = Connection::open(db_path)?;
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS core_memory_blocks (
@@ -18,12 +22,12 @@ impl CoreMemoryStore {
                 updated_at TEXT NOT NULL
             );",
         )?;
-        Ok(Self { db })
+        Ok(Self { db, clock })
     }
 
     /// Save all blocks from CoreMemory to SQLite.
     pub fn save(&self, memory: &CoreMemory) -> anyhow::Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = wall_to_datetime(self.clock.wall_now()).to_rfc3339();
         let tx = self.db.unchecked_transaction()?;
         for (label, block) in memory.blocks() {
             tx.execute(
@@ -80,7 +84,8 @@ mod tests {
 
     fn test_store() -> (CoreMemoryStore, NamedTempFile) {
         let tmp = NamedTempFile::new().unwrap();
-        let store = CoreMemoryStore::new(tmp.path()).unwrap();
+        let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let store = CoreMemoryStore::new(tmp.path(), clock).unwrap();
         (store, tmp)
     }
 

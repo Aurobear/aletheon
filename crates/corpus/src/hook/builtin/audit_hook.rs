@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn register_audit_hook_adds_entry() {
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         register_audit_hook(&mut reg);
         assert_eq!(reg.count(&HookPoint::PostTool), 1);
     }

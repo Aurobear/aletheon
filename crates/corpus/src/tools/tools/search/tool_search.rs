@@ -58,7 +58,7 @@ impl Tool for ToolSearchTool {
         })
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let query = input["query"].as_str().unwrap_or("");
         let limit = input["limit"].as_u64().unwrap_or(5) as usize;
 
@@ -142,6 +142,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool
             .execute(json!({"query": "read file", "limit": 5}), &ctx)
@@ -156,6 +157,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool
             .execute(json!({"query": "internal system", "limit": 5}), &ctx)
@@ -170,6 +172,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool
             .execute(json!({"query": "zzzznonexistent", "limit": 5}), &ctx)

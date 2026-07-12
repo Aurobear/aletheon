@@ -101,12 +101,12 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         }
         if app.input_buf.is_empty() {
             match app.last_ctrl_c {
-                Some(t) if t.elapsed() < std::time::Duration::from_secs(2) => {
+                Some(t) if (app.clock.mono_now().0 - t.0) < 2000 => {
                     app.running = false;
                     return;
                 }
                 _ => {
-                    app.last_ctrl_c = Some(std::time::Instant::now());
+                    app.last_ctrl_c = Some(app.clock.mono_now());
                     return;
                 }
             }
@@ -338,7 +338,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             if app.has_cjk {
                 // Delay submit to let IME finish composition
                 // (OpenCode's double-defer pattern adapted for Rust)
-                app.pending_submit = Some(std::time::Instant::now());
+                app.pending_submit = Some(app.clock.mono_now());
             } else {
                 // No CJK: submit immediately
                 app.input_buf.clear();

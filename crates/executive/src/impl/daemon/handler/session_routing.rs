@@ -6,7 +6,6 @@
 use super::super::session_manager::SessionManager;
 use super::RequestHandler;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -53,7 +52,7 @@ impl RequestHandler {
                     .session_created_at
                     .lock()
                     .await
-                    .insert(id.clone(), Instant::now());
+                    .insert(id.clone(), self.subsystems.ports.clock.mono_now());
                 info!(session_id = %id, "Session created on demand");
                 (id, sm)
             }
@@ -91,6 +90,6 @@ impl RequestHandler {
             .session_created_at
             .lock()
             .await
-            .insert(session_id.clone(), Instant::now());
+            .insert(session_id.clone(), self.subsystems.ports.clock.mono_now());
     }
 }

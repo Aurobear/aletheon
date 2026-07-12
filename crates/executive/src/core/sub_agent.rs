@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 
-use aletheon_kernel::chronos::SystemClock;
+use aletheon_kernel::chronos::{SystemClock, Timer};
 use aletheon_kernel::operation::{OperationScope, OperationTable};
 use aletheon_kernel::process::ProcessTable;
 use aletheon_kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
@@ -28,7 +28,7 @@ use fabric::ipc::envelope_v2::Target;
 use fabric::ipc::mailbox::{InProcessMailbox, InProcessMailboxService, Mailbox, MailboxService};
 use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use fabric::{
-    AgentProfileId, CancelReason, ExitReason, NamespaceId, OperationExitReason, OperationKind,
+    AgentProfileId, CancelReason, Clock, ExitReason, NamespaceId, OperationExitReason, OperationKind,
     OperationManager, OperationRequest, ProcessId, ProcessManager, ProcessSignal, ProcessSnapshot,
     ProcessState, SpawnSpec, SubAgentState,
 };
@@ -120,6 +120,8 @@ pub struct SubAgentSpawner {
     operation_table: Arc<OperationTable>,
     mailbox_service: Arc<InProcessMailboxService>,
     supervisor: SupervisorTree,
+    /// Clock for timeout/sleep operations routed through Timer.
+    clock: Arc<dyn Clock>,
     /// Optional execution runtime — when set, spawned sub-agents run real
     /// LLM + tool work. When `None`, the stub waits for cancellation.
     runtime: Option<Arc<dyn SubAgentRuntime>>,
@@ -146,16 +148,18 @@ impl Default for SubAgentSpawner {
 
 impl SubAgentSpawner {
     pub fn new() -> Self {
-        let clock = Arc::new(SystemClock::new());
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
         Self::with_tables(
             Arc::new(ProcessTable::new(clock.clone())),
-            Arc::new(OperationTable::new(clock)),
+            Arc::new(OperationTable::new(clock.clone())),
+            clock,
         )
     }
 
     pub fn with_tables(
         process_table: Arc<ProcessTable>,
         operation_table: Arc<OperationTable>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             agents: HashMap::new(),
@@ -163,6 +167,7 @@ impl SubAgentSpawner {
             operation_table,
             mailbox_service: Arc::new(InProcessMailboxService::new()),
             supervisor: SupervisorTree::new(),
+            clock,
             runtime: None,
         }
     }
@@ -573,7 +578,7 @@ impl SubAgentSpawner {
             .get(id)
             .ok_or_else(|| anyhow::anyhow!("unknown sub-agent: {id}"))?;
         let pid = entry.process_id;
-        tokio::time::timeout(timeout, self.process_table.wait(pid))
+        Timer::timeout(&*self.clock, timeout, self.process_table.wait(pid))
             .await
             .map_err(|_| anyhow::anyhow!("wait timed out for sub-agent: {id}"))?
             .map_err(|e| anyhow::anyhow!("process wait error: {e}"))?;

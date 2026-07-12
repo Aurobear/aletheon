@@ -224,6 +224,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
 
         let result = tool.execute(input, &ctx).await;
@@ -252,6 +253,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
 
         let result = tool.execute(input, &ctx).await;
@@ -271,6 +273,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
 
         let result = tool.execute(input, &ctx).await;

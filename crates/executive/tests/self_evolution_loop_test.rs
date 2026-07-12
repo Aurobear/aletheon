@@ -179,7 +179,8 @@ async fn test_evolution_triggered_after_consecutive_failures() -> Result<()> {
 
 #[tokio::test]
 async fn test_mutation_approver_validates_intents() -> Result<()> {
-    let mutation_layer = Arc::new(MutationLayer::new());
+    let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
+    let mutation_layer = Arc::new(MutationLayer::new(clock));
     let approver = MutationApprover::new(mutation_layer.clone());
 
     // Trigger with "consecutive_failures" reason -> generates safety_weight intent

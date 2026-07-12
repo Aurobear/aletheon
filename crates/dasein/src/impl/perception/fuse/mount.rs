@@ -275,11 +275,18 @@ mod fuse_impl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+    use std::sync::Arc;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
 
     #[tokio::test]
     async fn test_fuse_mount_stub_mode() {
         let mount_point = std::env::temp_dir().join("test-agent-fuse-mount");
-        let fs = AgentFs::new(mount_point.clone());
+        let clock = test_clock();
+        let fs = AgentFs::new(mount_point.clone(), clock);
         let mut mount = FuseMount::mount(mount_point.clone(), fs).await.unwrap();
 
         // In stub mode (without fuse feature), is_mounted returns false
@@ -300,7 +307,8 @@ mod tests {
     #[tokio::test]
     async fn test_fuse_mount_point_accessor() {
         let mount_point = std::env::temp_dir().join("test-agent-fuse-accessor");
-        let fs = AgentFs::new(mount_point.clone());
+        let clock = test_clock();
+        let fs = AgentFs::new(mount_point.clone(), clock);
         let mount = FuseMount::mount(mount_point.clone(), fs).await.unwrap();
 
         assert_eq!(mount.mount_point(), &mount_point);
@@ -309,7 +317,8 @@ mod tests {
     #[tokio::test]
     async fn test_fuse_unmount_idempotent() {
         let mount_point = std::env::temp_dir().join("test-agent-fuse-idempotent");
-        let fs = AgentFs::new(mount_point.clone());
+        let clock = test_clock();
+        let fs = AgentFs::new(mount_point.clone(), clock);
         let mut mount = FuseMount::mount(mount_point.clone(), fs).await.unwrap();
 
         // First unmount

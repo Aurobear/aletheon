@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use fabric::wall_to_datetime;
 use tokio::fs;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -26,11 +28,12 @@ pub struct ConsolidationResult {
 /// rollout summaries, and produces a consolidated raw_memories.md.
 pub struct Phase2Consolidator {
     config: Phase2Config,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl Phase2Consolidator {
-    pub fn new(config: Phase2Config) -> Self {
-        Self { config }
+    pub fn new(config: Phase2Config, clock: Arc<dyn fabric::Clock>) -> Self {
+        Self { config, clock }
     }
 
     /// Run Phase 2 consolidation.
@@ -107,7 +110,7 @@ impl Phase2Consolidator {
         sections.push(format!(
             "_Consolidated from {} sessions at {}_\n",
             to_process.len(),
-            chrono::Utc::now().to_rfc3339()
+            wall_to_datetime(self.clock.wall_now()).to_rfc3339()
         ));
 
         for record in &to_process {
@@ -225,7 +228,8 @@ mod tests {
 
         let (mut db, _) = setup_db_with_succeeded(3);
         let config = default_phase2_config();
-        let consolidator = Phase2Consolidator::new(config);
+        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let consolidator = Phase2Consolidator::new(config, clock);
 
         let result = consolidator.run(&mut db, memory_root).await.unwrap();
         assert_eq!(result.memories_processed, 3);
@@ -253,7 +257,8 @@ mod tests {
 
         let mut db = StateDatabase::new();
         let config = default_phase2_config();
-        let consolidator = Phase2Consolidator::new(config);
+        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let consolidator = Phase2Consolidator::new(config, clock);
 
         let result = consolidator.run(&mut db, memory_root).await.unwrap();
         assert_eq!(result.memories_processed, 0);
@@ -273,7 +278,8 @@ mod tests {
             max_unused_days: 14,
             model: "test-model".to_string(),
         };
-        let consolidator = Phase2Consolidator::new(config);
+        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let consolidator = Phase2Consolidator::new(config, clock);
 
         let result = consolidator.run(&mut db, memory_root).await.unwrap();
         assert_eq!(result.memories_processed, 3);
@@ -288,7 +294,8 @@ mod tests {
         db.acquire_phase2_lock("other-claim");
 
         let config = default_phase2_config();
-        let consolidator = Phase2Consolidator::new(config);
+        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let consolidator = Phase2Consolidator::new(config, clock);
 
         let result = consolidator.run(&mut db, memory_root).await;
         assert!(result.is_err());
@@ -302,7 +309,8 @@ mod tests {
 
         let (mut db, _) = setup_db_with_succeeded(1);
         let config = default_phase2_config();
-        let consolidator = Phase2Consolidator::new(config);
+        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let consolidator = Phase2Consolidator::new(config, clock);
 
         assert!(!db.is_phase2_locked());
         consolidator.run(&mut db, memory_root).await.unwrap();

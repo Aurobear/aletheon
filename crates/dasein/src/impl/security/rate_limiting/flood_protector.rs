@@ -1,9 +1,17 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
+
+use fabric::MonoTime;
+
+/// Helper: compute elapsed Duration between two MonoTime values.
+fn mono_elapsed(now: MonoTime, earlier: MonoTime) -> Duration {
+    Duration::from_millis(now.0.saturating_sub(earlier.0))
+}
 
 /// Sliding-window counter for a single event source.
 struct SlidingWindow {
-    timestamps: Vec<Instant>,
+    timestamps: Vec<MonoTime>,
     window: Duration,
     max_events: u32,
 }
@@ -17,12 +25,12 @@ impl SlidingWindow {
         }
     }
 
-    fn evict(&mut self, now: Instant) {
+    fn evict(&mut self, now: MonoTime) {
         self.timestamps
-            .retain(|&t| now.duration_since(t) <= self.window);
+            .retain(|&t| mono_elapsed(now, t) <= self.window);
     }
 
-    fn record_and_check(&mut self, now: Instant) -> bool {
+    fn record_and_check(&mut self, now: MonoTime) -> bool {
         self.evict(now);
         if self.timestamps.len() as u32 >= self.max_events {
             return false; // flooded
@@ -31,7 +39,7 @@ impl SlidingWindow {
         true
     }
 
-    fn count(&mut self, now: Instant) -> u32 {
+    fn count(&mut self, now: MonoTime) -> u32 {
         self.evict(now);
         self.timestamps.len() as u32
     }
@@ -59,15 +67,17 @@ pub struct EventFloodProtector {
     per_source: HashMap<String, SlidingWindow>,
     default_window: Duration,
     default_max_events: u32,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl EventFloodProtector {
     /// Create a protector with a default window and max-events-per-window.
-    pub fn new(window: Duration, max_events: u32) -> Self {
+    pub fn new(window: Duration, max_events: u32, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             per_source: HashMap::new(),
             default_window: window,
             default_max_events: max_events,
+            clock,
         }
     }
 
@@ -79,7 +89,7 @@ impl EventFloodProtector {
 
     /// Record an event from `source` and return whether it was accepted.
     pub fn record(&mut self, source: &str) -> FloodResult {
-        let now = Instant::now();
+        let now = self.clock.mono_now();
         let window = self
             .per_source
             .entry(source.to_string())
@@ -99,7 +109,7 @@ impl EventFloodProtector {
 
     /// Query the current event count for a source (for diagnostics).
     pub fn source_count(&mut self, source: &str) -> u32 {
-        let now = Instant::now();
+        let now = self.clock.mono_now();
         self.per_source
             .get_mut(source)
             .map(|w| w.count(now))
@@ -110,10 +120,19 @@ impl EventFloodProtector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
+    fn test_protector(window: Duration, max_events: u32) -> EventFloodProtector {
+        EventFloodProtector::new(window, max_events, test_clock())
+    }
 
     #[test]
     fn accepts_events_under_limit() {
-        let mut fp = EventFloodProtector::new(Duration::from_secs(1), 5);
+        let mut fp = test_protector(Duration::from_secs(1), 5);
         for _ in 0..5 {
             assert_eq!(fp.record("topic_a"), FloodResult::Accept);
         }
@@ -121,7 +140,7 @@ mod tests {
 
     #[test]
     fn detects_flood_after_limit() {
-        let mut fp = EventFloodProtector::new(Duration::from_secs(1), 3);
+        let mut fp = test_protector(Duration::from_secs(1), 3);
         assert_eq!(fp.record("spam"), FloodResult::Accept);
         assert_eq!(fp.record("spam"), FloodResult::Accept);
         assert_eq!(fp.record("spam"), FloodResult::Accept);
@@ -136,7 +155,7 @@ mod tests {
 
     #[test]
     fn independent_sources() {
-        let mut fp = EventFloodProtector::new(Duration::from_secs(1), 2);
+        let mut fp = test_protector(Duration::from_secs(1), 2);
         assert_eq!(fp.record("a"), FloodResult::Accept);
         assert_eq!(fp.record("a"), FloodResult::Accept);
         // a is now at limit, but b should still work.
@@ -145,7 +164,7 @@ mod tests {
 
     #[test]
     fn custom_source_limits() {
-        let mut fp = EventFloodProtector::new(Duration::from_secs(60), 1000);
+        let mut fp = test_protector(Duration::from_secs(60), 1000);
         fp.set_source_limit("critical", Duration::from_secs(1), 1);
         assert_eq!(fp.record("critical"), FloodResult::Accept);
         match fp.record("critical") {

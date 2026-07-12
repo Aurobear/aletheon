@@ -12,24 +12,28 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use fabric::{
-        CompactStrategy, EmbeddingProvider, MemoryBackend, MemoryEntry, MemoryFilter, MemoryQuery,
-        MemoryType, Subsystem, SubsystemContext,
+        wall_to_datetime, CompactStrategy, EmbeddingProvider, MemoryBackend, MemoryEntry,
+        MemoryFilter, MemoryQuery, MemoryType, Subsystem, SubsystemContext, WallTime,
     };
     use std::sync::Arc;
     use uuid::Uuid;
 
     use schema::{cosine_similarity, hash_embedding, l2_norm, VectorIndex};
 
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
+
     fn setup() -> (tempfile::NamedTempFile, SemanticMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        let mem = SemanticMemory::new(tmp.path().to_path_buf());
+        let mem = SemanticMemory::new(tmp.path().to_path_buf(), test_clock());
         (tmp, mem)
     }
 
     fn setup_with_embedding() -> (tempfile::NamedTempFile, SemanticMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let provider = Arc::new(HashEmbeddingProvider::new(32));
-        let mem = SemanticMemory::with_embedding_provider(tmp.path().to_path_buf(), provider);
+        let mem = SemanticMemory::with_embedding_provider(tmp.path().to_path_buf(), provider, test_clock());
         (tmp, mem)
     }
 

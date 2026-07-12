@@ -8,7 +8,9 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
+use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
+use fabric::{Clock, MonoTime};
 use tokio_util::sync::CancellationToken;
 
 use super::super::model_router::{ModelRouter, TaskType};
@@ -132,6 +134,7 @@ impl SubAgentRuntime for DaemonSubAgentRuntime {
                             let ctx = fabric::tool::ToolContext {
                                 working_dir: std::env::current_dir().unwrap_or_default(),
                                 session_id: "sub-agent".into(),
+                                clock: std::sync::Arc::new(SystemClock::new()),
                             };
                             tool.execute(input, &ctx).await
                         }
@@ -229,7 +232,8 @@ impl RequestHandler {
         // Create memory instances
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
         let recall_db_path = data_dir.join("recall_memory.db");
-        let recall_memory = Arc::new(Mutex::new(RecallMemory::new(&recall_db_path)?));
+        let recall_clock: Arc<dyn fabric::Clock> = Arc::new(SystemClock::new());
+        let recall_memory = Arc::new(Mutex::new(RecallMemory::new(&recall_db_path, recall_clock)?));
 
         // FactStore
         let aletheon_dir = dirs::home_dir()
@@ -284,9 +288,14 @@ impl RequestHandler {
         sessions.insert(session_id.clone(), initial_session.clone());
         let sessions = Arc::new(Mutex::new(sessions));
         let default_session_id = Arc::new(tokio::sync::Mutex::new(session_id.clone()));
+
+        // Clock for monotonic/wall timestamps. Created early so
+        // session_created_at timestamps are routed through Clock.
+        let clock = Arc::new(SystemClock::new());
+
         let session_created_at = {
             let mut m = HashMap::new();
-            m.insert(session_id.clone(), Instant::now());
+            m.insert(session_id.clone(), clock.mono_now());
             Arc::new(Mutex::new(m))
         };
         let active_connections = Arc::new(AtomicUsize::new(0));
@@ -331,12 +340,12 @@ impl RequestHandler {
 
         // Security
         let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
-        let sandbox = create_default_executor(sandbox_pref);
+        let sandbox = create_default_executor(sandbox_pref, clock.clone());
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
         let (approval_gate, approval_rx) = SocketApprovalGate::new();
         let tool_runner = Arc::new(Mutex::new(
-            ToolRunnerWithGuard::new(sandbox, audit_logger)
+            ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
                 .with_approval_gate(Arc::new(approval_gate)),
         ));
 
@@ -356,17 +365,17 @@ impl RequestHandler {
             window_size: 20,
             lineage_dir: data_dir.join("lineage"),
         };
-        runtime = runtime.with_evolution(evo_config)?;
+        runtime = runtime.with_evolution(evo_config, clock.clone())?;
         if let Some((ref desc, ref subs)) = resumed_objective {
             runtime.seed_goal(desc, subs);
         }
 
         // Pipeline, reflector, episodic memory
-        let meta_runtime = DefaultMetaRuntime::new(Version::new(0, 1, 0));
+        let meta_runtime = DefaultMetaRuntime::new(Version::new(0, 1, 0), clock.clone());
         let pipeline = Arc::new(MorphogenesisPipeline::new(meta_runtime));
-        let reflector = Reflector::new();
+        let reflector = Reflector::new(clock.clone());
         let episodic_db_path = data_dir.join("episodic.db");
-        let mut episodic_memory = EpisodicMemory::new(episodic_db_path);
+        let mut episodic_memory = EpisodicMemory::new(episodic_db_path, clock.clone());
         let ctx = SubsystemContext {
             name: "episodic_memory".into(),
             working_dir: data_dir.clone(),
@@ -385,7 +394,7 @@ impl RequestHandler {
         }
 
         // Hooks
-        let mut hook_registry = HookRegistry::new();
+        let mut hook_registry = HookRegistry::new(clock.clone());
         audit_hook::register_audit_hook(&mut hook_registry);
         let hooks_dir = aletheon_dir.join("hooks");
         let hook_loader = corpus::hook::loader::HookLoader::new(hooks_dir);
@@ -484,7 +493,7 @@ impl RequestHandler {
         let debug_hook = Arc::new(tokio::sync::Mutex::new(DebugBusHook::new(
             EventFilter::default(),
         )));
-        let debug_handler = Arc::new(DebugHandler::new(debug_hook, debug_perf.clone()));
+        let debug_handler = Arc::new(DebugHandler::new(debug_hook, debug_perf.clone(), clock.clone()));
 
         // Session Gateway
         let param_registry = Arc::new(ParamRegistry::new());
@@ -498,7 +507,7 @@ impl RequestHandler {
             tool_budget_max: runtime_config_snapshot.agent_loop.max_tool_calls,
             recent_tools: Vec::new(),
             storm_breaker_failure_count: 0,
-            goal_tracker: cognit::harness::linear::goal_tracker::GoalTracker::new(),
+            goal_tracker: cognit::harness::linear::goal_tracker::GoalTracker::new(clock.clone()),
         }));
         let gw_started_at = std::time::Instant::now();
         let session_gateway = Arc::new(SessionGateway::new(
@@ -602,6 +611,7 @@ impl RequestHandler {
                 let tools_for_agents = subsystems.corpus.tools.clone();
                 let exec_for_agents = subsystems.runtime.clone();
 
+                let clock_for_agents = clock.clone();
                 let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
                     Arc::new(move |system_prompt, user_prompt, allowed_tools| {
                         let llm = llm_for_agents.clone();
@@ -610,6 +620,7 @@ impl RequestHandler {
                         let sp = system_prompt;
                         let up = user_prompt;
                         let at = allowed_tools;
+                            let clock = clock.clone();
                         Box::pin(async move {
                             // 1. Register tracked sub-agent with SubAgentSpawner.
                             let agent_id = {
@@ -691,6 +702,7 @@ impl RequestHandler {
                                                         working_dir: std::env::current_dir()
                                                             .unwrap_or_default(),
                                                         session_id: "sub-agent".into(),
+                                                        clock: clock.clone(),
                                                     };
                                                     tool.execute(input, &ctx).await
                                                 } else {

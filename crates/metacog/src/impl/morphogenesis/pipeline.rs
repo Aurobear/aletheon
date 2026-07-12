@@ -136,12 +136,17 @@ pub struct PipelineResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use async_trait::async_trait;
     use fabric::genome::*;
     use fabric::meta::Recommendation;
-    use fabric::{Subsystem, SubsystemHealth, TestResult, Version};
+    use fabric::{wall_to_datetime, Clock, Subsystem, SubsystemHealth, TestResult, Version};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
 
     fn genome() -> Genome {
         Genome {
@@ -172,6 +177,7 @@ mod tests {
 
     struct RejectingMeta {
         rollbacks: Arc<AtomicUsize>,
+        clock: Arc<dyn Clock>,
     }
 
     #[async_trait]
@@ -206,7 +212,7 @@ mod tests {
                 id: uuid::Uuid::new_v4(),
                 genome: genome(),
                 changes: vec!["c".into()],
-                generated_at: chrono::Utc::now(),
+                generated_at: wall_to_datetime(self.clock.wall_now()),
             })
         }
         async fn sandbox_test(&self, _c: &RuntimeCandidate) -> anyhow::Result<TestResult> {
@@ -248,6 +254,7 @@ mod tests {
         let rollbacks = Arc::new(AtomicUsize::new(0));
         let meta = RejectingMeta {
             rollbacks: rollbacks.clone(),
+            clock: test_clock(),
         };
         let pipeline = MorphogenesisPipeline::new(meta);
         let intent = MutationIntent {
@@ -275,6 +282,7 @@ mod tests {
 
         struct SandboxFailingMeta {
             rolled_back: Arc<AtomicBool>,
+            clock: Arc<dyn Clock>,
         }
 
         #[async_trait]
@@ -309,7 +317,7 @@ mod tests {
                     id: uuid::Uuid::new_v4(),
                     genome: genome(),
                     changes: vec!["c".into()],
-                    generated_at: chrono::Utc::now(),
+                    generated_at: wall_to_datetime(self.clock.wall_now()),
                 })
             }
             async fn sandbox_test(&self, _c: &RuntimeCandidate) -> anyhow::Result<TestResult> {
@@ -337,6 +345,7 @@ mod tests {
         let rolled_back = Arc::new(AtomicBool::new(false));
         let meta = SandboxFailingMeta {
             rolled_back: rolled_back.clone(),
+            clock: test_clock(),
         };
         let pipeline = MorphogenesisPipeline::new(meta);
         let intent = MutationIntent {

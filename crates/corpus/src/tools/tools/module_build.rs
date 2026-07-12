@@ -47,8 +47,8 @@ impl Tool for ModuleBuildTool {
         Box::new(ModuleBuildTool)
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
-        let start = Instant::now();
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let source_dir = match input["source_dir"].as_str() {
             Some(p) => p,
@@ -57,7 +57,7 @@ impl Tool for ModuleBuildTool {
                     content: "Missing required parameter: source_dir".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 };
@@ -79,7 +79,7 @@ impl Tool for ModuleBuildTool {
                             content: format!("Failed to detect kernel version: {}", e),
                             is_error: true,
                             metadata: ToolResultMeta {
-                                execution_time_ms: start.elapsed().as_millis() as u64,
+                                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                                 truncated: false,
                             },
                         };
@@ -98,7 +98,7 @@ impl Tool for ModuleBuildTool {
                 ),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             };
@@ -111,7 +111,7 @@ impl Tool for ModuleBuildTool {
                 content: format!("No Makefile found in {}", source_dir),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             };
@@ -144,11 +144,11 @@ impl Tool for ModuleBuildTool {
                             kernel_version,
                             source_dir,
                             ko_files.join(", "),
-                            start.elapsed().as_millis()
+                            ctx.clock.mono_now().0.saturating_sub(start.0)
                         ),
                         is_error: false,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
                         },
                     }
@@ -164,7 +164,7 @@ impl Tool for ModuleBuildTool {
                         ),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
                         },
                     }
@@ -174,7 +174,7 @@ impl Tool for ModuleBuildTool {
                 content: format!("Failed to run make: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },
@@ -220,6 +220,7 @@ mod tests {
         let ctx = ToolContext {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
         };
         let result = tool
             .execute(json!({"source_dir": "/nonexistent"}), &ctx)

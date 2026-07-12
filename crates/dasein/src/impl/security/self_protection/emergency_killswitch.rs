@@ -10,14 +10,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// Get current epoch millis (for cooldown tracking).
-fn epoch_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
 // ── Killswitch Trigger ──────────────────────────────────────────────────────
 
 /// Conditions that can trigger the emergency killswitch.
@@ -118,12 +110,12 @@ pub fn default_trigger_configs() -> HashMap<KillswitchTrigger, TriggerConfig> {
 // ── EmergencyKillswitch ─────────────────────────────────────────────────────
 
 /// Monitors for critical failure conditions and activates emergency shutdown.
-#[derive(Debug)]
 pub struct EmergencyKillswitch {
     /// Default trigger configurations.
     configs: HashMap<KillswitchTrigger, TriggerConfig>,
     /// Current activation state.
     state: Arc<Mutex<KillswitchState>>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 #[derive(Debug, Default)]
@@ -142,10 +134,11 @@ struct KillswitchState {
 
 impl EmergencyKillswitch {
     /// Create with default trigger configs.
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             configs: default_trigger_configs(),
             state: Arc::new(Mutex::new(KillswitchState::default())),
+            clock,
         }
     }
 
@@ -231,7 +224,7 @@ impl EmergencyKillswitch {
         // Check cooldown
         if let Some(activated_at_ms) = state.activated_at_ms {
             if let Some(config) = self.find_config(&trigger) {
-                let elapsed_ms = epoch_millis().saturating_sub(activated_at_ms);
+                let elapsed_ms = (self.clock.wall_now().0 as u64).saturating_sub(activated_at_ms);
                 if !config.auto_recover && !state.user_confirmed {
                     return false; // Still in cooldown, not user-confirmed
                 }
@@ -243,7 +236,7 @@ impl EmergencyKillswitch {
 
         state.active = true;
         state.active_trigger = Some(trigger);
-        state.activated_at_ms = Some(epoch_millis());
+        state.activated_at_ms = Some(self.clock.wall_now().0 as u64);
         state.user_confirmed = false;
 
         tracing::error!(reason = %reason, "Emergency killswitch activated");
@@ -282,7 +275,7 @@ impl EmergencyKillswitch {
                 }
 
                 if let Some(activated_at_ms) = state.activated_at_ms {
-                    let elapsed_ms = epoch_millis().saturating_sub(activated_at_ms);
+                    let elapsed_ms = (self.clock.wall_now().0 as u64).saturating_sub(activated_at_ms);
                     if elapsed_ms < config.cooldown.as_millis() as u64 {
                         return false; // Still in cooldown
                     }
@@ -336,34 +329,37 @@ impl EmergencyKillswitch {
     }
 }
 
-impl Default for EmergencyKillswitch {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
+    fn test_ks() -> EmergencyKillswitch {
+        EmergencyKillswitch::new(test_clock())
+    }
 
     #[test]
     fn test_initially_inactive() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         assert!(!ks.is_active());
     }
 
     #[test]
     fn test_user_activate() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         ks.user_activate();
         assert!(ks.is_active());
     }
 
     #[test]
     fn test_consecutive_failures_trigger() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         for _ in 0..10 {
             ks.record_failure();
         }
@@ -372,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_success_resets_counter() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         for _ in 0..9 {
             ks.record_failure();
         }
@@ -386,42 +382,42 @@ mod tests {
 
     #[test]
     fn test_injection_detection() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         ks.check_injection(0.95);
         assert!(ks.is_active());
     }
 
     #[test]
     fn test_injection_low_confidence() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         ks.check_injection(0.5);
         assert!(!ks.is_active());
     }
 
     #[test]
     fn test_resource_exhaustion() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         ks.check_resource_exhaustion("memory", 0.98);
         assert!(ks.is_active());
     }
 
     #[test]
     fn test_resource_normal() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         ks.check_resource_exhaustion("memory", 0.5);
         assert!(!ks.is_active());
     }
 
     #[test]
     fn test_violation_report() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         ks.report_violation("unauthorized file access");
         assert!(ks.is_active());
     }
 
     #[test]
     fn test_user_recover_requires_confirmation() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         ks.user_activate();
         assert!(ks.is_active());
 
@@ -436,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_activation_trigger() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         assert!(ks.activation_trigger().is_none());
 
         ks.user_activate();
@@ -448,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_double_activate_ignored() {
-        let ks = EmergencyKillswitch::new();
+        let ks = test_ks();
         assert!(ks.try_activate(KillswitchTrigger::UserTriggered, "first".to_string(),));
         // Second activation should be ignored
         assert!(!ks.try_activate(KillswitchTrigger::UserTriggered, "second".to_string(),));

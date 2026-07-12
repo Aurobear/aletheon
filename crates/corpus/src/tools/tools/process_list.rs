@@ -30,8 +30,8 @@ impl Tool for ProcessListTool {
         Box::new(ProcessListTool)
     }
 
-    async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, _input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let result = tokio::process::Command::new("ps")
             .args(["aux", "--sort=-pcpu"])
@@ -52,7 +52,7 @@ impl Tool for ProcessListTool {
                     content,
                     is_error: false,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: lines.len() > 21,
                     },
                 }
@@ -61,7 +61,7 @@ impl Tool for ProcessListTool {
                 content: format!("Failed to list processes: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },

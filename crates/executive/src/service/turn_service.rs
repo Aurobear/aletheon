@@ -1,4 +1,5 @@
 use crate::service::{PostTurnPipeline, PreTurnPipeline};
+use aletheon_kernel::chronos::Timer;
 use aletheon_kernel::service::ServicePorts;
 use anyhow::Result;
 use cognit::harness::{CognitiveSession, HarnessConfig, LinearCognitiveSession};
@@ -100,19 +101,20 @@ impl TurnService {
         let mut session = LinearCognitiveSession::new(self.harness_config.clone());
         let start = self.clock.mono_now();
 
-        // TODO(PR-3): replace tokio::time::timeout with Clock::sleep_until
-        // for deterministic deadline testing with TestClock.
+        // Use Timer::timeout with the clock for deterministic deadline testing
+        // with TestClock.
         let mut result = match deadline {
             Some(deadline_millis) => {
                 let deadline_dur = Duration::from_millis(deadline_millis.0);
-                match tokio::time::timeout(
+                match Timer::timeout(
+                    &*self.clock,
                     deadline_dur,
                     session.run_turn(request, self.services.as_ref(), events),
                 )
                 .await
                 {
                     Ok(inner) => inner?,
-                    Err(_elapsed) => {
+                    Err(_) => {
                         self.ports
                             .operation_table
                             .cancel(op.id, fabric::CancelReason::DeadlineExceeded)

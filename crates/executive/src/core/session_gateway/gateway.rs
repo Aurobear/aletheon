@@ -221,6 +221,7 @@ mod tests {
         let debug_handler = Arc::new(DebugHandler::new(
             debug_hook,
             Arc::new(PerfCounter::default()),
+            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
         ));
         let state = Arc::new(Mutex::new(SessionStateRef {
             iteration: 0,
@@ -231,7 +232,7 @@ mod tests {
             tool_budget_max: 10,
             recent_tools: vec![],
             storm_breaker_failure_count: 0,
-            goal_tracker: GoalTracker::new(),
+            goal_tracker: GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default())),
         }));
         let tmp = tempfile::tempdir().unwrap();
         let sm = SessionManager::new(tmp.path(), "test-session".into(), 100000)
@@ -241,7 +242,8 @@ mod tests {
         // Create test CoreMemory, RecallMemory, SelfField
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
         let recall_db = tmp.path().join("recall.db");
-        let recall_memory = Arc::new(Mutex::new(RecallMemory::new(&recall_db).unwrap()));
+        let recall_clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let recall_memory = Arc::new(Mutex::new(RecallMemory::new(&recall_db, recall_clock).unwrap()));
         let self_field = Arc::new(Mutex::new(SelfField::new(Default::default())));
 
         // Mock LLM for session.ask

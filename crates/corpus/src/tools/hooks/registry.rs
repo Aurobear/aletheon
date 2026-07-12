@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn empty_registry() {
-        let reg = HookRegistry::new();
+        let reg = HookRegistry::default();
         assert!(reg.is_empty());
         assert_eq!(reg.len(), 0);
         assert!(reg.hooks_for_event(&HookEvent::SessionStart).is_empty());
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn register_and_query() {
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         reg.register(Hook {
             name: "greet".into(),
             event: HookEvent::SessionStart,
@@ -151,7 +151,7 @@ command = "echo bye"
         // Non-toml file should be ignored.
         std::fs::write(dir.join("readme.txt"), "not a hook").unwrap();
 
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         let count = reg.load_from_dir(dir).unwrap();
         assert_eq!(count, 2);
         assert_eq!(reg.len(), 2);
@@ -161,7 +161,7 @@ command = "echo bye"
 
     #[test]
     fn load_from_missing_dir() {
-        let mut reg = HookRegistry::new();
+        let mut reg = HookRegistry::default();
         let count = reg.load_from_dir(Path::new("/nonexistent/path")).unwrap();
         assert_eq!(count, 0);
     }

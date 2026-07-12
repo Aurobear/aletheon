@@ -1,6 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::time::{Duration, Instant};
+use fabric::Clock;
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::warn;
 
 use crate::sandbox::{
@@ -9,7 +11,10 @@ use crate::sandbox::{
 
 /// No-op sandbox backend — executes commands directly with no isolation.
 /// Always available. Used as last-resort fallback.
-pub struct NoopBackend;
+pub struct NoopBackend {
+    pub clock: Arc<dyn Clock>,
+
+}
 
 #[async_trait]
 impl SandboxBackend for NoopBackend {
@@ -55,7 +60,7 @@ impl SandboxBackend for NoopBackend {
             "Executing command WITHOUT sandbox (noop backend)"
         );
 
-        let start = Instant::now();
+        let start = self.clock.mono_now();
 
         let output = tokio::process::Command::new("bash")
             .arg("-c")
@@ -65,7 +70,7 @@ impl SandboxBackend for NoopBackend {
             .output()
             .await?;
 
-        let elapsed = start.elapsed();
+        let elapsed = self.clock.mono_now().0.saturating_sub(start.0);
 
         Ok(SandboxResult {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -73,7 +78,7 @@ impl SandboxBackend for NoopBackend {
             exit_code: output.status.code().unwrap_or(-1),
             backend_used: "noop".to_string(),
             isolation_level: IsolationLevel::None,
-            elapsed_ms: elapsed.as_millis() as u64,
+            elapsed_ms: elapsed,
         })
     }
 }

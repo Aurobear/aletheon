@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
+use fabric::Clock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Record of a tool call outcome for learning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,11 +36,12 @@ pub struct OutcomeContext {
 /// Records outcomes for the learning pipeline.
 pub struct OutcomeRecorder {
     db_path: std::path::PathBuf,
+    clock: Arc<dyn Clock>,
 }
 
 impl OutcomeRecorder {
-    pub fn new(db_path: std::path::PathBuf) -> Self {
-        Self { db_path }
+    pub fn new(db_path: std::path::PathBuf, clock: Arc<dyn Clock>) -> Self {
+        Self { db_path, clock }
     }
 
     /// Record an outcome.
@@ -102,7 +105,7 @@ impl OutcomeRecorder {
                         .and_then(|s| serde_json::from_str(&s).ok()),
                     timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
                         .map(|dt| dt.with_timezone(&chrono::Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
                     context: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
                 })
             })?

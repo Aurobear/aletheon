@@ -9,9 +9,9 @@ use serde_json::json;
 use tracing::info;
 
 use fabric::hook::{HookContext, HookPoint};
+use fabric::types::time::wall_to_datetime;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::session::store::SessionStore;
@@ -434,7 +434,7 @@ impl RequestHandler {
         .await
         {
             Ok(new_sm) => {
-                let created_at = chrono::Utc::now().to_rfc3339();
+                let created_at = wall_to_datetime(self.subsystems.ports.clock.wall_now()).to_rfc3339();
                 let sm = Arc::new(tokio::sync::Mutex::new(new_sm));
                 self.sessions.lock().await.insert(new_id.clone(), sm);
                 self.subsystems
@@ -442,7 +442,7 @@ impl RequestHandler {
                     .session_created_at
                     .lock()
                     .await
-                    .insert(new_id.clone(), Instant::now());
+                    .insert(new_id.clone(), self.subsystems.ports.clock.mono_now());
                 json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -473,8 +473,8 @@ impl RequestHandler {
             let created_at = created_at_map
                 .get(sid)
                 .map(|t| {
-                    let elapsed = t.elapsed();
-                    let secs = elapsed.as_secs();
+                    let elapsed_ms = self.subsystems.ports.clock.mono_now().0.saturating_sub(t.0);
+                    let secs = elapsed_ms / 1000;
                     format!("{}s ago", secs)
                 })
                 .unwrap_or_else(|| "unknown".to_string());

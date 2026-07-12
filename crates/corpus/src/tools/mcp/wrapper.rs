@@ -47,9 +47,9 @@ impl Tool for McpToolWrapper {
         })
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
         let mut client = self.client.lock().await;
-        let start = std::time::Instant::now();
+        let start = ctx.clock.mono_now();
 
         match client.call_tool(&self.mcp_tool.name, input).await {
             Ok(response) => {
@@ -59,7 +59,7 @@ impl Tool for McpToolWrapper {
                     content,
                     is_error: false,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
                     },
                 }
@@ -68,7 +68,7 @@ impl Tool for McpToolWrapper {
                 content: format!("MCP tool error: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
                 },
             },

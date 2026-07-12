@@ -4,7 +4,14 @@
 //! Returns throttle actions when limits are approached.
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use fabric::MonoTime;
+
+/// Helper: compute elapsed Duration between two MonoTime values.
+fn mono_elapsed(now: MonoTime, earlier: MonoTime) -> Duration {
+    Duration::from_millis(now.0.saturating_sub(earlier.0))
+}
 
 // ── Resource Limits ─────────────────────────────────────────────────────────
 
@@ -61,31 +68,17 @@ pub struct ResourceUsage {
     /// Current CPU percentage.
     pub cpu_percent: f32,
     /// When the hourly window started.
-    pub hour_window_start: Instant,
-}
-
-impl Default for ResourceUsage {
-    fn default() -> Self {
-        Self {
-            tokens_this_turn: 0,
-            tokens_this_hour: 0,
-            tool_calls_this_turn: 0,
-            active_tools: 0,
-            memory_mb: 0,
-            disk_write_mb_hour: 0,
-            cpu_percent: 0.0,
-            hour_window_start: Instant::now(),
-        }
-    }
+    pub hour_window_start: MonoTime,
 }
 
 impl ResourceUsage {
     /// Reset the hourly counters if the window has elapsed.
-    pub fn maybe_reset_hourly(&mut self) {
-        if self.hour_window_start.elapsed() >= Duration::from_secs(3600) {
+    pub fn maybe_reset_hourly(&mut self, clock: &dyn fabric::Clock) {
+        let now = clock.mono_now();
+        if mono_elapsed(now, self.hour_window_start) >= Duration::from_secs(3600) {
             self.tokens_this_hour = 0;
             self.disk_write_mb_hour = 0;
-            self.hour_window_start = Instant::now();
+            self.hour_window_start = now;
         }
     }
 
@@ -175,39 +168,53 @@ pub enum ThrottleAction {
 // ── ResourceGovernor ────────────────────────────────────────────────────────
 
 /// Enforces resource limits and returns throttle actions.
-#[derive(Debug)]
 pub struct ResourceGovernor {
     pub limits: ResourceLimits,
     pub usage: Arc<Mutex<ResourceUsage>>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl ResourceGovernor {
     /// Create with default limits.
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             limits: ResourceLimits::default(),
             usage: Arc::new(Mutex::new(ResourceUsage {
-                hour_window_start: Instant::now(),
-                ..Default::default()
+                tokens_this_turn: 0,
+                tokens_this_hour: 0,
+                tool_calls_this_turn: 0,
+                active_tools: 0,
+                memory_mb: 0,
+                disk_write_mb_hour: 0,
+                cpu_percent: 0.0,
+                hour_window_start: clock.mono_now(),
             })),
+            clock,
         }
     }
 
     /// Create with custom limits.
-    pub fn with_limits(limits: ResourceLimits) -> Self {
+    pub fn with_limits(limits: ResourceLimits, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             limits,
             usage: Arc::new(Mutex::new(ResourceUsage {
-                hour_window_start: Instant::now(),
-                ..Default::default()
+                tokens_this_turn: 0,
+                tokens_this_hour: 0,
+                tool_calls_this_turn: 0,
+                active_tools: 0,
+                memory_mb: 0,
+                disk_write_mb_hour: 0,
+                cpu_percent: 0.0,
+                hour_window_start: clock.mono_now(),
             })),
+            clock,
         }
     }
 
     /// Check if a resource request can be fulfilled.
     pub fn check_allow(&self, request: &ResourceRequest) -> Result<(), ResourceViolation> {
         let mut usage = self.usage.lock().unwrap();
-        usage.maybe_reset_hourly();
+        usage.maybe_reset_hourly(&*self.clock);
 
         match request {
             ResourceRequest::Tokens(n) => {
@@ -300,21 +307,24 @@ impl ResourceGovernor {
     }
 }
 
-impl Default for ResourceGovernor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
+    fn test_governor(limits: ResourceLimits) -> ResourceGovernor {
+        ResourceGovernor::with_limits(limits, test_clock())
+    }
 
     #[test]
     fn test_token_turn_limit() {
-        let governor = ResourceGovernor::with_limits(ResourceLimits {
+        let governor = test_governor(ResourceLimits {
             max_tokens_per_turn: 100,
             max_tokens_per_hour: 10000,
             ..Default::default()
@@ -326,7 +336,7 @@ mod tests {
 
     #[test]
     fn test_token_hour_limit() {
-        let governor = ResourceGovernor::with_limits(ResourceLimits {
+        let governor = test_governor(ResourceLimits {
             max_tokens_per_turn: 10000,
             max_tokens_per_hour: 100,
             ..Default::default()
@@ -338,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_limit() {
-        let governor = ResourceGovernor::with_limits(ResourceLimits {
+        let governor = test_governor(ResourceLimits {
             max_tool_calls_per_turn: 3,
             ..Default::default()
         });
@@ -351,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_concurrency_limit() {
-        let governor = ResourceGovernor::with_limits(ResourceLimits {
+        let governor = test_governor(ResourceLimits {
             max_concurrent_tools: 2,
             ..Default::default()
         });
@@ -374,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_disk_write_limit() {
-        let governor = ResourceGovernor::with_limits(ResourceLimits {
+        let governor = test_governor(ResourceLimits {
             max_disk_write_mb_per_hour: 100,
             ..Default::default()
         });
@@ -389,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_reset_turn() {
-        let governor = ResourceGovernor::with_limits(ResourceLimits {
+        let governor = test_governor(ResourceLimits {
             max_tokens_per_turn: 100,
             max_tokens_per_hour: 10000,
             ..Default::default()
@@ -404,13 +414,13 @@ mod tests {
 
     #[test]
     fn test_emergency_throttle_none() {
-        let governor = ResourceGovernor::new();
+        let governor = test_governor(ResourceLimits::default());
         assert_eq!(governor.emergency_throttle(), ThrottleAction::None);
     }
 
     #[test]
     fn test_emergency_throttle_high_usage() {
-        let governor = ResourceGovernor::with_limits(ResourceLimits {
+        let governor = test_governor(ResourceLimits {
             max_tokens_per_hour: 100,
             ..Default::default()
         });
@@ -425,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_emergency_throttle_critical() {
-        let governor = ResourceGovernor::with_limits(ResourceLimits {
+        let governor = test_governor(ResourceLimits {
             max_tokens_per_hour: 100,
             ..Default::default()
         });
