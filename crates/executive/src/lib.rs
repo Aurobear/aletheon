@@ -10,7 +10,6 @@
     clippy::manual_strip
 )]
 
-pub mod bridge;
 pub mod core;
 pub mod r#impl;
 pub mod service;
@@ -43,3 +42,17 @@ pub use cognit::r#impl::provider_registry::ProviderRegistry;
 pub use mnemosyne::memory_tools;
 pub use mnemosyne::CoreMemory;
 pub use mnemosyne::RecallMemory;
+
+// ── Re-exports for CLI exec path (bin crate uses these via executive) ───
+pub use crate::service::exec_session::ExecSessionBuilder;
+pub use cognit::harness::HarnessConfig;
+pub use corpus::security::approval::{ApprovalGate, TerminalApprovalGate};
+pub use corpus::security::audit::AuditLogger;
+pub use corpus::security::runner::ToolRunnerWithGuard;
+pub use corpus::tools::tools::{ToolContext, ToolRegistry};
+pub use fabric::types::admission::RiskLevel;
+pub use fabric::{
+    AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,
+    CapabilityScope, LlmProvider, Message, NoopTurnEventSink, OperationId, PrincipalId, ProcessId,
+    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
+};

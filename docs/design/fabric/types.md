@@ -1,8 +1,8 @@
 # ABI: Shared Types, Traits, and Interfaces
 
-> Migrated from `docs/design/shared/types.md`, `docs/design/shared/traits.md`, `docs/design/shared/interfaces.md` — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from `docs/design/shared/types.md`, `docs/design/shared/traits.md`, `docs/design/shared/interfaces.md` — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
-**Module:** base
+**Module:** fabric
 **Last Updated:** 2026-06-14
 
 ---
@@ -198,6 +198,6 @@ ToolResult + UserFeedback -> OutcomeRecorder.record()
 | Interface | Code Location | Notes |
 |-----------|---------------|-------|
 | Engine -> ToolRegistry | `cognit/src/harness/linear/step.rs`, `corpus/src/tools/tools/` | Engine calls tools via `ToolRegistry::execute()` |
-| Security -> ToolRunner | `corpus/src/security/security/policy.rs`, `corpus/src/security/security/runner.rs` | Policy + LoopDetector checks before execution |
+| Security -> ToolRunner | `corpus/src/security/policy.rs`, `corpus/src/security/runner.rs` | Policy + LoopDetector checks before execution |
 | DelegateTool | `executive/src/impl/orchestration/` | Delegation as tool call |
 | Perception -> Engine | `dasein/src/impl/perception/bridge.rs`, `cognit/src/harness/linear/step.rs` | PerceptionBridge wired via injection_tx |

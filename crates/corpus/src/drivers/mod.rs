@@ -1,9 +1,9 @@
 //! Hardware drivers and platform adapters.
 
-pub mod types;
 pub mod factory;
 pub mod io;
 pub mod proc;
+pub mod types;
 
 #[cfg(feature = "input")]
 pub mod input;

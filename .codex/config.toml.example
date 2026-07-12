@@ -1,0 +1,11 @@
+# Aletheon project-level Codex config template.
+# Copy to .codex/config.toml for local-only settings.
+# Do not commit secrets, API keys, personal paths, or machine-specific credentials.
+
+[project]
+name = "aletheon"
+integration_branch = "dev"
+
+[workflow]
+delete_merged_branches = true
+delete_branch_policy = "After a PR/MR is merged, delete the merged feature branch locally and remotely when safe. Do not delete protected, unmerged, shared, or still-open branches."

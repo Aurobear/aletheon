@@ -6,7 +6,7 @@ use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use super::output_guardrail::OutputGuardrail;
 use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
-use corpus::security::sandbox::{SandboxConfig, SandboxExecutor};
+use fabric::sandbox::{SandboxConfig, SandboxExecutor, SandboxPreference};
 use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 #[derive(Debug)]
@@ -55,10 +55,15 @@ impl ToolRunnerWithGuard {
         }
     }
 
-    /// Create with default sandbox (Auto preference).
-    pub fn with_default_sandbox(audit_logger: AuditLogger) -> Self {
-        use corpus::security::sandbox::SandboxPreference;
-        Self::new(SandboxExecutor::new(SandboxPreference::Auto), audit_logger)
+    /// Create with a sandbox executor using Auto preference and the given backends.
+    pub fn with_default_sandbox(
+        audit_logger: AuditLogger,
+        backends: Vec<Box<dyn fabric::sandbox::SandboxBackend>>,
+    ) -> Self {
+        Self::new(
+            SandboxExecutor::new(backends, SandboxPreference::Auto),
+            audit_logger,
+        )
     }
 
     pub fn on_new_turn(&mut self, turn_id: &str) {

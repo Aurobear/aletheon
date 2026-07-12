@@ -23,7 +23,6 @@ use cognit::r#impl::llm::scheduler::{
 };
 use fabric::evolution::LlmPurpose;
 use fabric::CommunicationBus;
-use fabric::KernelEventBus;
 
 use crate::r#impl::daemon::handler::RequestHandler;
 use crate::r#impl::daemon::DaemonConfig;
@@ -115,9 +114,7 @@ impl RuntimeCore {
         };
 
         // ── Event bus ───────────────────────────────────────────────
-        let kernel_bus = Arc::new(KernelEventBus::new(4096));
-        let bus: Arc<CommunicationBus> =
-            Arc::new(CommunicationBus::from_event_bus(kernel_bus.clone()));
+        let bus: Arc<CommunicationBus> = Arc::new(CommunicationBus::new());
 
         let cancel_token = CancellationToken::new();
 

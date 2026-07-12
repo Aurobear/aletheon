@@ -1,4 +1,3 @@
-#![allow(deprecated)]
 // crates/aletheon-comm/tests/protocol_e2e.rs
 
 //! End-to-end tests for the communication protocol stack.
@@ -8,7 +7,6 @@ use std::time::Duration;
 
 use fabric::envelope::*;
 use fabric::events::types::Priority;
-use fabric::event_bus::EventBus;
 
 use fabric::CommunicationBus;
 
@@ -186,19 +184,6 @@ async fn test_fire_and_forget() {
 
     let received = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await;
     assert!(received.is_ok(), "should receive fire-and-forget");
-}
-
-#[tokio::test]
-async fn test_backward_compat_event_bus() {
-    let bus = CommunicationBus::new();
-
-    // The event_bus() should be accessible for backward compatibility
-    let event_bus = bus.event_bus();
-    assert!(
-        !event_bus
-            .has_subscribers(&fabric::events::types::EventType::ToolObservation)
-            .await
-    );
 }
 
 #[tokio::test]

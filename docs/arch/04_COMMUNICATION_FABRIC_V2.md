@@ -99,7 +99,7 @@ topic routing
 ### PR-4A
 
 - 新增 EnvelopeV2 与转换器；
-- 不修改旧 EventBus。
+- 不修改旧 EventBus（已完成；旧 EventBus trait 现已删除）。
 
 ### PR-4B
 
@@ -113,13 +113,12 @@ topic routing
 
 ### PR-4D
 
-- 新代码禁止实现旧 `Event` trait；
-- 旧 EventBus 通过 LegacyEventBridge 兼容。
+- 新代码禁止实现旧 `Event` trait（已完成：旧 Event trait 已移除，CommunicationBus 为单一系统）；
+- 旧 EventBus 通过 LegacyEventBridge 兼容（迁移已完成；LegacyEventBridge 仅在过渡期使用）；
 
 ### PR-4E
 
-- 统计旧 Event/EventBus 使用点；
-- 使用点为零后删除旧接口。
+- 旧 Event/EventBus 使用点已清零，旧接口已删除（迁移完成）。
 
 ## 7. Schema 与兼容
 

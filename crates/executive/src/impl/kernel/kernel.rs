@@ -16,6 +16,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::r#impl::agent::fork::AgentFork;
 use crate::r#impl::agent::process::{AgentProcess, AgentProcessConfig};
 use crate::r#impl::kernel::ipc::SharedScratchpad;
+use crate::r#impl::kernel::supervisor::{AgentSupervisor, RestartDecision, RestartPolicy};
 
 // ---------------------------------------------------------------------------
 // KernelError
@@ -52,6 +53,13 @@ impl std::error::Error for KernelError {}
 ///
 /// Holds the process table, fork table, parent-child graph, IPC channel,
 /// shared scratchpads, and a reference to the event bus.
+///
+/// # Restart / Supervision
+///
+/// When an [`AgentSupervisor`] is attached via [`with_supervisor`](Self::with_supervisor),
+/// each spawned process is registered for supervision. Call
+/// [`evaluate_exit`](Self::evaluate_exit) after a process exits to get a
+/// restart decision with exponential backoff and fast-fail detection.
 pub struct AgentKernel {
     /// Running processes keyed by `Pid`.
     processes: RwLock<HashMap<Pid, Arc<Mutex<AgentProcess>>>>,
@@ -63,6 +71,10 @@ pub struct AgentKernel {
     bus: Arc<CommunicationBus>,
     /// Task-scoped shared scratchpads.
     scratchpads: RwLock<HashMap<String, Arc<SharedScratchpad>>>,
+    /// Optional supervisor for restart backoff and fast-fail detection.
+    supervisor: Option<AgentSupervisor>,
+    /// Saved spawn parameters for restart (pid → config).
+    spawn_configs: RwLock<HashMap<Pid, (String, AgentProcessConfig)>>,
 }
 
 impl AgentKernel {
@@ -74,7 +86,19 @@ impl AgentKernel {
             children: RwLock::new(HashMap::new()),
             bus,
             scratchpads: RwLock::new(HashMap::new()),
+            supervisor: None,
+            spawn_configs: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Attach a supervisor with the given restart policy.
+    ///
+    /// When a supervisor is attached, every process spawned via [`spawn`](Self::spawn)
+    /// is automatically registered for supervision. Use [`evaluate_exit`](Self::evaluate_exit)
+    /// to get a restart decision after a process exits.
+    pub fn with_supervisor(mut self, policy: RestartPolicy) -> Self {
+        self.supervisor = Some(AgentSupervisor::new(policy));
+        self
     }
 
     // -- spawn / fork --------------------------------------------------------
@@ -83,6 +107,9 @@ impl AgentKernel {
     ///
     /// Returns the `Pid` assigned to the new process. If `parent` is given the
     /// child is recorded in the parent-child graph.
+    ///
+    /// When a supervisor is attached, the new process is automatically
+    /// registered for supervision.
     pub async fn spawn(
         &self,
         task: String,
@@ -90,7 +117,7 @@ impl AgentKernel {
         parent: Option<Pid>,
     ) -> Pid {
         let pid = Pid::new();
-        let mut process = AgentProcess::new_minimal(config);
+        let mut process = AgentProcess::new_minimal(config.clone());
 
         // Register agent inbox on the communication bus and store the receiver.
         let inbox = self.bus.register_agent(pid.as_u64(), Some(64)).await;
@@ -112,8 +139,17 @@ impl AgentKernel {
                 .push(pid);
         }
 
-        // Emit a spawn event (fire-and-forget).
-        let _ = task; // task stored in config or used elsewhere
+        // Save spawn config for potential restart.
+        self.spawn_configs
+            .write()
+            .await
+            .insert(pid, (task.clone(), config.clone()));
+
+        // Register with supervisor if attached.
+        if let Some(ref sup) = self.supervisor {
+            sup.supervise(pid, task, config, parent).await;
+        }
+
         pid
     }
 
@@ -247,6 +283,31 @@ impl AgentKernel {
         }
     }
 
+    // -- supervision ---------------------------------------------------------
+
+    /// Evaluate a failed process for restart via the attached supervisor.
+    ///
+    /// Returns the supervisor's `RestartDecision`. If the decision is
+    /// `Restart`, the returned struct carries the saved spawn parameters
+    /// (`task`, `config`, `parent`) so the caller can re-spawn.
+    ///
+    /// If no supervisor is attached, returns `RestartDecision::DoNotRestart`.
+    pub async fn evaluate_exit(&self, pid: Pid, exit_code: Option<i32>) -> RestartDecision {
+        let sup = match &self.supervisor {
+            Some(s) => s,
+            None => return RestartDecision::Ignore,
+        };
+        sup.on_crash(pid, exit_code).await
+    }
+
+    /// Mark a supervised process as stable, resetting its restart counter
+    /// and crash history.
+    pub async fn mark_stable(&self, pid: Pid) {
+        if let Some(ref sup) = self.supervisor {
+            sup.mark_stable(pid).await;
+        }
+    }
+
     // -- kill ----------------------------------------------------------------
 
     /// Kill a process or fork by `Pid`.
@@ -260,6 +321,7 @@ impl AgentKernel {
             if processes.remove(&pid).is_some() {
                 drop(processes);
                 self.bus.unregister_agent(&pid.as_u64()).await;
+                self.spawn_configs.write().await.remove(&pid);
                 return Ok(());
             }
         }
@@ -270,6 +332,7 @@ impl AgentKernel {
             if forks.remove(&pid).is_some() {
                 drop(forks);
                 self.bus.unregister_agent(&pid.as_u64()).await;
+                self.spawn_configs.write().await.remove(&pid);
                 return Ok(());
             }
         }

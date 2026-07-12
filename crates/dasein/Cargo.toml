@@ -8,8 +8,6 @@ description = "Aletheon Self-evolution - reflection, behavior evolution, and gen
 
 [dependencies]
 fabric = { path = "../fabric" }
-corpus = { path = "../corpus" }
-mnemosyne = { path = "../mnemosyne" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }

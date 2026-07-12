@@ -23,8 +23,7 @@ impl ComputerCommands {
         #[cfg(feature = "ocr-tesseract")]
         let ocr = DriverFactory::try_ocr().or_else(|| Some(Box::new(MockOcrDriver)));
         #[cfg(not(feature = "ocr-tesseract"))]
-        let ocr: Option<Box<dyn corpus::drivers::ocr::OcrDriver>> =
-            Some(Box::new(MockOcrDriver));
+        let ocr: Option<Box<dyn corpus::drivers::ocr::OcrDriver>> = Some(Box::new(MockOcrDriver));
         let window = DriverFactory::try_window();
         let clipboard = DriverFactory::try_clipboard();
 

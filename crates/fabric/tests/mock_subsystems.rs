@@ -8,37 +8,6 @@ use std::path::PathBuf;
 
 use fabric::*;
 
-// ===== Mock EventBus =====
-
-struct MockEventBus;
-
-#[async_trait]
-impl EventBus for MockEventBus {
-    async fn publish(&self, _event: Box<dyn Event>) -> Result<()> {
-        Ok(())
-    }
-    async fn subscribe(
-        &self,
-        _event_type: EventType,
-        _handler: EventHandler,
-    ) -> Result<SubscriptionId> {
-        Ok(SubscriptionId(1))
-    }
-    async fn request(
-        &self,
-        _event: Box<dyn Event>,
-        _timeout: std::time::Duration,
-    ) -> Result<Box<dyn Event>> {
-        unimplemented!()
-    }
-    async fn unsubscribe(&self, _id: SubscriptionId) -> Result<()> {
-        Ok(())
-    }
-    async fn has_subscribers(&self, _event_type: &EventType) -> bool {
-        false
-    }
-}
-
 // ===== Mock BodyRuntime =====
 
 struct MockBodyRuntime;
@@ -252,7 +221,6 @@ impl CognitOps for MockCognitCore {
 
 #[tokio::test]
 async fn test_all_traits_compile() {
-    let _bus: Box<dyn EventBus> = Box::new(MockEventBus);
     let _body: Box<dyn BodyRuntime> = Box::new(MockBodyRuntime);
     let _memory: Box<dyn MemoryBackend> = Box::new(MockMemory);
     let _self_field: Box<dyn SelfFieldOps> = Box::new(MockSelfField);

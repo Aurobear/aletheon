@@ -13,14 +13,6 @@ pub use genome::GenomeConfig;
 pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
 
-use agent::{
-    default_compaction_keep_recent, default_compaction_threshold, default_max_iterations,
-    default_max_tokens,
-};
-use infra::{
-    default_daemon_log_level, default_daemon_socket_path, default_memory_backend,
-    default_memory_data_dir, default_sandbox_preference,
-};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -76,16 +68,16 @@ impl AppConfig {
         if other.agent.default_model.is_some() {
             self.agent.default_model = other.agent.default_model;
         }
-        if other.agent.max_iterations != default_max_iterations() {
+        if other.agent.max_iterations != AgentConfig::default().max_iterations {
             self.agent.max_iterations = other.agent.max_iterations;
         }
-        if other.agent.max_tokens != default_max_tokens() {
+        if other.agent.max_tokens != AgentConfig::default().max_tokens {
             self.agent.max_tokens = other.agent.max_tokens;
         }
-        if other.agent.compaction_keep_recent != default_compaction_keep_recent() {
+        if other.agent.compaction_keep_recent != AgentConfig::default().compaction_keep_recent {
             self.agent.compaction_keep_recent = other.agent.compaction_keep_recent;
         }
-        if other.agent.compaction_threshold != default_compaction_threshold() {
+        if other.agent.compaction_threshold != AgentConfig::default().compaction_threshold {
             self.agent.compaction_threshold = other.agent.compaction_threshold;
         }
 
@@ -125,7 +117,7 @@ impl AppConfig {
         }
 
         // Sandbox: override if non-default
-        if other.sandbox.preference != default_sandbox_preference() {
+        if other.sandbox.preference != SandboxConfig::default().preference {
             self.sandbox.preference = other.sandbox.preference;
         }
         if other.sandbox.bubblewrap_path.is_some() {
@@ -139,18 +131,18 @@ impl AppConfig {
         self.plugins.directories.extend(other.plugins.directories);
 
         // Memory: override if non-default
-        if other.memory.backend != default_memory_backend() {
+        if other.memory.backend != MemoryConfig::default().backend {
             self.memory.backend = other.memory.backend;
         }
-        if other.memory.data_dir != default_memory_data_dir() {
+        if other.memory.data_dir != MemoryConfig::default().data_dir {
             self.memory.data_dir = other.memory.data_dir;
         }
 
         // Daemon: override if non-default
-        if other.daemon.socket_path != default_daemon_socket_path() {
+        if other.daemon.socket_path != DaemonConfig::default().socket_path {
             self.daemon.socket_path = other.daemon.socket_path;
         }
-        if other.daemon.log_level != default_daemon_log_level() {
+        if other.daemon.log_level != DaemonConfig::default().log_level {
             self.daemon.log_level = other.daemon.log_level;
         }
 
@@ -357,6 +349,7 @@ log_level = "debug"
             transport: Transport::Openai,
             models: vec!["gpt-4".to_string()],
             max_context_length: None,
+            pricing: None,
         });
 
         let mut other = AppConfig::default();
@@ -367,6 +360,7 @@ log_level = "debug"
             transport: Transport::Openai,
             models: vec!["gpt-4o".to_string()],
             max_context_length: None,
+            pricing: None,
         });
         other.providers.push(ProviderConfig {
             name: "anthropic".to_string(),
@@ -375,6 +369,7 @@ log_level = "debug"
             transport: Transport::Anthropic,
             models: vec![],
             max_context_length: None,
+            pricing: None,
         });
 
         base.merge(other);

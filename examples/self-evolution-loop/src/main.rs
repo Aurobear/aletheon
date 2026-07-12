@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 //! Self-Evolution EventBus Loop Demo
 //!
 //! Demonstrates the full closed loop:
@@ -23,7 +21,6 @@ use cognit::r#impl::llm::scheduler::{
 };
 use fabric::events::types::{ConcreteEvent, EventType, Priority};
 use fabric::evolution::*;
-use fabric::EventBus;
 use fabric::KernelEventBus;
 
 // ---------------------------------------------------------------------------

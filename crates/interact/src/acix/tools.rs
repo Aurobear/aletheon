@@ -852,9 +852,7 @@ impl Tool for AcixGroundTool {
 pub fn default_aci() -> Arc<Aci> {
     Arc::new(Aci::new_basic(
         Box::new(corpus::drivers::input::MockInputDriver::new()),
-        Box::new(corpus::drivers::display::MockDisplayDriver::new(
-            1920, 1080,
-        )),
+        Box::new(corpus::drivers::display::MockDisplayDriver::new(1920, 1080)),
         Box::new(corpus::drivers::a11y::MockA11yDriver::new()),
         Some(Box::new(corpus::drivers::ocr::MockOcrDriver)),
     ))

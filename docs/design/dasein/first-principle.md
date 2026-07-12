@@ -59,7 +59,7 @@ How well does the current implementation satisfy the first principle?
 
 | Invariant | Status | Evidence |
 |-----------|--------|----------|
-| I1 (No execution without review) | Partial | review() is designed but not yet wired into the ReAct loop as a mandatory gate. Tool execution currently bypasses SelfField. See `crates/executive/src/core/react_loop/tool_exec.rs`. |
+| I1 (No execution without review) | Partial | review() is designed but not yet wired into the ReAct loop as a mandatory gate. Tool execution currently bypasses SelfField. See `crates/cognit/src/harness/linear/step.rs`. |
 | I2 (No state change without narrative) | Not Yet | narrate() exists in the trait but is not called automatically on state changes. NarrativeLayer records are explicit calls only. |
 | I3 (External input interpreted before memory) | Partial | PerceptionBridge exists but SelfField boundary check is not yet in the perception pipeline. Events flow directly to memory. |
 | I4 (Identity continuity never broken) | Partial | Continuity layer has lineage records and mutation_history, but rollback verification is not enforced. |

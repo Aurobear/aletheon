@@ -7,7 +7,6 @@ pub mod agora;
 pub mod body;
 pub mod capability_invoker;
 pub mod cognit;
-pub mod event_bus;
 pub mod memory;
 pub mod meta;
 pub mod plugin;

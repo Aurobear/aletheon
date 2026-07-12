@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 //! Integration tests for AgentProcess lifecycle, pulse-driven execution,
 //! and child spawning.
 
@@ -7,18 +5,16 @@ use std::sync::Arc;
 
 use executive::r#impl::agent::{AgentProcess, AgentProcessConfig, AgentState};
 use fabric::evolution::{CognitivePulseEvent, ProviderHealth};
+use fabric::ipc::envelope_v2::SchemaId;
 use fabric::CommunicationBus;
-use fabric::EventBus;
 use fabric::EventType;
-use fabric::KernelEventBus;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
-/// Helper: create a CommunicationBus wrapping a KernelEventBus.
+/// Helper: create a CommunicationBus.
 fn make_bus() -> Arc<CommunicationBus> {
-    let kernel = Arc::new(KernelEventBus::new(256));
-    Arc::new(CommunicationBus::from_event_bus(kernel))
+    Arc::new(CommunicationBus::new())
 }
 
 /// Helper: create a default CognitivePulseEvent.
@@ -34,6 +30,18 @@ fn make_pulse(available_tokens: u32) -> CognitivePulseEvent {
             tokens_remaining: Some(available_tokens),
         },
     }
+}
+
+/// Helper: subscribe to an event topic and spawn a background task that
+/// sets `flag` to `true` when the first message is received.
+fn subscribe_to_event(bus: &CommunicationBus, event_type: EventType, flag: Arc<AtomicBool>) {
+    let schema = SchemaId::from_event_type(&event_type);
+    let mut rx = bus.subscribe_topic(schema, Some(16));
+    tokio::spawn(async move {
+        if rx.recv().await.is_ok() {
+            flag.store(true, Ordering::SeqCst);
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -53,19 +61,8 @@ async fn test_agent_process_lifecycle() {
 
     // Subscribe to AgentStarted to verify the event fires
     let started = Arc::new(AtomicBool::new(false));
-    let started_clone = started.clone();
     let sub_bus = make_bus();
-    sub_bus
-        .event_bus()
-        .subscribe(
-            EventType::AgentStarted,
-            Box::new(move |_| {
-                started_clone.store(true, Ordering::SeqCst);
-                true
-            }),
-        )
-        .await
-        .unwrap();
+    subscribe_to_event(&sub_bus, EventType::AgentStarted, started.clone());
 
     // Re-create agent with the subscribed bus so events reach the handler
     let mut agent = AgentProcess::new(
@@ -78,6 +75,9 @@ async fn test_agent_process_lifecycle() {
     // start() — state stays Idle (as per implementation) and publishes event
     agent.start().await.unwrap();
     assert_eq!(agent.state(), AgentState::Idle);
+
+    // Allow background task to receive the event
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
         started.load(Ordering::SeqCst),
         "AgentStarted event should have fired"
@@ -85,21 +85,13 @@ async fn test_agent_process_lifecycle() {
 
     // terminate() — state becomes Terminated
     let stopped = Arc::new(AtomicBool::new(false));
-    let stopped_clone = stopped.clone();
-    sub_bus
-        .event_bus()
-        .subscribe(
-            EventType::AgentStopped,
-            Box::new(move |_| {
-                stopped_clone.store(true, Ordering::SeqCst);
-                true
-            }),
-        )
-        .await
-        .unwrap();
+    subscribe_to_event(&sub_bus, EventType::AgentStopped, stopped.clone());
 
     agent.terminate().await.unwrap();
     assert_eq!(agent.state(), AgentState::Terminated);
+
+    // Allow background task to receive the event
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
         stopped.load(Ordering::SeqCst),
         "AgentStopped event should have fired"
@@ -149,17 +141,7 @@ async fn test_spawn_child_agent() {
 
     // Subscribe to AgentSpawned to verify the event
     let spawned = Arc::new(AtomicBool::new(false));
-    let spawned_clone = spawned.clone();
-    bus.event_bus()
-        .subscribe(
-            EventType::AgentSpawned,
-            Box::new(move |_| {
-                spawned_clone.store(true, Ordering::SeqCst);
-                true
-            }),
-        )
-        .await
-        .unwrap();
+    subscribe_to_event(&bus, EventType::AgentSpawned, spawned.clone());
 
     // Spawn a child
     let child_pid = agent.spawn_child("child-task".to_string()).await.unwrap();
@@ -169,6 +151,9 @@ async fn test_spawn_child_agent() {
         child_pid, parent_pid,
         "Child PID must differ from parent PID"
     );
+
+    // Allow background task to receive the event
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // AgentSpawned event was published
     assert!(

@@ -13,7 +13,7 @@ use aletheon_kernel::process::ProcessTable;
 use aletheon_kernel::supervision::SupervisorTree;
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::{
-    AdmissionController, CancelReason, Clock, LlmProvider, OperationId, OperationManager,
+    AdmissionController, AgoraOps, CancelReason, Clock, LlmProvider, OperationId, OperationManager,
     ProcessId, ProcessManager, ProcessSignal,
 };
 use std::collections::HashMap;
@@ -36,6 +36,7 @@ pub struct DaemonTurnOrchestrator {
     pub(crate) supervisor: Arc<Mutex<SupervisorTree>>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) admission: Arc<dyn AdmissionController>,
+    pub(crate) agora: Option<Arc<dyn AgoraOps>>,
     pub(crate) mailbox_service: Arc<InProcessMailboxService>,
     pub(crate) main_agent_process_id: Mutex<Option<ProcessId>>,
 
@@ -77,6 +78,7 @@ impl DaemonTurnOrchestrator {
         let operation_table = subsystems.ports.operation_table.clone();
         let supervisor = subsystems.ports.supervisor.clone();
         let admission = subsystems.ports.admission.clone();
+        let agora = subsystems.ports.agora.clone();
         let mailbox_service = subsystems.ports.mailbox_service.clone();
 
         Self {
@@ -85,6 +87,7 @@ impl DaemonTurnOrchestrator {
             supervisor,
             clock,
             admission,
+            agora,
             mailbox_service,
             main_agent_process_id: Mutex::new(None),
             subsystems,

@@ -13,18 +13,11 @@
 ```
 crates/corpus/
 ├── core/           — Core types and traits
-├── bridge/         — FFI and cross-crate bridges
-├── impl/           — Implementation modules
-│   ├── tools/      — Tool system (Tool trait, registry, built-in tools, output defense)
-│   ├── sandbox/    — Sandbox execution (bubblewrap, process, noop backends)
-│   ├── mcp/        — MCP client (stdio, HTTP, SSE transports, OAuth)
-│   ├── security/   — Security policy (PolicyEngine, RiskClassifier, AuditLogger, RollbackEngine)
-│   ├── platform/   — Platform adaptation (Linux, Android, boot, IPC, awareness)
-│   ├── driver/     — Hardware drivers (display, input, OCR, a11y, process, I/O)
-│   ├── ui/         — Terminal UI (chat, commands, markdown, skills, status)
-│   ├── acix/       — Agent-Computer Interface (grounding, experience, task management)
-│   └── mod.rs      — Module entry point
-└── testing/        — Test utilities and fixtures
+├── drivers/        — Hardware drivers (display, input, OCR, a11y, process, I/O)
+├── hook/           — Hook lifecycle system
+├── security/       — Security policy (PolicyEngine, RiskClassifier, AuditLogger, RollbackEngine)
+├── skill/          — Skill system
+└── tools/          — Tool system (Tool trait, registry, built-in tools, output defense)
 ```
 
 ## Documents
@@ -36,7 +29,7 @@ crates/corpus/
 | [mcp.md](mcp.md) | MCP integration — client, transports (stdio/HTTP/SSE), OAuth, tool wrapping |
 | [security.md](security.md) | Security policy — PolicyEngine, RiskClassifier, AuditLogger, RollbackEngine, multi-agent permissions |
 | [platform.md](platform.md) | Platform adaptation — PlatformAdapter, boot integration, agent awareness, kernel IPC, multi-device |
-| [perception.md](perception.md) | Perception layer — event sources, aggregation, backpressure (source: perception-layer.md) |
+| [../dasein/perception.md](../dasein/perception.md) | Perception layer — event sources, aggregation, backpressure (source: perception-layer.md) |
 | [fuse.md](fuse.md) | FUSE virtual filesystem — mount structure, state provider, controls |
 | [driver.md](driver.md) | Hardware drivers — display (X11/DRM), input (uinput), OCR, accessibility, process, I/O |
 | [ui.md](ui.md) | Terminal UI — chat, commands, computer view, markdown rendering, skills |
@@ -44,9 +37,11 @@ crates/corpus/
 
 ## Internal Pattern
 
-Each `impl/` module follows the core/bridge/impl/testing pattern:
+The corpus crate follows a flat module layout — each module directory contains its own types, implementations, and tests in a self-contained structure:
 
 - **core/** — shared types and trait definitions
-- **bridge/** — cross-crate integration points
-- **impl/** — concrete implementations
-- **testing/** — test utilities and mocks
+- **drivers/** — hardware/platform drivers
+- **hook/** — hook lifecycle system
+- **security/** — security policy and enforcement
+- **skill/** — skill definitions
+- **tools/** — tool system and registry

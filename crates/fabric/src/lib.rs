@@ -38,7 +38,6 @@ pub mod types;
 pub use include::agora;
 pub use include::body;
 pub use include::cognit;
-pub use include::event_bus;
 pub use include::memory;
 pub use include::meta;
 pub use include::plugin;
@@ -106,7 +105,6 @@ pub use include::cognit::{
     Experience, LearnedRule, Observation, Plan, PlanStep, Reflection, ReflectionEntry,
     ReflectionOutcome, ReflectionTrigger,
 };
-pub use include::event_bus::EventBus;
 pub use include::memory::{
     CompactResult, CompactStrategy, EmbeddingProvider, MemoryBackend, MemoryEntry, MemoryFilter,
     MemoryHandle, MemoryQuery, MemoryStats, MemoryType,
@@ -161,7 +159,8 @@ pub use types::process::{
 };
 pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
-    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxExecutor,
+    SandboxPreference, SandboxResult,
 };
 pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,
@@ -174,14 +173,12 @@ pub use types::tool::{
 pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 
 // Event types
+pub use events::event_log;
+pub use events::event_log::{EventLog, LogEntry};
 pub use events::types as event;
 pub use events::types::{
     AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
 };
-pub use events::event_bridge::EventBridge;
-pub use events::event_log;
-pub use events::event_log::{EventLog, LogEntry};
-pub use events::legacy_bridge::LegacyEventBridge;
 pub use events::ui_event::{
     AwarenessLevel, ClientEvent, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate,
     SubAgentHandle, SubAgentState, SubAgentStatus,

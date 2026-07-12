@@ -569,7 +569,7 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 | **ToolExposure** | `corpus/src/tools/tools/exposure.rs` — 分级暴露枚举 |
 | **工具搜索** | `corpus/src/tools/tools/search/` — `tool_search.rs` (`ToolSearchTool` + BM25 `CatalogEntry`), `agent_tool.rs`（早期的 config/bridge/catalog 三文件已合并至此） |
 | **工具集** | `corpus/src/tools/tools/toolset.rs` — `Toolset`, `ToolsetRegistry` |
-| **守卫执行** | `corpus/src/security/security/runner.rs` — `ToolRunnerWithGuard`（policy/loop/sandbox/guardrail/audit 管道；早期独立的 `ToolGuardrailController` 已并入） |
+| **守卫执行** | `corpus/src/security/runner.rs` — `ToolRunnerWithGuard`（policy/loop/sandbox/guardrail/audit 管道；早期独立的 `ToolGuardrailController` 已并入） |
 | **并行执行** | `corpus/src/tools/tools/executor.rs` — ToolCallExecutor (RwLock gate + JoinSet + CancellationToken) |
 | **回合预算** | `corpus/src/tools/tools/output/turn_budget.rs` — `enforce_turn_budget()` |
 | **溢出清理** | `corpus/src/tools/tools/output/persistence.rs` — `cleanup_overflow_dir()` 7 天保留 |

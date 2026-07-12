@@ -22,7 +22,11 @@ impl SandboxBackend for NoopBackend {
     }
 
     fn is_available(&self) -> bool {
-        true
+        // NoopBackend executes commands with zero isolation.
+        // It should never be selected automatically as an available backend.
+        // The Forbid preference in SandboxExecutor.select_backend() selects
+        // it by name (not via is_available()), so Forbid still works.
+        false
     }
 
     fn capabilities(&self) -> SandboxCapabilities {

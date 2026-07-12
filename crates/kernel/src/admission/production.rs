@@ -61,6 +61,9 @@ pub struct ProductionAdmissionController {
     settled: Mutex<HashSet<PermitId>>,
     budget: Option<Arc<InMemoryBudgetController>>,
     leases: Option<Arc<InMemoryResourceLeaseManager>>,
+    /// Whether a real (non-noop) sandbox backend is available.
+    /// When false, SandboxRequirement::Required → AdmissionError::SandboxRequiredUnavailable.
+    sandbox_available: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +84,8 @@ impl std::fmt::Debug for ProductionAdmissionController {
 
 impl ProductionAdmissionController {
     /// Create a production admission controller backed by the given clock.
+    /// Sandbox availability defaults to `true` (optimistic). Wire with
+    /// `with_sandbox_available(false)` until Phase 5D detects real backends.
     pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             clock,
@@ -88,6 +93,7 @@ impl ProductionAdmissionController {
             settled: Mutex::new(HashSet::new()),
             budget: None,
             leases: None,
+            sandbox_available: true,
         }
     }
 
@@ -102,6 +108,14 @@ impl ProductionAdmissionController {
     /// during `admit()` and released during `settle()` or `revoke()`.
     pub fn with_leases(mut self, leases: Arc<InMemoryResourceLeaseManager>) -> Self {
         self.leases = Some(leases);
+        self
+    }
+
+    /// Set whether a real sandbox backend is available.
+    /// When `false`, `SandboxRequirement::Required` produces
+    /// `AdmissionError::SandboxRequiredUnavailable`.
+    pub fn with_sandbox_available(mut self, available: bool) -> Self {
+        self.sandbox_available = available;
         self
     }
 }
@@ -148,9 +162,12 @@ impl AdmissionController for ProductionAdmissionController {
         // --- Sandbox decision ---
         let sandbox = match request.sandbox {
             SandboxRequirement::NotRequired => SandboxDecision::NotApplicable,
-            // Fail-closed: executor must check and decline until sandbox
-            // infrastructure is available (Phase 5D).
+            // Fail-closed: if no real sandbox backend is available, deny the
+            // request rather than granting a permit that will silently noop.
             SandboxRequirement::Required | SandboxRequirement::RequiredThenPromote => {
+                if !self.sandbox_available {
+                    return Err(AdmissionError::SandboxRequiredUnavailable);
+                }
                 SandboxDecision::Required
             }
         };
