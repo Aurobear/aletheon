@@ -17,9 +17,9 @@ exceed 2000 lines without a split plan.
 
 | Crate | Domain layout |
 |-------|--------------|
-| `fabric` | `types/`, `include/`, `ipc/`, `events/`, `kernel/`, `policy/`, `primitives/` |
-| `kernel` | `admission/`, `capability/`, `chronos/`, `operation/`, `process/`, `space/`, `supervision/` |
-| `executive` | `core/`, `service/`, `impl/`, `bridge/`, `tools/` |
+| `fabric` | `types/`, `include/`, `ipc/`, `events/`, `kernel/`, `policy/`, `primitives/`, `contract/`, `dasein/` |
+| `kernel` | `admission/`, `capability/`, `chronos/`, `operation/`, `process/`, `service/`, `space/`, `supervision/` |
+| `executive` | `core/`, `service/`, `impl/`, `bridge/`, `tools/`, `host/` |
 
 ## Service access
 
