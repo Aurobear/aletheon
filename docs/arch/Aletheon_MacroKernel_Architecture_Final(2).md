@@ -26,16 +26,16 @@
 
 | 领域 | 当前实现 | 关键问题 |
 |---|---|---|
-| 生产对话主链 | `daemon/handler/chat.rs` 每轮临时创建 `ReActLoop` | Handler 同时负责安全、Prompt、Skill、Memory、Session、Approval、Agora、Reflection、Evolution，职责过重 |
+| 生产对话主链 | `daemon/handler/chat.rs` 每轮临时创建 `ReActLoop`（注：`chat.rs` 已删除，daemon 入口现位于 `service/daemon_turn/execute.rs` 并通过 `TurnService` 编排） | Handler 同时负责安全、Prompt、Skill、Memory、Session、Approval、Agora、Reflection、Evolution，职责过重 |
 | Executive | `AletheonExecutive` 自己持有另一套 `ReActLoop` | 与 daemon 生产主链重复，实际主路径不唯一 |
 | 非交互执行 | `crates/bin/src/main.rs::run_exec` 手写第三套模型/工具循环 | 安全、记忆、事件和会话语义与 daemon 不一致 |
-| Controller | 存在一套尚未接入的 `Controller` + `ReActLoop` | 又复制了状态和组合逻辑 |
+| Controller | 存在一套尚未接入的 `Controller` + `ReActLoop`（注：`Controller` 已删除，`ReActLoop` 已重命名为 `TurnService` 认知管线） | 又复制了状态和组合逻辑 |
 | Agent Process | `SubAgentSpawner` 只有 ID、状态和 CancellationToken | 目前是生命周期登记表，不是真正可执行、可 wait、可监督的 Agent Process |
 | Multi-Agent | 另有 `orchestration::Agent` trait | 与 `SubAgentSpawner`、runtime Agent 概念尚未统一 |
 | Agora | `AgoraRegistry<HashMap<SessionId, Workspace>>` | 生产路径主要写入 `turn_input` 和 Tool Evidence，attention/task graph 几乎没有进入核心循环；没有事务、版本、冲突和 ACL |
 | Mnemosyne | Recall/Core/Fact/Auto/Episodic 多套对象 | 能力丰富但入口分散；semantic/procedural/self backend 默认 feature 关闭，文档中的“完成”与生产启用状态不一致 |
 | Dasein | 已有 SelfField、Sorge、lived temporality | `TemporalStream` 是体验时间，不是 timeout/deadline/lease 所需的系统时钟；crate 仍直接依赖 `corpus` 和 `mnemosyne` |
-| 通信 | `CommunicationBus` 包装旧 `KernelEventBus`，旧 Event/EventBus 保留 | 仍处迁移态；实际 daemon Unix JSON-RPC、Agent IPC、Envelope Bus 是多套断开的通信体系 |
+| 通信 | `CommunicationBus` 包装旧 `KernelEventBus`，旧 Event/EventBus 已删除 | 迁移完成；实际 daemon Unix JSON-RPC、Agent IPC、Envelope Bus 统一于 `CommunicationBus` |
 | Fabric | 文档称零实现 ABI 层 | 实际包含 Bus、Transport、Event log、policy/verifier 等实现，契约层和基础设施层混合 |
 | Resource | `ManagedResource<T>` 生命周期包装 | 不是容量发现、租约、回收意义上的 Resource Manager |
 | 安全 | ToolRunner 有审批与沙箱 | `SandboxFirst` 在一条路径中只注入提示，在另一条路径中明确“无沙箱继续”，语义不安全 |
@@ -45,10 +45,10 @@
 现在至少存在三套可运行或半运行的认知循环：
 
 ```text
-daemon chat → ReActLoop
-Executive   → ReActLoop
-bin exec    → manual loop
-Controller  → parked ReActLoop
+daemon chat → TurnService (原 ReActLoop 已迁移)
+Executive   → TurnService (统一切换完成)
+bin exec    → manual loop (迁移中)
+Controller  → (已删除; was parked ReActLoop)
 ```
 
 这会导致：
@@ -556,7 +556,7 @@ SandboxRequired
 因此应废止这条旧原则：
 
 ```text
-所有跨子系统通信必须经过 EventBus
+所有跨子系统通信必须经过 CommunicationBus
 ```
 
 替换为：
@@ -834,7 +834,7 @@ Kernel 机制与上层 Session/Turn service 必须分目录，避免所有东西
 
 - daemon、TUI、exec 对同一输入使用相同安全、工具、记忆和事件语义；
 - 仓库中只有一个生产认知 loop；
-- chat handler 不再创建具体 ReActLoop。
+- chat handler 不再创建具体 ReActLoop（已实现：daemon 入口现已通过 `TurnService` 编排，无直接 ReActLoop 创建）。
 
 ### Phase 1：Operation + Process
 

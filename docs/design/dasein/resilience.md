@@ -476,7 +476,7 @@ crash/{timestamp}/
 
 > Token 速率限制、工具调用频率限制、感知事件洪水防护和背压传播。`TokenRateLimiter`、`ToolCallLimiter`、`FloodProtector` 和 `BackpressureController` 均已实现。
 
-**关联模块:** [错误处理](resilience.md), [自我保护](self-protection.md), [感知层](../corpus/perception.md)
+**关联模块:** [错误处理](resilience.md), [自我保护](self-protection.md), [感知层](../dasein/perception.md)
 **最后更新:** 2026-06-07
 
 ---

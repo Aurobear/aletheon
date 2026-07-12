@@ -90,7 +90,7 @@ bin             (aletheon-bin; depends on executive, interact, fabric, cognit --
 
 | Crate | 角色 | 核心内容 |
 |-------|------|----------|
-| `fabric` | 契约层+通信层 | 零实现 Trait 定义、共享类型（message, tool, sandbox, llm_types, memory, event, genome）、EventBus、Unix Socket、io_uring、优先队列、消息路由 |
+| `fabric` | 契约层+通信层 | 零实现 Trait 定义、共享类型（message, tool, sandbox, llm_types, memory, event, genome）、CommunicationBus、Unix Socket、io_uring、优先队列、消息路由 |
 | `mnemosyne` | 记忆层 | SQLite 后端：episodic、semantic、procedural、self_memory、MemoryRouter |
 | `agora` | 共享工作区层 | 会话隔离的认知工作区：blackboard、attention、task_graph、trace、scratchpad，`AgoraOps` |
 | `corpus` | 执行层 | 工具、沙箱、MCP、平台适配、驱动 |

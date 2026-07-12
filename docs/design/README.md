@@ -241,8 +241,6 @@ aletheon/
 |------|------|
 | [architecture-overview.md](architecture-overview.md) | 整体架构、数据流、演化路线 |
 | [testing/test-strategy.md](testing/test-strategy.md) | 测试策略 |
-| [testing/mock-strategy.md](testing/mock-strategy.md) | Mock 基础设施 |
-| [testing/ci-pipeline.md](testing/ci-pipeline.md) | CI 流水线 |
 | [roadmap/phases.md](roadmap/phases.md) | 6 Phase 路线图 |
 | [roadmap/open-questions.md](roadmap/open-questions.md) | 开放问题 |
 

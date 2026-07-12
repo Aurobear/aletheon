@@ -16,7 +16,7 @@
 | ContentBlock types | Implemented | `fabric/src/types/message.rs` | Text, ToolUse, ToolResult, Image |
 | Context compaction | Implemented | `mnemosyne/src/impl/compressor/` | AdvancedCompressor with token-budget tail protection, iterative summary, tool output pre-pruning |
 | Streaming | Implemented | `cognit/src/impl/inference/provider.rs` | `LlmStream` trait with SSE chunk streaming |
-| LoopDetector integration | Implemented | `corpus/src/security/security/loop_detector.rs` | Wired to engine via `pre_check()`/`post_check()` |
+| LoopDetector integration | Implemented | `corpus/src/security/loop_detector.rs` | Wired to engine via `pre_check()`/`post_check()` |
 
 ---
 
@@ -77,7 +77,7 @@ struct Message {
 
 ## 3. LoopDetector Integration
 
-The security model's `LoopDetector` (`corpus/src/security/security/loop_detector.rs`) provides pre-check and post-check hooks integrated into the ReAct loop.
+The security model's `LoopDetector` (`corpus/src/security/loop_detector.rs`) provides pre-check and post-check hooks integrated into the ReAct loop.
 
 **Integration points:**
 1. Pre-check before tool call: risk classification + loop detection
@@ -133,5 +133,5 @@ async fn compact(&mut self) {
 |-----------|---------------|-----------|
 | ReAct loop | `cognit/src/harness/linear/step.rs` | `Engine`, `TurnConfig`, `TurnResult` |
 | ContentBlock protocol | `fabric/src/types/message.rs` | `ContentBlock` (Text/ToolUse/ToolResult/Image), `Message` |
-| LoopDetector integration | `corpus/src/security/security/loop_detector.rs` | `LoopDetector`, `pre_check()`, `post_check()` |
+| LoopDetector integration | `corpus/src/security/loop_detector.rs` | `LoopDetector`, `pre_check()`, `post_check()` |
 | Compressor | `mnemosyne/src/impl/compressor/` | `AdvancedCompressor`, `TailProtectionConfig`, `SummaryTemplate` |

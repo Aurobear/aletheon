@@ -29,7 +29,7 @@ crates/corpus/
 | [mcp.md](mcp.md) | MCP integration — client, transports (stdio/HTTP/SSE), OAuth, tool wrapping |
 | [security.md](security.md) | Security policy — PolicyEngine, RiskClassifier, AuditLogger, RollbackEngine, multi-agent permissions |
 | [platform.md](platform.md) | Platform adaptation — PlatformAdapter, boot integration, agent awareness, kernel IPC, multi-device |
-| [perception.md](perception.md) | Perception layer — event sources, aggregation, backpressure (source: perception-layer.md) |
+| [../dasein/perception.md](../dasein/perception.md) | Perception layer — event sources, aggregation, backpressure (source: perception-layer.md) |
 | [fuse.md](fuse.md) | FUSE virtual filesystem — mount structure, state provider, controls |
 | [driver.md](driver.md) | Hardware drivers — display (X11/DRM), input (uinput), OCR, accessibility, process, I/O |
 | [ui.md](ui.md) | Terminal UI — chat, commands, computer view, markdown rendering, skills |

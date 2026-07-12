@@ -11,8 +11,6 @@
 
 ```
 executive/src/
-  bridge/
-    mod.rs                      # Cross-crate integration points
   core/
     mod.rs                      # Core types
     config/                     # Configuration (agent, genome, infra, provider)

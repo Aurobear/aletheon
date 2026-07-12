@@ -198,6 +198,6 @@ ToolResult + UserFeedback -> OutcomeRecorder.record()
 | Interface | Code Location | Notes |
 |-----------|---------------|-------|
 | Engine -> ToolRegistry | `cognit/src/harness/linear/step.rs`, `corpus/src/tools/tools/` | Engine calls tools via `ToolRegistry::execute()` |
-| Security -> ToolRunner | `corpus/src/security/security/policy.rs`, `corpus/src/security/security/runner.rs` | Policy + LoopDetector checks before execution |
+| Security -> ToolRunner | `corpus/src/security/policy.rs`, `corpus/src/security/runner.rs` | Policy + LoopDetector checks before execution |
 | DelegateTool | `executive/src/impl/orchestration/` | Delegation as tool call |
 | Perception -> Engine | `dasein/src/impl/perception/bridge.rs`, `cognit/src/harness/linear/step.rs` | PerceptionBridge wired via injection_tx |

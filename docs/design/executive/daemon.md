@@ -4,7 +4,7 @@
 > 作为 systemd 服务运行，是 Aletheon 系统的核心入口。
 
 **模块编号:** Daemon
-**关联模块:** [cli](../interact/README.md), [cognitive-engine](../cognit/cognitive-engine.md), [perception](../corpus/perception.md)
+**关联模块:** [cli](../interact/README.md), [cognitive-engine](../cognit/cognitive-engine.md), [perception](../dasein/perception.md)
 **最后更新:** 2026-07-03
 
 ---
@@ -19,8 +19,8 @@
 | Provider registry init | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | `ProviderRegistry::from_config()` |
 | Unix socket server | ✅ Implemented | `crates/executive/src/impl/daemon/server.rs` | Line-delimited JSON-RPC, concurrent connections |
 | RequestHandler | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | chat/clear/status/health/session.* methods |
-| Chat → ReAct loop | ✅ Implemented | `crates/executive/src/impl/daemon/handler/chat.rs` | `handle_chat` routes through `TurnService` / `DaemonTurnOrchestrator` with full tool calling |
-| Streaming responses | ✅ Implemented | `crates/executive/src/core/react_loop/tool_exec.rs` | `ChannelEventSink` → JSON-RPC notifications (TextDelta, ToolCallStart, etc.) |
+| Chat → ReAct loop | ✅ Implemented | `crates/executive/src/service/daemon_turn/orchestrator.rs` | `handle_chat` routes through `TurnService` / `DaemonTurnOrchestrator` with full tool calling |
+| Streaming responses | ✅ Implemented | `crates/executive/src/service/daemon_turn/` | `ChannelEventSink` → JSON-RPC notifications (TextDelta, ToolCallStart, etc.) |
 | Perception manager | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Spawns in background task via bootstrap |
 | Perception bridge | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Event→Engine injection channel |
 | Agent registry | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | Config-based + builtin fallback |
@@ -290,7 +290,7 @@ pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value
 
 错误响应: JSON-RPC 标准错误格式，`code: -32000` (LLM error) 或 `-32601` (unknown method)。
 
-**注意:** `chat` 方法现已通过 `TurnService` / `DaemonTurnOrchestrator` 路由，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/chat.rs`。
+**注意:** `chat` 方法现已通过 `TurnService` / `DaemonTurnOrchestrator` 路由，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/turn_handler.rs`。
 
 ### 4.3 会话状态管理
 
@@ -334,13 +334,13 @@ model = "claude-sonnet-4-20250514"
 
 ~~`chat` 方法直接调用 `llm.complete()`，绕过了 `AletheonExecutive` 的 ReAct 推理循环。~~
 
-现已通过 `handle_chat` 路由到 `TurnService`/`DaemonTurnOrchestrator` 完整集成，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/chat.rs`。
+现已通过 `handle_chat` 路由到 `TurnService`/`DaemonTurnOrchestrator` 完整集成，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/turn_handler.rs`。
 
 ### 6.2 无流式响应 ✅ 已修复
 
 ~~同步 request-response 模式，CLI 必须等待完整响应才能显示。~~
 
-现已通过 `ChannelEventSink` → JSON-RPC notification 实现流式 chunk 推送（TextDelta, ToolCallStart, ToolCallEnd 等）。详见 `crates/executive/src/core/react_loop/tool_exec.rs`。
+现已通过 `ChannelEventSink` → JSON-RPC notification 实现流式 chunk 推送（TextDelta, ToolCallStart, ToolCallEnd 等）。详见 `crates/executive/src/service/daemon_turn/`。
 
 ### 6.3 无优雅关闭 ✅ 已修复
 

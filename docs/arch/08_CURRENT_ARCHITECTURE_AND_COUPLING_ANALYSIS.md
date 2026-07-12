@@ -1,7 +1,7 @@
 # Aletheon Current Architecture & Coupling Analysis
 
 > 生成日期: 2026-07-12
-> 基于 dev 分支 commit b14788b
+> 基于 dev 分支 commit 1b12a59
 > 本文档反映真实代码状态，非设计建议
 
 ---
@@ -12,19 +12,20 @@
                     ┌──────────┐
                     │    bin   │
                     └────┬─────┘
-                         │ (直接依赖 6 crates: executive, kernel, interact,
-                         │  fabric, cognit, corpus — 有 side-channel)
+                         │ (直接依赖 2 crates: executive + interact
+                         │  side-channel 已消除)
                          │
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-         ┌────────┐ ┌───────┐ ┌──────────┐
-         │interact│ │  bin  │ │metacog   │──────► fabric
-         └───┬────┘ └───┬───┘ └──────────┘
-             │          │
-             ▼          ▼
+              ┌──────────┤
+              ▼          ▼
+         ┌────────┐ ┌──────────┐
+         │interact│ │metacog   │──────► fabric
+         └───┬────┘ └──────────┘
+             │
+             ▼
          ┌──────────────────────────────────┐
          │           executive              │
-         │  (依赖全部 8 crates, God Object)   │
+         │  (依赖全部 7 workspace crates,     │
+         │   仍然是集成 God Object)           │
          └──┬───┬───┬───┬───┬───┬───┬──────┘
             │   │   │   │   │   │   │
      ┌──────┘   │   │   │   │   │   └──────┐
@@ -33,9 +34,10 @@
 │ kernel │ │cognit│ │corpus│ │mnemosyne│ │dasein│
 └───┬────┘ └──┬───┘ └──┬───┘ └───┬─────┘ └──┬───┘
     │         │        │         │          │
-    │         │        │         │          ├────────► corpus
-    │         │        │         │          ├────────► mnemosyne
-    │         │        │         │          │
+    │         │        │         │          │ (仅 fabric)
+    │         │        │         │          │ dasein 已解耦:
+    │         │        │         │          │ 不再依赖 corpus
+    │         │        │         │          │ 不再依赖 mnemosyne
     ▼         ▼        ▼         ▼          ▼
          ┌──────────────────────┐
          │        fabric        │  (leaf crate)
@@ -52,9 +54,9 @@
 | 属性 | 值 |
 |------|-----|
 | 循环依赖 | **无** — DAG 结构，fabric 是唯一叶子 |
-| executive 依赖数 | **8 crates** — 全部依赖，是集成 God Object |
-| dasein 跨服务依赖 | **corpus + mnemosyne** — 唯一的跨服务具体依赖 |
-| bin side-channel | **6 crates** — 绕过 executive 直接访问 kernel/cognit/corpus |
+| executive 依赖数 | **7 workspace crates** + fabric — 仍然是集成 God Object |
+| dasein 跨服务依赖 | **无** — 仅依赖 fabric，已完成解耦 ✓ |
+| bin side-channel | **已消除** — 仅依赖 executive + interact ✓ |
 | metacog 隔离 | **良好** — 仅依赖 fabric |
 | agora 隔离 | **良好** — 仅依赖 fabric |
 
@@ -64,7 +66,7 @@
 
 ### 2.1 重度耦合: `executive` — 集成 God Object
 
-`CoreSystems` 位于 `crates/executive/src/core/core_systems.rs:33-69`，共 *31 个子系统引用*：
+`CoreSystems` 位于 `crates/executive/src/core/core_systems.rs`，已将字段组织为四个子结构体组：
 
 ```
 CoreSystems
@@ -105,38 +107,40 @@ CoreSystems
     └── data_dir
 ```
 
-**问题**: `DaemonTurnOrchestrator` (53 行 struct) 又镜像了 `CoreSystems` 的字段 + kernel primitives。两层 god object。
+**改善**: commit 10cd739 已将平铺字段重组为 Memory/Security/Corpus/Session 四个子结构体组。`DaemonTurnOrchestrator` 仍然镜像了 `CoreSystems` 的字段 + kernel primitives，构成两层 god object。
 
-**改善方向**: 继续将具体字段迁移为 `Arc<dyn TraitOps>` (commit 10cd739 已将部分字段分组)
+**改善方向**: 继续将具体字段迁移为 `Arc<dyn TraitOps>`。
 
-### 2.2 中度耦合: `dasein` — 跨服务具体依赖
+### 2.2 低度耦合: `dasein` — 跨服务依赖已解耦 ✓
 
 ```
 dasein ──► fabric           ✅ 合理 (protocol/types)
-dasein ──► corpus (具体类型)  ❌ 应改为 trait Port
-dasein ──► mnemosyne (具体类型) ❌ 应改为 trait Port
+dasein ──► corpus (具体类型)  ✅ 已移除
+dasein ──► mnemosyne (具体类型) ✅ 已移除
 ```
 
-`_Final(2).md` §12 明确要求: Dasein 不应直接依赖 Corpus 与 Mnemosyne 的具体实现。
+`_Final(2).md` §12 的要求已满足: Dasein 不再直接依赖 Corpus 与 Mnemosyne 的具体实现。`crates/dasein/Cargo.toml` 中仅保留 `fabric` 作为 workspace 依赖。
 
-### 2.3 中度耦合: `bin` — Side-channel 访问
+### 2.3 低度耦合: `bin` — Side-channel 已消除 ✓
 
 ```
 bin/Cargo.toml 直接依赖:
-  executive, kernel, interact, fabric, cognit, corpus
+  executive, interact
 ```
 
-bin 可以通过两条路径访问同一类型：`executive::re_export` 和 `cognit::original`。导致不确定哪个是 canonical import path。
+bin 以前依赖 6 个 crate (executive, kernel, interact, fabric, cognit, corpus)，现在仅依赖 `executive` + `interact`。`kernel`、`cognit`、`corpus` 的直接依赖已移除。bin 只能通过 `executive` 的公开 API 访问下游类型。
+
+`run_exec()` 函数使用 `ExecSessionBuilder` (shared factory) → `TurnService` 路径执行，不再绕过 executive。
 
 ### 2.4 低度耦合: `executive` 内部 — impl/ vs service/ 分裂
 
 | 目录 | 文件数 | 定位 |
 |------|--------|------|
-| `service/` | 12 | "新"代码 — DaemonTurnOrchestrator, TurnService |
+| `service/` | ~12+ | "新"代码 — DaemonTurnOrchestrator, TurnService, ExecSessionBuilder |
 | `impl/` | 80+ | "旧"代码 — daemon handlers, agents, automation, plugins |
-| `core/` | 28 | bootstrap + CoreSystems + session gateway |
+| `core/` | ~28 | bootstrap + CoreSystems + session gateway |
 
-`chat.rs` (482 行) 标记为 `#[allow(dead_code)]` 和 `#[deprecated]`，但文件仍在。逻辑已迁移到 `service/daemon_turn/`，旧文件是 zombie code。
+`chat.rs` (482 行 zombie) **已删除** ✓。`bridge/mod.rs` (空模块) **已删除** ✓。逻辑已完全迁移到 `service/daemon_turn/`。
 
 ---
 
@@ -158,12 +162,13 @@ bin 可以通过两条路径访问同一类型：`executive::re_export` 和 `cog
 │  │  └ container.rs ├ runtime_core  │  ├ execute.rs  │   │
 │  │                  ├ config/      │  ├ orchestrator│   │
 │  │                  └ session_     │  ├ inject.rs   │   │
-│  │                    gateway/     │  └ post_phases │   │
-│  │                                │                 │   │
+│  │                    gateway/     │  ├ lifecycle.rs│   │
+│  │                  ├ sub_agent.rs │  └ post_phases │   │
+│  │                  │              │                 │   │
 │  │  impl/ (旧代码 80+ files)       tools/           │   │
 │  │  ├ daemon/                     └ self_observe   │   │
 │  │  ├ agents/                                      │   │
-│  │  ├ automation/            bridge/ (空, vestigial)│   │
+│  │  ├ automation/                                  │   │
 │  │  ├ orchestration/                               │   │
 │  │  └ plugins/                                     │   │
 │  └────┬──────┬──────┬──────┬──────┬──────┬─────────┘   │
@@ -174,8 +179,8 @@ bin 可以通过两条路径访问同一类型：`executive::re_export` 和 `cog
 │  │proc   │ │config│ │tools │ │impl/│ │self  │ │        │  │
 │  │oper   │ │harness│ │sec  │ │back │ │field │ │        │  │
 │  │chronos│ │impl/ │ │drive│ │ends │ │      │ │        │  │
-│  │space  │ │bridge│ │hook  │ │ops  │ │      │ │        │  │
-│  │admiss │ │test  │ │skill │ │     │ │      │ │        │  │
+│  │space  │ │      │ │hook  │ │ops  │ │      │ │        │  │
+│  │admiss │ │      │ │skill │ │     │ │      │ │        │  │
 │  │supv   │ │      │ │      │ │     │ │      │ │        │  │
 │  └───┬───┘ └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘ └───┬────┘  │
 │      │        │       │       │       │        │        │
@@ -183,6 +188,7 @@ bin 可以通过两条路径访问同一类型：`executive::re_export` 和 `cog
 │  │                    fabric                          │  │
 │  │  contract/ dasein/ events/ include/ ipc/           │  │
 │  │  kernel/ policy/ primitives/ types/                │  │
+│  │  (CommunicationBus 统一事件总线)                     │  │
 │  └───────────────────────────────────────────────────┘  │
 │                                                         │
 │  ┌──────────────────────────────────────────────────┐   │
@@ -198,13 +204,13 @@ bin 可以通过两条路径访问同一类型：`executive::re_export` 和 `cog
 
 | # | P0 项 | 当前状态 | 具体 Gap |
 |---|-------|---------|----------|
-| 1 | **唯一 Turn Execution Path** | ⚠️ 部分 | 三套路径: `service/daemon_turn/execute.rs` (canonical) + `bin/main.rs run_exec()` (独立) + `impl/daemon/handler/chat.rs` (zombie)。只有 daemon 路径是完整的。exec 路径绕过 Admission/Session/Event streaming |
-| 2 | **拆 `handle_chat`** | ⚠️ 部分 | 业务逻辑已迁移到 `DaemonTurnOrchestrator`，但 `chat.rs` (482 行 zombie) 没删。`impl/daemon/handler/mod.rs` 还标着 `#[allow(dead_code)]` |
-| 3 | **修正 `SandboxFirst` fail-closed** | ⚠️ 部分 | 部分路径 warn 后继续，不是真正的 fail-closed |
-| 4 | **统一 AgentId/OperationId/Error** | ⚠️ 部分 | 有 AgentId/OperationId，但 `SubAgentSpawner`、`orchestration::Agent`、`AgentProcess` 概念未统一 |
-| 5 | **SubAgent 真实执行与 wait/cancel** | ⚠️ 部分 | `SubAgentSpawner` 有 ID/状态/CancellationToken，但缺少结构化 ExitStatus、supervision tree |
-| 6 | **Dasein lived time vs Kernel Chronos 边界** | ✅ 明确 | 概念已清晰分离 |
-| 7 | **Agora version/proposal/commit** | ⚠️ 部分 | propose/commit 有，但 version CAS 不完整 |
+| 1 | **唯一 Turn Execution Path** | ✅ 改善 | daemon 路径使用 `DaemonTurnOrchestrator`→`TurnService`。`bin/main.rs run_exec()` 已改为使用 `ExecSessionBuilder` (shared factory)→`TurnService`。`chat.rs` zombie 已删除。三条路径已收敛为两条通过 `TurnService` 的路径（daemon + exec），exec 路径使用 `NoopTurnEventSink`（无事件流）。 |
+| 2 | **拆 `handle_chat`** | ✅ 完成 | `chat.rs` (482 行 zombie) 已删除。`bridge/mod.rs` (空模块) 已删除。业务逻辑全部在 `DaemonTurnOrchestrator` 中。 |
+| 3 | **修正 `SandboxFirst` fail-closed** | ✅ 完成 | `ProductionAdmissionController` 的 `sandbox_available` 字段默认为 `false`（通过 `with_sandbox_available(false)` 设置）。当 sandbox required 但 `sandbox_available == false` 时，返回 `AdmissionError::SandboxRequiredUnavailable` 硬错误，而非 warn 后继续。 |
+| 4 | **统一 AgentId/OperationId/Error** | ✅ 完成 | `SubAgentSpawner` (`core/sub_agent.rs:118`) 有 `spawn_tracked`/`cancel`/`wait` 方法。`AgentKernel` + `AgentSupervisor` 存在。`orchestration::Agent` 标记为 `DEPRECATED`。Agent 概念已统一到 `SubAgentSpawner` + `AgentProcess` 体系。 |
+| 5 | **SubAgent 真实执行与 wait/cancel** | ✅ 完成 | `SubAgentSpawner` 有 ID/状态追踪/CancellationToken。`cancel(id)`→bool, `wait(id, timeout)`→`SubAgentHandle`。 |
+| 6 | **Dasein lived time vs Kernel Chronos 边界** | ✅ 明确 | 概念已清晰分离，dasein 不再依赖 kernel。 |
+| 7 | **Agora version/proposal/commit** | ✅ 完成 | 完整 CAS: `propose(base_version)` 比较 `self.version`，不匹配返回 `VersionConflict`。`commit` 递增版本。`propose_full` 接受外部预构建 `AgoraProposal`。`AgoraCommit` 持久化支持 (`persistence.rs`)。 |
 
 ---
 
@@ -212,25 +218,28 @@ bin 可以通过两条路径访问同一类型：`executive::re_export` 和 `cog
 
 | 文件/目录 | 状态 | 行动 |
 |-----------|------|------|
-| `executive/src/impl/daemon/handler/chat.rs` | 482 行 zombie, `#[allow(dead_code)]` | 删除 |
-| `executive/src/impl/daemon/handler/mod.rs` | `#[allow(dead_code)]` + deprecated 注释 | 清理 |
-| `executive/src/bridge/mod.rs` | 空文件, 仅 `//! Bridge module` | 删除 |
-| `corpus/src/testing/` | 已删除 ✓ | — |
+| `executive/src/impl/daemon/handler/chat.rs` | **已删除** ✓ | — |
+| `executive/src/impl/daemon/handler/mod.rs` | `#[allow(dead_code)]` 已移除 | — |
+| `executive/src/bridge/mod.rs` | **已删除** ✓ | — |
+| `corpus/src/testing/` | **已删除** ✓ | — |
+| `executive/src/impl/daemon/handler/tool_executor.rs` | `#![allow(dead_code)]` 仍存在 | 待清理 |
 
 ---
 
 ## 6. 依赖清理建议优先级
 
-| Priority | 行动 | 影响 |
-|----------|------|------|
-| **P0** | 删除 `chat.rs` zombie + `bridge/` 空模块 | 消除 dead code |
-| **P0** | bin `run_exec()` 改为调用 `DaemonTurnOrchestrator` 或共享 `TurnService` | 唯一执行路径 |
-| **P1** | dasein 去掉 corpus/mnemosyne 具体依赖，改为 trait Port | 降低跨服务耦合 |
-| **P1** | bin Cargo.toml 移除 kernel/cognit/corpus 直接依赖 | 消除 side-channel |
-| **P1** | `execute.rs` 拆出 event 转换函数 (230 行) | 降低单文件复杂度 |
-| **P2** | CoreSystems 直接字段 → `Arc<dyn TraitOps>` | 解耦 god object |
-| **P2** | `impl/daemon/server.rs` DaemonHost 搬到 `host/` | 统一 host 抽象 |
-| **P3** | `impl/` 中旧代码归档或删除 | 消除 catch-all 目录 |
+| Priority | 行动 | 影响 | 状态 |
+|----------|------|------|------|
+| **P0** | 删除 `chat.rs` zombie + `bridge/` 空模块 | 消除 dead code | ✅ 已完成 |
+| **P0** | bin `run_exec()` 改为调用 `ExecSessionBuilder`→`TurnService` | 唯一执行路径 | ✅ 已完成 |
+| **P1** | dasein 去掉 corpus/mnemosyne 具体依赖，改为 trait Port | 降低跨服务耦合 | ✅ 已完成 |
+| **P1** | bin Cargo.toml 移除 kernel/cognit/corpus 直接依赖 | 消除 side-channel | ✅ 已完成 |
+| **P1** | `execute.rs` 拆出 event 转换函数 (230 行) | 降低单文件复杂度 | ⚠️ 待处理 |
+| **P1** | EventBus 双轨合并: 旧 EventBus trait 删除，`event_bridge.rs` 删除，`legacy_bridge.rs` 删除，统一为 `CommunicationBus` | 消除双轨 | ✅ 已完成 |
+| **P2** | CoreSystems 直接字段 → `Arc<dyn TraitOps>` | 解耦 god object | ⚠️ 待处理 |
+| **P2** | `impl/daemon/server.rs` DaemonHost 搬到 `host/` | 统一 host 抽象 | ⚠️ 待处理 |
+| **P2** | `tool_executor.rs` 清理 `#![allow(dead_code)]` | 消除未使用代码提示 | ⚠️ 待处理 |
+| **P3** | `impl/` 中旧代码归档或删除 | 消除 catch-all 目录 | ⚠️ 待处理 |
 
 ---
 
@@ -243,14 +252,21 @@ kernel       ✓      -      -      -      -       -     -     -       -        
 cognit       ✓      -      -      -      -       -     -     -       -         -
 corpus       ✓      -      -      -      -       -     -     -       -         -
 mnemosyne    ✓      -      -      -      -       -     -     -       -         -
-dasein       ✓      -      -      ✓      ✓       -     -     -       -         -
+dasein       ✓      -      -      -      -       -     -     -       -         -
 agora        ✓      -      -      -      -       -     -     -       -         -
 metacog      ✓      -      -      -      -       -     -     -       -         -
 executive    ✓      ✓      ✓      ✓      ✓       ✓     ✓     ✓       -         -
 interact     ✓      -      -      -      -       -     -     -       ✓         -
-bin          ✓      ✓      ✓      ✓      -       -     -     -       ✓         ✓
+bin          -      -      -      -      -       -     -     -       ✓         ✓
 ```
 
 ✓ = 依赖, - = 无依赖
 
-**理想状态**: bin 只依赖 executive + interact, dasein 只依赖 fabric
+**关键变化 (相比 2026-07-12 初期快照)**:
+
+| Crate | 之前 | 现在 | 状态 |
+|-------|------|------|------|
+| dasein | fabric + corpus + mnemosyne | fabric only | ✅ 已解耦 |
+| bin | fabric + kernel + cognit + corpus + executive + interact | executive + interact | ✅ side-channel 已消除 |
+
+**理想状态已达成**: bin 只依赖 executive + interact, dasein 只依赖 fabric。

@@ -24,7 +24,7 @@
 | 4 | `04_COMMUNICATION_FABRIC_V2.md` | Call/Command/Event/Mailbox/Stream 语义分离 |
 | 5 | `05_ADMISSION_CAPABILITY_SECURITY.md` | 不可绕过的权限、预算、配额、Lease 与沙箱 |
 | 6 | `06_PR_PLAN_AND_ACCEPTANCE.md` | PR 顺序、测试矩阵、回滚点和最终验收 |
-| 7 | `07_M0_DETAILED_IMPLEMENTATION_PLAN.md` | M0 可执行任务拆解、文件级改动、测试命令 |
+| 7 | (曾为 `07_M0_DETAILED_IMPLEMENTATION_PLAN.md`，M0 任务拆解已合并至 `06_PR_PLAN_AND_ACCEPTANCE.md` 第 10 节) | M0 可执行任务拆解、文件级改动、测试命令 |
 
 ## 实施原则
 
@@ -42,7 +42,7 @@
 当前关键入口：
 
 ```text
-crates/executive/src/impl/daemon/handler/chat.rs
+crates/executive/src/service/daemon_turn/execute.rs
 crates/executive/src/core/orchestrator.rs
 crates/executive/src/core/core_systems.rs
 crates/cognit/src/harness/
@@ -55,17 +55,16 @@ crates/fabric/src/ipc/
 
 - `Aletheon_MacroKernel_Architecture_Final(2).md` 是代码对齐修订版，建议作为当前总纲。
 - `Aletheon_MacroKernel_Architecture_Final.md` 是较早版本，可保留为历史参考，但不应作为实施源。
-- `06_PR_PLAN_AND_ACCEPTANCE (1).md` 与 `06_PR_PLAN_AND_ACCEPTANCE.md` 内容相同，建议后续人工删除副本。
 
 ## M0 当前落地状态
 
-截至当前分支，M0（`07_M0_DETAILED_IMPLEMENTATION_PLAN.md`）已完成：
+截至当前分支，M0（参见 `06_PR_PLAN_AND_ACCEPTANCE.md` 第 10 节）已完成：
 
 - Turn/Operation contracts：`crates/fabric/src/types/turn.rs`、`crates/fabric/src/types/operation.rs`、`crates/fabric/src/include/turn.rs`；
 - CognitiveSession adapter：`crates/cognit/src/harness/session.rs`；
 - TurnService scaffold：`crates/executive/src/service/turn_service.rs`、`pre_turn.rs`、`post_turn.rs`；
 - exec 路径：`crates/bin/src/main.rs` 已通过 `TurnService` 提交 `TurnRequest`，不再手写 LLM/tool loop；
-- daemon 路径：`crates/executive/src/impl/daemon/handler/chat.rs` 已构造 `TurnRequest` 并通过 `executive::service::daemon_react::submit_streaming_daemon_turn` 进入 service/composition seam，handler 不再直接构造 `ReActLoop`；
+- daemon 路径：`crates/executive/src/service/daemon_turn/execute.rs` 已构造 `TurnRequest` 并通过 `executive::service::daemon_react::submit_streaming_daemon_turn` 进入 service/composition seam，handler 不再直接构造 `ReActLoop`；
 - Harness 创建点：生产 harness 创建集中在 `crates/executive/src/service/harness_factory.rs`；
 - SandboxFirst：缺少 sandbox promotion 时 fail closed，并有 `crates/executive/tests/sandbox_first_fail_closed.rs` 覆盖。
 

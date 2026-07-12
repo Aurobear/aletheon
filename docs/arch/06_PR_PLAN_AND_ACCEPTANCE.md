@@ -17,7 +17,7 @@
 | 3A | ContextSpace snapshot/overlay | 分布式 COW |
 | 3B | Agora version/proposal/commit | CRDT |
 | 3C | Agora/Mnemosyne commit persistence | 全量 Memory 重写 |
-| 4A | EnvelopeV2 + mailbox | 删除旧 EventBus |
+| 4A | EnvelopeV2 + mailbox | (旧 EventBus 已删除；迁移完成) |
 | 4B | Agent 协作迁移 | DDS |
 | 4C | Legacy Event 清理 | kernel IPC |
 | 5A | CapabilityInvoker + Permit | Robot backend |
@@ -155,7 +155,7 @@ Design：只有文档
 ## 8. 第一轮可直接创建的 Issues
 
 1. `arch: introduce TurnRequest/TurnResult contracts`
-2. `arch: wrap ReActLoop as CognitiveSession`
+2. `arch: wrap ReActLoop as CognitiveSession (done; ReActLoop renamed/absorbed into TurnService pipeline)`
 3. `refactor: extract TurnService from daemon chat handler`
 4. `refactor: route exec mode through TurnService`
 5. `cleanup: remove duplicate AletheonExecutive and Controller loops`
@@ -185,7 +185,7 @@ M0 的用户可见结果：
 
 ## 10. M0 具体执行拆分
 
-M0 只覆盖 Issues 1–6，对应详细实施文件：`07_M0_DETAILED_IMPLEMENTATION_PLAN.md`。
+M0 只覆盖 Issues 1–6。（`07_M0_DETAILED_IMPLEMENTATION_PLAN.md` 原为独立 M0 拆解文件，已删除；任务细节合并至本节。）
 
 | Issue | PR | 主要文件 | 验收命令 |
 |---|---|---|---|
@@ -193,7 +193,7 @@ M0 只覆盖 Issues 1–6，对应详细实施文件：`07_M0_DETAILED_IMPLEMENT
 | 2 | 0A | `crates/cognit/src/harness/session.rs`, `crates/cognit/tests/cognitive_session.rs` | `cargo test -p cognit cognitive_session` |
 | 3 | 0B | `crates/executive/src/service/*`, `crates/executive/tests/turn_service_equivalence.rs` | `cargo test -p executive turn_service` |
 | 4 | 0D | `crates/bin/src/main.rs` | `cargo check -p aletheon-bin --all-targets` |
-| 5 | 0E | `crates/executive/src/core/orchestrator.rs`, `crates/executive/src/core/controller.rs` | `rg 'ReActLoop::new|build_harness' crates/executive crates/bin` |
-| 6 | 0E | `crates/executive/src/impl/daemon/handler/chat.rs`, `crates/executive/src/core/orchestrator.rs` | `rg 'Proceeding without sandbox|selffield-note>SandboxFirst|sandbox review' crates/executive/src` |
+| 5 | 0E | `crates/executive/src/core/orchestrator.rs` (Controller 已删除) | `rg 'ReActLoop::new|build_harness' crates/executive crates/bin` |
+| 6 | 0E | `crates/executive/src/service/daemon_turn/execute.rs`, `crates/executive/src/core/orchestrator.rs` | `rg 'Proceeding without sandbox|selffield-note>SandboxFirst|sandbox review' crates/executive/src` |
 
 M0 禁止夹带：ProcessTable、ContextSpace、EnvelopeV2、Agora proposal、Budget/Quota/Lease 完整实现。

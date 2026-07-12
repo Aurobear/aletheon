@@ -5,10 +5,10 @@
 当前生产或半生产路径包含多套循环：
 
 ```text
-daemon handler → ReActLoop
-AletheonExecutive → ReActLoop
+daemon handler → TurnService/DaemonTurnOrchestrator
+AletheonExecutive → TurnService (formerly ReActLoop path)
 bin exec → manual LLM/tool loop
-Controller → parked ReActLoop
+Controller → (deleted; was parked ReActLoop)
 ```
 
 结果是安全、Memory、Agora、Hook 和事件语义不一致。
@@ -78,7 +78,7 @@ pub trait HarnessFactory: Send + Sync {
 }
 ```
 
-第一阶段 `LinearCognitiveSession` 内部继续复用 `ReActLoop`，不要重写 ReAct 算法。
+第一阶段 `LinearCognitiveSession` 内部继续复用 `ReActLoop`（即现在 `TurnService` 下的认知管线），不要重写 ReAct 算法。
 
 ## 4. Executive 新结构
 
@@ -139,7 +139,7 @@ format_json_rpc(result)
 ### PR-0A：只加类型和 Adapter
 
 - 增加 `TurnRequest/TurnResult/TurnServices`；
-- `LinearCognitiveSession` 包装现有 `ReActLoop`；
+- `LinearCognitiveSession` 包装现有认知管线（原 `ReActLoop`）；
 - 旧调用方不变。
 
 ### PR-0B：建立 TurnService
@@ -150,7 +150,7 @@ format_json_rpc(result)
 ### PR-0C：切换 daemon
 
 - `handle_chat` 调用 `TurnService`；
-- 删除 Handler 内创建 `ReActLoop` 的代码。
+- 删除 Handler 内创建认知管线（原 `ReActLoop`）的代码。
 
 ### PR-0D：切换 exec
 
@@ -160,7 +160,7 @@ format_json_rpc(result)
 ### PR-0E：清理重复入口
 
 - `AletheonExecutive::process/process_react` 标记 deprecated 后删除；
-- `Controller` 要么成为 `TurnService` 门面，要么删除；
+- `Controller` 已删除（原计划是成为 `TurnService` 门面或删除）；
 - 保留唯一生产 Harness 创建点。
 
 ## 7. 测试
@@ -193,8 +193,8 @@ cargo check --workspace --all-targets
 
 ## 8. 完成标准
 
-- `rg 'ReActLoop::new|build_harness' crates/executive crates/bin` 只剩 composition/factory 允许的位置；
-- `handle_chat` 不直接引用 `ReActLoop`、`AdvancedCompressor` 或 Provider；
+- `rg 'ReActLoop::new|build_harness' crates/executive crates/bin` 只剩 composition/factory 允许的位置（M0 验收后 `ReActLoop::new` 已从 production path 移除，harness factory 为唯一创建点）；
+- `handle_chat` 不直接引用认知管线（原 `ReActLoop`）、`AdvancedCompressor` 或 Provider；
 - `bin` 不直接执行 Tool；
 - daemon 与 exec 共用安全、Memory、Hook、Agora 和 metrics 语义。
 

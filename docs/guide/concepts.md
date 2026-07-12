@@ -1,6 +1,6 @@
 # Core Concepts
 
-Aletheon's architecture is built on three pillars: **SelfField** (the self-awareness layer), **BrainCore** (the cognitive layer), and **BodyRuntime** (the execution layer). This document explains what each does and how they interact.
+Aletheon's architecture is built on three pillars: **SelfField** (the self-awareness layer, implemented in the `dasein` crate), **cognit** (the cognitive layer), and **corpus** (the execution layer). This document explains what each does and how they interact.
 
 ---
 
@@ -10,14 +10,14 @@ Aletheon's architecture is built on three pillars: **SelfField** (the self-aware
 +-------------------------------------------------------------+
 |                         Aletheon                              |
 +-------------------------------------------------------------+
-|  SelfField (Self-Awareness)                                  |
+|  SelfField (Self-Awareness, crate: dasein)                   |
 |  Identity / Boundary / Care / Narrative / Conflict /         |
 |  Attention / Continuity / Mutation                           |
 +-------------------------------------------------------------+
-|  BrainCore (Cognition)                                       |
+|  cognit (Cognition)                                           |
 |  Reason / Plan / Reflect / Learn / Criticize                 |
 +-------------------------------------------------------------+
-|  BodyRuntime (Execution)                                     |
+|  corpus (Execution)                                           |
 |  Tools / Shell / Filesystem / Kernel / MCP / ROS             |
 +-------------------------------------------------------------+
 |  Memory (Persistence)                                        |
@@ -32,7 +32,7 @@ Aletheon's architecture is built on three pillars: **SelfField** (the self-aware
 
 ## SelfField
 
-SelfField is not a static identity object. It is a dynamic field that maintains the agent's sense of self across sessions and tasks.
+SelfField is not a static identity object. It is a dynamic field that maintains the agent's sense of self across sessions and tasks. It is implemented in the `dasein` crate.
 
 **The 8 internal layers:**
 
@@ -51,9 +51,9 @@ SelfField is not a static identity object. It is a dynamic field that maintains 
 
 ---
 
-## BrainCore
+## cognit
 
-BrainCore drives reasoning and decision-making through a ReAct (Think-Act-Observe) loop. It has no self-model and no authority over SelfField -- it proposes, but SelfField evaluates.
+cognit drives reasoning and decision-making through a ReAct (Think-Act-Observe) loop. It has no self-model and no authority over SelfField -- it proposes, but SelfField evaluates.
 
 **Core capabilities:**
 
@@ -77,9 +77,9 @@ User request / Perception event
 
 ---
 
-## BodyRuntime
+## corpus
 
-BodyRuntime is the agent's embodied execution layer. It interacts with the operating system, runs tools, manages sandboxes, and bridges to external systems (MCP servers, ROS nodes, browser automation).
+corpus is the agent's embodied execution layer. It interacts with the operating system, runs tools, manages sandboxes, and bridges to external systems (MCP servers, ROS nodes, browser automation).
 
 **What it does:**
 
@@ -89,7 +89,7 @@ BodyRuntime is the agent's embodied execution layer. It interacts with the opera
 - Collects perception data from /proc, journald, inotify, eBPF
 - Provides platform abstraction (Linux systemd/D-Bus, Android)
 
-BodyRuntime can **refuse** actions flagged by SelfField's boundary layer and can **observe** system state that feeds into BrainCore's reasoning.
+corpus can **refuse** actions flagged by SelfField's boundary layer and can **observe** system state that feeds into cognit's reasoning.
 
 **Implementation:** `crates/corpus/` -- see [Body design](../design/corpus/tools.md).
 
@@ -131,8 +131,8 @@ This is the foundation of true self-evolution: not just learning patterns, but r
 
 Self-Evolution is the closed loop that ties all three bodies together:
 
-1. **Task execution** (BodyRuntime) produces results
-2. **Reflection** (BrainCore) analyzes what worked and what failed
+1. **Task execution** (corpus) produces results
+2. **Reflection** (cognit) analyzes what worked and what failed
 3. **Behavior adjustment** (SelfField) updates care weights, boundary rules, attention focus
 4. **Genome update** (MetaRuntime) persists successful patterns
 
