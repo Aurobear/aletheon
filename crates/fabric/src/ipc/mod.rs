@@ -2,6 +2,7 @@
 
 pub mod backends;
 pub mod bus;
+pub mod bus_handle;
 pub mod envelope;
 pub mod envelope_v2;
 pub mod ipc_msg;

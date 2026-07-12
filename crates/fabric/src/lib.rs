@@ -20,11 +20,8 @@
 
 // === Module declarations ===
 
-pub mod bus_handle;
-pub mod compaction;
 pub mod contract;
 pub mod dasein;
-pub mod error;
 pub mod event;
 pub mod events;
 pub mod include;
@@ -236,4 +233,4 @@ pub use primitives::{
 };
 
 // Compaction (shared context-compaction interface + pruning helpers)
-pub use compaction::{prune_tool_outputs, CompactorTrait};
+pub use include::compaction::{prune_tool_outputs, CompactorTrait};

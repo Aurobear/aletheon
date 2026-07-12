@@ -6,4 +6,4 @@ pub mod observable;
 pub mod registry;
 
 // error module extracted to fabric; re-export for backward compat
-pub use crate::error;
+pub mod error;

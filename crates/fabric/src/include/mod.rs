@@ -21,3 +21,5 @@ pub mod turn;
 pub mod chronos;
 
 pub mod process;
+
+pub mod compaction;

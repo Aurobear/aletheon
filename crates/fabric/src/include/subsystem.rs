@@ -10,7 +10,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::bus_handle::BusHandle;
+use crate::ipc::bus_handle::BusHandle;
 
 /// Semantic version for ABI compatibility checks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
