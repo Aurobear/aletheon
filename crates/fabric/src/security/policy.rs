@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use fabric::tool::PermissionLevel;
+use crate::types::tool::PermissionLevel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyRule {

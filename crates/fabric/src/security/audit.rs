@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 
 use super::risk_classifier::RiskCategory;
-use fabric::tool::PermissionLevel;
+use crate::types::tool::PermissionLevel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditRecord {
