@@ -340,7 +340,7 @@ impl DebugBusHook {
         self.sinks.retain(|s| s.sink_filter().is_none());
     }
 
-    /// Called on every EventBus.publish().
+    /// Called on every KernelEventBus.publish().
     ///
     /// Forwards matching events to sinks and records to bag.
     pub async fn on_event(&mut self, event: &DebugEvent) {

@@ -1,6 +1,6 @@
 //! Self-evolution loop event types.
 //!
-//! These events flow through the EventBus to decouple CognitCore, SelfField, and MetaRuntime.
+//! These events flow through the bus to decouple CognitCore, SelfField, and MetaRuntime.
 
 use crate::MutationIntent;
 use serde::{Deserialize, Serialize};

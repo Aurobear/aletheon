@@ -146,7 +146,7 @@ impl TransportMetrics {
 }
 
 /// Intra-process transport — based on tokio channels.
-/// Wraps existing KernelEventBus for backward-compatible event dispatch.
+/// Wraps KernelEventBus for event dispatch.
 pub struct InProcessTransport {
     /// Per-module mailboxes for point-to-point delivery.
     mailboxes: DashMap<ModuleId, PriorityChannel>,
@@ -157,7 +157,7 @@ pub struct InProcessTransport {
     /// Per-topic broadcast channels for pub-sub.
     topics: DashMap<String, broadcast::Sender<Envelope>>,
 
-    /// Existing EventBus for backward-compatible event dispatch.
+    /// KernelEventBus for event dispatch.
     event_bus: Arc<KernelEventBus>,
 
     /// Event log (shared with KernelEventBus).
