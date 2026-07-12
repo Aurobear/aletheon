@@ -260,13 +260,13 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
 
 // ── Exec ────────────────────────────────────────────────────────────────────
 
+use aletheon_kernel::service_ports::ServicePorts;
 use cognit::r#impl::provider_registry::ProviderRegistry;
 use corpus::security::sandbox::executor::SandboxPreference;
 use corpus::security::security::approval::{ApprovalGate, TerminalApprovalGate};
 use corpus::security::security::audit::AuditLogger;
 use corpus::security::security::runner::ToolRunnerWithGuard;
 use corpus::tools::tools::{ToolContext, ToolRegistry};
-use executive::kernel::service_ports::ServicePorts;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,

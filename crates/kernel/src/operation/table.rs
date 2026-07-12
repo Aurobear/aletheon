@@ -195,6 +195,6 @@ impl OperationManager for OperationTable {
 
 impl Default for OperationTable {
     fn default() -> Self {
-        Self::new(Arc::new(crate::kernel::chronos::SystemClock::new()))
+        Self::new(Arc::new(crate::chronos::SystemClock::new()))
     }
 }

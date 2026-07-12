@@ -1,4 +1,4 @@
-use executive::kernel::chronos::{TestClock, Timer};
+use aletheon_kernel::chronos::{TestClock, Timer};
 use fabric::{MonoDeadline, MonoTime};
 
 #[test]

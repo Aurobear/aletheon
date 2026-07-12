@@ -8,6 +8,7 @@ description = "Aletheon Runtime - core agent runtime and orchestration"
 
 [dependencies]
 fabric = { path = "../fabric" }
+aletheon-kernel = { path = "../kernel" }
 agora = { path = "../agora" }
 cognit = { path = "../cognit" }
 corpus = { path = "../corpus" }

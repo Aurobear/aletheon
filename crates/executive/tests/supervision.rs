@@ -4,8 +4,8 @@
 //! - SupervisorTree restart-decision logic (kernel-level unit tests)
 //! - SubAgentSpawner restart behaviour (end-to-end integration)
 
+use aletheon_kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
 use executive::core::SubAgentSpawner;
-use executive::kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
 use fabric::{ExitReason, ProcessId, SubAgentState};
 
 // ---------------------------------------------------------------------------

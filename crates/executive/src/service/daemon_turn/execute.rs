@@ -8,8 +8,8 @@ use super::super::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTu
 use super::helpers::{bounded_text_history, build_request_messages};
 use super::orchestrator::DaemonTurnOrchestrator;
 
-use crate::kernel::operation::OperationScope;
 use crate::r#impl::daemon::handler::tool_executor::TurnToolExecutor;
+use aletheon_kernel::operation::OperationScope;
 use cognit::harness::event_sink::{ChannelEventSink, Event};
 use cognit::harness::linear::TurnMetrics;
 use fabric::hook::{HookContext, HookPoint, HookResult};

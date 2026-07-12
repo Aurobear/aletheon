@@ -1,5 +1,5 @@
-use executive::kernel::chronos::TestClock;
-use executive::kernel::operation::{OperationScope, OperationTable};
+use aletheon_kernel::chronos::TestClock;
+use aletheon_kernel::operation::{OperationScope, OperationTable};
 use fabric::{
     CancelReason, OperationExitReason, OperationKind, OperationManager, OperationRequest,
     OperationState, ProcessId,

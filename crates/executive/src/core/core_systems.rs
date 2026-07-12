@@ -26,10 +26,10 @@ use mnemosyne::episodic::EpisodicMemory;
 
 use crate::core::config::HooksConfig;
 use crate::core::orchestrator::AletheonExecutive;
-use crate::kernel::service_ports::ServicePorts;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::CoreMemory;
 use crate::RecallMemory;
+use aletheon_kernel::service_ports::ServicePorts;
 use corpus::security::storm_breaker::StormBreaker;
 use corpus::HookRegistry;
 use corpus::SkillLoader;

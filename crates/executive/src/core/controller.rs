@@ -63,7 +63,7 @@ pub struct Controller {
 impl Controller {
     /// Create a new Controller compatibility facade.
     pub fn new(opts: ControllerOptions, event_sink: Arc<dyn EventSink>) -> Self {
-        let ports = Arc::new(crate::kernel::service_ports::ServicePorts::default());
+        let ports = Arc::new(aletheon_kernel::service_ports::ServicePorts::default());
         let turn_service = Arc::new(TurnService::new(
             Arc::new(StubTurnServices),
             PreTurnPipeline,

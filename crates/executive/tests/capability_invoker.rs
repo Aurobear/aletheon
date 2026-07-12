@@ -2,9 +2,9 @@
 //!
 //! Validates the admission → permit → execute → settle pipeline.
 
-use executive::kernel::admission::AllowAllAdmissionController;
-use executive::kernel::capability::{DefaultCapabilityInvoker, StubToolExecutor, ToolExecutor};
-use executive::kernel::chronos::TestClock;
+use aletheon_kernel::admission::AllowAllAdmissionController;
+use aletheon_kernel::capability::{DefaultCapabilityInvoker, StubToolExecutor, ToolExecutor};
+use aletheon_kernel::chronos::TestClock;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, AdmissionError, AdmissionRequest, CapabilityInvoker, CapabilityRequest,

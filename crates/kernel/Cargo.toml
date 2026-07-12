@@ -1,0 +1,23 @@
+[package]
+name = "aletheon-kernel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Aletheon macro-kernel — process/operation tables, admission, chronos, supervision"
+
+[dependencies]
+fabric = { path = "../fabric" }
+async-trait.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -23,10 +23,10 @@
 //! | `no_orphan_tasks_after_cancel_and_drain` | OperationScope drain → all tasks recorded |
 //! | `deadline_exceeded_sets_operation_to_cancelled` | Hanging LLM triggers tokio timeout → Cancelled |
 
-use executive::kernel::chronos::TestClock;
-use executive::kernel::operation::{OperationScope, OperationTable};
-use executive::kernel::process::ProcessTable;
-use executive::kernel::service_ports::ServicePorts;
+use aletheon_kernel::chronos::TestClock;
+use aletheon_kernel::operation::{OperationScope, OperationTable};
+use aletheon_kernel::process::ProcessTable;
+use aletheon_kernel::service_ports::ServicePorts;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
     CancelReason, MonoDeadlineMillis, NoopTurnEventSink, OperationExitReason, OperationId,
@@ -44,7 +44,7 @@ use std::time::Duration;
 fn test_ports() -> Arc<ServicePorts> {
     let clock: Arc<dyn fabric::Clock> = Arc::new(TestClock::default());
     let admission: Arc<dyn fabric::AdmissionController> =
-        Arc::new(executive::kernel::admission::AllowAllAdmissionController::new(clock.clone()));
+        Arc::new(aletheon_kernel::admission::AllowAllAdmissionController::new(clock.clone()));
     Arc::new(ServicePorts::for_testing(clock, admission))
 }
 
@@ -117,8 +117,8 @@ async fn main_agent_exists_in_process_table() {
 
 #[tokio::test]
 async fn sub_agent_created_in_process_table() {
+    use aletheon_kernel::supervision::RestartPolicy;
     use executive::core::SubAgentSpawner;
-    use executive::kernel::supervision::RestartPolicy;
 
     let clock = Arc::new(TestClock::default());
     let table = Arc::new(ProcessTable::new(clock));
