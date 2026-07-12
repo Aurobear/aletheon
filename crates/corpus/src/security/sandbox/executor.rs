@@ -108,6 +108,15 @@ impl SandboxExecutor {
             .select_backend()
             .ok_or_else(|| anyhow::anyhow!("No suitable sandbox backend available"))?;
 
+        // Defense-in-depth: if Require preference somehow selects NoopBackend
+        // (e.g. a misconfigured backend claiming namespace isolation), fail
+        // explicitly rather than executing without real isolation.
+        if self.preference == SandboxPreference::Require && backend.name() == "noop" {
+            return Err(anyhow::anyhow!(
+                "Sandbox required but NoopBackend was selected (fail-closed)"
+            ));
+        }
+
         if self.preference == SandboxPreference::BestEffort
             && backend.isolation_level() == IsolationLevel::None
         {

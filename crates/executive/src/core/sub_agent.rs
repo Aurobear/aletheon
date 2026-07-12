@@ -290,6 +290,79 @@ impl SubAgentSpawner {
         Ok(handle)
     }
 
+    /// Register a tracked sub-agent entry without spawning a runtime task.
+    ///
+    /// Creates process/operation/mailbox entries so the sub-agent appears in
+    /// the process table and can be cancelled or waited on, but does not
+    /// execute any LLM work. The caller is responsible for running the actual
+    /// task and calling [`transition`](Self::transition) to update state.
+    pub async fn spawn_tracked(
+        &mut self,
+        task: String,
+        parent_turn_id: String,
+        restart_policy: RestartPolicy,
+    ) -> anyhow::Result<SubAgentHandle> {
+        let process = self
+            .process_table
+            .spawn(SpawnSpec {
+                profile: AgentProfileId("sub-agent".into()),
+                namespace: NamespaceId(parent_turn_id.clone()),
+                initial_operation: Some(OperationKind::SubAgent),
+                ..SpawnSpec::default()
+            })
+            .await?;
+        let operation = self
+            .operation_table
+            .submit(OperationRequest {
+                owner: process.id,
+                parent: None,
+                kind: OperationKind::SubAgent,
+                deadline: None,
+            })
+            .await?;
+        self.operation_table.start(operation.id).await?;
+        self.process_table
+            .set_active_operation(process.id, Some(operation.id))
+            .await?;
+        let mailbox_target = Self::mailbox_target_for(process.id);
+        let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(64));
+        self.mailbox_service
+            .register(mailbox_target.clone(), mailbox)
+            .await?;
+
+        let mut scope = OperationScope::new(operation.id);
+        let token = scope.token();
+
+        // Always use the cancellation-wait stub — no runtime execution.
+        scope.spawn("sub-agent-execution", async move {
+            token.cancelled().await;
+            OperationExitReason::Cancelled(CancelReason::User)
+        });
+
+        let snapshot = self.process_table.inspect(process.id).await?;
+        let id = process.id.0.to_string();
+        let handle =
+            Self::handle_from_snapshot(id.clone(), task.clone(), parent_turn_id.clone(), &snapshot);
+
+        // Register with supervisor for failure-restart tracking.
+        self.supervisor.supervise(process.id, restart_policy);
+
+        self.agents.insert(
+            id,
+            SubAgentEntry {
+                handle: handle.clone(),
+                state: SubAgentState::Created,
+                process_id: process.id,
+                mailbox_target,
+                operation_id: operation.id,
+                scope,
+                task,
+                parent_turn_id,
+            },
+        );
+        Ok(handle)
+    }
+
     /// Update an agent's UI status (unchanged UI-display behavior).
     pub fn update_status(&mut self, id: &str, status: SubAgentStatus) {
         if let Some(entry) = self.agents.get_mut(id) {
@@ -474,6 +547,38 @@ impl SubAgentSpawner {
             .await
             .map_err(|e| TransitionError::Kernel(e.to_string()))?;
         Ok(())
+    }
+
+    /// Cancel a sub-agent's operation scope.
+    ///
+    /// Triggers cancellation of the underlying `CancellationToken`. The state
+    /// in the spawner transitions to `Failed` when the cancelled task exits.
+    /// Returns `false` if no agent with that id is tracked.
+    pub fn cancel(&self, id: &str) -> bool {
+        match self.agents.get(id) {
+            Some(entry) => {
+                entry.scope.cancel.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Wait for a sub-agent process to exit, with a timeout.
+    ///
+    /// Returns a clone of the `SubAgentHandle` on completion, or an error
+    /// if the timeout elapses or the process is not tracked.
+    pub async fn wait(&self, id: &str, timeout: Duration) -> anyhow::Result<SubAgentHandle> {
+        let entry = self
+            .agents
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown sub-agent: {id}"))?;
+        let pid = entry.process_id;
+        tokio::time::timeout(timeout, self.process_table.wait(pid))
+            .await
+            .map_err(|_| anyhow::anyhow!("wait timed out for sub-agent: {id}"))?
+            .map_err(|e| anyhow::anyhow!("process wait error: {e}"))?;
+        Ok(entry.handle.clone())
     }
 
     /// Tear an agent down: cancel its operation scope, signal/wait/reap the process, then free UI slot.

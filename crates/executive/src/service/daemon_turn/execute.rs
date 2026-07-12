@@ -20,7 +20,7 @@ use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionRequest, CapabilityId, CapabilityScope, ContentBlock, Intent, IntentSource,
     LlmProvider, Message, OperationKind, OperationManager, OperationRequest, PrincipalId, Role,
-    SandboxDecision, SandboxRequirement, TurnRequest, UsageReport,
+    SandboxRequirement, TurnRequest, UsageReport,
 };
 use fabric::{AgoraSpaceId, AgoraVersion, ContextBinding, SessionId, SpaceId, SpaceManager};
 use serde_json::json;
@@ -133,6 +133,10 @@ impl DaemonTurnOrchestrator {
                 self.sf_narrate("chat_sandbox_required", reason).await;
                 sandbox_requirement = SandboxRequirement::Required;
             }
+            Err(ref e) => {
+                warn!(error = %e, "SelfField review error — denying turn (fail-closed)");
+                return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32010, "message": format!("SelfField review failed (fail-closed): {}", e)}});
+            }
             _ => {}
         }
 
@@ -150,9 +154,6 @@ impl DaemonTurnOrchestrator {
         if !memory_block.is_empty() {
             effective_message.push_str(&memory_block);
             effective_message.push_str("\n\n");
-        }
-        if let Err(ref e) = verdict {
-            warn!(error = %e, "SelfField review error, proceeding with caution");
         }
         self.inject_keyword_skills(message, &mut effective_message)
             .await;
@@ -389,16 +390,6 @@ impl DaemonTurnOrchestrator {
                     Ok(p) => p,
                     Err(e) => return (format!("admission denied: {e}"), true),
                 };
-
-                // Check sandbox decision — fail closed.
-                if matches!(permit.sandbox, SandboxDecision::Required) {
-                    return (
-                        format!(
-                            "Sandbox required but execution infrastructure not available for '{n}'"
-                        ),
-                        true,
-                    );
-                }
 
                 // Execute the tool through the existing pipeline.
                 let (content, is_error) = exec.execute(&permit, &tid, &n, &inp).await;

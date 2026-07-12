@@ -91,7 +91,8 @@ impl ServicePorts {
         let admission: Arc<dyn AdmissionController> =
             Arc::new(ProductionAdmissionController::new(clock.clone())
                 .with_budget(budget.clone())
-                .with_leases(leases.clone()));
+                .with_leases(leases.clone())
+                .with_sandbox_available(false));
         let space_manager = InMemorySpaceManager::new();
 
         Self {

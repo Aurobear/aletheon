@@ -26,6 +26,9 @@ pub struct AgentConfig {
 
 /// Canonical Agent trait for multi-agent orchestration.
 ///
+/// DEPRECATED: Use `AgentProcess` + `AgentKernel` for agent lifecycle management.
+/// This trait remains for backward compatibility with existing orchestration code.
+///
 /// Each agent has an identity, a set of capabilities it advertises,
 /// and a set of tools it can use. The orchestration layer uses this
 /// trait to discover, route, and coordinate agents.
