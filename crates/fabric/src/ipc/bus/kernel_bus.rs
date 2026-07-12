@@ -120,7 +120,11 @@ impl KernelEventBus {
         Ok(id)
     }
 
-    pub async fn request(&self, event: Box<dyn Event>, timeout: Duration) -> Result<Box<dyn Event>> {
+    pub async fn request(
+        &self,
+        event: Box<dyn Event>,
+        timeout: Duration,
+    ) -> Result<Box<dyn Event>> {
         // Phase 1: request-response not fully implemented.
         // For now, publish the event and return error after timeout.
         // Full implementation will use oneshot channels when response events are supported.

@@ -173,12 +173,12 @@ pub use types::tool::{
 pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 
 // Event types
+pub use events::event_log;
+pub use events::event_log::{EventLog, LogEntry};
 pub use events::types as event;
 pub use events::types::{
     AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
 };
-pub use events::event_log;
-pub use events::event_log::{EventLog, LogEntry};
 pub use events::ui_event::{
     AwarenessLevel, ClientEvent, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate,
     SubAgentHandle, SubAgentState, SubAgentStatus,

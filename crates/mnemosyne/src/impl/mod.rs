@@ -13,11 +13,11 @@ pub use archival_memory::{ArchivalEntry, ArchivalMemory, InMemoryArchival, Vecto
 pub use auto_memory::AutoMemory;
 pub use compaction::CompactionManager;
 pub use compressor::AdvancedCompressor;
-pub use core_memory::{CoreMemory, MemoryBlock};
 pub use core_memory::scope::{
     scope_metadata, MemoryScope, PendingWrite, PendingWriteType, RecallScopeFilter, ScopeFilter,
     ScopedCoreMemory, ScopedMemoryBlock, ScopedRecallFilter, WriteOutcome,
 };
+pub use core_memory::{CoreMemory, MemoryBlock};
 pub use fact_store::{
     ConsolidationLogRow, EntityNeighbor, EpisodeRow, FactRow, FactStore, FeedbackResult,
     KnowledgeRow,

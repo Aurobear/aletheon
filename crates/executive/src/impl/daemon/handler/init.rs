@@ -25,9 +25,9 @@ use crate::CoreMemory;
 use crate::ProviderRegistry;
 use crate::RecallMemory;
 use cognit::core::reflector::Reflector;
-use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
+use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
@@ -656,7 +656,9 @@ impl RequestHandler {
                                             let mut tool_calls = Vec::new();
                                             for block in &response.content {
                                                 match block {
-                                                    fabric::message::ContentBlock::Text { text } => {
+                                                    fabric::message::ContentBlock::Text {
+                                                        text,
+                                                    } => {
                                                         text_parts.push(text.clone());
                                                     }
                                                     fabric::message::ContentBlock::ToolUse {
@@ -695,7 +697,8 @@ impl RequestHandler {
                                                     fabric::tool::ToolResult {
                                                         content: format!("Unknown tool: {}", name),
                                                         is_error: true,
-                                                        metadata: fabric::tool::ToolResultMeta::default(),
+                                                        metadata:
+                                                            fabric::tool::ToolResultMeta::default(),
                                                     }
                                                 };
                                                 drop(reg);

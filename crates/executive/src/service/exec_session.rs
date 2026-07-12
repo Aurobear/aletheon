@@ -21,8 +21,8 @@ use corpus::tools::tools::{ToolContext, ToolRegistry};
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,
-    CapabilityScope, LlmProvider, Message, MonoTime, PrincipalId, RecallSet, SandboxRequirement,
-    ToolDefinition, TurnRequest, TurnServices, UsageReport, ProcessId,
+    CapabilityScope, LlmProvider, Message, MonoTime, PrincipalId, ProcessId, RecallSet,
+    SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
 };
 
 use crate::host::load_dotenv;
@@ -70,19 +70,16 @@ impl ExecSessionBuilder {
 
     /// Wire up the full exec stack and return the `TurnService`, `LlmProvider`,
     /// and the configured `RiskLevel`.
-    pub async fn build(self) -> Result<(
-        TurnService,
-        Arc<dyn LlmProvider>,
-        RiskLevel,
-    )> {
+    pub async fn build(self) -> Result<(TurnService, Arc<dyn LlmProvider>, RiskLevel)> {
         // Load ~/.aletheon/.env so provider API keys resolve.
         if let Some(home) = std::env::var_os("HOME") {
             load_dotenv(&PathBuf::from(home).join(".aletheon").join(".env"));
         }
 
-        let working_dir = self.working_dir.canonicalize().unwrap_or_else(|_| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
-        });
+        let working_dir = self
+            .working_dir
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
 
         // Load config
         let app_config = if let Some(ref path) = self.config_path {
@@ -146,13 +143,8 @@ impl ExecSessionBuilder {
             max_iterations: self.max_turns,
             ..Default::default()
         };
-        let turn_service = TurnService::new(
-            services,
-            PreTurnPipeline,
-            PostTurnPipeline,
-            ports,
-        )
-        .with_harness_config(harness_config);
+        let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, ports)
+            .with_harness_config(harness_config);
 
         Ok((turn_service, llm, RiskLevel::ReadOnly))
     }

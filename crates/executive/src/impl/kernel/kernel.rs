@@ -292,11 +292,7 @@ impl AgentKernel {
     /// (`task`, `config`, `parent`) so the caller can re-spawn.
     ///
     /// If no supervisor is attached, returns `RestartDecision::DoNotRestart`.
-    pub async fn evaluate_exit(
-        &self,
-        pid: Pid,
-        exit_code: Option<i32>,
-    ) -> RestartDecision {
+    pub async fn evaluate_exit(&self, pid: Pid, exit_code: Option<i32>) -> RestartDecision {
         let sup = match &self.supervisor {
             Some(s) => s,
             None => return RestartDecision::Ignore,

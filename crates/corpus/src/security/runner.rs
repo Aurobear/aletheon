@@ -76,7 +76,10 @@ impl ToolRunnerWithGuard {
     /// Create with default sandbox (Auto preference).
     pub fn with_default_sandbox(audit_logger: AuditLogger) -> Self {
         use crate::sandbox::SandboxPreference;
-        Self::new(create_default_executor(SandboxPreference::Auto), audit_logger)
+        Self::new(
+            create_default_executor(SandboxPreference::Auto),
+            audit_logger,
+        )
     }
 
     /// Create with an explicit sandbox preference.

@@ -62,46 +62,36 @@ impl DaseinEventBridge {
         // ToolObservation → tool execution results
         {
             let tx = self.dasein_tx.clone();
-            spawn_topic_subscriber(
-                communication_bus,
-                EventType::ToolObservation,
-                tx,
-                |json| {
-                    let tool_name = json
-                        .get("tool_name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let status = json
-                        .get("status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    DaseinEvent::SystemEvent {
-                        source: "tool_execution".to_string(),
-                        content: format!("{}: {}", tool_name, status),
-                    }
-                },
-            );
+            spawn_topic_subscriber(communication_bus, EventType::ToolObservation, tx, |json| {
+                let tool_name = json
+                    .get("tool_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let status = json
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                DaseinEvent::SystemEvent {
+                    source: "tool_execution".to_string(),
+                    content: format!("{}: {}", tool_name, status),
+                }
+            });
         }
 
         // MemoryStored → memory events
         {
             let tx = self.dasein_tx.clone();
-            spawn_topic_subscriber(
-                communication_bus,
-                EventType::MemoryStored,
-                tx,
-                |json| {
-                    let memory_type = json
-                        .get("memory_type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let content = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                    DaseinEvent::SystemEvent {
-                        source: "memory".to_string(),
-                        content: format!("[{}] {}", memory_type, content),
-                    }
-                },
-            );
+            spawn_topic_subscriber(communication_bus, EventType::MemoryStored, tx, |json| {
+                let memory_type = json
+                    .get("memory_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let content = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                DaseinEvent::SystemEvent {
+                    source: "memory".to_string(),
+                    content: format!("[{}] {}", memory_type, content),
+                }
+            });
         }
 
         // EvolutionTriggered → evolution events
@@ -127,15 +117,12 @@ impl DaseinEventBridge {
         // AgentStarted → session lifecycle
         {
             let tx = self.dasein_tx.clone();
-            spawn_topic_subscriber(
-                communication_bus,
-                EventType::AgentStarted,
-                tx,
-                |_json| DaseinEvent::SystemEvent {
+            spawn_topic_subscriber(communication_bus, EventType::AgentStarted, tx, |_json| {
+                DaseinEvent::SystemEvent {
                     source: "session".to_string(),
                     content: "new session started".to_string(),
-                },
-            );
+                }
+            });
         }
 
         tracing::info!("DaseinEventBridge subscribed to CommunicationBus topic events");

@@ -88,11 +88,12 @@ impl ServicePorts {
         let mailbox_service = Arc::new(InProcessMailboxService::new());
         let budget = Arc::new(InMemoryBudgetController::new());
         let leases = Arc::new(InMemoryResourceLeaseManager::new());
-        let admission: Arc<dyn AdmissionController> =
-            Arc::new(ProductionAdmissionController::new(clock.clone())
+        let admission: Arc<dyn AdmissionController> = Arc::new(
+            ProductionAdmissionController::new(clock.clone())
                 .with_budget(budget.clone())
                 .with_leases(leases.clone())
-                .with_sandbox_available(false));
+                .with_sandbox_available(false),
+        );
         let space_manager = InMemorySpaceManager::new();
 
         Self {
