@@ -1,5 +1,5 @@
 use crate::service::{PostTurnPipeline, PreTurnPipeline};
-use aletheon_kernel::service_ports::ServicePorts;
+use aletheon_kernel::service::ServicePorts;
 use anyhow::Result;
 use cognit::harness::{CognitiveSession, HarnessConfig, LinearCognitiveSession};
 use fabric::{

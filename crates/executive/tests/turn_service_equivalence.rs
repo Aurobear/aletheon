@@ -1,5 +1,5 @@
 use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::service_ports::ServicePorts;
+use aletheon_kernel::service::ServicePorts;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{NoopTurnEventSink, OperationId, ProcessId, StubTurnServices, TurnRequest, TurnStop};
 use std::path::PathBuf;

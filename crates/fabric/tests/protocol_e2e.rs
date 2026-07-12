@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fabric::envelope::*;
-use fabric::event::Priority;
+use fabric::events::types::Priority;
 use fabric::event_bus::EventBus;
 
 use fabric::CommunicationBus;
@@ -196,7 +196,7 @@ async fn test_backward_compat_event_bus() {
     let event_bus = bus.event_bus();
     assert!(
         !event_bus
-            .has_subscribers(&fabric::event::EventType::ToolObservation)
+            .has_subscribers(&fabric::events::types::EventType::ToolObservation)
             .await
     );
 }

@@ -9,7 +9,7 @@
 // (topic-based broadcast/mpsc channels). Requires architectural change to convert
 // DaseinEventBridge from callback-based to channel-based event handling.
 // Currently uses communication_bus.event_bus().subscribe() as bridge.
-use fabric::event::EventType;
+use fabric::events::types::EventType;
 use fabric::CommunicationBus;
 use fabric::EventBus;
 use tokio::sync::mpsc;

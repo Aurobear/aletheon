@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::service_ports::ServicePorts;
+use aletheon_kernel::service::ServicePorts;
 use async_trait::async_trait;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{

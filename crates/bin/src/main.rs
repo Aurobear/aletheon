@@ -260,7 +260,7 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
 
 // ── Exec ────────────────────────────────────────────────────────────────────
 
-use aletheon_kernel::service_ports::ServicePorts;
+use aletheon_kernel::service::ServicePorts;
 use cognit::r#impl::provider_registry::ProviderRegistry;
 use corpus::security::sandbox::executor::SandboxPreference;
 use corpus::security::security::approval::{ApprovalGate, TerminalApprovalGate};

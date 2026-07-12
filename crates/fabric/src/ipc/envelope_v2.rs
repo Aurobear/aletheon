@@ -362,14 +362,14 @@ trait PriorityU8 {
     fn into_u8(self) -> u8;
 }
 
-impl PriorityU8 for crate::event::Priority {
+impl PriorityU8 for crate::events::types::Priority {
     fn into_u8(self) -> u8 {
         match self {
-            crate::event::Priority::Low => 50,
-            crate::event::Priority::Normal => 128,
-            crate::event::Priority::High => 200,
-            crate::event::Priority::Critical => 255,
-            crate::event::Priority::Background => 10,
+            crate::events::types::Priority::Low => 50,
+            crate::events::types::Priority::Normal => 128,
+            crate::events::types::Priority::High => 200,
+            crate::events::types::Priority::Critical => 255,
+            crate::events::types::Priority::Background => 10,
         }
     }
 }
@@ -474,8 +474,8 @@ impl SchemaId {
     ///
     /// This is the migration bridge: old code that used `EventType` routing
     /// can use this to produce an `EnvelopeV2` with the correct schema.
-    pub fn from_event_type(et: &crate::event::EventType) -> &'static str {
-        use crate::event::EventType;
+    pub fn from_event_type(et: &crate::events::types::EventType) -> &'static str {
+        use crate::events::types::EventType;
         match et {
             EventType::UserIntent => Self::EVENT_USER_INTENT_V1,
             EventType::UserFeedback => Self::EVENT_USER_FEEDBACK_V1,
@@ -666,7 +666,7 @@ mod tests {
 
     #[test]
     fn from_event_type_covers_all_variants_without_panic() {
-        use crate::event::EventType;
+        use crate::events::types::EventType;
         // Every variant must map to a distinct non-empty schema string.
         let variants = [
             EventType::UserIntent,
@@ -718,7 +718,7 @@ mod tests {
 
     #[test]
     fn from_event_type_schemas_are_valid() {
-        use crate::event::EventType;
+        use crate::events::types::EventType;
         // Spot-check a few well-known mappings.
         assert_eq!(
             SchemaId::from_event_type(&EventType::UserIntent),

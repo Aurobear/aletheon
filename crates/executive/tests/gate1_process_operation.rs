@@ -26,7 +26,7 @@
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::operation::{OperationScope, OperationTable};
 use aletheon_kernel::process::ProcessTable;
-use aletheon_kernel::service_ports::ServicePorts;
+use aletheon_kernel::service::ServicePorts;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
     CancelReason, MonoDeadlineMillis, NoopTurnEventSink, OperationExitReason, OperationId,

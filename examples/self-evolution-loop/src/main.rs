@@ -21,7 +21,7 @@ use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObserva
 use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
-use fabric::event::{ConcreteEvent, EventType, Priority};
+use fabric::events::types::{ConcreteEvent, EventType, Priority};
 use fabric::evolution::*;
 use fabric::EventBus;
 use fabric::KernelEventBus;
