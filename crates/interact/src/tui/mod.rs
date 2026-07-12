@@ -125,7 +125,16 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         // In test mode, use a test backend (no real terminal)
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend)?;
-        run_app(&mut terminal, stream, caps, model_name, test_config, true, clock).await
+        run_app(
+            &mut terminal,
+            stream,
+            caps,
+            model_name,
+            test_config,
+            true,
+            clock,
+        )
+        .await
     } else {
         // RAII guard that restores terminal state on drop.
         // Handles normal exit, panic, and signal-driven exit.
@@ -192,7 +201,16 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         })
         .expect("Error setting Ctrl-C handler");
 
-        let result = run_app(&mut terminal, stream, caps, model_name, test_config, false, clock).await;
+        let result = run_app(
+            &mut terminal,
+            stream,
+            caps,
+            model_name,
+            test_config,
+            false,
+            clock,
+        )
+        .await;
 
         // TerminalGuard::drop() handles terminal cleanup.
         // Explicitly drop the guard before returning to ensure clean state.

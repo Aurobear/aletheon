@@ -88,17 +88,23 @@ impl Tool for FileSearchTool {
             .unwrap_or(50) as usize;
 
         // Strategy 1: Try ripgrep
-        if let Some(result) = try_ripgrep(&query, &path, include.as_deref(), max_results, &*ctx.clock).await {
+        if let Some(result) =
+            try_ripgrep(&query, &path, include.as_deref(), max_results, &*ctx.clock).await
+        {
             return result;
         }
 
         // Strategy 2: Fallback to grep -r
-        if let Some(result) = try_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock).await {
+        if let Some(result) =
+            try_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock).await
+        {
             return result;
         }
 
         // Strategy 3: Fallback to find + grep
-        if let Some(result) = try_find_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock).await {
+        if let Some(result) =
+            try_find_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock).await
+        {
             return result;
         }
 

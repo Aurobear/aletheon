@@ -70,7 +70,9 @@ impl StateProvider for LiveStateProvider {
                             serde_json::Value::String(parts[1].trim().to_string());
                     }
                 }
-                mem["timestamp"] = serde_json::Value::String(fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339());
+                mem["timestamp"] = serde_json::Value::String(
+                    fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                );
                 Ok(serde_json::to_string_pretty(&mem)?.into_bytes())
             }
             "disk" => {

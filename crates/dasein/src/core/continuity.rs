@@ -153,8 +153,8 @@ impl ContinuityLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
     use aletheon_kernel::chronos::TestClock;
+    use chrono::Duration;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
         Arc::new(TestClock::default())

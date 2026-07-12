@@ -2,7 +2,6 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::time::Instant;
 use tracing::info;
 
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
@@ -118,7 +117,11 @@ impl Tool for ModuleLoadTool {
                                 ),
                                 is_error: false,
                                 metadata: ToolResultMeta {
-                                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                                    execution_time_ms: ctx
+                                        .clock
+                                        .mono_now()
+                                        .0
+                                        .saturating_sub(start.0),
                                     truncated: false,
                                 },
                             }
@@ -128,7 +131,11 @@ impl Tool for ModuleLoadTool {
                                 content: format!("insmod failed:\n{}", stderr),
                                 is_error: true,
                                 metadata: ToolResultMeta {
-                                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                                    execution_time_ms: ctx
+                                        .clock
+                                        .mono_now()
+                                        .0
+                                        .saturating_sub(start.0),
                                     truncated: false,
                                 },
                             }
@@ -164,7 +171,11 @@ impl Tool for ModuleLoadTool {
                                 content: format!("Module {} unloaded successfully.", module_name),
                                 is_error: false,
                                 metadata: ToolResultMeta {
-                                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                                    execution_time_ms: ctx
+                                        .clock
+                                        .mono_now()
+                                        .0
+                                        .saturating_sub(start.0),
                                     truncated: false,
                                 },
                             }
@@ -174,7 +185,11 @@ impl Tool for ModuleLoadTool {
                                 content: format!("rmmod failed:\n{}", stderr),
                                 is_error: true,
                                 metadata: ToolResultMeta {
-                                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                                    execution_time_ms: ctx
+                                        .clock
+                                        .mono_now()
+                                        .0
+                                        .saturating_sub(start.0),
                                     truncated: false,
                                 },
                             }
@@ -199,7 +214,11 @@ impl Tool for ModuleLoadTool {
                     .await;
 
                 // Small delay
-                aletheon_kernel::chronos::Timer::sleep(&*ctx.clock, std::time::Duration::from_millis(100)).await;
+                aletheon_kernel::chronos::Timer::sleep(
+                    &*ctx.clock,
+                    std::time::Duration::from_millis(100),
+                )
+                .await;
 
                 // Re-execute as load
                 let load_input = json!({

@@ -57,9 +57,7 @@ mod tests {
         };
 
         let bridge = CandidateBridge::new(Arc::new(TestClock::default()));
-        let candidate = bridge.generate_candidate(&genome, &intent)
-            .await
-            .unwrap();
+        let candidate = bridge.generate_candidate(&genome, &intent).await.unwrap();
         assert!(!candidate.changes.is_empty());
     }
 }

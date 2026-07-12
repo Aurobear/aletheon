@@ -172,7 +172,12 @@ fn cycle1_boundary_rule_roundtrip() {
 fn cycle1_identity_roundtrip() {
     let (_tmp, store) = temp_store();
 
-    let identity = IdentityLayer::new("aletheon", "persistent self-evolving runtime", "0.1.0", test_clock());
+    let identity = IdentityLayer::new(
+        "aletheon",
+        "persistent self-evolving runtime",
+        "0.1.0",
+        test_clock(),
+    );
 
     // Apply a mutation to build history
     identity.mutate(

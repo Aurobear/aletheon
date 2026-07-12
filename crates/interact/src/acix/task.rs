@@ -502,7 +502,11 @@ impl TaskWorker {
                     Ok("Composite executed".into())
                 }
                 TaskAction::Wait(ms) => {
-                    aletheon_kernel::chronos::Timer::sleep(&*self.clock, std::time::Duration::from_millis(*ms)).await;
+                    aletheon_kernel::chronos::Timer::sleep(
+                        &*self.clock,
+                        std::time::Duration::from_millis(*ms),
+                    )
+                    .await;
                     Ok(format!("Waited {ms}ms"))
                 }
             }

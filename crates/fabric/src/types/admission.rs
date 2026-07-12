@@ -341,7 +341,7 @@ mod tests {
             budget_reservation: None,
             lease: None,
         };
-        assert_eq!(permit.is_valid_at(MonoTime(0)), false);
+        assert!(!permit.is_valid_at(MonoTime(0)));
     }
 
     #[test]

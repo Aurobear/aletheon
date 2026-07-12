@@ -181,7 +181,11 @@ impl SemanticMemory {
     }
 
     /// Create a SemanticMemory with an embedding provider for vector search.
-    pub fn with_embedding_provider(db_path: PathBuf, provider: Arc<dyn EmbeddingProvider>, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn with_embedding_provider(
+        db_path: PathBuf,
+        provider: Arc<dyn EmbeddingProvider>,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),

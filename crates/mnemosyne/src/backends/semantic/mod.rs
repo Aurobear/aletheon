@@ -33,7 +33,11 @@ mod tests {
     fn setup_with_embedding() -> (tempfile::NamedTempFile, SemanticMemory) {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let provider = Arc::new(HashEmbeddingProvider::new(32));
-        let mem = SemanticMemory::with_embedding_provider(tmp.path().to_path_buf(), provider, test_clock());
+        let mem = SemanticMemory::with_embedding_provider(
+            tmp.path().to_path_buf(),
+            provider,
+            test_clock(),
+        );
         (tmp, mem)
     }
 

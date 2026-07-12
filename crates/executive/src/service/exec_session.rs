@@ -3,7 +3,7 @@
 //! Wraps the manual wiring previously duplicated in `crates/bin/src/main.rs`
 //! so the binary crate only depends on `executive + interact`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;

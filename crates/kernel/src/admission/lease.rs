@@ -1,4 +1,3 @@
-
 //! In-memory resource lease manager — Phase 5A.
 //!
 //! Manages exclusive/shared access to named resources (e.g. "gpu",
@@ -21,6 +20,7 @@ use tokio::sync::Mutex;
 
 /// An active lease on a resource.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct LeaseEntry {
     id: ResourceLeaseId,
     resource: String,

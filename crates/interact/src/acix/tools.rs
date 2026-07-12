@@ -791,8 +791,16 @@ pub struct AcixGroundTool {
 }
 
 impl AcixGroundTool {
-    pub fn new(aci: Arc<Aci>, grounding: Arc<dyn GroundingProvider>, clock: Arc<dyn Clock>) -> Self {
-        Self { aci, grounding, clock }
+    pub fn new(
+        aci: Arc<Aci>,
+        grounding: Arc<dyn GroundingProvider>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            aci,
+            grounding,
+            clock,
+        }
     }
 }
 
@@ -923,10 +931,7 @@ pub fn register_acix_tools_with(
         aci: Arc::clone(&aci),
         clock: Arc::clone(&clock),
     }));
-    let _ = registry.register(Arc::new(RightClickTool {
-        aci,
-        clock,
-    }));
+    let _ = registry.register(Arc::new(RightClickTool { aci, clock }));
 }
 
 /// Register all ACIX tools into the given `ToolRegistry` with mock drivers.

@@ -27,8 +27,7 @@ impl MonoDeadline {
 /// needs chrono types (serialization, formatting, arithmetic).
 /// Returns `DateTime::UNIX_EPOCH` if the millis value is out of chrono's range.
 pub fn wall_to_datetime(wt: WallTime) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::from_timestamp_millis(wt.0)
-        .unwrap_or(chrono::DateTime::UNIX_EPOCH)
+    chrono::DateTime::from_timestamp_millis(wt.0).unwrap_or(chrono::DateTime::UNIX_EPOCH)
 }
 
 #[cfg(test)]

@@ -13,7 +13,6 @@ use crate::sandbox::{
 /// Always available. Used as last-resort fallback.
 pub struct NoopBackend {
     pub clock: Arc<dyn Clock>,
-
 }
 
 #[async_trait]

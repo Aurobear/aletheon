@@ -109,7 +109,8 @@ pub struct EvolutionCoordinator {
 
 impl EvolutionCoordinator {
     pub fn new(config: EvolutionConfig, clock: Arc<dyn Clock>) -> Result<Self> {
-        let lineage = LineageTracker::with_path(config.lineage_dir.join("lineage.jsonl"), clock.clone())?;
+        let lineage =
+            LineageTracker::with_path(config.lineage_dir.join("lineage.jsonl"), clock.clone())?;
         Ok(Self {
             config,
             reflector: Reflector::new(clock.clone()),

@@ -151,7 +151,9 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             if let Ok(awareness_level) =
                 serde_json::from_str::<AwarenessLevel>(&format!("\"{}\"", level))
             {
-                app.app_state.awareness.update(awareness_level, context, app.clock.mono_now());
+                app.app_state
+                    .awareness
+                    .update(awareness_level, context, app.clock.mono_now());
             }
         }
         ClientEvent::PlanUpdate {

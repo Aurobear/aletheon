@@ -1,6 +1,6 @@
 // crates/runtime/src/core/react_loop/goal_tracker.rs
-use std::collections::HashMap;
 use fabric::Clock;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 

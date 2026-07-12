@@ -289,7 +289,10 @@ mod tests {
 
     #[test]
     fn snapshot_includes_session_and_blackboard() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         ws.blackboard.set("goal", json!("ship it"));
         let snap = ws.snapshot();
         assert_eq!(snap["session_id"], json!("s1"));
@@ -298,7 +301,10 @@ mod tests {
 
     #[test]
     fn clear_resets_state() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         ws.blackboard.set("k", json!(1));
         ws.clear();
         assert!(ws.blackboard.is_empty());
@@ -307,13 +313,19 @@ mod tests {
 
     #[test]
     fn version_starts_at_zero() {
-        let ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         assert_eq!(ws.version, 0);
     }
 
     #[test]
     fn propose_succeeds_when_version_matches() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let op = AgoraOperation::PublishFact {
             key: "x".into(),
             value: json!(42),
@@ -327,7 +339,10 @@ mod tests {
 
     #[test]
     fn propose_fails_on_version_conflict() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         // Bump version by committing something
         let op = AgoraOperation::PublishFact {
             key: "x".into(),
@@ -349,7 +364,10 @@ mod tests {
 
     #[test]
     fn commit_bumps_version_and_logs() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let op = AgoraOperation::PublishFact {
             key: "k".into(),
             value: json!("v"),
@@ -364,13 +382,19 @@ mod tests {
 
     #[test]
     fn commit_unknown_proposal_returns_none() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         assert!(ws.commit(Uuid::new_v4()).is_none());
     }
 
     #[test]
     fn changes_since_returns_commits_after_version() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         // Commit v1
         let p1 = ws
             .propose(
@@ -406,7 +430,10 @@ mod tests {
 
     #[test]
     fn clear_resets_version_and_commits() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let p = ws
             .propose(
                 0,
@@ -429,7 +456,10 @@ mod tests {
 
     #[test]
     fn commit_publish_fact_writes_to_blackboard() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let prop = ws
             .propose(
                 0,
@@ -446,7 +476,10 @@ mod tests {
 
     #[test]
     fn commit_emit_observation_appends_to_trace() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let prop = ws
             .propose(
                 0,
@@ -464,7 +497,10 @@ mod tests {
 
     #[test]
     fn commit_claim_release_manages_claims() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let oid = "obj-42".to_string();
 
         // Claim
@@ -486,7 +522,10 @@ mod tests {
 
     #[test]
     fn commit_propose_plan_traces_and_stores_on_blackboard() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let plan = json!({"steps": ["a", "b", "c"]});
         let prop = ws
             .propose(0, AgoraOperation::ProposePlan { plan: plan.clone() })
@@ -501,7 +540,10 @@ mod tests {
 
     #[test]
     fn commit_update_task_sets_status() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         ws.task_graph.add("t1", "do the thing", vec![]);
         let patch = json!({"id": "t1", "status": "done"});
         let prop = ws
@@ -519,7 +561,10 @@ mod tests {
 
     #[test]
     fn reject_removes_pending_proposal() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let prop = ws
             .propose(
                 0,
@@ -538,13 +583,19 @@ mod tests {
 
     #[test]
     fn reject_unknown_proposal_returns_none() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         assert!(ws.reject(Uuid::new_v4(), RejectReason::Timeout).is_none());
     }
 
     #[test]
     fn reject_records_trace_entry() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let prop = ws
             .propose(
                 0,
@@ -566,7 +617,10 @@ mod tests {
 
     #[test]
     fn reject_does_not_bump_version() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let prop = ws
             .propose(
                 0,
@@ -584,7 +638,10 @@ mod tests {
 
     #[test]
     fn reject_prevents_later_commit() {
-        let mut ws = Workspace::new("s1", Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
         let prop = ws
             .propose(
                 0,

@@ -94,7 +94,11 @@ impl ToolRunnerWithGuard {
         preference: SandboxPreference,
         clock: Arc<dyn Clock>,
     ) -> Self {
-        Self::new(create_default_executor(preference, clock.clone()), audit_logger, clock)
+        Self::new(
+            create_default_executor(preference, clock.clone()),
+            audit_logger,
+            clock,
+        )
     }
 
     /// Set the approval gate used for actions that require approval.
@@ -511,8 +515,12 @@ mod tests {
 
     fn make_runner(gate: Arc<dyn ApprovalGate>) -> ToolRunnerWithGuard {
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        ToolRunnerWithGuard::with_sandbox_preference(audit_logger, SandboxPreference::Forbid, test_clock())
-            .with_approval_gate(gate)
+        ToolRunnerWithGuard::with_sandbox_preference(
+            audit_logger,
+            SandboxPreference::Forbid,
+            test_clock(),
+        )
+        .with_approval_gate(gate)
     }
 
     fn make_input_rm() -> serde_json::Value {
@@ -570,10 +578,13 @@ mod tests {
             ..Default::default()
         };
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner =
-            ToolRunnerWithGuard::with_sandbox_preference(audit_logger, SandboxPreference::Forbid, test_clock())
-                .with_approval_gate(Arc::new(AutoDenyGate))
-                .with_permission_context(ctx);
+        let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
+            audit_logger,
+            SandboxPreference::Forbid,
+            test_clock(),
+        )
+        .with_approval_gate(Arc::new(AutoDenyGate))
+        .with_permission_context(ctx);
         let tool = DummyL2Tool;
         let result = runner
             .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
@@ -621,8 +632,8 @@ mod tests {
         policy.add_rule(ExecPrefixRule::new("bash_exec", ExecDecision::Forbidden));
 
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner =
-            ToolRunnerWithGuard::with_default_sandbox(audit_logger, test_clock()).with_policy(policy);
+        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger, test_clock())
+            .with_policy(policy);
 
         let tool = DummyL2Tool;
         let result = runner

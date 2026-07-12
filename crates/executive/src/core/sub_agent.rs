@@ -28,9 +28,9 @@ use fabric::ipc::envelope_v2::Target;
 use fabric::ipc::mailbox::{InProcessMailbox, InProcessMailboxService, Mailbox, MailboxService};
 use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use fabric::{
-    AgentProfileId, CancelReason, Clock, ExitReason, NamespaceId, OperationExitReason, OperationKind,
-    OperationManager, OperationRequest, ProcessId, ProcessManager, ProcessSignal, ProcessSnapshot,
-    ProcessState, SpawnSpec, SubAgentState,
+    AgentProfileId, CancelReason, Clock, ExitReason, NamespaceId, OperationExitReason,
+    OperationKind, OperationManager, OperationRequest, ProcessId, ProcessManager, ProcessSignal,
+    ProcessSnapshot, ProcessState, SpawnSpec, SubAgentState,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -53,13 +53,16 @@ pub trait SubAgentRuntime: Send + Sync {
 }
 
 /// Owned, boxed future for spawn() compatibility.
+#[allow(dead_code)]
 type RuntimeFuture = Pin<Box<dyn Future<Output = Result<String, String>> + Send>>;
 
 /// Erased runtime closure — bridges the trait to the operation scope spawn.
+#[allow(dead_code)]
 struct RuntimeTask {
     fut: RuntimeFuture,
 }
 
+#[allow(dead_code)]
 impl RuntimeTask {
     fn new(runtime: Arc<dyn SubAgentRuntime>, task: String, cancel: CancellationToken) -> Self {
         Self {

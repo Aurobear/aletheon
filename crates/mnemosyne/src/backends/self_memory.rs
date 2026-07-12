@@ -92,7 +92,10 @@ impl Subsystem for SelfMemory {
     }
 }
 
-fn row_to_entry(row: &rusqlite::Row, clock: &Arc<dyn fabric::Clock>) -> rusqlite::Result<MemoryEntry> {
+fn row_to_entry(
+    row: &rusqlite::Row,
+    clock: &Arc<dyn fabric::Clock>,
+) -> rusqlite::Result<MemoryEntry> {
     let id_str: String = row.get("id")?;
     let tags_str: String = row.get("tags")?;
     let assoc_str: String = row.get("associations")?;

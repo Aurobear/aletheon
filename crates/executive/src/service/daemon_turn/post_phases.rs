@@ -107,8 +107,7 @@ impl DaemonTurnOrchestrator {
                         let summarizer = cognit::core::ExperienceSummarizer::new(
                             self.subsystems.ports.clock.clone(),
                         );
-                        if let Some(evo_entry) = summarizer.summarize(&recent)
-                        {
+                        if let Some(evo_entry) = summarizer.summarize(&recent) {
                             if let Err(e) = mem.store_evolution_log(&evo_entry) {
                                 warn!(error = %e, "Failed to store evolution log");
                             } else {

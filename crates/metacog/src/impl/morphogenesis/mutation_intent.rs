@@ -287,10 +287,10 @@ fn success_rate(entries: &[ReflectionEntry]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use fabric::cognit::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
     use fabric::wall_to_datetime;
     use fabric::Clock;
-    use aletheon_kernel::chronos::TestClock;
 
     fn test_clock() -> TestClock {
         TestClock::default()

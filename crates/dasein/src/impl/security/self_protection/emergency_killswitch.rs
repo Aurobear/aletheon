@@ -275,7 +275,8 @@ impl EmergencyKillswitch {
                 }
 
                 if let Some(activated_at_ms) = state.activated_at_ms {
-                    let elapsed_ms = (self.clock.wall_now().0 as u64).saturating_sub(activated_at_ms);
+                    let elapsed_ms =
+                        (self.clock.wall_now().0 as u64).saturating_sub(activated_at_ms);
                     if elapsed_ms < config.cooldown.as_millis() as u64 {
                         return false; // Still in cooldown
                     }

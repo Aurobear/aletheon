@@ -225,7 +225,7 @@ async fn many_mailboxes_concurrent_routing() {
         let msg = mb
             .recv()
             .await
-            .expect(&format!("agent-{i} should have a message"));
+            .unwrap_or_else(|| panic!("agent-{i} should have a message"));
         assert_eq!(msg.payload["body"], format!("to-{i}"));
     }
 }

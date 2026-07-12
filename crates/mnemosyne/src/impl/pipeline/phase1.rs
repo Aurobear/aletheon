@@ -243,7 +243,6 @@ fn generate_slug(session_id: &str) -> String {
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,7 +378,8 @@ mod tests {
 
         let mut db = StateDatabase::new();
         let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::new(
-            1000000000000, 1000000000000,
+            1000000000000,
+            1000000000000,
         ));
         let now = clock.wall_now().0 as u64 / 1000;
         for sid in &["sess-a", "sess-b"] {

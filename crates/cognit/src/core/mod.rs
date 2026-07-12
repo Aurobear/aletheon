@@ -86,6 +86,7 @@ pub struct CognitCore {
     dual_model: Option<DualModelBridge>,
     learning: Option<LearningBridge>,
     awareness_generator: AwarenessGenerator,
+    #[allow(dead_code)]
     clock: Arc<dyn Clock>,
 }
 

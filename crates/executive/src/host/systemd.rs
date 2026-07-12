@@ -9,8 +9,8 @@
 //! Reuses `RuntimeCore::bootstrap`, `UnixServer`, and `McpEmbedded`
 //! identically to `DaemonHost`.
 
-use anyhow::Result;
 use aletheon_kernel::chronos::Timer;
+use anyhow::Result;
 use std::os::unix::net::UnixDatagram;
 use std::path::PathBuf;
 use std::time::Duration;

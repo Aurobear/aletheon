@@ -184,7 +184,8 @@ impl MemoryBackend for SemanticMemory {
                 let mut stmt = conn.prepare(&sql)?;
                 let params_refs: Vec<&dyn rusqlite::types::ToSql> =
                     param_values.iter().map(|p| p.as_ref()).collect();
-                let rows = stmt.query_map(params_refs.as_slice(), |row| row_to_entry(row, &self.clock))?;
+                let rows =
+                    stmt.query_map(params_refs.as_slice(), |row| row_to_entry(row, &self.clock))?;
                 entries = rows.collect::<std::result::Result<Vec<_>, _>>()?;
 
                 let now = wall_to_datetime(self.clock.wall_now()).timestamp();

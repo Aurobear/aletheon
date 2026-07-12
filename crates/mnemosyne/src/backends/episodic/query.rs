@@ -51,7 +51,9 @@ impl EpisodicMemory {
 
                     Ok(ReflectionEntry {
                         id,
-                        timestamp: created_at.parse().unwrap_or_else(|_| wall_to_datetime(self.clock.wall_now())),
+                        timestamp: created_at
+                            .parse()
+                            .unwrap_or_else(|_| wall_to_datetime(self.clock.wall_now())),
                         trigger,
                         task_summary,
                         outcome,
@@ -115,7 +117,9 @@ impl EpisodicMemory {
                     Ok((
                         ReflectionEntry {
                             id,
-                            timestamp: created_at.parse().unwrap_or_else(|_| wall_to_datetime(self.clock.wall_now())),
+                            timestamp: created_at
+                                .parse()
+                                .unwrap_or_else(|_| wall_to_datetime(self.clock.wall_now())),
                             trigger,
                             task_summary,
                             outcome,
@@ -270,7 +274,9 @@ impl EpisodicMemory {
 
                     Ok(EvolutionLogEntry {
                         id,
-                        timestamp: created_at.parse().unwrap_or_else(|_| wall_to_datetime(self.clock.wall_now())),
+                        timestamp: created_at
+                            .parse()
+                            .unwrap_or_else(|_| wall_to_datetime(self.clock.wall_now())),
                         trigger,
                         basis: serde_json::from_str(&basis_str).unwrap_or_default(),
                         patterns_detected: serde_json::from_str(&patterns_str).unwrap_or_default(),
@@ -285,7 +291,10 @@ impl EpisodicMemory {
 }
 
 /// Convert a rusqlite Row into a MemoryEntry.
-pub(super) fn row_to_entry(row: &rusqlite::Row, clock: &std::sync::Arc<dyn fabric::Clock>) -> rusqlite::Result<MemoryEntry> {
+pub(super) fn row_to_entry(
+    row: &rusqlite::Row,
+    clock: &std::sync::Arc<dyn fabric::Clock>,
+) -> rusqlite::Result<MemoryEntry> {
     let id_str: String = row.get("id")?;
     let tags_str: String = row.get("tags")?;
     let assoc_str: String = row.get("associations")?;

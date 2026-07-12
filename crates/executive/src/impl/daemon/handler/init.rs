@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
-use fabric::{Clock, MonoTime};
+use fabric::Clock;
 use tokio_util::sync::CancellationToken;
 
 use super::super::model_router::{ModelRouter, TaskType};
@@ -233,7 +233,10 @@ impl RequestHandler {
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
         let recall_db_path = data_dir.join("recall_memory.db");
         let recall_clock: Arc<dyn fabric::Clock> = Arc::new(SystemClock::new());
-        let recall_memory = Arc::new(Mutex::new(RecallMemory::new(&recall_db_path, recall_clock)?));
+        let recall_memory = Arc::new(Mutex::new(RecallMemory::new(
+            &recall_db_path,
+            recall_clock,
+        )?));
 
         // FactStore
         let aletheon_dir = dirs::home_dir()
@@ -493,7 +496,11 @@ impl RequestHandler {
         let debug_hook = Arc::new(tokio::sync::Mutex::new(DebugBusHook::new(
             EventFilter::default(),
         )));
-        let debug_handler = Arc::new(DebugHandler::new(debug_hook, debug_perf.clone(), clock.clone()));
+        let debug_handler = Arc::new(DebugHandler::new(
+            debug_hook,
+            debug_perf.clone(),
+            clock.clone(),
+        ));
 
         // Session Gateway
         let param_registry = Arc::new(ParamRegistry::new());
@@ -611,7 +618,7 @@ impl RequestHandler {
                 let tools_for_agents = subsystems.corpus.tools.clone();
                 let exec_for_agents = subsystems.runtime.clone();
 
-                let clock_for_agents = clock.clone();
+                let _clock_for_agents = clock.clone();
                 let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
                     Arc::new(move |system_prompt, user_prompt, allowed_tools| {
                         let llm = llm_for_agents.clone();
@@ -620,7 +627,7 @@ impl RequestHandler {
                         let sp = system_prompt;
                         let up = user_prompt;
                         let at = allowed_tools;
-                            let clock = clock.clone();
+                        let clock = clock.clone();
                         Box::pin(async move {
                             // 1. Register tracked sub-agent with SubAgentSpawner.
                             let agent_id = {
@@ -657,6 +664,7 @@ impl RequestHandler {
                                     fabric::message::Message::system(&sp),
                                     fabric::message::Message::user(&up),
                                 ];
+                                #[allow(unused_assignments)]
                                 let mut response_text = String::new();
                                 let mut loop_result: Result<String, anyhow::Error> =
                                     Ok(String::new());

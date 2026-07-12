@@ -376,7 +376,11 @@ mod tests {
                 .unwrap()
                 .push((self.tool_name.clone(), seq));
             if self.delay_ms > 0 {
-                aletheon_kernel::chronos::Timer::sleep(&*ctx.clock, Duration::from_millis(self.delay_ms)).await;
+                aletheon_kernel::chronos::Timer::sleep(
+                    &*ctx.clock,
+                    Duration::from_millis(self.delay_ms),
+                )
+                .await;
             }
             ToolResult {
                 content: format!("{}:ok:seq{}", self.tool_name, seq),

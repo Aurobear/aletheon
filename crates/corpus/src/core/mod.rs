@@ -42,7 +42,11 @@ impl AletheonBodyRuntime {
     }
 
     /// Create with explicit runner (for testing).
-    pub fn with_runner(registry: ToolRegistry, runner: ToolRunnerWithGuard, clock: Arc<dyn Clock>) -> Self {
+    pub fn with_runner(
+        registry: ToolRegistry,
+        runner: ToolRunnerWithGuard,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         let capabilities = Self::build_capabilities(&registry);
 
         Self {

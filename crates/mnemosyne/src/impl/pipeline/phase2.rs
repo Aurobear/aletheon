@@ -228,7 +228,8 @@ mod tests {
 
         let (mut db, _) = setup_db_with_succeeded(3);
         let config = default_phase2_config();
-        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let clock: Arc<dyn fabric::Clock> =
+            Arc::new(aletheon_kernel::chronos::TestClock::default());
         let consolidator = Phase2Consolidator::new(config, clock);
 
         let result = consolidator.run(&mut db, memory_root).await.unwrap();
@@ -257,7 +258,8 @@ mod tests {
 
         let mut db = StateDatabase::new();
         let config = default_phase2_config();
-        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let clock: Arc<dyn fabric::Clock> =
+            Arc::new(aletheon_kernel::chronos::TestClock::default());
         let consolidator = Phase2Consolidator::new(config, clock);
 
         let result = consolidator.run(&mut db, memory_root).await.unwrap();
@@ -278,7 +280,8 @@ mod tests {
             max_unused_days: 14,
             model: "test-model".to_string(),
         };
-        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let clock: Arc<dyn fabric::Clock> =
+            Arc::new(aletheon_kernel::chronos::TestClock::default());
         let consolidator = Phase2Consolidator::new(config, clock);
 
         let result = consolidator.run(&mut db, memory_root).await.unwrap();
@@ -294,7 +297,8 @@ mod tests {
         db.acquire_phase2_lock("other-claim");
 
         let config = default_phase2_config();
-        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let clock: Arc<dyn fabric::Clock> =
+            Arc::new(aletheon_kernel::chronos::TestClock::default());
         let consolidator = Phase2Consolidator::new(config, clock);
 
         let result = consolidator.run(&mut db, memory_root).await;
@@ -309,7 +313,8 @@ mod tests {
 
         let (mut db, _) = setup_db_with_succeeded(1);
         let config = default_phase2_config();
-        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let clock: Arc<dyn fabric::Clock> =
+            Arc::new(aletheon_kernel::chronos::TestClock::default());
         let consolidator = Phase2Consolidator::new(config, clock);
 
         assert!(!db.is_phase2_locked());

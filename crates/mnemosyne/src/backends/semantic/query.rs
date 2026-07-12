@@ -10,7 +10,10 @@ use fabric::{wall_to_datetime, MemoryEntry, MemoryType, WallTime};
 use uuid::Uuid;
 
 /// Convert a rusqlite Row into a MemoryEntry.
-pub(super) fn row_to_entry(row: &rusqlite::Row, clock: &Arc<dyn fabric::Clock>) -> rusqlite::Result<MemoryEntry> {
+pub(super) fn row_to_entry(
+    row: &rusqlite::Row,
+    clock: &Arc<dyn fabric::Clock>,
+) -> rusqlite::Result<MemoryEntry> {
     let id_str: String = row.get("id")?;
     let tags_str: String = row.get("tags")?;
     let assoc_str: String = row.get("associations")?;

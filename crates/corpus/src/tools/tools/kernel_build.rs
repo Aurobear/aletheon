@@ -87,9 +87,15 @@ impl Tool for KernelBuildTool {
             .to_string();
 
         match action {
-            "clone" => self.action_clone(&input, &source_dir, &*ctx.clock, start).await,
+            "clone" => {
+                self.action_clone(&input, &source_dir, &*ctx.clock, start)
+                    .await
+            }
             "config" => self.action_config(&source_dir, &*ctx.clock, start).await,
-            "build" => self.action_build(&input, &source_dir, &*ctx.clock, start).await,
+            "build" => {
+                self.action_build(&input, &source_dir, &*ctx.clock, start)
+                    .await
+            }
             "install" => self.action_install(&source_dir, &*ctx.clock, start).await,
             _ => ToolResult {
                 content: format!(
@@ -107,7 +113,13 @@ impl Tool for KernelBuildTool {
 }
 
 impl KernelBuildTool {
-    async fn action_clone(&self, input: &Value, source_dir: &str, clock: &dyn fabric::Clock, start: fabric::MonoTime) -> ToolResult {
+    async fn action_clone(
+        &self,
+        input: &Value,
+        source_dir: &str,
+        clock: &dyn fabric::Clock,
+        start: fabric::MonoTime,
+    ) -> ToolResult {
         let repo_url = input["repo_url"]
             .as_str()
             .unwrap_or("https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git");
@@ -181,7 +193,12 @@ impl KernelBuildTool {
         }
     }
 
-    async fn action_config(&self, source_dir: &str, clock: &dyn fabric::Clock, start: fabric::MonoTime) -> ToolResult {
+    async fn action_config(
+        &self,
+        source_dir: &str,
+        clock: &dyn fabric::Clock,
+        start: fabric::MonoTime,
+    ) -> ToolResult {
         info!("Preparing kernel config from running kernel");
 
         // Step 1: Copy running kernel config
@@ -250,7 +267,13 @@ impl KernelBuildTool {
         }
     }
 
-    async fn action_build(&self, input: &Value, source_dir: &str, clock: &dyn fabric::Clock, start: fabric::MonoTime) -> ToolResult {
+    async fn action_build(
+        &self,
+        input: &Value,
+        source_dir: &str,
+        clock: &dyn fabric::Clock,
+        start: fabric::MonoTime,
+    ) -> ToolResult {
         let jobs = input["jobs"]
             .as_u64()
             .map(|j| j.to_string())
@@ -331,7 +354,12 @@ impl KernelBuildTool {
         }
     }
 
-    async fn action_install(&self, source_dir: &str, clock: &dyn fabric::Clock, start: fabric::MonoTime) -> ToolResult {
+    async fn action_install(
+        &self,
+        source_dir: &str,
+        clock: &dyn fabric::Clock,
+        start: fabric::MonoTime,
+    ) -> ToolResult {
         info!("Installing kernel from {}", source_dir);
 
         // Step 1: make modules_install

@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
 use fabric::{
     wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
     MemoryHandle, MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext,
@@ -24,7 +23,11 @@ pub struct MockMemoryBackend {
 }
 
 impl MockMemoryBackend {
-    pub fn new(name: impl Into<String>, memory_type: MemoryType, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        memory_type: MemoryType,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
         Self {
             name: name.into(),
             memory_type,
@@ -267,7 +270,8 @@ mod tests {
     use std::path::PathBuf;
 
     async fn setup_backend() -> MockMemoryBackend {
-        let mut backend = MockMemoryBackend::episodic(Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let mut backend =
+            MockMemoryBackend::episodic(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let ctx = SubsystemContext {
             name: "test".into(),
             working_dir: PathBuf::from("/tmp"),

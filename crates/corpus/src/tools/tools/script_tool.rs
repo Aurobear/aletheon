@@ -7,7 +7,6 @@
 //! as the tool result.
 
 use std::path::PathBuf;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};

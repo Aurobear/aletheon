@@ -11,9 +11,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use fabric::{
-        wall_to_datetime, BehaviorAdjustment, CompactStrategy, EvolutionLogEntry, MemoryBackend,
-        MemoryEntry, MemoryQuery, MemoryType, ReflectionEntry, ReflectionTrigger, Subsystem,
-        SubsystemContext, WallTime,
+        BehaviorAdjustment, CompactStrategy, EvolutionLogEntry, MemoryBackend, MemoryEntry,
+        MemoryQuery, MemoryType, ReflectionEntry, ReflectionTrigger, Subsystem, SubsystemContext,
     };
     use std::sync::Arc;
     use uuid::Uuid;

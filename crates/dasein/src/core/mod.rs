@@ -109,6 +109,7 @@ pub struct SelfField {
     permission_authority:
         Option<Arc<dyn fabric::policy::permission_authority::PermissionAuthority>>,
     /// Clock for deterministic time in sub-modules.
+    #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
 }
 

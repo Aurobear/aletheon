@@ -58,7 +58,7 @@ impl Tool for ToolSearchTool {
         })
     }
 
-    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let query = input["query"].as_str().unwrap_or("");
         let limit = input["limit"].as_u64().unwrap_or(5) as usize;
 

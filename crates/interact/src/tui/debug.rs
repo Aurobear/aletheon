@@ -660,7 +660,11 @@ async fn perf_stats(socket: &std::path::Path, interval: Option<u64>) -> Result<(
             Some(secs) => {
                 println!();
                 println!("Refreshing in {}s (Ctrl+C to stop)...", secs);
-                Timer::sleep(&*std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()), std::time::Duration::from_secs(secs)).await;
+                Timer::sleep(
+                    &*std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                    std::time::Duration::from_secs(secs),
+                )
+                .await;
                 // Clear screen
                 print!("\x1B[2J\x1B[H");
             }

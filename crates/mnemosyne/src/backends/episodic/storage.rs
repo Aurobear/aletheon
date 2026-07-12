@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use fabric::{
-    wall_to_datetime, CompactResult, CompactStrategy, EvolutionLogEntry, MemoryBackend, MemoryEntry,
-    MemoryFilter, MemoryHandle, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry,
+    wall_to_datetime, CompactResult, CompactStrategy, EvolutionLogEntry, MemoryBackend,
+    MemoryEntry, MemoryFilter, MemoryHandle, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry,
     SelfAwareness, WallTime,
 };
 use rusqlite::params;
@@ -203,7 +203,8 @@ impl MemoryBackend for EpisodicMemory {
                 } => {
                     let cutoff = wall_to_datetime(WallTime(
                         self.clock.wall_now().0 - max_age.num_milliseconds(),
-                    )).to_rfc3339();
+                    ))
+                    .to_rfc3339();
                     conn.execute(
                         "DELETE FROM memory WHERE memory_type = 'episodic'
                          AND created_at < ?1 AND access_count < ?2",

@@ -434,7 +434,8 @@ impl RequestHandler {
         .await
         {
             Ok(new_sm) => {
-                let created_at = wall_to_datetime(self.subsystems.ports.clock.wall_now()).to_rfc3339();
+                let created_at =
+                    wall_to_datetime(self.subsystems.ports.clock.wall_now()).to_rfc3339();
                 let sm = Arc::new(tokio::sync::Mutex::new(new_sm));
                 self.sessions.lock().await.insert(new_id.clone(), sm);
                 self.subsystems

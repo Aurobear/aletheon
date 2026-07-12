@@ -179,7 +179,9 @@ impl IdentityLayer {
                             version: row.get(2)?,
                             created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
                                 .map(|dt| dt.with_timezone(&Utc))
-                                .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
+                                .unwrap_or_else(|_| {
+                                    fabric::wall_to_datetime(self.clock.wall_now())
+                                }),
                             last_mutation: last_mutation
                                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                                 .map(|dt| dt.with_timezone(&Utc)),
@@ -207,11 +209,7 @@ mod tests {
         Arc::new(TestClock::default())
     }
 
-    fn test_layer(
-        name: &str,
-        desc: &str,
-        ver: &str,
-    ) -> IdentityLayer {
+    fn test_layer(name: &str, desc: &str, ver: &str) -> IdentityLayer {
         IdentityLayer::new(name, desc, ver, test_clock())
     }
 

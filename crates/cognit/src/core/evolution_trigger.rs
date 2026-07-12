@@ -103,9 +103,7 @@ impl EvolutionTrigger {
         let next_check = self
             .last_evolution
             .map(|t| t + Duration::hours(self.config.periodic_interval_hours as i64))
-            .unwrap_or_else(|| {
-                now + Duration::hours(self.config.periodic_interval_hours as i64)
-            });
+            .unwrap_or_else(|| now + Duration::hours(self.config.periodic_interval_hours as i64));
 
         EvolutionDecision::NotYet { next_check }
     }
@@ -334,7 +332,8 @@ mod tests {
     fn periodic_triggers_when_interval_exceeded() {
         let mut trigger = make_trigger();
         // Set last evolution to 7 hours ago
-        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)) - Duration::hours(7));
+        trigger
+            .set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)) - Duration::hours(7));
 
         let reflections = vec![success_entry(0.9)];
         let decision = trigger.check_should_evolve(&reflections);
@@ -349,7 +348,8 @@ mod tests {
     #[test]
     fn periodic_does_not_trigger_within_interval() {
         let mut trigger = make_trigger();
-        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)) - Duration::hours(2));
+        trigger
+            .set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)) - Duration::hours(2));
 
         let reflections = vec![success_entry(0.9)];
         let decision = trigger.check_should_evolve(&reflections);

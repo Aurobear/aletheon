@@ -97,7 +97,7 @@ impl Tool for AgentTool {
         })
     }
 
-    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let agent_type = input["agent_type"].as_str().unwrap_or("");
         let prompt = input["prompt"].as_str().unwrap_or("");
 

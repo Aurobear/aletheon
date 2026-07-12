@@ -118,7 +118,10 @@ impl IntegrityMonitor {
     }
 
     /// Create a new IntegrityMonitor with killswitch integration.
-    pub fn with_killswitch(killswitch: Arc<Mutex<EmergencyKillswitch>>, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn with_killswitch(
+        killswitch: Arc<Mutex<EmergencyKillswitch>>,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
         Self {
             checks: Vec::new(),
             baseline_hashes: HashMap::new(),

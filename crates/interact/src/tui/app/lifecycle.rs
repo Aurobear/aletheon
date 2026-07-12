@@ -80,7 +80,9 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
     while app.running {
         // Test timeout check
-        if test_input.is_some() && (app.clock.mono_now().0 - test_start.0) >= test_timeout.as_millis() as u64 {
+        if test_input.is_some()
+            && (app.clock.mono_now().0 - test_start.0) >= test_timeout.as_millis() as u64
+        {
             app.running = false;
             break;
         }

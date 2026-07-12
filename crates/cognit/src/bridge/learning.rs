@@ -72,7 +72,11 @@ impl LearningBridge {
     }
 
     /// Convert aletheon Experience to OutcomeRecord for learning
-    pub fn experience_to_outcome(&self, experience: &Experience, session_id: &str) -> OutcomeRecord {
+    pub fn experience_to_outcome(
+        &self,
+        experience: &Experience,
+        session_id: &str,
+    ) -> OutcomeRecord {
         OutcomeRecord {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session_id.to_string(),

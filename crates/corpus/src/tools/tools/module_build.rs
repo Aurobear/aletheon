@@ -2,7 +2,6 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::time::Instant;
 use tracing::info;
 
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};

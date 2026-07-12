@@ -157,7 +157,6 @@ impl MemoryPipeline {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,14 +191,16 @@ mod tests {
             max_unused_days: 7,
             model: "gpt-4".to_string(),
         };
-        let pipeline = MemoryPipeline::new(PathBuf::from("/tmp/test"), phase1, phase2, test_clock());
+        let pipeline =
+            MemoryPipeline::new(PathBuf::from("/tmp/test"), phase1, phase2, test_clock());
         assert_eq!(pipeline.phase1_config.concurrency_limit, 4);
         assert_eq!(pipeline.phase2_config.max_raw_memories, 10);
     }
 
     #[test]
     fn test_register_session() {
-        let mut pipeline = MemoryPipeline::with_defaults(PathBuf::from("/tmp/memories"), test_clock());
+        let mut pipeline =
+            MemoryPipeline::with_defaults(PathBuf::from("/tmp/memories"), test_clock());
         pipeline.register_session("sess-1".into(), PathBuf::from("/tmp/sessions/sess-1"));
 
         assert_eq!(pipeline.state_db().session_count(), 1);
@@ -253,7 +254,8 @@ mod tests {
         let phase2 = Phase2Config::default();
 
         let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::new(
-            1000000000000, 1000000000000,
+            1000000000000,
+            1000000000000,
         ));
         let mut pipeline = MemoryPipeline::new(memory_root.clone(), phase1, phase2, clock.clone());
 

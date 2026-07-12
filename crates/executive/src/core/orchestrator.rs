@@ -65,7 +65,11 @@ impl AletheonExecutive {
     ///
     /// Returns `Err` if the coordinator cannot be initialized (e.g., lineage
     /// directory creation fails).
-    pub fn with_evolution(mut self, evo_config: EvolutionConfig, clock: Arc<dyn Clock>) -> Result<Self> {
+    pub fn with_evolution(
+        mut self,
+        evo_config: EvolutionConfig,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
         self.evolution = Some(EvolutionCoordinator::new(evo_config, clock)?);
         Ok(self)
     }
