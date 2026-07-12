@@ -1,3 +1,4 @@
+pub mod memory_pipeline;
 pub mod phase1;
 pub mod phase2;
 pub mod state_db;

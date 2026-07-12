@@ -46,9 +46,9 @@ pub use r#impl::compaction::CompactionManager;
 pub use r#impl::compressor::AdvancedCompressor;
 pub use r#impl::core_memory::{CoreMemory, MemoryBlock};
 pub use r#impl::fact_store::FactStore;
-pub use r#impl::memory_pipeline::MemoryPipeline;
+pub use r#impl::pipeline::memory_pipeline::MemoryPipeline;
 pub use r#impl::recall_memory::RecallMemory;
-pub use r#impl::scope::MemoryScope;
+pub use r#impl::core_memory::scope::MemoryScope;
 pub use r#impl::tools as memory_tools;
 
 #[cfg(test)]

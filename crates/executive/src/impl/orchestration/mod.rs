@@ -2,6 +2,7 @@ pub mod agent;
 pub mod budget;
 pub mod builtin;
 pub mod config_agent;
+pub mod coordinator;
 pub mod delegate;
 pub mod digraph;
 pub mod handoff;

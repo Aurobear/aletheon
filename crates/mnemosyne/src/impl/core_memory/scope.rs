@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::core_memory::{CoreMemory, MemoryBlock};
+use super::{CoreMemory, MemoryBlock};
 
 // ---------------------------------------------------------------------------
 // MemoryScope
@@ -349,9 +349,9 @@ pub enum ScopeFilter {
 pub trait RecallScopeFilter {
     /// Filter a set of memory entries by scope metadata.
     fn filter_by_scope(
-        entries: Vec<super::recall_memory::MemoryEntry>,
+        entries: Vec<super::super::recall_memory::MemoryEntry>,
         filter: &ScopeFilter,
-    ) -> Vec<super::recall_memory::MemoryEntry>;
+    ) -> Vec<super::super::recall_memory::MemoryEntry>;
 }
 
 /// Default scope filter implementation. Scope is stored in the metadata JSON
@@ -361,9 +361,9 @@ pub struct ScopedRecallFilter;
 
 impl RecallScopeFilter for ScopedRecallFilter {
     fn filter_by_scope(
-        entries: Vec<super::recall_memory::MemoryEntry>,
+        entries: Vec<super::super::recall_memory::MemoryEntry>,
         filter: &ScopeFilter,
-    ) -> Vec<super::recall_memory::MemoryEntry> {
+    ) -> Vec<super::super::recall_memory::MemoryEntry> {
         match filter {
             ScopeFilter::All => entries,
             ScopeFilter::Global => entries
@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_recall_scope_filter() {
-        use super::super::recall_memory::MemoryEntry;
+        use super::super::super::recall_memory::MemoryEntry;
         use chrono::Utc;
 
         let make_entry = |scope_json: &str| MemoryEntry {
