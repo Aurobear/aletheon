@@ -71,7 +71,7 @@ mod tests {
         AgoraCommit {
             id,
             space: fabric::AgoraSpaceId("s".into()),
-            author: fabric::ProcessId(uuid::Uuid::nil()),
+            author: fabric::ProcessId(uuid::Uuid::from_u128(3)),
             version,
             operation: AgoraOperation::PublishFact {
                 key: key.into(),

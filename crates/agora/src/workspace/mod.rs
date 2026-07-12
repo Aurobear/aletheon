@@ -12,6 +12,7 @@ use crate::attention::Attention;
 use crate::blackboard::Blackboard;
 use crate::task_graph::TaskGraph;
 use crate::trace::Trace;
+use fabric::types::operation::ProcessId;
 
 // Re-export versioned commit types from fabric (single source of truth for
 // the trait contract), so consumers can import them from `agora::workspace`.
@@ -81,6 +82,7 @@ impl Workspace {
         &mut self,
         base_version: u64,
         operation: AgoraOperation,
+        author: ProcessId,
     ) -> Result<AgoraProposal, VersionConflict> {
         if base_version != self.version {
             return Err(VersionConflict {
@@ -91,7 +93,7 @@ impl Workspace {
         let proposal = AgoraProposal {
             id: Uuid::new_v4(),
             space: fabric::AgoraSpaceId(self.session_id.clone()),
-            author: fabric::ProcessId(uuid::Uuid::nil()),
+            author,
             base_version,
             operation,
             evidence: Vec::new(),
@@ -146,7 +148,7 @@ impl Workspace {
             confidence: proposal.confidence,
             committed_at: now_ms,
         };
-        self.apply_operation(&operation);
+        self.apply_operation(&operation, proposal.author);
         self.version = next_version;
         self.commits.push(commit.clone());
         Some(commit)
@@ -176,7 +178,7 @@ impl Workspace {
         if self.commits.iter().any(|existing| existing.id == commit.id) {
             return false;
         }
-        self.apply_operation(&commit.operation);
+        self.apply_operation(&commit.operation, commit.author);
         self.version = self.version.max(commit.version);
         self.commits.push(commit);
         true
@@ -186,7 +188,7 @@ impl Workspace {
     ///
     /// This is called by [`commit`](Self::commit) so that every committed
     /// operation mutates the workspace, not just the append-only log.
-    fn apply_operation(&mut self, op: &AgoraOperation) {
+    fn apply_operation(&mut self, op: &AgoraOperation, author: ProcessId) {
         match op {
             AgoraOperation::PublishFact { key, value } => {
                 self.blackboard.set(key, value.clone());
@@ -223,13 +225,8 @@ impl Workspace {
                 self.trace.push("evidence", content);
             }
             AgoraOperation::ClaimSharedObject { oid } => {
-                // Shared-object claims are tracked as present (the caller's
-                // process identity lives in the parent commit context, not the
-                // operation payload itself).  Mark the oid as claimed with a
-                // placeholder process id.
-                self.claims
-                    .entry(oid.clone())
-                    .or_insert(fabric::ProcessId(uuid::Uuid::nil()));
+                // Track the claim with the author's process identity.
+                self.claims.entry(oid.clone()).or_insert(author);
             }
             AgoraOperation::ReleaseSharedObject { oid } => {
                 self.claims.remove(oid);
@@ -287,6 +284,10 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn test_author() -> ProcessId {
+        ProcessId(uuid::Uuid::from_u128(1))
+    }
+
     #[test]
     fn snapshot_includes_session_and_blackboard() {
         let mut ws = Workspace::new(
@@ -330,7 +331,7 @@ mod tests {
             key: "x".into(),
             value: json!(42),
         };
-        let result = ws.propose(0, op);
+        let result = ws.propose(0, op, test_author());
         assert!(result.is_ok());
         let proposal = result.unwrap();
         assert_eq!(proposal.base_version, 0);
@@ -348,7 +349,7 @@ mod tests {
             key: "x".into(),
             value: json!(1),
         };
-        let prop = ws.propose(0, op).unwrap();
+        let prop = ws.propose(0, op, test_author()).unwrap();
         ws.commit(prop.id);
         assert_eq!(ws.version, 1);
 
@@ -357,7 +358,7 @@ mod tests {
             key: "y".into(),
             value: json!(2),
         };
-        let err = ws.propose(0, op2).unwrap_err();
+        let err = ws.propose(0, op2, test_author()).unwrap_err();
         assert_eq!(err.expected, 0);
         assert_eq!(err.actual, 1);
     }
@@ -372,7 +373,7 @@ mod tests {
             key: "k".into(),
             value: json!("v"),
         };
-        let prop = ws.propose(0, op).unwrap();
+        let prop = ws.propose(0, op, test_author()).unwrap();
         let commit = ws.commit(prop.id).unwrap();
         assert_eq!(commit.id, prop.id);
         assert_eq!(ws.version, 1);
@@ -403,6 +404,7 @@ mod tests {
                     key: "a".into(),
                     value: json!(1),
                 },
+                test_author(),
             )
             .unwrap();
         ws.commit(p1.id);
@@ -414,6 +416,7 @@ mod tests {
                     key: "b".into(),
                     value: json!(2),
                 },
+                test_author(),
             )
             .unwrap();
         ws.commit(p2.id);
@@ -441,6 +444,7 @@ mod tests {
                     key: "k".into(),
                     value: json!(1),
                 },
+                test_author(),
             )
             .unwrap();
         ws.commit(p.id);
@@ -467,6 +471,7 @@ mod tests {
                     key: "greeting".into(),
                     value: json!("hello"),
                 },
+                test_author(),
             )
             .unwrap();
         ws.commit(prop.id);
@@ -486,6 +491,7 @@ mod tests {
                 AgoraOperation::EmitObservation {
                     obs: json!({"temp": 72}),
                 },
+                test_author(),
             )
             .unwrap();
         ws.commit(prop.id);
@@ -505,7 +511,11 @@ mod tests {
 
         // Claim
         let cp = ws
-            .propose(0, AgoraOperation::ClaimSharedObject { oid: oid.clone() })
+            .propose(
+                0,
+                AgoraOperation::ClaimSharedObject { oid: oid.clone() },
+                test_author(),
+            )
             .unwrap();
         ws.commit(cp.id);
         assert!(ws.claims.contains_key(&oid));
@@ -513,7 +523,11 @@ mod tests {
 
         // Release
         let rp = ws
-            .propose(1, AgoraOperation::ReleaseSharedObject { oid: oid.clone() })
+            .propose(
+                1,
+                AgoraOperation::ReleaseSharedObject { oid: oid.clone() },
+                test_author(),
+            )
             .unwrap();
         ws.commit(rp.id);
         assert!(!ws.claims.contains_key(&oid));
@@ -528,7 +542,11 @@ mod tests {
         );
         let plan = json!({"steps": ["a", "b", "c"]});
         let prop = ws
-            .propose(0, AgoraOperation::ProposePlan { plan: plan.clone() })
+            .propose(
+                0,
+                AgoraOperation::ProposePlan { plan: plan.clone() },
+                test_author(),
+            )
             .unwrap();
         ws.commit(prop.id);
         // Plan is stored as a structured trace entry.
@@ -547,7 +565,11 @@ mod tests {
         ws.task_graph.add("t1", "do the thing", vec![]);
         let patch = json!({"id": "t1", "status": "done"});
         let prop = ws
-            .propose(0, AgoraOperation::UpdateTask { task_patch: patch })
+            .propose(
+                0,
+                AgoraOperation::UpdateTask { task_patch: patch },
+                test_author(),
+            )
             .unwrap();
         ws.commit(prop.id);
         // Task status must have been updated.
@@ -572,6 +594,7 @@ mod tests {
                     key: "k".into(),
                     value: json!("v"),
                 },
+                test_author(),
             )
             .unwrap();
         assert_eq!(ws.proposals.len(), 1);
@@ -603,6 +626,7 @@ mod tests {
                     key: "k".into(),
                     value: json!("v"),
                 },
+                test_author(),
             )
             .unwrap();
         ws.reject(prop.id, RejectReason::Invalid("bad input".into()));
@@ -628,6 +652,7 @@ mod tests {
                     key: "k".into(),
                     value: json!("v"),
                 },
+                test_author(),
             )
             .unwrap();
         ws.reject(prop.id, RejectReason::Superseded);
@@ -649,6 +674,7 @@ mod tests {
                     key: "k".into(),
                     value: json!("v"),
                 },
+                test_author(),
             )
             .unwrap();
         let prop_id = prop.id;

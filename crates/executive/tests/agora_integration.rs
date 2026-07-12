@@ -3,12 +3,14 @@
 //! Verifies that AgoraRegistry with an InMemoryCommitLog survives
 //! "restart" (new registry instance) and recovers committed state.
 
-use agora::{AgoraPersistence, AgoraRegistry, InMemoryCommitLog};
-use fabric::AgoraOps;
+use agora::{AgoraOperation, AgoraPersistence, AgoraRegistry, InMemoryCommitLog};
+use fabric::{AgoraOps, ProcessId};
 use serde_json::json;
 use std::sync::Arc;
 
-use agora::AgoraOperation;
+fn test_author() -> ProcessId {
+    ProcessId(uuid::Uuid::from_u128(4))
+}
 
 #[tokio::test]
 async fn commit_then_recover() {
@@ -24,6 +26,7 @@ async fn commit_then_recover() {
                 key: "alpha".into(),
                 value: json!(10),
             },
+            test_author(),
         )
         .await
         .unwrap();
@@ -37,6 +40,7 @@ async fn commit_then_recover() {
                 key: "beta".into(),
                 value: json!(20),
             },
+            test_author(),
         )
         .await
         .unwrap();
@@ -70,6 +74,7 @@ async fn no_persistence_still_works() {
                 key: "k".into(),
                 value: json!("v"),
             },
+            test_author(),
         )
         .await
         .unwrap();
@@ -98,6 +103,7 @@ async fn recover_session_is_idempotent() {
                 key: "x".into(),
                 value: json!(1),
             },
+            test_author(),
         )
         .await
         .unwrap();

@@ -538,6 +538,7 @@ impl DaemonTurnOrchestrator {
                                     &session_id_for_agora,
                                     agora_version,
                                     AgoraOperation::AcceptEvidence { evidence },
+                                    main_pid,
                                 ).await {
                                     Ok(prop) => {
                                         if let Err(e) = agora.commit(&session_id_for_agora, prop.id).await {

@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use fabric::include::agora::{AgoraView, AgoraViewRequest, CommitPermit, CommitReceipt};
-use fabric::AgoraOps;
+use fabric::{AgoraOps, ProcessId};
 
 use crate::persistence::AgoraPersistence;
 use crate::workspace::{AgoraCommit, AgoraOperation, AgoraProposal, Workspace};
@@ -147,6 +147,7 @@ impl AgoraOps for AgoraRegistry {
         session: &str,
         base_version: u64,
         operation: AgoraOperation,
+        author: ProcessId,
     ) -> Result<AgoraProposal, String> {
         let mut map = self.sessions.lock().await;
         let ws = map.entry(session.to_string()).or_insert_with(|| {
@@ -155,7 +156,7 @@ impl AgoraOps for AgoraRegistry {
                 Arc::new(aletheon_kernel::chronos::SystemClock::new()),
             )
         });
-        ws.propose(base_version, operation).map_err(|c| {
+        ws.propose(base_version, operation, author).map_err(|c| {
             format!(
                 "version conflict: expected {}, actual {}",
                 c.expected, c.actual
@@ -255,9 +256,11 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
         else {
             anyhow::bail!("proposal {id} not found");
         };
-        let commit = ws
+        let mut commit = ws
             .commit(id)
             .ok_or_else(|| anyhow::anyhow!("proposal {id} expired or not found"))?;
+        // Stamp the commit with the real process identity from the permit.
+        commit.author = permit.process;
         if let Some(ref p) = self.persistence {
             p.append_commit(session, &commit).await?;
         }
@@ -290,6 +293,10 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn test_author() -> fabric::ProcessId {
+        fabric::ProcessId(uuid::Uuid::from_u128(2))
+    }
 
     #[tokio::test]
     async fn publish_then_recall() {
@@ -361,7 +368,7 @@ mod tests {
             key: "x".into(),
             value: json!(42),
         };
-        let prop = reg.propose("s1", 0, op).await.unwrap();
+        let prop = reg.propose("s1", 0, op, test_author()).await.unwrap();
         assert_eq!(prop.base_version, 0);
 
         let commit = reg.commit("s1", prop.id).await.unwrap();
@@ -379,14 +386,14 @@ mod tests {
             key: "a".into(),
             value: json!(1),
         };
-        let p1 = reg.propose("s1", 0, op1).await.unwrap();
+        let p1 = reg.propose("s1", 0, op1, test_author()).await.unwrap();
         reg.commit("s1", p1.id).await.unwrap();
 
         let op2 = AgoraOperation::PublishFact {
             key: "b".into(),
             value: json!(2),
         };
-        let err = reg.propose("s1", 0, op2).await.unwrap_err();
+        let err = reg.propose("s1", 0, op2, test_author()).await.unwrap_err();
         assert!(err.contains("version conflict"));
     }
 
@@ -408,7 +415,7 @@ mod tests {
             key: "z".into(),
             value: json!(99),
         };
-        let prop = reg.propose("s1", 0, op).await.unwrap();
+        let prop = reg.propose("s1", 0, op, test_author()).await.unwrap();
         assert_eq!(prop.base_version, 0);
 
         let commit = reg.commit("s1", prop.id).await.unwrap();
@@ -438,6 +445,7 @@ mod tests {
                     key: "first".into(),
                     value: json!(1),
                 },
+                test_author(),
             )
             .await
             .unwrap();
@@ -452,6 +460,7 @@ mod tests {
                     key: "second".into(),
                     value: json!(2),
                 },
+                test_author(),
             )
             .await
             .unwrap_err();
@@ -476,6 +485,7 @@ mod tests {
                         key: key.to_string(),
                         value: json!(i),
                     },
+                    test_author(),
                 )
                 .await
                 .unwrap();
@@ -522,6 +532,7 @@ mod tests {
                     key: "new_key".into(),
                     value: json!("new_val"),
                 },
+                test_author(),
             )
             .await
             .unwrap();
@@ -548,6 +559,7 @@ mod tests {
                 "s1",
                 0,
                 AgoraOperation::ClaimSharedObject { oid: oid.into() },
+                test_author(),
             )
             .await
             .unwrap();
@@ -560,6 +572,7 @@ mod tests {
                 "s1",
                 1,
                 AgoraOperation::ReleaseSharedObject { oid: oid.into() },
+                test_author(),
             )
             .await
             .unwrap();
@@ -591,6 +604,7 @@ mod tests {
                     key: "k".into(),
                     value: json!("v"),
                 },
+                test_author(),
             )
             .await
             .unwrap();
@@ -625,6 +639,7 @@ mod tests {
                     key: "first".into(),
                     value: json!(1),
                 },
+                test_author(),
             )
             .await
             .unwrap();
@@ -641,6 +656,7 @@ mod tests {
                     key: "second".into(),
                     value: json!(2),
                 },
+                test_author(),
             )
             .await
             .unwrap();
@@ -662,6 +678,7 @@ mod tests {
                     key: "k".into(),
                     value: json!("v"),
                 },
+                test_author(),
             )
             .await
             .unwrap();
@@ -687,14 +704,18 @@ mod tests {
 mod phase3_service_tests {
     use super::*;
     use fabric::include::agora::{AgoraService, AgoraViewRequest, CommitPermit};
-    use fabric::{AgoraSpaceId, Evidence, ProcessId};
+    use fabric::{AgoraSpaceId, Evidence};
     use serde_json::json;
+
+    fn test_author() -> ProcessId {
+        ProcessId(uuid::Uuid::from_u128(2))
+    }
 
     fn proposal(space: &str, base_version: u64, op: AgoraOperation) -> AgoraProposal {
         AgoraProposal {
             id: uuid::Uuid::new_v4(),
             space: AgoraSpaceId(space.into()),
-            author: ProcessId(uuid::Uuid::nil()),
+            author: test_author(),
             base_version,
             operation: op,
             evidence: Vec::new(),
@@ -719,7 +740,7 @@ mod phase3_service_tests {
             &reg,
             id,
             CommitPermit {
-                process: ProcessId(uuid::Uuid::nil()),
+                process: test_author(),
                 authorized: false,
             },
         )
@@ -745,7 +766,7 @@ mod phase3_service_tests {
             &reg,
             id,
             CommitPermit {
-                process: ProcessId(uuid::Uuid::nil()),
+                process: test_author(),
                 authorized: true,
             },
         )
@@ -783,7 +804,7 @@ mod phase3_service_tests {
             &reg,
             id,
             CommitPermit {
-                process: ProcessId(uuid::Uuid::nil()),
+                process: test_author(),
                 authorized: true,
             },
         )
