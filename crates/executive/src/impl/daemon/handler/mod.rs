@@ -1,17 +1,6 @@
-#![allow(dead_code)]
-
 //! Daemon request handler — JSON-RPC dispatcher for the Unix socket server.
 //! Handles chat, RPC, session management, and lifecycle events.
-//!
-// TODO(P1-A): Migrate event_bus field from Arc<dyn EventBus> to Arc<CommunicationBus>.
-// DONE: event_bus is now Arc<CommunicationBus>. DaseinEventBridge has been updated
-// to accept CommunicationBus. The underlying EventBus::subscribe calls remain
-// (accessible via communication_bus.event_bus()) until a true topic-based migration.
-//
-// Additionally, the file uses `use fabric::envelope::*;` which re-exports types
-// that use deprecated Event/Payload. These need to be migrated separately.
 
-mod chat;
 mod connection;
 pub(crate) mod format;
 mod init;
@@ -296,5 +285,16 @@ impl RequestHandler {
             "chat" => self.handle_chat(id, request).await,
             _ => self.handle_rpc(&method, id, request).await,
         }
+    }
+
+    /// Thin delegation to the macro-kernel turn orchestrator.
+    pub(super) async fn handle_chat(
+        &self,
+        id: serde_json::Value,
+        request: serde_json::Value,
+    ) -> serde_json::Value {
+        let message = request["params"]["message"].as_str().unwrap_or("");
+        tracing::info!(message = %message, "Chat request received");
+        self.turn_orchestrator.execute_turn(id, message).await
     }
 }

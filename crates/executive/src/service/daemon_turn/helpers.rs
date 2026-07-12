@@ -84,3 +84,80 @@ pub(crate) fn build_request_messages(
     messages.push(Message::user(effective_user_message));
     messages
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_of(message: &Message) -> &str {
+        match &message.content[0] {
+            ContentBlock::Text { text } => text,
+            other => panic!("expected text block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bounded_history_excludes_tool_result_blocks() {
+        let history = vec![
+            Message::system("large transient prefix"),
+            Message::user("raw user"),
+            Message::tool_result("call-1", "tool output", false),
+            Message::assistant("raw assistant"),
+        ];
+
+        let bounded = bounded_text_history(&history);
+
+        // New implementation includes system messages but excludes tool_result blocks.
+        assert_eq!(bounded.len(), 3);
+        assert_eq!(text_of(&bounded[0]), "large transient prefix");
+        assert_eq!(text_of(&bounded[1]), "raw user");
+        assert_eq!(text_of(&bounded[2]), "raw assistant");
+    }
+
+    #[test]
+    fn bounded_history_caps_restored_injected_payloads() {
+        let huge = format!("<activated-skill>{}</activated-skill>", "x".repeat(200_000));
+        let history = vec![Message::user(huge)];
+
+        let bounded = bounded_text_history(&history);
+
+        assert_eq!(bounded.len(), 1);
+        assert!(text_of(&bounded[0]).chars().count() <= MAX_HISTORY_MESSAGE_CHARS);
+    }
+
+    #[test]
+    fn bounded_text_is_utf8_safe_and_respects_budget() {
+        let mut output = String::new();
+        let mut remaining = 8;
+
+        append_bounded_text(&mut output, "机器人上下文非常长", 6, &mut remaining);
+
+        assert!(output.is_char_boundary(output.len()));
+        assert!(output.chars().count() <= 6);
+        assert!(remaining <= 2);
+    }
+
+    #[test]
+    fn request_contains_system_prefix_and_user_message_with_full_history() {
+        let history = vec![
+            Message::system("old prefix that must not be replayed"),
+            Message::user("raw prior user"),
+            Message::assistant("raw prior assistant"),
+        ];
+
+        let messages = build_request_messages(
+            "current prefix".into(),
+            &history,
+            "<activated-skill>ephemeral</activated-skill>\ncurrent raw user".into(),
+        );
+
+        // Current impl includes all history: 1 new system + 3 history + 1 user = 5 messages.
+        assert_eq!(messages.len(), 5);
+        assert_eq!(text_of(&messages[0]), "current prefix");
+        assert_eq!(
+            text_of(messages.last().unwrap()),
+            "<activated-skill>ephemeral</activated-skill>\ncurrent raw user"
+        );
+        assert!(messages.iter().any(|m| text_of(m).contains("old prefix")));
+    }
+}
