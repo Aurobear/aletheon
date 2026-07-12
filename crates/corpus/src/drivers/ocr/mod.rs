@@ -1,4 +1,4 @@
-use crate::driver::types::{Bounds, Image, OcrResult, OcrWord};
+use crate::drivers::types::{Bounds, Image, OcrResult, OcrWord};
 use anyhow::Result;
 
 #[cfg(feature = "ocr-tesseract")]

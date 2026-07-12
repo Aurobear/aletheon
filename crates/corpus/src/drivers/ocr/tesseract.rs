@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use tracing::debug;
 
 use super::OcrDriver;
-use crate::driver::types::{Bounds, Image, OcrResult, OcrWord};
+use crate::drivers::types::{Bounds, Image, OcrResult, OcrWord};
 
 /// Tesseract-based OCR driver.
 ///

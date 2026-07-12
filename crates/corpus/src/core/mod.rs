@@ -1,6 +1,6 @@
 pub mod conversions;
 
-use crate::security::security::{AuditLogger, ToolRunnerWithGuard};
+use crate::security::{AuditLogger, ToolRunnerWithGuard};
 use crate::tools::tools::ToolRegistry;
 use anyhow::Result;
 use async_trait::async_trait;

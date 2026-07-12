@@ -1,6 +1,6 @@
 //! Accessibility driver trait and mock implementation.
 
-use crate::driver::types::{Bounds, Element, UiTree};
+use crate::drivers::types::{Bounds, Element, UiTree};
 use anyhow::Result;
 
 /// Accessibility driver trait — provides structured UI tree access.

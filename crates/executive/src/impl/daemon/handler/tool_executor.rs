@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
-use corpus::security::security::runner::ToolRunnerWithGuard;
+use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::storm_breaker::StormBreaker;
 use corpus::tools::tools::ToolRegistry;
 use corpus::HookRegistry;

@@ -1,4 +1,4 @@
-use crate::driver::types::Image;
+use crate::drivers::types::Image;
 use anyhow::Result;
 
 /// Display driver trait

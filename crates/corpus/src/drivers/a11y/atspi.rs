@@ -9,7 +9,7 @@ use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::CoordType;
 
 use super::A11yDriver;
-use crate::driver::types::{Bounds, Element, UiTree};
+use crate::drivers::types::{Bounds, Element, UiTree};
 
 /// AT-SPI2 accessibility tree driver.
 ///
@@ -318,7 +318,7 @@ fn empty_tree(reason: &str) -> UiTree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::types::Bounds;
+    use crate::drivers::types::Bounds;
 
     #[test]
     fn test_find_at_hits() {

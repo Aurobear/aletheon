@@ -1,12 +1,10 @@
 //! Core execution body — the minimal runtime for tool execution.
 
-pub mod bridge;
 pub mod core;
 pub mod drivers;
 pub mod hook;
 pub mod security;
 pub mod skill;
-pub mod testing;
 pub mod tools;
 
 // Re-export main types

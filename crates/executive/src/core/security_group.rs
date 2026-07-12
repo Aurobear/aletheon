@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-use corpus::security::security::approval::ApprovalDecision;
-use corpus::security::security::runner::ToolRunnerWithGuard;
-use corpus::security::security::socket_approval::PendingApproval;
+use corpus::security::approval::ApprovalDecision;
+use corpus::security::runner::ToolRunnerWithGuard;
+use corpus::security::socket_approval::PendingApproval;
 use corpus::security::storm_breaker::StormBreaker;
 
 pub struct SecurityGroup {

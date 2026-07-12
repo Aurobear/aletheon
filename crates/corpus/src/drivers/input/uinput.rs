@@ -1,5 +1,5 @@
 use super::InputDriver;
-use crate::driver::types::{Key, MouseButton, ScrollDirection};
+use crate::drivers::types::{Key, MouseButton, ScrollDirection};
 use anyhow::{Context, Result};
 use std::fs::{File, OpenOptions};
 use std::io::Write;

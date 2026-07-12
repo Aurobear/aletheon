@@ -1,5 +1,5 @@
 use super::DisplayDriver;
-use crate::driver::types::Image;
+use crate::drivers::types::Image;
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
