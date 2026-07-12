@@ -6,11 +6,13 @@
 //!
 //! Design: docs/arch/04_COMMUNICATION_FABRIC_V2.md
 
-use crate::ipc::envelope_v2::{EnvelopeV2, MessageId, Target};
+use crate::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, MessageId, SchemaId, Target};
+use crate::types::process::{NamespaceId, ProcessSignal};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, Notify};
 
 // ---------------------------------------------------------------------------
 // Delivery receipt
@@ -104,6 +106,24 @@ pub trait MailboxService: Send + Sync {
     /// Returns `DeliveryReceipt::NoSuchMailbox` if the target is unknown.
     async fn route(&self, envelope: EnvelopeV2) -> DeliveryReceipt;
 
+    /// Route with an explicit monotonic timestamp for deterministic deadline tests.
+    async fn route_at(&self, envelope: EnvelopeV2, now_mono_millis: u64) -> DeliveryReceipt;
+
+    /// Send a lifecycle signal to a process mailbox. Signals use the stable
+    /// `aletheon.process.signal/v1` schema and highest priority.
+    async fn signal_process(&self, target: Target, signal: ProcessSignal) -> DeliveryReceipt {
+        let env = EnvelopeV2::new(
+            SchemaId::from(SchemaId::PROCESS_SIGNAL_V1),
+            Target::from("kernel"),
+            target,
+            DeliveryPattern::Direct,
+            NamespaceId("process".into()),
+            serde_json::json!({"signal": format!("{signal:?}")}),
+        )
+        .with_priority(255);
+        self.route(env).await
+    }
+
     /// Return the number of registered mailboxes.
     async fn len(&self) -> usize;
 
@@ -148,16 +168,22 @@ pub trait MailboxService: Send + Sync {
 // In-process mailbox (bounded channel)
 // ---------------------------------------------------------------------------
 
-struct InProcessMailboxInner {
-    tx: mpsc::Sender<EnvelopeV2>,
-    rx: Mutex<mpsc::Receiver<EnvelopeV2>>,
+struct InProcessMailboxState {
+    high: VecDeque<EnvelopeV2>,
+    normal: VecDeque<EnvelopeV2>,
+    closed: bool,
 }
 
-/// A single-process mailbox backed by a bounded tokio MPSC channel.
+struct InProcessMailboxInner {
+    capacity: usize,
+    state: Mutex<InProcessMailboxState>,
+    notify: Notify,
+}
+
+/// A single-process mailbox backed by bounded priority queues.
 ///
-/// Default capacity is 64 messages. When the buffer is full, `send` returns
-/// `DeliveryReceipt::Rejected` immediately — the sender is responsible for
-/// retry or backoff.
+/// Default capacity is 64 messages. High-priority process signals are delivered
+/// before ordinary messages, while preserving FIFO order within each priority.
 #[derive(Clone)]
 pub struct InProcessMailbox {
     inner: Arc<InProcessMailboxInner>,
@@ -171,11 +197,15 @@ impl InProcessMailbox {
 
     /// Create a new mailbox with a specific buffer capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        let (tx, rx) = mpsc::channel(capacity);
         Self {
             inner: Arc::new(InProcessMailboxInner {
-                tx,
-                rx: Mutex::new(rx),
+                capacity,
+                state: Mutex::new(InProcessMailboxState {
+                    high: VecDeque::new(),
+                    normal: VecDeque::new(),
+                    closed: false,
+                }),
+                notify: Notify::new(),
             }),
         }
     }
@@ -197,30 +227,54 @@ impl std::fmt::Debug for InProcessMailbox {
 impl Mailbox for InProcessMailbox {
     async fn send(&self, envelope: EnvelopeV2) -> DeliveryReceipt {
         let msg_id = envelope.id;
-        match self.inner.tx.try_send(envelope) {
-            Ok(()) => DeliveryReceipt::Delivered { message_id: msg_id },
-            Err(mpsc::error::TrySendError::Full(_)) => DeliveryReceipt::Rejected {
-                message_id: msg_id,
-                reason: "mailbox buffer full".into(),
-            },
-            Err(mpsc::error::TrySendError::Closed(_)) => DeliveryReceipt::Rejected {
+        let mut state = self.inner.state.lock().await;
+        if state.closed {
+            return DeliveryReceipt::Rejected {
                 message_id: msg_id,
                 reason: "mailbox closed".into(),
-            },
+            };
         }
+        let len = state.high.len() + state.normal.len();
+        if len >= self.inner.capacity {
+            return DeliveryReceipt::Rejected {
+                message_id: msg_id,
+                reason: "mailbox buffer full".into(),
+            };
+        }
+        if envelope.priority == 255 || envelope.schema.0 == SchemaId::PROCESS_SIGNAL_V1 {
+            state.high.push_back(envelope);
+        } else {
+            state.normal.push_back(envelope);
+        }
+        drop(state);
+        self.inner.notify.notify_one();
+        DeliveryReceipt::Delivered { message_id: msg_id }
     }
 
     async fn recv(&self) -> Option<EnvelopeV2> {
-        let mut rx = self.inner.rx.lock().await;
-        rx.recv().await
+        loop {
+            let notified = {
+                let mut state = self.inner.state.lock().await;
+                if let Some(msg) = state.high.pop_front() {
+                    return Some(msg);
+                }
+                if let Some(msg) = state.normal.pop_front() {
+                    return Some(msg);
+                }
+                if state.closed {
+                    return None;
+                }
+                self.inner.notify.notified()
+            };
+            notified.await;
+        }
     }
 
     fn close(&self) {
-        // Dropping the sender is not enough because clone() duplicates it.
-        // We close by draining. The actual close happens when all sender
-        // clones are dropped; we signal this by taking no further action.
-        // In practice, `MailboxService::unregister` drops the only held
-        // reference, which closes the channel.
+        if let Ok(mut state) = self.inner.state.try_lock() {
+            state.closed = true;
+            self.inner.notify.notify_waiters();
+        }
     }
 }
 
@@ -273,7 +327,21 @@ impl MailboxService for InProcessMailboxService {
     }
 
     async fn route(&self, envelope: EnvelopeV2) -> DeliveryReceipt {
+        self.route_at(envelope, current_mono_millis()).await
+    }
+
+    async fn route_at(&self, envelope: EnvelopeV2, now_mono_millis: u64) -> DeliveryReceipt {
         let target = envelope.target.clone();
+        let msg_id = envelope.id;
+        if envelope.is_expired_at(now_mono_millis) {
+            return DeliveryReceipt::Expired { message_id: msg_id };
+        }
+        if let Err(err) = envelope.validate_known_schema() {
+            return DeliveryReceipt::Rejected {
+                message_id: msg_id,
+                reason: err.to_string(),
+            };
+        }
         let mailboxes = self.mailboxes.lock().await;
         match mailboxes.get(&target) {
             Some(mb) => mb.send(envelope).await,
@@ -285,6 +353,14 @@ impl MailboxService for InProcessMailboxService {
         let mailboxes = self.mailboxes.lock().await;
         mailboxes.len()
     }
+}
+
+fn current_mono_millis() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
 }
 
 // ---------------------------------------------------------------------------

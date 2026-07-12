@@ -5,8 +5,9 @@
 //! Extracted from the former inline `execute_tool` closure in `chat.rs`
 //! (RFC-018 D5 seam 3 / issue #4). Runs one tool through the full pipeline:
 //! PreTool hook → OnMemoryRecall hook → session-approval check → SelfField
-//! review → registry lookup → guarded `ToolRunnerWithGuard::run` → PerfCounter
-//! → StormBreaker → PostTool hook, returning `(content, is_error)`.
+//! review → registry lookup → `ExecutionPermit`-guarded
+//! `ToolRunnerWithGuard::run` → PerfCounter → StormBreaker → PostTool hook,
+//! returning `(content, is_error)`.
 //!
 //! Behaviour is identical to the previous closure; this only gives the pipeline
 //! a name and a home. It is adapted to the harness's
@@ -27,6 +28,7 @@ use corpus::HookRegistry;
 use dasein::SelfField;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::kernel::debug_bus::PerfCounter;
+use fabric::types::admission::ExecutionPermit;
 use fabric::types::operation::{OperationId, ProcessId};
 use fabric::{Context as AbiContext, Intent, IntentSource, SelfFieldOps, Verdict};
 
@@ -91,13 +93,27 @@ impl TurnToolExecutor {
         self.process_id
     }
 
-    /// Run one tool call. Returns `(content, is_error)`.`
+    /// Run one tool call with an already-granted execution permit.
+    ///
+    /// No `ExecutionPermit` means no side-effecting tool execution.
+    /// Returns `(content, is_error)`.`
     pub(crate) async fn execute(
         &self,
+        permit: &ExecutionPermit,
         _id: &str,
         name: &str,
         input: &serde_json::Value,
     ) -> (String, bool) {
+        if permit.operation_id != self.operation_id
+            || permit.process_id != self.process_id
+            || permit.capability.0 != name
+        {
+            return (
+                format!("admission permit does not match tool '{name}'"),
+                true,
+            );
+        }
+
         // Rebind captured handles/values so the pipeline body below is identical
         // to the former `execute_tool` closure.
         let hook_registry_arc = &self.hook_registry;

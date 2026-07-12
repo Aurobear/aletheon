@@ -1,7 +1,7 @@
 //! Cognitive objects — the canonical vocabulary of RFC-017.
 //!
 //! Existing types are re-exported from their current homes (no redefinition).
-//! Evidence is now defined in `aletheon-abi` for broader access.
+//! Evidence is now defined in `fabric` for broader access.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -11,8 +11,8 @@ pub use crate::include::cognit::{Experience, Observation, Plan};
 pub use crate::include::self_field::Intent;
 pub use crate::policy::execpolicy::Decision;
 
-// Evidence is now defined in aletheon-abi (consumed by include::agora::AgoraOps).
-pub use aletheon_abi::Evidence;
+// Evidence is now defined in fabric (consumed by include::agora::AgoraOps).
+pub use crate::types::evidence::Evidence;
 
 // -- New cognitive objects --
 

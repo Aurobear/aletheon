@@ -4,10 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Aletheon ABI layer - public API interfaces for agent runtime"
+description = "Aletheon fabric contracts, shared types, communication, and runtime interfaces"
 
 [dependencies]
-aletheon-abi = { path = "../aletheon-abi" }
 async-trait = "0.1"
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
@@ -17,6 +16,7 @@ uuid = { version = "1", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 bincode = "1"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { workspace = true }
 toml = "0.8"
 
 # Merged from comm crate

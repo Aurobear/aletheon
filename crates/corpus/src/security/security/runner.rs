@@ -494,7 +494,8 @@ mod tests {
 
     fn make_runner(gate: Arc<dyn ApprovalGate>) -> ToolRunnerWithGuard {
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        ToolRunnerWithGuard::with_default_sandbox(audit_logger).with_approval_gate(gate)
+        ToolRunnerWithGuard::with_sandbox_preference(audit_logger, SandboxPreference::Forbid)
+            .with_approval_gate(gate)
     }
 
     fn make_input_rm() -> serde_json::Value {
@@ -551,9 +552,10 @@ mod tests {
             ..Default::default()
         };
         let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger)
-            .with_approval_gate(Arc::new(AutoDenyGate))
-            .with_permission_context(ctx);
+        let mut runner =
+            ToolRunnerWithGuard::with_sandbox_preference(audit_logger, SandboxPreference::Forbid)
+                .with_approval_gate(Arc::new(AutoDenyGate))
+                .with_permission_context(ctx);
         let tool = DummyL2Tool;
         let result = runner
             .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")

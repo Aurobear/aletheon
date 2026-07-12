@@ -1,4 +1,4 @@
-// crates/aletheon-abi/src/envelope.rs
+// crates/fabric/src/envelope.rs
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

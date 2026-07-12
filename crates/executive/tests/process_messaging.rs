@@ -247,3 +247,21 @@ async fn duplicate_mailbox_registration_is_rejected() {
     assert!(err.is_err(), "duplicate registration must fail");
     assert!(err.unwrap_err().to_string().contains("already registered"));
 }
+
+#[tokio::test]
+async fn process_signal_prioritized_in_mailbox() {
+    let clock = Arc::new(TestClock::default());
+    let table = ProcessTable::new(clock);
+    let svc = InProcessMailboxService::new();
+    let (_pid, mb) = spawn_with_mailbox(&table, &svc, "agent-sig", "sig-ns").await;
+
+    svc.route(make_test_envelope("kernel", "agent-sig", "ordinary"))
+        .await;
+    svc.signal_process(Target::from("agent-sig"), ProcessSignal::Terminate)
+        .await;
+
+    let first = mb.recv().await.unwrap();
+    assert_eq!(first.schema.0, SchemaId::PROCESS_SIGNAL_V1);
+    let second = mb.recv().await.unwrap();
+    assert_eq!(second.payload["body"], "ordinary");
+}

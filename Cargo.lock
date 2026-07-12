@@ -44,22 +44,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aletheon-abi"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64",
- "chrono",
- "futures",
- "png",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "aletheon-bin"
 version = "0.1.0"
 dependencies = [
@@ -1095,7 +1079,6 @@ dependencies = [
 name = "fabric"
 version = "0.1.0"
 dependencies = [
- "aletheon-abi",
  "anyhow",
  "async-trait",
  "base64",
@@ -1111,6 +1094,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "toml",
  "tracing",
  "uuid",

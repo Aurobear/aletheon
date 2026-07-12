@@ -69,9 +69,29 @@ impl Workspace {
         }
         let proposal = AgoraProposal {
             id: Uuid::new_v4(),
+            space: fabric::AgoraSpaceId(self.session_id.clone()),
+            author: fabric::ProcessId(uuid::Uuid::nil()),
             base_version,
             operation,
+            evidence: Vec::new(),
+            confidence: 1.0,
+            expires_at_ms: None,
         };
+        self.proposals.insert(proposal.id, proposal.clone());
+        Ok(proposal)
+    }
+
+    /// Insert a fully-specified proposal from the transactional AgoraService API.
+    pub fn propose_full(
+        &mut self,
+        proposal: AgoraProposal,
+    ) -> Result<AgoraProposal, VersionConflict> {
+        if proposal.base_version != self.version {
+            return Err(VersionConflict {
+                expected: proposal.base_version,
+                actual: self.version,
+            });
+        }
         self.proposals.insert(proposal.id, proposal.clone());
         Ok(proposal)
     }
@@ -81,17 +101,32 @@ impl Workspace {
     /// and appends to the commit log.
     pub fn commit(&mut self, proposal_id: Uuid) -> Option<AgoraCommit> {
         let proposal = self.proposals.remove(&proposal_id)?;
+        let now_ms = current_unix_ms();
+        if proposal.is_expired_at(now_ms) {
+            self.trace.push(
+                "proposal_rejected",
+                serde_json::json!({
+                    "proposal_id": proposal.id.to_string(),
+                    "reason": "Timeout",
+                    "operation": format!("{:?}", proposal.operation),
+                }),
+            );
+            return None;
+        }
         let operation = proposal.operation.clone();
+        let next_version = self.version + 1;
         let commit = AgoraCommit {
             id: proposal.id,
+            space: proposal.space,
+            author: proposal.author,
+            version: next_version,
             operation: proposal.operation,
-            committed_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64,
+            evidence: proposal.evidence,
+            confidence: proposal.confidence,
+            committed_at: now_ms,
         };
         self.apply_operation(&operation);
-        self.version += 1;
+        self.version = next_version;
         self.commits.push(commit.clone());
         Some(commit)
     }
@@ -113,6 +148,17 @@ impl Workspace {
             }),
         );
         Some(())
+    }
+
+    /// Replay a persisted commit idempotently.
+    pub fn apply_commit(&mut self, commit: AgoraCommit) -> bool {
+        if self.commits.iter().any(|existing| existing.id == commit.id) {
+            return false;
+        }
+        self.apply_operation(&commit.operation);
+        self.version = self.version.max(commit.version);
+        self.commits.push(commit);
+        true
     }
 
     /// Apply the semantic effect of an operation to workspace state.
@@ -150,6 +196,10 @@ impl Workspace {
             }
             AgoraOperation::EmitObservation { obs } => {
                 self.trace.push("observation", obs.clone());
+            }
+            AgoraOperation::AcceptEvidence { evidence } => {
+                let content = serde_json::to_value(evidence).unwrap_or(serde_json::Value::Null);
+                self.trace.push("evidence", content);
             }
             AgoraOperation::ClaimSharedObject { oid } => {
                 // Shared-object claims are tracked as present (the caller's
@@ -209,6 +259,13 @@ impl Workspace {
         self.proposals.clear();
         self.claims.clear();
     }
+}
+
+fn current_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 impl Default for Workspace {

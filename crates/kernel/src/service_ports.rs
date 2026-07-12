@@ -236,7 +236,7 @@ mod tests {
             .unwrap();
 
         let env = EnvelopeV2::new(
-            SchemaId::from("test/v1"),
+            SchemaId::from("aletheon.test/v1"),
             Target::from("kernel"),
             Target::from("agent-1"),
             DeliveryPattern::Direct,

@@ -20,6 +20,7 @@ use fabric::{
     LlmProvider, Message, OperationKind, OperationManager, OperationRequest, PrincipalId, Role,
     SandboxDecision, SandboxRequirement, TurnRequest, UsageReport,
 };
+use fabric::{AgoraSpaceId, AgoraVersion, ContextBinding, SessionId, SpaceId, SpaceManager};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -283,33 +284,52 @@ impl DaemonTurnOrchestrator {
         let turn_count = sm_arc.lock().await.turn_count();
         drop(sm_arc);
 
-        // Agora seed — versioned publish via propose+commit (RFC-014 Phase 3B).
-        let mut agora_version = self.subsystems.agora.version(&sess_id).await.unwrap_or(0);
-        match self
+        // Context Space seed — user turn input is private overlay data, not
+        // shared Agora fact. Shared visibility requires an explicit proposal.
+        let agora = self.subsystems.ports.agora.clone();
+        let mut agora_version = if let Some(ref agora) = agora {
+            agora.version(&sess_id).await.unwrap_or(0)
+        } else {
+            tracing::warn!(target: "agora", "ServicePorts.agora is not configured; shared evidence commits disabled for this turn");
+            0
+        };
+        let agora_start_version = agora_version;
+        let turn_space = SpaceId::new();
+        if let Err(e) = self
             .subsystems
-            .agora
-            .propose(
-                &sess_id,
-                agora_version,
-                AgoraOperation::PublishFact {
-                    key: "turn_input".into(),
-                    value: serde_json::json!(message),
-                },
+            .ports
+            .space_manager
+            .attach_region(
+                turn_space,
+                ContextBinding::Session(SessionId(sess_id.clone())),
             )
             .await
         {
-            Ok(prop) => {
-                if let Err(e) = self.subsystems.agora.commit(&sess_id, prop.id).await {
-                    tracing::warn!("agora commit (turn_input) failed: {e}");
-                } else {
-                    agora_version += 1;
-                }
-            }
-            Err(e) => tracing::warn!("agora propose (turn_input) failed: {e}"),
+            tracing::warn!(target: "space", error = %e, "failed to attach session binding");
+        }
+        if let Err(e) = self
+            .subsystems
+            .ports
+            .space_manager
+            .attach_region(
+                turn_space,
+                ContextBinding::Agora(AgoraSpaceId(sess_id.clone()), AgoraVersion(agora_version)),
+            )
+            .await
+        {
+            tracing::warn!(target: "space", error = %e, "failed to attach agora binding");
+        }
+        if let Err(e) = self.subsystems.ports.space_manager.set_overlay(
+            turn_space,
+            "turn_input",
+            serde_json::json!(message),
+        ) {
+            tracing::warn!(target: "space", error = %e, "failed to store turn input overlay");
         }
 
         let self_field_arc_for_react = self.subsystems.self_field.clone();
         let session_id_for_agora = sess_id.clone();
+        let agora_for_events = agora.clone();
 
         let tool_executor = Arc::new(TurnToolExecutor::new(
             &self.subsystems,
@@ -321,7 +341,7 @@ impl DaemonTurnOrchestrator {
         ));
 
         // Admission controller for tool gating.
-        let admission = self.subsystems.admission.clone();
+        let admission = self.admission.clone();
         let adm_op_id = operation.id;
         let adm_pid = main_pid;
         let adm_sandbox = sandbox_requirement;
@@ -373,13 +393,14 @@ impl DaemonTurnOrchestrator {
                 }
 
                 // Execute the tool through the existing pipeline.
-                let (content, is_error) = exec.execute(&tid, &n, &inp).await;
+                let (content, is_error) = exec.execute(&permit, &tid, &n, &inp).await;
 
                 // Settle the permit (best-effort audit).
                 let _ = adm
                     .settle(
                         permit.id,
                         UsageReport {
+                            permit_id: permit.id,
                             output_bytes: content.len() as u64,
                             exit_code: if is_error { Some(1) } else { Some(0) },
                             ..Default::default()
@@ -487,20 +508,26 @@ impl DaemonTurnOrchestrator {
                             let evidence = fabric::Evidence::from_tool_result(
                                 call_id.clone(), name.clone(), result.content.clone(), result.is_error,
                             );
-                            let obs = serde_json::to_value(&evidence).unwrap_or(serde_json::Value::Null);
-                            match self.subsystems.agora.propose(
-                                &session_id_for_agora,
-                                agora_version,
-                                AgoraOperation::EmitObservation { obs },
-                            ).await {
-                                Ok(prop) => {
-                                    if let Err(e) = self.subsystems.agora.commit(&session_id_for_agora, prop.id).await {
-                                        tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed");
-                                    } else {
-                                        agora_version += 1;
+                            if let Some(ref agora) = agora_for_events {
+                                match agora.propose(
+                                    &session_id_for_agora,
+                                    agora_version,
+                                    AgoraOperation::AcceptEvidence { evidence },
+                                ).await {
+                                    Ok(prop) => {
+                                        if let Err(e) = agora.commit(&session_id_for_agora, prop.id).await {
+                                            tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed");
+                                        } else {
+                                            agora_version += 1;
+                                        }
                                     }
+                                    Err(e) => tracing::warn!(target: "agora", error = %e, "agora propose (evidence) failed"),
                                 }
-                                Err(e) => tracing::warn!(target: "agora", error = %e, "agora propose (evidence) failed"),
+                            } else {
+                                tracing::warn!(
+                                    target: "agora",
+                                    "ServicePorts.agora missing; skipping shared evidence commit"
+                                );
                             }
                         }
                         Event::Usage { tokens_in, tokens_out, .. } => {
@@ -719,7 +746,7 @@ impl DaemonTurnOrchestrator {
             .await;
         self.run_post_evolution(&task_summary, &text, &metrics)
             .await;
-        self.commit_agora_snapshot(&session_id_for_agora, agora_version)
+        self.commit_agora_snapshot(&session_id_for_agora, agora_start_version)
             .await;
 
         // -- Kernel: mark turn operation completed --

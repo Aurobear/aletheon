@@ -1,7 +1,6 @@
 //! # Aletheon Base
 //!
-//! Core trait definitions for the Aletheon persistent self-evolving runtime.
-//! This crate contains **zero implementations** — only interfaces.
+//! Shared contracts, types, communication primitives, and infrastructure for the Aletheon runtime.
 //!
 //! Like Linux kernel header files define the contract between subsystems
 //! (`file_operations`, `net_proto_ops`), this crate defines the contracts
@@ -21,13 +20,19 @@
 
 // === Module declarations ===
 
-pub use aletheon_abi::{compaction, event, include, types};
+pub mod bus_handle;
+pub mod compaction;
+pub mod contract;
 pub mod dasein;
+pub mod error;
+pub mod event;
 pub mod events;
+pub mod include;
 pub mod ipc;
 pub mod kernel;
 pub mod policy;
 pub mod primitives;
+pub mod types;
 
 // === Backward-compatible module re-exports ===
 // These allow `fabric::genome::*`, `fabric::self_field::*`, etc. to continue working.
@@ -50,6 +55,7 @@ pub use include::subsystem;
 pub use types::agent;
 pub use types::capability;
 pub use types::context;
+pub use types::evidence;
 pub use types::genome;
 pub use types::grounding;
 pub use types::hook;
@@ -64,7 +70,7 @@ pub use types::sandbox;
 pub use types::tool;
 pub use types::vision;
 
-// Event modules (from events/ + aletheon-abi)
+// Event modules
 pub use events::evolution;
 pub use events::ui_event;
 
@@ -93,7 +99,8 @@ pub use policy::verifier;
 // Subsystem traits (from include/)
 pub use include::admission::AdmissionController;
 pub use include::agora::{
-    AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, RejectReason, VersionConflict,
+    AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, AgoraService, AgoraViewRequest,
+    CommitPermit, CommitReceipt, RejectReason, VersionConflict,
 };
 pub use include::body::{Action, ActionResult, BodyRuntime};
 pub use include::capability_invoker::CapabilityInvoker;
@@ -160,14 +167,17 @@ pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
 };
-pub use types::space::{AccessMode, AgoraSpaceId, AgoraVersion, ContextBinding};
+pub use types::space::{
+    AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,
+    ProjectionVersion, SessionId, SpaceSnapshotId, VersionedOverlay, WorldProjectionId,
+};
 pub use types::time::{MonoDeadline, MonoTime, WallTime};
 pub use types::tool::{
     PermissionLevel as ToolPermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
 };
 pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 
-// Event types (from aletheon-abi)
+// Event types
 pub use event::{
     AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
 };

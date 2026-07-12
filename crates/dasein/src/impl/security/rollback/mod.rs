@@ -231,6 +231,14 @@ impl FileBackupBackend {
         }
     }
 
+    #[cfg(test)]
+    fn with_backup_dir(backup_dir: std::path::PathBuf, protected_paths: &[String]) -> Self {
+        Self {
+            backup_dir,
+            protected_paths: protected_paths.to_vec(),
+        }
+    }
+
     fn snapshot_dir(&self, id: &str) -> std::path::PathBuf {
         self.backup_dir.join(id)
     }
@@ -701,16 +709,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_backup_snapshot_and_rollback() {
-        let backend = FileBackupBackend::new(&[]);
+        let dir = tempfile::tempdir().unwrap();
+        let backup_dir = dir.path().join("snapshots");
+        let source_path = dir.path().join("aletheon-test-snapshot");
+        let backend = FileBackupBackend::with_backup_dir(backup_dir, &[]);
         let context = RollbackContext {
             operation: "test".to_string(),
-            paths: vec!["/tmp/aletheon-test-snapshot".to_string()],
+            paths: vec![source_path.to_string_lossy().to_string()],
             tool: None,
             risk_level: None,
         };
 
         // Create a test file
-        std::fs::write("/tmp/aletheon-test-snapshot", "test data").unwrap();
+        std::fs::write(&source_path, "test data").unwrap();
 
         let id = backend.create_snapshot(&context).await.unwrap();
         assert_eq!(id.tier, RollbackTier::FileBackup);
@@ -720,7 +731,7 @@ mod tests {
         assert!(snapshots.iter().any(|s| s.id == id.id));
 
         // Cleanup
-        let _ = std::fs::remove_file("/tmp/aletheon-test-snapshot");
+        let _ = std::fs::remove_file(source_path);
         let _ = backend.cleanup(std::time::Duration::from_secs(0)).await;
     }
 }

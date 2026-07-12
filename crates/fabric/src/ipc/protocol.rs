@@ -1,4 +1,4 @@
-// crates/aletheon-abi/src/protocol.rs
+// crates/fabric/src/protocol.rs
 
 use crate::ipc::envelope::Envelope;
 use async_trait::async_trait;

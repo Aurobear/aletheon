@@ -1,4 +1,4 @@
-// crates/aletheon-abi/src/hook.rs
+// crates/fabric/src/hook.rs
 
 //! Hook types — lifecycle callback definitions for the Aletheon runtime.
 //!

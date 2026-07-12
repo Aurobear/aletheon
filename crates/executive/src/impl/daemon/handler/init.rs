@@ -631,12 +631,6 @@ impl RequestHandler {
 
         let ports = aletheon_kernel::service_ports::ServicePorts::new()
             .with_agora(Arc::new(agora::AgoraRegistry::new()));
-        let shared_agora = ports
-            .agora
-            .clone()
-            .expect("ports.agora must be set via with_agora");
-        let shared_admission = ports.admission.clone();
-
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
             ports,
             runtime: Arc::new(Mutex::new(runtime)),
@@ -648,10 +642,6 @@ impl RequestHandler {
             auto_memory,
             objective_store,
             reflector,
-            // Transitional: use ports.agora instead (PR-1 deduplication).
-            agora: shared_agora,
-            // Transitional: use ports.admission instead (PR-1 deduplication).
-            admission: shared_admission,
             tools,
             tool_runner,
             skill_loader: Arc::new(Mutex::new(skill_loader)),

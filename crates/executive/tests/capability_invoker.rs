@@ -148,10 +148,12 @@ async fn invoker_pipeline_admit_execute_settle() {
 
     let result = invoker
         .invoke(CapabilityRequest {
+            operation_id: fabric::OperationId::new(),
             process_id: fabric::ProcessId::new(),
             name: "test.ping".into(),
             input: serde_json::json!({"msg": "hello"}),
             call_id: "call-1".into(),
+            deadline: None,
         })
         .await;
 
@@ -170,10 +172,12 @@ async fn invoker_preserves_call_id_on_error() {
     // AllowAll never denies, but the structure preserves call_id.
     let result = invoker
         .invoke(CapabilityRequest {
+            operation_id: fabric::OperationId::new(),
             process_id: fabric::ProcessId::new(),
             name: "test.noop".into(),
             input: serde_json::json!({}),
             call_id: "my-call-id".into(),
+            deadline: None,
         })
         .await;
 
@@ -196,6 +200,11 @@ impl ToolExecutor for ErrorToolExecutor {
             call_id: request.call_id.clone(),
             output: "tool failed: simulated error".into(),
             is_error: true,
+            usage: fabric::UsageReport {
+                permit_id: _permit.id,
+                ..Default::default()
+            },
+            audit_id: Some(fabric::AuditEventId::new()),
         }
     }
 }
@@ -209,10 +218,12 @@ async fn invoker_reports_executor_errors() {
 
     let result = invoker
         .invoke(CapabilityRequest {
+            operation_id: fabric::OperationId::new(),
             process_id: fabric::ProcessId::new(),
             name: "test.failing".into(),
             input: serde_json::json!({}),
             call_id: "fail-1".into(),
+            deadline: None,
         })
         .await;
 
@@ -258,10 +269,12 @@ async fn denied_admission_produces_error_result() {
 
     let result = invoker
         .invoke(CapabilityRequest {
+            operation_id: fabric::OperationId::new(),
             process_id: fabric::ProcessId::new(),
             name: "test.blocked".into(),
             input: serde_json::json!({}),
             call_id: "blocked-1".into(),
+            deadline: None,
         })
         .await;
 

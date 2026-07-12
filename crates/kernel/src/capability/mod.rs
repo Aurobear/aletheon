@@ -7,8 +7,9 @@
 use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, AdmissionRequest, CapabilityInvoker, CapabilityRequest, CapabilityResult,
-    CapabilityScope, ExecutionPermit, SandboxDecision, SandboxRequirement,
+    AdmissionController, AdmissionRequest, AuditEventId, CapabilityInvoker, CapabilityRequest,
+    CapabilityResult, CapabilityScope, ExecutionPermit, SandboxDecision, SandboxRequirement,
+    UsageReport,
 };
 use std::sync::Arc;
 
@@ -71,7 +72,7 @@ where
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityResult {
         // 1. Build admission request.
         let admission_req = AdmissionRequest {
-            operation_id: fabric::OperationId::new(),
+            operation_id: request.operation_id,
             process_id: request.process_id,
             principal: fabric::PrincipalId("agent".into()),
             capability: fabric::CapabilityId(request.name.clone()),
@@ -92,6 +93,8 @@ where
                     call_id: request.call_id.clone(),
                     output: format!("admission denied: {e}"),
                     is_error: true,
+                    usage: UsageReport::default(),
+                    audit_id: None,
                 };
             }
         };
@@ -107,14 +110,33 @@ where
                     request.name
                 ),
                 is_error: true,
+                usage: UsageReport {
+                    permit_id: permit.id,
+                    ..Default::default()
+                },
+                audit_id: Some(AuditEventId::new()),
             };
         }
 
         // 3. Execute.
-        let result = self.executor.execute_with_permit(&request, &permit).await;
+        let mut result = self.executor.execute_with_permit(&request, &permit).await;
+        result.usage.permit_id = permit.id;
+        if result.audit_id.is_none() {
+            result.audit_id = Some(AuditEventId::new());
+        }
 
-        // 4. Settle (ignore settlement errors in this simplified impl).
-        let _ = self.admission.settle(permit.id, Default::default()).await;
+        // 4. Settle with the usage emitted by the executor. Settlement failure
+        // is returned as a structured capability error so double-settle / budget
+        // accounting bugs cannot silently pass.
+        if let Err(err) = self.admission.settle(permit.id, result.usage.clone()).await {
+            return CapabilityResult {
+                call_id: request.call_id.clone(),
+                output: format!("settlement failed: {err}"),
+                is_error: true,
+                usage: result.usage,
+                audit_id: result.audit_id,
+            };
+        }
 
         result
     }
@@ -141,6 +163,12 @@ impl ToolExecutor for StubToolExecutor {
             call_id: request.call_id.clone(),
             output: format!("stub: executed {}", request.name),
             is_error: false,
+            usage: UsageReport {
+                permit_id: _permit.id,
+                output_bytes: request.name.len() as u64,
+                ..Default::default()
+            },
+            audit_id: Some(AuditEventId::new()),
         }
     }
 }

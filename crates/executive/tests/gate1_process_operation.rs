@@ -73,6 +73,8 @@ fn stub_services() -> Arc<dyn TurnServices> {
                 call_id: String::new(),
                 output: String::new(),
                 is_error: false,
+                usage: fabric::UsageReport::default(),
+                audit_id: None,
             }
         }
         fn llm_provider(&self) -> Option<&dyn LlmProvider> {
@@ -439,6 +441,8 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
                 call_id: String::new(),
                 output: String::new(),
                 is_error: false,
+                usage: fabric::UsageReport::default(),
+                audit_id: None,
             }
         }
         fn llm_provider(&self) -> Option<&dyn LlmProvider> {
