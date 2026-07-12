@@ -150,6 +150,10 @@ mod tests {
             m.set_overlay(s, "turn_input", json!(i)).unwrap();
             assert!(m.release(s));
         }
-        assert_eq!(m.space_count(), 0, "spaces must not accumulate across turns");
+        assert_eq!(
+            m.space_count(),
+            0,
+            "spaces must not accumulate across turns"
+        );
     }
 }
