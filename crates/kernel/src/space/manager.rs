@@ -180,21 +180,50 @@ mod tests {
         let m = InMemorySpaceManager::new();
         let s = SpaceId::new();
 
-        m.upsert_binding(s, ContextBinding::Agora(AgoraSpaceId("sess".into()), AgoraVersion(1)));
-        m.upsert_binding(s, ContextBinding::Agora(AgoraSpaceId("sess".into()), AgoraVersion(2)));
+        m.upsert_binding(
+            s,
+            ContextBinding::Agora(AgoraSpaceId("sess".into()), AgoraVersion(1)),
+        );
+        m.upsert_binding(
+            s,
+            ContextBinding::Agora(AgoraSpaceId("sess".into()), AgoraVersion(2)),
+        );
         let b = m.get_bindings(s).unwrap();
-        assert_eq!(b.iter().filter(|x| matches!(x, ContextBinding::Agora(_, _))).count(), 1);
-        assert!(b.iter().any(|x| matches!(x, ContextBinding::Agora(_, AgoraVersion(2)))));
+        assert_eq!(
+            b.iter()
+                .filter(|x| matches!(x, ContextBinding::Agora(_, _)))
+                .count(),
+            1
+        );
+        assert!(b
+            .iter()
+            .any(|x| matches!(x, ContextBinding::Agora(_, AgoraVersion(2)))));
 
         m.upsert_binding(s, ContextBinding::Session(SessionId("x".into())));
         m.upsert_binding(s, ContextBinding::Session(SessionId("x".into())));
         let b = m.get_bindings(s).unwrap();
-        assert_eq!(b.iter().filter(|x| matches!(x, ContextBinding::Session(_))).count(), 1);
+        assert_eq!(
+            b.iter()
+                .filter(|x| matches!(x, ContextBinding::Session(_)))
+                .count(),
+            1
+        );
 
-        m.upsert_binding(s, ContextBinding::Artifact(ArtifactId("a".into()), AccessMode::ReadOnly));
-        m.upsert_binding(s, ContextBinding::Artifact(ArtifactId("b".into()), AccessMode::ReadOnly));
+        m.upsert_binding(
+            s,
+            ContextBinding::Artifact(ArtifactId("a".into()), AccessMode::ReadOnly),
+        );
+        m.upsert_binding(
+            s,
+            ContextBinding::Artifact(ArtifactId("b".into()), AccessMode::ReadOnly),
+        );
         let b = m.get_bindings(s).unwrap();
-        assert_eq!(b.iter().filter(|x| matches!(x, ContextBinding::Artifact(_, _))).count(), 2);
+        assert_eq!(
+            b.iter()
+                .filter(|x| matches!(x, ContextBinding::Artifact(_, _)))
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -204,10 +233,18 @@ mod tests {
         let s = SpaceId::new(); // one long-lived space
         for v in 0..1000u64 {
             m.upsert_binding(s, ContextBinding::Session(SessionId("sess".into())));
-            m.upsert_binding(s, ContextBinding::Agora(AgoraSpaceId("sess".into()), AgoraVersion(v)));
-            m.set_overlay(s, "turn_input", serde_json::json!(v)).unwrap();
+            m.upsert_binding(
+                s,
+                ContextBinding::Agora(AgoraSpaceId("sess".into()), AgoraVersion(v)),
+            );
+            m.set_overlay(s, "turn_input", serde_json::json!(v))
+                .unwrap();
         }
         assert_eq!(m.space_count(), 1);
-        assert_eq!(m.get_bindings(s).unwrap().len(), 2, "one Session + one Agora, no accumulation");
+        assert_eq!(
+            m.get_bindings(s).unwrap().len(),
+            2,
+            "one Session + one Agora, no accumulation"
+        );
     }
 }
