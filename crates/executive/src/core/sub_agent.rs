@@ -841,11 +841,8 @@ mod lifecycle_tests {
         let process_table = Arc::new(ProcessTable::with_space_manager(clock.clone(), sm.clone()));
         let operation_table = Arc::new(OperationTable::new(clock.clone()));
 
-        let mut s = SubAgentSpawner::with_tables(
-            process_table.clone(),
-            operation_table.clone(),
-            clock,
-        );
+        let mut s =
+            SubAgentSpawner::with_tables(process_table.clone(), operation_table.clone(), clock);
 
         // Spawn a "main" process directly in the shared table and seed a
         // binding on its space.
