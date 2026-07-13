@@ -481,9 +481,9 @@ pub trait SpaceManager: Send + Sync {
 | 问题 | 严重度 | 影响 |
 |------|--------|------|
 | `fork_space` 从未被调用 | 🔴 高 | 进程间无空间继承，每个进程都是孤立空间 |
-| `turn_space` 泄露 | ✅ Phase 1 已修复 | `InMemorySpaceManager::release()`（inherent method）+ `execute_turn` 内的 `SpaceReleaseGuard` 在每次 turn 退出时释放临时空间，空间表不再无限增长。`process.space` 复用 / `fork_space` 接线仍是 Phase 2 |
+| `turn_space` 泄露 | ✅ Phase 2a 已修复 | Phase 1 的 `SpaceReleaseGuard` 已移除；`execute_turn` 现在通过 `inspect(main_pid).space` 复用主 agent 的长生命周期 `process.space`（`upsert_binding` 原地替换 Session/Agora 绑定，不再每 turn 新建），空间改为在 `exit_process`（`orchestrator.rs`）里通过 `inspect` + `release` 释放。`ProcessTable::spawn` → `fork_space` 接线、子进程空间继承、`SpaceManager` trait 提升仍是 Phase 2b |
 | agora nil-uuid | 🟡 中 | claims 无意义，审计不可追踪，但功能可用 |
-| `SpaceManager` trait 不完整 | 🟡 中 | 无法基于 trait 做 release/查询/绑定更新（release 已作为 `InMemorySpaceManager` 的 inherent method 提供，trait 提升仍是 Phase 2） |
+| `SpaceManager` trait 不完整 | 🟡 中 | 无法基于 trait 做查询/绑定更新（release 仍是 `InMemorySpaceManager` 的 inherent method；`upsert_binding` 同样是 inherent method；trait 提升仍是 Phase 2b） |
 | 其他 crate 零感知 | 🟢 低 | 需要空间的 crate（agora）暂时不需要完整 SpaceManager |
 
 ### 9.8 修复建议优先级
@@ -491,8 +491,8 @@ pub trait SpaceManager: Send + Sync {
 | 优先级 | 修复 | 影响 |
 |--------|------|------|
 | **P0** | ✅ Phase 1 done：`InMemorySpaceManager` 加 `release(space)` inherent method（非 trait），并在 `execute_turn` 中通过 `SpaceReleaseGuard` 每 turn 释放 | 修复内存泄露 |
-| **P0** | Phase 2：`execute_turn` 复用 `process.space` 而非创建临时 `turn_space`；`fork_space` 接线；`SpaceManager` trait 提升 release | 修复内存泄露 + 语义正确 |
-| **P1** | `ProcessTable::spawn()` 改调用 `space_manager.fork_space()` | 进程间空间继承 |
+| **P0** | ✅ Phase 2a done：`ProcessSnapshot` 暴露 `space` 只读字段；`execute_turn` 复用 `inspect(main_pid).space` 而非创建临时 `turn_space`；新增 `InMemorySpaceManager::upsert_binding`（Session/Agora 原地替换，Artifact 追加）避免绑定累积；空间改在 `exit_process` 里释放 | 修复内存泄露 + 语义正确（进程级空间复用） |
+| **P1（Phase 2b，待办）** | `ProcessTable::spawn()` 改调用 `space_manager.fork_space()`；子 agent 空间继承；`SpaceManager` trait 提升 `release`/`upsert_binding` | 进程间空间继承 |
 | **P1** | agora 的 nil-uuid → 接受 `Arc<dyn ProcessManager>` 或传入真实 ProcessId | claims 有意义 |
 | **P2** | `SpaceManager` trait 补全 lookup / update_binding / get_overlay | trait 可以作为抽象边界使用 |
 | **P2** | `ContextBinding::Agora` 版本号在 commit 时自动更新 | 绑定版本与实际 workspace 版本一致 |
