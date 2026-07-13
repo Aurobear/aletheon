@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 use fabric::{
     Clock, ExitReason, ExitStatus, MailboxId, ProcessHandle, ProcessId, ProcessManager,
-    ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState, SpaceId, SpawnSpec,
+    ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState, SpaceId, SpaceManager, SpawnSpec,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
+
+use crate::space::InMemorySpaceManager;
 
 #[derive(Debug)]
 struct ProcessRuntime {
@@ -18,6 +20,7 @@ struct ProcessRuntime {
 pub struct ProcessTable {
     clock: Arc<dyn Clock>,
     records: Mutex<HashMap<ProcessId, ProcessRuntime>>,
+    space_manager: Arc<InMemorySpaceManager>,
 }
 
 impl std::fmt::Debug for ProcessTable {
@@ -27,10 +30,21 @@ impl std::fmt::Debug for ProcessTable {
 }
 
 impl ProcessTable {
+    /// Create a table with its own private space manager (tests, standalone).
     pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self::with_space_manager(clock, Arc::new(InMemorySpaceManager::new()))
+    }
+
+    /// Create a table sharing a space manager with the rest of the kernel, so
+    /// spawn/exit can fork and release context spaces.
+    pub fn with_space_manager(
+        clock: Arc<dyn Clock>,
+        space_manager: Arc<InMemorySpaceManager>,
+    ) -> Self {
         Self {
             clock,
             records: Mutex::new(HashMap::new()),
+            space_manager,
         }
     }
 
@@ -66,7 +80,7 @@ impl ProcessTable {
     }
 
     pub async fn mark_exit(&self, id: ProcessId, reason: ExitReason) -> anyhow::Result<()> {
-        let notify = {
+        let (notify, space) = {
             let mut records = self.records.lock().await;
             let runtime = records
                 .get_mut(&id)
@@ -80,8 +94,10 @@ impl ProcessTable {
                 _ => ProcessState::Exited,
             };
             runtime.record.last_heartbeat = self.clock.mono_now();
-            runtime.notify.clone()
+            (runtime.notify.clone(), runtime.record.space)
         };
+        // Kernel-owned lifecycle: free the process's context space on terminal exit.
+        self.space_manager.release(space);
         notify.notify_waiters();
         Ok(())
     }
@@ -131,13 +147,25 @@ impl ProcessTable {
 impl ProcessManager for ProcessTable {
     async fn spawn(&self, spec: SpawnSpec) -> anyhow::Result<ProcessHandle> {
         let process_id = ProcessId::new();
+        // Look up the parent's space (scoped lock — released before await).
+        let parent_space = {
+            let records = self.records.lock().await;
+            spec.parent
+                .and_then(|pid| records.get(&pid).map(|r| r.record.space))
+        };
+        // Fork the child space from the parent (inherits bindings read-only),
+        // or mint a fresh root space for parentless processes.
+        let space = match parent_space {
+            Some(parent_space) => self.space_manager.fork_space(parent_space, process_id).await?,
+            None => SpaceId::new(),
+        };
         let record = ProcessRecord {
             process_id,
             agent_id: spec.agent_id,
             parent: spec.parent,
             profile: spec.profile,
             state: ProcessState::Created,
-            space: SpaceId::new(),
+            space,
             mailbox: MailboxId::new(),
             namespace: spec.namespace,
             created_at: self.clock.wall_now(),
@@ -222,5 +250,38 @@ mod tests {
         let s2 = table.inspect(h2.id).await.unwrap();
         assert_eq!(s1.space, s1_again.space, "space stable per process");
         assert_ne!(s1.space, s2.space, "each spawn mints a unique space");
+    }
+
+    #[tokio::test]
+    async fn spawn_forks_child_space_from_parent() {
+        use crate::chronos::SystemClock;
+        use fabric::types::space::{ContextBinding, SessionId};
+        let sm = std::sync::Arc::new(InMemorySpaceManager::new());
+        let table = ProcessTable::with_space_manager(std::sync::Arc::new(SystemClock::new()), sm.clone());
+        let parent = table.spawn(SpawnSpec::default()).await.unwrap();
+        let parent_space = table.inspect(parent.id).await.unwrap().space;
+        sm.upsert_binding(parent_space, ContextBinding::Session(SessionId("s".into())));
+        let child = table
+            .spawn(SpawnSpec { parent: Some(parent.id), ..SpawnSpec::default() })
+            .await
+            .unwrap();
+        let child_space = table.inspect(child.id).await.unwrap().space;
+        assert_ne!(child_space, parent_space, "child gets its own space");
+        let cb = sm.get_bindings(child_space).unwrap();
+        assert!(cb.iter().any(|b| matches!(b, ContextBinding::Session(_))), "inherited parent binding");
+    }
+
+    #[tokio::test]
+    async fn terminate_releases_process_space() {
+        use crate::chronos::SystemClock;
+        use fabric::types::space::{ContextBinding, SessionId};
+        let sm = std::sync::Arc::new(InMemorySpaceManager::new());
+        let table = ProcessTable::with_space_manager(std::sync::Arc::new(SystemClock::new()), sm.clone());
+        let h = table.spawn(SpawnSpec::default()).await.unwrap();
+        let space = table.inspect(h.id).await.unwrap().space;
+        sm.upsert_binding(space, ContextBinding::Session(SessionId("s".into())));
+        assert_eq!(sm.space_count(), 1);
+        table.signal(h.id, fabric::types::process::ProcessSignal::Terminate).await.unwrap();
+        assert!(sm.get_space(space).is_none(), "space released on terminate");
     }
 }
