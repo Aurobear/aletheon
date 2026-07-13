@@ -148,14 +148,8 @@ pub trait AgoraService: Send + Sync {
 /// Agora (working-memory) operations — the shared cognitive workspace.
 #[async_trait]
 pub trait AgoraOps: Send + Sync {
-    /// Write a value onto a session's blackboard.
-    #[deprecated(note = "Use AgoraService propose/commit; publish is backend compatibility only")]
-    async fn publish(&self, session: &str, key: &str, value: serde_json::Value) -> Result<()>;
     /// Read a value from a session's blackboard.
     async fn recall(&self, session: &str, key: &str) -> Result<Option<serde_json::Value>>;
-    /// Merge a JSON patch into the session workspace.
-    #[deprecated(note = "Use AgoraService propose/commit; update is backend compatibility only")]
-    async fn update(&self, session: &str, patch: serde_json::Value) -> Result<()>;
     /// Snapshot the entire session workspace (for debug / commit).
     async fn snapshot(&self, session: &str) -> Result<serde_json::Value>;
     /// Return the current workspace version (0-based, incremented on commit).
@@ -232,6 +226,11 @@ pub trait AgoraOps: Send + Sync {
         let _ = (session, since_version);
         Vec::new()
     }
+
+    /// Public watch surface: return commits after `cursor` (poll-style).
+    async fn watch(&self, session: &str, cursor: u64) -> Vec<AgoraCommit> {
+        self.changes_since(session, cursor).await
+    }
 }
 
 #[cfg(test)]
@@ -248,14 +247,8 @@ mod tests {
 
     #[async_trait]
     impl AgoraOps for SpyAgora {
-        async fn publish(&self, _: &str, _: &str, _: serde_json::Value) -> Result<()> {
-            Ok(())
-        }
         async fn recall(&self, _: &str, _: &str) -> Result<Option<serde_json::Value>> {
             Ok(None)
-        }
-        async fn update(&self, _: &str, _: serde_json::Value) -> Result<()> {
-            Ok(())
         }
         async fn snapshot(&self, _: &str) -> Result<serde_json::Value> {
             Ok(serde_json::Value::Null)
