@@ -59,6 +59,23 @@ impl InMemorySpaceManager {
             .unwrap_or(false)
     }
 
+    /// Insert or update a binding. Singleton-per-space variants (Session,
+    /// Agora, MemoryView, WorldProjection) replace an existing binding of the
+    /// same variant in place; Artifact bindings (multi-instance) are appended.
+    /// Infallible: a poisoned mutex is a no-op.
+    pub fn upsert_binding(&self, space: SpaceId, binding: ContextBinding) {
+        if let Ok(mut spaces) = self.spaces.lock() {
+            let entry = spaces.entry(space).or_insert_with(|| empty_space(space));
+            let is_multi = matches!(binding, ContextBinding::Artifact(_, _));
+            if !is_multi {
+                entry
+                    .bindings
+                    .retain(|b| std::mem::discriminant(b) != std::mem::discriminant(&binding));
+            }
+            entry.bindings.push(binding);
+        }
+    }
+
     /// Number of tracked spaces (observability / leak checks).
     pub fn space_count(&self) -> usize {
         self.spaces.lock().map(|s| s.len()).unwrap_or(0)
@@ -155,5 +172,42 @@ mod tests {
             0,
             "spaces must not accumulate across turns"
         );
+    }
+
+    #[test]
+    fn upsert_replaces_singletons_appends_artifacts() {
+        use fabric::types::space::{AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, SessionId};
+        let m = InMemorySpaceManager::new();
+        let s = SpaceId::new();
+
+        m.upsert_binding(s, ContextBinding::Agora(AgoraSpaceId("sess".into()), AgoraVersion(1)));
+        m.upsert_binding(s, ContextBinding::Agora(AgoraSpaceId("sess".into()), AgoraVersion(2)));
+        let b = m.get_bindings(s).unwrap();
+        assert_eq!(b.iter().filter(|x| matches!(x, ContextBinding::Agora(_, _))).count(), 1);
+        assert!(b.iter().any(|x| matches!(x, ContextBinding::Agora(_, AgoraVersion(2)))));
+
+        m.upsert_binding(s, ContextBinding::Session(SessionId("x".into())));
+        m.upsert_binding(s, ContextBinding::Session(SessionId("x".into())));
+        let b = m.get_bindings(s).unwrap();
+        assert_eq!(b.iter().filter(|x| matches!(x, ContextBinding::Session(_))).count(), 1);
+
+        m.upsert_binding(s, ContextBinding::Artifact(ArtifactId("a".into()), AccessMode::ReadOnly));
+        m.upsert_binding(s, ContextBinding::Artifact(ArtifactId("b".into()), AccessMode::ReadOnly));
+        let b = m.get_bindings(s).unwrap();
+        assert_eq!(b.iter().filter(|x| matches!(x, ContextBinding::Artifact(_, _))).count(), 2);
+    }
+
+    #[test]
+    fn reused_space_does_not_grow_across_turns() {
+        use fabric::types::space::{AgoraSpaceId, AgoraVersion, SessionId};
+        let m = InMemorySpaceManager::new();
+        let s = SpaceId::new(); // one long-lived space
+        for v in 0..1000u64 {
+            m.upsert_binding(s, ContextBinding::Session(SessionId("sess".into())));
+            m.upsert_binding(s, ContextBinding::Agora(AgoraSpaceId("sess".into()), AgoraVersion(v)));
+            m.set_overlay(s, "turn_input", serde_json::json!(v)).unwrap();
+        }
+        assert_eq!(m.space_count(), 1);
+        assert_eq!(m.get_bindings(s).unwrap().len(), 2, "one Session + one Agora, no accumulation");
     }
 }
