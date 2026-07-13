@@ -271,8 +271,16 @@ impl DaemonTurnOrchestrator {
         // Persist user message to recall memory
         {
             let (sess_id, sm_arc) = self.get_or_create_session(None).await;
-            let rm = self.subsystems.memory.recall_memory.lock().await;
-            let _ = rm.store(&sess_id, "user_message", message, None);
+            let _ = self
+                .subsystems
+                .memory
+                .memory_service
+                .record(mnemosyne::ExperienceEvent::Message {
+                    session: sess_id.clone(),
+                    role: "user".into(),
+                    content: message.to_string(),
+                })
+                .await;
             let hr = self.subsystems.corpus.hook_registry.lock().await;
             let turn_count = sm_arc.lock().await.turn_count();
             let ctx = HookContext {
@@ -742,8 +750,16 @@ impl DaemonTurnOrchestrator {
 
         if turn_succeeded {
             let sess_id = self.get_or_create_session(None).await.0;
-            let rm = self.subsystems.memory.recall_memory.lock().await;
-            let _ = rm.store(&sess_id, "assistant_message", &text, None);
+            let _ = self
+                .subsystems
+                .memory
+                .memory_service
+                .record(mnemosyne::ExperienceEvent::Message {
+                    session: sess_id.clone(),
+                    role: "assistant".into(),
+                    content: text.clone(),
+                })
+                .await;
             let hr = self.subsystems.corpus.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnMemoryStore,

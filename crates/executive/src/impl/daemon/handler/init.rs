@@ -539,6 +539,12 @@ impl RequestHandler {
             self_field,
             reflector,
             memory: crate::core::MemoryGroup {
+                memory_service: Arc::new(mnemosyne::DefaultMemoryService::new(
+                    recall_memory.clone(),
+                    fact_store.clone(),
+                    core_memory.clone(),
+                    episodic_memory.clone(),
+                )),
                 episodic_memory,
                 recall_memory,
                 core_memory,
