@@ -155,6 +155,7 @@ pub enum ProcessSignal {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessSnapshot {
     pub process_id: crate::types::operation::ProcessId,
+    pub space: SpaceId,
     pub agent_id: AgentId,
     pub parent: Option<crate::types::operation::ProcessId>,
     pub profile: AgentProfileId,

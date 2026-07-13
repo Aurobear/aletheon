@@ -116,6 +116,7 @@ impl ProcessTable {
     fn snapshot(runtime: &ProcessRuntime) -> ProcessSnapshot {
         ProcessSnapshot {
             process_id: runtime.record.process_id,
+            space: runtime.record.space,
             agent_id: runtime.record.agent_id,
             parent: runtime.record.parent,
             profile: runtime.record.profile.clone(),
@@ -203,5 +204,23 @@ impl ProcessManager for ProcessTable {
 impl Default for ProcessTable {
     fn default() -> Self {
         Self::new(Arc::new(crate::chronos::SystemClock::new()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fabric::types::process::SpawnSpec;
+
+    #[tokio::test]
+    async fn snapshot_exposes_process_space() {
+        let table = ProcessTable::default();
+        let h1 = table.spawn(SpawnSpec::default()).await.unwrap();
+        let h2 = table.spawn(SpawnSpec::default()).await.unwrap();
+        let s1 = table.inspect(h1.id).await.unwrap();
+        let s1_again = table.inspect(h1.id).await.unwrap();
+        let s2 = table.inspect(h2.id).await.unwrap();
+        assert_eq!(s1.space, s1_again.space, "space stable per process");
+        assert_ne!(s1.space, s2.space, "each spawn mints a unique space");
     }
 }
