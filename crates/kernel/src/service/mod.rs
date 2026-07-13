@@ -71,8 +71,10 @@ pub struct ServicePorts {
     pub budget: Arc<InMemoryBudgetController>,
     /// Resource lease manager (Phase 5B).
     pub leases: Arc<InMemoryResourceLeaseManager>,
-    /// Context space manager (fork/attach — Phase 3A).
-    pub space_manager: InMemorySpaceManager,
+    /// Context space manager (fork/attach — Phase 3A). Shared with the
+    /// `ProcessTable` so spawn/exit can fork and release context spaces
+    /// (Phase 2b).
+    pub space_manager: Arc<InMemorySpaceManager>,
 }
 
 impl ServicePorts {
@@ -82,7 +84,11 @@ impl ServicePorts {
     /// Agora is set to `None` and should be wired via `with_agora()`.
     pub fn new() -> Self {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-        let process_table = Arc::new(ProcessTable::new(clock.clone()));
+        let space_manager = Arc::new(InMemorySpaceManager::new());
+        let process_table = Arc::new(ProcessTable::with_space_manager(
+            clock.clone(),
+            space_manager.clone(),
+        ));
         let operation_table = Arc::new(OperationTable::new(clock.clone()));
         let supervisor = Arc::new(TokioMutex::new(SupervisorTree::new()));
         let mailbox_service = Arc::new(InProcessMailboxService::new());
@@ -94,7 +100,6 @@ impl ServicePorts {
                 .with_leases(leases.clone())
                 .with_sandbox_available(false),
         );
-        let space_manager = InMemorySpaceManager::new();
 
         Self {
             process_table,
@@ -121,13 +126,16 @@ impl ServicePorts {
 
     /// Create service ports for testing with a deterministic clock.
     pub fn for_testing(clock: Arc<dyn Clock>, admission: Arc<dyn AdmissionController>) -> Self {
-        let process_table = Arc::new(ProcessTable::new(clock.clone()));
+        let space_manager = Arc::new(InMemorySpaceManager::new());
+        let process_table = Arc::new(ProcessTable::with_space_manager(
+            clock.clone(),
+            space_manager.clone(),
+        ));
         let operation_table = Arc::new(OperationTable::new(clock.clone()));
         let supervisor = Arc::new(TokioMutex::new(SupervisorTree::new()));
         let mailbox_service = Arc::new(InProcessMailboxService::new());
         let budget = Arc::new(InMemoryBudgetController::new());
         let leases = Arc::new(InMemoryResourceLeaseManager::new());
-        let space_manager = InMemorySpaceManager::new();
 
         Self {
             process_table,
@@ -295,23 +303,12 @@ mod tests {
         struct StubAgora;
         #[async_trait::async_trait]
         impl AgoraOps for StubAgora {
-            async fn publish(
-                &self,
-                _s: &str,
-                _k: &str,
-                _v: serde_json::Value,
-            ) -> anyhow::Result<()> {
-                Ok(())
-            }
             async fn recall(
                 &self,
                 _s: &str,
                 _k: &str,
             ) -> anyhow::Result<Option<serde_json::Value>> {
                 Ok(None)
-            }
-            async fn update(&self, _s: &str, _p: serde_json::Value) -> anyhow::Result<()> {
-                Ok(())
             }
             async fn snapshot(&self, _s: &str) -> anyhow::Result<serde_json::Value> {
                 Ok(serde_json::Value::Null)

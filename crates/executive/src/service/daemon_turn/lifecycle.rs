@@ -10,7 +10,7 @@ use tracing::info;
 impl DaemonTurnOrchestrator {
     /// Ensure the main daemon agent is registered in the process table.
     pub(crate) async fn ensure_main_agent(&self) -> anyhow::Result<ProcessId> {
-        let mut guard = self.main_agent_process_id.lock().await;
+        let mut guard = self.subsystems.main_agent_process_id.lock().await;
         if let Some(pid) = *guard {
             return Ok(pid);
         }

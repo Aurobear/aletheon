@@ -74,11 +74,10 @@ impl AgoraRegistry {
 
         Ok(replayed)
     }
-}
 
-#[async_trait]
-impl AgoraOps for AgoraRegistry {
-    async fn publish(&self, session: &str, key: &str, value: Value) -> Result<()> {
+    /// Write a value onto a session's blackboard.
+    #[deprecated(note = "Use AgoraService propose/commit; publish is backend compatibility only")]
+    pub async fn publish(&self, session: &str, key: &str, value: Value) -> Result<()> {
         let mut map = self.sessions.lock().await;
         let ws = map.entry(session.to_string()).or_insert_with(|| {
             Workspace::new(
@@ -90,14 +89,9 @@ impl AgoraOps for AgoraRegistry {
         Ok(())
     }
 
-    async fn recall(&self, session: &str, key: &str) -> Result<Option<Value>> {
-        let map = self.sessions.lock().await;
-        Ok(map
-            .get(session)
-            .and_then(|ws| ws.blackboard.get(key).cloned()))
-    }
-
-    async fn update(&self, session: &str, patch: Value) -> Result<()> {
+    /// Merge a JSON patch into the session workspace.
+    #[deprecated(note = "Use AgoraService propose/commit; update is backend compatibility only")]
+    pub async fn update(&self, session: &str, patch: Value) -> Result<()> {
         let mut map = self.sessions.lock().await;
         let ws = map.entry(session.to_string()).or_insert_with(|| {
             Workspace::new(
@@ -107,6 +101,16 @@ impl AgoraOps for AgoraRegistry {
         });
         ws.blackboard.merge(patch);
         Ok(())
+    }
+}
+
+#[async_trait]
+impl AgoraOps for AgoraRegistry {
+    async fn recall(&self, session: &str, key: &str) -> Result<Option<Value>> {
+        let map = self.sessions.lock().await;
+        Ok(map
+            .get(session)
+            .and_then(|ws| ws.blackboard.get(key).cloned()))
     }
 
     async fn snapshot(&self, session: &str) -> Result<Value> {

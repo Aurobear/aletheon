@@ -66,4 +66,9 @@ pub struct CoreSystems {
     pub debug_handler: Arc<DebugHandler>,
     pub debug_perf: Arc<PerfCounter>,
     pub cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+
+    /// Shared main-agent process id, written by DaemonTurnOrchestrator's
+    /// ensure_main_agent and read by tools (e.g. AgentTool) that need the
+    /// process parent for space forking.
+    pub main_agent_process_id: Arc<tokio::sync::Mutex<Option<fabric::ProcessId>>>,
 }

@@ -175,6 +175,18 @@ impl SubAgentSpawner {
         }
     }
 
+    /// Repoint this spawner at externally-owned kernel tables so sub-agents
+    /// register in the same ProcessTable/OperationTable as the main agent.
+    /// Safe to call at bootstrap before any sub-agent is spawned.
+    pub fn set_shared_tables(
+        &mut self,
+        process_table: Arc<ProcessTable>,
+        operation_table: Arc<OperationTable>,
+    ) {
+        self.process_table = process_table;
+        self.operation_table = operation_table;
+    }
+
     /// Attach a sub-agent execution runtime.
     ///
     /// When set, spawned sub-agents run real LLM + tool work through the
@@ -309,9 +321,25 @@ impl SubAgentSpawner {
         parent_turn_id: String,
         restart_policy: RestartPolicy,
     ) -> anyhow::Result<SubAgentHandle> {
+        self.spawn_tracked_with_parent(task, parent_turn_id, restart_policy, None)
+            .await
+    }
+
+    /// Register a tracked sub-agent entry with an explicit process parent, so
+    /// the kernel `ProcessTable` can fork the child's context space from the
+    /// parent's (Phase 2b fork-on-spawn). See [`spawn_tracked`](Self::spawn_tracked)
+    /// for the parentless variant.
+    pub async fn spawn_tracked_with_parent(
+        &mut self,
+        task: String,
+        parent_turn_id: String,
+        restart_policy: RestartPolicy,
+        parent: Option<ProcessId>,
+    ) -> anyhow::Result<SubAgentHandle> {
         let process = self
             .process_table
             .spawn(SpawnSpec {
+                parent,
                 profile: AgentProfileId("sub-agent".into()),
                 namespace: NamespaceId(parent_turn_id.clone()),
                 initial_operation: Some(OperationKind::SubAgent),
@@ -801,6 +829,46 @@ mod lifecycle_tests {
         );
         let got = s.get(&h.id).unwrap();
         assert!(matches!(got.status, SubAgentStatus::Executing { .. }));
+    }
+
+    #[tokio::test]
+    async fn spawn_tracked_with_parent_forks_child_space_from_shared_table() {
+        use aletheon_kernel::space::InMemorySpaceManager;
+        use fabric::types::space::{ContextBinding, SessionId};
+
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
+        let sm = Arc::new(InMemorySpaceManager::new());
+        let process_table = Arc::new(ProcessTable::with_space_manager(clock.clone(), sm.clone()));
+        let operation_table = Arc::new(OperationTable::new(clock.clone()));
+
+        let mut s =
+            SubAgentSpawner::with_tables(process_table.clone(), operation_table.clone(), clock);
+
+        // Spawn a "main" process directly in the shared table and seed a
+        // binding on its space.
+        let main = process_table.spawn(SpawnSpec::default()).await.unwrap();
+        let main_space = process_table.inspect(main.id).await.unwrap().space;
+        sm.upsert_binding(main_space, ContextBinding::Session(SessionId("s".into())));
+
+        let handle = s
+            .spawn_tracked_with_parent(
+                "task".into(),
+                "turn-1".into(),
+                RestartPolicy::Never,
+                Some(main.id),
+            )
+            .await
+            .unwrap();
+        let child_space = s.snapshot(&handle.id).await.unwrap().unwrap().space;
+
+        assert_ne!(child_space, main_space, "child gets its own forked space");
+        let bindings = sm.get_bindings(child_space).unwrap();
+        assert!(
+            bindings
+                .iter()
+                .any(|b| matches!(b, ContextBinding::Session(_))),
+            "child space inherited the parent's binding"
+        );
     }
 
     #[test]

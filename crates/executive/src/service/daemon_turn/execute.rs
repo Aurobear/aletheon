@@ -23,7 +23,7 @@ use fabric::{
     LlmProvider, Message, OperationKind, OperationManager, OperationRequest, PrincipalId, Role,
     SandboxRequirement, TurnRequest, UsageReport,
 };
-use fabric::{AgoraSpaceId, AgoraVersion, ContextBinding, SessionId, SpaceId, SpaceManager};
+use fabric::{AgoraSpaceId, AgoraVersion, ContextBinding, ProcessManager, SessionId, SpaceId};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -271,8 +271,16 @@ impl DaemonTurnOrchestrator {
         // Persist user message to recall memory
         {
             let (sess_id, sm_arc) = self.get_or_create_session(None).await;
-            let rm = self.subsystems.memory.recall_memory.lock().await;
-            let _ = rm.store(&sess_id, "user_message", message, None);
+            let _ = self
+                .subsystems
+                .memory
+                .memory_service
+                .record(mnemosyne::ExperienceEvent::Message {
+                    session: sess_id.clone(),
+                    role: "user".into(),
+                    content: message.to_string(),
+                })
+                .await;
             let hr = self.subsystems.corpus.hook_registry.lock().await;
             let turn_count = sm_arc.lock().await.turn_count();
             let ctx = HookContext {
@@ -308,33 +316,27 @@ impl DaemonTurnOrchestrator {
             0
         };
         let agora_start_version = agora_version;
-        let turn_space = SpaceId::new();
-        if let Err(e) = self
-            .subsystems
-            .ports
-            .space_manager
-            .attach_region(
-                turn_space,
-                ContextBinding::Session(SessionId(sess_id.clone())),
-            )
-            .await
-        {
-            tracing::warn!(target: "space", error = %e, "failed to attach session binding");
-        }
-        if let Err(e) = self
-            .subsystems
-            .ports
-            .space_manager
-            .attach_region(
-                turn_space,
-                ContextBinding::Agora(AgoraSpaceId(sess_id.clone()), AgoraVersion(agora_version)),
-            )
-            .await
-        {
-            tracing::warn!(target: "space", error = %e, "failed to attach agora binding");
-        }
+        // Phase 2a: reuse the main agent's long-lived process space (one per
+        // session, not per turn). Bindings are upserted so the Agora version is
+        // refreshed in place rather than accumulating. Space is released on
+        // process exit (see orchestrator::exit_process).
+        let agent_space = match self.process_table.inspect(main_pid).await {
+            Ok(snap) => snap.space,
+            Err(e) => {
+                tracing::warn!(target: "space", error = %e, "inspect(main_pid) failed; using ephemeral space for this turn");
+                SpaceId::new()
+            }
+        };
+        self.subsystems.ports.space_manager.upsert_binding(
+            agent_space,
+            ContextBinding::Session(SessionId(sess_id.clone())),
+        );
+        self.subsystems.ports.space_manager.upsert_binding(
+            agent_space,
+            ContextBinding::Agora(AgoraSpaceId(sess_id.clone()), AgoraVersion(agora_version)),
+        );
         if let Err(e) = self.subsystems.ports.space_manager.set_overlay(
-            turn_space,
+            agent_space,
             "turn_input",
             serde_json::json!(message),
         ) {
@@ -748,8 +750,16 @@ impl DaemonTurnOrchestrator {
 
         if turn_succeeded {
             let sess_id = self.get_or_create_session(None).await.0;
-            let rm = self.subsystems.memory.recall_memory.lock().await;
-            let _ = rm.store(&sess_id, "assistant_message", &text, None);
+            let _ = self
+                .subsystems
+                .memory
+                .memory_service
+                .record(mnemosyne::ExperienceEvent::Message {
+                    session: sess_id.clone(),
+                    role: "assistant".into(),
+                    content: text.clone(),
+                })
+                .await;
             let hr = self.subsystems.corpus.hook_registry.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnMemoryStore,

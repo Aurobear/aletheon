@@ -8,6 +8,15 @@
 pub mod backends;
 pub mod r#impl;
 pub mod ops;
+pub mod service;
+
+// MemoryService facade (docs/arch §11). NOTE: `MemoryScope` from `service` is
+// intentionally not re-exported here — it would collide with the existing
+// multi-agent `MemoryScope` re-exported below (`r#impl::core_memory::scope`).
+// Reach the facade's scope type via `mnemosyne::service::MemoryScope`.
+pub use service::{
+    DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryService, RecallRequest, RecallSet,
+};
 
 // Always-available exports
 pub use backends::EpisodicMemory;
