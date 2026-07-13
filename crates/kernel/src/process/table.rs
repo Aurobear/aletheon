@@ -156,7 +156,11 @@ impl ProcessManager for ProcessTable {
         // Fork the child space from the parent (inherits bindings read-only),
         // or mint a fresh root space for parentless processes.
         let space = match parent_space {
-            Some(parent_space) => self.space_manager.fork_space(parent_space, process_id).await?,
+            Some(parent_space) => {
+                self.space_manager
+                    .fork_space(parent_space, process_id)
+                    .await?
+            }
             None => SpaceId::new(),
         };
         let record = ProcessRecord {
@@ -257,18 +261,25 @@ mod tests {
         use crate::chronos::SystemClock;
         use fabric::types::space::{ContextBinding, SessionId};
         let sm = std::sync::Arc::new(InMemorySpaceManager::new());
-        let table = ProcessTable::with_space_manager(std::sync::Arc::new(SystemClock::new()), sm.clone());
+        let table =
+            ProcessTable::with_space_manager(std::sync::Arc::new(SystemClock::new()), sm.clone());
         let parent = table.spawn(SpawnSpec::default()).await.unwrap();
         let parent_space = table.inspect(parent.id).await.unwrap().space;
         sm.upsert_binding(parent_space, ContextBinding::Session(SessionId("s".into())));
         let child = table
-            .spawn(SpawnSpec { parent: Some(parent.id), ..SpawnSpec::default() })
+            .spawn(SpawnSpec {
+                parent: Some(parent.id),
+                ..SpawnSpec::default()
+            })
             .await
             .unwrap();
         let child_space = table.inspect(child.id).await.unwrap().space;
         assert_ne!(child_space, parent_space, "child gets its own space");
         let cb = sm.get_bindings(child_space).unwrap();
-        assert!(cb.iter().any(|b| matches!(b, ContextBinding::Session(_))), "inherited parent binding");
+        assert!(
+            cb.iter().any(|b| matches!(b, ContextBinding::Session(_))),
+            "inherited parent binding"
+        );
     }
 
     #[tokio::test]
@@ -276,12 +287,16 @@ mod tests {
         use crate::chronos::SystemClock;
         use fabric::types::space::{ContextBinding, SessionId};
         let sm = std::sync::Arc::new(InMemorySpaceManager::new());
-        let table = ProcessTable::with_space_manager(std::sync::Arc::new(SystemClock::new()), sm.clone());
+        let table =
+            ProcessTable::with_space_manager(std::sync::Arc::new(SystemClock::new()), sm.clone());
         let h = table.spawn(SpawnSpec::default()).await.unwrap();
         let space = table.inspect(h.id).await.unwrap().space;
         sm.upsert_binding(space, ContextBinding::Session(SessionId("s".into())));
         assert_eq!(sm.space_count(), 1);
-        table.signal(h.id, fabric::types::process::ProcessSignal::Terminate).await.unwrap();
+        table
+            .signal(h.id, fabric::types::process::ProcessSignal::Terminate)
+            .await
+            .unwrap();
         assert!(sm.get_space(space).is_none(), "space released on terminate");
     }
 }
