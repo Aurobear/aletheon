@@ -7,7 +7,6 @@
 use super::super::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use super::helpers::{bounded_text_history, build_request_messages};
 use super::orchestrator::DaemonTurnOrchestrator;
-use crate::core::core_systems::CoreSystems;
 
 use crate::r#impl::daemon::handler::tool_executor::TurnToolExecutor;
 use aletheon_kernel::chronos::Timer;
@@ -24,7 +23,7 @@ use fabric::{
     LlmProvider, Message, OperationKind, OperationManager, OperationRequest, PrincipalId, Role,
     SandboxRequirement, TurnRequest, UsageReport,
 };
-use fabric::{AgoraSpaceId, AgoraVersion, ContextBinding, SessionId, SpaceId, SpaceManager};
+use fabric::{AgoraSpaceId, AgoraVersion, ContextBinding, ProcessManager, SessionId, SpaceId};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -309,55 +308,32 @@ impl DaemonTurnOrchestrator {
             0
         };
         let agora_start_version = agora_version;
-        let turn_space = SpaceId::new();
-        if let Err(e) = self
-            .subsystems
-            .ports
-            .space_manager
-            .attach_region(
-                turn_space,
-                ContextBinding::Session(SessionId(sess_id.clone())),
-            )
-            .await
-        {
-            tracing::warn!(target: "space", error = %e, "failed to attach session binding");
-        }
-        if let Err(e) = self
-            .subsystems
-            .ports
-            .space_manager
-            .attach_region(
-                turn_space,
-                ContextBinding::Agora(AgoraSpaceId(sess_id.clone()), AgoraVersion(agora_version)),
-            )
-            .await
-        {
-            tracing::warn!(target: "space", error = %e, "failed to attach agora binding");
-        }
+        // Phase 2a: reuse the main agent's long-lived process space (one per
+        // session, not per turn). Bindings are upserted so the Agora version is
+        // refreshed in place rather than accumulating. Space is released on
+        // process exit (see orchestrator::exit_process).
+        let agent_space = match self.process_table.inspect(main_pid).await {
+            Ok(snap) => snap.space,
+            Err(e) => {
+                tracing::warn!(target: "space", error = %e, "inspect(main_pid) failed; using ephemeral space for this turn");
+                SpaceId::new()
+            }
+        };
+        self.subsystems.ports.space_manager.upsert_binding(
+            agent_space,
+            ContextBinding::Session(SessionId(sess_id.clone())),
+        );
+        self.subsystems.ports.space_manager.upsert_binding(
+            agent_space,
+            ContextBinding::Agora(AgoraSpaceId(sess_id.clone()), AgoraVersion(agora_version)),
+        );
         if let Err(e) = self.subsystems.ports.space_manager.set_overlay(
-            turn_space,
+            agent_space,
             "turn_input",
             serde_json::json!(message),
         ) {
             tracing::warn!(target: "space", error = %e, "failed to store turn input overlay");
         }
-
-        // Release the ephemeral turn space on every exit path (including panics
-        // and any future early returns) so the space table does not grow
-        // unbounded across turns. See docs/plans/2026-07-12-space-lifecycle-phase1-design.md.
-        struct SpaceReleaseGuard {
-            subsystems: Arc<CoreSystems>,
-            space: SpaceId,
-        }
-        impl Drop for SpaceReleaseGuard {
-            fn drop(&mut self) {
-                self.subsystems.ports.space_manager.release(self.space);
-            }
-        }
-        let _space_guard = SpaceReleaseGuard {
-            subsystems: self.subsystems.clone(),
-            space: turn_space,
-        };
 
         let self_field_arc_for_react = self.subsystems.self_field.clone();
         let session_id_for_agora = sess_id.clone();
