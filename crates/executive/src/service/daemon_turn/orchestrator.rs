@@ -38,7 +38,6 @@ pub struct DaemonTurnOrchestrator {
     pub(crate) admission: Arc<dyn AdmissionController>,
     pub(crate) agora: Option<Arc<dyn AgoraOps>>,
     pub(crate) mailbox_service: Arc<InProcessMailboxService>,
-    pub(crate) main_agent_process_id: Mutex<Option<ProcessId>>,
 
     // --- Subsystem handles (mirrors RequestHandler fields) ---
     pub(crate) subsystems: Arc<CoreSystems>,
@@ -89,7 +88,6 @@ impl DaemonTurnOrchestrator {
             admission,
             agora,
             mailbox_service,
-            main_agent_process_id: Mutex::new(None),
             subsystems,
             sessions,
             session_gateway,

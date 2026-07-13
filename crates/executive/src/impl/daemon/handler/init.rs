@@ -573,6 +573,7 @@ impl RequestHandler {
             debug_handler,
             debug_perf,
             cancel_token: Arc::new(Mutex::new(None)),
+            main_agent_process_id: Arc::new(Mutex::new(None)),
         });
 
         // Wire sub-agent execution runtime so spawned sub-agents run real
@@ -588,6 +589,20 @@ impl RequestHandler {
                 .await
                 .sub_agent_spawner_mut()
                 .with_runtime(sub_agent_runtime);
+        }
+
+        // Repoint the sub-agent spawner at the shared kernel tables so
+        // sub-agents register in the same ProcessTable/OperationTable as the
+        // main agent (Phase 2c: enables fork-on-spawn for process parents).
+        {
+            let pt = subsystems.ports.process_table.clone();
+            let ot = subsystems.ports.operation_table.clone();
+            subsystems
+                .runtime
+                .lock()
+                .await
+                .sub_agent_spawner_mut()
+                .set_shared_tables(pt, ot);
         }
 
         // AgentTool — delegates to SubAgentSpawner for process tracking,
@@ -617,6 +632,7 @@ impl RequestHandler {
                 let llm_for_agents: Arc<dyn LlmProvider> = llm.clone();
                 let tools_for_agents = subsystems.corpus.tools.clone();
                 let exec_for_agents = subsystems.runtime.clone();
+                let main_slot = subsystems.main_agent_process_id.clone();
 
                 let _clock_for_agents = clock.clone();
                 let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
@@ -624,6 +640,7 @@ impl RequestHandler {
                         let llm = llm_for_agents.clone();
                         let tools = tools_for_agents.clone();
                         let exec = exec_for_agents.clone();
+                        let main_slot = main_slot.clone();
                         let sp = system_prompt;
                         let up = user_prompt;
                         let at = allowed_tools;
@@ -632,12 +649,14 @@ impl RequestHandler {
                             // 1. Register tracked sub-agent with SubAgentSpawner.
                             let agent_id = {
                                 let mut runtime = exec.lock().await;
+                                let parent = *main_slot.lock().await;
                                 let handle = runtime
                                     .sub_agent_spawner_mut()
-                                    .spawn_tracked(
+                                    .spawn_tracked_with_parent(
                                         up.clone(),
                                         "agent-tool".into(),
                                         RestartPolicy::Never,
+                                        parent,
                                     )
                                     .await?;
                                 let id = handle.id.clone();
