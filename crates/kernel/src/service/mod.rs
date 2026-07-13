@@ -303,23 +303,12 @@ mod tests {
         struct StubAgora;
         #[async_trait::async_trait]
         impl AgoraOps for StubAgora {
-            async fn publish(
-                &self,
-                _s: &str,
-                _k: &str,
-                _v: serde_json::Value,
-            ) -> anyhow::Result<()> {
-                Ok(())
-            }
             async fn recall(
                 &self,
                 _s: &str,
                 _k: &str,
             ) -> anyhow::Result<Option<serde_json::Value>> {
                 Ok(None)
-            }
-            async fn update(&self, _s: &str, _p: serde_json::Value) -> anyhow::Result<()> {
-                Ok(())
             }
             async fn snapshot(&self, _s: &str) -> anyhow::Result<serde_json::Value> {
                 Ok(serde_json::Value::Null)
