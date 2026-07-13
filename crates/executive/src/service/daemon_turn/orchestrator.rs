@@ -144,19 +144,8 @@ impl DaemonTurnOrchestrator {
     /// Stopping → Exited/Failed, and any in-flight operations are cancelled via
     /// the operation tree's parent-cancel propagation.
     pub async fn exit_process(&self, process_id: ProcessId) -> anyhow::Result<()> {
-        // Capture the process's space before termination so we can release it.
-        let space = self
-            .process_table
-            .inspect(process_id)
-            .await
-            .ok()
-            .map(|snap| snap.space);
         self.process_table
             .signal(process_id, ProcessSignal::Terminate)
-            .await?;
-        if let Some(space) = space {
-            self.subsystems.ports.space_manager.release(space);
-        }
-        Ok(())
+            .await
     }
 }
