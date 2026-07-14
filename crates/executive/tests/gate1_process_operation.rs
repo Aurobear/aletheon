@@ -359,7 +359,10 @@ async fn no_orphan_tasks_after_cancel_and_drain() {
     });
 
     // Drain the scope with a short grace period.
-    let exits = scope.cancel_and_drain(Duration::from_millis(500)).await;
+    let clock = TestClock::default();
+    let exits = scope
+        .cancel_and_drain(&clock, Duration::from_millis(500))
+        .await;
 
     // All tasks should be accounted for.
     assert_eq!(exits.len(), 1);

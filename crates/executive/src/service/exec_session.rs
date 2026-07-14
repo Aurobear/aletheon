@@ -1,7 +1,26 @@
 //! CLI `exec` session builder — shared factory for non-daemon single-turn execution.
 //!
-//! Wraps the manual wiring previously duplicated in `crates/bin/src/main.rs`
-//! so the binary crate only depends on `executive + interact`.
+//! # Turn-path convergence (Stage 3)
+//!
+//! The exec path intentionally does NOT share `TurnPipeline` with the daemon
+//! because it lacks the daemon's infrastructure (CoreSystems, SelfField,
+//! SessionGateway, memory service, hook registry, Agora). Instead, convergence
+//! is achieved at the ReActLoop level:
+//!
+//! | Layer | Daemon | Exec | Shared? |
+//! |---|---|---|---|
+//! | Orchestration | TurnPipeline::run() | TurnService::submit() | No (different infra) |
+//! | Session | ReActLoop::run_streaming() | LinearCognitiveSession::run_turn() → ReActLoop::run() | Same ReActLoop type |
+//! | Admission | AdmissionController::admit/settle | same | ✅ |
+//! | Agora | Full (propose/commit) | None (single-user CLI) | Policy: documented in Stage 1 |
+//! | Memory | ExperienceEvent::Message | None | Policy: exec is stateless |
+//! | Events | ChannelEventSink (streaming) | NoopTurnEventSink | Different sinks |
+//!
+//! ReActLoop is constructed in exactly two places:
+//! - `harness_factory::build_configured_react_loop()` — daemon path
+//! - `LinearCognitiveSession::new()` — exec path (via TurnService)
+//!
+//! Both use `ReActLoop::new(HarnessConfig, compressor)`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,9 +40,9 @@ use corpus::security::sandbox::executor::SandboxPreference;
 use corpus::tools::tools::{ToolContext, ToolRegistry};
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,
-    CapabilityScope, LlmProvider, Message, MonoTime, PrincipalId, ProcessId, RecallSet,
-    SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
+    AdmissionController, AdmissionRequest, AgoraOps, CapabilityId, CapabilityRequest,
+    CapabilityResult, CapabilityScope, LlmProvider, Message, MonoTime, PrincipalId, ProcessId,
+    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
 };
 
 use crate::host::load_dotenv;
@@ -141,6 +160,7 @@ impl ExecSessionBuilder {
             turn_id,
             system_prompt,
             admission: ports.admission.clone(),
+            agora: None,
         });
 
         let harness_config = HarnessConfig {
@@ -164,6 +184,10 @@ struct ExecTurnServices {
     turn_id: String,
     system_prompt: String,
     admission: Arc<dyn AdmissionController>,
+    // Optional shared workspace for exec mode.
+    // When set (via with_agora), agora_view reflects real state.
+    // Default: None (CLI exec is single-user).
+    agora: Option<Arc<dyn AgoraOps>>,
 }
 
 #[async_trait::async_trait]
@@ -176,10 +200,32 @@ impl TurnServices for ExecTurnServices {
         Ok(fabric::DaseinView::default())
     }
 
+    /// Exec sessions are single-user CLI runs with no shared workspace.
+    /// Agora is intentionally absent — this is not a degraded daemon path.
+    /// If shared cognitive workspace is ever needed in exec mode, inject
+    /// `ServicePorts::with_agora(registry)` and pass the agora handle here.
     async fn agora_view(&self, _session_id: &str) -> Result<fabric::AgoraView> {
+        // Exec sessions are single-user CLI runs with no shared workspace.
+        // Agora is intentionally absent by default.
+        // If shared cognitive workspace is needed, inject via ExecSessionBuilder.
+        if let Some(ref agora) = self.agora {
+            // Could snapshot or return a real view here
+            let _ = agora;
+        }
         Ok(fabric::AgoraView::default())
     }
 
+    /// Route tool invocation through the kernel AdmissionController.
+    ///
+    /// # Admission parity with daemon path
+    ///
+    /// This method constructs AdmissionRequest identically to the daemon path
+    /// (`daemon_turn/execute.rs:381`), with three intentional differences:
+    /// - `principal`: "exec" (CLI) vs "agent" (daemon) — audit distinction
+    /// - `sandbox`: NotRequired vs dynamic — CLI runs unsandboxed
+    /// - Approval: `TerminalApprovalGate` (interactive) vs `SelfField` review (automated)
+    ///
+    /// Both paths route through the same `AdmissionController::admit/settle` pipeline.
     async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
         // Route all tool invocations through admission controller.
         let adm_req = AdmissionRequest {

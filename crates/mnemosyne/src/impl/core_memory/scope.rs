@@ -663,11 +663,17 @@ mod tests {
     #[test]
     fn test_recall_scope_filter() {
         use super::super::super::recall_memory::MemoryEntry;
-        use chrono::Utc;
+        use fabric::wall_to_datetime;
+        use std::sync::Arc;
 
+        fn test_clock() -> Arc<dyn fabric::Clock> {
+            Arc::new(aletheon_kernel::chronos::TestClock::default())
+        }
+
+        let clock = test_clock();
         let make_entry = |scope_json: &str| MemoryEntry {
             id: 1,
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(clock.wall_now()),
             session_id: "s1".into(),
             entry_type: "msg".into(),
             content: "test".into(),

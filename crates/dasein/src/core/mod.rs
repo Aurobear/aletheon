@@ -141,7 +141,7 @@ impl SelfField {
             .and_then(|path| SelfFieldStore::new(path).ok());
 
         let (dasein, dasein_event_tx) = if config.enable_dasein {
-            let (module, tx) = DaseinModule::new();
+            let (module, tx) = DaseinModule::new(clock.clone());
             (Some(module), Some(tx))
         } else {
             (None, None)
@@ -160,7 +160,7 @@ impl SelfField {
             store,
             policy_bridge: PolicyBridge::new(),
             loop_bridge: LoopBridge::new(),
-            hook_bridge: HookBridge::new(),
+            hook_bridge: HookBridge::new(clock.clone()),
             dasein,
             permission_authority: None,
             dasein_event_tx,

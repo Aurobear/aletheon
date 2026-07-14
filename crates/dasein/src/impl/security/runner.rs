@@ -1,4 +1,5 @@
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::warn;
 
 use super::audit::{AuditLogger, AuditRecord};
@@ -41,10 +42,15 @@ pub struct ToolRunnerWithGuard {
     output_guardrail: OutputGuardrail,
     audit_logger: AuditLogger,
     risk_classifier: RiskClassifier,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl ToolRunnerWithGuard {
-    pub fn new(sandbox: SandboxExecutor, audit_logger: AuditLogger) -> Self {
+    pub fn new(
+        sandbox: SandboxExecutor,
+        audit_logger: AuditLogger,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
         Self {
             sandbox,
             loop_detector: LoopDetector::new(LoopDetectorConfig::default()),
@@ -52,17 +58,20 @@ impl ToolRunnerWithGuard {
             policy_engine: PolicyEngine::with_defaults(),
             audit_logger,
             risk_classifier: RiskClassifier::with_defaults(),
+            clock,
         }
     }
 
     /// Create with a sandbox executor using Auto preference and the given backends.
     pub fn with_default_sandbox(
         audit_logger: AuditLogger,
+        clock: Arc<dyn fabric::Clock>,
         backends: Vec<Box<dyn fabric::sandbox::SandboxBackend>>,
     ) -> Self {
         Self::new(
             SandboxExecutor::new(backends, SandboxPreference::Auto),
             audit_logger,
+            clock,
         )
     }
 
@@ -84,7 +93,7 @@ impl ToolRunnerWithGuard {
         turn_id: &str,
     ) -> std::result::Result<ToolResult, ToolError> {
         let tool_name = tool.name();
-        let start = Instant::now();
+        let start = self.clock.mono_now();
 
         // 1. Policy check
         let policy_verdict = self.policy_engine.check(tool_name, &input);
@@ -283,12 +292,12 @@ impl ToolRunnerWithGuard {
         level: PermissionLevel,
         turn_id: &str,
         result: Option<&ToolResult>,
-        start: &Instant,
+        start: &fabric::MonoTime,
         verdict: &str,
     ) {
         let category = self.risk_classifier.classify(tool_name);
         let record = AuditRecord {
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
             session_id: String::new(), // Will be filled by caller or context
             turn_id: turn_id.to_string(),
             tool_name: tool_name.to_string(),
@@ -299,7 +308,7 @@ impl ToolRunnerWithGuard {
             result_summary: result.map(|r| r.content.chars().take(200).collect()),
             is_error: result.map(|r| r.is_error).unwrap_or(false),
             sandbox_backend: None,
-            elapsed_ms: start.elapsed().as_millis() as u64,
+            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
         };
         let _ = self.audit_logger.log(record).await;
     }

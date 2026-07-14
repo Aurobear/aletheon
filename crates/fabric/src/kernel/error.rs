@@ -5,6 +5,8 @@
 
 use std::time::Duration;
 
+use crate::{Clock, Timer};
+
 // ── Error Severity ──────────────────────────────────────────────────────────
 
 /// How severe an error is and what recovery is possible.
@@ -468,7 +470,14 @@ impl DegradationChain {
     /// The `operation` closure is called for each Retry strategy.
     /// Other strategies modify behavior but don't re-invoke the operation
     /// (they return control to the caller to handle).
-    pub async fn execute<F, Fut, T>(&self, mut operation: F) -> Result<T, AgentError>
+    ///
+    /// `clock` is optional; when `None`, retry delays fall back to
+    /// `tokio::time::sleep`.
+    pub async fn execute<F, Fut, T>(
+        &self,
+        mut operation: F,
+        clock: Option<&dyn Clock>,
+    ) -> Result<T, AgentError>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<T, AgentError>>,
@@ -491,7 +500,11 @@ impl DegradationChain {
                                 last_error = Some(e);
                                 if attempt < max_attempts - 1 {
                                     let delay = backoff.delay_for_attempt(attempt);
-                                    tokio::time::sleep(delay).await;
+                                    if let Some(c) = clock {
+                                        Timer::sleep(c, delay).await;
+                                    } else {
+                                        tokio::time::sleep(delay).await;
+                                    }
                                 }
                             }
                         }
@@ -730,23 +743,26 @@ mod tests {
 
         let attempt = std::sync::atomic::AtomicU32::new(0);
         let result = chain
-            .execute(|| {
-                let prev = attempt.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                async move {
-                    if prev < 1 {
-                        Err(AgentError::new(
-                            ErrorSeverity::Recoverable,
-                            ErrorCategory::Llm {
-                                provider: "test".to_string(),
-                                kind: LlmErrorKind::Timeout,
-                            },
-                            "timeout",
-                        ))
-                    } else {
-                        Ok(42)
+            .execute(
+                || {
+                    let prev = attempt.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async move {
+                        if prev < 1 {
+                            Err(AgentError::new(
+                                ErrorSeverity::Recoverable,
+                                ErrorCategory::Llm {
+                                    provider: "test".to_string(),
+                                    kind: LlmErrorKind::Timeout,
+                                },
+                                "timeout",
+                            ))
+                        } else {
+                            Ok(42)
+                        }
                     }
-                }
-            })
+                },
+                None,
+            )
             .await;
 
         assert_eq!(result.unwrap(), 42);
@@ -766,16 +782,19 @@ mod tests {
         ]);
 
         let result = chain
-            .execute(|| async {
-                Err::<i32, _>(AgentError::new(
-                    ErrorSeverity::Recoverable,
-                    ErrorCategory::Llm {
-                        provider: "test".to_string(),
-                        kind: LlmErrorKind::Timeout,
-                    },
-                    "timeout",
-                ))
-            })
+            .execute(
+                || async {
+                    Err::<i32, _>(AgentError::new(
+                        ErrorSeverity::Recoverable,
+                        ErrorCategory::Llm {
+                            provider: "test".to_string(),
+                            kind: LlmErrorKind::Timeout,
+                        },
+                        "timeout",
+                    ))
+                },
+                None,
+            )
             .await;
 
         assert!(result.is_err());
@@ -841,19 +860,22 @@ mod tests {
 
         let attempts = std::sync::atomic::AtomicU32::new(0);
         let result = chain
-            .execute(|| {
-                attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                async {
-                    Err::<i32, _>(AgentError::new(
-                        ErrorSeverity::SecurityViolation,
-                        ErrorCategory::Tool {
-                            tool: "test".to_string(),
-                            kind: ToolErrorKind::SecurityViolation,
-                        },
-                        "blocked",
-                    ))
-                }
-            })
+            .execute(
+                || {
+                    attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async {
+                        Err::<i32, _>(AgentError::new(
+                            ErrorSeverity::SecurityViolation,
+                            ErrorCategory::Tool {
+                                tool: "test".to_string(),
+                                kind: ToolErrorKind::SecurityViolation,
+                            },
+                            "blocked",
+                        ))
+                    }
+                },
+                None,
+            )
             .await;
 
         // Should fail immediately -- SecurityViolation is not retryable

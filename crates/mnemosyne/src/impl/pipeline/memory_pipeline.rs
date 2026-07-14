@@ -325,9 +325,10 @@ mod tests {
         learned: Vec<&str>,
         confidence: f64,
     ) -> ReflectionEntry {
+        let clock = test_clock();
         ReflectionEntry {
             id: "test-1".to_string(),
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(clock.wall_now()),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: "test task".to_string(),
             outcome: ReflectionOutcome::Success,
@@ -423,11 +424,12 @@ mod tests {
 
     #[test]
     fn should_extract_false_when_recent() {
+        let clock = test_clock();
         let pipeline = MemoryPipeline {
             recall_memory: Arc::new(Mutex::new(dummy_recall())),
             core_memory: Arc::new(Mutex::new(CoreMemory::with_defaults())),
             episodic_memory: Arc::new(Mutex::new(dummy_episodic())),
-            last_extraction: Some(Utc::now()),
+            last_extraction: Some(wall_to_datetime(clock.wall_now())),
             config: MemoryPipelineConfig::default(),
             clock: test_clock(),
         };
@@ -457,10 +459,12 @@ mod tests {
     fn extract_facts_from_messages_detects_preferences() {
         use super::super::super::recall_memory::MemoryEntry;
 
+        let clock = test_clock();
+        let now = wall_to_datetime(clock.wall_now());
         let messages = vec![
             MemoryEntry {
                 id: 1,
-                timestamp: Utc::now(),
+                timestamp: now,
                 session_id: "s1".to_string(),
                 entry_type: "user".to_string(),
                 content: "I prefer using vim over nano for editing".to_string(),
@@ -468,7 +472,7 @@ mod tests {
             },
             MemoryEntry {
                 id: 2,
-                timestamp: Utc::now(),
+                timestamp: now,
                 session_id: "s1".to_string(),
                 entry_type: "user".to_string(),
                 content: "Always check disk space before deploying".to_string(),
@@ -476,7 +480,7 @@ mod tests {
             },
             MemoryEntry {
                 id: 3,
-                timestamp: Utc::now(),
+                timestamp: now,
                 session_id: "s1".to_string(),
                 entry_type: "user".to_string(),
                 content: "Don't ever use rm -rf on production".to_string(),
@@ -484,7 +488,7 @@ mod tests {
             },
             MemoryEntry {
                 id: 4,
-                timestamp: Utc::now(),
+                timestamp: now,
                 session_id: "s1".to_string(),
                 entry_type: "user".to_string(),
                 content: "My name is Aurobear".to_string(),
@@ -514,9 +518,11 @@ mod tests {
     fn extract_facts_ignores_assistant_messages_for_preferences() {
         use super::super::super::recall_memory::MemoryEntry;
 
+        let clock = test_clock();
+        let now = wall_to_datetime(clock.wall_now());
         let messages = vec![MemoryEntry {
             id: 1,
-            timestamp: Utc::now(),
+            timestamp: now,
             session_id: "s1".to_string(),
             entry_type: "assistant".to_string(),
             content: "I prefer using Python for data analysis".to_string(),
@@ -538,10 +544,12 @@ mod tests {
     fn extract_facts_deduplicates() {
         use super::super::super::recall_memory::MemoryEntry;
 
+        let clock = test_clock();
+        let now = wall_to_datetime(clock.wall_now());
         let messages = vec![
             MemoryEntry {
                 id: 1,
-                timestamp: Utc::now(),
+                timestamp: now,
                 session_id: "s1".to_string(),
                 entry_type: "user".to_string(),
                 content: "I prefer using vim for editing".to_string(),
@@ -549,7 +557,7 @@ mod tests {
             },
             MemoryEntry {
                 id: 2,
-                timestamp: Utc::now(),
+                timestamp: now,
                 session_id: "s1".to_string(),
                 entry_type: "user".to_string(),
                 content: "I prefer using vim for editing".to_string(),

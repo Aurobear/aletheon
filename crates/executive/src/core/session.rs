@@ -5,8 +5,10 @@
 
 use fabric::permission::PermissionMode;
 use fabric::ui_event::CollaborationMode;
+use fabric::Clock;
+use fabric::MonoTime;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::sync::Arc;
 
 /// Context window usage tracking.
 #[derive(Debug, Clone)]
@@ -14,7 +16,7 @@ pub struct ContextState {
     pub used_tokens: usize,
     pub max_tokens: usize,
     pub compaction_count: usize,
-    pub last_compaction: Option<Instant>,
+    pub last_compaction: Option<MonoTime>,
 }
 
 impl ContextState {
@@ -46,18 +48,18 @@ pub struct Session {
     pub mode: CollaborationMode,
     pub context_state: ContextState,
     pub model_override: Option<String>,
-    pub created_at: Instant,
+    pub created_at: MonoTime,
     pub turn_count: usize,
 }
 
 impl Session {
-    pub fn new(id: String, max_context_tokens: usize) -> Self {
+    pub fn new(id: String, max_context_tokens: usize, created_at: MonoTime) -> Self {
         Self {
             id,
             mode: CollaborationMode::Default,
             context_state: ContextState::new(max_context_tokens),
             model_override: None,
-            created_at: Instant::now(),
+            created_at,
             turn_count: 0,
         }
     }
@@ -88,25 +90,27 @@ impl Session {
 }
 
 /// Manages multiple sessions.
-#[derive(Debug)]
 pub struct TuiSessionManager {
     sessions: HashMap<String, Session>,
     active_session: Option<String>,
     max_context_tokens: usize,
+    #[allow(dead_code)]
+    clock: Arc<dyn Clock>,
 }
 
 impl TuiSessionManager {
-    pub fn new(max_context_tokens: usize) -> Self {
+    pub fn new(max_context_tokens: usize, clock: Arc<dyn Clock>) -> Self {
         Self {
             sessions: HashMap::new(),
             active_session: None,
             max_context_tokens,
+            clock,
         }
     }
 
     /// Create a new session and set it as active.
     pub fn create_session(&mut self, id: String) -> String {
-        let session = Session::new(id.clone(), self.max_context_tokens);
+        let session = Session::new(id.clone(), self.max_context_tokens, self.clock.mono_now());
         self.sessions.insert(id.clone(), session);
         self.active_session = Some(id.clone());
         id

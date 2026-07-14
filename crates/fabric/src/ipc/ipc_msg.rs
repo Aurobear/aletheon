@@ -4,9 +4,9 @@
 //! structured, typed messages with signal semantics and fork directives.
 
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
 
 use crate::types::agent::Pid;
+use crate::types::time::WallTime;
 
 // ---------------------------------------------------------------------------
 // Signal enum
@@ -51,34 +51,42 @@ pub struct IpcMessage {
 }
 
 impl IpcMessage {
-    /// Create a new IPC message with an automatic timestamp.
-    pub fn new(from: Pid, to: Pid, kind: MessageKind, payload: String) -> Self {
-        let timestamp_ms = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+    /// Create a new IPC message with an explicit timestamp.
+    pub fn new(
+        from: Pid,
+        to: Pid,
+        kind: MessageKind,
+        payload: String,
+        timestamp: WallTime,
+    ) -> Self {
         Self {
             from,
             to,
             kind,
             payload,
-            timestamp_ms,
+            timestamp_ms: timestamp.0 as u64,
         }
     }
 
     /// Convenience constructor for task messages.
-    pub fn task(from: Pid, to: Pid, task: String) -> Self {
-        Self::new(from, to, MessageKind::Task, task)
+    pub fn task(from: Pid, to: Pid, task: String, timestamp: WallTime) -> Self {
+        Self::new(from, to, MessageKind::Task, task, timestamp)
     }
 
     /// Convenience constructor for result messages.
-    pub fn result(from: Pid, to: Pid, result: String) -> Self {
-        Self::new(from, to, MessageKind::Result, result)
+    pub fn result(from: Pid, to: Pid, result: String, timestamp: WallTime) -> Self {
+        Self::new(from, to, MessageKind::Result, result, timestamp)
     }
 
     /// Convenience constructor for signal messages.
-    pub fn signal(from: Pid, to: Pid, signal: Signal) -> Self {
-        Self::new(from, to, MessageKind::Signal(signal), String::new())
+    pub fn signal(from: Pid, to: Pid, signal: Signal, timestamp: WallTime) -> Self {
+        Self::new(
+            from,
+            to,
+            MessageKind::Signal(signal),
+            String::new(),
+            timestamp,
+        )
     }
 }
 

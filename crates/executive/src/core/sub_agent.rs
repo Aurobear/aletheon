@@ -624,7 +624,7 @@ impl SubAgentSpawner {
         self.mailbox_service.unregister(&entry.mailbox_target).await;
         let _task_exits = entry
             .scope
-            .cancel_and_drain(Duration::from_millis(50))
+            .cancel_and_drain(self.clock.as_ref(), Duration::from_millis(50))
             .await;
         self.operation_table
             .cancel(entry.operation_id, CancelReason::User)

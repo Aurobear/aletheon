@@ -10,11 +10,14 @@ pub mod linux;
 
 pub use adapter::{PlatformAdapter, PlatformCapabilities, ServiceInfo, ServiceStatus};
 
+use fabric::Clock;
+use std::sync::Arc;
+
 /// Create the best available platform adapter.
-pub fn create_platform_adapter() -> Box<dyn PlatformAdapter> {
+pub fn create_platform_adapter(clock: Arc<dyn Clock>) -> Box<dyn PlatformAdapter> {
     // Check Android first
     if android::AndroidPlatformAdapter::is_android() {
-        return Box::new(android::AndroidPlatformAdapter::new());
+        return Box::new(android::AndroidPlatformAdapter::new(clock));
     }
 
     #[cfg(feature = "dbus")]

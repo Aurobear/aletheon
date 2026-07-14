@@ -11,7 +11,7 @@ mod turn_handler;
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use aletheon_kernel::chronos::Timer;
 use tokio_util::sync::CancellationToken;
@@ -55,7 +55,7 @@ pub struct RequestHandler {
     /// Active connection count.
     pub(crate) active_connections: Arc<AtomicUsize>,
     /// Daemon start time.
-    pub(crate) started_at: Instant,
+    pub(crate) started_at: fabric::MonoTime,
     /// Daemon-level cancellation token for graceful shutdown.
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
     /// Macro-kernel turn orchestrator — handles the full pre/core/post turn pipeline.

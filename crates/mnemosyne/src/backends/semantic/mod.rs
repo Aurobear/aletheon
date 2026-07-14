@@ -10,7 +10,6 @@ pub use schema::{HashEmbeddingProvider, SemanticMemory};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use fabric::{
         wall_to_datetime, CompactStrategy, EmbeddingProvider, MemoryBackend, MemoryEntry,
         MemoryFilter, MemoryQuery, MemoryType, Subsystem, SubsystemContext, WallTime,
@@ -52,12 +51,13 @@ mod tests {
     }
 
     fn make_entry(content: &[u8]) -> MemoryEntry {
+        let clock = test_clock();
         MemoryEntry {
             id: Uuid::new_v4(),
             memory_type: MemoryType::Semantic,
             content: content.to_vec(),
             tags: vec!["knowledge".into()],
-            created_at: Utc::now(),
+            created_at: wall_to_datetime(clock.wall_now()),
             access_count: 0,
             importance: 0.8,
             decay_rate: 0.0,

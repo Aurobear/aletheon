@@ -11,8 +11,11 @@
 
 use aletheon_kernel::chronos::Timer;
 use anyhow::Result;
+use fabric::Clock;
+use fabric::MonoTime;
 use std::os::unix::net::UnixDatagram;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::core::runtime_core::RuntimeCore;
@@ -57,7 +60,8 @@ pub struct SystemdHost {
     socket: PathBuf,
     enable_evolution: bool,
     core: Option<RuntimeCore>,
-    started_at: std::time::Instant,
+    clock: Arc<dyn Clock>,
+    started_at: MonoTime,
 }
 
 impl SystemdHost {
@@ -66,14 +70,17 @@ impl SystemdHost {
         env_path: Option<PathBuf>,
         socket: PathBuf,
         enable_evolution: bool,
+        clock: Arc<dyn Clock>,
     ) -> Self {
+        let started_at = clock.mono_now();
         Self {
             config_path,
             env_path,
             socket,
             enable_evolution,
             core: None,
-            started_at: std::time::Instant::now(),
+            clock,
+            started_at,
         }
     }
 }
@@ -122,7 +129,7 @@ impl crate::host::RuntimeHost for SystemdHost {
         // ── Notify systemd: ready ───────────────────────────────────
         sd_notify("READY=1");
         tracing::info!(
-            elapsed_ms = %self.started_at.elapsed().as_millis(),
+            elapsed_ms = %(self.clock.mono_now().0.saturating_sub(self.started_at.0)),
             "SystemdHost ready"
         );
 
@@ -160,6 +167,7 @@ impl crate::host::RuntimeHost for SystemdHost {
             cancel_token.clone(),
             owner_uid,
             group_gid,
+            self.clock.clone(),
         )
         .await?;
 

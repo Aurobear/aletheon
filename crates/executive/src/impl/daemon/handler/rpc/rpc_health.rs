@@ -86,7 +86,8 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let uptime = self.started_at.elapsed().as_secs();
+        let now = self.turn_orchestrator.clock.mono_now();
+        let uptime = now.0.saturating_sub(self.started_at.0) / 1000;
         let active = self
             .active_connections
             .load(std::sync::atomic::Ordering::Relaxed);

@@ -14,12 +14,16 @@ use tokio::sync::oneshot;
 use crate::ipc::envelope::*;
 use crate::ipc::protocol::Protocol;
 use crate::ipc::transport::Transport;
+use crate::Timer;
 
 /// Request-Response protocol.
 /// Correlates requests and responses via envelope ID.
 pub struct RequestResponseProtocol {
     transport: Arc<dyn Transport>,
     pending: DashMap<u64, oneshot::Sender<Envelope>>,
+    /// Optional clock for deterministic timeout tracking in tests.
+    /// When `None`, falls back to `tokio::time::timeout`.
+    clock: Option<Arc<dyn crate::Clock>>,
 }
 
 impl RequestResponseProtocol {
@@ -28,7 +32,14 @@ impl RequestResponseProtocol {
         Self {
             transport,
             pending: DashMap::new(),
+            clock: None,
         }
+    }
+
+    /// Attach a clock for deterministic timeout tracking in tests.
+    pub fn with_clock(mut self, clock: Arc<dyn crate::Clock>) -> Self {
+        self.clock = Some(clock);
+        self
     }
 
     /// Register a response handler for a pending request.
@@ -74,7 +85,14 @@ impl Protocol for RequestResponseProtocol {
             })?;
 
         // Wait for response with timeout
-        match tokio::time::timeout(timeout, rx).await {
+        let result = if let Some(ref clock) = self.clock {
+            Timer::timeout(clock.as_ref(), timeout, rx).await
+        } else {
+            tokio::time::timeout(timeout, rx)
+                .await
+                .map_err(|_| crate::Elapsed)
+        };
+        match result {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => {
                 // Sender dropped — response channel closed

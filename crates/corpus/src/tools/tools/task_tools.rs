@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use fabric::wall_to_datetime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -79,9 +80,8 @@ impl TaskStore {
         }
     }
 
-    pub fn create(&mut self, subject: String, description: String) -> Task {
+    pub fn create(&mut self, subject: String, description: String, now: DateTime<Utc>) -> Task {
         let id = Uuid::new_v4().to_string();
-        let now = Utc::now();
         let task = Task {
             id: id.clone(),
             subject,
@@ -102,10 +102,15 @@ impl TaskStore {
         self.tasks.values().cloned().collect()
     }
 
-    pub fn update_status(&mut self, id: &str, status: TaskStatus) -> Option<Task> {
+    pub fn update_status(
+        &mut self,
+        id: &str,
+        status: TaskStatus,
+        now: DateTime<Utc>,
+    ) -> Option<Task> {
         if let Some(task) = self.tasks.get_mut(id) {
             task.status = status;
-            task.updated_at = Utc::now();
+            task.updated_at = now;
             Some(task.clone())
         } else {
             None
@@ -194,7 +199,8 @@ impl Tool for TaskCreateTool {
 
         let description = input["description"].as_str().unwrap_or("").to_string();
 
-        let task = self.store.lock().create(subject, description);
+        let now = wall_to_datetime(ctx.clock.wall_now());
+        let task = self.store.lock().create(subject, description, now);
 
         ToolResult {
             content: serde_json::to_string_pretty(&task).unwrap_or_default(),
@@ -307,7 +313,11 @@ impl Tool for TaskUpdateTool {
             }
         };
 
-        match self.store.lock().update_status(id, status) {
+        match self
+            .store
+            .lock()
+            .update_status(id, status, wall_to_datetime(ctx.clock.wall_now()))
+        {
             Some(task) => ToolResult {
                 content: serde_json::to_string_pretty(&task).unwrap_or_default(),
                 is_error: false,
@@ -494,7 +504,11 @@ mod tests {
         let mut store = TaskStore::new();
 
         // create
-        let task = store.create("Fix bug".to_string(), "Fix the null pointer".to_string());
+        let task = store.create(
+            "Fix bug".to_string(),
+            "Fix the null pointer".to_string(),
+            Utc::now(),
+        );
         let id = task.id.clone();
         assert_eq!(task.status, TaskStatus::Pending);
 
@@ -508,7 +522,9 @@ mod tests {
         assert_eq!(got.subject, "Fix bug");
 
         // update status
-        let updated = store.update_status(&id, TaskStatus::InProgress).unwrap();
+        let updated = store
+            .update_status(&id, TaskStatus::InProgress, Utc::now())
+            .unwrap();
         assert_eq!(updated.status, TaskStatus::InProgress);
 
         // confirm via get
@@ -536,7 +552,9 @@ mod tests {
     #[tokio::test]
     async fn task_list_tool_shows_created() {
         let store = new_shared_task_store();
-        store.lock().create("A".to_string(), "".to_string());
+        store
+            .lock()
+            .create("A".to_string(), "".to_string(), Utc::now());
 
         let tool = TaskListTool::new(Arc::clone(&store));
         let result = tool.execute(json!({}), &ctx()).await;
@@ -550,7 +568,9 @@ mod tests {
     #[tokio::test]
     async fn task_update_tool_flips_status() {
         let store = new_shared_task_store();
-        let task = store.lock().create("B".to_string(), "".to_string());
+        let task = store
+            .lock()
+            .create("B".to_string(), "".to_string(), Utc::now());
         let id = task.id.clone();
 
         let tool = TaskUpdateTool::new(Arc::clone(&store));
@@ -566,10 +586,14 @@ mod tests {
     #[tokio::test]
     async fn task_get_tool_reflects_update() {
         let store = new_shared_task_store();
-        let task = store.lock().create("C".to_string(), "".to_string());
+        let task = store
+            .lock()
+            .create("C".to_string(), "".to_string(), Utc::now());
         let id = task.id.clone();
 
-        store.lock().update_status(&id, TaskStatus::InProgress);
+        store
+            .lock()
+            .update_status(&id, TaskStatus::InProgress, Utc::now());
 
         let tool = TaskGetTool::new(Arc::clone(&store));
         let result = tool.execute(json!({"id": id}), &ctx()).await;

@@ -22,7 +22,10 @@ use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
 use fabric::evolution::LlmPurpose;
+use fabric::Clock;
 use fabric::CommunicationBus;
+
+use aletheon_kernel::chronos::SystemClock;
 
 use crate::r#impl::daemon::handler::RequestHandler;
 use crate::r#impl::daemon::DaemonConfig;
@@ -193,11 +196,13 @@ impl RuntimeCore {
                 .map(PathBuf::from)
                 .collect();
             let enable_journald = perception_config.enable_journald;
+            let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
             tokio::spawn(async move {
                 let mut manager = dasein::r#impl::perception::manager::PerceptionManager::new(
                     event_tx,
                     watch_paths,
                     enable_journald,
+                    clock,
                 );
                 if let Err(e) = manager.start().await {
                     tracing::error!(error = %e, "Perception manager failed");

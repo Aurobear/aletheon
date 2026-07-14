@@ -1,4 +1,7 @@
 /// Detect available drivers and create real implementations.
+#[cfg(feature = "display")]
+use std::sync::Arc;
+
 pub struct DriverFactory;
 
 impl DriverFactory {
@@ -66,9 +69,13 @@ impl DriverFactory {
 
     /// Try to create a real clipboard driver (X11 clipboard).
     #[cfg(feature = "display")]
-    pub fn try_clipboard() -> Option<Box<dyn crate::drivers::display::ClipboardDriver>> {
+    pub fn try_clipboard(
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Option<Box<dyn crate::drivers::display::ClipboardDriver>> {
         if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
-            return Some(Box::new(crate::drivers::display::X11ClipboardDriver::new()));
+            return Some(Box::new(crate::drivers::display::X11ClipboardDriver::new(
+                clock,
+            )));
         }
         None
     }

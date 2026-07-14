@@ -5,11 +5,15 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use fabric::{wall_to_datetime, Clock};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
+
+use aletheon_kernel::chronos::Timer;
 
 /// Boot phases representing system initialization stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -58,9 +62,14 @@ pub struct BootEvent {
 
 impl BootEvent {
     /// Create a new boot event.
-    pub fn new(phase: BootPhase, component: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(
+        timestamp: DateTime<Utc>,
+        phase: BootPhase,
+        component: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
-            timestamp: Utc::now(),
+            timestamp,
             phase,
             component: component.into(),
             message: message.into(),
@@ -70,13 +79,14 @@ impl BootEvent {
 
     /// Create a boot event with duration tracking.
     pub fn with_duration(
+        timestamp: DateTime<Utc>,
         phase: BootPhase,
         component: impl Into<String>,
         message: impl Into<String>,
         duration: Duration,
     ) -> Self {
         Self {
-            timestamp: Utc::now(),
+            timestamp,
             phase,
             component: component.into(),
             message: message.into(),
@@ -379,32 +389,38 @@ pub struct BootMonitor {
     lazy_stages: Vec<LazyLoadStage>,
     /// Loaded components tracking
     loaded_components: RwLock<HashSet<String>>,
-    /// Boot start time
-    start_time: Instant,
+    /// Boot start time (monotonic)
+    start_time: fabric::MonoTime,
+    /// Clock for all time operations
+    clock: Arc<dyn Clock>,
 }
 
 impl BootMonitor {
     /// Create a new boot monitor with default lazy loading stages.
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        let start_time = clock.mono_now();
         Self {
             current_phase: RwLock::new(BootPhase::Initializing),
             timeline: RwLock::new(Vec::new()),
             dependency_graph: RwLock::new(ServiceDependencyGraph::new()),
             lazy_stages: LazyLoadStage::default_stages(),
             loaded_components: RwLock::new(HashSet::new()),
-            start_time: Instant::now(),
+            start_time,
+            clock,
         }
     }
 
     /// Create a boot monitor with custom lazy loading stages.
-    pub fn with_stages(stages: Vec<LazyLoadStage>) -> Self {
+    pub fn with_stages(clock: Arc<dyn Clock>, stages: Vec<LazyLoadStage>) -> Self {
+        let start_time = clock.mono_now();
         Self {
             current_phase: RwLock::new(BootPhase::Initializing),
             timeline: RwLock::new(Vec::new()),
             dependency_graph: RwLock::new(ServiceDependencyGraph::new()),
             lazy_stages: stages,
             loaded_components: RwLock::new(HashSet::new()),
-            start_time: Instant::now(),
+            start_time,
+            clock,
         }
     }
 
@@ -434,6 +450,7 @@ impl BootMonitor {
 
         // Record the transition event
         self.record_event(BootEvent::new(
+            wall_to_datetime(self.clock.wall_now()),
             new_phase,
             "boot_monitor",
             format!("Phase transition from {:?} to {:?}", old_phase, new_phase),
@@ -503,6 +520,7 @@ impl BootMonitor {
 
         // Record stage start
         self.record_event(BootEvent::new(
+            wall_to_datetime(self.clock.wall_now()),
             self.current_phase().await,
             "lazy_loader",
             format!(
@@ -514,7 +532,7 @@ impl BootMonitor {
 
         // Simulate loading delay (in real implementation, this would be actual loading)
         if !stage.delay.is_zero() {
-            tokio::time::sleep(stage.delay).await;
+            Timer::sleep(&*self.clock, stage.delay).await;
         }
 
         // Mark components as loaded
@@ -525,6 +543,7 @@ impl BootMonitor {
 
         // Record stage completion
         self.record_event(BootEvent::with_duration(
+            wall_to_datetime(self.clock.wall_now()),
             self.current_phase().await,
             "lazy_loader",
             format!("Completed stage {}: {:?}", stage_num, stage.components),
@@ -548,6 +567,7 @@ impl BootMonitor {
                 info!("Loading on-demand component: {}", component);
 
                 self.record_event(BootEvent::new(
+                    wall_to_datetime(self.clock.wall_now()),
                     self.current_phase().await,
                     "lazy_loader",
                     format!("Loading on-demand component: {}", component),
@@ -558,6 +578,7 @@ impl BootMonitor {
                 loaded.insert(component.to_string());
 
                 self.record_event(BootEvent::new(
+                    wall_to_datetime(self.clock.wall_now()),
                     self.current_phase().await,
                     "lazy_loader",
                     format!("Loaded on-demand component: {}", component),
@@ -635,7 +656,8 @@ impl BootMonitor {
 
     /// Get boot elapsed time.
     pub fn elapsed(&self) -> Duration {
-        self.start_time.elapsed()
+        let now = self.clock.mono_now();
+        Duration::from_millis(now.0.saturating_sub(self.start_time.0))
     }
 
     /// Check if all critical components are loaded.
@@ -649,17 +671,24 @@ impl BootMonitor {
 
 impl Default for BootMonitor {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+    use std::sync::Arc;
+
+    fn test_clock() -> Arc<TestClock> {
+        Arc::new(TestClock::default())
+    }
 
     #[tokio::test]
     async fn test_boot_phase_transitions() {
-        let monitor = BootMonitor::new();
+        let clock = test_clock();
+        let monitor = BootMonitor::new(clock.clone());
 
         // Initial phase should be Initializing
         assert_eq!(monitor.current_phase().await, BootPhase::Initializing);
@@ -728,7 +757,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_lazy_loading_stages() {
-        let monitor = BootMonitor::new();
+        let clock = test_clock();
+        let monitor = BootMonitor::new(clock.clone());
 
         // Stage 1 components should not be loaded initially
         assert!(!monitor.is_component_loaded("config").await);
@@ -753,11 +783,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_boot_event_timeline() {
-        let monitor = BootMonitor::new();
+        let clock = test_clock();
+        let monitor = BootMonitor::new(clock);
+        let ts = wall_to_datetime(monitor.clock.wall_now());
 
         // Record some events
         monitor
             .record_event(BootEvent::new(
+                ts,
                 BootPhase::Initializing,
                 "test",
                 "Starting initialization",
@@ -766,6 +799,7 @@ mod tests {
 
         monitor
             .record_event(BootEvent::with_duration(
+                ts,
                 BootPhase::Initializing,
                 "test",
                 "Initialization complete",
@@ -781,7 +815,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_boot_diagnosis() {
-        let monitor = BootMonitor::new();
+        let clock = test_clock();
+        let monitor = BootMonitor::new(clock.clone());
 
         // Add a dependency
         monitor.add_dependency("app", "config").await;

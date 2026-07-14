@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use fabric::Clock;
 use serde::{Deserialize, Serialize};
 
 /// Minimal percent-encoding for URL query parameters (RFC 3986 unreserved set).
@@ -236,16 +237,21 @@ fn generate_state_string() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-fn now_epoch_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before UNIX epoch")
-        .as_secs()
+fn now_epoch_secs(clock: &dyn Clock) -> u64 {
+    (clock.wall_now().0 as u64) / 1000
 }
 
 // ---------------------------------------------------------------------------
 // McpOAuthProvider -- OAuth 2.0 Authorization Code flow
 // ---------------------------------------------------------------------------
+
+/// OAuth 2.0 endpoint URLs.
+#[derive(Debug, Clone)]
+pub struct OAuthEndpoints {
+    pub auth_url: String,
+    pub token_url: String,
+    pub redirect_uri: String,
+}
 
 /// OAuth 2.0 authorization code flow for MCP servers.
 ///
@@ -257,37 +263,34 @@ fn now_epoch_secs() -> u64 {
 pub struct McpOAuthProvider {
     client_id: String,
     client_secret: Option<String>,
-    auth_url: String,
-    token_url: String,
-    redirect_uri: String,
+    endpoints: OAuthEndpoints,
     scopes: Vec<String>,
     server_id: String,
     token_store: TokenStore,
     /// Pending authorization states (state -> OAuthState).
     pending_states: HashMap<String, OAuthState>,
+    clock: Arc<dyn Clock>,
 }
 
 impl McpOAuthProvider {
     /// Create a new OAuth provider.
     pub fn new(
         client_id: impl Into<String>,
-        auth_url: impl Into<String>,
-        token_url: impl Into<String>,
-        redirect_uri: impl Into<String>,
+        endpoints: OAuthEndpoints,
         scopes: Vec<String>,
         server_id: impl Into<String>,
         token_store: TokenStore,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             client_id: client_id.into(),
             client_secret: None,
-            auth_url: auth_url.into(),
-            token_url: token_url.into(),
-            redirect_uri: redirect_uri.into(),
+            endpoints,
             scopes,
             server_id: server_id.into(),
             token_store,
             pending_states: HashMap::new(),
+            clock,
         }
     }
 
@@ -303,7 +306,7 @@ impl McpOAuthProvider {
     /// `callback()` is called.
     pub fn authorize_url(&mut self) -> (String, OAuthState) {
         let state_str = generate_state_string();
-        let now = now_epoch_secs();
+        let now = now_epoch_secs(&*self.clock);
         let oauth_state = OAuthState {
             state: state_str.clone(),
             created_at: now,
@@ -315,9 +318,9 @@ impl McpOAuthProvider {
         let scope_str = self.scopes.join(" ");
         let url = format!(
             "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
-            self.auth_url,
+            self.endpoints.auth_url,
             percent_encode(&self.client_id),
-            percent_encode(&self.redirect_uri),
+            percent_encode(&self.endpoints.redirect_uri),
             percent_encode(&scope_str),
             percent_encode(&state_str),
         );
@@ -335,7 +338,7 @@ impl McpOAuthProvider {
             .remove(state)
             .context("unknown or already-consumed OAuth state")?;
 
-        let age = now_epoch_secs().saturating_sub(oauth_state.created_at);
+        let age = now_epoch_secs(&*self.clock).saturating_sub(oauth_state.created_at);
         if age > STATE_MAX_AGE_SECS {
             anyhow::bail!(
                 "OAuth state expired (age {}s > {}s max)",
@@ -360,7 +363,7 @@ impl McpOAuthProvider {
         let mut params = vec![
             ("grant_type", "authorization_code"),
             ("code", code),
-            ("redirect_uri", &self.redirect_uri),
+            ("redirect_uri", &self.endpoints.redirect_uri),
             ("client_id", &self.client_id),
         ];
         let secret_ref;
@@ -371,7 +374,7 @@ impl McpOAuthProvider {
 
         let client = reqwest::blocking::Client::new();
         let resp = client
-            .post(&self.token_url)
+            .post(&self.endpoints.token_url)
             .form(&params)
             .send()
             .context("token exchange HTTP request failed")?;
@@ -383,7 +386,7 @@ impl McpOAuthProvider {
         }
 
         let raw: serde_json::Value = resp.json().context("parsing token response")?;
-        parse_token_response(&raw)
+        parse_token_response(&raw, &*self.clock)
     }
 
     /// Refresh the access token using the stored refresh token.
@@ -412,7 +415,7 @@ impl McpOAuthProvider {
 
         let client = reqwest::blocking::Client::new();
         let resp = client
-            .post(&self.token_url)
+            .post(&self.endpoints.token_url)
             .form(&params)
             .send()
             .context("token refresh HTTP request failed")?;
@@ -424,7 +427,7 @@ impl McpOAuthProvider {
         }
 
         let raw: serde_json::Value = resp.json().context("parsing refresh response")?;
-        let entry = parse_token_response(&raw)?;
+        let entry = parse_token_response(&raw, &*self.clock)?;
 
         self.token_store.set(&self.server_id, entry.clone());
         self.token_store.save()?;
@@ -444,7 +447,7 @@ impl McpOAuthProvider {
 
     /// Clear any expired pending states (housekeeping).
     pub fn purge_expired_states(&mut self) {
-        let now = now_epoch_secs();
+        let now = now_epoch_secs(&*self.clock);
         self.pending_states
             .retain(|_, s| now.saturating_sub(s.created_at) <= STATE_MAX_AGE_SECS);
     }
@@ -464,7 +467,7 @@ impl McpAuth for McpOAuthProvider {
 
     fn is_expired(&self) -> bool {
         match self.token_store.get(&self.server_id) {
-            Some(entry) => now_epoch_secs() >= entry.expires_at,
+            Some(entry) => now_epoch_secs(&*self.clock) >= entry.expires_at,
             None => true,
         }
     }
@@ -490,14 +493,14 @@ impl fmt::Display for McpOAuthProvider {
 // ---------------------------------------------------------------------------
 
 /// Parse the JSON response from a token endpoint into a `TokenEntry`.
-fn parse_token_response(raw: &serde_json::Value) -> Result<TokenEntry> {
+fn parse_token_response(raw: &serde_json::Value, clock: &dyn Clock) -> Result<TokenEntry> {
     let access_token = raw["access_token"]
         .as_str()
         .context("missing access_token in response")?
         .to_string();
 
     let expires_in = raw["expires_in"].as_u64().unwrap_or(3600);
-    let expires_at = now_epoch_secs() + expires_in;
+    let expires_at = now_epoch_secs(clock) + expires_in;
 
     let token_type = raw["token_type"].as_str().unwrap_or("Bearer").to_string();
 
@@ -524,6 +527,12 @@ fn parse_token_response(raw: &serde_json::Value) -> Result<TokenEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+    use std::sync::Arc;
+
+    fn test_clock() -> Arc<TestClock> {
+        Arc::new(TestClock::default())
+    }
 
     // -- BearerTokenAuth tests (existing + trait) --------------------------
 
@@ -644,7 +653,8 @@ mod tests {
 
     #[test]
     fn token_entry_expired_detection() {
-        let now = now_epoch_secs();
+        let clock = test_clock();
+        let now = now_epoch_secs(&*clock);
 
         let expired = TokenEntry {
             access_token: "old".into(),
@@ -673,12 +683,15 @@ mod tests {
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
             "my-client-id",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost:8765/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost:8765/callback".into(),
+            },
             vec!["openid".into(), "profile".into()],
             "test-server",
             store,
+            test_clock(),
         );
 
         let (url, state) = provider.authorize_url();
@@ -703,12 +716,15 @@ mod tests {
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
+            test_clock(),
         );
 
         let result = provider.callback("any-code", "bogus-state");
@@ -725,12 +741,15 @@ mod tests {
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
+            test_clock(),
         );
 
         let (_, state) = provider.authorize_url();
@@ -749,7 +768,8 @@ mod tests {
         let path = dir.path().join("t.json");
 
         let mut store = TokenStore::new(path.clone()).unwrap();
-        let now = now_epoch_secs();
+        let clock = test_clock();
+        let now = now_epoch_secs(&*clock);
 
         // Not expired
         store.set(
@@ -767,12 +787,15 @@ mod tests {
         let store = TokenStore::new(path.clone()).unwrap();
         let provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
+            test_clock(),
         );
         assert!(!provider.is_expired());
 
@@ -793,12 +816,15 @@ mod tests {
         let store = TokenStore::new(path).unwrap();
         let provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
+            test_clock(),
         );
         assert!(provider.is_expired());
     }
@@ -811,7 +837,8 @@ mod tests {
         let path = dir.path().join("t.json");
 
         let mut store = TokenStore::new(path.clone()).unwrap();
-        let now = now_epoch_secs();
+        let clock = test_clock();
+        let now = now_epoch_secs(&*clock);
         store.set(
             "srv",
             TokenEntry {
@@ -827,12 +854,15 @@ mod tests {
         let store = TokenStore::new(path).unwrap();
         let provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec!["read".into()],
             "srv",
             store,
+            test_clock(),
         );
 
         let headers = provider.get_headers();
@@ -848,7 +878,8 @@ mod tests {
         let path = dir.path().join("t.json");
 
         let mut store = TokenStore::new(path.clone()).unwrap();
-        let now = now_epoch_secs();
+        let clock = test_clock();
+        let now = now_epoch_secs(&*clock);
         store.set(
             "srv",
             TokenEntry {
@@ -864,12 +895,15 @@ mod tests {
         let store = TokenStore::new(path).unwrap();
         let provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
+            test_clock(),
         );
 
         let headers = provider.get_headers();
@@ -880,6 +914,7 @@ mod tests {
 
     #[test]
     fn parse_token_response_full() {
+        let clock = test_clock();
         let raw = serde_json::json!({
             "access_token": "at",
             "refresh_token": "rt",
@@ -887,23 +922,24 @@ mod tests {
             "token_type": "Bearer",
             "scope": "openid profile"
         });
-        let entry = parse_token_response(&raw).unwrap();
+        let entry = parse_token_response(&raw, &*clock).unwrap();
         assert_eq!(entry.access_token, "at");
         assert_eq!(entry.refresh_token.as_deref(), Some("rt"));
         assert_eq!(entry.token_type, "Bearer");
         assert_eq!(entry.scopes, vec!["openid", "profile"]);
         // expires_at should be ~now + 7200
-        let now = now_epoch_secs();
+        let now = now_epoch_secs(&*clock);
         assert!(entry.expires_at > now + 7100);
         assert!(entry.expires_at <= now + 7200);
     }
 
     #[test]
     fn parse_token_response_minimal() {
+        let clock = test_clock();
         let raw = serde_json::json!({
             "access_token": "tok"
         });
-        let entry = parse_token_response(&raw).unwrap();
+        let entry = parse_token_response(&raw, &*clock).unwrap();
         assert_eq!(entry.access_token, "tok");
         assert!(entry.refresh_token.is_none());
         assert_eq!(entry.token_type, "Bearer");
@@ -918,12 +954,15 @@ mod tests {
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
+            test_clock(),
         );
 
         let (_, _) = provider.authorize_url();

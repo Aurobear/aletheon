@@ -24,6 +24,7 @@ impl SessionGateway {
             &state.goal_tracker,
             perf,
             &self.runtime_config,
+            &*self.clock,
             self.started_at,
             state.circuit_breaker_status.clone(),
             state.tool_budget_remaining,

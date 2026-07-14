@@ -3,11 +3,13 @@ use super::care_structure::*;
 use super::negativity::*;
 use super::self_model::*;
 use super::temporality::*;
+use aletheon_kernel::chronos::Timer;
 use fabric::dasein::{DaseinEvent, Stimmung};
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// The sorge loop — the continuous heartbeat of Dasein.
@@ -19,10 +21,14 @@ pub struct SorgeLoop {
     #[allow(dead_code)]
     event_tx: mpsc::Sender<DaseinEvent>,
     event_rx: Mutex<Option<mpsc::Receiver<DaseinEvent>>>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl SorgeLoop {
-    pub fn new(buffer_size: usize) -> (Self, mpsc::Sender<DaseinEvent>) {
+    pub fn new(
+        buffer_size: usize,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> (Self, mpsc::Sender<DaseinEvent>) {
         let (event_tx, event_rx) = mpsc::channel(buffer_size);
         let external_tx = event_tx.clone();
 
@@ -31,6 +37,7 @@ impl SorgeLoop {
                 running: Arc::new(AtomicBool::new(false)),
                 event_tx,
                 event_rx: Mutex::new(Some(event_rx)),
+                clock,
             },
             external_tx,
         )
@@ -56,6 +63,7 @@ impl SorgeLoop {
         let shared_mood = shared_mood.clone();
         let mut event_rx = event_rx;
 
+        let clock = self.clock.clone();
         let handle = tokio::spawn(async move {
             let mut tick_count: u64 = 0;
             let mut mood = Stimmung::Gelassenheit;
@@ -67,7 +75,7 @@ impl SorgeLoop {
                     Some(event) = event_rx.recv() => {
                         events.push(event);
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                    _ = Timer::sleep(&*clock, Duration::from_millis(100)) => {
                         // Timeout — just continue
                     }
                 }
@@ -151,7 +159,7 @@ impl SorgeLoop {
 
                 // 7. Sleep for care rhythm interval
                 let interval = care.rhythm.read().next_interval();
-                tokio::time::sleep(interval).await;
+                Timer::sleep(&*clock, interval).await;
             }
         });
 

@@ -2,12 +2,13 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tracing::debug;
 #[cfg(feature = "io_uring")]
 use tracing::info;
 
 use crate::ipc::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
+use crate::Timer;
 
 /// Real io_uring IPC backend.
 ///
@@ -22,6 +23,8 @@ pub struct IoUringBackend {
     /// Pre-allocated receive buffer for io_uring completions.
     #[allow(dead_code)]
     recv_buffer: Vec<u8>,
+    /// Optional clock for deterministic simulated-latency sleep in tests.
+    clock: Option<Arc<dyn crate::Clock>>,
 }
 
 struct IoUringRing {
@@ -54,6 +57,7 @@ impl IoUringBackend {
             kernel_version,
             ring: None,
             recv_buffer: Vec::with_capacity(65536),
+            clock: None,
         }
     }
 
@@ -79,6 +83,12 @@ impl IoUringBackend {
         } else {
             false
         }
+    }
+
+    /// Attach a clock for deterministic simulated-latency sleep in tests.
+    pub fn with_clock(mut self, clock: Arc<dyn crate::Clock>) -> Self {
+        self.clock = Some(clock);
+        self
     }
 
     /// Probe whether io_uring is available on this system.
@@ -170,7 +180,11 @@ impl IpcBackend for IoUringBackend {
         }
 
         // Fallback: simulated latency
-        tokio::time::sleep(std::time::Duration::from_micros(10)).await;
+        if let Some(ref clock) = self.clock {
+            Timer::sleep(clock.as_ref(), std::time::Duration::from_micros(10)).await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_micros(10)).await;
+        }
         debug!("io_uring send (simulated): {} bytes", data.len());
         Ok(())
     }

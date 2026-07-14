@@ -7,8 +7,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use aletheon_kernel::chronos::Timer;
 use fabric::agent::Pid;
 use fabric::envelope::Envelope;
+use fabric::Clock;
 use fabric::CommunicationBus;
 use fabric::{ForkDirective, ForkResult};
 use tokio::sync::{Mutex, RwLock};
@@ -75,11 +77,13 @@ pub struct AgentKernel {
     supervisor: Option<AgentSupervisor>,
     /// Saved spawn parameters for restart (pid → config).
     spawn_configs: RwLock<HashMap<Pid, (String, AgentProcessConfig)>>,
+    /// Clock for sleep/timeout operations.
+    clock: Arc<dyn Clock>,
 }
 
 impl AgentKernel {
     /// Create a new kernel with the given communication bus.
-    pub fn new(bus: Arc<CommunicationBus>) -> Self {
+    pub fn new(bus: Arc<CommunicationBus>, clock: Arc<dyn Clock>) -> Self {
         Self {
             processes: RwLock::new(HashMap::new()),
             forks: RwLock::new(HashMap::new()),
@@ -88,6 +92,7 @@ impl AgentKernel {
             scratchpads: RwLock::new(HashMap::new()),
             supervisor: None,
             spawn_configs: RwLock::new(HashMap::new()),
+            clock,
         }
     }
 
@@ -97,7 +102,7 @@ impl AgentKernel {
     /// is automatically registered for supervision. Use [`evaluate_exit`](Self::evaluate_exit)
     /// to get a restart decision after a process exits.
     pub fn with_supervisor(mut self, policy: RestartPolicy) -> Self {
-        self.supervisor = Some(AgentSupervisor::new(policy));
+        self.supervisor = Some(AgentSupervisor::new(policy, self.clock.clone()));
         self
     }
 
@@ -117,7 +122,7 @@ impl AgentKernel {
         parent: Option<Pid>,
     ) -> Pid {
         let pid = Pid::new();
-        let mut process = AgentProcess::new_minimal(config.clone());
+        let mut process = AgentProcess::new_minimal(config.clone(), self.clock.clone());
 
         // Register agent inbox on the communication bus and store the receiver.
         let inbox = self.bus.register_agent(pid.as_u64(), Some(64)).await;
@@ -251,7 +256,7 @@ impl AgentKernel {
                     return Err(KernelError::WaitCancelled);
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            Timer::sleep(&*self.clock, std::time::Duration::from_millis(100)).await;
         }
     }
 
@@ -279,7 +284,7 @@ impl AgentKernel {
                     _ => {}
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            Timer::sleep(&*self.clock, std::time::Duration::from_millis(100)).await;
         }
     }
 
@@ -353,7 +358,12 @@ impl AgentKernel {
     pub async fn scratchpad(&self, task_id: &str) -> Arc<SharedScratchpad> {
         let mut pads = self.scratchpads.write().await;
         pads.entry(task_id.to_string())
-            .or_insert_with(|| Arc::new(SharedScratchpad::new(task_id.to_string())))
+            .or_insert_with(|| {
+                Arc::new(SharedScratchpad::new(
+                    task_id.to_string(),
+                    self.clock.clone(),
+                ))
+            })
             .clone()
     }
 
@@ -392,10 +402,15 @@ impl AgentKernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use fabric::envelope::{Endpoint, Payload, Target};
 
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
+
     fn make_kernel() -> AgentKernel {
-        AgentKernel::new(Arc::new(CommunicationBus::new()))
+        AgentKernel::new(Arc::new(CommunicationBus::new()), test_clock())
     }
 
     fn make_config(id: &str) -> AgentProcessConfig {

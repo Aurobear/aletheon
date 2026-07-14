@@ -27,11 +27,11 @@
 //!
 //! Design doc: `docs/plans/2026-07-03-session-gateway-design.md`
 
+use fabric::{Clock, MonoTime};
 #[cfg(test)]
 use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::Mutex;
 
 use super::param_registry::ParamRegistry;
@@ -67,7 +67,7 @@ pub struct SessionGateway {
     pub(super) session_id: String,
     pub(super) state: Arc<Mutex<SessionStateRef>>,
     pub(super) session_manager: Arc<Mutex<SessionManager>>,
-    pub(super) started_at: Instant,
+    pub(super) started_at: MonoTime,
     pub(super) runtime_config: ExecutiveConfig,
 
     /// Memory and SelfField refs (Phase C).
@@ -77,6 +77,9 @@ pub struct SessionGateway {
 
     /// LLM provider for session.ask (Phase E).
     pub(super) llm: Arc<dyn LlmProvider>,
+
+    /// Clock for uptime computation in snapshot.
+    pub(super) clock: Arc<dyn Clock>,
 }
 
 impl SessionGateway {
@@ -87,12 +90,13 @@ impl SessionGateway {
         session_id: String,
         state: Arc<Mutex<SessionStateRef>>,
         session_manager: Arc<Mutex<SessionManager>>,
-        started_at: Instant,
+        started_at: MonoTime,
         runtime_config: ExecutiveConfig,
         core_memory: Arc<Mutex<CoreMemory>>,
         recall_memory: Arc<Mutex<RecallMemory>>,
         self_field: Arc<Mutex<SelfField>>,
         llm: Arc<dyn LlmProvider>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             param_registry,
@@ -107,6 +111,7 @@ impl SessionGateway {
             recall_memory,
             self_field,
             llm,
+            clock,
         }
     }
 
@@ -218,10 +223,12 @@ mod tests {
         let debug_hook = Arc::new(tokio::sync::Mutex::new(DebugBusHook::new(
             EventFilter::default(),
         )));
+        let test_clock: Arc<dyn fabric::Clock> =
+            Arc::new(aletheon_kernel::chronos::TestClock::default());
         let debug_handler = Arc::new(DebugHandler::new(
             debug_hook,
             Arc::new(PerfCounter::default()),
-            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            test_clock.clone(),
         ));
         let state = Arc::new(Mutex::new(SessionStateRef {
             iteration: 0,
@@ -237,9 +244,14 @@ mod tests {
             ),
         }));
         let tmp = tempfile::tempdir().unwrap();
-        let sm = SessionManager::new(tmp.path(), "test-session".into(), 100000)
-            .await
-            .unwrap();
+        let sm = SessionManager::new(
+            tmp.path(),
+            "test-session".into(),
+            100000,
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
+        .await
+        .unwrap();
 
         // Create test CoreMemory, RecallMemory, SelfField
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
@@ -260,12 +272,13 @@ mod tests {
             "test-session".into(),
             state,
             Arc::new(Mutex::new(sm)),
-            Instant::now(),
+            test_clock.mono_now(),
             ExecutiveConfig::default(),
             core_memory,
             recall_memory,
             self_field,
             mock_llm,
+            test_clock,
         );
 
         TestFixture { gw, _tmp: tmp }

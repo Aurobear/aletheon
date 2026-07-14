@@ -178,6 +178,7 @@ impl RuntimeHost for DaemonHost {
             cancel_token.clone(),
             owner_uid,
             group_gid,
+            clock.clone(),
         )
         .await?;
 

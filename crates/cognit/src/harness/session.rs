@@ -52,6 +52,14 @@ impl LinearCognitiveSession {
             inner: ReActLoop::new(config, Box::new(NoopCompressor)),
         }
     }
+
+    /// Create a session wrapping a pre-built ReActLoop.
+    ///
+    /// Useful when the loop is constructed by a shared factory, e.g.
+    /// `harness_factory::build_configured_react_loop()` in the daemon path.
+    pub fn from_react_loop(inner: ReActLoop) -> Self {
+        Self { inner }
+    }
 }
 
 #[async_trait]

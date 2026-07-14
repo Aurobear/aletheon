@@ -10,6 +10,7 @@ use crate::r#impl::agent::{AgentProcess, AgentProcessConfig};
 use corpus::tools::tools::Tool;
 use fabric::agent::Pid;
 use fabric::evolution::CognitivePulseEvent;
+use fabric::Clock;
 use fabric::CommunicationBus;
 use fabric::LlmProvider;
 
@@ -98,8 +99,9 @@ impl AgentRegistry {
         task: String,
         config: AgentProcessConfig,
         bus: Arc<CommunicationBus>,
+        clock: Arc<dyn Clock>,
     ) -> anyhow::Result<Pid> {
-        let mut process = AgentProcess::new(None, task, bus, config);
+        let mut process = AgentProcess::new(None, task, bus, config, clock);
         process.start().await?;
         let pid = process.pid;
         info!(%pid, "Spawning agent process");

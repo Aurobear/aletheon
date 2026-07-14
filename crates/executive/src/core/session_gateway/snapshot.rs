@@ -7,7 +7,7 @@ use crate::core::config::ExecutiveConfig;
 use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
 use cognit::harness::linear::goal_tracker::GoalTracker;
 use fabric::kernel::debug_bus::PerfCounter;
-use std::time::Instant;
+use fabric::{Clock, MonoTime};
 
 /// Builds a runtime snapshot as markdown.
 ///
@@ -22,7 +22,8 @@ impl SnapshotBuilder {
         goal_tracker: &GoalTracker,
         perf: &PerfCounter,
         config: &ExecutiveConfig,
-        started_at: Instant,
+        clock: &dyn Clock,
+        started_at: MonoTime,
         circuit_breaker_status: CircuitBreakerStatus,
         tool_budget_remaining: usize,
         tool_budget_max: usize,
@@ -77,7 +78,8 @@ impl SnapshotBuilder {
             CircuitBreakerStatus::Warning(_) => "DEGRADED",
             CircuitBreakerStatus::Tripped(_) => "TRIPPED",
         };
-        let uptime = started_at.elapsed();
+        let uptime =
+            std::time::Duration::from_millis(clock.mono_now().0.saturating_sub(started_at.0));
         let perf_snapshot = perf.snapshot();
 
         md.push_str("## Health\n");
@@ -215,6 +217,7 @@ mod tests {
 
     #[test]
     fn snapshot_with_no_goal() {
+        let clock = aletheon_kernel::chronos::TestClock::default();
         let goal_tracker =
             GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let perf = PerfCounter::default();
@@ -225,7 +228,8 @@ mod tests {
             &goal_tracker,
             &perf,
             &config,
-            Instant::now(),
+            &clock,
+            clock.mono_now(),
             CircuitBreakerStatus::Ok,
             10,
             10,
@@ -244,6 +248,7 @@ mod tests {
 
     #[test]
     fn snapshot_with_goal_and_errors() {
+        let clock = aletheon_kernel::chronos::TestClock::default();
         let mut goal_tracker =
             GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         goal_tracker.set_goal("Fix all the bugs".into());
@@ -265,7 +270,8 @@ mod tests {
             &goal_tracker,
             &perf,
             &config,
-            Instant::now(),
+            &clock,
+            clock.mono_now(),
             CircuitBreakerStatus::Warning("test warning".into()),
             3,
             10,
@@ -289,6 +295,7 @@ mod tests {
 
     #[test]
     fn snapshot_with_circuit_tripped() {
+        let clock = aletheon_kernel::chronos::TestClock::default();
         let goal_tracker =
             GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let perf = PerfCounter::default();
@@ -299,7 +306,8 @@ mod tests {
             &goal_tracker,
             &perf,
             &config,
-            Instant::now(),
+            &clock,
+            clock.mono_now(),
             CircuitBreakerStatus::Tripped("Loop detected!".into()),
             0,
             10,

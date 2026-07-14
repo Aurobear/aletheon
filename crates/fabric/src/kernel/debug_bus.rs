@@ -6,6 +6,7 @@
 //! Design: `docs/plans/2026-06-19-aletheon-debug-system-design.md` (Layer 2).
 
 use crate::kernel::debug::{DebugEvent, DebugLevel, DebugSink, Tracepoint};
+use crate::types::time::MonoTime;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -68,7 +69,7 @@ pub struct EventRecorder {
     buffer: VecDeque<DebugEvent>,
     _max_buffer: usize,
     event_count: u64,
-    started_at: std::time::Instant,
+    started_at: MonoTime,
 }
 
 impl EventRecorder {
@@ -78,7 +79,18 @@ impl EventRecorder {
             buffer: VecDeque::with_capacity(max_buffer),
             _max_buffer: max_buffer,
             event_count: 0,
-            started_at: std::time::Instant::now(),
+            started_at: mono_now_fallback(),
+        }
+    }
+
+    /// Create a new EventRecorder with an explicit monotonic start timestamp.
+    pub fn new_at(path: PathBuf, max_buffer: usize, started_at: MonoTime) -> Self {
+        Self {
+            path,
+            buffer: VecDeque::with_capacity(max_buffer),
+            _max_buffer: max_buffer,
+            event_count: 0,
+            started_at,
         }
     }
 
@@ -93,7 +105,8 @@ impl EventRecorder {
     }
 
     pub fn duration(&self) -> std::time::Duration {
-        self.started_at.elapsed()
+        let now = mono_now_fallback();
+        std::time::Duration::from_millis(now.0.saturating_sub(self.started_at.0))
     }
 
     /// Flush buffered events to disk. Call periodically or on stop.
@@ -118,10 +131,14 @@ impl EventRecorder {
     /// Stop recording and flush remaining events.
     pub async fn stop(mut self) -> anyhow::Result<RecordingMeta> {
         self.flush().await?;
+        let duration = {
+            let now = mono_now_fallback();
+            std::time::Duration::from_millis(now.0.saturating_sub(self.started_at.0))
+        };
         Ok(RecordingMeta {
             path: self.path,
             event_count: self.event_count,
-            duration: self.started_at.elapsed(),
+            duration,
         })
     }
 }
@@ -371,6 +388,20 @@ impl DebugBusHook {
             Ok(None)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helper
+// ---------------------------------------------------------------------------
+
+/// Fallback monotonic time source when no clock is attached.
+fn mono_now_fallback() -> MonoTime {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let elapsed = START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64;
+    MonoTime(elapsed)
 }
 
 // ---------------------------------------------------------------------------

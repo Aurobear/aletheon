@@ -47,9 +47,11 @@ dependencies = [
 name = "aletheon-bin"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "clap",
  "executive",
+ "fabric",
  "interact",
  "serde",
  "serde_json",

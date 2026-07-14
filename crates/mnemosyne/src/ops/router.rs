@@ -420,7 +420,7 @@ impl MemoryBackend for MemoryRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use fabric::{wall_to_datetime, MemoryEntry, ReflectionTrigger};
     use uuid::Uuid;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
@@ -441,12 +441,13 @@ mod tests {
     }
 
     fn make_entry(mt: MemoryType, content: &[u8]) -> MemoryEntry {
+        let clock = test_clock();
         MemoryEntry {
             id: Uuid::new_v4(),
             memory_type: mt,
             content: content.to_vec(),
             tags: vec!["test".into()],
-            created_at: Utc::now(),
+            created_at: wall_to_datetime(clock.wall_now()),
             access_count: 0,
             importance: 0.5,
             decay_rate: 0.0,
@@ -665,9 +666,10 @@ mod tests {
         // We store a ReflectionEntry as JSON bytes.
         use fabric::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
+        let clock = test_clock();
         let reflection = ReflectionEntry {
             id: "test-ref-1".into(),
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(clock.wall_now()),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: "fixed memory leak in router".into(),
             outcome: ReflectionOutcome::Success,
@@ -736,9 +738,10 @@ mod tests {
         // Store one of each type
         use fabric::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
+        let clock = test_clock();
         let reflection = ReflectionEntry {
             id: "ref-full".into(),
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(clock.wall_now()),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: "deployed microservice".into(),
             outcome: ReflectionOutcome::Success,
@@ -806,16 +809,17 @@ mod tests {
     async fn test_router_recall_activation_ordering_cross_type() {
         let (_dir, router) = setup_router().await;
 
+        let clock = test_clock();
         // Store an old moderate-importance episodic entry (90 days ago)
         let mut old_entry = make_entry(MemoryType::Episodic, b"old important event");
         old_entry.importance = 0.6;
-        old_entry.created_at = Utc::now() - chrono::Duration::days(90);
+        old_entry.created_at = wall_to_datetime(clock.wall_now()) - chrono::Duration::days(90);
         router.store(old_entry).await.unwrap();
 
         // Store a recent very-low-importance semantic entry
         let mut recent_entry = make_entry(MemoryType::Semantic, b"recent minor fact");
         recent_entry.importance = 0.1;
-        recent_entry.created_at = Utc::now();
+        recent_entry.created_at = wall_to_datetime(clock.wall_now());
         router.store(recent_entry).await.unwrap();
 
         // Recall across all types (no memory_type filter)
@@ -846,15 +850,16 @@ mod tests {
     async fn test_router_recall_fresh_beats_stale_same_importance() {
         let (_dir, router) = setup_router().await;
 
+        let clock = test_clock();
         // Two entries with same importance, but different ages
         let mut stale = make_entry(MemoryType::Semantic, b"stale fact");
         stale.importance = 0.5;
-        stale.created_at = Utc::now() - chrono::Duration::days(90);
+        stale.created_at = wall_to_datetime(clock.wall_now()) - chrono::Duration::days(90);
         router.store(stale).await.unwrap();
 
         let mut fresh = make_entry(MemoryType::Episodic, b"fresh event");
         fresh.importance = 0.5;
-        fresh.created_at = Utc::now();
+        fresh.created_at = wall_to_datetime(clock.wall_now());
         router.store(fresh).await.unwrap();
 
         let query = MemoryQuery {

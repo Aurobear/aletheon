@@ -3,6 +3,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+use aletheon_kernel::chronos::Timer;
+use fabric::Clock;
+
 use super::super::registry::AgentRegistry;
 use super::edge::Edge;
 use super::node::{Node, NodeKind, NodeStatus, OnExhausted};
@@ -165,6 +168,7 @@ impl DiGraph {
         &self,
         registry: &AgentRegistry,
         initial_state: GraphState,
+        clock: &dyn Clock,
     ) -> Result<GraphState, String> {
         let mut state = initial_state;
         let mut node_statuses: HashMap<String, NodeStatus> = HashMap::new();
@@ -196,7 +200,7 @@ impl DiGraph {
                     "Skipping node (dependencies not met)"
                 );
                 node_statuses.insert(node_id.clone(), NodeStatus::Skipped);
-                state.record(node_id, "skipped");
+                state.record(node_id, "skipped", clock);
                 continue;
             }
 
@@ -209,32 +213,34 @@ impl DiGraph {
             match result {
                 Ok(()) => {
                     node_statuses.insert(node_id.clone(), NodeStatus::Completed);
-                    state.record(node_id, "completed");
+                    state.record(node_id, "completed", clock);
                     info!(node = node_id.as_str(), "Node completed");
                 }
                 Err(e) => {
                     // Handle retry
-                    let retried = self.handle_retry(node, registry, &mut state, &e).await;
+                    let retried = self
+                        .handle_retry(node, registry, &mut state, &e, clock)
+                        .await;
                     if retried {
                         node_statuses.insert(node_id.clone(), NodeStatus::Completed);
-                        state.record(node_id, "completed_after_retry");
+                        state.record(node_id, "completed_after_retry", clock);
                     } else {
                         match node.retry_policy.on_exhausted {
                             OnExhausted::FailGraph => {
                                 node_statuses
                                     .insert(node_id.clone(), NodeStatus::Failed(e.clone()));
-                                state.record(node_id, "failed");
+                                state.record(node_id, "failed", clock);
                                 return Err(format!("Node '{}' failed: {}", node_id, e));
                             }
                             OnExhausted::SkipNode => {
                                 node_statuses.insert(node_id.clone(), NodeStatus::Skipped);
-                                state.record(node_id, "skipped_after_failure");
+                                state.record(node_id, "skipped_after_failure", clock);
                                 warn!(node = node_id.as_str(), error = %e, "Node failed, skipping");
                             }
                             OnExhausted::Escalate => {
                                 node_statuses
                                     .insert(node_id.clone(), NodeStatus::Failed(e.clone()));
-                                state.record(node_id, "escalated");
+                                state.record(node_id, "escalated", clock);
                                 return Err(format!(
                                     "Node '{}' needs human intervention: {}",
                                     node_id, e
@@ -339,6 +345,7 @@ impl DiGraph {
         registry: &AgentRegistry,
         state: &mut GraphState,
         _error: &str,
+        clock: &dyn Clock,
     ) -> bool {
         for attempt in 0..node.retry_policy.max_retries {
             warn!(
@@ -348,9 +355,12 @@ impl DiGraph {
                 "Retrying node"
             );
 
-            tokio::time::sleep(std::time::Duration::from_millis(
-                node.retry_policy.backoff_ms * (attempt as u64 + 1),
-            ))
+            Timer::sleep(
+                clock,
+                std::time::Duration::from_millis(
+                    node.retry_policy.backoff_ms * (attempt as u64 + 1),
+                ),
+            )
             .await;
 
             if self.execute_node(node, registry, state).await.is_ok() {

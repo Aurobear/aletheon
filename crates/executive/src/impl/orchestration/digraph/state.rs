@@ -1,3 +1,5 @@
+use fabric::wall_to_datetime;
+use fabric::Clock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -37,11 +39,11 @@ impl GraphState {
     }
 
     /// Record a log entry.
-    pub fn record(&mut self, node_id: &str, status: &str) {
+    pub fn record(&mut self, node_id: &str, status: &str, clock: &dyn Clock) {
         self.log.push(LogEntry {
             node_id: node_id.to_string(),
             status: status.to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: wall_to_datetime(clock.wall_now()).to_rfc3339(),
         });
     }
 }
@@ -55,6 +57,7 @@ impl Default for GraphState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
 
     #[test]
     fn test_state_set_get() {
@@ -66,8 +69,9 @@ mod tests {
 
     #[test]
     fn test_state_record() {
+        let clock = TestClock::default();
         let mut state = GraphState::new();
-        state.record("node1", "completed");
+        state.record("node1", "completed", &clock);
         assert_eq!(state.log.len(), 1);
         assert_eq!(state.log[0].node_id, "node1");
         assert_eq!(state.log[0].status, "completed");

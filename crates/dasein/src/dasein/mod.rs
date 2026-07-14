@@ -50,11 +50,13 @@ pub struct DaseinModule {
     // Runtime
     sorge: SorgeLoop,
     event_tx: mpsc::Sender<DaseinEvent>,
+    #[allow(dead_code)]
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl DaseinModule {
-    pub fn new() -> (Self, mpsc::Sender<DaseinEvent>) {
-        let (sorge, event_tx) = SorgeLoop::new(256);
+    pub fn new(clock: Arc<dyn fabric::Clock>) -> (Self, mpsc::Sender<DaseinEvent>) {
+        let (sorge, event_tx) = SorgeLoop::new(256, clock.clone());
         let external_tx = event_tx.clone();
 
         let temporality = Arc::new(TemporalStream::new(50, 0.8));
@@ -72,6 +74,7 @@ impl DaseinModule {
             negativity,
             sorge,
             event_tx,
+            clock,
         };
 
         (module, external_tx)
@@ -179,7 +182,7 @@ impl DaseinModule {
 
 impl Default for DaseinModule {
     fn default() -> Self {
-        Self::new().0
+        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new())).0
     }
 }
 
@@ -235,16 +238,20 @@ impl DaseinOps for DaseinModule {
 mod tests {
     use super::*;
 
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
+
     #[test]
     fn test_dasein_module_creation() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
         assert_eq!(module.mood(), Stimmung::Gelassenheit);
         assert!(!module.is_alive()); // sorge not started yet
     }
 
     #[test]
     fn test_context_injection() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
 
         // Add some state
         module.self_model().assert(self_model::SelfAssertion {
@@ -265,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_format_context_not_empty() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
         let formatted = module.format_context();
         assert!(!formatted.is_empty());
         assert!(formatted.contains("Existential State"));
@@ -279,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_snapshots() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
 
         let temporal = module.temporality_snapshot();
         assert_eq!(temporal.tempo, 1.0);
@@ -296,21 +303,21 @@ mod tests {
 
     #[test]
     fn test_event_sender_available() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
         let _sender = module.event_sender();
         // Just verify we can get a sender without panicking
     }
 
     #[test]
     fn test_quick_mood_update_error() {
-        let (module, _rx) = DaseinModule::new();
+        let (module, _rx) = DaseinModule::new(test_clock());
         let mood = module.quick_mood_update("operation failed with error");
         assert!(matches!(mood, Stimmung::Geknickt { .. }));
     }
 
     #[test]
     fn test_quick_mood_update_success() {
-        let (module, _rx) = DaseinModule::new();
+        let (module, _rx) = DaseinModule::new(test_clock());
         let mood = module.quick_mood_update("task completed successfully");
         assert!(matches!(mood, Stimmung::Gelaunt { .. }));
     }
