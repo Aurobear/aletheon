@@ -234,10 +234,22 @@ impl RequestHandler {
             .context("opening objective store")?;
         let objective_store = Arc::new(Mutex::new(objective_store));
 
-        // M2: Recover persisted goal state — clear stale process links,
-        // map legacy active objectives, preserve suspended/awaiting states.
+        // M3: terminalize stale runtime calls before making their Goals ready.
+        // Recovery records cancellation evidence and never invokes a runtime.
         {
             let store = objective_store.lock().await;
+            let stale_attempts = store
+                .recover_stale_attempts()
+                .context("recovering stale goal attempts")?;
+            if !stale_attempts.is_empty() {
+                info!(
+                    count = stale_attempts.len(),
+                    "Cancelled stale goal attempts on start"
+                );
+            }
+
+            // M2: clear stale process links, map legacy active objectives, and
+            // preserve suspended/awaiting states.
             match store.recover_goals() {
                 Ok(recovered) if !recovered.is_empty() => {
                     info!(

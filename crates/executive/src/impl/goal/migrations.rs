@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 2;
+const CURRENT_VERSION: u32 = 3;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -66,6 +66,36 @@ CREATE TABLE IF NOT EXISTS goal_budget_ledger (
 );
 ";
 
+/// Migration 3 — durable runtime attempts and immutable attempt identity.
+const MIGRATION_3: &str = "
+CREATE TABLE IF NOT EXISTS goal_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    objective_id INTEGER NOT NULL REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL,
+    runtime_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed','cancelled')),
+    input_json TEXT NOT NULL,
+    output_json TEXT,
+    failure_json TEXT,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    usage_json TEXT NOT NULL DEFAULT '{}',
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    UNIQUE(objective_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS idx_goal_attempts_objective_sequence
+    ON goal_attempts(objective_id, sequence DESC);
+CREATE INDEX IF NOT EXISTS idx_goal_attempts_status ON goal_attempts(status);
+
+CREATE TRIGGER IF NOT EXISTS goal_attempts_immutable_identity
+BEFORE UPDATE OF objective_id, sequence, runtime_id, role, input_json, started_at
+ON goal_attempts
+BEGIN
+    SELECT RAISE(ABORT, 'goal attempt identity is immutable');
+END;
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -86,6 +116,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
             .context("begin migration 2 transaction")?;
         tx.execute_batch(MIGRATION_2)?;
         tx.pragma_update(None, "user_version", 2)?;
+        tx.commit()?;
+    }
+
+    if version < 3 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 3 transaction")?;
+        tx.execute_batch(MIGRATION_3)?;
+        tx.pragma_update(None, "user_version", 3)?;
         tx.commit()?;
     }
 
@@ -111,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_schema_migrates_to_v2() {
+    fn legacy_schema_migrates_to_latest() {
         // Manually create the legacy V1 schema.
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch(MIGRATION_1).unwrap();
@@ -125,7 +164,7 @@ mod tests {
         )
         .unwrap();
 
-        // Re-open / migrate to V2.
+        // Re-open / migrate to the current schema.
         run_migrations(&db).unwrap();
 
         // Row still readable.
@@ -155,14 +194,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 2);
+        assert_eq!(v1, 3);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 2);
+        assert_eq!(v2, 3);
     }
 
     #[test]
@@ -178,6 +217,7 @@ mod tests {
         assert!(tables.iter().any(|n| n == "objectives"));
         assert!(tables.iter().any(|n| n == "goal_events"));
         assert!(tables.iter().any(|n| n == "goal_budget_ledger"));
+        assert!(tables.iter().any(|n| n == "goal_attempts"));
     }
 
     #[test]
