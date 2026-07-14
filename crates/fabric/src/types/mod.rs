@@ -7,6 +7,7 @@ pub mod channel;
 pub mod context;
 pub mod evidence;
 pub mod genome;
+pub mod goal;
 pub mod grounding;
 pub mod hook;
 pub mod hook_ext;
