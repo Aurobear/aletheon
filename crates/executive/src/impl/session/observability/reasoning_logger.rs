@@ -208,7 +208,8 @@ async fn cleanup_old_logs(dir: &Path, clock: &dyn Clock) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::{TestClock, Timer};
+    use aletheon_kernel::chronos::{SystemTimer, TestClock};
+    use fabric::Timer;
     use tempfile::TempDir;
 
     fn test_clock() -> Arc<dyn Clock> {
@@ -232,7 +233,9 @@ mod tests {
             .unwrap();
 
         // Give the writer task a moment
-        Timer::sleep(&*clock, std::time::Duration::from_millis(50)).await;
+        SystemTimer
+            .sleep(std::time::Duration::from_millis(50))
+            .await;
 
         // Verify the file exists and has content
         let entries: Vec<_> = std::fs::read_dir(tmp.path())

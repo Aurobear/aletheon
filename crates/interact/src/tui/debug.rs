@@ -12,10 +12,10 @@
 //!
 //! Design: `docs/plans/2026-06-19-aletheon-debug-system-design.md` (Layer 3).
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use fabric::Clock;
+use fabric::{Clock, Timer};
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -660,11 +660,9 @@ async fn perf_stats(socket: &std::path::Path, interval: Option<u64>) -> Result<(
             Some(secs) => {
                 println!();
                 println!("Refreshing in {}s (Ctrl+C to stop)...", secs);
-                Timer::sleep(
-                    &*std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-                    std::time::Duration::from_secs(secs),
-                )
-                .await;
+                SystemTimer
+                    .sleep(std::time::Duration::from_secs(secs))
+                    .await;
                 // Clear screen
                 print!("\x1B[2J\x1B[H");
             }
@@ -1023,12 +1021,12 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
     let mut line = String::new();
     loop {
         line.clear();
-        match Timer::timeout(
-            &*clock,
-            std::time::Duration::from_millis(100),
-            reader.read_line(&mut line),
-        )
-        .await
+        match SystemTimer
+            .timeout(
+                std::time::Duration::from_millis(100),
+                reader.read_line(&mut line),
+            )
+            .await
         {
             Ok(Ok(0)) => break, // Connection closed
             Ok(Ok(_)) => {

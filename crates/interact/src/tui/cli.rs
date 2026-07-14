@@ -14,9 +14,10 @@ use fabric::ui_event::ClientEvent;
 use std::io;
 use std::path::PathBuf;
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use fabric::Timer;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
@@ -498,8 +499,7 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
     // This provides a clean timeout mechanism.
     let timeout_duration = std::time::Duration::from_secs(SINGLE_MESSAGE_TIMEOUT_SECS);
 
-    let clock = std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new());
-    let result = Timer::timeout(&*clock, timeout_duration, async {
+    let result = SystemTimer.timeout(timeout_duration, async {
         let mut response_buf = String::new();
         loop {
             response_buf.clear();

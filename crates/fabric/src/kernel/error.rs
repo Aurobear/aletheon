@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crate::{Clock, Timer};
+use crate::Clock;
 
 // ── Error Severity ──────────────────────────────────────────────────────────
 
@@ -471,12 +471,12 @@ impl DegradationChain {
     /// Other strategies modify behavior but don't re-invoke the operation
     /// (they return control to the caller to handle).
     ///
-    /// `clock` is optional; when `None`, retry delays fall back to
+    /// `_clock` is kept for API compatibility; retry delays always use
     /// `tokio::time::sleep`.
     pub async fn execute<F, Fut, T>(
         &self,
         mut operation: F,
-        clock: Option<&dyn Clock>,
+        _clock: Option<&dyn Clock>,
     ) -> Result<T, AgentError>
     where
         F: FnMut() -> Fut,
@@ -500,11 +500,7 @@ impl DegradationChain {
                                 last_error = Some(e);
                                 if attempt < max_attempts - 1 {
                                     let delay = backoff.delay_for_attempt(attempt);
-                                    if let Some(c) = clock {
-                                        Timer::sleep(c, delay).await;
-                                    } else {
-                                        tokio::time::sleep(delay).await;
-                                    }
+                                    tokio::time::sleep(delay).await;
                                 }
                             }
                         }

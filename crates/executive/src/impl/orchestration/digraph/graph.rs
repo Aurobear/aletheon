@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-use aletheon_kernel::chronos::Timer;
-use fabric::Clock;
+use aletheon_kernel::chronos::SystemTimer;
+use fabric::{Clock, Timer};
 
 use super::super::registry::AgentRegistry;
 use super::edge::Edge;
@@ -350,7 +350,7 @@ impl DiGraph {
         registry: &AgentRegistry,
         state: &mut GraphState,
         _error: &str,
-        clock: &dyn Clock,
+        _clock: &dyn Clock,
     ) -> bool {
         for attempt in 0..node.retry_policy.max_retries {
             warn!(
@@ -360,13 +360,11 @@ impl DiGraph {
                 "Retrying node"
             );
 
-            Timer::sleep(
-                clock,
-                std::time::Duration::from_millis(
+            SystemTimer
+                .sleep(std::time::Duration::from_millis(
                     node.retry_policy.backoff_ms * (attempt as u64 + 1),
-                ),
-            )
-            .await;
+                ))
+                .await;
 
             if self.execute_node(node, registry, state).await.is_ok() {
                 return true;

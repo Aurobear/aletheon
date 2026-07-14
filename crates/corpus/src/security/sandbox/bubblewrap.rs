@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use fabric::Clock;
+use fabric::Timer;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -135,14 +136,15 @@ impl SandboxBackend for BubblewrapBackend {
         let args = self.build_args(cmd, config);
         let start = self.clock.mono_now();
 
-        let result = aletheon_kernel::chronos::Timer::timeout(&*self.clock, timeout, async {
-            tokio::process::Command::new(&self.bwrap_path)
-                .args(&args)
-                .current_dir(&config.working_dir)
-                .output()
-                .await
-        })
-        .await;
+        let result = aletheon_kernel::chronos::SystemTimer
+            .timeout(timeout, async {
+                tokio::process::Command::new(&self.bwrap_path)
+                    .args(&args)
+                    .current_dir(&config.working_dir)
+                    .output()
+                    .await
+            })
+            .await;
 
         let elapsed = self.clock.mono_now().0.saturating_sub(start.0);
 

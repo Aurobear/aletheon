@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fabric::Clock;
+use fabric::Timer;
 use tracing::warn;
 
 use super::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest, AutoDenyGate};
@@ -349,12 +350,12 @@ impl ToolRunnerWithGuard {
         } else {
             // Direct execution for L0 tools with timeout
             const L0_TIMEOUT_SECS: u64 = 60;
-            match aletheon_kernel::chronos::Timer::timeout(
-                &*self.clock,
-                Duration::from_secs(L0_TIMEOUT_SECS),
-                tool.execute(input.clone(), ctx),
-            )
-            .await
+            match aletheon_kernel::chronos::SystemTimer
+                .timeout(
+                    Duration::from_secs(L0_TIMEOUT_SECS),
+                    tool.execute(input.clone(), ctx),
+                )
+                .await
             {
                 Ok(result) => result,
                 Err(_) => ToolResult {

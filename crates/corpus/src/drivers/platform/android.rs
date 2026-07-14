@@ -17,12 +17,14 @@ use fabric::Clock;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
+use fabric::Timer;
 
 /// Android platform adapter.
 ///
 /// Currently a stub. Full implementation requires Android NDK compilation.
 pub struct AndroidPlatformAdapter {
+    #[allow(dead_code)]
     clock: Arc<dyn Clock>,
 }
 
@@ -146,7 +148,7 @@ impl PlatformAdapter for AndroidPlatformAdapter {
 
     async fn service_restart(&self, name: &str) -> Result<()> {
         self.service_stop(name).await?;
-        Timer::sleep(&*self.clock, Duration::from_millis(100)).await;
+        SystemTimer.sleep(Duration::from_millis(100)).await;
         self.service_start(name).await
     }
 

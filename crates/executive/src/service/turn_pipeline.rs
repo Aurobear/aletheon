@@ -10,7 +10,7 @@ use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::service::daemon_turn::helpers::{bounded_text_history, build_request_messages};
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use aletheon_kernel::operation::{OperationScope, OperationTable};
 use aletheon_kernel::process::ProcessTable;
 use aletheon_kernel::space::InMemorySpaceManager;
@@ -27,7 +27,7 @@ use fabric::{
     AdmissionController, AdmissionRequest, AgoraOps, AgoraSpaceId, AgoraVersion, CapabilityId,
     CapabilityScope, Clock, ContentBlock, ContextBinding, Intent, IntentSource, LlmProvider,
     Message, OperationId, PrincipalId, ProcessId, ProcessManager, Role, SandboxRequirement,
-    SessionId, SpaceId, TurnRequest, UsageReport,
+    SessionId, SpaceId, Timer, TurnRequest, UsageReport,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -216,12 +216,9 @@ impl TurnPipeline {
                             });
                         }
                         let mut stdout_pipe = child.stdout.take();
-                        match Timer::timeout(
-                            &*self.clock,
-                            std::time::Duration::from_secs(30),
-                            child.wait(),
-                        )
-                        .await
+                        match SystemTimer
+                            .timeout(std::time::Duration::from_secs(30), child.wait())
+                            .await
                         {
                             Ok(Ok(status)) if status.success() => {
                                 if let Some(ref mut stdout) = stdout_pipe {

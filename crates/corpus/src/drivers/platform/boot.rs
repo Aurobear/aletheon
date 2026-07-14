@@ -13,7 +13,8 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
+use fabric::Timer;
 
 /// Boot phases representing system initialization stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -532,7 +533,7 @@ impl BootMonitor {
 
         // Simulate loading delay (in real implementation, this would be actual loading)
         if !stage.delay.is_zero() {
-            Timer::sleep(&*self.clock, stage.delay).await;
+            SystemTimer.sleep(stage.delay).await;
         }
 
         // Mark components as loaded

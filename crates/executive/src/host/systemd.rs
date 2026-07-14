@@ -9,10 +9,9 @@
 //! Reuses `RuntimeCore::bootstrap`, `UnixServer`, and `McpEmbedded`
 //! identically to `DaemonHost`.
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
-use fabric::Clock;
-use fabric::MonoTime;
+use fabric::{Clock, MonoTime, Timer};
 use std::os::unix::net::UnixDatagram;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -115,7 +114,7 @@ impl crate::host::RuntimeHost for SystemdHost {
         // ── Watchdog task ───────────────────────────────────────────
         if let Some(interval_usec) = watchdog_interval_usec() {
             let interval = Duration::from_micros(interval_usec);
-            let clock = core.request_handler.subsystems.ports.clock.clone();
+            let _clock = core.request_handler.subsystems.ports.clock.clone();
             tracing::info!(
                 interval_us = interval_usec,
                 "Systemd watchdog enabled, pinging every {} us",
@@ -123,7 +122,7 @@ impl crate::host::RuntimeHost for SystemdHost {
             );
             tokio::spawn(async move {
                 loop {
-                    Timer::sleep(&*clock, interval).await;
+                    SystemTimer.sleep(interval).await;
                     sd_notify("WATCHDOG=1");
                 }
             });
@@ -145,7 +144,7 @@ impl crate::host::RuntimeHost for SystemdHost {
         let cancel_token = core.cancel_token;
         let socket = self.socket;
         let pulse_handle = core.pulse_handle;
-        let clock = request_handler.subsystems.ports.clock.clone();
+        let _clock = request_handler.subsystems.ports.clock.clone();
 
         // ── MCP embedded server ─────────────────────────────────────
         let mcp_socket = socket
@@ -193,7 +192,7 @@ impl crate::host::RuntimeHost for SystemdHost {
         // ── Graceful shutdown: stop LlmPulse ────────────────────────
         if let Some((shutdown_tx, handle)) = pulse_handle {
             let _ = shutdown_tx.send(true);
-            let _ = Timer::timeout(&*clock, Duration::from_secs(2), handle).await;
+            let _ = SystemTimer.timeout(Duration::from_secs(2), handle).await;
         }
 
         Ok(())

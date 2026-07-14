@@ -8,7 +8,8 @@ use fabric::Clock;
 use ratatui::Terminal;
 use tokio::net::UnixStream;
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
+use fabric::Timer;
 
 use super::super::chat::Role as ChatRole;
 use super::super::response::{
@@ -60,7 +61,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         .await;
     let _ = app.stream.flush().await;
     // Read and discard the clear response so it doesn't pollute the socket buffer
-    Timer::sleep(&*app.clock, Duration::from_millis(50)).await;
+    SystemTimer.sleep(Duration::from_millis(50)).await;
     let _ = app.stream.try_read(&mut app.read_buf);
 
     // Welcome message
@@ -151,7 +152,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                         break;
                     }
                 }
-                _ = Timer::sleep(&*app.clock, Duration::from_millis(200)) => {}
+                _ = SystemTimer.sleep(Duration::from_millis(200)) => {}
             }
         }
 
@@ -166,7 +167,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             if !app.turn_active && !reader.is_exhausted() {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
-                    Timer::sleep(&*app.clock, Duration::from_millis(100)).await;
+                    SystemTimer.sleep(Duration::from_millis(100)).await;
                     submit_message(&mut app, next).await;
                 }
             }
@@ -189,7 +190,7 @@ pub async fn simple_line_mode(
     mut stream: UnixStream,
     _caps: TermCaps,
     model_name: String,
-    clock: Arc<dyn Clock>,
+    _clock: Arc<dyn Clock>,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -279,7 +280,7 @@ pub async fn simple_line_mode(
         // Use Timer::timeout for clean timeout handling.
         let timeout_duration = Duration::from_secs(120);
 
-        let result = Timer::timeout(&*clock, timeout_duration, async {
+        let result = SystemTimer.timeout(timeout_duration, async {
             loop {
                 // Wait for stream to be readable
                 match stream.readable().await {
@@ -397,7 +398,7 @@ pub async fn simple_line_mode(
                         }
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        Timer::sleep(&*clock, Duration::from_millis(50)).await;
+                        SystemTimer.sleep(Duration::from_millis(50)).await;
                     }
                     Err(_) => return Ok(()),
                 }

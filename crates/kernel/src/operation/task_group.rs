@@ -1,5 +1,5 @@
-use crate::chronos::Timer;
-use fabric::{OperationExitReason, OperationId};
+use crate::chronos::SystemTimer;
+use fabric::{OperationExitReason, OperationId, Timer};
 use std::future::Future;
 use std::time::Duration;
 use tokio::task::JoinSet;
@@ -67,16 +67,17 @@ impl OperationScope {
 
     pub async fn cancel_and_drain(
         &mut self,
-        clock: &dyn fabric::Clock,
+        _clock: &dyn fabric::Clock,
         grace: Duration,
     ) -> Vec<TaskExit> {
         self.cancel.cancel();
         let mut exits = Vec::new();
+        let timer = SystemTimer;
         loop {
             if self.tasks.is_empty() {
                 break;
             }
-            match Timer::timeout(clock, grace, self.join_next()).await {
+            match timer.timeout(grace, self.join_next()).await {
                 Ok(Some(exit)) => exits.push(exit),
                 Ok(None) => break,
                 Err(_) => {

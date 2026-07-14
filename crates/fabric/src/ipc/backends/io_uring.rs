@@ -8,7 +8,6 @@ use tracing::debug;
 use tracing::info;
 
 use crate::ipc::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
-use crate::Timer;
 
 /// Real io_uring IPC backend.
 ///
@@ -180,11 +179,7 @@ impl IpcBackend for IoUringBackend {
         }
 
         // Fallback: simulated latency
-        if let Some(ref clock) = self.clock {
-            Timer::sleep(clock.as_ref(), std::time::Duration::from_micros(10)).await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_micros(10)).await;
-        }
+        tokio::time::sleep(std::time::Duration::from_micros(10)).await;
         debug!("io_uring send (simulated): {} bytes", data.len());
         Ok(())
     }

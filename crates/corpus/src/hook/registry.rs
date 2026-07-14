@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fabric::Clock;
+use fabric::Timer;
 use tracing::warn;
 
 use fabric::hook::{HookContext, HookPoint, HookResult};
@@ -33,6 +34,7 @@ pub struct RegisteredHook {
 /// Registry of lifecycle hooks.
 pub struct HookRegistry {
     hooks: HashMap<HookPoint, Vec<RegisteredHook>>,
+    #[allow(dead_code)]
     clock: Arc<dyn Clock>,
 }
 
@@ -142,10 +144,8 @@ impl HookRegistry {
 
         // Wait for the child with a 30-second timeout.
         // We use `child.wait()` so we retain ownership and can `kill()` on timeout.
-        let deadline = aletheon_kernel::chronos::Timer::timeout(
-            &*self.clock,
-            Duration::from_secs(30),
-            async {
+        let deadline =
+            aletheon_kernel::chronos::SystemTimer.timeout(Duration::from_secs(30), async {
                 let stdout = child.stdout.take();
                 let status = child.wait().await?;
                 let mut out = Vec::new();
@@ -154,8 +154,7 @@ impl HookRegistry {
                     let _ = s.read_to_end(&mut out).await;
                 }
                 Ok::<_, std::io::Error>((status, out))
-            },
-        );
+            });
 
         match deadline.await {
             Ok(Ok((_status, stdout))) => parse_hook_output(&stdout),

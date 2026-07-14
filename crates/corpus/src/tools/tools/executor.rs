@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
+#[cfg(test)]
+use fabric::Timer;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -369,18 +371,16 @@ mod tests {
         fn boxed_clone(&self) -> Box<dyn Tool> {
             panic!("mock tool boxed_clone should not be called in tests")
         }
-        async fn execute(&self, _input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
             let seq = self.invocation_counter.fetch_add(1, Ordering::SeqCst);
             self.invocation_log
                 .lock()
                 .unwrap()
                 .push((self.tool_name.clone(), seq));
             if self.delay_ms > 0 {
-                aletheon_kernel::chronos::Timer::sleep(
-                    &*ctx.clock,
-                    Duration::from_millis(self.delay_ms),
-                )
-                .await;
+                aletheon_kernel::chronos::SystemTimer
+                    .sleep(Duration::from_millis(self.delay_ms))
+                    .await;
             }
             ToolResult {
                 content: format!("{}:ok:seq{}", self.tool_name, seq),

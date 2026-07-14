@@ -3,10 +3,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
 use fabric::debug::DebugEvent;
-use fabric::Clock;
+use fabric::{Clock, Timer};
 use nix::unistd::{Gid, Uid, User};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -27,6 +27,7 @@ pub struct UnixServer {
     owner_uid: u32,
     /// GID of the aletheon group — users in this group may also connect.
     group_gid: u32,
+    #[allow(dead_code)]
     clock: Arc<dyn Clock>,
 }
 
@@ -108,12 +109,9 @@ impl UnixServer {
             "Draining in-flight connections..."
         );
         loop {
-            match Timer::timeout(
-                &*self.clock,
-                Duration::from_secs(5),
-                self.connections.join_next(),
-            )
-            .await
+            match SystemTimer
+                .timeout(Duration::from_secs(5), self.connections.join_next())
+                .await
             {
                 Ok(Some(Ok(()))) => {
                     // Connection completed normally.

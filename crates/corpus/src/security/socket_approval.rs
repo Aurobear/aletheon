@@ -9,7 +9,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 use super::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest};
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
+use fabric::Timer;
 
 /// A pending approval forwarded to the daemon side. The runner blocks on `respond`.
 pub struct PendingApproval {
@@ -20,6 +21,7 @@ pub struct PendingApproval {
 /// Approval gate that forwards to a daemon-side receiver.
 pub struct SocketApprovalGate {
     tx: mpsc::Sender<PendingApproval>,
+    #[allow(dead_code)]
     clock: Arc<dyn Clock>,
 }
 
@@ -43,7 +45,10 @@ impl ApprovalGate for SocketApprovalGate {
             return ApprovalDecision::Deny; // daemon side gone → fail-safe
         }
         // Bound the wait so a disconnected client can't hang a turn forever.
-        match Timer::timeout(&*self.clock, std::time::Duration::from_secs(120), wait).await {
+        match SystemTimer
+            .timeout(std::time::Duration::from_secs(120), wait)
+            .await
+        {
             Ok(Ok(decision)) => decision,
             _ => ApprovalDecision::Deny, // timeout or dropped responder → fail-safe
         }
