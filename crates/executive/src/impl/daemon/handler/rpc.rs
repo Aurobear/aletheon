@@ -4,6 +4,7 @@
 //! Each sub-module is responsible for a single logical group of methods.
 
 mod rpc_admin;
+mod rpc_approval;
 mod rpc_goal;
 mod rpc_health;
 mod rpc_memory;
@@ -44,6 +45,10 @@ impl RequestHandler {
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,
             "reload_skills" => self.handle_reload_skills(&id, &request).await,
             "approval_response" => self.handle_approval_response(&id, &request).await,
+            "approval.list" => self.handle_approval_list(&id, &request).await,
+            "approval.show" => self.handle_approval_show(&id, &request).await,
+            "approval.approve" => self.handle_approval_approve(&id, &request).await,
+            "approval.reject" => self.handle_approval_reject(&id, &request).await,
             "interrupt" => self.handle_interrupt(&id, &request).await,
             "mode_switch" => self.handle_mode_switch(&id, &request).await,
             "model_list" => self.handle_model_list(&id, &request).await,

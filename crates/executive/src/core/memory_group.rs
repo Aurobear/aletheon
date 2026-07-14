@@ -9,6 +9,7 @@ use mnemosyne::AutoMemory;
 use mnemosyne::FactStore;
 use mnemosyne::MemoryService;
 
+use crate::r#impl::approval::ApprovalRepository;
 use crate::r#impl::goal::ObjectiveStore;
 use mnemosyne::CoreMemory;
 use mnemosyne::RecallMemory;
@@ -20,6 +21,8 @@ pub struct MemoryGroup {
     pub fact_store: Arc<Mutex<FactStore>>,
     pub auto_memory: Arc<Mutex<AutoMemory>>,
     pub objective_store: Arc<Mutex<ObjectiveStore>>,
+    /// Durable protected-operation approvals stored beside Goal state.
+    pub approval_repository: Arc<Mutex<ApprovalRepository>>,
     /// Unified facade over the 6 memory objects above (docs/arch §11).
     /// Built from the same `Arc<Mutex<_>>` handles; additive, does not
     /// replace direct field access elsewhere.

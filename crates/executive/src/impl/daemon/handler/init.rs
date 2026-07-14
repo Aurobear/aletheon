@@ -235,6 +235,10 @@ impl RequestHandler {
         let objective_store = ObjectiveStore::open(&aletheon_dir.join("objectives.db"))
             .context("opening objective store")?;
         let objective_store = Arc::new(Mutex::new(objective_store));
+        let approval_repository =
+            crate::r#impl::approval::ApprovalRepository::open(&aletheon_dir.join("objectives.db"))
+                .context("opening approval repository")?;
+        let approval_repository = Arc::new(Mutex::new(approval_repository));
 
         // M3: terminalize stale runtime calls before making their Goals ready.
         // Recovery records cancellation evidence and never invokes a runtime.
@@ -640,6 +644,7 @@ impl RequestHandler {
                 fact_store,
                 auto_memory,
                 objective_store,
+                approval_repository,
             },
             security: crate::core::SecurityGroup {
                 tool_runner,
