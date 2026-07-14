@@ -8,8 +8,7 @@ use fabric::kernel::debug::{DebugEvent, DebugLevel};
 use fabric::kernel::debug_bus::{
     DebugBusHook, EventFilter, EventRecorder, PerfCounter, RecorderSink, SubscriberSink,
 };
-use fabric::Clock;
-use fabric::MonoTime;
+use fabric::{Clock, MonoTime, Timer};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -361,7 +360,7 @@ impl DebugHandler {
         let event_count = events.len();
         let hook = self.hook.clone();
         let _perf = self.perf.clone();
-        let clock = self.clock.clone();
+        let _clock = self.clock.clone();
 
         // Spawn async replay task — re-publish events with timing
         tokio::spawn(async move {
@@ -371,11 +370,9 @@ impl DebugHandler {
                 if speed > 0.0 && prev_ts > 0 && event.ts > prev_ts {
                     let delay_ms = (event.ts - prev_ts) as f64 / speed;
                     if delay_ms > 0.0 && delay_ms < 60_000.0 {
-                        aletheon_kernel::chronos::Timer::sleep(
-                            &*clock,
-                            std::time::Duration::from_millis(delay_ms as u64),
-                        )
-                        .await;
+                        aletheon_kernel::chronos::SystemTimer
+                            .sleep(std::time::Duration::from_millis(delay_ms as u64))
+                            .await;
                     }
                 }
                 prev_ts = event.ts;

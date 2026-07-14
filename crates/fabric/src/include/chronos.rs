@@ -1,20 +1,29 @@
-//! Chronos clock contracts.
+//! Chronos clock and timer contracts.
+//!
+//! The [`Clock`] trait provides wall-clock and monotonic time sources.
+//! The [`Timer`] trait provides async sleep / timeout operations.
+//!
+//! Implementations live in `aletheon_kernel::chronos`:
+//! - [`SystemClock`] / [`SystemTimer`] for production (tokio-based).
+//! - [`TestClock`]   / [`TestTimer`]   for deterministic tests.
+
+use std::future::Future;
+use std::time::Duration;
 
 use crate::types::time::{MonoDeadline, MonoTime, WallTime};
-use std::time::Duration;
+
+// ============================================================================
+// Clock
+// ============================================================================
 
 pub trait Clock: Send + Sync {
     fn wall_now(&self) -> WallTime;
     fn mono_now(&self) -> MonoTime;
 }
 
-/// Timer helpers that route through [`Clock`] so tests can deterministically
-/// advance time without real wall-clock waits.
-///
-/// Delegates to `tokio::time` under the hood; the [`Clock`] parameter is
-/// carried for future test-clock integration.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Timer;
+// ============================================================================
+// Timer
+// ============================================================================
 
 /// Error returned when a [`Timer::timeout`] expires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,26 +37,29 @@ impl std::fmt::Display for Elapsed {
 
 impl std::error::Error for Elapsed {}
 
-impl Timer {
-    /// Check whether a deadline has expired at the given clock time.
-    pub fn is_expired(clock: &dyn Clock, deadline: MonoDeadline) -> bool {
-        deadline.is_expired_at(clock.mono_now())
+/// Async timer abstraction.
+///
+/// Implementations in `aletheon_kernel::chronos`:
+/// - [`SystemTimer`] — delegates to `tokio::time` (production).
+/// - [`TestTimer`]  — uses a Notify priority-queue driven by clock
+///   advancement for deterministic tests.
+pub trait Timer: Send + Sync {
+    /// Check whether `deadline` has expired at the given monotonic time.
+    fn is_expired(&self, now: MonoTime, deadline: MonoDeadline) -> bool {
+        deadline.is_expired_at(now)
     }
 
-    /// Sleep for `dur`, using the clock to track elapsed time.
-    pub async fn sleep(_clock: &dyn Clock, dur: Duration) {
-        tokio::time::sleep(dur).await;
-    }
+    /// Sleep for `dur`.
+    fn sleep(&self, dur: Duration) -> impl Future<Output = ()> + Send;
 
-    /// Run a future with a timeout, using the clock to track elapsed time.
-    pub async fn timeout<F: std::future::Future>(
-        _clock: &dyn Clock,
+    /// Run `fut` with a timeout.  Returns [`Elapsed`] if `dur` passes
+    /// before the future completes.
+    fn timeout<F>(
+        &self,
         dur: Duration,
         fut: F,
-    ) -> Result<F::Output, Elapsed> {
-        match tokio::time::timeout(dur, fut).await {
-            Ok(output) => Ok(output),
-            Err(_elapsed) => Err(Elapsed),
-        }
-    }
+    ) -> impl Future<Output = Result<F::Output, Elapsed>> + Send
+    where
+        F: Future + Send,
+        F::Output: Send;
 }

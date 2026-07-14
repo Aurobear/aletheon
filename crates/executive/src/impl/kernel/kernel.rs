@@ -7,12 +7,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use fabric::agent::Pid;
 use fabric::envelope::Envelope;
-use fabric::Clock;
-use fabric::CommunicationBus;
-use fabric::{ForkDirective, ForkResult};
+use fabric::{Clock, CommunicationBus, ForkDirective, ForkResult, Timer};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::r#impl::agent::fork::AgentFork;
@@ -256,7 +254,9 @@ impl AgentKernel {
                     return Err(KernelError::WaitCancelled);
                 }
             }
-            Timer::sleep(&*self.clock, std::time::Duration::from_millis(100)).await;
+            SystemTimer
+                .sleep(std::time::Duration::from_millis(100))
+                .await;
         }
     }
 
@@ -284,7 +284,9 @@ impl AgentKernel {
                     _ => {}
                 }
             }
-            Timer::sleep(&*self.clock, std::time::Duration::from_millis(100)).await;
+            SystemTimer
+                .sleep(std::time::Duration::from_millis(100))
+                .await;
         }
     }
 

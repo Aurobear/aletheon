@@ -14,7 +14,6 @@ use tokio::sync::oneshot;
 use crate::ipc::envelope::*;
 use crate::ipc::protocol::Protocol;
 use crate::ipc::transport::Transport;
-use crate::Timer;
 
 /// Request-Response protocol.
 /// Correlates requests and responses via envelope ID.
@@ -85,13 +84,9 @@ impl Protocol for RequestResponseProtocol {
             })?;
 
         // Wait for response with timeout
-        let result = if let Some(ref clock) = self.clock {
-            Timer::timeout(clock.as_ref(), timeout, rx).await
-        } else {
-            tokio::time::timeout(timeout, rx)
-                .await
-                .map_err(|_| crate::Elapsed)
-        };
+        let result = tokio::time::timeout(timeout, rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("request timeout"));
         match result {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => {

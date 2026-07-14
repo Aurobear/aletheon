@@ -3,7 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(test)]
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
+#[cfg(test)]
+use fabric::Timer;
 use fabric::{Clock, MonoTime};
 use tokio::sync::watch;
 use tracing::{info, warn};
@@ -200,7 +202,7 @@ mod tests {
         let wd = Arc::new(WatchdogTimer::new(test_clock()));
         let handle = wd.spawn_checker();
         // Let it tick a couple of times
-        Timer::sleep(&*test_clock(), Duration::from_millis(1200)).await;
+        SystemTimer.sleep(Duration::from_millis(1200)).await;
         handle.abort();
         assert!(handle.await.unwrap_err().is_cancelled());
     }

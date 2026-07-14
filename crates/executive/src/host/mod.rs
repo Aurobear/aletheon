@@ -14,8 +14,9 @@
 pub mod container;
 pub mod systemd;
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
+use fabric::Timer;
 use std::path::PathBuf;
 
 use tracing::info;
@@ -200,7 +201,9 @@ impl RuntimeHost for DaemonHost {
         // ── Graceful shutdown: stop LlmPulse ────────────────────────
         if let Some((shutdown_tx, handle)) = pulse_handle {
             let _ = shutdown_tx.send(true);
-            let _ = Timer::timeout(&*clock, std::time::Duration::from_secs(2), handle).await;
+            let _ = SystemTimer
+                .timeout(std::time::Duration::from_secs(2), handle)
+                .await;
         }
 
         // ── Remove PID file ─────────────────────────────────────────

@@ -1,12 +1,12 @@
 use crate::service::{PostTurnPipeline, PreTurnPipeline};
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use aletheon_kernel::service::ServicePorts;
 use anyhow::Result;
 use cognit::harness::{CognitiveSession, HarnessConfig, LinearCognitiveSession};
 use fabric::{
     Clock, MonoDeadline, OperationKind, OperationManager, OperationRequest, ProcessManager,
-    ProcessSignal, SpawnSpec, TurnEventSink, TurnMetrics, TurnRequest, TurnResult, TurnServices,
-    TurnStop,
+    ProcessSignal, SpawnSpec, Timer, TurnEventSink, TurnMetrics, TurnRequest, TurnResult,
+    TurnServices, TurnStop,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -106,12 +106,12 @@ impl TurnService {
         let mut result = match deadline {
             Some(deadline_millis) => {
                 let deadline_dur = Duration::from_millis(deadline_millis.0);
-                match Timer::timeout(
-                    &*self.clock,
-                    deadline_dur,
-                    session.run_turn(request, self.services.as_ref(), events),
-                )
-                .await
+                match SystemTimer
+                    .timeout(
+                        deadline_dur,
+                        session.run_turn(request, self.services.as_ref(), events),
+                    )
+                    .await
                 {
                     Ok(inner) => inner?,
                     Err(_) => {

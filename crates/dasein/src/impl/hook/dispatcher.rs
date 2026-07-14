@@ -4,10 +4,13 @@ use tokio::process::Command;
 use tracing::{debug, warn};
 
 use super::types::*;
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
+use fabric::Timer;
 
 pub struct HookDispatcher {
     config: super::config::HookConfig,
+    // Kept for future Timer integration; no longer needed by SystemTimer.
+    #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
 }
 
@@ -92,7 +95,7 @@ impl HookDispatcher {
 
         let timeout = Duration::from_secs(hook.timeout_sec);
 
-        match Timer::timeout(&*self.clock, timeout, command.output()).await {
+        match SystemTimer.timeout(timeout, command.output()).await {
             Ok(Ok(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();

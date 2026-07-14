@@ -1,13 +1,14 @@
-use aletheon_kernel::chronos::{TestClock, Timer};
-use fabric::{MonoDeadline, MonoTime};
+use aletheon_kernel::chronos::{SystemTimer, TestClock};
+use fabric::{Clock, MonoDeadline, MonoTime, Timer};
 
 #[test]
 fn chronos_virtual_clock_deadline_is_deterministic() {
     let clock = TestClock::new(1_000, 10);
+    let timer = SystemTimer;
     let deadline = MonoDeadline::after(MonoTime(10), 25);
-    assert!(!Timer::is_expired(&clock, deadline));
+    assert!(!timer.is_expired(clock.mono_now(), deadline));
     clock.advance(24);
-    assert!(!Timer::is_expired(&clock, deadline));
+    assert!(!timer.is_expired(clock.mono_now(), deadline));
     clock.advance(1);
-    assert!(Timer::is_expired(&clock, deadline));
+    assert!(timer.is_expired(clock.mono_now(), deadline));
 }

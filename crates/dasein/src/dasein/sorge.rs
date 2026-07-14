@@ -3,8 +3,9 @@ use super::care_structure::*;
 use super::negativity::*;
 use super::self_model::*;
 use super::temporality::*;
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use fabric::dasein::{DaseinEvent, Stimmung};
+use fabric::Timer;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -21,6 +22,7 @@ pub struct SorgeLoop {
     #[allow(dead_code)]
     event_tx: mpsc::Sender<DaseinEvent>,
     event_rx: Mutex<Option<mpsc::Receiver<DaseinEvent>>>,
+    #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
 }
 
@@ -63,7 +65,6 @@ impl SorgeLoop {
         let shared_mood = shared_mood.clone();
         let mut event_rx = event_rx;
 
-        let clock = self.clock.clone();
         let handle = tokio::spawn(async move {
             let mut tick_count: u64 = 0;
             let mut mood = Stimmung::Gelassenheit;
@@ -75,7 +76,7 @@ impl SorgeLoop {
                     Some(event) = event_rx.recv() => {
                         events.push(event);
                     }
-                    _ = Timer::sleep(&*clock, Duration::from_millis(100)) => {
+                    _ = SystemTimer.sleep(Duration::from_millis(100)) => {
                         // Timeout — just continue
                     }
                 }
@@ -159,7 +160,7 @@ impl SorgeLoop {
 
                 // 7. Sleep for care rhythm interval
                 let interval = care.rhythm.read().next_interval();
-                Timer::sleep(&*clock, interval).await;
+                SystemTimer.sleep(interval).await;
             }
         });
 

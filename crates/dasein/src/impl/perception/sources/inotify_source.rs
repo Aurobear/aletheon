@@ -2,8 +2,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use async_trait::async_trait;
+use fabric::Timer;
 use tokio::sync::mpsc;
 
 use fabric::Clock;
@@ -57,7 +58,7 @@ impl InotifySource {
                 let mut last_modified = std::collections::HashMap::new();
 
                 loop {
-                    Timer::sleep(&*clock, Duration::from_secs(2)).await;
+                    SystemTimer.sleep(Duration::from_secs(2)).await;
 
                     if let Ok(entries) = tokio::fs::read_dir(&watch_path).await {
                         let mut entries = entries;

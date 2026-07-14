@@ -9,7 +9,7 @@ use crate::events::routing_policy::{RouteAction, RoutingPolicy};
 use crate::events::subscription::SubscriptionRegistry;
 use crate::ipc::envelope::{Endpoint, Payload, Target};
 use crate::ipc::transport::Transport;
-use crate::{AsyncEventHandler, Clock, Event, EventHandler, EventType, SubscriptionId, Timer};
+use crate::{AsyncEventHandler, Clock, Event, EventHandler, EventType, SubscriptionId};
 
 pub struct KernelEventBus {
     subscriptions: SubscriptionRegistry,
@@ -147,11 +147,7 @@ impl KernelEventBus {
         // Full implementation will use oneshot channels when response events are supported.
         warn!("request() not fully implemented in Phase 1; publishing event only");
         self.publish(event).await?;
-        if let Some(ref clock) = self.clock {
-            Timer::sleep(clock.as_ref(), timeout).await;
-        } else {
-            tokio::time::sleep(timeout).await;
-        }
+        tokio::time::sleep(timeout).await;
         Err(anyhow::anyhow!(
             "Request timeout — no response received (Phase 1 limitation)"
         ))

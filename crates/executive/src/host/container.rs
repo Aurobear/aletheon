@@ -10,8 +10,9 @@
 //! they run *inside* the container (the container entrypoint starts
 //! `aletheond` which handles that).
 
-use aletheon_kernel::chronos::Timer;
+use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
+use fabric::Timer;
 use std::path::PathBuf;
 
 use crate::core::runtime_core::RuntimeCore;
@@ -95,7 +96,7 @@ impl crate::host::RuntimeHost for ContainerHost {
         let data_dir = core.daemon_config.data_dir.clone();
         let cancel_token = core.cancel_token.clone();
         let pulse_handle = core.pulse_handle;
-        let clock = core.request_handler.subsystems.ports.clock.clone();
+        let _clock = core.request_handler.subsystems.ports.clock.clone();
 
         // ── Build container run command ─────────────────────────────
         // Mount the data directory so the agent inside the container
@@ -177,8 +178,7 @@ impl crate::host::RuntimeHost for ContainerHost {
                         .await;
                 }
                 // Wait for graceful exit.
-                let _ = Timer::timeout(
-                    &*clock,
+                let _ = SystemTimer.timeout(
                     std::time::Duration::from_secs(15),
                     child.wait(),
                 ).await;
@@ -197,7 +197,9 @@ impl crate::host::RuntimeHost for ContainerHost {
         //    runs its own, but clean up just in case.) ────────────────
         if let Some((shutdown_tx, handle)) = pulse_handle {
             let _ = shutdown_tx.send(true);
-            let _ = Timer::timeout(&*clock, std::time::Duration::from_secs(2), handle).await;
+            let _ = SystemTimer
+                .timeout(std::time::Duration::from_secs(2), handle)
+                .await;
         }
 
         Ok(())

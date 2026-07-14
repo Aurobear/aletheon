@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use fabric::Timer;
 use serde_json::json;
 use tokio::process::Command;
 
@@ -49,16 +50,16 @@ impl Tool for BashExecTool {
 
         let start = ctx.clock.mono_now();
 
-        let result = aletheon_kernel::chronos::Timer::timeout(
-            &*ctx.clock,
-            std::time::Duration::from_secs(timeout_secs),
-            Command::new("bash")
-                .arg("-c")
-                .arg(command)
-                .current_dir(&ctx.working_dir)
-                .output(),
-        )
-        .await;
+        let result = aletheon_kernel::chronos::SystemTimer
+            .timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                Command::new("bash")
+                    .arg("-c")
+                    .arg(command)
+                    .current_dir(&ctx.working_dir)
+                    .output(),
+            )
+            .await;
 
         let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 

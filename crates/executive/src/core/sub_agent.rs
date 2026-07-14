@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 
-use aletheon_kernel::chronos::{SystemClock, Timer};
+use aletheon_kernel::chronos::{SystemClock, SystemTimer};
 use aletheon_kernel::operation::{OperationScope, OperationTable};
 use aletheon_kernel::process::ProcessTable;
 use aletheon_kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
@@ -30,7 +30,7 @@ use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use fabric::{
     AgentProfileId, CancelReason, Clock, ExitReason, NamespaceId, OperationExitReason,
     OperationKind, OperationManager, OperationRequest, ProcessId, ProcessManager, ProcessSignal,
-    ProcessSnapshot, ProcessState, SpawnSpec, SubAgentState,
+    ProcessSnapshot, ProcessState, SpawnSpec, SubAgentState, Timer,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -609,7 +609,8 @@ impl SubAgentSpawner {
             .get(id)
             .ok_or_else(|| anyhow::anyhow!("unknown sub-agent: {id}"))?;
         let pid = entry.process_id;
-        Timer::timeout(&*self.clock, timeout, self.process_table.wait(pid))
+        SystemTimer
+            .timeout(timeout, self.process_table.wait(pid))
             .await
             .map_err(|_| anyhow::anyhow!("wait timed out for sub-agent: {id}"))?
             .map_err(|e| anyhow::anyhow!("process wait error: {e}"))?;

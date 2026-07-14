@@ -1,6 +1,7 @@
 //! Tool for loading and unloading Linux kernel modules.
 
 use async_trait::async_trait;
+use fabric::Timer;
 use serde_json::{json, Value};
 use tracing::info;
 
@@ -214,11 +215,9 @@ impl Tool for ModuleLoadTool {
                     .await;
 
                 // Small delay
-                aletheon_kernel::chronos::Timer::sleep(
-                    &*ctx.clock,
-                    std::time::Duration::from_millis(100),
-                )
-                .await;
+                aletheon_kernel::chronos::SystemTimer
+                    .sleep(std::time::Duration::from_millis(100))
+                    .await;
 
                 // Re-execute as load
                 let load_input = json!({

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use corpus::drivers::types::{Key, ScrollDirection};
+use fabric::Timer;
 use serde::{Deserialize, Serialize};
 
 use super::aci::Aci;
@@ -438,6 +439,7 @@ fn parse_key(s: &str) -> Option<Key> {
 /// Task executor: runs nodes against an Aci instance.
 pub struct TaskWorker {
     aci: Arc<Aci>,
+    #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
 }
 
@@ -502,11 +504,9 @@ impl TaskWorker {
                     Ok("Composite executed".into())
                 }
                 TaskAction::Wait(ms) => {
-                    aletheon_kernel::chronos::Timer::sleep(
-                        &*self.clock,
-                        std::time::Duration::from_millis(*ms),
-                    )
-                    .await;
+                    aletheon_kernel::chronos::SystemTimer
+                        .sleep(std::time::Duration::from_millis(*ms))
+                        .await;
                     Ok(format!("Waited {ms}ms"))
                 }
             }
