@@ -215,6 +215,7 @@ impl McpOAuthProvider {
             auth_url: endpoints.auth_url.clone(),
             token_url: endpoints.token_url.clone(),
             revocation_url: None,
+            userinfo_url: None,
         })
         .expect("static MCP OAuth client configuration must build");
         Self {
@@ -241,6 +242,7 @@ impl McpOAuthProvider {
             auth_url: self.endpoints.auth_url.clone(),
             token_url: self.endpoints.token_url.clone(),
             revocation_url: None,
+            userinfo_url: None,
         })
         .expect("static MCP OAuth client configuration must build");
         self

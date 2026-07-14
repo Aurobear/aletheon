@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 8;
+const CURRENT_VERSION: u32 = 9;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -249,6 +249,52 @@ CREATE INDEX IF NOT EXISTS idx_goal_completion_summaries_goal
     ON goal_completion_summaries(objective_id, created_at_ms);
 ";
 
+/// Migration 9 — provider account metadata and capability grants (never credentials).
+const MIGRATION_9: &str = "
+CREATE TABLE IF NOT EXISTS external_identities (
+    identity_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    provider_subject TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    alias TEXT,
+    state TEXT NOT NULL CHECK(state IN ('active','revoked')),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(provider, provider_subject, principal_id)
+);
+CREATE INDEX IF NOT EXISTS idx_external_identities_principal
+    ON external_identities(principal_id, provider, state);
+
+CREATE TABLE IF NOT EXISTS capability_grants (
+    identity_id TEXT PRIMARY KEY REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    scopes_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('active','revoked')),
+    granted_at_ms INTEGER NOT NULL,
+    revoked_at_ms INTEGER,
+    version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS external_identity_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    identity_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_external_identity_events_identity
+    ON external_identity_events(identity_id, event_id);
+CREATE TRIGGER IF NOT EXISTS external_identity_events_append_only_update
+BEFORE UPDATE ON external_identity_events BEGIN
+    SELECT RAISE(ABORT, 'external identity events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS external_identity_events_append_only_delete
+BEFORE DELETE ON external_identity_events BEGIN
+    SELECT RAISE(ABORT, 'external identity events are append-only');
+END;
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -326,6 +372,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
         tx.commit()?;
     }
 
+    if version < 9 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 9 transaction")?;
+        tx.execute_batch(MIGRATION_9)?;
+        tx.pragma_update(None, "user_version", 9)?;
+        tx.commit()?;
+    }
+
     // Verify we're at the expected version.
     let current: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     anyhow::ensure!(
@@ -392,14 +447,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 8);
+        assert_eq!(v1, 9);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 8);
+        assert_eq!(v2, 9);
     }
 
     #[test]
@@ -418,6 +473,9 @@ mod tests {
         assert!(tables.iter().any(|n| n == "goal_attempts"));
         assert!(tables.iter().any(|n| n == "goal_coding_jobs"));
         assert!(tables.iter().any(|n| n == "goal_verification_reports"));
+        assert!(tables.iter().any(|n| n == "external_identities"));
+        assert!(tables.iter().any(|n| n == "capability_grants"));
+        assert!(tables.iter().any(|n| n == "external_identity_events"));
         assert!(tables.iter().any(|n| n == "approval_requests"));
         assert!(tables.iter().any(|n| n == "approval_events"));
         assert!(tables.iter().any(|n| n == "approval_deliveries"));

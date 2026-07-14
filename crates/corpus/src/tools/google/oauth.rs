@@ -17,6 +17,7 @@ use std::time::Duration;
 pub const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 pub const GOOGLE_REVOCATION_URL: &str = "https://oauth2.googleapis.com/revoke";
+pub const GOOGLE_USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const STATE_LIFETIME_SECS: u64 = 600;
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ pub struct OAuthClientConfig {
     pub auth_url: String,
     pub token_url: String,
     pub revocation_url: Option<String>,
+    pub userinfo_url: Option<String>,
 }
 
 impl fmt::Debug for OAuthClientConfig {
@@ -41,6 +43,7 @@ impl fmt::Debug for OAuthClientConfig {
             .field("auth_url", &self.auth_url)
             .field("token_url", &self.token_url)
             .field("revocation_url", &self.revocation_url)
+            .field("userinfo_url", &self.userinfo_url)
             .finish()
     }
 }
@@ -166,6 +169,38 @@ impl AsyncOAuthClient {
         anyhow::ensure!(response.status().is_success(), "OAuth revocation rejected");
         Ok(())
     }
+
+    async fn google_userinfo(&self, access_token: &str) -> Result<RawGoogleUserInfo> {
+        let endpoint = self
+            .config
+            .userinfo_url
+            .as_deref()
+            .context("Google user-info endpoint unavailable")?;
+        let response = self
+            .client
+            .get(endpoint)
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("Google user-info transport failed"))?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Google user-info request rejected"
+        );
+        let profile: RawGoogleUserInfo = response
+            .json()
+            .await
+            .context("Google user-info response was malformed")?;
+        anyhow::ensure!(
+            profile.verified_email.unwrap_or(true),
+            "Google account email is unverified"
+        );
+        anyhow::ensure!(
+            !profile.sub.trim().is_empty() && profile.email.contains('@'),
+            "Google user-info identity is invalid"
+        );
+        Ok(profile)
+    }
 }
 
 async fn parse_response(
@@ -222,6 +257,21 @@ struct RawTokenResponse {
     expires_in: Option<u64>,
     token_type: Option<String>,
     scope: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawGoogleUserInfo {
+    sub: String,
+    email: String,
+    verified_email: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoogleBinding {
+    pub identity_id: ExternalIdentityId,
+    pub provider_subject: String,
+    pub email: String,
+    pub scopes: Vec<ExternalScope>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -284,6 +334,7 @@ impl GoogleOAuthProvider {
                 auth_url: GOOGLE_AUTH_URL.into(),
                 token_url: GOOGLE_TOKEN_URL.into(),
                 revocation_url: Some(GOOGLE_REVOCATION_URL.into()),
+                userinfo_url: Some(GOOGLE_USERINFO_URL.into()),
             },
             scopes,
             tokens,
@@ -336,12 +387,11 @@ impl GoogleOAuthProvider {
         })
     }
 
-    pub async fn exchange_for_identity(
+    pub async fn complete_authorization(
         &mut self,
         code: &str,
         state: &str,
-        identity_id: ExternalIdentityId,
-    ) -> Result<()> {
+    ) -> Result<GoogleBinding> {
         let pending = self
             .pending
             .remove(state)
@@ -355,11 +405,24 @@ impl GoogleOAuthProvider {
             .oauth
             .exchange_code(code, &pending.verifier, &pending.requested_scopes, now)
             .await?;
+        let profile = self.oauth.google_userinfo(&entry.access_token).await?;
+        let identity_id = ExternalIdentityId::new();
+        let scopes = entry
+            .scopes
+            .iter()
+            .map(|scope| external_scope(scope))
+            .collect::<Result<Vec<_>>>()?;
         self.tokens.set_key(
             TokenKey::external(IdentityProvider::Google, identity_id),
             entry,
         );
-        self.tokens.save()
+        self.tokens.save()?;
+        Ok(GoogleBinding {
+            identity_id,
+            provider_subject: profile.sub,
+            email: profile.email,
+            scopes,
+        })
     }
 
     pub async fn refresh(&mut self, identity_id: ExternalIdentityId) -> Result<()> {
@@ -417,6 +480,18 @@ fn now_secs(clock: &dyn Clock) -> u64 {
     u64::try_from(clock.wall_now().0.max(0)).unwrap_or(0) / 1_000
 }
 
+fn external_scope(scope: &str) -> Result<ExternalScope> {
+    [
+        ExternalScope::OpenId,
+        ExternalScope::UserInfoEmail,
+        ExternalScope::GmailReadonly,
+        ExternalScope::CalendarReadonly,
+    ]
+    .into_iter()
+    .find(|candidate| candidate.oauth_name() == scope)
+    .with_context(|| format!("unsupported Google read scope: {scope}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +518,7 @@ mod tests {
                 auth_url: "https://accounts.example/authorize".into(),
                 token_url: "https://accounts.example/token".into(),
                 revocation_url: Some("https://accounts.example/revoke".into()),
+                userinfo_url: Some("https://accounts.example/userinfo".into()),
             },
             vec![ExternalScope::OpenId, ExternalScope::GmailReadonly],
             tokens,
@@ -480,17 +556,13 @@ mod tests {
     async fn unknown_and_replayed_state_fail_before_network() {
         let mut provider = provider();
         assert!(provider
-            .exchange_for_identity("code", "forged", ExternalIdentityId::new())
+            .complete_authorization("code", "forged")
             .await
             .is_err());
         let start = provider.start_authorization().unwrap();
-        let first = provider
-            .exchange_for_identity("code", &start.state, ExternalIdentityId::new())
-            .await;
+        let first = provider.complete_authorization("code", &start.state).await;
         assert!(first.is_err());
-        let replay = provider
-            .exchange_for_identity("code", &start.state, ExternalIdentityId::new())
-            .await;
+        let replay = provider.complete_authorization("code", &start.state).await;
         assert!(replay.unwrap_err().to_string().contains("already-consumed"));
     }
 
@@ -577,6 +649,7 @@ mod tests {
             auth_url: format!("{endpoint}/authorize"),
             token_url: format!("{endpoint}/token"),
             revocation_url: Some(format!("{endpoint}/revoke")),
+            userinfo_url: Some(format!("{endpoint}/userinfo")),
         })
         .unwrap()
     }
@@ -601,6 +674,48 @@ mod tests {
         let body = &requests.lock().unwrap()[0];
         assert!(body.contains("code_verifier=pkce-verifier-value"));
         assert!(body.contains("grant_type=authorization_code"));
+    }
+
+    #[tokio::test]
+    async fn binding_is_returned_only_after_authenticated_userinfo() {
+        let (endpoint, _) = mock_server(vec![
+            (
+                StatusCode::OK,
+                r#"{"access_token":"access-secret","refresh_token":"refresh-secret","expires_in":60,"scope":"openid"}"#,
+            ),
+            (
+                StatusCode::OK,
+                r#"{"sub":"google-subject","email":"owner@example.com","verified_email":true}"#,
+            ),
+        ])
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let mut provider = GoogleOAuthProvider::with_endpoints(
+            OAuthClientConfig {
+                client_id: "client".into(),
+                client_secret: None,
+                redirect_uri: "http://localhost/callback".into(),
+                auth_url: format!("{endpoint}/authorize"),
+                token_url: format!("{endpoint}/token"),
+                revocation_url: Some(format!("{endpoint}/revoke")),
+                userinfo_url: Some(format!("{endpoint}/userinfo")),
+            },
+            vec![ExternalScope::OpenId],
+            TokenStore::new(dir.path().join("tokens.json")).unwrap(),
+            Arc::new(TestClock::default()),
+        )
+        .unwrap();
+        let start = provider.start_authorization().unwrap();
+        let binding = provider
+            .complete_authorization("code", &start.state)
+            .await
+            .unwrap();
+        assert_eq!(binding.provider_subject, "google-subject");
+        assert_eq!(binding.email, "owner@example.com");
+        assert_eq!(binding.scopes, vec![ExternalScope::OpenId]);
+        let rendered = format!("{binding:?}");
+        assert!(!rendered.contains("access-secret"));
+        assert!(!rendered.contains("refresh-secret"));
     }
 
     #[tokio::test]
@@ -683,6 +798,7 @@ mod tests {
                 auth_url: "http://127.0.0.1:1/authorize".into(),
                 token_url: "http://127.0.0.1:1/token".into(),
                 revocation_url: None,
+                userinfo_url: None,
             },
             vec![ExternalScope::OpenId],
             TokenStore::new(dir.path().join("tokens.json")).unwrap(),
@@ -692,12 +808,12 @@ mod tests {
         let start = provider.start_authorization().unwrap();
         clock.advance((STATE_LIFETIME_SECS + 1) * 1_000);
         let error = provider
-            .exchange_for_identity("code", &start.state, ExternalIdentityId::new())
+            .complete_authorization("code", &start.state)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("expired"));
         let replay = provider
-            .exchange_for_identity("code", &start.state, ExternalIdentityId::new())
+            .complete_authorization("code", &start.state)
             .await
             .unwrap_err();
         assert!(replay.to_string().contains("already-consumed"));
