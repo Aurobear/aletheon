@@ -4,11 +4,17 @@
 //! the channel router from the daemon runtime, plus a pure content-routing
 //! function so the router is testable without constructing the full stack.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use fabric::channel::{ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage};
-use fabric::{AttemptId, GoalId, GoalSnapshot};
+use fabric::channel::{
+    ActionType, ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage,
+    UserAction,
+};
+use fabric::{
+    ApprovalId, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId, GoalSnapshot, PrincipalId,
+};
 
+use crate::r#impl::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
 use crate::r#impl::goal::{AttemptCoordinationOutcome, RetryDecision};
 
 use super::store::{ChannelStore, InsertOutcome};
@@ -208,6 +214,7 @@ pub struct ChannelRouter {
     store: ChannelStore,
     turn_executor: Arc<dyn ChannelTurnExecutor>,
     goal_executor: Option<Arc<dyn ChannelGoalExecutor>>,
+    approval_repository: Option<Arc<Mutex<ApprovalRepository>>>,
 }
 
 impl ChannelRouter {
@@ -218,6 +225,66 @@ impl ChannelRouter {
             store,
             turn_executor,
             goal_executor: None,
+            approval_repository: None,
+        }
+    }
+
+    pub fn with_approval_repository(mut self, repository: Arc<Mutex<ApprovalRepository>>) -> Self {
+        self.approval_repository = Some(repository);
+        self
+    }
+
+    /// Persist an approval notification before network delivery. Message text
+    /// contains only bounded summaries and trusted artifact references.
+    pub async fn notify_approval(
+        &self,
+        transport: &dyn ChannelTransport,
+        conversation_id: ConversationId,
+        approval: &ApprovalSnapshot,
+        now_ms: i64,
+    ) -> anyhow::Result<bool> {
+        if approval.status != ApprovalStatus::Pending {
+            anyhow::bail!("only pending approvals can be delivered");
+        }
+        let repository = self
+            .approval_repository
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("approval repository is not configured"))?;
+        let outbound = render_approval_notification(conversation_id, approval);
+        let enqueued = self
+            .store
+            .enqueue_outbound(transport.channel_id(), &outbound)?;
+        repository.lock().unwrap().record_delivery_pending(
+            approval.id,
+            transport.channel_id(),
+            &outbound.conversation_id.0,
+            &outbound.correlation_id,
+            now_ms,
+        )?;
+        if !enqueued {
+            return Ok(false);
+        }
+        match transport.send(&outbound).await {
+            Ok(provider_id) => {
+                self.store
+                    .mark_outbound_sent(&outbound.correlation_id, &provider_id)?;
+                repository.lock().unwrap().record_delivery_sent(
+                    &outbound.correlation_id,
+                    &provider_id,
+                    now_ms,
+                )?;
+                Ok(true)
+            }
+            Err(error) => {
+                self.store
+                    .mark_outbound_failed(&outbound.correlation_id, &error.to_string())?;
+                repository.lock().unwrap().record_delivery_failed(
+                    &outbound.correlation_id,
+                    &error.to_string(),
+                    now_ms,
+                )?;
+                Ok(false)
+            }
         }
     }
 
@@ -310,6 +377,72 @@ impl ChannelRouter {
         Ok(format!("Goal {}: {}", goal.id.0, goal.state))
     }
 
+    fn execute_approval_action(
+        &self,
+        principal: &str,
+        action_data: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<String> {
+        let repository = self
+            .approval_repository
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("durable approvals are not configured"))?;
+        let (id, action) = action_data
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("invalid approval action"))?;
+        let id = ApprovalId(uuid::Uuid::parse_str(id)?);
+        let context = ApprovalResolutionContext {
+            principal_id: PrincipalId(principal.to_owned()),
+            channel: "telegram".into(),
+        };
+        let repository = repository.lock().unwrap();
+        match action {
+            "view_diff" => {
+                let approval = repository
+                    .get(id)?
+                    .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
+                let artifact = approval
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.kind == "diff")
+                    .ok_or_else(|| anyhow::anyhow!("approval diff artifact is unavailable"))?;
+                Ok(format!(
+                    "Verified diff reference: {} (sha256 {}).",
+                    artifact.relative_path.display(),
+                    artifact.sha256
+                ))
+            }
+            "apply" => {
+                let current = repository
+                    .get(id)?
+                    .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
+                let resolved = repository.resolve(
+                    id,
+                    current.version,
+                    &context,
+                    ApprovalDecision::Approve,
+                    now_ms,
+                )?;
+                Ok(format!("Approval {}: {}", resolved.id, "approved"))
+            }
+            "revision" | "reject" => {
+                let current = repository
+                    .get(id)?
+                    .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
+                let reason = (action == "revision").then(|| "owner requested revision".to_string());
+                let resolved = repository.resolve(
+                    id,
+                    current.version,
+                    &context,
+                    ApprovalDecision::Reject { reason },
+                    now_ms,
+                )?;
+                Ok(format!("Approval {}: rejected", resolved.id))
+            }
+            _ => anyhow::bail!("unknown approval action"),
+        }
+    }
+
     /// Process a single provider message envelope.
     ///
     /// # Algorithm
@@ -350,33 +483,50 @@ impl ChannelRouter {
             return Ok(());
         }
 
-        // 4. Normalize the message content through command routing.
+        // 4. Resolve approval callbacks from authoritative repository state;
+        // callback payload contains no subject details.
+        let approval_reply = message.reply_to_action.as_deref().map(|action| {
+            self.execute_approval_action(
+                principal.as_deref().expect("principal checked above"),
+                action,
+                message.timestamp_ms,
+            )
+        });
+
+        // 5. Normalize ordinary message content through command routing.
         let routed = route_content(&message.content);
 
-        // 5. Execute AI turn only for chat messages.
-        let mut ai_reply: Option<String> = None;
-        if let RoutedInput::Chat(text) = &routed {
-            match self
-                .turn_executor
-                .execute(text, &message.correlation_id)
-                .await
-            {
-                Ok(reply) => ai_reply = Some(reply),
-                Err(e) => {
-                    // Executor failure: mark inbox failed so it stays
-                    // retryable, do NOT advance the cursor.
-                    self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
-                    return Err(e);
+        // 6. Execute AI turn only for non-callback chat messages.
+        let mut ai_reply: Option<String> = approval_reply.map(|result| match result {
+            Ok(reply) => reply,
+            Err(error) => error.to_string(),
+        });
+        if message.reply_to_action.is_none() {
+            if let RoutedInput::Chat(text) = &routed {
+                match self
+                    .turn_executor
+                    .execute(text, &message.correlation_id)
+                    .await
+                {
+                    Ok(reply) => ai_reply = Some(reply),
+                    Err(e) => {
+                        // Executor failure: mark inbox failed so it stays
+                        // retryable, do NOT advance the cursor.
+                        self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
+                        return Err(e);
+                    }
                 }
             }
         }
-        if let RoutedInput::GoalCommand { command, args } = &routed {
-            match self
-                .execute_goal_command(principal.as_deref().unwrap(), command, args)
-                .await
-            {
-                Ok(reply) => ai_reply = Some(reply),
-                Err(error) => ai_reply = Some(error.to_string()),
+        if message.reply_to_action.is_none() {
+            if let RoutedInput::GoalCommand { command, args } = &routed {
+                match self
+                    .execute_goal_command(principal.as_deref().unwrap(), command, args)
+                    .await
+                {
+                    Ok(reply) => ai_reply = Some(reply),
+                    Err(error) => ai_reply = Some(error.to_string()),
+                }
             }
         }
 
@@ -558,12 +708,21 @@ impl ChannelRouter {
         let mut count = 0usize;
         for outbound in &pending {
             match transport.send(outbound).await {
-                Ok(_) => {
+                Ok(provider_id) => {
                     self.store.db.execute(
                         "UPDATE channel_outbox SET status = 'sent', updated_at = datetime('now')
                          WHERE correlation_id = ?1",
                         rusqlite::params![outbound.correlation_id],
                     )?;
+                    if outbound.correlation_id.starts_with("approval:") {
+                        if let Some(repository) = &self.approval_repository {
+                            repository.lock().unwrap().record_delivery_sent(
+                                &outbound.correlation_id,
+                                &provider_id,
+                                chrono::Utc::now().timestamp_millis(),
+                            )?;
+                        }
+                    }
                 }
                 Err(e) => {
                     self.store.db.execute(
@@ -571,6 +730,15 @@ impl ChannelRouter {
                          WHERE correlation_id = ?2",
                         rusqlite::params![e.to_string(), outbound.correlation_id],
                     )?;
+                    if outbound.correlation_id.starts_with("approval:") {
+                        if let Some(repository) = &self.approval_repository {
+                            repository.lock().unwrap().record_delivery_failed(
+                                &outbound.correlation_id,
+                                &e.to_string(),
+                                chrono::Utc::now().timestamp_millis(),
+                            )?;
+                        }
+                    }
                 }
             }
             count += 1;
@@ -583,6 +751,50 @@ impl ChannelRouter {
     #[allow(dead_code)]
     pub fn store(&self) -> &ChannelStore {
         &self.store
+    }
+}
+
+fn render_approval_notification(
+    conversation_id: ConversationId,
+    approval: &ApprovalSnapshot,
+) -> OutboundMessage {
+    let changed_files = approval
+        .subject
+        .attributes
+        .get("changed_file_count")
+        .map(String::as_str)
+        .unwrap_or("unknown");
+    let verification = approval
+        .subject
+        .attributes
+        .get("verification_summary")
+        .map(String::as_str)
+        .unwrap_or("required checks passed");
+    let text = format!(
+        "Goal {} requires approval.\nChanged files: {}\nVerification: {}\nRisk: {:?}\nExpires: {} ms\n{}",
+        approval.goal_id.0,
+        changed_files,
+        verification,
+        approval.risk,
+        approval.expires_at_ms,
+        approval.summary
+    );
+    let action = |suffix: &str, label: &str, action_type| UserAction {
+        action_id: format!("{}:{suffix}", approval.id),
+        label: label.into(),
+        action_type,
+    };
+    OutboundMessage {
+        conversation_id,
+        content: MessageContent::Text { text },
+        actions: vec![
+            action("apply", "Apply", ActionType::Approve),
+            action("view_diff", "View Diff", ActionType::Callback),
+            action("revision", "Request Revision", ActionType::Callback),
+            action("reject", "Reject", ActionType::Reject),
+        ],
+        reply_to: None,
+        correlation_id: format!("approval:{}", approval.id),
     }
 }
 
@@ -607,7 +819,7 @@ fn build_outbound(
                 .to_string(),
         },
         RoutedInput::Unsupported(_) => MessageContent::Text {
-            text: "I don't recognize your identity. Please contact an administrator.".into(),
+            text: ai_reply.unwrap_or("Unsupported channel input.").to_string(),
         },
     };
 

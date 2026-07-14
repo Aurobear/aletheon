@@ -35,6 +35,20 @@ pub enum ApprovalDecision {
     Reject { reason: Option<String> },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalDelivery {
+    pub approval_id: ApprovalId,
+    pub channel: String,
+    pub conversation_id: String,
+    pub correlation_id: String,
+    pub status: String,
+    pub provider_message_id: Option<String>,
+    pub attempt_count: u32,
+    pub last_error: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct ApprovalChannelPolicy {
     allowed: BTreeSet<String>,
@@ -74,6 +88,114 @@ impl ApprovalRepository {
     pub fn with_channel_policy(mut self, policy: ApprovalChannelPolicy) -> Self {
         self.channel_policy = policy;
         self
+    }
+
+    pub fn record_delivery_pending(
+        &self,
+        approval_id: ApprovalId,
+        channel: &str,
+        conversation_id: &str,
+        correlation_id: &str,
+        now_ms: i64,
+    ) -> Result<ApprovalDelivery, ApprovalRepositoryError> {
+        let approval = self
+            .get(approval_id)?
+            .ok_or(ApprovalRepositoryError::NotFound(approval_id))?;
+        if approval.status != ApprovalStatus::Pending {
+            return Err(ApprovalRepositoryError::AlreadyDecided);
+        }
+        self.db.execute(
+            "INSERT INTO approval_deliveries (
+                approval_id, channel, conversation_id, correlation_id, status,
+                created_at_ms, updated_at_ms
+             ) VALUES (?1,?2,?3,?4,'pending',?5,?5)
+             ON CONFLICT(approval_id, channel) DO NOTHING",
+            params![
+                approval_id.0.to_string(),
+                channel,
+                conversation_id,
+                correlation_id,
+                now_ms
+            ],
+        )?;
+        self.delivery_for_correlation(correlation_id)?
+            .ok_or_else(|| ApprovalRepositoryError::Storage("approval delivery disappeared".into()))
+    }
+
+    pub fn record_delivery_sent(
+        &self,
+        correlation_id: &str,
+        provider_message_id: &str,
+        now_ms: i64,
+    ) -> Result<(), ApprovalRepositoryError> {
+        let changed = self.db.execute(
+            "UPDATE approval_deliveries SET status='sent', provider_message_id=?1,
+             attempt_count=attempt_count+1, last_error=NULL, updated_at_ms=?2
+             WHERE correlation_id=?3",
+            params![provider_message_id, now_ms, correlation_id],
+        )?;
+        if changed != 1 {
+            return Err(ApprovalRepositoryError::Storage(
+                "approval delivery correlation not found".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn record_delivery_failed(
+        &self,
+        correlation_id: &str,
+        error: &str,
+        now_ms: i64,
+    ) -> Result<(), ApprovalRepositoryError> {
+        let changed = self.db.execute(
+            "UPDATE approval_deliveries SET status='failed', attempt_count=attempt_count+1,
+             last_error=?1, updated_at_ms=?2 WHERE correlation_id=?3",
+            params![bound_text(error, 1024), now_ms, correlation_id],
+        )?;
+        if changed != 1 {
+            return Err(ApprovalRepositoryError::Storage(
+                "approval delivery correlation not found".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn delivery_for_correlation(
+        &self,
+        correlation_id: &str,
+    ) -> Result<Option<ApprovalDelivery>, ApprovalRepositoryError> {
+        self.db
+            .query_row(
+                "SELECT approval_id, channel, conversation_id, correlation_id, status,
+                        provider_message_id, attempt_count, last_error, created_at_ms, updated_at_ms
+                 FROM approval_deliveries WHERE correlation_id=?1",
+                params![correlation_id],
+                |row| {
+                    let id: String = row.get(0)?;
+                    let id = uuid::Uuid::parse_str(&id).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            error.into(),
+                        )
+                    })?;
+                    Ok(ApprovalDelivery {
+                        approval_id: ApprovalId(id),
+                        channel: row.get(1)?,
+                        conversation_id: row.get(2)?,
+                        correlation_id: row.get(3)?,
+                        status: row.get(4)?,
+                        provider_message_id: row.get(5)?,
+                        attempt_count: row.get::<_, i64>(6)? as u32,
+                        last_error: row.get(7)?,
+                        created_at_ms: row.get(8)?,
+                        updated_at_ms: row.get(9)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn create(
@@ -477,6 +599,16 @@ fn bounded_json<T: Serialize>(
         )));
     }
     Ok(json)
+}
+fn bound_text(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &value[..end])
 }
 fn status_wire(status: ApprovalStatus) -> &'static str {
     match status {

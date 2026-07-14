@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 5;
+const CURRENT_VERSION: u32 = 6;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -202,6 +202,23 @@ BEFORE DELETE ON approval_events BEGIN
 END;
 ";
 
+/// Migration 6 — delivery correlation for durable approval notifications.
+const MIGRATION_6: &str = "
+CREATE TABLE IF NOT EXISTS approval_deliveries (
+    approval_id TEXT NOT NULL REFERENCES approval_requests(approval_id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    correlation_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('pending','sent','failed')),
+    provider_message_id TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(approval_id, channel)
+);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -249,6 +266,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
             .context("begin migration 5 transaction")?;
         tx.execute_batch(MIGRATION_5)?;
         tx.pragma_update(None, "user_version", 5)?;
+        tx.commit()?;
+    }
+
+    if version < 6 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 6 transaction")?;
+        tx.execute_batch(MIGRATION_6)?;
+        tx.pragma_update(None, "user_version", 6)?;
         tx.commit()?;
     }
 
@@ -318,14 +344,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 5);
+        assert_eq!(v1, 6);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 5);
+        assert_eq!(v2, 6);
     }
 
     #[test]
@@ -346,6 +372,7 @@ mod tests {
         assert!(tables.iter().any(|n| n == "goal_verification_reports"));
         assert!(tables.iter().any(|n| n == "approval_requests"));
         assert!(tables.iter().any(|n| n == "approval_events"));
+        assert!(tables.iter().any(|n| n == "approval_deliveries"));
     }
 
     #[test]

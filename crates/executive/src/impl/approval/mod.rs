@@ -3,6 +3,6 @@
 mod repository;
 
 pub use repository::{
-    ApprovalChannelPolicy, ApprovalCreate, ApprovalDecision, ApprovalRepository,
+    ApprovalChannelPolicy, ApprovalCreate, ApprovalDecision, ApprovalDelivery, ApprovalRepository,
     ApprovalRepositoryError, ApprovalResolutionContext,
 };

@@ -934,6 +934,14 @@ fn create_apply_approval(
             ("base_commit".into(), persisted.report.base_commit.clone()),
             ("diff_sha256".into(), persisted.diff_sha256.clone()),
             ("verification_sha256".into(), verification_sha256),
+            (
+                "changed_file_count".into(),
+                persisted.report.changed_files.len().to_string(),
+            ),
+            (
+                "verification_summary".into(),
+                "all required checks passed".into(),
+            ),
         ]),
         allowed_scope: pi_request.job.workspace.allowed_paths().to_vec(),
         apply_target: Some(PathBuf::from(".")),
