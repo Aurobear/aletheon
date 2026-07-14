@@ -70,7 +70,7 @@ use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 // ---------------------------------------------------------------------------
 
 /// Production sub-agent execution runtime: single-turn LLM completion with
-/// optional tool calls. Wired into [`SubAgentSpawner`] so spawned sub-agents
+/// optional tool calls. Wired into `SubAgentSpawner` so spawned sub-agents
 /// perform real reasoning work instead of the cancellation-wait stub.
 struct DaemonSubAgentRuntime {
     llm: Arc<dyn LlmProvider>,

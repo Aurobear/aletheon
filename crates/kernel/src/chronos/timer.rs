@@ -50,7 +50,7 @@ impl Timer for SystemTimer {
 /// Deterministic timer for tests.
 ///
 /// Maintains a priority queue of (mono-deadline-millis, Notify) entries.
-/// [`TestTimer::advance(ms)`] advances the associated [`TestClock`] and
+/// [`TestTimer::advance`] advances the associated [`TestClock`] and
 /// wakes every sleeper whose deadline has been reached.
 ///
 /// # Example
