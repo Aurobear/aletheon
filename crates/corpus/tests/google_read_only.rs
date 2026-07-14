@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use corpus::tools::google::{
-    CalendarCapability, GmailCapability, GoogleAccessToken, GoogleApiClient, GoogleApiEndpoints,
-    GoogleApiError, GoogleCalendarAdapter, GoogleCredentialSource, GoogleGmailAdapter,
+    CalendarCapability, GmailCapability, GmailIngressCapability, GoogleAccessToken,
+    GoogleApiClient, GoogleApiEndpoints, GoogleApiError, GoogleCalendarAdapter,
+    GoogleCredentialSource, GoogleGmailAdapter,
 };
 use fabric::{CalendarTimeRange, ExternalIdentityId, ExternalScope, GmailQuery, PrincipalId};
 use http_body_util::Full;
@@ -20,6 +21,52 @@ struct Credentials {
     allowed_scope: ExternalScope,
     access_calls: AtomicUsize,
     refresh_calls: AtomicUsize,
+}
+
+#[tokio::test]
+async fn gmail_ingress_preserves_auth_headers_mime_tree_and_bounded_attachments() {
+    let (endpoint, requests) = server(vec![
+        MockResponse::json(
+            StatusCode::OK,
+            r#"{"id":"m1","threadId":"thread-m1","internalDate":"1000","payload":{"partId":"root","headers":[{"name":"Subject","value":"[GOAL] verify release"},{"name":"From","value":"sender@example.com"},{"name":"Authentication-Results","value":"mx.google.com; spf=pass smtp.mailfrom=example.com"}],"mimeType":"multipart/mixed","parts":[{"partId":"body","mimeType":"text/plain","body":{"data":"dmVyaWZ5IHJlbGVhc2U","size":14}},{"partId":"a1","filename":"evidence.txt","mimeType":"text/plain","body":{"attachmentId":"att1","size":5}}]}}"#,
+        ),
+        MockResponse::json(StatusCode::OK, r#"{"data":"aGVsbG8","size":5}"#),
+    ])
+    .await;
+    let owner = PrincipalId("owner".into());
+    let account = ExternalIdentityId::new();
+    let adapter = gmail(
+        &endpoint,
+        Arc::new(Credentials::new(
+            owner.clone(),
+            account,
+            ExternalScope::GmailReadonly,
+        )),
+    );
+
+    let message = adapter
+        .read_ingress_message(&owner, account, "m1", &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(message.message_id, "m1");
+    assert_eq!(
+        message.root.parts[0].inline_body.as_deref(),
+        Some(b"verify release".as_slice())
+    );
+    assert_eq!(message.root.parts[1].attachment_id.as_deref(), Some("att1"));
+    assert!(message
+        .headers
+        .iter()
+        .any(|header| header.name == "Authentication-Results"));
+
+    let attachment = adapter
+        .read_ingress_attachment(&owner, account, "m1", "att1", 5, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(attachment, b"hello");
+    let paths = requests.lock().unwrap();
+    assert!(paths[0].contains("/users/me/messages/m1?format=full"));
+    assert!(paths[1].contains("/users/me/messages/m1/attachments/att1"));
 }
 
 impl Credentials {

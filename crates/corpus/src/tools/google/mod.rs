@@ -19,7 +19,10 @@ pub use drive::GoogleDriveAdapter;
 pub use drive_sync::{
     DriveContentArtifact, DriveSyncBatch, DriveSyncConfig, DriveSyncHealthEvent, DriveSynchronizer,
 };
-pub use gmail::{GmailCapability, GoogleGmailAdapter};
+pub use gmail::{
+    GmailCapability, GmailIngressCapability, GmailIngressHeader, GmailIngressMessage,
+    GmailIngressPart, GoogleGmailAdapter,
+};
 pub use gmail_sync::{
     GmailHistorySyncConfig, GmailHistorySynchronizer, GmailSyncBatch, GmailSyncHealthEvent,
 };
