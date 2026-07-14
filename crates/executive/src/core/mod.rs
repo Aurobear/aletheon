@@ -8,6 +8,7 @@ pub mod mode_router;
 pub mod orchestrator;
 pub mod permission_manager;
 pub mod runtime_core;
+pub mod runtime_registry;
 pub mod security_group;
 pub mod session;
 pub mod session_gateway;
@@ -25,6 +26,7 @@ pub use evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, Evolution
 pub use memory_group::MemoryGroup;
 pub use mode_router::ModeRouter;
 pub use orchestrator::AletheonExecutive;
+pub use runtime_registry::RuntimeRegistry;
 pub use security_group::SecurityGroup;
 pub use session::{ContextState, Session, TuiSessionManager};
 pub use session_group::SessionGroup;
