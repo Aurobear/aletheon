@@ -118,12 +118,15 @@ impl ApplyCoordinator {
         };
         if let Some(receipt) = existing_receipt {
             self.reconcile_receipt(&approval, &receipt).await?;
+            self.record_summary(approval_id)?;
             return Ok(ApplyCoordinationOutcome::Recovered(receipt));
         }
         match approval.status {
             ApprovalStatus::Pending => return Ok(ApplyCoordinationOutcome::AwaitingDecision),
             ApprovalStatus::Rejected | ApprovalStatus::Expired => {
-                return self.transition_rejected(&approval)
+                let outcome = self.transition_rejected(&approval)?;
+                self.record_summary(approval_id)?;
+                return Ok(outcome);
             }
             ApprovalStatus::Consumed => {
                 return Err(ApplyCoordinationError::Approval(
@@ -210,6 +213,7 @@ impl ApplyCoordinator {
                 .await
                 .map_err(|error| ApplyCoordinationError::Operation(error.to_string()))?;
             self.transition_terminal(receipt.goal_id, GoalState::Completed, &receipt)?;
+            self.record_summary(approval_id)?;
             let (job_id, worktree) = self.worktree_for(&approval)?;
             self.cleaner
                 .cleanup(job_id, &worktree)
@@ -222,6 +226,7 @@ impl ApplyCoordinator {
                 .await
                 .map_err(|error| ApplyCoordinationError::Operation(error.to_string()))?;
             self.transition_terminal(receipt.goal_id, GoalState::Blocked, &receipt)?;
+            self.record_summary(approval_id)?;
             Ok(ApplyCoordinationOutcome::Failed(receipt))
         }
     }
@@ -481,6 +486,32 @@ impl ApplyCoordinator {
             ));
         }
         Ok((job_id, path))
+    }
+
+    fn record_summary(&self, approval_id: ApprovalId) -> Result<(), ApplyCoordinationError> {
+        let (approval, receipt) = {
+            let approvals = self.approvals.lock().unwrap();
+            let approval = approvals
+                .get(approval_id)
+                .map_err(approval_error)?
+                .ok_or_else(|| ApplyCoordinationError::Approval("approval not found".into()))?;
+            let receipt = approvals
+                .apply_receipt(approval_id)
+                .map_err(approval_error)?;
+            (approval, receipt)
+        };
+        let store = self.store.lock().unwrap();
+        let summary = crate::r#impl::goal::GoalCompletionSummary::build(
+            &store,
+            &approval,
+            receipt.as_ref(),
+            self.clock.wall_now().0,
+        )
+        .map_err(|error| ApplyCoordinationError::Evidence(error.to_string()))?;
+        store
+            .persist_goal_completion_summary(&summary)
+            .map_err(|error| ApplyCoordinationError::Evidence(error.to_string()))?;
+        Ok(())
     }
 }
 

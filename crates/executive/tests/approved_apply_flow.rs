@@ -298,6 +298,13 @@ async fn approved_apply_is_consumed_once_and_completes_goal() {
     );
     assert_eq!(f.cleaner.calls.load(Ordering::SeqCst), 1);
     assert!(!f.worktree.exists());
+    assert!(f
+        .store
+        .lock()
+        .unwrap()
+        .load_goal_completion_summary(f.approval_id)
+        .unwrap()
+        .is_some());
 
     let second = coordinator
         .coordinate(f.approval_id, ProcessId::new(), CancellationToken::new())
