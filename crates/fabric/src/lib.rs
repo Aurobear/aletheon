@@ -54,8 +54,10 @@ pub use types::capability;
 pub use types::channel;
 pub use types::context;
 pub use types::evidence;
+pub use types::external_identity;
 pub use types::genome;
 pub use types::goal;
+pub use types::google;
 pub use types::grounding;
 pub use types::hook;
 pub use types::hook_ext;
@@ -159,9 +161,17 @@ pub use types::coding_job::{
     WorkspaceBoundary,
 };
 pub use types::context::{Context, TraceState};
+pub use types::external_identity::{
+    CapabilityGrant, ExternalIdentity, ExternalIdentityId, ExternalIdentityState, ExternalScope,
+    GrantState, IdentityProvider,
+};
 pub use types::genome::Genome;
 pub use types::goal::{
     GoalBudget, GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason,
+};
+pub use types::google::{
+    CalendarEvent, CalendarEventPage, CalendarTimeRange, GmailMessage, GmailMessagePage,
+    GmailMessageSummary, GmailQuery, GoogleContractError, ProviderRecordRef,
 };
 pub use types::hook::{HookContext, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
