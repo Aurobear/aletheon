@@ -153,16 +153,14 @@ Every milestone ends with `cargo fmt --all -- --check`, scoped tests, `cargo tes
 ### Task M2.2: Evolve the existing ObjectiveStore into the Goal repository
 
 **Files:**
-- Create: `crates/executive/src/impl/goal/mod.rs`
 - Modify: `crates/executive/src/impl/goal/mod.rs`
 - Modify: `crates/executive/src/impl/goal/store.rs`
 - Create: `crates/executive/src/impl/goal/migrations.rs`
-- Modify: `crates/executive/src/impl/persistence/migrations.rs`
 
 - [ ] Preserve the existing `objectives` table and CRUD compatibility; add versioned columns plus `goal_events`, `goal_tasks`, `goal_attempts`, and `goal_budget_ledger` tables.
 - [ ] Write tests for create/load/list, optimistic-version conflict, transition+journal atomicity, immutable spec fields, and non-terminal recovery.
 - [ ] Store timestamps and versions explicitly; do not serialize the entire aggregate as an opaque unqueryable blob.
-- [ ] Run `cargo test -p executive -- impl::goal::repository`; expect PASS.
+- [ ] Run `cargo test -p executive -- impl::goal`; expect PASS.
 
 ### Task M2.3: Implement bounded GoalCoordinator
 
