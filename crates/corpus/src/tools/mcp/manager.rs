@@ -52,13 +52,14 @@ impl McpManager {
     pub fn connected_count(&self) -> usize {
         self.inner.connected_count()
     }
+
+    pub fn server_has_tools(&self, server_name: &str, required: &[&str]) -> bool {
+        self.inner.server_has_tools(server_name, required)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
-    use std::net::SocketAddr;
-    use std::sync::{Arc, Mutex};
     use super::super::config::{McpServerConfig, McpTransportConfig, McpTrustLevel};
     use super::*;
     use http_body_util::{BodyExt, Full};
@@ -68,6 +69,9 @@ mod tests {
     use hyper::{Method, Request, Response, StatusCode};
     use hyper_util::rt::TokioIo;
     use serde_json::json;
+    use std::convert::Infallible;
+    use std::net::SocketAddr;
+    use std::sync::{Arc, Mutex};
     use tokio::net::TcpListener;
 
     /// Shared state for the mock MCP server.
@@ -180,7 +184,11 @@ mod tests {
             }
 
             // Parse body
-            let collected = req.collect().await.map(|b| b.to_bytes()).unwrap_or_default();
+            let collected = req
+                .collect()
+                .await
+                .map(|b| b.to_bytes())
+                .unwrap_or_default();
             let req_json: serde_json::Value =
                 serde_json::from_slice(&collected).unwrap_or(Value::Null);
 
@@ -228,9 +236,8 @@ mod tests {
                 let state = state.clone();
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
-                    let svc = service_fn(move |req| {
-                        MockMcpState::handle_request(state.clone(), req)
-                    });
+                    let svc =
+                        service_fn(move |req| MockMcpState::handle_request(state.clone(), req));
                     let _ = http1::Builder::new().serve_connection(io, svc).await;
                 });
             }
@@ -308,10 +315,15 @@ mod tests {
 
         // Verify auth header was sent
         let s = state.lock().unwrap();
-        let auth_sent = s.auth_headers.iter().any(|h| {
-            h.as_deref() == Some("Bearer test-token-123")
-        });
-        assert!(auth_sent, "Expected Bearer token in auth headers, got: {:?}", s.auth_headers);
+        let auth_sent = s
+            .auth_headers
+            .iter()
+            .any(|h| h.as_deref() == Some("Bearer test-token-123"));
+        assert!(
+            auth_sent,
+            "Expected Bearer token in auth headers, got: {:?}",
+            s.auth_headers
+        );
 
         std::env::remove_var("TEST_HTTP_TOKEN");
     }
@@ -342,16 +354,58 @@ mod tests {
 
         // Call a tool via the manager
         let result = mgr
-            .call_tool("gbrain", "search", json!({"query": "servo", "source": "aurb"}))
+            .call_tool(
+                "gbrain",
+                "search",
+                json!({"query": "servo", "source": "aurb"}),
+            )
             .await;
         assert!(result.is_ok(), "call_tool failed: {:?}", result);
         let value = result.unwrap();
         assert_eq!(
-            value.get("content").and_then(|c| c.get(0)).and_then(|c| c.get("text")).and_then(|t| t.as_str()),
+            value
+                .get("content")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("text"))
+                .and_then(|t| t.as_str()),
             Some("search result")
         );
 
         std::env::remove_var("TEST_CALL_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn tool_level_error_is_not_reported_as_success() {
+        std::env::set_var("TEST_TOOL_ERROR_TOKEN", "tool-error-token");
+        let mut mock = MockMcpState::with_token("tool-error-token");
+        mock.search_response = json!({
+            "content": [{"type": "text", "text": "secret server detail"}],
+            "isError": true
+        });
+        let state = Arc::new(Mutex::new(mock));
+        let addr = spawn_mock_server(state).await;
+        let config = McpConfig {
+            servers: vec![McpServerConfig {
+                name: "gbrain".into(),
+                transport: McpTransportConfig::StreamableHttp {
+                    url: format!("http://{}/mcp", addr),
+                },
+                trust: McpTrustLevel::RemoteTrusted,
+                enabled: true,
+                bearer_token_env: Some("TEST_TOOL_ERROR_TOKEN".into()),
+            }],
+            ..McpConfig::default()
+        };
+        let mut manager = McpManager::new(config);
+        manager.connect_all().await.unwrap();
+        let error = manager
+            .call_tool("gbrain", "put_page", json!({"slug":"s","content":"c"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("application error"));
+        assert!(!error.contains("secret server detail"));
+        std::env::remove_var("TEST_TOOL_ERROR_TOKEN");
     }
 
     #[tokio::test]
@@ -418,7 +472,10 @@ mod tests {
         let json_str = serde_json::to_string(&config).unwrap();
         let deserialized: McpServerConfig = serde_json::from_str(&json_str).unwrap();
 
-        assert_eq!(deserialized.bearer_token_env.as_deref(), Some("GBRAIN_READ_TOKEN"));
+        assert_eq!(
+            deserialized.bearer_token_env.as_deref(),
+            Some("GBRAIN_READ_TOKEN")
+        );
     }
 
     #[tokio::test]

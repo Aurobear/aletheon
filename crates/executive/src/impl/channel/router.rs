@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use fabric::channel::{ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage};
+use fabric::{GoalId, GoalSnapshot};
 
 use super::store::{ChannelStore, InsertOutcome};
 
@@ -25,10 +26,7 @@ pub trait ChannelTransport: Send + Sync {
 
     /// Receive pending messages since `cursor`, or from the start when
     /// `cursor` is `None`.
-    async fn receive(
-        &self,
-        cursor: Option<String>,
-    ) -> anyhow::Result<Vec<ProviderEnvelope>>;
+    async fn receive(&self, cursor: Option<String>) -> anyhow::Result<Vec<ProviderEnvelope>>;
 
     /// Send an outbound message. Returns the provider-assigned message id.
     async fn send(&self, message: &OutboundMessage) -> anyhow::Result<String>;
@@ -57,11 +55,17 @@ pub trait ChannelTurnExecutor: Send + Sync {
     ///
     /// Returns the result text on success or a stable error string on
     /// failure.
-    async fn execute(
-        &self,
-        message: &str,
-        correlation_id: &str,
-    ) -> anyhow::Result<String>;
+    async fn execute(&self, message: &str, correlation_id: &str) -> anyhow::Result<String>;
+}
+
+#[async_trait::async_trait]
+pub trait ChannelGoalExecutor: Send + Sync {
+    async fn create_draft(&self, owner: &str, intent: &str) -> anyhow::Result<GoalSnapshot>;
+    async fn list(&self, owner: &str) -> anyhow::Result<Vec<GoalSnapshot>>;
+    async fn show(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
+    async fn pause(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
+    async fn resume(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
+    async fn cancel(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,8 +79,8 @@ pub enum RoutedInput {
     Greeting,
     /// Text to be executed as a chat turn.
     Chat(String),
-    /// Feature not yet available (M2).
-    GoalUnavailable,
+    /// Owner-scoped persistent Goal lifecycle command.
+    GoalCommand { command: String, args: String },
     /// Input that the router cannot handle.
     Unsupported(String),
 }
@@ -89,8 +93,12 @@ pub fn route_content(content: &MessageContent) -> RoutedInput {
         MessageContent::Command { command, args } => match command.as_str() {
             "/start" => RoutedInput::Greeting,
             "/chat" => RoutedInput::Chat(args.clone()),
-            "/goal" | "/goals" | "/status" | "/pause" | "/resume" | "/cancel"
-            | "/approve" | "/reject" => RoutedInput::GoalUnavailable,
+            "/goal" | "/goals" | "/status" | "/pause" | "/resume" | "/cancel" => {
+                RoutedInput::GoalCommand {
+                    command: command.clone(),
+                    args: args.clone(),
+                }
+            }
             _ => RoutedInput::Unsupported(command.clone()),
         },
         MessageContent::Text { text } => {
@@ -116,6 +124,7 @@ pub fn route_content(content: &MessageContent) -> RoutedInput {
 pub struct ChannelRouter {
     store: ChannelStore,
     turn_executor: Arc<dyn ChannelTurnExecutor>,
+    goal_executor: Option<Arc<dyn ChannelGoalExecutor>>,
 }
 
 impl ChannelRouter {
@@ -125,7 +134,59 @@ impl ChannelRouter {
         Self {
             store,
             turn_executor,
+            goal_executor: None,
         }
+    }
+
+    pub fn with_goal_executor(mut self, executor: Arc<dyn ChannelGoalExecutor>) -> Self {
+        self.goal_executor = Some(executor);
+        self
+    }
+
+    async fn execute_goal_command(
+        &mut self,
+        owner: &str,
+        command: &str,
+        args: &str,
+    ) -> anyhow::Result<String> {
+        let executor = self
+            .goal_executor
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Goal runtime is not configured"))?;
+        if command == "/goal" {
+            if args.trim().is_empty() {
+                anyhow::bail!("usage: /goal <intent>");
+            }
+            let goal = executor.create_draft(owner, args.trim()).await?;
+            return Ok(format!(
+                "Goal {} created as draft: {}",
+                goal.id.0, goal.spec.original_intent
+            ));
+        }
+        if command == "/goals" {
+            let goals = executor.list(owner).await?;
+            if goals.is_empty() {
+                return Ok("No goals.".into());
+            }
+            return Ok(goals
+                .iter()
+                .map(|g| format!("{} {} {}", g.id.0, g.state, g.spec.original_intent))
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+        let id = args
+            .trim()
+            .parse::<i64>()
+            .map(GoalId)
+            .map_err(|_| anyhow::anyhow!("usage: {command} <goal-id>"))?;
+        let goal = match command {
+            "/status" => executor.show(owner, id).await?,
+            "/pause" => executor.pause(owner, id).await?,
+            "/resume" => executor.resume(owner, id).await?,
+            "/cancel" => executor.cancel(owner, id).await?,
+            _ => anyhow::bail!("unsupported goal command"),
+        };
+        Ok(format!("Goal {}: {}", goal.id.0, goal.state))
     }
 
     /// Process a single provider message envelope.
@@ -186,6 +247,15 @@ impl ChannelRouter {
                     self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
                     return Err(e);
                 }
+            }
+        }
+        if let RoutedInput::GoalCommand { command, args } = &routed {
+            match self
+                .execute_goal_command(principal.as_deref().unwrap(), command, args)
+                .await
+            {
+                Ok(reply) => ai_reply = Some(reply),
+                Err(error) => ai_reply = Some(error.to_string()),
             }
         }
 
@@ -260,12 +330,7 @@ impl ChannelRouter {
 
     /// Mark an inbox message as failed (leaving it retryable) without
     /// advancing the cursor.
-    fn fail_inbound(
-        &mut self,
-        channel: &str,
-        message_id: &str,
-        error: &str,
-    ) -> anyhow::Result<()> {
+    fn fail_inbound(&mut self, channel: &str, message_id: &str, error: &str) -> anyhow::Result<()> {
         self.store.db.execute(
             "UPDATE channel_inbox SET status = 'failed', result_json = ?3,
              attempt_count = attempt_count + 1, updated_at = datetime('now')
@@ -308,6 +373,15 @@ impl ChannelRouter {
                         self.fail_inbound(channel_str, &msg.message_id.0, &e.to_string())?;
                         return Err(e);
                     }
+                }
+            }
+            if let RoutedInput::GoalCommand { command, args } = &routed {
+                match self
+                    .execute_goal_command(principal.as_deref().unwrap(), command, args)
+                    .await
+                {
+                    Ok(reply) => ai_reply = Some(reply),
+                    Err(error) => ai_reply = Some(error.to_string()),
                 }
             }
             let outbound = build_outbound(
@@ -406,8 +480,10 @@ fn build_outbound(
         RoutedInput::Greeting => MessageContent::Text {
             text: "Hello! I am Aletheon. How can I help you today?".into(),
         },
-        RoutedInput::GoalUnavailable => MessageContent::Text {
-            text: "Objective creation via chat is not yet available (targeting M2).".into(),
+        RoutedInput::GoalCommand { .. } => MessageContent::Text {
+            text: ai_reply
+                .unwrap_or("Goal runtime is not configured")
+                .to_string(),
         },
         RoutedInput::Unsupported(_) => MessageContent::Text {
             text: "I don't recognize your identity. Please contact an administrator.".into(),
@@ -476,9 +552,7 @@ mod tests {
 
     #[test]
     fn whitespace_only_text_is_unsupported() {
-        let content = MessageContent::Text {
-            text: "   ".into(),
-        };
+        let content = MessageContent::Text { text: "   ".into() };
         assert_eq!(
             route_content(&content),
             RoutedInput::Unsupported(String::new())
@@ -486,19 +560,19 @@ mod tests {
     }
 
     #[test]
-    fn m2_commands_are_goal_unavailable() {
-        for cmd in &[
-            "/goal", "/goals", "/status", "/pause", "/resume", "/cancel",
-            "/approve", "/reject",
-        ] {
+    fn m2_commands_are_goal_commands() {
+        for cmd in &["/goal", "/goals", "/status", "/pause", "/resume", "/cancel"] {
             let content = MessageContent::Command {
                 command: (*cmd).into(),
                 args: String::new(),
             };
             assert_eq!(
                 route_content(&content),
-                RoutedInput::GoalUnavailable,
-                "command {cmd} should be GoalUnavailable"
+                RoutedInput::GoalCommand {
+                    command: (*cmd).into(),
+                    args: String::new()
+                },
+                "command {cmd} should be routed to Goal runtime"
             );
         }
     }

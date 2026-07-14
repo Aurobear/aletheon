@@ -3,10 +3,10 @@
 //! Tests the complete path from /goal → Draft → resume → tick →
 //! pause → restart recovery → re-tick → cancel → restart (terminal).
 
-use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState};
-use fabric::PrincipalId;
 use executive::r#impl::goal::coordinator::{GoalCoordinator, GoalTickOutcome};
 use executive::r#impl::goal::ObjectiveStore;
+use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState};
+use fabric::PrincipalId;
 use std::sync::{Arc, Mutex};
 
 fn setup() -> (GoalCoordinator, Arc<Mutex<ObjectiveStore>>) {
@@ -91,10 +91,13 @@ fn vertical_slice() {
 
     // 2. Tick: Ready → Running.
     let outcome = coord.tick(id, 0).unwrap();
-    assert!(matches!(outcome, GoalTickOutcome::Transitioned {
-        from: GoalState::Ready,
-        to: GoalState::Running,
-    }));
+    assert!(matches!(
+        outcome,
+        GoalTickOutcome::Transitioned {
+            from: GoalState::Ready,
+            to: GoalState::Running,
+        }
+    ));
 
     // 3. Tick: Running → TurnRequested.
     let outcome = coord.tick(id, 0).unwrap();
@@ -103,13 +106,24 @@ fn vertical_slice() {
     // 4. Pause: Running → Suspended.
     {
         let s = store.lock().unwrap();
-        s.transition_goal(id, 1, GoalState::Suspended, None, &serde_json::json!({"action": "pause"}))
-            .unwrap();
+        s.transition_goal(
+            id,
+            1,
+            GoalState::Suspended,
+            None,
+            &serde_json::json!({"action": "pause"}),
+        )
+        .unwrap();
     }
 
     // 5. Tick on Suspended is Noop.
     let outcome = coord.tick(id, 0).unwrap();
-    assert!(matches!(outcome, GoalTickOutcome::Noop { state: GoalState::Suspended }));
+    assert!(matches!(
+        outcome,
+        GoalTickOutcome::Noop {
+            state: GoalState::Suspended
+        }
+    ));
 
     // 6. Simulate daemon restart: recover goals.
     {
@@ -123,28 +137,48 @@ fn vertical_slice() {
     {
         let s = store.lock().unwrap();
         let current = s.get_goal(id).unwrap().unwrap();
-        s.transition_goal(id, current.version, GoalState::Ready, None, &serde_json::json!({"action": "resume"}))
-            .unwrap();
+        s.transition_goal(
+            id,
+            current.version,
+            GoalState::Ready,
+            None,
+            &serde_json::json!({"action": "resume"}),
+        )
+        .unwrap();
     }
 
     // 8. Tick again: Ready → Running.
     let outcome = coord.tick(id, 0).unwrap();
-    assert!(matches!(outcome, GoalTickOutcome::Transitioned {
-        from: GoalState::Ready,
-        to: GoalState::Running,
-    }));
+    assert!(matches!(
+        outcome,
+        GoalTickOutcome::Transitioned {
+            from: GoalState::Ready,
+            to: GoalState::Running,
+        }
+    ));
 
     // 9. Cancel: Running → Cancelled.
     {
         let s = store.lock().unwrap();
         let current = s.get_goal(id).unwrap().unwrap();
-        s.transition_goal(id, current.version, GoalState::Cancelled, None, &serde_json::json!({"action": "cancel"}))
-            .unwrap();
+        s.transition_goal(
+            id,
+            current.version,
+            GoalState::Cancelled,
+            None,
+            &serde_json::json!({"action": "cancel"}),
+        )
+        .unwrap();
     }
 
     // 10. Tick on Cancelled is Noop.
     let outcome = coord.tick(id, 0).unwrap();
-    assert!(matches!(outcome, GoalTickOutcome::Noop { state: GoalState::Cancelled }));
+    assert!(matches!(
+        outcome,
+        GoalTickOutcome::Noop {
+            state: GoalState::Cancelled
+        }
+    ));
 
     // 11. Second restart: terminal goals not recovered.
     {

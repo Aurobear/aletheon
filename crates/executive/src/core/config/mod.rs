@@ -10,7 +10,9 @@ pub use agent::{
     HooksConfig, PerceptionConfig,
 };
 pub use genome::GenomeConfig;
-pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig, TelegramConfig};
+pub use infra::{
+    DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig, TelegramConfig,
+};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
 
 use serde::{Deserialize, Serialize};
@@ -447,6 +449,7 @@ log_level = "debug"
             transport: "stdio".to_string(),
             command: Some("mcp-fs".to_string()),
             url: None,
+            bearer_token_env: None,
         });
 
         let mut other = AppConfig::default();
@@ -455,6 +458,7 @@ log_level = "debug"
             transport: "http".to_string(),
             command: None,
             url: Some("http://localhost:8080".to_string()),
+            bearer_token_env: None,
         });
 
         base.merge(other);

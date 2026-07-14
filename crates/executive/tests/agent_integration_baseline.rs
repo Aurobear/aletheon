@@ -33,8 +33,7 @@ fn objective_store_reopens_and_recovers_active_objective() {
     // Open, create an objective, then drop the store.
     let description = "rebuild the hyperdrive after hyperspace incident";
     {
-        let store =
-            ObjectiveStore::open(&db_path).expect("open objective store for first write");
+        let store = ObjectiveStore::open(&db_path).expect("open objective store for first write");
         let id = store
             .create(description, None, "session-reopen", "project")
             .expect("create objective");
@@ -44,8 +43,7 @@ fn objective_store_reopens_and_recovers_active_objective() {
     // Re-open from the same file — must recover the objective with the same
     // description.
     {
-        let store =
-            ObjectiveStore::open(&db_path).expect("re-open objective store for recovery");
+        let store = ObjectiveStore::open(&db_path).expect("re-open objective store for recovery");
         let active = store
             .active()
             .expect("active query should succeed")

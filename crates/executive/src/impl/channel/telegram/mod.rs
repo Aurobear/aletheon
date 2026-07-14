@@ -121,12 +121,12 @@ impl TelegramTransport {
             // Split at the first whitespace: command vs args.
             if let Some((cmd, args)) = rest.split_once(char::is_whitespace) {
                 MessageContent::Command {
-                    command: cmd.to_string(),
+                    command: format!("/{cmd}"),
                     args: args.trim().to_string(),
                 }
             } else {
                 MessageContent::Command {
-                    command: rest.to_string(),
+                    command: format!("/{rest}"),
                     args: String::new(),
                 }
             }
@@ -150,10 +150,7 @@ impl ChannelTransport for TelegramTransport {
     }
 
     async fn receive(&self, cursor: Option<String>) -> Result<Vec<ProviderEnvelope>> {
-        let offset: i64 = cursor
-            .as_deref()
-            .and_then(|c| c.parse().ok())
-            .unwrap_or(0);
+        let offset: i64 = cursor.as_deref().and_then(|c| c.parse().ok()).unwrap_or(0);
 
         let resp = self
             .client
@@ -380,7 +377,7 @@ mod tests {
         assert_eq!(
             msg.content,
             MessageContent::Command {
-                command: "chat".into(),
+                command: "/chat".into(),
                 args: "hello there".into(),
             }
         );
@@ -406,7 +403,7 @@ mod tests {
         assert_eq!(
             msg.content,
             MessageContent::Command {
-                command: "status".into(),
+                command: "/status".into(),
                 args: String::new(),
             }
         );
@@ -586,9 +583,7 @@ mod tests {
 
         let outbound = OutboundMessage {
             conversation_id: ConversationId("9999".into()),
-            content: MessageContent::Text {
-                text: "hi".into(),
-            },
+            content: MessageContent::Text { text: "hi".into() },
             actions: vec![],
             reply_to: None,
             correlation_id: "corr-send-err".into(),

@@ -48,6 +48,8 @@ pub struct DaemonConfig {
     pub hooks: crate::core::config::HooksConfig,
     /// Telegram owner-only control channel configuration.
     pub telegram: cognit::config::TelegramConfig,
+    /// gbrain shared memory integration configuration.
+    pub gbrain_memory: cognit::config::GbrainMemoryConfig,
 }
 
 /// Default config file search paths.

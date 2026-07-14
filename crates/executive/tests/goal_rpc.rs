@@ -3,9 +3,9 @@
 //! Validates new goal.create, goal.list, goal.pause, goal.run, goal.cancel
 //! methods alongside legacy response compatibility.
 
+use executive::r#impl::goal::ObjectiveStore;
 use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState};
 use fabric::PrincipalId;
-use executive::r#impl::goal::ObjectiveStore;
 use tempfile::NamedTempFile;
 
 fn setup() -> ObjectiveStore {
@@ -76,7 +76,13 @@ fn pause_goal_suspends_running() {
 
     // Running -> Suspended
     let snap = store
-        .transition_goal(id, 1, GoalState::Suspended, None, &serde_json::json!({"action": "pause"}))
+        .transition_goal(
+            id,
+            1,
+            GoalState::Suspended,
+            None,
+            &serde_json::json!({"action": "pause"}),
+        )
         .unwrap();
     assert_eq!(snap.state, GoalState::Suspended);
     assert!(snap.version > 1);
@@ -101,7 +107,13 @@ fn run_goal_resumes_suspended() {
 
     // Suspended -> Ready
     let snap = store
-        .transition_goal(id, 2, GoalState::Ready, None, &serde_json::json!({"action": "run"}))
+        .transition_goal(
+            id,
+            2,
+            GoalState::Ready,
+            None,
+            &serde_json::json!({"action": "run"}),
+        )
         .unwrap();
     assert_eq!(snap.state, GoalState::Ready);
 }
@@ -122,7 +134,13 @@ fn cancel_goal_cancels_running() {
 
     // Running -> Cancelled
     let snap = store
-        .transition_goal(id, 1, GoalState::Cancelled, None, &serde_json::json!({"action": "cancel"}))
+        .transition_goal(
+            id,
+            1,
+            GoalState::Cancelled,
+            None,
+            &serde_json::json!({"action": "cancel"}),
+        )
         .unwrap();
     assert_eq!(snap.state, GoalState::Cancelled);
     assert!(snap.state.is_terminal());

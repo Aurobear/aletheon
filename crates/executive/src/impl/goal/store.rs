@@ -159,13 +159,35 @@ impl ObjectiveStore {
         scope: &str,
         spec: &GoalSpec,
     ) -> Result<GoalSnapshot> {
+        self.create_goal_with_state(owner, session_id, scope, spec, GoalState::Ready)
+    }
+
+    /// Create an owner-confirmable draft without changing legacy Ready semantics.
+    pub fn create_draft_goal(
+        &self,
+        owner: &PrincipalId,
+        session_id: &str,
+        scope: &str,
+        spec: &GoalSpec,
+    ) -> Result<GoalSnapshot> {
+        self.create_goal_with_state(owner, session_id, scope, spec, GoalState::Draft)
+    }
+
+    fn create_goal_with_state(
+        &self,
+        owner: &PrincipalId,
+        session_id: &str,
+        scope: &str,
+        spec: &GoalSpec,
+        state: GoalState,
+    ) -> Result<GoalSnapshot> {
         let spec_json = serde_json::to_string(spec)?;
         let tx = self.db.unchecked_transaction()?;
 
         tx.execute(
             "INSERT INTO objectives (description, session_id, scope, owner_id, goal_state, spec_json, version)
-             VALUES (?1, ?2, ?3, ?4, 'ready', ?5, 0)",
-            rusqlite::params![spec.original_intent, session_id, scope, owner.0, spec_json],
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
+            rusqlite::params![spec.original_intent, session_id, scope, owner.0, state.as_str(), spec_json],
         )?;
         let objective_id = tx.last_insert_rowid();
 
@@ -183,12 +205,9 @@ impl ObjectiveStore {
 
     /// Fetch a goal by id.
     pub fn get_goal(&self, id: GoalId) -> Result<Option<GoalSnapshot>> {
-        let sql = format!(
-            "SELECT {GOAL_COLS} FROM objectives WHERE objective_id = ?1"
-        );
+        let sql = format!("SELECT {GOAL_COLS} FROM objectives WHERE objective_id = ?1");
         let mut stmt = self.db.prepare(&sql)?;
-        let mut rows =
-            stmt.query_map(rusqlite::params![id.0], Self::map_goal_snapshot_row)?;
+        let mut rows = stmt.query_map(rusqlite::params![id.0], Self::map_goal_snapshot_row)?;
         match rows.next() {
             Some(r) => Ok(Some(r?)),
             None => Ok(None),
@@ -196,15 +215,10 @@ impl ObjectiveStore {
     }
 
     /// List goals filtered by state, newest first.
-    pub fn list_goals(
-        &self,
-        states: &[GoalState],
-        limit: usize,
-    ) -> Result<Vec<GoalSnapshot>> {
+    pub fn list_goals(&self, states: &[GoalState], limit: usize) -> Result<Vec<GoalSnapshot>> {
         if states.is_empty() {
-            let sql = format!(
-                "SELECT {GOAL_COLS} FROM objectives ORDER BY objective_id DESC LIMIT ?1"
-            );
+            let sql =
+                format!("SELECT {GOAL_COLS} FROM objectives ORDER BY objective_id DESC LIMIT ?1");
             let mut stmt = self.db.prepare(&sql)?;
             let rows = stmt
                 .query_map(rusqlite::params![limit as i64], Self::map_goal_snapshot_row)?
@@ -227,7 +241,8 @@ impl ObjectiveStore {
             .collect();
         params.push(Box::new(limit as i64));
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt
             .query_map(param_refs.as_slice(), Self::map_goal_snapshot_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -279,9 +294,9 @@ impl ObjectiveStore {
                         ],
                     )?;
                     tx.commit()?;
-                    let fresh = self
-                        .get_goal(goal.id)?
-                        .ok_or_else(|| anyhow::anyhow!("goal {} disappeared during recovery", goal.id))?;
+                    let fresh = self.get_goal(goal.id)?.ok_or_else(|| {
+                        anyhow::anyhow!("goal {} disappeared during recovery", goal.id)
+                    })?;
                     recovered.push(fresh);
                 }
                 _ => {

@@ -3,11 +3,11 @@
 //! Exercises bounded tick behavior, process linkage, pause/resume/cancel,
 //! and restart recovery of stale process links.
 
-use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState};
-use fabric::ProcessId;
-use fabric::PrincipalId;
 use executive::r#impl::goal::coordinator::{GoalCoordinator, GoalTickOutcome};
 use executive::r#impl::goal::ObjectiveStore;
+use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState};
+use fabric::PrincipalId;
+use fabric::ProcessId;
 use std::sync::{Arc, Mutex};
 
 // ---------------------------------------------------------------------------
@@ -40,8 +40,13 @@ fn create_goal(store: &Arc<Mutex<ObjectiveStore>>) -> fabric::goal::GoalSnapshot
             deadline_ms: None,
         },
     };
-    s.create_goal(&PrincipalId("test-owner".into()), "sess-1", "project", &spec)
-        .unwrap()
+    s.create_goal(
+        &PrincipalId("test-owner".into()),
+        "sess-1",
+        "project",
+        &spec,
+    )
+    .unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -89,26 +94,49 @@ fn pause_and_resume() {
     {
         let s = store.lock().unwrap();
         let g2 = s
-            .transition_goal(g.id, 1, GoalState::Suspended, None, &serde_json::json!({"action": "pause"}))
+            .transition_goal(
+                g.id,
+                1,
+                GoalState::Suspended,
+                None,
+                &serde_json::json!({"action": "pause"}),
+            )
             .unwrap();
         assert_eq!(g2.state, GoalState::Suspended);
     }
 
     let outcome = coord.tick(g.id, 0).unwrap();
-    assert!(matches!(outcome, GoalTickOutcome::Noop { state: GoalState::Suspended }));
+    assert!(matches!(
+        outcome,
+        GoalTickOutcome::Noop {
+            state: GoalState::Suspended
+        }
+    ));
 
     // Resume: Suspended → Ready.
     {
         let s = store.lock().unwrap();
         let g3 = s
-            .transition_goal(g.id, 2, GoalState::Ready, None, &serde_json::json!({"action": "resume"}))
+            .transition_goal(
+                g.id,
+                2,
+                GoalState::Ready,
+                None,
+                &serde_json::json!({"action": "resume"}),
+            )
             .unwrap();
         assert_eq!(g3.state, GoalState::Ready);
         assert_eq!(g3.version, 3);
     }
 
     let outcome = coord.tick(g.id, 0).unwrap();
-    assert!(matches!(outcome, GoalTickOutcome::Transitioned { from: GoalState::Ready, to: GoalState::Running }));
+    assert!(matches!(
+        outcome,
+        GoalTickOutcome::Transitioned {
+            from: GoalState::Ready,
+            to: GoalState::Running
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -126,14 +154,25 @@ fn cancel_from_running() {
     {
         let s = store.lock().unwrap();
         let g2 = s
-            .transition_goal(g.id, 1, GoalState::Cancelled, None, &serde_json::json!({"action": "cancel"}))
+            .transition_goal(
+                g.id,
+                1,
+                GoalState::Cancelled,
+                None,
+                &serde_json::json!({"action": "cancel"}),
+            )
             .unwrap();
         assert_eq!(g2.state, GoalState::Cancelled);
         assert!(g2.state.is_terminal());
     }
 
     let outcome = coord.tick(g.id, 0).unwrap();
-    assert!(matches!(outcome, GoalTickOutcome::Noop { state: GoalState::Cancelled }));
+    assert!(matches!(
+        outcome,
+        GoalTickOutcome::Noop {
+            state: GoalState::Cancelled
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -175,10 +214,22 @@ fn stale_process_cleared_on_reconstruction() {
     // Running can transition to Suspended but not Ready directly.
     {
         let s = store.lock().unwrap();
-        s.transition_goal(g.id, 2, GoalState::Suspended, None, &serde_json::json!({"action": "pause"}))
-            .unwrap();
-        s.transition_goal(g.id, 3, GoalState::Ready, None, &serde_json::json!({"action": "resume"}))
-            .unwrap();
+        s.transition_goal(
+            g.id,
+            2,
+            GoalState::Suspended,
+            None,
+            &serde_json::json!({"action": "pause"}),
+        )
+        .unwrap();
+        s.transition_goal(
+            g.id,
+            3,
+            GoalState::Ready,
+            None,
+            &serde_json::json!({"action": "resume"}),
+        )
+        .unwrap();
     }
     // Drop lock before calling set_process_link (it acquires the lock internally).
     coord.set_process_link(g.id, 4, None).unwrap();
@@ -193,7 +244,13 @@ fn stale_process_cleared_on_reconstruction() {
 
     // Re-tick activates with fresh process.
     let outcome = coord.tick(g.id, 0).unwrap();
-    assert!(matches!(outcome, GoalTickOutcome::Transitioned { from: GoalState::Ready, to: GoalState::Running }));
+    assert!(matches!(
+        outcome,
+        GoalTickOutcome::Transitioned {
+            from: GoalState::Ready,
+            to: GoalState::Running
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------

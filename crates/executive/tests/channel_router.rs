@@ -50,10 +50,7 @@ impl ChannelTransport for FakeTransport {
         "telegram"
     }
 
-    async fn receive(
-        &self,
-        _cursor: Option<String>,
-    ) -> anyhow::Result<Vec<ProviderEnvelope>> {
+    async fn receive(&self, _cursor: Option<String>) -> anyhow::Result<Vec<ProviderEnvelope>> {
         Ok(vec![])
     }
 
@@ -92,9 +89,7 @@ fn owner_text(message_id: &str, correlation_id: &str, text: &str) -> InboundMess
         message_id,
         "owner",
         correlation_id,
-        MessageContent::Text {
-            text: text.into(),
-        },
+        MessageContent::Text { text: text.into() },
     )
 }
 
@@ -282,7 +277,7 @@ async fn start_command_greeting_no_executor() {
 /// `/goal example` returns the M2-unavailable response without creating an
 /// objective (no executor call).
 #[tokio::test]
-async fn goal_command_m2_unavailable_no_executor() {
+async fn goal_command_without_goal_executor_is_stable_no_turn() {
     let (mut router, executor, transport, dir) = setup().await;
     let db_path = dir.path().join("channels.db");
 
@@ -307,7 +302,7 @@ async fn goal_command_m2_unavailable_no_executor() {
         Some("completed")
     );
 
-    // Outbound was sent through transport with M2-unavailable text.
+    // Outbound reports the missing Goal runtime without invoking chat.
     let sent = transport.sent.lock().await;
     assert_eq!(sent.len(), 1, "expected one outbound message to be sent");
     let text = match &sent[0].content {
@@ -315,8 +310,8 @@ async fn goal_command_m2_unavailable_no_executor() {
         _ => String::new(),
     };
     assert!(
-        text.contains("not yet available"),
-        "expected M2-unavailable message, got: {text}"
+        text.contains("Goal runtime is not configured"),
+        "expected stable configuration error, got: {text}"
     );
 }
 
@@ -331,11 +326,7 @@ async fn executor_failure_inbox_retryable_cursor_unchanged() {
     struct FailingExecutor;
     #[async_trait::async_trait]
     impl ChannelTurnExecutor for FailingExecutor {
-        async fn execute(
-            &self,
-            _message: &str,
-            _correlation_id: &str,
-        ) -> anyhow::Result<String> {
+        async fn execute(&self, _message: &str, _correlation_id: &str) -> anyhow::Result<String> {
             anyhow::bail!("simulated ai failure")
         }
     }
@@ -350,7 +341,10 @@ async fn executor_failure_inbox_retryable_cursor_unchanged() {
     };
 
     let result = router.process(&transport, envelope).await;
-    assert!(result.is_err(), "process should return error on executor failure");
+    assert!(
+        result.is_err(),
+        "process should return error on executor failure"
+    );
 
     // Cursor must not have advanced (the failing test store is separate).
     let store = inspect(&db_path);

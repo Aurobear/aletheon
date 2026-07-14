@@ -189,6 +189,9 @@ pub struct McpServerConfig {
     /// For http/sse transport: URL to connect to
     #[serde(default)]
     pub url: Option<String>,
+    /// Environment variable containing the bearer token (never the token itself).
+    #[serde(default)]
+    pub bearer_token_env: Option<String>,
 }
 
 fn default_mcp_transport() -> String {
@@ -202,6 +205,7 @@ impl Default for McpServerConfig {
             transport: default_mcp_transport(),
             command: None,
             url: None,
+            bearer_token_env: None,
         }
     }
 }
@@ -221,6 +225,9 @@ pub struct MemoryConfig {
     pub backend: String,
     #[serde(default = "default_memory_data_dir")]
     pub data_dir: String,
+    /// Optional gbrain shared memory integration (disabled by default).
+    #[serde(default)]
+    pub gbrain: GbrainMemoryConfig,
 }
 
 fn default_memory_backend() -> String {
@@ -235,6 +242,79 @@ impl Default for MemoryConfig {
         Self {
             backend: default_memory_backend(),
             data_dir: default_memory_data_dir(),
+            gbrain: GbrainMemoryConfig::default(),
+        }
+    }
+}
+/// gbrain shared memory integration configuration.
+///
+/// Disabled by default. When enabled, the daemon connects to a gbrain
+/// MCP server at startup and injects recalled content into dynamic turns.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GbrainMemoryConfig {
+    /// Master switch. When false (default), gbrain is not connected.
+    #[serde(default)]
+    pub enabled: bool,
+    /// MCP server name this gbrain instance is registered under.
+    #[serde(default = "default_gbrain_server_name")]
+    pub server_name: String,
+    /// Primary source identifier for this project.
+    #[serde(default = "default_gbrain_source")]
+    pub source: String,
+    /// Secondary (general) source identifier.
+    #[serde(default = "default_general_source")]
+    pub general_source: String,
+    /// Recall timeout in milliseconds.
+    #[serde(default = "default_gbrain_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Maximum number of recalled results.
+    #[serde(default = "default_gbrain_max_results")]
+    pub max_results: usize,
+    /// Maximum characters in rendered recall block.
+    #[serde(default = "default_gbrain_max_chars")]
+    pub max_chars: usize,
+    /// Enable durable outbox capture (disabled by default).
+    #[serde(default)]
+    pub capture_enabled: bool,
+    /// Directory for durable outbox entries.
+    #[serde(default = "default_gbrain_outbox_dir")]
+    pub outbox_dir: String,
+}
+
+fn default_gbrain_server_name() -> String {
+    "gbrain".to_string()
+}
+fn default_gbrain_source() -> String {
+    "aletheon".to_string()
+}
+fn default_general_source() -> String {
+    "general".to_string()
+}
+fn default_gbrain_timeout_ms() -> u64 {
+    1200
+}
+fn default_gbrain_max_results() -> usize {
+    4
+}
+fn default_gbrain_max_chars() -> usize {
+    6000
+}
+fn default_gbrain_outbox_dir() -> String {
+    "~/.aletheon/gbrain-outbox".to_string()
+}
+
+impl Default for GbrainMemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_name: default_gbrain_server_name(),
+            source: default_gbrain_source(),
+            general_source: default_general_source(),
+            timeout_ms: default_gbrain_timeout_ms(),
+            max_results: default_gbrain_max_results(),
+            max_chars: default_gbrain_max_chars(),
+            capture_enabled: false,
+            outbox_dir: default_gbrain_outbox_dir(),
         }
     }
 }
@@ -359,12 +439,7 @@ impl TelegramConfig {
         let mut errors: Vec<String> = Vec::new();
 
         // Clamp poll timeout
-        if self.poll_timeout_secs < 1 {
-            self.poll_timeout_secs = 1;
-        }
-        if self.poll_timeout_secs > 50 {
-            self.poll_timeout_secs = 50;
-        }
+        self.poll_timeout_secs = self.poll_timeout_secs.clamp(1, 50);
 
         if !self.enabled {
             // Disabled: no token or owner required
@@ -374,14 +449,10 @@ impl TelegramConfig {
         // Enabled: require bot_token_env
         match &self.bot_token_env {
             None => {
-                errors.push(
-                    "telegram.enabled=true but bot_token_env is not set".to_string(),
-                );
+                errors.push("telegram.enabled=true but bot_token_env is not set".to_string());
             }
             Some(name) if name.trim().is_empty() => {
-                errors.push(
-                    "telegram.enabled=true but bot_token_env is empty".to_string(),
-                );
+                errors.push("telegram.enabled=true but bot_token_env is empty".to_string());
             }
             Some(_) => {}
         }
@@ -389,9 +460,7 @@ impl TelegramConfig {
         // Enabled: require owner_user_id > 0
         match self.owner_user_id {
             None => {
-                errors.push(
-                    "telegram.enabled=true but owner_user_id is not set".to_string(),
-                );
+                errors.push("telegram.enabled=true but owner_user_id is not set".to_string());
             }
             Some(id) if id <= 0 => {
                 errors.push(format!(
@@ -505,6 +574,34 @@ impl AppConfig {
         }
         if other.memory.data_dir != default_memory_data_dir() {
             self.memory.data_dir = other.memory.data_dir;
+        }
+        // gbrain: merge if enabled or non-default
+        if other.memory.gbrain.enabled {
+            self.memory.gbrain.enabled = true;
+        }
+        if other.memory.gbrain.server_name != default_gbrain_server_name() {
+            self.memory.gbrain.server_name = other.memory.gbrain.server_name;
+        }
+        if other.memory.gbrain.source != default_gbrain_source() {
+            self.memory.gbrain.source = other.memory.gbrain.source;
+        }
+        if other.memory.gbrain.general_source != default_general_source() {
+            self.memory.gbrain.general_source = other.memory.gbrain.general_source;
+        }
+        if other.memory.gbrain.timeout_ms != default_gbrain_timeout_ms() {
+            self.memory.gbrain.timeout_ms = other.memory.gbrain.timeout_ms;
+        }
+        if other.memory.gbrain.max_results != default_gbrain_max_results() {
+            self.memory.gbrain.max_results = other.memory.gbrain.max_results;
+        }
+        if other.memory.gbrain.max_chars != default_gbrain_max_chars() {
+            self.memory.gbrain.max_chars = other.memory.gbrain.max_chars;
+        }
+        if other.memory.gbrain.capture_enabled {
+            self.memory.gbrain.capture_enabled = true;
+        }
+        if other.memory.gbrain.outbox_dir != default_gbrain_outbox_dir() {
+            self.memory.gbrain.outbox_dir = other.memory.gbrain.outbox_dir;
         }
 
         // Daemon: override if non-default
@@ -648,7 +745,10 @@ mod tests {
         assert!(cfg.bot_token_env.is_none());
         assert!(cfg.owner_user_id.is_none());
         let errors = cfg.validate();
-        assert!(errors.is_empty(), "disabled config must have no errors, got: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "disabled config must have no errors, got: {errors:?}"
+        );
     }
 
     #[test]
@@ -709,10 +809,7 @@ mod tests {
                 poll_timeout_secs: 10,
             };
             let errors = cfg.validate();
-            assert!(
-                !errors.is_empty(),
-                "must reject owner_user_id={bad_id}"
-            );
+            assert!(!errors.is_empty(), "must reject owner_user_id={bad_id}");
             assert!(
                 errors.iter().any(|e| e.contains("not positive")),
                 "error must say 'not positive' for id={bad_id}: {errors:?}"
@@ -729,7 +826,10 @@ mod tests {
             poll_timeout_secs: 10,
         };
         let errors = cfg.validate();
-        assert!(errors.is_empty(), "valid config must have no errors, got: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "valid config must have no errors, got: {errors:?}"
+        );
     }
 
     #[test]
@@ -765,7 +865,10 @@ poll_timeout_secs = 20
 "#;
         let cfg: TelegramConfig = toml::from_str(toml).unwrap();
         assert!(cfg.enabled);
-        assert_eq!(cfg.bot_token_env.as_deref(), Some("ALETHEON_TELEGRAM_BOT_TOKEN"));
+        assert_eq!(
+            cfg.bot_token_env.as_deref(),
+            Some("ALETHEON_TELEGRAM_BOT_TOKEN")
+        );
         assert_eq!(cfg.owner_user_id, Some(12345));
         assert_eq!(cfg.poll_timeout_secs, 20);
     }
@@ -795,5 +898,72 @@ base_url = "http://localhost"
         assert!(base.telegram.enabled);
         assert_eq!(base.telegram.bot_token_env.as_deref(), Some("MY_TOKEN"));
         assert_eq!(base.telegram.owner_user_id, Some(42));
+    }
+
+    #[test]
+    fn gbrain_disabled_by_default() {
+        let config = AppConfig::default();
+        assert!(!config.memory.gbrain.enabled);
+        assert_eq!(config.memory.gbrain.server_name, "gbrain");
+        assert_eq!(config.memory.gbrain.source, "aletheon");
+        assert_eq!(config.memory.gbrain.timeout_ms, 1200);
+        assert_eq!(config.memory.gbrain.max_results, 4);
+        assert_eq!(config.memory.gbrain.max_chars, 6000);
+        assert!(!config.memory.gbrain.capture_enabled);
+    }
+
+    #[test]
+    fn gbrain_parses_from_toml() {
+        let toml = r#"
+enabled = true
+server_name = "gbrain"
+source = "aletheon"
+general_source = "general"
+timeout_ms = 1200
+max_results = 4
+max_chars = 6000
+capture_enabled = false
+outbox_dir = "~/.aletheon/gbrain-outbox"
+"#;
+        let cfg: GbrainMemoryConfig = toml::from_str(toml).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.server_name, "gbrain");
+        assert_eq!(cfg.source, "aletheon");
+        assert_eq!(cfg.timeout_ms, 1200);
+        assert!(!cfg.capture_enabled);
+    }
+
+    #[test]
+    fn gbrain_nested_in_memory_config() {
+        let toml = r#"
+backend = "sqlite"
+data_dir = "/tmp/mem"
+
+[gbrain]
+enabled = true
+source = "aletheon"
+timeout_ms = 2500
+max_results = 6
+"#;
+        let mem: MemoryConfig = toml::from_str(toml).unwrap();
+        assert!(mem.gbrain.enabled);
+        assert_eq!(mem.gbrain.source, "aletheon");
+        assert_eq!(mem.gbrain.timeout_ms, 2500);
+        assert_eq!(mem.gbrain.server_name, "gbrain");
+    }
+
+    #[test]
+    fn gbrain_merge_overrides() {
+        let mut base = AppConfig::default();
+        let mut other = AppConfig::default();
+        other.memory.gbrain.enabled = true;
+        other.memory.gbrain.source = "custom".into();
+        other.memory.gbrain.timeout_ms = 5000;
+
+        base.merge(other);
+
+        assert!(base.memory.gbrain.enabled);
+        assert_eq!(base.memory.gbrain.source, "custom");
+        assert_eq!(base.memory.gbrain.timeout_ms, 5000);
     }
 }

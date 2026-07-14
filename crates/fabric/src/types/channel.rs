@@ -75,20 +75,27 @@ mod tests {
             message_id: MessageId("42".into()),
             conversation_id: ConversationId("1001".into()),
             sender_id: ExternalSenderId("telegram:7".into()),
-            content: MessageContent::Text { text: "hello".into() },
+            content: MessageContent::Text {
+                text: "hello".into(),
+            },
             timestamp_ms: 1_720_000_000_000,
             reply_to_action: None,
             correlation_id: "telegram:42".into(),
         };
         let json = serde_json::to_string(&message).unwrap();
-        assert_eq!(serde_json::from_str::<InboundMessage>(&json).unwrap(), message);
+        assert_eq!(
+            serde_json::from_str::<InboundMessage>(&json).unwrap(),
+            message
+        );
     }
 
     #[test]
     fn outbound_actions_round_trip() {
         let message = OutboundMessage {
             conversation_id: ConversationId("1001".into()),
-            content: MessageContent::Text { text: "continue?".into() },
+            content: MessageContent::Text {
+                text: "continue?".into(),
+            },
             actions: vec![UserAction {
                 action_id: "approve:abc".into(),
                 label: "Approve".into(),
@@ -98,6 +105,9 @@ mod tests {
             correlation_id: "approval:abc".into(),
         };
         let json = serde_json::to_string(&message).unwrap();
-        assert_eq!(serde_json::from_str::<OutboundMessage>(&json).unwrap(), message);
+        assert_eq!(
+            serde_json::from_str::<OutboundMessage>(&json).unwrap(),
+            message
+        );
     }
 }

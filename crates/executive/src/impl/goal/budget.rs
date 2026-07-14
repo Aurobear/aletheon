@@ -37,11 +37,30 @@ pub struct GoalBudgetReservation {
 #[derive(Debug)]
 pub enum GoalBudgetError {
     GoalNotFound(GoalId),
-    InputTokenExhausted { limit: u64, used: u64, requested: u64 },
-    OutputTokenExhausted { limit: u64, used: u64, requested: u64 },
-    CostExhausted { limit: f64, used: f64, requested: f64 },
-    AttemptExhausted { limit: u32, used: u32, requested: u32 },
-    DeadlineExpired { deadline_ms: i64, now_ms: i64 },
+    InputTokenExhausted {
+        limit: u64,
+        used: u64,
+        requested: u64,
+    },
+    OutputTokenExhausted {
+        limit: u64,
+        used: u64,
+        requested: u64,
+    },
+    CostExhausted {
+        limit: f64,
+        used: f64,
+        requested: f64,
+    },
+    AttemptExhausted {
+        limit: u32,
+        used: u32,
+        requested: u32,
+    },
+    DeadlineExpired {
+        deadline_ms: i64,
+        now_ms: i64,
+    },
     DuplicateReservation(String),
     ReservationNotFound(String),
     Storage(String),
@@ -51,20 +70,48 @@ impl fmt::Display for GoalBudgetError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::GoalNotFound(id) => write!(f, "goal {id} not found"),
-            Self::InputTokenExhausted { limit, used, requested } => {
+            Self::InputTokenExhausted {
+                limit,
+                used,
+                requested,
+            } => {
                 write!(f, "input token budget exhausted: limit={limit}, used={used}, requested={requested}")
             }
-            Self::OutputTokenExhausted { limit, used, requested } => {
+            Self::OutputTokenExhausted {
+                limit,
+                used,
+                requested,
+            } => {
                 write!(f, "output token budget exhausted: limit={limit}, used={used}, requested={requested}")
             }
-            Self::CostExhausted { limit, used, requested } => {
-                write!(f, "cost budget exhausted: limit={limit}, used={used}, requested={requested}")
+            Self::CostExhausted {
+                limit,
+                used,
+                requested,
+            } => {
+                write!(
+                    f,
+                    "cost budget exhausted: limit={limit}, used={used}, requested={requested}"
+                )
             }
-            Self::AttemptExhausted { limit, used, requested } => {
-                write!(f, "attempt budget exhausted: limit={limit}, used={used}, requested={requested}")
+            Self::AttemptExhausted {
+                limit,
+                used,
+                requested,
+            } => {
+                write!(
+                    f,
+                    "attempt budget exhausted: limit={limit}, used={used}, requested={requested}"
+                )
             }
-            Self::DeadlineExpired { deadline_ms, now_ms } => {
-                write!(f, "deadline expired: deadline_ms={deadline_ms}, now_ms={now_ms}")
+            Self::DeadlineExpired {
+                deadline_ms,
+                now_ms,
+            } => {
+                write!(
+                    f,
+                    "deadline expired: deadline_ms={deadline_ms}, now_ms={now_ms}"
+                )
             }
             Self::DuplicateReservation(id) => write!(f, "duplicate reservation: {id}"),
             Self::ReservationNotFound(id) => write!(f, "reservation not found: {id}"),
@@ -516,10 +563,7 @@ mod tests {
 
         // Cannot settle again.
         let err = store
-            .settle_goal_budget(
-                &res.reservation_id,
-                GoalBudgetUsage::default(),
-            )
+            .settle_goal_budget(&res.reservation_id, GoalBudgetUsage::default())
             .unwrap_err();
         match err {
             GoalBudgetError::ReservationNotFound(_) => {}

@@ -51,17 +51,31 @@ impl GoalCoordinator {
 
         let current = match store.get_goal(goal_id)? {
             Some(g) => g,
-            None => return Ok(GoalTickOutcome::Noop { state: GoalState::Cancelled }),
+            None => {
+                return Ok(GoalTickOutcome::Noop {
+                    state: GoalState::Cancelled,
+                })
+            }
         };
 
         match current.state {
             GoalState::Completed | GoalState::Failed | GoalState::Cancelled => {
-                Ok(GoalTickOutcome::Noop { state: current.state })
+                Ok(GoalTickOutcome::Noop {
+                    state: current.state,
+                })
             }
-            GoalState::Draft => Ok(GoalTickOutcome::Noop { state: GoalState::Draft }),
-            GoalState::Suspended => Ok(GoalTickOutcome::Noop { state: GoalState::Suspended }),
-            GoalState::AwaitingHuman => Ok(GoalTickOutcome::Noop { state: GoalState::AwaitingHuman }),
-            GoalState::Blocked => Ok(GoalTickOutcome::Noop { state: GoalState::Blocked }),
+            GoalState::Draft => Ok(GoalTickOutcome::Noop {
+                state: GoalState::Draft,
+            }),
+            GoalState::Suspended => Ok(GoalTickOutcome::Noop {
+                state: GoalState::Suspended,
+            }),
+            GoalState::AwaitingHuman => Ok(GoalTickOutcome::Noop {
+                state: GoalState::AwaitingHuman,
+            }),
+            GoalState::Blocked => Ok(GoalTickOutcome::Noop {
+                state: GoalState::Blocked,
+            }),
             GoalState::Ready => {
                 let from = current.state;
                 let snapshot = store.transition_goal(
@@ -90,10 +104,13 @@ impl GoalCoordinator {
 
                 match budget_res {
                     Ok(_reservation) => {
-                        let input = format!("Goal #{}: {}", goal_id.0, current.spec.original_intent);
+                        let input =
+                            format!("Goal #{}: {}", goal_id.0, current.spec.original_intent);
                         Ok(GoalTickOutcome::TurnRequested { goal_id, input })
                     }
-                    Err(e) => Ok(GoalTickOutcome::BudgetBlocked { reason: e.to_string() }),
+                    Err(e) => Ok(GoalTickOutcome::BudgetBlocked {
+                        reason: e.to_string(),
+                    }),
                 }
             }
         }
@@ -170,8 +187,8 @@ impl GoalCoordinator {
 mod tests {
     use super::*;
     use fabric::goal::{GoalBudget, GoalSpec};
-    use fabric::ProcessId;
     use fabric::PrincipalId;
+    use fabric::ProcessId;
     use tempfile::NamedTempFile;
 
     fn setup() -> (GoalCoordinator, NamedTempFile) {

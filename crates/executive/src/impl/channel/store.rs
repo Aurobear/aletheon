@@ -195,10 +195,7 @@ impl ChannelStore {
              LIMIT ?2",
         )?;
         let rows: Vec<String> = stmt
-            .query_map(
-                rusqlite::params![channel, limit as i64],
-                |r| r.get(0),
-            )?
+            .query_map(rusqlite::params![channel, limit as i64], |r| r.get(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let mut msgs = Vec::with_capacity(rows.len());
         for row in rows {
@@ -343,9 +340,7 @@ mod tests {
             message_id: MessageId(message_id.into()),
             conversation_id: ConversationId("1001".into()),
             sender_id: ExternalSenderId("7".into()),
-            content: MessageContent::Text {
-                text: text.into(),
-            },
+            content: MessageContent::Text { text: text.into() },
             timestamp_ms: 1_720_000_000_000,
             reply_to_action: None,
             correlation_id: "corr-1".into(),
@@ -435,10 +430,7 @@ mod tests {
             store.inbox_status("telegram", "42").unwrap().as_deref(),
             Some("completed")
         );
-        assert_eq!(
-            store.cursor("telegram").unwrap().as_deref(),
-            Some("43")
-        );
+        assert_eq!(store.cursor("telegram").unwrap().as_deref(), Some("43"));
         assert_eq!(
             store.pending_outbox("telegram", 10).unwrap(),
             vec![outbound]

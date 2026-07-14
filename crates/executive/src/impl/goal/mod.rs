@@ -14,12 +14,10 @@ mod transition;
 pub use self::coordinator::{GoalCoordinator, GoalTickOutcome};
 
 use anyhow::{Context, Result};
-use fabric::goal::{
-    GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason,
-};
+use fabric::goal::{GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason};
 use fabric::objective::{Objective, ObjectiveStatus};
-use fabric::ProcessId;
 use fabric::PrincipalId;
+use fabric::ProcessId;
 use rusqlite::Connection;
 
 /// SQLite-backed objective store.
@@ -65,9 +63,7 @@ impl ObjectiveStore {
     ///          4=session_id, 5=scope, 6=created_at, 7=updated_at,
     ///          8=owner_id, 9=goal_state, 10=spec_json, 11=wait_json,
     ///          12=process_id, 13=version, 14=deadline_ms
-    pub(crate) fn map_goal_snapshot_row(
-        row: &rusqlite::Row,
-    ) -> rusqlite::Result<GoalSnapshot> {
+    pub(crate) fn map_goal_snapshot_row(row: &rusqlite::Row) -> rusqlite::Result<GoalSnapshot> {
         let spec_json: String = row.get(10)?;
         let spec: GoalSpec = serde_json::from_str(&spec_json).unwrap_or_else(|_| GoalSpec {
             original_intent: row.get::<_, String>(1).unwrap_or_default(),
@@ -78,8 +74,8 @@ impl ObjectiveStore {
         });
 
         let wait_json: Option<String> = row.get(11)?;
-        let wait_reason: Option<GoalWaitReason> = wait_json
-            .and_then(|s| serde_json::from_str(&s).ok());
+        let wait_reason: Option<GoalWaitReason> =
+            wait_json.and_then(|s| serde_json::from_str(&s).ok());
 
         let process_id_str: Option<String> = row.get(12)?;
         let process_id: Option<ProcessId> = process_id_str

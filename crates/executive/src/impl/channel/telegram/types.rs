@@ -177,10 +177,7 @@ mod tests {
         }"#;
         let resp: SendMessageResponse = serde_json::from_str(json).unwrap();
         assert!(resp.ok);
-        assert_eq!(
-            resp.result.unwrap().text.as_deref(),
-            Some("hello back")
-        );
+        assert_eq!(resp.result.unwrap().text.as_deref(), Some("hello back"));
     }
 
     // -- unknown fields are silently ignored ----------------------------------

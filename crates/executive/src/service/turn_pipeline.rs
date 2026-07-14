@@ -186,6 +186,8 @@ impl TurnPipeline {
         self.inject_fact_recall(&message, &mut effective_message)
             .await;
         self.inject_core_memory(&mut effective_message).await;
+        self.inject_gbrain_recall(&message, &mut effective_message)
+            .await;
         self.inject_skill_suggestion(&message, &mut effective_message)
             .await;
         self.decay_stale_facts().await;

@@ -66,10 +66,7 @@ impl ChannelTransport for FakeTransport {
         "telegram"
     }
 
-    async fn receive(
-        &self,
-        _cursor: Option<String>,
-    ) -> anyhow::Result<Vec<ProviderEnvelope>> {
+    async fn receive(&self, _cursor: Option<String>) -> anyhow::Result<Vec<ProviderEnvelope>> {
         Ok(vec![])
     }
 
@@ -113,9 +110,7 @@ fn owner_text(message_id: &str, correlation_id: &str, text: &str) -> InboundMess
         message_id,
         "owner",
         correlation_id,
-        MessageContent::Text {
-            text: text.into(),
-        },
+        MessageContent::Text { text: text.into() },
     )
 }
 
@@ -157,9 +152,7 @@ async fn crash_after_inbox_insert_recover_processes_pending() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("channels.db");
     let mut store = ChannelStore::open(&db_path).unwrap();
-    store
-        .bind("telegram", "owner", "owner", "active")
-        .unwrap();
+    store.bind("telegram", "owner", "owner", "active").unwrap();
     let msg = owner_text("42", "corr-recover-inbox", "hello from pending");
     let outcome = store.insert_inbound(&msg).unwrap();
     assert_eq!(outcome, InsertOutcome::Inserted);
@@ -192,10 +185,7 @@ async fn crash_after_inbox_insert_recover_processes_pending() {
     );
 
     // Cursor was advanced.
-    assert_eq!(
-        store3.cursor("telegram").unwrap().as_deref(),
-        Some("42")
-    );
+    assert_eq!(store3.cursor("telegram").unwrap().as_deref(), Some("42"));
 
     // Outbound was sent through transport.
     let sent = transport.sent.lock().await;
@@ -248,9 +238,7 @@ async fn crash_after_outbox_commit_flush_sends_without_turn() {
 /// leaving the inbox completed and the outbox pending.
 async fn do_crash_after_outbox_commit(db_path: &std::path::Path) {
     let store = ChannelStore::open(db_path).unwrap();
-    store
-        .bind("telegram", "owner", "owner", "active")
-        .unwrap();
+    store.bind("telegram", "owner", "owner", "active").unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
     transport.set_fail_next(true).await;
@@ -295,9 +283,7 @@ async fn crash_after_send_before_mark_retry_may_duplicate_outbound() {
 
     // Process a message normally (transport succeeds).
     let store = ChannelStore::open(&db_path).unwrap();
-    store
-        .bind("telegram", "owner", "owner", "active")
-        .unwrap();
+    store.bind("telegram", "owner", "owner", "active").unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
     let mut router = ChannelRouter::new(store, executor.clone());
@@ -314,7 +300,10 @@ async fn crash_after_send_before_mark_retry_may_duplicate_outbound() {
     assert_eq!(transport.sent.lock().await.len(), 1);
     let store_check = inspect(&db_path);
     assert_eq!(
-        store_check.inbox_status("telegram", "50").unwrap().as_deref(),
+        store_check
+            .inbox_status("telegram", "50")
+            .unwrap()
+            .as_deref(),
         Some("completed")
     );
 
@@ -406,9 +395,7 @@ async fn unknown_sender_recovery_rejected_no_executor() {
     // Insert a pending message from an unbound sender.
     let mut store = ChannelStore::open(&db_path).unwrap();
     // No binding for "stranger" — only "owner" is bound.
-    store
-        .bind("telegram", "owner", "owner", "active")
-        .unwrap();
+    store.bind("telegram", "owner", "owner", "active").unwrap();
     let msg = make_inbound(
         "77",
         "stranger",
@@ -446,10 +433,7 @@ async fn unknown_sender_recovery_rejected_no_executor() {
     );
 
     // Cursor was advanced (so the same message is not re-fetched).
-    assert_eq!(
-        store3.cursor("telegram").unwrap().as_deref(),
-        Some("77")
-    );
+    assert_eq!(store3.cursor("telegram").unwrap().as_deref(), Some("77"));
 
     // No outbound was sent.
     assert!(

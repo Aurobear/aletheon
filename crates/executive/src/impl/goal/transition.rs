@@ -83,7 +83,9 @@ impl ObjectiveStore {
             .map_err(|e| GoalTransitionError::Storage(e.to_string()))?;
 
         // Load current state.
-        let current = self.get_goal(id)?.ok_or(GoalTransitionError::NotFound(id))?;
+        let current = self
+            .get_goal(id)?
+            .ok_or(GoalTransitionError::NotFound(id))?;
 
         // Guard: immutable intent.
         // (The spec is never updated by transition_goal.)
@@ -113,9 +115,7 @@ impl ObjectiveStore {
         }
 
         let new_version = current.version + 1;
-        let wait_json = wait_reason
-            .map(|w| serde_json::to_string(w))
-            .transpose()?;
+        let wait_json = wait_reason.map(serde_json::to_string).transpose()?;
         let event_type = format!("{:?}", next).to_lowercase();
         let payload_json = serde_json::to_string(event_payload)?;
 
@@ -156,8 +156,7 @@ impl ObjectiveStore {
         tx.commit()?;
 
         // Return fresh snapshot.
-        self.get_goal(id)?
-            .ok_or(GoalTransitionError::NotFound(id))
+        self.get_goal(id)?.ok_or(GoalTransitionError::NotFound(id))
     }
 }
 
@@ -303,7 +302,13 @@ mod tests {
         // Version 0 event: 'created' (from create_goal).
         // Version 1 event: 'ready->running'.
         store
-            .transition_goal(g.id, 0, GoalState::Running, None, &serde_json::json!({"by": "test"}))
+            .transition_goal(
+                g.id,
+                0,
+                GoalState::Running,
+                None,
+                &serde_json::json!({"by": "test"}),
+            )
             .unwrap();
 
         let count: i64 = store

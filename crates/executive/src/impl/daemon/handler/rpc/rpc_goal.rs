@@ -177,7 +177,12 @@ impl RequestHandler {
             budget: Default::default(),
         };
         let store = self.subsystems.memory.objective_store.lock().await;
-        match store.create_goal(&fabric::PrincipalId(session_id.clone()), &session_id, scope, &spec) {
+        match store.create_goal(
+            &fabric::PrincipalId(session_id.clone()),
+            &session_id,
+            scope,
+            &spec,
+        ) {
             Ok(snapshot) => json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -208,12 +213,14 @@ impl RequestHandler {
             Ok(snapshots) => {
                 let items: Vec<_> = snapshots
                     .iter()
-                    .map(|s| json!({
-                        "id": s.id.0,
-                        "state": s.state.as_str(),
-                        "intent": s.spec.original_intent,
-                        "version": s.version,
-                    }))
+                    .map(|s| {
+                        json!({
+                            "id": s.id.0,
+                            "state": s.state.as_str(),
+                            "intent": s.spec.original_intent,
+                            "version": s.version,
+                        })
+                    })
                     .collect();
                 json!({
                     "jsonrpc": "2.0",

@@ -3,9 +3,9 @@
 //! Validates that recover_goals() correctly handles every GoalState
 //! after a simulated daemon restart.
 
+use executive::r#impl::goal::ObjectiveStore;
 use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState, GoalWaitReason};
 use fabric::PrincipalId;
-use executive::r#impl::goal::ObjectiveStore;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,7 +72,7 @@ fn draft_remains_draft() {
 fn ready_remains_ready() {
     let store = setup();
     let spec = make_spec("ready goal");
-    let g = store
+    let _g = store
         .create_goal(&PrincipalId("test".into()), "s", "session", &spec)
         .unwrap();
 

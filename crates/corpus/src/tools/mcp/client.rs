@@ -199,6 +199,15 @@ impl McpClient {
                 }),
             )
             .await?;
+        if result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            // Do not copy server-provided text into the error: it may contain
+            // credentials or other sensitive request context.
+            anyhow::bail!("MCP tool '{}' reported an application error", tool_name);
+        }
         Ok(result)
     }
 }
@@ -308,7 +317,10 @@ impl McpConnectionManager {
         for (server_name, client_arc) in &self.clients {
             // We need to block briefly to read the tools list.
             // Since connect_all has already completed, the mutex is uncontested.
-            let client = client_arc.blocking_lock();
+            let Ok(client) = client_arc.try_lock() else {
+                tracing::warn!(server = %server_name, "MCP client busy during tool discovery");
+                continue;
+            };
             let prefix = if self.config.tool_name_prefix {
                 format!("{}__", server_name)
             } else {
@@ -362,5 +374,17 @@ impl McpConnectionManager {
     /// Number of connected servers.
     pub fn connected_count(&self) -> usize {
         self.clients.len()
+    }
+
+    /// Whether a connected server advertised every required tool.
+    pub fn server_has_tools(&self, server_name: &str, required: &[&str]) -> bool {
+        self.clients.get(server_name).is_some_and(|client| {
+            let Ok(client) = client.try_lock() else {
+                return false;
+            };
+            required
+                .iter()
+                .all(|name| client.tools.iter().any(|tool| tool.name == *name))
+        })
     }
 }
