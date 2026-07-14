@@ -8,7 +8,7 @@ pub const MAX_GMAIL_QUERY_BYTES: usize = 1_024;
 pub const MAX_GOOGLE_PAGE_SIZE: u16 = 100;
 pub const MAX_GMAIL_BODY_BYTES: usize = 256 * 1_024;
 pub const MAX_CALENDAR_RANGE_MS: i64 = 366 * 24 * 60 * 60 * 1_000;
-const MAX_PROVIDER_ID_BYTES: usize = 1_024;
+pub const MAX_GOOGLE_PROVIDER_ID_BYTES: usize = 1_024;
 const MAX_TEXT_BYTES: usize = 8 * 1_024;
 const MAX_TIMEZONE_BYTES: usize = 128;
 
@@ -25,14 +25,14 @@ impl ProviderRecordRef {
     pub fn validate(&self) -> Result<(), GoogleContractError> {
         bounded(
             &self.provider_object_id,
-            MAX_PROVIDER_ID_BYTES,
+            MAX_GOOGLE_PROVIDER_ID_BYTES,
             "provider_object_id",
         )?;
         if self.fetched_at_ms < 0 || self.source_timestamp_ms < 0 {
             return Err(GoogleContractError::InvalidField("timestamp"));
         }
         if let Some(marker) = &self.etag_or_history {
-            bounded(marker, MAX_PROVIDER_ID_BYTES, "etag_or_history")?;
+            bounded(marker, MAX_GOOGLE_PROVIDER_ID_BYTES, "etag_or_history")?;
         }
         Ok(())
     }
@@ -51,7 +51,7 @@ impl GmailQuery {
         bounded(&self.query, MAX_GMAIL_QUERY_BYTES, "query")?;
         valid_page_size(self.page_size)?;
         if let Some(token) = &self.page_token {
-            bounded(token, MAX_PROVIDER_ID_BYTES, "page_token")?;
+            bounded(token, MAX_GOOGLE_PROVIDER_ID_BYTES, "page_token")?;
         }
         Ok(())
     }
@@ -95,7 +95,7 @@ pub struct GmailMessageSummary {
 impl GmailMessageSummary {
     pub fn validate(&self) -> Result<(), GoogleContractError> {
         self.source.validate()?;
-        bounded(&self.thread_id, MAX_PROVIDER_ID_BYTES, "thread_id")?;
+        bounded(&self.thread_id, MAX_GOOGLE_PROVIDER_ID_BYTES, "thread_id")?;
         bounded_allow_empty(&self.subject, MAX_TEXT_BYTES, "subject")?;
         bounded_allow_empty(&self.from, MAX_TEXT_BYTES, "from")?;
         bounded_allow_empty(&self.snippet, MAX_TEXT_BYTES, "snippet")
@@ -134,7 +134,7 @@ impl GmailMessagePage {
             }
         }
         if let Some(token) = &self.next_page_token {
-            bounded(token, MAX_PROVIDER_ID_BYTES, "next_page_token")?;
+            bounded(token, MAX_GOOGLE_PROVIDER_ID_BYTES, "next_page_token")?;
         }
         Ok(())
     }
@@ -161,7 +161,7 @@ impl CalendarTimeRange {
         bounded(&self.timezone, MAX_TIMEZONE_BYTES, "timezone")?;
         valid_page_size(self.page_size)?;
         if let Some(token) = &self.page_token {
-            bounded(token, MAX_PROVIDER_ID_BYTES, "page_token")?;
+            bounded(token, MAX_GOOGLE_PROVIDER_ID_BYTES, "page_token")?;
         }
         Ok(())
     }
@@ -204,7 +204,11 @@ pub struct CalendarEvent {
 impl CalendarEvent {
     pub fn validate(&self) -> Result<(), GoogleContractError> {
         self.source.validate()?;
-        bounded(&self.calendar_id, MAX_PROVIDER_ID_BYTES, "calendar_id")?;
+        bounded(
+            &self.calendar_id,
+            MAX_GOOGLE_PROVIDER_ID_BYTES,
+            "calendar_id",
+        )?;
         bounded_allow_empty(&self.summary, MAX_TEXT_BYTES, "summary")?;
         if let Some(location) = &self.location {
             bounded_allow_empty(location, MAX_TEXT_BYTES, "location")?;
@@ -236,7 +240,7 @@ impl CalendarEventPage {
             }
         }
         if let Some(token) = &self.next_page_token {
-            bounded(token, MAX_PROVIDER_ID_BYTES, "next_page_token")?;
+            bounded(token, MAX_GOOGLE_PROVIDER_ID_BYTES, "next_page_token")?;
         }
         Ok(())
     }
