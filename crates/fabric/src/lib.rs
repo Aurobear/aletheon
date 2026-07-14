@@ -149,6 +149,11 @@ pub use types::channel::{
     ActionType, ChannelHealth, ChannelId, ConversationId, ExternalSenderId, InboundMessage,
     MessageContent, OutboundMessage, UserAction,
 };
+pub use types::coding_job::{
+    ChangedFile, ChangedFileKind, CodingJobId, CodingJobReport, CodingJobSpec, CodingJobStatus,
+    CodingNetworkPolicy, VerificationCheck, VerificationReport, VerificationSeverity,
+    WorkspaceBoundary,
+};
 pub use types::context::{Context, TraceState};
 pub use types::genome::Genome;
 pub use types::goal::{
