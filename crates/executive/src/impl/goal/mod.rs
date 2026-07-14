@@ -7,9 +7,11 @@
 //! while keeping legacy Objective CRUD intact.
 
 mod budget;
+pub mod coordinator;
 mod migrations;
 pub(crate) mod store;
 mod transition;
+pub use self::coordinator::{GoalCoordinator, GoalTickOutcome};
 
 use anyhow::{Context, Result};
 use fabric::goal::{
