@@ -136,6 +136,7 @@ impl GoogleApiClient {
                 }
                 401 => return Err(GoogleApiError::ReauthorizationRequired),
                 403 => return Err(GoogleApiError::ScopeDenied),
+                404 | 410 => return Err(GoogleApiError::CursorExpired),
                 429 if !rate_retried => {
                     rate_retried = true;
                     let delay = retry_after(&response);
@@ -200,6 +201,7 @@ pub enum GoogleApiError {
     MalformedResponse,
     ResponseTooLarge,
     Cancelled,
+    CursorExpired,
 }
 
 impl fmt::Display for GoogleApiError {
@@ -215,6 +217,7 @@ impl fmt::Display for GoogleApiError {
             Self::MalformedResponse => "google_malformed_response",
             Self::ResponseTooLarge => "google_response_too_large",
             Self::Cancelled => "google_cancelled",
+            Self::CursorExpired => "google_cursor_expired",
         })
     }
 }
