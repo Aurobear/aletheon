@@ -10,10 +10,12 @@ mod attempt;
 mod budget;
 pub mod coordinator;
 mod migrations;
+mod retry;
 pub(crate) mod store;
 mod transition;
 pub use self::coordinator::{GoalCoordinator, GoalTickOutcome};
 pub use attempt::GoalAttempt;
+pub use retry::{RetryDecision, RetryPolicy};
 
 use anyhow::{Context, Result};
 use fabric::goal::{GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason};
