@@ -139,4 +139,282 @@ impl RequestHandler {
             }),
         }
     }
+
+    // -----------------------------------------------------------------------
+    // M2 Goal lifecycle RPC (new — beside legacy API)
+    // -----------------------------------------------------------------------
+
+    pub(super) async fn handle_goal_create(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let p = &request["params"];
+        let intent = p["intent"].as_str().unwrap_or("");
+        if intent.is_empty() {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32602, "message": "intent must not be empty" }
+            });
+        }
+        let scope = p["scope"].as_str().unwrap_or("session");
+        let session_id = match self.get_or_create_session(None).await {
+            Ok(v) => v.0,
+            Err(e) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32000, "message": e.to_string() }
+                })
+            }
+        };
+        let spec = fabric::GoalSpec {
+            original_intent: intent.to_string(),
+            desired_state: vec![],
+            constraints: vec![],
+            acceptance_criteria: vec![],
+            budget: Default::default(),
+        };
+        let store = self.subsystems.memory.objective_store.lock().await;
+        match store.create_goal(&fabric::PrincipalId(session_id.clone()), &session_id, scope, &spec) {
+            Ok(snapshot) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "id": snapshot.id.0,
+                    "state": snapshot.state.as_str(),
+                    "intent": snapshot.spec.original_intent,
+                    "version": snapshot.version,
+                }
+            }),
+            Err(e) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32020, "message": e.to_string() }
+            }),
+        }
+    }
+
+    pub(super) async fn handle_goal_list(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let p = &request["params"];
+        let limit = p["limit"].as_u64().unwrap_or(20).min(100) as usize;
+        let store = self.subsystems.memory.objective_store.lock().await;
+        match store.list_goals(&[], limit) {
+            Ok(snapshots) => {
+                let items: Vec<_> = snapshots
+                    .iter()
+                    .map(|s| json!({
+                        "id": s.id.0,
+                        "state": s.state.as_str(),
+                        "intent": s.spec.original_intent,
+                        "version": s.version,
+                    }))
+                    .collect();
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "goals": items }
+                })
+            }
+            Err(e) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32020, "message": e.to_string() }
+            }),
+        }
+    }
+
+    pub(super) async fn handle_goal_pause(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let goal_id = match request["params"]["goal_id"].as_i64() {
+            Some(v) if v > 0 => fabric::GoalId(v),
+            _ => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": "invalid goal_id" }
+                });
+            }
+        };
+        let store = self.subsystems.memory.objective_store.lock().await;
+        let current = match store.get_goal(goal_id) {
+            Ok(Some(g)) => g,
+            Ok(None) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32021, "message": "goal not found" }
+                });
+            }
+            Err(e) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32020, "message": e.to_string() }
+                });
+            }
+        };
+        match store.transition_goal(
+            goal_id,
+            current.version,
+            fabric::GoalState::Suspended,
+            None,
+            &serde_json::json!({"action": "pause"}),
+        ) {
+            Ok(snapshot) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "id": snapshot.id.0,
+                    "state": snapshot.state.as_str(),
+                    "version": snapshot.version,
+                }
+            }),
+            Err(e) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32022, "message": e.to_string() }
+            }),
+        }
+    }
+
+    pub(super) async fn handle_goal_run(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let goal_id = match request["params"]["goal_id"].as_i64() {
+            Some(v) if v > 0 => fabric::GoalId(v),
+            _ => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": "invalid goal_id" }
+                });
+            }
+        };
+        let store = self.subsystems.memory.objective_store.lock().await;
+        let current = match store.get_goal(goal_id) {
+            Ok(Some(g)) => g,
+            Ok(None) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32021, "message": "goal not found" }
+                });
+            }
+            Err(e) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32020, "message": e.to_string() }
+                });
+            }
+        };
+        // Resume: map Suspended/Blocked to Ready.
+        let next = match current.state {
+            fabric::GoalState::Suspended | fabric::GoalState::Blocked => fabric::GoalState::Ready,
+            other => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32022, "message": format!("cannot run from state {}", other) }
+                });
+            }
+        };
+        match store.transition_goal(
+            goal_id,
+            current.version,
+            next,
+            None,
+            &serde_json::json!({"action": "run"}),
+        ) {
+            Ok(snapshot) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "id": snapshot.id.0,
+                    "state": snapshot.state.as_str(),
+                    "version": snapshot.version,
+                }
+            }),
+            Err(e) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32022, "message": e.to_string() }
+            }),
+        }
+    }
+
+    pub(super) async fn handle_goal_cancel(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let goal_id = match request["params"]["goal_id"].as_i64() {
+            Some(v) if v > 0 => fabric::GoalId(v),
+            _ => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": "invalid goal_id" }
+                });
+            }
+        };
+        let store = self.subsystems.memory.objective_store.lock().await;
+        let current = match store.get_goal(goal_id) {
+            Ok(Some(g)) => g,
+            Ok(None) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32021, "message": "goal not found" }
+                });
+            }
+            Err(e) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32020, "message": e.to_string() }
+                });
+            }
+        };
+        if current.state.is_terminal() {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32022, "message": "goal already terminal" }
+            });
+        }
+        match store.transition_goal(
+            goal_id,
+            current.version,
+            fabric::GoalState::Cancelled,
+            None,
+            &serde_json::json!({"action": "cancel"}),
+        ) {
+            Ok(snapshot) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "id": snapshot.id.0,
+                    "state": snapshot.state.as_str(),
+                    "version": snapshot.version,
+                }
+            }),
+            Err(e) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32022, "message": e.to_string() }
+            }),
+        }
+    }
 }
