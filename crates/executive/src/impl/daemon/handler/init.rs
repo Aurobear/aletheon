@@ -57,7 +57,7 @@ use crate::r#impl::channel::router::{
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
 use crate::r#impl::goal::ObjectiveStore;
-use crate::r#impl::runtime::ProviderWorkerRuntime;
+use crate::r#impl::runtime::{register_pi_runtime, ProviderWorkerRuntime};
 use aletheon_kernel::supervision::RestartPolicy;
 use corpus::hook::builtin::audit_hook;
 use corpus::security::storm_breaker::StormBreaker;
@@ -173,6 +173,7 @@ impl RequestHandler {
         registry: &ProviderRegistry,
         model_routing: crate::core::config::ModelRoutingConfig,
         goal_runtime: cognit::config::GoalRuntimeConfig,
+        pi_runtime: cognit::config::PiRuntimeConfig,
         evolution_enabled: bool,
         event_bus: Option<Arc<CommunicationBus>>,
         cancel_token: CancellationToken,
@@ -673,6 +674,23 @@ impl RequestHandler {
             )?;
             if !registered.is_empty() {
                 info!(runtime_ids = ?registered, "Goal runtimes registered");
+            }
+        }
+
+        // Coding jobs are fail-closed: only a probed namespace backend may
+        // register the stable `pi-coder` runtime ID.
+        {
+            let sandbox = corpus::security::sandbox::BubblewrapBackend::probe_async(clock.clone())
+                .await
+                .map(|backend| Arc::new(backend) as Arc<dyn fabric::sandbox::SandboxBackend>);
+            let mut runtime = subsystems.runtime.lock().await;
+            if register_pi_runtime(
+                runtime.sub_agent_spawner_mut(),
+                &pi_runtime,
+                sandbox,
+                clock.clone(),
+            )? {
+                info!(runtime_id = "pi-coder", "Pi coding runtime registered");
             }
         }
 

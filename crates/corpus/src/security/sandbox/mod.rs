@@ -19,7 +19,8 @@ pub use container::{ContainerBackend, ContainerResourceLimits, ContainerRuntime,
 pub use env::SandboxEnvironment;
 pub use executor::{SandboxExecutor, SandboxPreference};
 pub use fabric::sandbox::{
-    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
+    SandboxResult,
 };
 pub use glob_scanner::GlobScanner;
 pub use noop::NoopBackend;

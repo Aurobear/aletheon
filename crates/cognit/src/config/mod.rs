@@ -5,7 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::fmt;
+use std::path::{Path, PathBuf};
 
 /// Dynamic model routing — maps task types to model specs.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -51,6 +52,83 @@ pub struct AppConfig {
     pub telegram: TelegramConfig,
     #[serde(default)]
     pub goal_runtime: Option<GoalRuntimeConfig>,
+    #[serde(default)]
+    pub pi_runtime: PiRuntimeConfig,
+}
+
+/// Fail-closed configuration for the isolated Pi coding runtime.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PiRuntimeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub executable: PathBuf,
+    #[serde(default)]
+    pub trusted_executable_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub fixed_args: Vec<String>,
+    #[serde(default)]
+    pub worktree_base: PathBuf,
+    #[serde(default = "default_pi_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_pi_max_output_bytes")]
+    pub max_output_bytes: usize,
+    #[serde(default)]
+    pub allowed_paths: Vec<PathBuf>,
+    #[serde(default)]
+    pub forbidden_paths: Vec<PathBuf>,
+    #[serde(default = "default_true")]
+    pub require_namespace_isolation: bool,
+    /// Pi has no network access by default and initial M4 rejects enabling it.
+    #[serde(default)]
+    pub network_enabled: bool,
+}
+
+impl Default for PiRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            executable: PathBuf::new(),
+            trusted_executable_dir: None,
+            fixed_args: Vec::new(),
+            worktree_base: PathBuf::new(),
+            timeout_ms: default_pi_timeout_ms(),
+            max_output_bytes: default_pi_max_output_bytes(),
+            allowed_paths: Vec::new(),
+            forbidden_paths: Vec::new(),
+            require_namespace_isolation: true,
+            network_enabled: false,
+        }
+    }
+}
+
+impl fmt::Debug for PiRuntimeConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PiRuntimeConfig")
+            .field("enabled", &self.enabled)
+            .field("executable", &self.executable)
+            .field("trusted_executable_dir", &self.trusted_executable_dir)
+            .field("fixed_arg_count", &self.fixed_args.len())
+            .field("worktree_base", &self.worktree_base)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("max_output_bytes", &self.max_output_bytes)
+            .field("allowed_paths", &self.allowed_paths)
+            .field("forbidden_paths", &self.forbidden_paths)
+            .field(
+                "require_namespace_isolation",
+                &self.require_namespace_isolation,
+            )
+            .field("network_enabled", &self.network_enabled)
+            .finish()
+    }
+}
+
+fn default_pi_timeout_ms() -> u64 {
+    30 * 60 * 1_000
+}
+
+fn default_pi_max_output_bytes() -> usize {
+    1024 * 1024
 }
 
 /// Provider/model routing for durable Goal worker attempts.
@@ -594,6 +672,9 @@ impl AppConfig {
         if other.goal_runtime.is_some() {
             self.goal_runtime = other.goal_runtime;
         }
+        if other.pi_runtime != PiRuntimeConfig::default() {
+            self.pi_runtime = other.pi_runtime;
+        }
 
         // Sandbox: override if non-default
         if other.sandbox.preference != default_sandbox_preference() {
@@ -764,6 +845,42 @@ mod tests {
         let mut base = AppConfig::default();
         base.merge(parsed.clone());
         assert_eq!(base.goal_runtime, parsed.goal_runtime);
+    }
+
+    #[test]
+    fn pi_runtime_is_disabled_and_network_denied_by_default() {
+        let config = AppConfig::default().pi_runtime;
+        assert!(!config.enabled);
+        assert!(!config.network_enabled);
+        assert!(config.require_namespace_isolation);
+    }
+
+    #[test]
+    fn pi_runtime_parses_merges_and_debug_omits_fixed_arguments() {
+        let parsed: AppConfig = toml::from_str(
+            r#"
+            [pi_runtime]
+            enabled = true
+            executable = "/opt/aletheon/bin/pi"
+            fixed_args = ["--api-key", "super-secret"]
+            worktree_base = "/var/lib/aletheon/pi-worktrees"
+            timeout_ms = 42000
+            max_output_bytes = 8192
+            allowed_paths = ["crates", "Cargo.toml"]
+            forbidden_paths = [".git", ".env"]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(parsed.pi_runtime.fixed_args.len(), 2);
+        assert!(!parsed.pi_runtime.network_enabled);
+
+        let debug = format!("{:?}", parsed.pi_runtime);
+        assert!(!debug.contains("super-secret"));
+        assert!(debug.contains("fixed_arg_count"));
+
+        let mut base = AppConfig::default();
+        base.merge(parsed.clone());
+        assert_eq!(base.pi_runtime, parsed.pi_runtime);
     }
 
     #[test]
