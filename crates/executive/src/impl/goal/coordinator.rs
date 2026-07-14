@@ -13,9 +13,11 @@ use crate::r#impl::goal::{
     AttemptRequest, CodingVerifier, ObjectiveStore, RetryPolicy,
 };
 use aletheon_kernel::operation::OperationTable;
-use fabric::goal::{GoalId, GoalSnapshot, GoalState};
+use fabric::goal::{GoalId, GoalSnapshot, GoalState, GoalWaitReason};
 use fabric::Clock;
 use fabric::ProcessId;
+use fabric::{ExternalEventEnvelope, ExternalEventId, ExternalIdentityId, PrincipalId};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -30,6 +32,36 @@ pub enum GoalTickOutcome {
     Transitioned { from: GoalState, to: GoalState },
     TurnRequested { goal_id: GoalId, input: String },
     BudgetBlocked { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoogleEventWaitCondition {
+    pub account_id: ExternalIdentityId,
+    pub event_id: Option<ExternalEventId>,
+    pub object_id: Option<String>,
+    pub source_after_ms: Option<i64>,
+    pub source_before_ms: Option<i64>,
+}
+
+impl GoogleEventWaitCondition {
+    pub fn key(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    fn matches(&self, event: &ExternalEventEnvelope) -> bool {
+        self.account_id == event.account_id
+            && self.event_id.is_none_or(|id| id == event.id)
+            && self
+                .object_id
+                .as_deref()
+                .is_none_or(|id| id == event.object.object_id)
+            && self
+                .source_after_ms
+                .is_none_or(|after| event.source_timestamp_ms >= after)
+            && self
+                .source_before_ms
+                .is_none_or(|before| event.source_timestamp_ms <= before)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +222,51 @@ impl GoalCoordinator {
                 }
             }
         }
+    }
+
+    /// Wake only goals with an explicit persisted external-event condition.
+    pub fn wake_for_google_event(
+        &self,
+        principal: &PrincipalId,
+        event: &ExternalEventEnvelope,
+    ) -> Result<Vec<GoalId>, GoalTransitionError> {
+        let store = self.store.lock().unwrap();
+        let goals = store.list_goals(
+            &[
+                GoalState::AwaitingHuman,
+                GoalState::Suspended,
+                GoalState::Blocked,
+            ],
+            100,
+        )?;
+        let mut woken = Vec::new();
+        for goal in goals {
+            if &goal.owner != principal || goal.state.is_terminal() {
+                continue;
+            }
+            let Some(GoalWaitReason::ExternalEvent { key }) = &goal.wait_reason else {
+                continue;
+            };
+            let Ok(condition) = serde_json::from_str::<GoogleEventWaitCondition>(key) else {
+                continue;
+            };
+            if !condition.matches(event) {
+                continue;
+            }
+            store.transition_goal(
+                goal.id,
+                goal.version,
+                GoalState::Ready,
+                None,
+                &serde_json::json!({
+                    "action":"google_external_event_wake",
+                    "event_id":event.id.to_string(),
+                    "object_id":event.object.object_id,
+                }),
+            )?;
+            woken.push(goal.id);
+        }
+        Ok(woken)
     }
 
     /// Set the process link for a goal (atomic versioned event).

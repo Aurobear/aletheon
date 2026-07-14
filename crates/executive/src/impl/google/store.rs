@@ -1,7 +1,7 @@
 //! Atomic normalized Google event, projection, outbox, and cursor persistence.
 
 use crate::r#impl::goal::migrations;
-use fabric::{ExternalEventEnvelope, ExternalEventId, ExternalIdentityId};
+use fabric::{ExternalEventEnvelope, ExternalEventId, ExternalIdentityId, PrincipalId};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -26,6 +26,15 @@ impl SyncStream {
             Self::GmailHistory => "gmail_history",
             Self::Calendar => "calendar",
             Self::DriveChanges => "drive_changes",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, rusqlite::Error> {
+        match value {
+            "gmail_history" => Ok(Self::GmailHistory),
+            "calendar" => Ok(Self::Calendar),
+            "drive_changes" => Ok(Self::DriveChanges),
+            _ => Err(rusqlite::Error::InvalidQuery),
         }
     }
 }
@@ -79,6 +88,32 @@ pub struct GoogleOutboxClaim {
     pub outbox_id: String,
     pub event: ExternalEventEnvelope,
     pub attempt_count: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoogleSubscriptionQuery {
+    pub object_id: Option<String>,
+    pub important_only: bool,
+    pub source_after_ms: Option<i64>,
+    pub source_before_ms: Option<i64>,
+    pub telegram_conversation_id: Option<String>,
+    pub current_task_id: Option<String>,
+    pub propose_memory: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoogleSubscription {
+    pub subscription_id: String,
+    pub principal_id: PrincipalId,
+    pub account_id: ExternalIdentityId,
+    pub stream: SyncStream,
+    pub event_kinds: Vec<String>,
+    pub query: GoogleSubscriptionQuery,
+    pub cursor_generation: u64,
+    pub state: String,
+    pub version: u64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 pub struct GoogleSyncStore {
@@ -478,6 +513,128 @@ impl GoogleSyncStore {
         )? == 1)
     }
 
+    pub fn put_subscription(
+        &self,
+        subscription: &GoogleSubscription,
+        expected_version: Option<u64>,
+    ) -> Result<GoogleSubscription, SyncStoreError> {
+        validate_subscription(subscription)?;
+        let event_kinds = serde_json::to_string(&subscription.event_kinds)?;
+        let query = serde_json::to_string(&subscription.query)?;
+        match expected_version {
+            None => {
+                self.db.execute(
+                    "INSERT INTO google_subscriptions(
+                        subscription_id,principal_id,account_id,stream,event_kinds_json,
+                        query_json,cursor_generation,state,version,created_at_ms,updated_at_ms
+                     ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,0,?9,?10)",
+                    params![
+                        subscription.subscription_id,
+                        subscription.principal_id.0,
+                        subscription.account_id.to_string(),
+                        subscription.stream.as_str(),
+                        event_kinds,
+                        query,
+                        subscription.cursor_generation,
+                        subscription.state,
+                        subscription.created_at_ms,
+                        subscription.updated_at_ms
+                    ],
+                )?;
+            }
+            Some(expected) => {
+                let changed = self.db.execute(
+                    "UPDATE google_subscriptions SET
+                        event_kinds_json=?1,query_json=?2,cursor_generation=?3,state=?4,
+                        version=version+1,updated_at_ms=?5
+                     WHERE subscription_id=?6 AND version=?7",
+                    params![
+                        event_kinds,
+                        query,
+                        subscription.cursor_generation,
+                        subscription.state,
+                        subscription.updated_at_ms,
+                        subscription.subscription_id,
+                        expected
+                    ],
+                )?;
+                if changed != 1 {
+                    return Err(SyncStoreError::CursorConflict {
+                        expected_version: expected,
+                        actual_version: expected.saturating_add(1),
+                    });
+                }
+            }
+        }
+        self.subscription(&subscription.subscription_id)?
+            .ok_or_else(|| SyncStoreError::Storage("subscription write disappeared".into()))
+    }
+
+    pub fn subscription(
+        &self,
+        subscription_id: &str,
+    ) -> Result<Option<GoogleSubscription>, SyncStoreError> {
+        self.db
+            .query_row(
+                "SELECT principal_id,account_id,stream,event_kinds_json,query_json,
+                        cursor_generation,state,version,created_at_ms,updated_at_ms
+                 FROM google_subscriptions WHERE subscription_id=?1",
+                [subscription_id],
+                |row| decode_subscription(row, subscription_id),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn matching_subscriptions(
+        &self,
+        event: &ExternalEventEnvelope,
+        stream: SyncStream,
+        cursor_generation: u64,
+    ) -> Result<Vec<GoogleSubscription>, SyncStoreError> {
+        let mut statement = self.db.prepare(
+            "SELECT subscription_id,principal_id,account_id,stream,event_kinds_json,query_json,
+                    cursor_generation,state,version,created_at_ms,updated_at_ms
+             FROM google_subscriptions
+             WHERE account_id=?1 AND stream=?2 AND state='active' AND cursor_generation=?3
+             ORDER BY subscription_id LIMIT 100",
+        )?;
+        let subscriptions = statement
+            .query_map(
+                params![
+                    event.account_id.to_string(),
+                    stream.as_str(),
+                    cursor_generation
+                ],
+                |row| {
+                    let id = row.get::<_, String>(0)?;
+                    decode_subscription_offset(row, &id, 1)
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(subscriptions
+            .into_iter()
+            .filter(|subscription| subscription_matches(subscription, event))
+            .collect())
+    }
+
+    pub fn account_is_active(
+        &self,
+        account_id: ExternalIdentityId,
+    ) -> Result<bool, SyncStoreError> {
+        self.db
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM external_identities i
+                    JOIN capability_grants g USING(identity_id)
+                    WHERE i.identity_id=?1 AND i.state='active' AND g.state='active'
+                )",
+                [account_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     #[cfg(test)]
     fn fail_after(&self, statement_index: usize) {
         self.fail_after_statement.set(Some(statement_index));
@@ -574,6 +731,126 @@ fn contains_forbidden_sensitive_field(value: &serde_json::Value) -> bool {
         serde_json::Value::Array(values) => values.iter().any(contains_forbidden_sensitive_field),
         _ => false,
     }
+}
+
+fn validate_subscription(subscription: &GoogleSubscription) -> Result<(), SyncStoreError> {
+    let query = &subscription.query;
+    if subscription.subscription_id.is_empty()
+        || subscription.subscription_id.len() > 1_024
+        || subscription.principal_id.0.is_empty()
+        || subscription.event_kinds.is_empty()
+        || subscription.event_kinds.len() > 32
+        || subscription
+            .event_kinds
+            .iter()
+            .any(|kind| kind.is_empty() || kind.len() > 128)
+        || !matches!(subscription.state.as_str(), "active" | "paused" | "revoked")
+        || subscription.created_at_ms < 0
+        || subscription.updated_at_ms < subscription.created_at_ms
+        || query
+            .object_id
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 1_024)
+        || query
+            .telegram_conversation_id
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 256)
+        || query
+            .current_task_id
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 256)
+        || query.source_after_ms.is_some_and(|value| value < 0)
+        || query.source_before_ms.is_some_and(|value| value < 0)
+        || matches!((query.source_after_ms, query.source_before_ms), (Some(after), Some(before)) if after > before)
+    {
+        Err(SyncStoreError::InvalidInput)
+    } else {
+        Ok(())
+    }
+}
+
+fn decode_subscription(
+    row: &rusqlite::Row<'_>,
+    subscription_id: &str,
+) -> rusqlite::Result<GoogleSubscription> {
+    decode_subscription_offset(row, subscription_id, 0)
+}
+
+fn decode_subscription_offset(
+    row: &rusqlite::Row<'_>,
+    subscription_id: &str,
+    offset: usize,
+) -> rusqlite::Result<GoogleSubscription> {
+    let account: String = row.get(offset + 1)?;
+    let stream: String = row.get(offset + 2)?;
+    let event_kinds: String = row.get(offset + 3)?;
+    let query: String = row.get(offset + 4)?;
+    Ok(GoogleSubscription {
+        subscription_id: subscription_id.to_owned(),
+        principal_id: PrincipalId(row.get(offset)?),
+        account_id: ExternalIdentityId(uuid::Uuid::parse_str(&account).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                offset + 1,
+                rusqlite::types::Type::Text,
+                error.into(),
+            )
+        })?),
+        stream: SyncStream::parse(&stream)?,
+        event_kinds: serde_json::from_str(&event_kinds).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                offset + 3,
+                rusqlite::types::Type::Text,
+                error.into(),
+            )
+        })?,
+        query: serde_json::from_str(&query).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                offset + 4,
+                rusqlite::types::Type::Text,
+                error.into(),
+            )
+        })?,
+        cursor_generation: row.get(offset + 5)?,
+        state: row.get(offset + 6)?,
+        version: row.get(offset + 7)?,
+        created_at_ms: row.get(offset + 8)?,
+        updated_at_ms: row.get(offset + 9)?,
+    })
+}
+
+fn subscription_matches(subscription: &GoogleSubscription, event: &ExternalEventEnvelope) -> bool {
+    if !subscription
+        .event_kinds
+        .iter()
+        .any(|kind| kind == event.event.kind())
+    {
+        return false;
+    }
+    let query = &subscription.query;
+    if query
+        .object_id
+        .as_deref()
+        .is_some_and(|id| id != event.object.object_id)
+    {
+        return false;
+    }
+    if query
+        .source_after_ms
+        .is_some_and(|after| event.source_timestamp_ms < after)
+        || query
+            .source_before_ms
+            .is_some_and(|before| event.source_timestamp_ms > before)
+    {
+        return false;
+    }
+    if query.important_only {
+        return matches!(
+            &event.event,
+            fabric::GoogleEvent::MailReceived(change) | fabric::GoogleEvent::MailUpdated(change)
+                if change.message.important
+        );
+    }
+    true
 }
 
 fn validate_cursor(token: Option<&str>) -> Result<(), SyncStoreError> {
