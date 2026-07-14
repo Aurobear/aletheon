@@ -41,6 +41,29 @@ impl ToolRegistry {
             })
             .collect()
     }
+
+    pub fn register_google_read_tools(
+        &mut self,
+        gmail: Option<Arc<dyn crate::tools::google::GmailCapability>>,
+        calendar: Option<Arc<dyn crate::tools::google::CalendarCapability>>,
+        accounts: Arc<dyn crate::tools::google::GoogleAccountResolver>,
+    ) -> Result<Vec<RegistrationId>, AgentError> {
+        let mut registrations = Vec::new();
+        if let Some(gmail) = gmail {
+            registrations.push(self.register(Arc::new(
+                crate::tools::google::GoogleGmailSearchTool::new(gmail.clone(), accounts.clone()),
+            ))?);
+            registrations.push(self.register(Arc::new(
+                crate::tools::google::GoogleGmailReadTool::new(gmail, accounts.clone()),
+            ))?);
+        }
+        if let Some(calendar) = calendar {
+            registrations.push(self.register(Arc::new(
+                crate::tools::google::GoogleCalendarListTool::new(calendar, accounts),
+            ))?);
+        }
+        Ok(registrations)
+    }
 }
 
 impl Registry<Arc<dyn Tool>> for ToolRegistry {
