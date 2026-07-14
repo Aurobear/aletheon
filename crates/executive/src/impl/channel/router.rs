@@ -275,6 +275,114 @@ impl ChannelRouter {
         Ok(())
     }
 
+    // -----------------------------------------------------------------------
+    // Restart recovery
+    // -----------------------------------------------------------------------
+
+    /// Recover pending inbox messages after a restart.
+    pub async fn recover_pending_inbox(
+        &mut self,
+        transport: &dyn ChannelTransport,
+        limit: usize,
+    ) -> anyhow::Result<usize> {
+        let channel = transport.channel_id();
+        let pending = self.store.pending_inbound(channel, limit)?;
+        let mut count = 0usize;
+
+        for msg in &pending {
+            let channel_str = msg.channel_id.0.as_str();
+            let principal = self
+                .store
+                .resolve_principal(channel_str, &msg.sender_id.0)?;
+            if principal.is_none() {
+                self.reject_inbound(channel_str, &msg.message_id.0, &msg.message_id.0)?;
+                count += 1;
+                continue;
+            }
+            let routed = route_content(&msg.content);
+            let mut ai_reply: Option<String> = None;
+            if let RoutedInput::Chat(text) = &routed {
+                match self.turn_executor.execute(text, &msg.correlation_id).await {
+                    Ok(reply) => ai_reply = Some(reply),
+                    Err(e) => {
+                        self.fail_inbound(channel_str, &msg.message_id.0, &e.to_string())?;
+                        return Err(e);
+                    }
+                }
+            }
+            let outbound = build_outbound(
+                &routed,
+                &msg.conversation_id,
+                &msg.message_id,
+                &msg.correlation_id,
+                ai_reply.as_deref(),
+            );
+            self.store.complete_inbound(
+                channel_str,
+                &msg.message_id.0,
+                &msg.message_id.0,
+                &outbound,
+            )?;
+            match transport.send(&outbound).await {
+                Ok(_) => {
+                    self.store.db.execute(
+                        "UPDATE channel_outbox SET status = 'sent', updated_at = datetime('now')
+                         WHERE correlation_id = ?1",
+                        rusqlite::params![msg.correlation_id],
+                    )?;
+                }
+                Err(e) => {
+                    self.store.db.execute(
+                        "UPDATE channel_outbox SET status = 'failed', last_error = ?1, updated_at = datetime('now')
+                         WHERE correlation_id = ?2",
+                        rusqlite::params![e.to_string(), msg.correlation_id],
+                    )?;
+                }
+            }
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Flush pending and failed outbox messages after a restart.
+    ///
+    /// # At-least-once boundary
+    ///
+    /// If the original `transport.send()` succeeded but the outbox-status
+    /// update crashed, this method will re-send the same outbound message.
+    /// The provider may deliver the same reply twice. The LLM turn is never
+    /// re-executed because inbox completion and outbox insertion happen
+    /// atomically before the send.
+    pub async fn flush_pending_outbox(
+        &self,
+        transport: &dyn ChannelTransport,
+        limit: usize,
+    ) -> anyhow::Result<usize> {
+        let channel = transport.channel_id();
+        let pending = self.store.pending_outbox(channel, limit)?;
+        let mut count = 0usize;
+        for outbound in &pending {
+            match transport.send(outbound).await {
+                Ok(_) => {
+                    self.store.db.execute(
+                        "UPDATE channel_outbox SET status = 'sent', updated_at = datetime('now')
+                         WHERE correlation_id = ?1",
+                        rusqlite::params![outbound.correlation_id],
+                    )?;
+                }
+                Err(e) => {
+                    self.store.db.execute(
+                        "UPDATE channel_outbox SET status = 'failed', last_error = ?1, updated_at = datetime('now')
+                         WHERE correlation_id = ?2",
+                        rusqlite::params![e.to_string(), outbound.correlation_id],
+                    )?;
+                }
+            }
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// Expose the store for tests to inspect state.
     #[cfg(test)]
     #[allow(dead_code)]

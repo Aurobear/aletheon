@@ -280,11 +280,13 @@ impl ChannelStore {
         Ok(cursor)
     }
 
-    /// Return pending outbox messages for `channel`, ordered oldest-first.
+    /// Return pending or failed outbox messages for `channel`, ordered oldest-first.
+    /// Includes both 'pending' and 'failed' status so that send retries pick
+    /// up previously failed outbound messages.
     pub fn pending_outbox(&self, channel: &str, limit: usize) -> Result<Vec<OutboundMessage>> {
         let mut stmt = self.db.prepare(
             "SELECT payload_json FROM channel_outbox
-             WHERE channel_id = ?1 AND status = 'pending'
+             WHERE channel_id = ?1 AND status IN ('pending','failed')
              ORDER BY created_at ASC
              LIMIT ?2",
         )?;
@@ -298,6 +300,26 @@ impl ChannelStore {
             msgs.push(msg);
         }
         Ok(msgs)
+    }
+
+    /// Return the total number of outbox rows for `channel` (all statuses).
+    pub fn outbox_count(&self, channel: &str) -> Result<usize> {
+        let count: i64 = self.db.query_row(
+            "SELECT COUNT(*) FROM channel_outbox WHERE channel_id = ?1",
+            rusqlite::params![channel],
+            |r| r.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
+    /// Force an outbox row to a specific status (used by restart-recovery tests).
+    pub fn set_outbox_status(&self, correlation_id: &str, status: &str) -> Result<()> {
+        self.db.execute(
+            "UPDATE channel_outbox SET status = ?1, updated_at = datetime('now')
+             WHERE correlation_id = ?2",
+            rusqlite::params![status, correlation_id],
+        )?;
+        Ok(())
     }
 }
 
