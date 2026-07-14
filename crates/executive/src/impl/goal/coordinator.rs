@@ -6,11 +6,15 @@
 
 use crate::r#impl::goal::budget::GoalBudgetRequest;
 use crate::r#impl::goal::transition::GoalTransitionError;
-use crate::r#impl::goal::{AttemptCoordinator, AttemptExecutor, ObjectiveStore, RetryPolicy};
+use crate::r#impl::goal::{
+    AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
+    AttemptRequest, ObjectiveStore, RetryPolicy,
+};
 use fabric::goal::{GoalId, GoalSnapshot, GoalState};
 use fabric::Clock;
 use fabric::ProcessId;
 use std::sync::{Arc, Mutex};
+use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
 // GoalTickOutcome
@@ -47,6 +51,17 @@ impl GoalCoordinator {
         retry_policy: RetryPolicy,
     ) -> AttemptCoordinator {
         AttemptCoordinator::new(self.store.clone(), executor, clock, retry_policy)
+    }
+
+    /// Schedule exactly one durable runtime attempt for a Running Goal.
+    /// A retry decision is persisted for a future tick; this method never loops.
+    pub async fn tick_attempt(
+        &self,
+        attempt_coordinator: &AttemptCoordinator,
+        request: AttemptRequest,
+        cancel: CancellationToken,
+    ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
+        attempt_coordinator.execute_one(request, cancel).await
     }
 
     /// Advance a goal by one bounded step.

@@ -255,6 +255,44 @@ impl ChannelStore {
         Ok(())
     }
 
+    /// Persist a proactive outbound notification before any network send.
+    /// Returns false when the correlation ID was already enqueued.
+    pub fn enqueue_outbound(&self, channel: &str, outbound: &OutboundMessage) -> Result<bool> {
+        let payload = serde_json::to_string(outbound)?;
+        let changed = self.db.execute(
+            "INSERT INTO channel_outbox
+                (channel_id, conversation_id, payload_json, correlation_id)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(correlation_id) DO NOTHING",
+            rusqlite::params![
+                channel,
+                outbound.conversation_id.0,
+                payload,
+                outbound.correlation_id,
+            ],
+        )?;
+        Ok(changed == 1)
+    }
+
+    pub fn mark_outbound_sent(&self, correlation_id: &str, provider_id: &str) -> Result<()> {
+        self.db.execute(
+            "UPDATE channel_outbox SET status = 'sent', provider_message_id = ?1,
+             updated_at = datetime('now') WHERE correlation_id = ?2",
+            rusqlite::params![provider_id, correlation_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_outbound_failed(&self, correlation_id: &str, error: &str) -> Result<()> {
+        self.db.execute(
+            "UPDATE channel_outbox SET status = 'failed', last_error = ?1,
+             attempt_count = attempt_count + 1, updated_at = datetime('now')
+             WHERE correlation_id = ?2",
+            rusqlite::params![error, correlation_id],
+        )?;
+        Ok(())
+    }
+
     /// Return the status of an inbox message, or `None` if not found.
     pub fn inbox_status(&self, channel: &str, message_id: &str) -> Result<Option<String>> {
         let mut stmt = self.db.prepare(
