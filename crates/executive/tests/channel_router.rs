@@ -25,7 +25,12 @@ struct FakeTurnExecutor {
 
 #[async_trait::async_trait]
 impl ChannelTurnExecutor for FakeTurnExecutor {
-    async fn execute(&self, message: &str, _correlation_id: &str) -> anyhow::Result<String> {
+    async fn execute(
+        &self,
+        _principal: &str,
+        message: &str,
+        _correlation_id: &str,
+    ) -> anyhow::Result<String> {
         self.calls.lock().await.push(message.to_string());
         Ok(format!("reply:{}", message))
     }
@@ -326,7 +331,12 @@ async fn executor_failure_inbox_retryable_cursor_unchanged() {
     struct FailingExecutor;
     #[async_trait::async_trait]
     impl ChannelTurnExecutor for FailingExecutor {
-        async fn execute(&self, _message: &str, _correlation_id: &str) -> anyhow::Result<String> {
+        async fn execute(
+            &self,
+            _principal: &str,
+            _message: &str,
+            _correlation_id: &str,
+        ) -> anyhow::Result<String> {
             anyhow::bail!("simulated ai failure")
         }
     }

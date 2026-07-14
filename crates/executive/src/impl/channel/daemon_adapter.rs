@@ -170,12 +170,18 @@ impl DaemonChannelTurnExecutor {
 
 #[async_trait::async_trait]
 impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
-    async fn execute(&self, message: &str, correlation_id: &str) -> anyhow::Result<String> {
+    async fn execute(
+        &self,
+        principal: &str,
+        message: &str,
+        correlation_id: &str,
+    ) -> anyhow::Result<String> {
         let resp = self
             .orchestrator
-            .execute_turn(
+            .execute_authenticated_turn(
                 serde_json::Value::String(correlation_id.to_string()),
                 message,
+                PrincipalId(principal.to_owned()),
             )
             .await;
 

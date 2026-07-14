@@ -120,6 +120,7 @@ impl TurnPipeline {
         operation_id: OperationId,
         main_pid: ProcessId,
         scope_token: CancellationToken,
+        principal: PrincipalId,
     ) -> anyhow::Result<serde_json::Value> {
         // -- SelfField review --
         let intent = Intent {
@@ -375,6 +376,7 @@ impl TurnPipeline {
         let tool_executor = Arc::new(TurnToolExecutor::new(
             &self.subsystems,
             sess_id.clone(),
+            principal,
             turn_count,
             working_dir,
             operation_id,

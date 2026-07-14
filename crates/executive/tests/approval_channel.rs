@@ -16,7 +16,7 @@ use tempfile::{NamedTempFile, TempDir};
 struct NoTurn;
 #[async_trait]
 impl ChannelTurnExecutor for NoTurn {
-    async fn execute(&self, _: &str, _: &str) -> anyhow::Result<String> {
+    async fn execute(&self, _: &str, _: &str, _: &str) -> anyhow::Result<String> {
         panic!("callback must not invoke LLM")
     }
 }
