@@ -148,7 +148,9 @@ impl DiGraph {
         while let Some(node_id) = queue.pop_front() {
             result.push(node_id.to_string());
             for edge in self.outgoing(node_id) {
-                let deg = in_degree.get_mut(edge.to.as_str()).unwrap();
+                let deg = in_degree
+                    .get_mut(edge.to.as_str())
+                    .ok_or_else(|| format!("edge target '{}' not found in graph", edge.to))?;
                 *deg -= 1;
                 if *deg == 0 {
                     queue.push_back(&edge.to);
@@ -182,7 +184,10 @@ impl DiGraph {
         let order = self.topological_sort()?;
 
         for node_id in &order {
-            let node = self.nodes.get(node_id).unwrap();
+            let node = self
+                .nodes
+                .get(node_id)
+                .ok_or_else(|| format!("node '{}' not found", node_id))?;
 
             // Check if all incoming edges are satisfied
             let incoming = self.incoming(node_id);

@@ -335,6 +335,14 @@ mod tests {
             ) -> Result<fabric::AgoraCommit, String> {
                 Err("not implemented".into())
             }
+            async fn reject(
+                &self,
+                _s: &str,
+                _id: uuid::Uuid,
+                _reason: fabric::RejectReason,
+            ) -> std::result::Result<(), String> {
+                Err("StubAgora: reject not implemented".into())
+            }
         }
 
         let ports = ServicePorts::new().with_agora(Arc::new(StubAgora));

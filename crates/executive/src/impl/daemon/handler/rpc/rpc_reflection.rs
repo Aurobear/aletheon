@@ -58,7 +58,16 @@ impl RequestHandler {
                 .clone();
             let iteration = self.subsystems.runtime.lock().await.iteration();
             let turn = {
-                let (_sid, sm_arc) = self.get_or_create_session(None).await;
+                let (_sid, sm_arc) = match self.get_or_create_session(None).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32000, "message": e.to_string() }
+                        })
+                    }
+                };
                 let tc = sm_arc.lock().await.turn_count();
                 tc
             };

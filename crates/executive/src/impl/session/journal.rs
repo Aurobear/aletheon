@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Session event types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,14 +129,20 @@ impl EventJournal {
             while let Some(msg) = rx.recv().await {
                 match msg {
                     WriterMsg::Flush(done) => {
-                        let _ = done.send(());
+                        if done.send(()).is_err() {
+                            warn!("Journal flush receiver dropped");
+                        }
                         continue;
                     }
                     WriterMsg::Entry(entry) => {
                         // Write to JSONL
                         let json = serde_json::to_string(&entry).unwrap_or_default();
-                        let _ = file.write_all(json.as_bytes()).await;
-                        let _ = file.write_all(b"\n").await;
+                        if let Err(e) = file.write_all(json.as_bytes()).await {
+                            warn!("Failed to write journal entry: {e}");
+                        }
+                        if let Err(e) = file.write_all(b"\n").await {
+                            warn!("Failed to write journal newline: {e}");
+                        }
 
                         // Write to SQLite index
                         let event_type = match &entry.event {

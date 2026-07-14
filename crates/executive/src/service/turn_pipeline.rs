@@ -35,7 +35,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Shared turn orchestration pipeline.
 ///
@@ -120,7 +120,7 @@ impl TurnPipeline {
         operation_id: OperationId,
         main_pid: ProcessId,
         scope_token: CancellationToken,
-    ) -> serde_json::Value {
+    ) -> anyhow::Result<serde_json::Value> {
         // -- SelfField review --
         let intent = Intent {
             action: "chat".to_string(),
@@ -148,7 +148,9 @@ impl TurnPipeline {
             Ok(fabric::Verdict::Deny { ref reason }) => {
                 warn!(reason = %reason, "SelfField denied chat intent");
                 self.sf_narrate("chat_denied", reason).await;
-                return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32010, "message": format!("Intent denied by SelfField: {}", reason)}});
+                return Ok(
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32010, "message": format!("Intent denied by SelfField: {}", reason)}}),
+                );
             }
             Ok(fabric::Verdict::SandboxFirst { ref reason }) => {
                 warn!(reason = %reason, "SelfField requires sandbox; tools will be gated through admission");
@@ -157,7 +159,9 @@ impl TurnPipeline {
             }
             Err(ref e) => {
                 warn!(error = %e, "SelfField review error — denying turn (fail-closed)");
-                return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32010, "message": format!("SelfField review failed (fail-closed): {}", e)}});
+                return Ok(
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32010, "message": format!("SelfField review failed (fail-closed): {}", e)}}),
+                );
             }
             _ => {}
         }
@@ -188,7 +192,7 @@ impl TurnPipeline {
 
         // -- Configured pre_turn hook scripts --
         if !self.subsystems.corpus.hooks_config.pre_turn.is_empty() {
-            let hook_session_id = self.get_or_create_session(None).await.0;
+            let hook_session_id = self.get_or_create_session(None).await?.0;
             let hook_input = serde_json::json!({"prompt": message, "session_id": hook_session_id});
             for script_path in &self.subsystems.corpus.hooks_config.pre_turn {
                 let path = crate::r#impl::daemon::handler::format::expand_tilde(script_path);
@@ -255,7 +259,7 @@ impl TurnPipeline {
         // -- PreTurn hooks --
         {
             let (sess_id, turn_count) = {
-                let (_sid, sm_arc) = self.get_or_create_session(None).await;
+                let (_sid, sm_arc) = self.get_or_create_session(None).await?;
                 let sm = sm_arc.lock().await;
                 (sm.session_id.clone(), sm.turn_count())
             };
@@ -273,7 +277,9 @@ impl TurnPipeline {
             match hr.execute(&ctx).await {
                 HookResult::Block { reason } => {
                     warn!(reason = %reason, "PreTurn hook blocked");
-                    return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32015, "message": format!("Blocked by hook: {}", reason)}});
+                    return Ok(
+                        json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32015, "message": format!("Blocked by hook: {}", reason)}}),
+                    );
                 }
                 HookResult::Inject(text) => {
                     effective_message.push_str(&text);
@@ -285,13 +291,13 @@ impl TurnPipeline {
 
         // Push user message into session history
         {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let (_sid, sm_arc) = self.get_or_create_session(None).await?;
             let mut sm = sm_arc.lock().await;
             sm.push_user(&message).await;
         }
         // Persist user message to recall memory
         {
-            let (sess_id, sm_arc) = self.get_or_create_session(None).await;
+            let (sess_id, sm_arc) = self.get_or_create_session(None).await?;
             let _ = self
                 .subsystems
                 .memory
@@ -323,7 +329,7 @@ impl TurnPipeline {
             tools.definitions()
         };
         let working_dir = std::env::current_dir().unwrap_or_default();
-        let (sess_id, sm_arc) = self.get_or_create_session(None).await;
+        let (sess_id, sm_arc) = self.get_or_create_session(None).await?;
         let turn_count = sm_arc.lock().await.turn_count();
         drop(sm_arc);
 
@@ -485,7 +491,7 @@ impl TurnPipeline {
 
         // History compaction
         let existing_messages = {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let (_sid, sm_arc) = self.get_or_create_session(None).await?;
             let mut sm = sm_arc.lock().await;
             let _ = sm.compact_if_needed(&*self.llm).await;
             let mut full_history = sm.history().to_vec();
@@ -590,7 +596,9 @@ impl TurnPipeline {
                         if let Some(ref tx) = *guard {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
                                 if let Ok(json_str) = event_to_json(&client_event) {
-                                    let _ = tx.send(json_str).await;
+                                    if tx.send(json_str).await.is_err() {
+                                        debug!("Event sink closed, dropping event");
+                                    }
                                 }
                             }
                         }
@@ -645,7 +653,12 @@ impl TurnPipeline {
                         if let Some(ref tx) = *guard {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
                                 if let Ok(json_str) = event_to_json(&client_event) {
-                                    let _ = tx.send(json_str).await;
+                                    if tx.send(json_str).await.is_err() {
+                                        debug!(
+                                            "Event sink closed during drain, stopping event stream"
+                                        );
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -660,7 +673,9 @@ impl TurnPipeline {
         if !had_turn_done {
             let guard = notify_tx.lock().await;
             if let Some(ref tx) = *guard {
-                let _ = tx.send(json!({"jsonrpc": "2.0", "method": "event", "params": {"type": "turn_done"}}).to_string()).await;
+                if tx.send(json!({"jsonrpc": "2.0", "method": "event", "params": {"type": "turn_done"}}).to_string()).await.is_err() {
+                    warn!("Event sink closed, unable to send turn_done event");
+                }
             }
         }
 
@@ -729,7 +744,7 @@ impl TurnPipeline {
 
         // Session history push
         let turn = if turn_succeeded {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let (_sid, sm_arc) = self.get_or_create_session(None).await?;
             let mut sm = sm_arc.lock().await;
             if !tool_calls_for_session.is_empty() {
                 let content_blocks: Vec<ContentBlock> = tool_calls_for_session
@@ -763,13 +778,13 @@ impl TurnPipeline {
             let _ = sm.compact_if_needed(&*self.llm).await;
             sm.turn_count()
         } else {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let (_sid, sm_arc) = self.get_or_create_session(None).await?;
             let sm = sm_arc.lock().await;
             sm.turn_count()
         };
 
         if turn_succeeded {
-            let sess_id = self.get_or_create_session(None).await.0;
+            let sess_id = self.get_or_create_session(None).await?.0;
             let _ = self
                 .subsystems
                 .memory
@@ -824,7 +839,7 @@ impl TurnPipeline {
             }
         }
 
-        json!({"jsonrpc": "2.0", "id": id, "result": {"response": text, "turn": turn}})
+        Ok(json!({"jsonrpc": "2.0", "id": id, "result": {"response": text, "turn": turn}}))
     }
 }
 

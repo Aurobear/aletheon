@@ -189,7 +189,7 @@ pub trait AgoraOps: Send + Sync {
         author: ProcessId,
     ) -> std::result::Result<AgoraProposal, String> {
         let _ = (session, base_version, operation, author);
-        unimplemented!("propose: not implemented")
+        Err("AgoraOps::propose not implemented for this backend".into())
     }
 
     /// Commit a previously-created proposal by id. Returns the resulting
@@ -200,7 +200,7 @@ pub trait AgoraOps: Send + Sync {
         proposal_id: Uuid,
     ) -> std::result::Result<AgoraCommit, String> {
         let _ = (session, proposal_id);
-        unimplemented!("commit: not implemented")
+        Err("AgoraOps::commit not implemented for this backend".into())
     }
 
     /// Reject a pending proposal by id, removing it from the proposal set.
@@ -218,7 +218,7 @@ pub trait AgoraOps: Send + Sync {
         reason: RejectReason,
     ) -> std::result::Result<(), String> {
         let _ = (session, proposal_id, reason);
-        unimplemented!("reject: not implemented")
+        Err("AgoraOps::reject not implemented for this backend".into())
     }
 
     /// Return all commits with version strictly greater than `since_version`.

@@ -63,24 +63,30 @@ impl SessionManager {
     /// Push a user message into the conversation history and journal.
     pub async fn push_user(&mut self, content: &str) {
         self.messages.push(Message::user(content));
-        let _ = self
+        if let Err(e) = self
             .journal
             .append(SessionEvent::UserMessage {
                 content: content.to_string(),
             })
-            .await;
+            .await
+        {
+            warn!("Failed to append user message to journal: {e}");
+        }
         debug!(len = content.len(), "Pushed user message");
     }
 
     /// Push an assistant message into the conversation history and journal.
     pub async fn push_assistant(&mut self, content: &str) {
         self.messages.push(Message::assistant(content));
-        let _ = self
+        if let Err(e) = self
             .journal
             .append(SessionEvent::AssistantMessage {
                 content: content.to_string(),
             })
-            .await;
+            .await
+        {
+            warn!("Failed to append assistant message to journal: {e}");
+        }
         debug!(len = content.len(), "Pushed assistant message");
     }
 
@@ -100,28 +106,34 @@ impl SessionManager {
         for block in &message.content {
             match block {
                 ContentBlock::ToolUse { id, name, input } => {
-                    let _ = self
+                    if let Err(e) = self
                         .journal
                         .append(SessionEvent::ToolUseBlock {
                             tool_use_id: id.clone(),
                             tool_name: name.clone(),
                             input: input.clone(),
                         })
-                        .await;
+                        .await
+                    {
+                        warn!("Failed to append tool use block to journal: {e}");
+                    }
                 }
                 ContentBlock::ToolResult {
                     tool_use_id,
                     content,
                     is_error,
                 } => {
-                    let _ = self
+                    if let Err(e) = self
                         .journal
                         .append(SessionEvent::ToolResultBlock {
                             tool_use_id: tool_use_id.clone(),
                             content: content.clone(),
                             is_error: *is_error,
                         })
-                        .await;
+                        .await
+                    {
+                        warn!("Failed to append tool result block to journal: {e}");
+                    }
                 }
                 _ => {}
             }
@@ -288,16 +300,21 @@ impl SessionManager {
                 Role::System => {}
             }
         }
-        let _ = self.journal.flush().await;
+        if let Err(e) = self.journal.flush().await {
+            warn!("Failed to flush journal after compaction persist: {e}");
+        }
     }
 
     /// Write a checkpoint boundary to the journal.
     pub async fn save_checkpoint(&mut self) {
         let iteration = self.turn_count();
-        let _ = self
+        if let Err(e) = self
             .journal
             .append(SessionEvent::CheckpointBoundary { iteration })
-            .await;
+            .await
+        {
+            warn!("Failed to append checkpoint to journal: {e}");
+        }
         info!(iteration, "Checkpoint saved");
     }
 

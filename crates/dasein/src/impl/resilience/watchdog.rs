@@ -162,7 +162,7 @@ mod tests {
         assert!(layer.is_alive());
         // Artificially expire by setting last_beat far in the past
         {
-            let mut t = layer.last_beat.lock().unwrap();
+            let mut t = layer.last_beat.lock().unwrap_or_else(|e| e.into_inner());
             *t = MonoTime(0);
         }
         assert!(!layer.is_alive());
@@ -183,7 +183,11 @@ mod tests {
         let wd = WatchdogTimer::new(test_clock());
         // Artificially expire L2 by setting its last_beat far in the past.
         {
-            let mut t = wd.l2_runtime.last_beat.lock().unwrap();
+            let mut t = wd
+                .l2_runtime
+                .last_beat
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             *t = MonoTime(0);
         }
         let expired = wd.expired_layers();

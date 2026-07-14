@@ -86,7 +86,7 @@ impl DaemonTurnOrchestrator {
         // Delegate to shared TurnPipeline
         self.pipeline
             .run(
-                id,
+                id.clone(),
                 message.to_string(),
                 turn_request,
                 operation.id,
@@ -94,5 +94,8 @@ impl DaemonTurnOrchestrator {
                 scope_token,
             )
             .await
+            .unwrap_or_else(|e| {
+                json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": e.to_string()}})
+            })
     }
 }

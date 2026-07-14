@@ -84,7 +84,7 @@ impl PriorityChannel {
     /// envelope is sent through the mpsc channel.
     async fn send(&self, envelope: Envelope, sequence: &mut u64) -> Result<()> {
         {
-            let mut heap = self.heap.lock().unwrap();
+            let mut heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
             heap.push(PriorityEnvelope {
                 envelope,
                 sequence: *sequence,
@@ -94,7 +94,7 @@ impl PriorityChannel {
 
         // Send the highest-priority envelope from the heap
         let to_send = {
-            let mut heap = self.heap.lock().unwrap();
+            let mut heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
             heap.pop()
         };
 

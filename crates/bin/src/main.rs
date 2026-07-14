@@ -7,6 +7,7 @@
 //!   -m `msg`      Send single message to daemon
 //!   version      Print version + git commit
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -239,12 +240,22 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
             Ok(_) => {
                 let file_layer = tracing_subscriber::fmt::layer()
                     .with_ansi(false)
-                    .with_writer(move || {
-                        fs::OpenOptions::new()
+                    .with_writer(move || -> Box<dyn Write> {
+                        match fs::OpenOptions::new()
                             .create(true)
                             .append(true)
                             .open(&log_path)
-                            .expect("failed to open log file for append")
+                        {
+                            Ok(f) => Box::new(f),
+                            Err(e) => {
+                                eprintln!(
+                                    "Warning: log file '{}' became unwritable after init: {}. Disabling file logging.",
+                                    log_path.display(),
+                                    e
+                                );
+                                Box::new(std::io::sink())
+                            }
+                        }
                     });
                 subscriber.with(file_layer).init();
                 return;
