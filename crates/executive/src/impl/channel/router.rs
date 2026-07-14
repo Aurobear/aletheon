@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use fabric::channel::{ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage};
-use fabric::{GoalId, GoalSnapshot};
+use fabric::{AttemptId, GoalId, GoalSnapshot};
+
+use crate::r#impl::goal::{AttemptCoordinationOutcome, RetryDecision};
 
 use super::store::{ChannelStore, InsertOutcome};
 
@@ -85,6 +87,87 @@ pub enum RoutedInput {
     Unsupported(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalProgressKind {
+    Succeeded,
+    RetryBackoff,
+    Escalated,
+    AwaitingHuman,
+    Failed,
+    Cancelled,
+}
+
+impl GoalProgressKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::RetryBackoff => "retry_backoff",
+            Self::Escalated => "escalated",
+            Self::AwaitingHuman => "awaiting_human",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// Bounded proactive Goal notification. Raw provider output and errors are
+/// deliberately absent from this contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalProgress {
+    pub goal_id: GoalId,
+    pub attempt_id: AttemptId,
+    pub kind: GoalProgressKind,
+}
+
+impl GoalProgress {
+    pub fn from_outcome(outcome: &AttemptCoordinationOutcome) -> Self {
+        match outcome {
+            AttemptCoordinationOutcome::Succeeded { attempt, .. } => Self {
+                goal_id: attempt.goal_id,
+                attempt_id: attempt.id,
+                kind: GoalProgressKind::Succeeded,
+            },
+            AttemptCoordinationOutcome::Failed {
+                attempt, decision, ..
+            } => Self {
+                goal_id: attempt.goal_id,
+                attempt_id: attempt.id,
+                kind: match decision {
+                    RetryDecision::RetrySame { .. } => GoalProgressKind::RetryBackoff,
+                    RetryDecision::Escalate { .. } => GoalProgressKind::Escalated,
+                    RetryDecision::AwaitHuman { .. } => GoalProgressKind::AwaitingHuman,
+                    RetryDecision::Fail { .. } => GoalProgressKind::Failed,
+                    RetryDecision::Cancel => GoalProgressKind::Cancelled,
+                },
+            },
+        }
+    }
+
+    fn text(&self) -> String {
+        let status = match self.kind {
+            GoalProgressKind::Succeeded => "completed successfully",
+            GoalProgressKind::RetryBackoff => "will retry after bounded backoff",
+            GoalProgressKind::Escalated => "escalated to reviewer",
+            GoalProgressKind::AwaitingHuman => "is awaiting human input",
+            GoalProgressKind::Failed => "failed",
+            GoalProgressKind::Cancelled => "was cancelled",
+        };
+        format!(
+            "Goal {} attempt {} {status}.",
+            self.goal_id.0, self.attempt_id.0
+        )
+    }
+
+    fn correlation_id(&self) -> String {
+        format!(
+            "goal:{}:attempt:{}:{}",
+            self.goal_id.0,
+            self.attempt_id.0,
+            self.kind.as_str()
+        )
+    }
+}
+
 /// Classify a [`MessageContent`] into a [`RoutedInput`].
 ///
 /// This is a pure function with no side-effects or async — easy to test.
@@ -141,6 +224,44 @@ impl ChannelRouter {
     pub fn with_goal_executor(mut self, executor: Arc<dyn ChannelGoalExecutor>) -> Self {
         self.goal_executor = Some(executor);
         self
+    }
+
+    /// Persist a proactive Goal progress notification, then attempt delivery.
+    /// The caller can only construct `progress` from an already-persisted
+    /// AttemptCoordinator outcome, preserving Goal-event-before-send ordering.
+    pub async fn notify_goal_progress(
+        &self,
+        transport: &dyn ChannelTransport,
+        conversation_id: ConversationId,
+        progress: &GoalProgress,
+    ) -> anyhow::Result<bool> {
+        let outbound = OutboundMessage {
+            conversation_id,
+            content: MessageContent::Text {
+                text: progress.text(),
+            },
+            actions: vec![],
+            reply_to: None,
+            correlation_id: progress.correlation_id(),
+        };
+        if !self
+            .store
+            .enqueue_outbound(transport.channel_id(), &outbound)?
+        {
+            return Ok(false);
+        }
+        match transport.send(&outbound).await {
+            Ok(provider_id) => {
+                self.store
+                    .mark_outbound_sent(&outbound.correlation_id, &provider_id)?;
+                Ok(true)
+            }
+            Err(error) => {
+                self.store
+                    .mark_outbound_failed(&outbound.correlation_id, &error.to_string())?;
+                Ok(false)
+            }
+        }
     }
 
     async fn execute_goal_command(
