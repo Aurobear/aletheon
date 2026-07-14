@@ -32,6 +32,7 @@ impl fmt::Display for ApprovalId {
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalCategory {
     ApplyCode,
+    ActivateGoal,
     SendMail,
     DeleteFile,
     ModifyCalendar,

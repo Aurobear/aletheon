@@ -11,7 +11,8 @@ use fabric::channel::{
     UserAction,
 };
 use fabric::{
-    ApprovalId, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId, GoalSnapshot, PrincipalId,
+    ApprovalCategory, ApprovalId, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId,
+    GoalSnapshot, PrincipalId,
 };
 
 use crate::r#impl::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
@@ -89,6 +90,24 @@ pub trait ChannelGoalExecutor: Send + Sync {
 #[async_trait::async_trait]
 pub trait ChannelApprovalExecutor: Send + Sync {
     async fn execute_resolved(&self, approval_id: ApprovalId) -> anyhow::Result<()>;
+}
+
+#[async_trait::async_trait]
+pub trait GmailDraftApprovalExecutor: Send + Sync {
+    async fn execute_draft_resolution(
+        &self,
+        approval: &ApprovalSnapshot,
+        action: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<()>;
+
+    async fn revise_draft(
+        &self,
+        owner: &str,
+        goal_id: GoalId,
+        intent: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<ApprovalSnapshot>;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +216,7 @@ pub fn route_content(content: &MessageContent) -> RoutedInput {
         MessageContent::Command { command, args } => match command.as_str() {
             "/start" => RoutedInput::Greeting,
             "/chat" => RoutedInput::Chat(args.clone()),
-            "/goal" | "/goals" | "/status" | "/pause" | "/resume" | "/cancel" => {
+            "/goal" | "/goals" | "/status" | "/pause" | "/resume" | "/cancel" | "/edit" => {
                 RoutedInput::GoalCommand {
                     command: command.clone(),
                     args: args.clone(),
@@ -231,6 +250,7 @@ pub struct ChannelRouter {
     goal_executor: Option<Arc<dyn ChannelGoalExecutor>>,
     approval_repository: Option<Arc<Mutex<ApprovalRepository>>>,
     approval_executor: Option<Arc<dyn ChannelApprovalExecutor>>,
+    gmail_draft_executor: Option<Arc<dyn GmailDraftApprovalExecutor>>,
     google_accounts: Option<Arc<dyn GoogleChannelAccountDirectory>>,
 }
 
@@ -244,6 +264,7 @@ impl ChannelRouter {
             goal_executor: None,
             approval_repository: None,
             approval_executor: None,
+            gmail_draft_executor: None,
             google_accounts: None,
         }
     }
@@ -296,6 +317,14 @@ impl ChannelRouter {
 
     pub fn with_approval_executor(mut self, executor: Arc<dyn ChannelApprovalExecutor>) -> Self {
         self.approval_executor = Some(executor);
+        self
+    }
+
+    pub fn with_gmail_draft_executor(
+        mut self,
+        executor: Arc<dyn GmailDraftApprovalExecutor>,
+    ) -> Self {
+        self.gmail_draft_executor = Some(executor);
         self
     }
 
@@ -401,7 +430,32 @@ impl ChannelRouter {
         owner: &str,
         command: &str,
         args: &str,
+        now_ms: i64,
     ) -> anyhow::Result<String> {
+        if command == "/edit" {
+            let (id, intent) = args
+                .trim()
+                .split_once(char::is_whitespace)
+                .ok_or_else(|| anyhow::anyhow!("usage: /edit <goal-id> <revised-intent>"))?;
+            let id = id
+                .parse::<i64>()
+                .map(GoalId)
+                .map_err(|_| anyhow::anyhow!("usage: /edit <goal-id> <revised-intent>"))?;
+            if intent.trim().is_empty() {
+                anyhow::bail!("usage: /edit <goal-id> <revised-intent>");
+            }
+            let executor = self
+                .gmail_draft_executor
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Gmail draft executor is not configured"))?;
+            let approval = executor
+                .revise_draft(owner, id, intent.trim(), now_ms)
+                .await?;
+            return Ok(format!(
+                "Goal {} revised; fresh confirmation {} is pending.",
+                id.0, approval.id
+            ));
+        }
         let executor = self
             .goal_executor
             .as_ref()
@@ -477,7 +531,7 @@ impl ChannelRouter {
                     artifact.sha256
                 ));
             }
-            "apply" => {
+            "apply" | "confirm" => {
                 let repository = repository.lock().unwrap();
                 let current = repository
                     .get(id)?
@@ -491,12 +545,13 @@ impl ChannelRouter {
                 )?;
                 (resolved, "approved")
             }
-            "revision" | "reject" => {
+            "revision" | "edit" | "reject" => {
                 let repository = repository.lock().unwrap();
                 let current = repository
                     .get(id)?
                     .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
-                let reason = (action == "revision").then(|| "owner requested revision".to_string());
+                let reason = matches!(action, "revision" | "edit")
+                    .then(|| "owner requested revision".to_string());
                 let resolved = repository.resolve(
                     id,
                     current.version,
@@ -508,7 +563,15 @@ impl ChannelRouter {
             }
             _ => anyhow::bail!("unknown approval action"),
         };
-        if let Some(executor) = &self.approval_executor {
+        if result.0.category == ApprovalCategory::ActivateGoal {
+            let executor = self
+                .gmail_draft_executor
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Gmail draft executor is not configured"))?;
+            executor
+                .execute_draft_resolution(&result.0, action, now_ms)
+                .await?;
+        } else if let Some(executor) = &self.approval_executor {
             executor.execute_resolved(result.0.id).await?;
         }
         Ok(format!("Approval {}: {}", result.0.id, result.1))
@@ -622,7 +685,12 @@ impl ChannelRouter {
         if message.reply_to_action.is_none() {
             if let RoutedInput::GoalCommand { command, args } = &routed {
                 match self
-                    .execute_goal_command(principal.as_deref().unwrap(), command, args)
+                    .execute_goal_command(
+                        principal.as_deref().unwrap(),
+                        command,
+                        args,
+                        message.timestamp_ms,
+                    )
                     .await
                 {
                     Ok(reply) => ai_reply = Some(reply),
@@ -777,7 +845,12 @@ impl ChannelRouter {
             }
             if let RoutedInput::GoalCommand { command, args } = &routed {
                 match self
-                    .execute_goal_command(principal.as_deref().unwrap(), command, args)
+                    .execute_goal_command(
+                        principal.as_deref().unwrap(),
+                        command,
+                        args,
+                        msg.timestamp_ms,
+                    )
                     .await
                 {
                     Ok(reply) => ai_reply = Some(reply),
@@ -887,6 +960,28 @@ fn render_approval_notification(
     conversation_id: ConversationId,
     approval: &ApprovalSnapshot,
 ) -> OutboundMessage {
+    if approval.category == ApprovalCategory::ActivateGoal {
+        let text = format!(
+            "Goal {} requires owner confirmation.\nRisk: {:?}\nExpires: {} ms\n{}",
+            approval.goal_id.0, approval.risk, approval.expires_at_ms, approval.summary
+        );
+        let action = |suffix: &str, label: &str, action_type| UserAction {
+            action_id: format!("{}:{suffix}", approval.id),
+            label: label.into(),
+            action_type,
+        };
+        return OutboundMessage {
+            conversation_id,
+            content: MessageContent::Text { text },
+            actions: vec![
+                action("confirm", "Confirm", ActionType::Approve),
+                action("edit", "Edit", ActionType::Callback),
+                action("reject", "Reject", ActionType::Reject),
+            ],
+            reply_to: None,
+            correlation_id: format!("approval:{}", approval.id),
+        };
+    }
     let changed_files = approval
         .subject
         .attributes
@@ -1023,7 +1118,9 @@ mod tests {
 
     #[test]
     fn m2_commands_are_goal_commands() {
-        for cmd in &["/goal", "/goals", "/status", "/pause", "/resume", "/cancel"] {
+        for cmd in &[
+            "/goal", "/goals", "/status", "/pause", "/resume", "/cancel", "/edit",
+        ] {
             let content = MessageContent::Command {
                 command: (*cmd).into(),
                 args: String::new(),

@@ -7,8 +7,9 @@
 use std::sync::Arc;
 
 use crate::r#impl::approval::ApplyCoordinator;
+use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::channel::router::{
-    ChannelApprovalExecutor, ChannelGoalExecutor, ChannelTurnExecutor,
+    ChannelApprovalExecutor, ChannelGoalExecutor, ChannelTurnExecutor, GmailDraftApprovalExecutor,
 };
 use crate::r#impl::goal::ObjectiveStore;
 use crate::service::DaemonTurnOrchestrator;
@@ -29,6 +30,61 @@ pub struct DaemonChannelApprovalExecutor {
     coordinator: Arc<ApplyCoordinator>,
     owner_process: ProcessId,
     cancel: tokio_util::sync::CancellationToken,
+}
+
+pub struct DaemonGmailDraftApprovalExecutor {
+    coordinator: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>,
+}
+
+impl DaemonGmailDraftApprovalExecutor {
+    pub fn new(coordinator: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>) -> Self {
+        Self { coordinator }
+    }
+}
+
+#[async_trait::async_trait]
+impl GmailDraftApprovalExecutor for DaemonGmailDraftApprovalExecutor {
+    async fn execute_draft_resolution(
+        &self,
+        approval: &fabric::ApprovalSnapshot,
+        action: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<()> {
+        let coordinator = self.coordinator.lock().unwrap();
+        match action {
+            "confirm" => {
+                coordinator.confirm(approval, now_ms)?;
+            }
+            "edit" => {
+                coordinator.reject_or_edit(approval, true, now_ms)?;
+            }
+            "reject" => {
+                coordinator.reject_or_edit(approval, false, now_ms)?;
+            }
+            _ => anyhow::bail!("unsupported Gmail draft approval action"),
+        }
+        Ok(())
+    }
+
+    async fn revise_draft(
+        &self,
+        owner: &str,
+        goal_id: GoalId,
+        intent: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<fabric::ApprovalSnapshot> {
+        self.coordinator
+            .lock()
+            .unwrap()
+            .revise(
+                goal_id,
+                &PrincipalId(owner.to_owned()),
+                intent,
+                now_ms,
+                now_ms.saturating_add(24 * 60 * 60 * 1_000),
+            )
+            .map(|draft| draft.approval)
+    }
 }
 
 impl DaemonChannelApprovalExecutor {

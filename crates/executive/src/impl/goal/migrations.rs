@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 13;
+const CURRENT_VERSION: u32 = 14;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -435,6 +435,38 @@ CREATE TABLE IF NOT EXISTS external_artifact_sources (
 );
 ";
 
+/// Migration 14 — authenticated Gmail Goal drafts and immutable intent revisions.
+const MIGRATION_14: &str = "
+CREATE TABLE IF NOT EXISTS gmail_goal_drafts (
+    account_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    source_event_id TEXT NOT NULL,
+    objective_id INTEGER NOT NULL UNIQUE REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    principal_id TEXT NOT NULL,
+    sender_address TEXT NOT NULL,
+    sender_policy_version INTEGER NOT NULL,
+    current_revision INTEGER NOT NULL DEFAULT 1,
+    current_approval_id TEXT REFERENCES approval_requests(approval_id),
+    status TEXT NOT NULL CHECK(status IN ('pending','awaiting_edit','confirmed','rejected')),
+    artifact_summary_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(account_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_gmail_goal_drafts_objective
+    ON gmail_goal_drafts(objective_id);
+CREATE TABLE IF NOT EXISTS gmail_goal_draft_revisions (
+    objective_id INTEGER NOT NULL REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    intent TEXT NOT NULL,
+    intent_sha256 TEXT NOT NULL,
+    approval_id TEXT REFERENCES approval_requests(approval_id),
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(objective_id, revision)
+);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -557,6 +589,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
         tx.commit()?;
     }
 
+    if version < 14 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 14 transaction")?;
+        tx.execute_batch(MIGRATION_14)?;
+        tx.pragma_update(None, "user_version", 14)?;
+        tx.commit()?;
+    }
+
     // Verify we're at the expected version.
     let current: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     anyhow::ensure!(
@@ -623,14 +664,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 13);
+        assert_eq!(v1, 14);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 13);
+        assert_eq!(v2, 14);
     }
 
     #[test]
@@ -658,6 +699,8 @@ mod tests {
         assert!(tables.iter().any(|n| n == "approval_apply_operations"));
         assert!(tables.iter().any(|n| n == "approval_apply_receipts"));
         assert!(tables.iter().any(|n| n == "goal_completion_summaries"));
+        assert!(tables.iter().any(|n| n == "gmail_goal_drafts"));
+        assert!(tables.iter().any(|n| n == "gmail_goal_draft_revisions"));
     }
 
     #[test]

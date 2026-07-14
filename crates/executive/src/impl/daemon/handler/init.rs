@@ -55,10 +55,12 @@ use tracing::{info, warn};
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::r#impl::channel::daemon_adapter::{
     DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
+    DaemonGmailDraftApprovalExecutor,
 };
+use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::channel::router::{
     ChannelApprovalExecutor, ChannelGoalExecutor, ChannelRouter, ChannelTransport,
-    ChannelTurnExecutor,
+    ChannelTurnExecutor, GmailDraftApprovalExecutor,
 };
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
@@ -406,6 +408,10 @@ impl RequestHandler {
             crate::r#impl::approval::ApprovalRepository::open(&objective_db_path)
                 .context("opening approval repository")?;
         let approval_repository = Arc::new(std::sync::Mutex::new(approval_repository));
+        let gmail_goal_drafts = Arc::new(std::sync::Mutex::new(
+            GmailGoalDraftCoordinator::open(&objective_db_path)
+                .context("opening Gmail Goal draft coordinator")?,
+        ));
 
         // M3: terminalize stale runtime calls before making their Goals ready.
         // Recovery records cancellation evidence and never invokes a runtime.
@@ -1275,6 +1281,7 @@ impl RequestHandler {
                 _turn_orch_for_telegram,
                 handler.subsystems.memory.objective_store.clone(),
                 handler.subsystems.memory.approval_repository.clone(),
+                gmail_goal_drafts,
                 approved_apply,
                 handler.google.clone(),
                 _cancel_for_telegram,
@@ -1295,6 +1302,7 @@ impl RequestHandler {
         orchestrator: Arc<crate::service::DaemonTurnOrchestrator>,
         objective_store: Arc<Mutex<ObjectiveStore>>,
         approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+        gmail_goal_drafts: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>,
         approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
         google: Option<Arc<GoogleIntegration>>,
         cancel: CancellationToken,
@@ -1340,6 +1348,9 @@ impl RequestHandler {
         let mut router = ChannelRouter::new(store, turn_executor)
             .with_goal_executor(goal_executor)
             .with_approval_repository(approval_repository);
+        let gmail_executor: Arc<dyn GmailDraftApprovalExecutor> =
+            Arc::new(DaemonGmailDraftApprovalExecutor::new(gmail_goal_drafts));
+        router = router.with_gmail_draft_executor(gmail_executor);
         if let Some(google) = google {
             router = router.with_google_accounts(google);
         }
