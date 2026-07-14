@@ -5,6 +5,7 @@
 
 use super::super::session_manager::SessionManager;
 use super::RequestHandler;
+use anyhow::anyhow;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -15,7 +16,7 @@ impl RequestHandler {
     pub(crate) async fn get_or_create_session(
         &self,
         session_id: Option<&str>,
-    ) -> (String, Arc<Mutex<SessionManager>>) {
+    ) -> anyhow::Result<(String, Arc<Mutex<SessionManager>>)> {
         let id = if let Some(sid) = session_id {
             sid.to_string()
         } else {
@@ -31,7 +32,7 @@ impl RequestHandler {
         {
             let sessions = self.sessions.lock().await;
             if let Some(sm) = sessions.get(&id) {
-                return (id, sm.clone());
+                return Ok((id, sm.clone()));
             }
         }
 
@@ -55,7 +56,7 @@ impl RequestHandler {
                     .await
                     .insert(id.clone(), self.subsystems.ports.clock.mono_now());
                 info!(session_id = %id, "Session created on demand");
-                (id, sm)
+                Ok((id, sm))
             }
             Err(e) => {
                 warn!(error = %e, session_id = %id, "Failed to create session on demand, falling back to default");
@@ -69,9 +70,11 @@ impl RequestHandler {
                 let sessions = self.sessions.lock().await;
                 let sm = sessions
                     .get(&default_id)
-                    .expect("default session must exist in registry")
+                    .ok_or_else(|| {
+                        anyhow!("default session '{}' not found in registry", default_id)
+                    })?
                     .clone();
-                (default_id, sm)
+                Ok((default_id, sm))
             }
         }
     }

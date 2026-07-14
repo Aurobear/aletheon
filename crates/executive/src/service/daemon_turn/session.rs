@@ -3,6 +3,7 @@
 use super::orchestrator::DaemonTurnOrchestrator;
 use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::service::turn_pipeline::TurnPipeline;
+use anyhow::anyhow;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -13,7 +14,7 @@ impl DaemonTurnOrchestrator {
     pub(crate) async fn get_or_create_session(
         &self,
         session_id: Option<&str>,
-    ) -> (String, Arc<Mutex<SessionManager>>) {
+    ) -> anyhow::Result<(String, Arc<Mutex<SessionManager>>)> {
         let id = if let Some(sid) = session_id {
             sid.to_string()
         } else {
@@ -27,7 +28,7 @@ impl DaemonTurnOrchestrator {
         {
             let sessions = self.sessions.lock().await;
             if let Some(sm) = sessions.get(&id) {
-                return (id, sm.clone());
+                return Ok((id, sm.clone()));
             }
         }
         match SessionManager::new(
@@ -51,7 +52,7 @@ impl DaemonTurnOrchestrator {
                     .await
                     .insert(id.clone(), self.clock.mono_now());
                 info!(session_id = %id, "Session created on demand");
-                (id, sm_arc)
+                Ok((id, sm_arc))
             }
             Err(e) => {
                 warn!(error = %e, session_id = %id, "Failed to create session on demand, using default");
@@ -63,8 +64,10 @@ impl DaemonTurnOrchestrator {
                     .await
                     .clone();
                 let sessions = self.sessions.lock().await;
-                let sm = sessions.get(&default_id).cloned().unwrap();
-                (default_id, sm)
+                let sm = sessions.get(&default_id).cloned().ok_or_else(|| {
+                    anyhow!("default session '{}' not found in registry", default_id)
+                })?;
+                Ok((default_id, sm))
             }
         }
     }
@@ -81,7 +84,7 @@ impl TurnPipeline {
     pub(crate) async fn get_or_create_session(
         &self,
         session_id: Option<&str>,
-    ) -> (String, Arc<Mutex<SessionManager>>) {
+    ) -> anyhow::Result<(String, Arc<Mutex<SessionManager>>)> {
         let id = if let Some(sid) = session_id {
             sid.to_string()
         } else {
@@ -95,7 +98,7 @@ impl TurnPipeline {
         {
             let sessions = self.sessions.lock().await;
             if let Some(sm) = sessions.get(&id) {
-                return (id, sm.clone());
+                return Ok((id, sm.clone()));
             }
         }
         match SessionManager::new(
@@ -119,7 +122,7 @@ impl TurnPipeline {
                     .await
                     .insert(id.clone(), self.clock.mono_now());
                 info!(session_id = %id, "Session created on demand");
-                (id, sm_arc)
+                Ok((id, sm_arc))
             }
             Err(e) => {
                 warn!(error = %e, session_id = %id, "Failed to create session on demand, using default");
@@ -131,8 +134,10 @@ impl TurnPipeline {
                     .await
                     .clone();
                 let sessions = self.sessions.lock().await;
-                let sm = sessions.get(&default_id).cloned().unwrap();
-                (default_id, sm)
+                let sm = sessions.get(&default_id).cloned().ok_or_else(|| {
+                    anyhow!("default session '{}' not found in registry", default_id)
+                })?;
+                Ok((default_id, sm))
             }
         }
     }

@@ -144,7 +144,7 @@ impl EmergencyKillswitch {
 
     /// Record a failure (increments consecutive failure counter).
     pub fn record_failure(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.consecutive_failures += 1;
 
         // Check if we've hit the consecutive failure threshold
@@ -159,7 +159,7 @@ impl EmergencyKillswitch {
 
     /// Reset the consecutive failure counter (on success).
     pub fn record_success(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.consecutive_failures = 0;
     }
 
@@ -214,7 +214,7 @@ impl EmergencyKillswitch {
 
     /// Try to activate the killswitch. Returns false if already active or in cooldown.
     fn try_activate(&self, trigger: KillswitchTrigger, reason: String) -> bool {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         // Already active — don't re-activate
         if state.active {
@@ -246,12 +246,12 @@ impl EmergencyKillswitch {
 
     /// Check if the killswitch is currently active.
     pub fn is_active(&self) -> bool {
-        self.state.lock().unwrap().active
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).active
     }
 
     /// Get the activation trigger if active.
     pub fn activation_trigger(&self) -> Option<KillswitchTrigger> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.active {
             state.active_trigger.clone()
         } else {
@@ -261,7 +261,7 @@ impl EmergencyKillswitch {
 
     /// Attempt to recover. Returns true if recovery succeeded.
     pub fn try_recover(&self) -> bool {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         if !state.active {
             return true; // Already recovered
@@ -295,7 +295,7 @@ impl EmergencyKillswitch {
 
     /// User confirms recovery (for triggers that require it).
     pub fn user_confirm_recovery(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.user_confirmed = true;
     }
 

@@ -2,6 +2,15 @@
 //!
 //! Provides an async trait for inter-agent messaging over Unix sockets
 //! using a JSON-RPC inspired protocol.
+//!
+//! ## Trait implementation status
+//!
+//! `AgentCommunication` is a **future design placeholder** — the
+//! JSON-RPC request/response types are used in tests and serve as a
+//! concrete protocol contract, but the trait itself has no
+//! implementations yet. It will be wired to a real transport
+//! (Unix-domain sockets or the mailbox bus) when inter-agent
+//! messaging is implemented.
 
 use super::{AgentId, Endpoint};
 use anyhow::Result;

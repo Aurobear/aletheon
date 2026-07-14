@@ -5,7 +5,8 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use fabric::wall_to_datetime;
 use fabric::Clock;
-use serde::{Deserialize, Serialize};
+use fabric::WallTime;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -17,10 +18,56 @@ const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
 /// Number of days to retain old log files.
 const RETENTION_DAYS: i64 = 7;
 
+/// Serde helper: serialize WallTime as an RFC 3339 string.
+fn serialize_wall_time_as_rfc3339<S>(wt: &WallTime, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let dt = wall_to_datetime(*wt);
+    serializer.serialize_str(&dt.to_rfc3339())
+}
+
+/// Serde helper: deserialize WallTime from an RFC 3339 string or integer millis.
+fn deserialize_wall_time_from_rfc3339<'de, D>(deserializer: D) -> Result<WallTime, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+    struct WallTimeVisitor;
+    impl<'de> de::Visitor<'de> for WallTimeVisitor {
+        type Value = WallTime;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an RFC 3339 timestamp string or integer millis")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<WallTime, E> {
+            chrono::DateTime::parse_from_rfc3339(v)
+                .or_else(|_| chrono::DateTime::parse_from_rfc3339(&v.replace(' ', "T")))
+                .map(|dt| WallTime(dt.timestamp_millis()))
+                .map_err(|e| E::custom(format!("invalid timestamp: {}", e)))
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<WallTime, E> {
+            Ok(WallTime(v))
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<WallTime, E> {
+            Ok(WallTime(v as i64))
+        }
+    }
+    deserializer.deserialize_any(WallTimeVisitor)
+}
+
 /// A single reasoning log entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningEntry {
-    pub timestamp: String,
+    #[serde(
+        rename = "timestamp",
+        serialize_with = "serialize_wall_time_as_rfc3339",
+        deserialize_with = "deserialize_wall_time_from_rfc3339"
+    )]
+    pub wall_timestamp: WallTime,
     pub session_id: String,
     pub kind: String,
     pub payload: serde_json::Value,
@@ -76,8 +123,12 @@ impl ReasoningLogger {
                 {
                     Ok(mut file) => {
                         let json = serde_json::to_string(&entry).unwrap_or_default();
-                        let _ = file.write_all(json.as_bytes()).await;
-                        let _ = file.write_all(b"\n").await;
+                        if let Err(e) = file.write_all(json.as_bytes()).await {
+                            warn!("Failed to write reasoning log entry: {e}");
+                        }
+                        if let Err(e) = file.write_all(b"\n").await {
+                            warn!("Failed to write reasoning log newline: {e}");
+                        }
                     }
                     Err(e) => {
                         error!(error = %e, "Failed to open reasoning log file");
@@ -98,7 +149,7 @@ impl ReasoningLogger {
     /// Log a reasoning entry.
     pub async fn log(&self, kind: impl Into<String>, payload: serde_json::Value) -> Result<()> {
         let entry = ReasoningEntry {
-            timestamp: wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+            wall_timestamp: self.clock.wall_now(),
             session_id: String::new(), // caller context, can be enriched later
             kind: kind.into(),
             payload,

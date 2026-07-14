@@ -89,7 +89,7 @@ impl Hook for RecallInjector {
         let query = keywords.join(" OR ");
 
         let mut injected_parts: Vec<String> = Vec::new();
-        let store = self.fact_store.lock().unwrap();
+        let store = self.fact_store.lock().unwrap_or_else(|e| e.into_inner());
 
         // ── FTS5 recall ──────────────────────────────────────────────────
         let facts = store
@@ -353,7 +353,10 @@ mod tests {
         };
         let _ = injector.handle(&event);
 
-        let store = injector.fact_store().lock().unwrap();
+        let store = injector
+            .fact_store()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let fact = store.get_fact(fid).unwrap().unwrap();
         assert!(
             fact.trust_score > 0.5,

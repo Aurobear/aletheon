@@ -91,7 +91,7 @@ impl SessionDistiller {
         };
 
         let facts = extractor.extract(&parsed)?;
-        let store = self.fact_store.lock().unwrap();
+        let store = self.fact_store.lock().unwrap_or_else(|e| e.into_inner());
 
         // Filter out low-importance and cap at MAX_FACTS_PER_SESSION
         let mut written = Vec::new();
@@ -289,7 +289,10 @@ mod tests {
         assert_eq!(written.len(), 2);
 
         // Verify facts were written to the store
-        let store = distiller.fact_store().lock().unwrap();
+        let store = distiller
+            .fact_store()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let results = store.search_facts("Rust", None, 0.0, 10).unwrap();
         assert!(!results.is_empty());
     }

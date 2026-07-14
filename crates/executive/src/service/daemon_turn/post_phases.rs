@@ -16,7 +16,13 @@ use tracing::{info, warn};
 impl DaemonTurnOrchestrator {
     pub(crate) async fn run_post_turn_hooks(&self) {
         let (session_id, turn_count) = {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let (_sid, sm_arc) = match self.get_or_create_session(None).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(error = %e, "Failed to get session, skipping post-turn hooks");
+                    return;
+                }
+            };
             let sm = sm_arc.lock().await;
             (sm.session_id.clone(), sm.turn_count())
         };
@@ -183,7 +189,13 @@ impl DaemonTurnOrchestrator {
 impl TurnPipeline {
     pub(crate) async fn run_post_turn_hooks(&self) {
         let (session_id, turn_count) = {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let (_sid, sm_arc) = match self.get_or_create_session(None).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(error = %e, "Failed to get session, skipping post-turn hooks");
+                    return;
+                }
+            };
             let sm = sm_arc.lock().await;
             (sm.session_id.clone(), sm.turn_count())
         };

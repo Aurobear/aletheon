@@ -15,7 +15,16 @@ impl RequestHandler {
         let p = &request["params"];
         let description = p["description"].as_str().unwrap_or("");
         let scope = p["scope"].as_str().unwrap_or("session");
-        let session_id = self.get_or_create_session(None).await.0;
+        let session_id = match self.get_or_create_session(None).await {
+            Ok(v) => v.0,
+            Err(e) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32000, "message": e.to_string() }
+                })
+            }
+        };
         let store = self.subsystems.memory.objective_store.lock().await;
         match store.create(description, None, &session_id, scope) {
             Ok(oid) => json!({

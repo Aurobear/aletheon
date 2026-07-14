@@ -255,7 +255,8 @@ impl DebugHandler {
 
         let rec_id = uuid::Uuid::new_v4().to_string();
 
-        // Register a RecorderSink on the DebugBusHook so events flow into the recorder
+        // Register a RecorderSink on the DebugBusHook so events flow into the recorder.
+        // Lock ordering: ALWAYS acquire hook before recordings to prevent deadlock with bag_start/bag_stop.
         let recorder = EventRecorder::new(path.clone(), max_buffer);
         let sink = Arc::new(RecorderSink::new(recorder));
         let sink_index = self.hook.lock().await.add_sink(sink);
@@ -289,13 +290,16 @@ impl DebugHandler {
             .unwrap_or("")
             .to_string();
 
-        let recording = self.recordings.lock().await.remove(&rec_id);
+        // Lock ordering: ALWAYS acquire hook before recordings to prevent deadlock with bag_start/bag_stop
+        let mut hook = self.hook.lock().await;
+        let mut recordings = self.recordings.lock().await;
+
+        let recording = recordings.remove(&rec_id);
 
         match recording {
             Some(rec) => {
-                // Remove the RecorderSink from the hook and get the recorded events
+                // Remove the RecorderSink from the hook
                 let duration = self.elapsed_since(rec.started_at);
-                let mut hook = self.hook.lock().await;
                 hook.remove_sink(rec.sink_index);
 
                 // The RecorderSink was removed; we report basic metadata.

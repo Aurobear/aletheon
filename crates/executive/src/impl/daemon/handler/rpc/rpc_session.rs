@@ -22,7 +22,16 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let (session_id, sm_arc) = self.get_or_create_session(None).await;
+        let (session_id, sm_arc) = match self.get_or_create_session(None).await {
+            Ok(v) => v,
+            Err(e) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32000, "message": e.to_string() }
+                })
+            }
+        };
         // Fire OnSessionEnd hook before clearing
         {
             let (sid, turn_count) = {
@@ -190,7 +199,16 @@ impl RequestHandler {
         _request: &serde_json::Value,
     ) -> serde_json::Value {
         let did_compact = {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let (_sid, sm_arc) = match self.get_or_create_session(None).await {
+                Ok(v) => v,
+                Err(e) => {
+                    return json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32000, "message": e.to_string() }
+                    })
+                }
+            };
             let mut sm = sm_arc.lock().await;
             // Force compaction by temporarily lowering threshold
             sm.force_compact(&*self.llm).await
@@ -210,7 +228,16 @@ impl RequestHandler {
         let new_id = uuid::Uuid::new_v4().to_string();
         // Get current session info for hooks
         let (old_id, turn_count, old_hook_session_id) = {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await;
+            let (_sid, sm_arc) = match self.get_or_create_session(None).await {
+                Ok(v) => v,
+                Err(e) => {
+                    return json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32000, "message": e.to_string() }
+                    })
+                }
+            };
             let sm = sm_arc.lock().await;
             (
                 sm.session_id.clone(),

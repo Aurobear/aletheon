@@ -17,6 +17,7 @@ use std::os::unix::net::UnixDatagram;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing;
 
 use crate::core::runtime_core::RuntimeCore;
 use crate::host::load_dotenv;
@@ -39,7 +40,9 @@ fn sd_notify(msg: &str) {
         Err(_) => return,
     };
 
-    let _ = sock.send_to(msg.as_bytes(), &socket_path);
+    if let Err(e) = sock.send_to(msg.as_bytes(), &socket_path) {
+        tracing::warn!("systemd notify failed: {e}");
+    }
 }
 
 /// Read `WATCHDOG_USEC` from the environment, returning half the value in
