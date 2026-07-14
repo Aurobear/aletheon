@@ -152,7 +152,9 @@
 
 - Create: `crates/executive/src/impl/channel/gmail/ingest.rs`
 - Modify: `crates/executive/src/impl/channel/gmail/mod.rs`
-- Modify: existing artifact-store integration selected during implementation
+- Create: `crates/executive/src/impl/artifact/mod.rs`
+- Create: `crates/executive/src/impl/artifact/store.rs`
+- Modify: `crates/executive/src/impl/mod.rs`
 - Test: `crates/executive/tests/gmail_attachment_ingest.rs`
 
 - [ ] Prefer text/plain, sanitize HTML to bounded text, strip quoted history/signatures by deterministic conservative rules, and retain the original message as an external reference.

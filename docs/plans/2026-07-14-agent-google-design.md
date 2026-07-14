@@ -101,7 +101,7 @@ The implementation must start from these current facts:
         |
         +------> MemoryService ------> SQLite / GBrain
 
- Google MCP tools <----- encrypted OAuth credentials
+ Native Google tools <-- encrypted OAuth credentials
  GoogleSyncManager -----> DurableChannelInbox / normalized events
 ```
 
@@ -275,7 +275,7 @@ Introduce a token persistence abstraction with an encrypted implementation. The 
 
 ### 10.2 Active tools versus background sync
 
-- Agent-invoked Gmail/Calendar/Drive operations are MCP tools and pass through admission and approval.
+- Agent-invoked Gmail/Calendar/Drive operations are native `ToolRegistry` capabilities and pass through the same admission and approval path as MCP wrappers.
 - `GoogleSyncManager` is a dedicated provider client for Gmail history IDs, Calendar sync tokens, and later Drive change tokens.
 - Both paths share the OAuth credential provider, normalized DTOs, redaction rules, and account binding.
 - Sync cursors and dedup IDs are persisted before claiming restart safety.

@@ -138,7 +138,11 @@
 **Files:**
 
 - Create: `crates/executive/src/impl/storage_quota.rs`
-- Modify: Goal/artifact/worktree/Google/GBrain spool services selected by prior milestones
+- Modify: `crates/executive/src/impl/goal/coordinator.rs`
+- Modify: `crates/executive/src/impl/artifact/store.rs`
+- Modify: `crates/corpus/src/tools/subagent/worktree.rs`
+- Modify: `crates/executive/src/impl/google/store.rs`
+- Modify: `crates/mnemosyne/src/backends/gbrain/spool.rs`
 - Create: `config/aletheon-cleanup.service`
 - Create: `config/aletheon-cleanup.timer`
 - Create: `docs/deployment/storage-policy.md`
@@ -157,7 +161,8 @@
 
 **Files:**
 
-- Modify: daemon tracing/bootstrap files selected by current logging initialization
+- Modify: `crates/bin/src/main.rs`
+- Modify: `crates/corpus/src/security/audit.rs`
 - Create: `config/aletheon.logrotate`
 - Create: `docs/deployment/observability.md`
 - Test: logging redaction tests

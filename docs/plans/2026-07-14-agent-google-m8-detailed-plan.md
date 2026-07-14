@@ -45,7 +45,9 @@
 - Create: `crates/mnemosyne/src/backends/gbrain/config.rs`
 - Create: `crates/mnemosyne/src/backends/gbrain/dto.rs`
 - Modify: `crates/mnemosyne/src/backends/mod.rs`
-- Modify: daemon configuration structures selected by current config loading code
+- Modify: `crates/executive/src/core/config/mod.rs`
+- Modify: `crates/executive/src/core/config/infra.rs`
+- Modify: `config/default.toml`
 
 - [ ] Define `GBrainConfig` with enabled flag, base URL, credential-file path, connect/request timeout, batch size, recall limit, retry policy, and spool limits.
 - [ ] Reject public/non-HTTPS endpoints unless an explicit loopback/private-container development mode is enabled.
@@ -130,7 +132,8 @@
 
 **Files:**
 
-- Modify: M5 Goal completion summary integration selected in implementation
+- Modify: `crates/executive/src/impl/goal/coordinator.rs`
+- Modify: `crates/executive/src/impl/goal/verification.rs`
 - Create: `crates/executive/src/impl/memory_projection.rs`
 - Test: `crates/executive/tests/goal_memory_projection.rs`
 
@@ -166,7 +169,9 @@
 - Create: `deploy/gbrain/compose.yaml`
 - Create: `deploy/gbrain/.env.example`
 - Create: `deploy/gbrain/README.md`
-- Modify: existing example Aletheon configuration file selected by current config layout
+- Modify: `crates/executive/src/core/config/mod.rs`
+- Modify: `crates/executive/src/core/config/infra.rs`
+- Modify: `config/default.toml`
 
 - [ ] Pin GBrain image by immutable digest and document the exact API/schema version used by DTO fixtures.
 - [ ] Bind service ports to loopback or an internal container network only; configure persistent volumes, healthcheck, restart policy, resource limits, and log rotation.

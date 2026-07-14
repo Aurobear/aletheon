@@ -62,7 +62,7 @@
 - Create: `crates/corpus/src/security/credential_vault.rs`
 - Modify: `crates/corpus/src/security/mod.rs`
 - Modify: `crates/corpus/Cargo.toml`
-- Modify: workspace dependency manifest if dependencies are centralized
+- Modify: `Cargo.toml` if `aes-gcm` is added to `[workspace.dependencies]`
 - Modify: `crates/fabric/src/paths.rs`
 
 - [ ] Add failing tests proving ciphertext contains neither access token, refresh token, account email, nor serialized token JSON.

@@ -6,7 +6,7 @@
 
 **Architecture:** Durable domain state lives in SQLite repositories; live work uses the existing `TurnPipeline`, `ProcessTable`, `OperationTable`, admission, approval, and memory interfaces. Runtime choice/retry is per attempt, verification is a cancellable job stage, Google credentials are encrypted before persistence, and GBrain composes behind `MemoryService`.
 
-**Tech Stack:** Rust, Tokio, SQLite/rusqlite, serde, existing Aletheon kernel/executive/corpus/mnemosyne abstractions, Telegram Bot API, OAuth 2.0, MCP, reqwest, git worktrees.
+**Tech Stack:** Rust, Tokio, SQLite/rusqlite, serde, existing Aletheon kernel/executive/corpus/mnemosyne abstractions, Telegram Bot API, OAuth 2.0, native/MCP tool admission, reqwest, git worktrees.
 
 ---
 
@@ -24,6 +24,18 @@ M0 -> M1 -> M2 -> M3 -> M4 -> M5
 ```
 
 Every milestone ends with `cargo fmt --all -- --check`, scoped tests, `cargo test --workspace`, and `cargo build --workspace`. Do not begin a dependent milestone while its prerequisite has failing validation.
+
+Detailed execution plans are authoritative when their paths or sequencing refine this master plan:
+
+- M0–M1: `docs/plans/2026-07-14-agent-google-m0-m1-detailed-plan.md`
+- M2: `docs/plans/2026-07-14-agent-google-m2-detailed-plan.md`
+- M3: `docs/plans/2026-07-14-agent-google-m3-detailed-plan.md`
+- M4: `docs/plans/2026-07-14-agent-google-m4-detailed-plan.md`
+- M5: `docs/plans/2026-07-14-agent-google-m5-detailed-plan.md`
+- M6: `docs/plans/2026-07-14-agent-google-m6-detailed-plan.md`
+- M7: `docs/plans/2026-07-14-agent-google-m7-detailed-plan.md`
+- M8: `docs/plans/2026-07-14-agent-google-m8-detailed-plan.md`
+- M9: `docs/plans/2026-07-14-agent-google-m9-detailed-plan.md`
 
 ## 2. M0 — Baseline and schema conventions
 
@@ -118,7 +130,9 @@ Every milestone ends with `cargo fmt --all -- --check`, scoped tests, `cargo tes
 - Create: `crates/executive/src/impl/channel/telegram/polling.rs`
 - Create: `crates/executive/src/impl/channel/telegram/formatting.rs`
 - Modify: `crates/executive/Cargo.toml`
-- Modify: daemon configuration files discovered during the milestone plan
+- Modify: `crates/executive/src/core/config/mod.rs`
+- Modify: `crates/executive/src/core/config/infra.rs`
+- Modify: `config/default.toml`
 
 - [ ] Add mocked-provider tests for owner allow-list, unknown-user rejection, stable message IDs, offset restart, retry/backoff, button callbacks, and reply formatting.
 - [ ] Implement long polling with persisted cursor and bounded exponential backoff.
@@ -389,9 +403,15 @@ Every milestone ends with `cargo fmt --all -- --check`, scoped tests, `cargo tes
 ### Task M6.3: Add manual read-only Gmail and Calendar capabilities
 
 **Files:**
-- Create or configure provider tools under `crates/corpus/src/tools/google/`
-- Modify tool registration at the current registry discovered during milestone planning
-- Test with mock MCP/provider endpoints
+- Create: `crates/corpus/src/tools/google/mod.rs`
+- Create: `crates/corpus/src/tools/google/client.rs`
+- Create: `crates/corpus/src/tools/google/gmail.rs`
+- Create: `crates/corpus/src/tools/google/calendar.rs`
+- Create: `crates/corpus/src/tools/google/tools.rs`
+- Modify: `crates/corpus/src/tools/tools/registry.rs`
+- Modify: `crates/executive/src/impl/daemon/handler/init.rs`
+- Test: `crates/corpus/tests/google_read_only.rs`
+- Test: `crates/executive/tests/google_tool_flow.rs`
 
 - [ ] Test Gmail search/read and Calendar list operations through capability admission.
 - [ ] Verify refresh tokens and authorization headers never enter tool results or model-visible errors.
@@ -490,9 +510,9 @@ Every milestone ends with `cargo fmt --all -- --check`, scoped tests, `cargo tes
 
 **Files:**
 - Create: `crates/mnemosyne/src/backends/gbrain/backend.rs`
-- Create: `crates/mnemosyne/src/service/composite.rs`
-- Modify: `crates/mnemosyne/src/service.rs` or convert it to a module during the detailed milestone plan
-- Modify: daemon memory bootstrap files discovered during milestone planning
+- Modify: `crates/mnemosyne/src/service.rs`
+- Create: `crates/mnemosyne/src/composite_service.rs`
+- Modify: `crates/executive/src/impl/daemon/handler/init.rs`
 
 - [ ] Add contract tests for `record`, `recall`, `consolidate`, and `forget`.
 - [ ] Test degraded recall fallback, recovery, result merging/dedup, and the prohibition on Dasein mutation.
@@ -502,9 +522,12 @@ Every milestone ends with `cargo fmt --all -- --check`, scoped tests, `cargo tes
 ### Task M8.4: Add deployment assets
 
 **Files:**
-- Create: `docker-compose.gbrain.yml`
-- Create: documented example environment file without secrets
-- Modify: existing configuration schema and example files discovered during milestone planning
+- Create: `deploy/gbrain/compose.yaml`
+- Create: `deploy/gbrain/.env.example`
+- Create: `deploy/gbrain/README.md`
+- Modify: `crates/executive/src/core/config/mod.rs`
+- Modify: `crates/executive/src/core/config/infra.rs`
+- Modify: `config/default.toml`
 
 - [ ] Add PostgreSQL and GBrain health checks with dependency ordering.
 - [ ] Bind service ports to localhost by default.
