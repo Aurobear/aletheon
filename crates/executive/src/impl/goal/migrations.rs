@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 3;
+const CURRENT_VERSION: u32 = 4;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -96,6 +96,54 @@ BEGIN
 END;
 ";
 
+/// Migration 4 — immutable coding jobs and their deterministic verification evidence.
+const MIGRATION_4: &str = "
+CREATE TABLE IF NOT EXISTS goal_coding_jobs (
+    job_id TEXT PRIMARY KEY,
+    objective_id INTEGER NOT NULL REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES goal_attempts(attempt_id) ON DELETE CASCADE,
+    base_commit TEXT NOT NULL,
+    worktree_ref TEXT NOT NULL,
+    report_json TEXT NOT NULL,
+    diff_artifact_ref TEXT NOT NULL,
+    diff_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed','timed_out','cancelled','retained')),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_goal_coding_jobs_objective
+    ON goal_coding_jobs(objective_id, created_at_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_goal_coding_jobs_status
+    ON goal_coding_jobs(status, created_at_ms);
+
+CREATE TABLE IF NOT EXISTS goal_verification_reports (
+    job_id TEXT PRIMARY KEY REFERENCES goal_coding_jobs(job_id) ON DELETE CASCADE,
+    objective_id INTEGER NOT NULL REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES goal_attempts(attempt_id) ON DELETE CASCADE,
+    report_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('passed','failed')),
+    started_at_ms INTEGER NOT NULL,
+    ended_at_ms INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_goal_verification_reports_objective
+    ON goal_verification_reports(objective_id, created_at_ms DESC);
+
+CREATE TRIGGER IF NOT EXISTS goal_coding_jobs_immutable_identity
+BEFORE UPDATE OF job_id, objective_id, attempt_id, base_commit, worktree_ref,
+                 diff_artifact_ref, diff_sha256, created_at_ms
+ON goal_coding_jobs
+BEGIN
+    SELECT RAISE(ABORT, 'coding job identity is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS goal_verification_reports_immutable
+BEFORE UPDATE ON goal_verification_reports
+BEGIN
+    SELECT RAISE(ABORT, 'verification report is immutable');
+END;
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -125,6 +173,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
             .context("begin migration 3 transaction")?;
         tx.execute_batch(MIGRATION_3)?;
         tx.pragma_update(None, "user_version", 3)?;
+        tx.commit()?;
+    }
+
+    if version < 4 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 4 transaction")?;
+        tx.execute_batch(MIGRATION_4)?;
+        tx.pragma_update(None, "user_version", 4)?;
         tx.commit()?;
     }
 
@@ -194,14 +251,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 3);
+        assert_eq!(v1, 4);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 3);
+        assert_eq!(v2, 4);
     }
 
     #[test]
@@ -218,6 +275,8 @@ mod tests {
         assert!(tables.iter().any(|n| n == "goal_events"));
         assert!(tables.iter().any(|n| n == "goal_budget_ledger"));
         assert!(tables.iter().any(|n| n == "goal_attempts"));
+        assert!(tables.iter().any(|n| n == "goal_coding_jobs"));
+        assert!(tables.iter().any(|n| n == "goal_verification_reports"));
     }
 
     #[test]

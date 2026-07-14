@@ -5,7 +5,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Isolation level for sandbox execution.
@@ -63,6 +64,14 @@ pub struct SandboxResult {
     pub elapsed_ms: u64,
 }
 
+/// An argv-preserving sandbox launcher command suitable for bounded execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxCommand {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub environment: BTreeMap<String, String>,
+}
+
 /// Trait that every sandbox backend must implement.
 #[async_trait]
 pub trait SandboxBackend: Send + Sync {
@@ -77,6 +86,17 @@ pub trait SandboxBackend: Send + Sync {
 
     /// Report the backend's capabilities and limitations.
     fn capabilities(&self) -> SandboxCapabilities;
+
+    /// Wrap an argv command without shell interpolation. Backends that cannot
+    /// preserve argv boundaries must fail closed rather than use `sh -c`.
+    fn wrap_argv(
+        &self,
+        _program: &Path,
+        _args: &[String],
+        _config: &SandboxConfig,
+    ) -> Result<SandboxCommand> {
+        anyhow::bail!("sandbox backend does not support argv-safe execution")
+    }
 
     /// Execute a shell command under this sandbox with the given config and timeout.
     async fn execute(

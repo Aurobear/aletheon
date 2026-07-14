@@ -157,7 +157,12 @@ impl WorktreeManager {
         let status = self
             .git(
                 &lease.path,
-                vec!["status".into(), "--porcelain=v2".into(), "-z".into()],
+                vec![
+                    "status".into(),
+                    "--porcelain=v2".into(),
+                    "-z".into(),
+                    "--untracked-files=all".into(),
+                ],
                 cancel.clone(),
             )
             .await?;

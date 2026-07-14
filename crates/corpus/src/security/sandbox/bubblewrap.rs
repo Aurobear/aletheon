@@ -4,10 +4,12 @@ use fabric::Clock;
 use fabric::Timer;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{collections::BTreeMap, path::Path, path::PathBuf};
 use tracing::{info, warn};
 
 use crate::sandbox::{
-    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
+    SandboxResult,
 };
 
 /// Bubblewrap-based sandbox backend — full namespace isolation.
@@ -42,12 +44,51 @@ impl BubblewrapBackend {
         }
     }
 
+    /// Async probe for runtime bootstrap paths; avoids blocking an executor
+    /// thread while validating the configured launcher.
+    pub async fn probe_async(clock: Arc<dyn Clock>) -> Option<Self> {
+        let bwrap_path = which::which("bwrap").ok()?;
+        let path_str = bwrap_path.to_string_lossy().to_string();
+        match tokio::process::Command::new(&bwrap_path)
+            .arg("--version")
+            .output()
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout);
+                info!(version = version.trim(), path = %path_str, "Bubblewrap detected");
+                Some(Self {
+                    bwrap_path: path_str,
+                    clock,
+                })
+            }
+            Ok(output) => {
+                warn!(status = ?output.status.code(), "bwrap --version failed");
+                None
+            }
+            Err(error) => {
+                warn!(%error, "Failed to run bwrap --version");
+                None
+            }
+        }
+    }
+
     fn build_args(&self, cmd: &str, config: &SandboxConfig) -> Vec<String> {
+        self.build_argv_args(Path::new("/bin/bash"), &["-c".into(), cmd.into()], config)
+    }
+
+    fn build_argv_args(
+        &self,
+        program: &Path,
+        command_args: &[String],
+        config: &SandboxConfig,
+    ) -> Vec<String> {
         let mut args = vec![
             "--die-with-parent".into(),
             "--unshare-pid".into(),
             "--unshare-ipc".into(),
             "--unshare-net".into(), // Default: no network
+            "--clearenv".into(),
         ];
 
         // Bind entire root read-only FIRST, then mount --dev and --proc
@@ -90,9 +131,8 @@ impl BubblewrapBackend {
 
         // The command to execute
         args.push("--".into());
-        args.push("/bin/bash".into());
-        args.push("-c".into());
-        args.push(cmd.to_string());
+        args.push(program.to_string_lossy().into_owned());
+        args.extend(command_args.iter().cloned());
 
         args
     }
@@ -123,6 +163,22 @@ impl SandboxBackend for BubblewrapBackend {
                 "Some paths may not be accessible in sandbox".into(),
             ],
         }
+    }
+
+    fn wrap_argv(
+        &self,
+        program: &Path,
+        args: &[String],
+        config: &SandboxConfig,
+    ) -> Result<SandboxCommand> {
+        if !program.is_absolute() {
+            anyhow::bail!("bubblewrap requires an absolute command path");
+        }
+        Ok(SandboxCommand {
+            program: PathBuf::from(&self.bwrap_path),
+            args: self.build_argv_args(program, args, config),
+            environment: BTreeMap::new(),
+        })
     }
 
     async fn execute(
@@ -167,5 +223,48 @@ impl SandboxBackend for BubblewrapBackend {
                 elapsed_ms: elapsed,
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aletheon_kernel::chronos::TestClock;
+    use std::collections::HashMap;
+
+    #[test]
+    fn argv_wrapper_is_networkless_and_only_worktree_is_writable() {
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let config = SandboxConfig {
+            working_dir: "/managed/job-1".into(),
+            env_vars: HashMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+        };
+        let wrapped = backend
+            .wrap_argv(
+                Path::new("/opt/pi/bin/pi"),
+                &["--task".into(), "literal;not-shell".into()],
+                &config,
+            )
+            .unwrap();
+        assert_eq!(wrapped.program, PathBuf::from("/usr/bin/bwrap"));
+        assert!(wrapped
+            .args
+            .windows(3)
+            .any(|items| items == ["--ro-bind", "/", "/"]));
+        assert!(wrapped
+            .args
+            .windows(3)
+            .any(|items| { items == ["--bind", "/managed/job-1", "/managed/job-1"] }));
+        assert!(wrapped.args.iter().any(|arg| arg == "--unshare-net"));
+        assert!(wrapped.args.iter().any(|arg| arg == "--clearenv"));
+        let separator = wrapped.args.iter().position(|arg| arg == "--").unwrap();
+        assert_eq!(
+            &wrapped.args[separator + 1..],
+            ["/opt/pi/bin/pi", "--task", "literal;not-shell"]
+        );
+        assert!(!wrapped.args.iter().any(|arg| arg == "-c"));
     }
 }
