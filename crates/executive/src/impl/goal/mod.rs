@@ -24,7 +24,7 @@ pub use attempt_coordinator::{
 };
 pub use frame::{GoalAttemptSummary, GoalFrame, GoalRemainingBudget};
 pub use retry::{RetryDecision, RetryPolicy};
-pub use verification::{PersistedCodingJob, PersistedVerificationReport};
+pub use verification::{CodingJobRecoveryRecord, PersistedCodingJob, PersistedVerificationReport};
 
 use anyhow::{Context, Result};
 use fabric::goal::{GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason};
