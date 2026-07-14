@@ -15,6 +15,7 @@ mod migrations;
 mod retry;
 pub(crate) mod store;
 mod transition;
+mod verification;
 pub use self::coordinator::{GoalCoordinator, GoalTickOutcome};
 pub use attempt::GoalAttempt;
 pub use attempt_coordinator::{
@@ -23,6 +24,7 @@ pub use attempt_coordinator::{
 };
 pub use frame::{GoalAttemptSummary, GoalFrame, GoalRemainingBudget};
 pub use retry::{RetryDecision, RetryPolicy};
+pub use verification::{PersistedCodingJob, PersistedVerificationReport};
 
 use anyhow::{Context, Result};
 use fabric::goal::{GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason};
@@ -37,6 +39,7 @@ use rusqlite::Connection;
 /// `fact_store`'s ownership pattern exactly.
 pub struct ObjectiveStore {
     pub(crate) db: Connection,
+    pub(crate) artifact_dir: std::path::PathBuf,
 }
 
 impl ObjectiveStore {
@@ -44,7 +47,16 @@ impl ObjectiveStore {
     pub fn open(path: &std::path::Path) -> Result<Self> {
         let db = Connection::open(path).context("opening objective store DB")?;
         migrations::run_migrations(&db)?;
-        Ok(Self { db })
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("objectives.db");
+        let artifact_dir = path.with_file_name(format!("{file_name}.artifacts"));
+        std::fs::create_dir_all(&artifact_dir).context("creating Goal artifact directory")?;
+        let artifact_dir = artifact_dir
+            .canonicalize()
+            .context("canonicalizing Goal artifact directory")?;
+        Ok(Self { db, artifact_dir })
     }
 
     /// Map a rusqlite Row to an Objective using positional indices.
