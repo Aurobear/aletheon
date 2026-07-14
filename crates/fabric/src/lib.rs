@@ -49,6 +49,7 @@ pub use include::subsystem;
 
 // Shared type modules (from types/)
 pub use types::agent;
+pub use types::attempt;
 pub use types::capability;
 pub use types::channel;
 pub use types::context;
@@ -139,6 +140,10 @@ pub use types::admission::{
     ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
 pub use types::agent::Pid;
+pub use types::attempt::{
+    AttemptEvidence, AttemptId, AttemptStatus, AttemptUsage, CognitiveRole, FailureClass,
+    RuntimeFailure, RuntimeId, RuntimeResult,
+};
 pub use types::capability::{Capability, CapabilityLevel, CapabilitySet};
 pub use types::channel::{
     ActionType, ChannelHealth, ChannelId, ConversationId, ExternalSenderId, InboundMessage,
