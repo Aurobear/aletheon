@@ -5,7 +5,6 @@
 
 use anyhow::{Context, Result};
 use fabric::{Clock, RuntimeCandidate, TestResult};
-use std::process::Command;
 use std::sync::Arc;
 
 pub struct SandboxRunner {
@@ -33,10 +32,11 @@ impl SandboxRunner {
     pub async fn run_tests(&self, _candidate: &RuntimeCandidate) -> Result<TestResult> {
         let start = self.clock.mono_now();
 
-        let output = Command::new("cargo")
+        let output = tokio::process::Command::new("cargo")
             .args(["test", "--workspace", "--message-format=json"])
             .current_dir(&self.work_dir)
             .output()
+            .await
             .context("Failed to run cargo test")?;
 
         let elapsed_ms = self.clock.mono_now().0 - start.0;
