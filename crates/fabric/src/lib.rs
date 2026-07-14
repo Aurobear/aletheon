@@ -54,6 +54,7 @@ pub use types::capability;
 pub use types::channel;
 pub use types::context;
 pub use types::evidence;
+pub use types::external_event;
 pub use types::external_identity;
 pub use types::genome;
 pub use types::goal;
@@ -161,6 +162,11 @@ pub use types::coding_job::{
     WorkspaceBoundary,
 };
 pub use types::context::{Context, TraceState};
+pub use types::external_event::{
+    DriveFileMetadata, ExternalContentRef, ExternalEventDraft, ExternalEventEnvelope,
+    ExternalEventError, ExternalEventId, ExternalObjectRef, GoogleEvent, MailChange,
+    EXTERNAL_EVENT_SCHEMA_VERSION,
+};
 pub use types::external_identity::{
     CapabilityGrant, ExternalIdentity, ExternalIdentityId, ExternalIdentityState, ExternalScope,
     GrantState, IdentityProvider,
@@ -172,6 +178,7 @@ pub use types::goal::{
 pub use types::google::{
     CalendarEvent, CalendarEventPage, CalendarTimeRange, GmailMessage, GmailMessagePage,
     GmailMessageSummary, GmailQuery, GoogleContractError, ProviderRecordRef,
+    MAX_GOOGLE_PROVIDER_ID_BYTES,
 };
 pub use types::hook::{HookContext, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};

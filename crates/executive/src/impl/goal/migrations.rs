@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 9;
+const CURRENT_VERSION: u32 = 10;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -295,6 +295,86 @@ BEFORE DELETE ON external_identity_events BEGIN
 END;
 ";
 
+/// Migration 10 — durable Google cursors, normalized projections, subscriptions, and outbox.
+const MIGRATION_10: &str = "
+CREATE TABLE IF NOT EXISTS google_sync_cursors (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL CHECK(stream IN ('gmail_history','calendar','drive_changes')),
+    cursor_token TEXT,
+    generation INTEGER NOT NULL DEFAULT 0,
+    last_success_ms INTEGER,
+    last_error_ms INTEGER,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    retry_after_ms INTEGER,
+    health_state TEXT NOT NULL DEFAULT 'healthy'
+        CHECK(health_state IN ('healthy','retrying','circuit_open','auth_required','revoked')),
+    version INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(account_id, stream)
+);
+
+CREATE TABLE IF NOT EXISTS google_events (
+    event_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL,
+    dedup_key TEXT NOT NULL,
+    event_kind TEXT NOT NULL,
+    object_id TEXT NOT NULL,
+    object_version TEXT NOT NULL,
+    source_timestamp_ms INTEGER NOT NULL,
+    observed_at_ms INTEGER NOT NULL,
+    payload_hash TEXT NOT NULL,
+    envelope_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    UNIQUE(account_id, stream, dedup_key)
+);
+CREATE INDEX IF NOT EXISTS idx_google_events_object
+    ON google_events(account_id, stream, object_id, source_timestamp_ms);
+
+CREATE TABLE IF NOT EXISTS google_objects (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL,
+    object_id TEXT NOT NULL,
+    object_version TEXT NOT NULL,
+    latest_event_id TEXT NOT NULL REFERENCES google_events(event_id),
+    source_timestamp_ms INTEGER NOT NULL,
+    projection_json TEXT NOT NULL,
+    tombstone INTEGER NOT NULL DEFAULT 0 CHECK(tombstone IN (0,1)),
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(account_id, stream, object_id)
+);
+
+CREATE TABLE IF NOT EXISTS google_subscriptions (
+    subscription_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL,
+    event_kinds_json TEXT NOT NULL,
+    query_json TEXT NOT NULL,
+    cursor_generation INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('active','paused','revoked')),
+    version INTEGER NOT NULL DEFAULT 0,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_google_subscriptions_account
+    ON google_subscriptions(account_id, stream, state);
+
+CREATE TABLE IF NOT EXISTS google_event_outbox (
+    outbox_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL UNIQUE REFERENCES google_events(event_id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK(status IN ('pending','claimed','delivered','failed')),
+    claim_owner TEXT,
+    claim_expires_at_ms INTEGER,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error_code TEXT,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    delivered_at_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_google_event_outbox_pending
+    ON google_event_outbox(status, created_at_ms);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -381,6 +461,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
         tx.commit()?;
     }
 
+    if version < 10 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 10 transaction")?;
+        tx.execute_batch(MIGRATION_10)?;
+        tx.pragma_update(None, "user_version", 10)?;
+        tx.commit()?;
+    }
+
     // Verify we're at the expected version.
     let current: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     anyhow::ensure!(
@@ -447,14 +536,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 9);
+        assert_eq!(v1, 10);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 9);
+        assert_eq!(v2, 10);
     }
 
     #[test]

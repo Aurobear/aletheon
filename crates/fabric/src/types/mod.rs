@@ -9,6 +9,7 @@ pub mod channel;
 pub mod coding_job;
 pub mod context;
 pub mod evidence;
+pub mod external_event;
 pub mod external_identity;
 pub mod genome;
 pub mod goal;

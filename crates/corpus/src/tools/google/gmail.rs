@@ -40,7 +40,7 @@ pub trait GmailCapability: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct GoogleGmailAdapter {
-    client: GoogleApiClient,
+    pub(crate) client: GoogleApiClient,
 }
 
 impl GoogleGmailAdapter {
@@ -48,7 +48,7 @@ impl GoogleGmailAdapter {
         Self { client }
     }
 
-    async fn metadata(
+    pub(crate) async fn metadata(
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
