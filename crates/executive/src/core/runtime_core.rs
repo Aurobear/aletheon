@@ -223,6 +223,7 @@ impl RuntimeCore {
             &registry,
             app_config.model_routing.clone(),
             app_config.goal_runtime.clone().unwrap_or_default(),
+            app_config.pi_runtime.clone(),
             config.enable_evolution,
             Some(bus.clone()),
             cancel_token.clone(),

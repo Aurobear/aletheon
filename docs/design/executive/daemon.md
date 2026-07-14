@@ -32,6 +32,7 @@
 | ContainerHost | ✅ Implemented | `crates/executive/src/host/container.rs` | Docker/Podman container lifecycle via CLI |
 | RuntimeCore (host-agnostic) | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Shared bootstrap for all host types |
 | Goal role runtime routing | ✅ Implemented | `crates/executive/src/impl/daemon/handler/init.rs` | Optional worker/reviewer runtimes resolved through ProviderRegistry |
+| Isolated Pi coding runtime | 🟡 Configured | `crates/executive/src/impl/runtime/pi.rs` | Registers `pi-coder` only with a complete policy and namespace sandbox; execution lifecycle follows in M4 |
 | `aletheon exec` (CI/CD) | ✅ Implemented | `crates/bin/src/main.rs` | Non-interactive batch execution |
 
 ---
@@ -217,6 +218,32 @@ allowed_tools = ["file_read", "grep"]
 The runtime implementation does not inspect provider brands. Provider
 transport and model selection remain `ProviderRegistry` configuration, while
 `RuntimeRegistry` only maps the stable runtime IDs used by Goal attempts.
+
+#### 3.3.2 Isolated Pi coding runtime
+
+`[pi_runtime]` is disabled by default. When enabled, daemon startup resolves a
+fixed Pi executable from an absolute path or an explicit trusted directory and
+registers stable runtime ID `pi-coder` only after a namespace-capable sandbox
+reports both filesystem and network isolation. Noop and process-only backends
+are rejected; network access cannot be enabled in M4.
+
+```toml
+[pi_runtime]
+enabled = true
+executable = "/opt/aletheon/bin/pi"
+fixed_args = ["--mode", "json"]
+worktree_base = "/var/lib/aletheon/pi-worktrees"
+timeout_ms = 1800000
+max_output_bytes = 1048576
+allowed_paths = ["crates", "Cargo.toml", "Cargo.lock"]
+forbidden_paths = [".git", ".env"]
+require_namespace_isolation = true
+network_enabled = false
+```
+
+Fixed arguments are deliberately omitted from `Debug` output. A Goal cannot
+replace the configured executable, relax path scope, request network access,
+or downgrade the sandbox.
 
 ### 3.4 感知管理器启动
 
