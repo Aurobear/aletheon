@@ -114,6 +114,7 @@ impl RuntimeCore {
                 };
                 rt_config.hooks
             },
+            telegram: app_config.telegram.clone(),
         };
 
         // ── Event bus ───────────────────────────────────────────────

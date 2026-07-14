@@ -10,7 +10,7 @@ pub use agent::{
     HooksConfig, PerceptionConfig,
 };
 pub use genome::GenomeConfig;
-pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig};
+pub use infra::{DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig, TelegramConfig};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
 
 use serde::{Deserialize, Serialize};

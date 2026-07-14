@@ -47,6 +47,8 @@ pub struct AppConfig {
     pub perception: PerceptionConfig,
     #[serde(default)]
     pub evolution: EvolutionSettings,
+    #[serde(default)]
+    pub telegram: TelegramConfig,
 }
 
 /// Agent-level settings.
@@ -316,6 +318,94 @@ impl Default for PerceptionConfig {
     }
 }
 
+/// Telegram bot configuration for owner-only control channel.
+///
+/// The config stores the environment-variable NAME, never the token value itself.
+/// The runtime reads the token from that env var at startup.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct TelegramConfig {
+    /// Master switch. When false (default), the Telegram bot is not started.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Environment variable name that holds the bot token.
+    /// Example value: `"ALETHEON_TELEGRAM_BOT_TOKEN"`.
+    pub bot_token_env: Option<String>,
+    /// Owner's Telegram user ID. Only messages from this user are accepted.
+    pub owner_user_id: Option<i64>,
+    /// Polling timeout in seconds (clamped to 1–50).
+    #[serde(default = "default_poll_timeout_secs")]
+    pub poll_timeout_secs: u64,
+}
+
+fn default_poll_timeout_secs() -> u64 {
+    10
+}
+
+impl Default for TelegramConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bot_token_env: None,
+            owner_user_id: None,
+            poll_timeout_secs: default_poll_timeout_secs(),
+        }
+    }
+}
+
+impl TelegramConfig {
+    /// Validate the configuration, returning a list of errors.
+    /// Also clamps `poll_timeout_secs` to the allowed 1–50 range.
+    pub fn validate(&mut self) -> Vec<String> {
+        let mut errors: Vec<String> = Vec::new();
+
+        // Clamp poll timeout
+        if self.poll_timeout_secs < 1 {
+            self.poll_timeout_secs = 1;
+        }
+        if self.poll_timeout_secs > 50 {
+            self.poll_timeout_secs = 50;
+        }
+
+        if !self.enabled {
+            // Disabled: no token or owner required
+            return errors;
+        }
+
+        // Enabled: require bot_token_env
+        match &self.bot_token_env {
+            None => {
+                errors.push(
+                    "telegram.enabled=true but bot_token_env is not set".to_string(),
+                );
+            }
+            Some(name) if name.trim().is_empty() => {
+                errors.push(
+                    "telegram.enabled=true but bot_token_env is empty".to_string(),
+                );
+            }
+            Some(_) => {}
+        }
+
+        // Enabled: require owner_user_id > 0
+        match self.owner_user_id {
+            None => {
+                errors.push(
+                    "telegram.enabled=true but owner_user_id is not set".to_string(),
+                );
+            }
+            Some(id) if id <= 0 => {
+                errors.push(format!(
+                    "telegram.enabled=true but owner_user_id={} is not positive",
+                    id
+                ));
+            }
+            Some(_) => {}
+        }
+
+        errors
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AppConfig methods
 // ---------------------------------------------------------------------------
@@ -440,6 +530,20 @@ impl AppConfig {
         if other.evolution.enabled {
             self.evolution.enabled = other.evolution.enabled;
         }
+
+        // Telegram: override if non-default
+        if other.telegram.enabled {
+            self.telegram.enabled = other.telegram.enabled;
+        }
+        if other.telegram.bot_token_env.is_some() {
+            self.telegram.bot_token_env = other.telegram.bot_token_env;
+        }
+        if other.telegram.owner_user_id.is_some() {
+            self.telegram.owner_user_id = other.telegram.owner_user_id;
+        }
+        if other.telegram.poll_timeout_secs != default_poll_timeout_secs() {
+            self.telegram.poll_timeout_secs = other.telegram.poll_timeout_secs;
+        }
     }
 
     /// Load config with layer merging (low → high precedence):
@@ -533,5 +637,163 @@ mod tests {
         config.merge(user);
 
         assert_eq!(config.agent.default_model.as_deref(), Some("user-model"));
+    }
+
+    // ── TelegramConfig validation ──────────────────────────────────────
+
+    #[test]
+    fn telegram_disabled_needs_no_token_or_owner() {
+        let mut cfg = TelegramConfig::default();
+        assert!(!cfg.enabled);
+        assert!(cfg.bot_token_env.is_none());
+        assert!(cfg.owner_user_id.is_none());
+        let errors = cfg.validate();
+        assert!(errors.is_empty(), "disabled config must have no errors, got: {errors:?}");
+    }
+
+    #[test]
+    fn telegram_enabled_requires_token_env() {
+        let mut cfg = TelegramConfig {
+            enabled: true,
+            bot_token_env: None,
+            owner_user_id: Some(12345),
+            poll_timeout_secs: 10,
+        };
+        let errors = cfg.validate();
+        assert!(!errors.is_empty(), "must reject missing bot_token_env");
+        assert!(
+            errors.iter().any(|e| e.contains("bot_token_env")),
+            "error must mention bot_token_env: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn telegram_enabled_rejects_empty_token_env() {
+        let mut cfg = TelegramConfig {
+            enabled: true,
+            bot_token_env: Some("   ".to_string()),
+            owner_user_id: Some(12345),
+            poll_timeout_secs: 10,
+        };
+        let errors = cfg.validate();
+        assert!(!errors.is_empty(), "must reject empty bot_token_env");
+        assert!(
+            errors.iter().any(|e| e.contains("bot_token_env")),
+            "error must mention bot_token_env: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn telegram_enabled_requires_owner_user_id() {
+        let mut cfg = TelegramConfig {
+            enabled: true,
+            bot_token_env: Some("ALETHEON_TELEGRAM_BOT_TOKEN".into()),
+            owner_user_id: None,
+            poll_timeout_secs: 10,
+        };
+        let errors = cfg.validate();
+        assert!(!errors.is_empty(), "must reject missing owner_user_id");
+        assert!(
+            errors.iter().any(|e| e.contains("owner_user_id")),
+            "error must mention owner_user_id: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn telegram_enabled_rejects_zero_or_negative_owner_id() {
+        for bad_id in [0, -1] {
+            let mut cfg = TelegramConfig {
+                enabled: true,
+                bot_token_env: Some("ALETHEON_TELEGRAM_BOT_TOKEN".into()),
+                owner_user_id: Some(bad_id),
+                poll_timeout_secs: 10,
+            };
+            let errors = cfg.validate();
+            assert!(
+                !errors.is_empty(),
+                "must reject owner_user_id={bad_id}"
+            );
+            assert!(
+                errors.iter().any(|e| e.contains("not positive")),
+                "error must say 'not positive' for id={bad_id}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn telegram_valid_enabled_passes() {
+        let mut cfg = TelegramConfig {
+            enabled: true,
+            bot_token_env: Some("ALETHEON_TELEGRAM_BOT_TOKEN".into()),
+            owner_user_id: Some(12345),
+            poll_timeout_secs: 10,
+        };
+        let errors = cfg.validate();
+        assert!(errors.is_empty(), "valid config must have no errors, got: {errors:?}");
+    }
+
+    #[test]
+    fn telegram_clamps_poll_timeout() {
+        // Below minimum
+        let mut cfg = TelegramConfig {
+            enabled: false,
+            bot_token_env: None,
+            owner_user_id: None,
+            poll_timeout_secs: 0,
+        };
+        cfg.validate();
+        assert_eq!(cfg.poll_timeout_secs, 1);
+
+        // Above maximum
+        cfg.poll_timeout_secs = 100;
+        cfg.validate();
+        assert_eq!(cfg.poll_timeout_secs, 50);
+
+        // In range
+        cfg.poll_timeout_secs = 30;
+        cfg.validate();
+        assert_eq!(cfg.poll_timeout_secs, 30);
+    }
+
+    #[test]
+    fn telegram_parses_from_toml() {
+        let toml = r#"
+enabled = true
+bot_token_env = "ALETHEON_TELEGRAM_BOT_TOKEN"
+owner_user_id = 12345
+poll_timeout_secs = 20
+"#;
+        let cfg: TelegramConfig = toml::from_str(toml).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.bot_token_env.as_deref(), Some("ALETHEON_TELEGRAM_BOT_TOKEN"));
+        assert_eq!(cfg.owner_user_id, Some(12345));
+        assert_eq!(cfg.poll_timeout_secs, 20);
+    }
+
+    #[test]
+    fn telegram_default_in_app_config() {
+        let toml = r#"
+[[providers]]
+name = "test"
+base_url = "http://localhost"
+"#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        assert!(!config.telegram.enabled, "telegram disabled by default");
+        assert_eq!(config.telegram.poll_timeout_secs, 10);
+    }
+
+    #[test]
+    fn telegram_merge_overrides() {
+        let mut base = AppConfig::default();
+        let mut other = AppConfig::default();
+        other.telegram.enabled = true;
+        other.telegram.bot_token_env = Some("MY_TOKEN".into());
+        other.telegram.owner_user_id = Some(42);
+
+        base.merge(other);
+
+        assert!(base.telegram.enabled);
+        assert_eq!(base.telegram.bot_token_env.as_deref(), Some("MY_TOKEN"));
+        assert_eq!(base.telegram.owner_user_id, Some(42));
     }
 }
