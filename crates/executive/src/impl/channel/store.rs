@@ -5,7 +5,7 @@
 //! the existing objective database (`objectives.db`).
 
 use anyhow::{Context, Result};
-use fabric::channel::InboundMessage;
+use fabric::channel::{InboundMessage, OutboundMessage};
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
@@ -208,12 +208,105 @@ impl ChannelStore {
         }
         Ok(msgs)
     }
+
+    /// Atomically settle an inbound message: insert outbound, mark inbox
+    /// completed, and advance the channel cursor — all in one transaction.
+    ///
+    /// If any operation fails, the transaction rolls back and no side-effects
+    /// are visible to other connections.
+    pub fn complete_inbound(
+        &mut self,
+        channel: &str,
+        message_id: &str,
+        next_cursor: &str,
+        outbound: &OutboundMessage,
+    ) -> Result<()> {
+        let tx = self.db.transaction()?;
+
+        // 1. Insert outbox — skip silently on duplicate correlation_id so
+        //    we never double-send a message across restarts.
+        let outbound_json = serde_json::to_string(outbound)?;
+        tx.execute(
+            "INSERT INTO channel_outbox (channel_id, conversation_id, payload_json, correlation_id)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(correlation_id) DO NOTHING",
+            rusqlite::params![
+                channel,
+                outbound.conversation_id.0,
+                outbound_json,
+                outbound.correlation_id,
+            ],
+        )?;
+
+        // 2. Mark inbox completed and store the serialized result.
+        tx.execute(
+            "UPDATE channel_inbox SET status = 'completed', result_json = ?3, updated_at = datetime('now')
+             WHERE channel_id = ?1 AND message_id = ?2",
+            rusqlite::params![channel, message_id, outbound_json],
+        )?;
+
+        // 3. Upsert the channel cursor so we know where to resume.
+        tx.execute(
+            "INSERT INTO channel_cursor (channel_id, cursor, updated_at)
+             VALUES (?1, ?2, datetime('now'))
+             ON CONFLICT(channel_id) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at",
+            rusqlite::params![channel, next_cursor],
+        )?;
+
+        // 4. Commit — all three effects visible atomically or none at all.
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Return the status of an inbox message, or `None` if not found.
+    pub fn inbox_status(&self, channel: &str, message_id: &str) -> Result<Option<String>> {
+        let mut stmt = self.db.prepare(
+            "SELECT status FROM channel_inbox WHERE channel_id = ?1 AND message_id = ?2",
+        )?;
+        let status: Option<String> = stmt
+            .query_row(rusqlite::params![channel, message_id], |r| r.get(0))
+            .optional()?;
+        Ok(status)
+    }
+
+    /// Return the current cursor for `channel`, or `None` if never set.
+    pub fn cursor(&self, channel: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .db
+            .prepare("SELECT cursor FROM channel_cursor WHERE channel_id = ?1")?;
+        let cursor: Option<String> = stmt
+            .query_row(rusqlite::params![channel], |r| r.get(0))
+            .optional()?;
+        Ok(cursor)
+    }
+
+    /// Return pending outbox messages for `channel`, ordered oldest-first.
+    pub fn pending_outbox(&self, channel: &str, limit: usize) -> Result<Vec<OutboundMessage>> {
+        let mut stmt = self.db.prepare(
+            "SELECT payload_json FROM channel_outbox
+             WHERE channel_id = ?1 AND status = 'pending'
+             ORDER BY created_at ASC
+             LIMIT ?2",
+        )?;
+        let rows: Vec<String> = stmt
+            .query_map(rusqlite::params![channel, limit as i64], |r| r.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut msgs = Vec::with_capacity(rows.len());
+        for row in rows {
+            let msg: OutboundMessage =
+                serde_json::from_str(&row).context("deserializing pending outbound message")?;
+            msgs.push(msg);
+        }
+        Ok(msgs)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::channel::{ChannelId, ConversationId, ExternalSenderId, MessageContent, MessageId};
+    use fabric::channel::{
+        ChannelId, ConversationId, ExternalSenderId, MessageContent, MessageId, OutboundMessage,
+    };
 
     fn test_store() -> (ChannelStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -296,6 +389,100 @@ mod tests {
                 .unwrap()
                 .content,
             first.content
+        );
+    }
+
+    #[test]
+    fn completion_persists_result_outbox_and_cursor_together() {
+        let (mut store, _dir) = test_store();
+        let inbound = sample_inbound("42", "hello");
+        store.insert_inbound(&inbound).unwrap();
+        let outbound = OutboundMessage {
+            conversation_id: inbound.conversation_id.clone(),
+            content: MessageContent::Text {
+                text: "world".into(),
+            },
+            actions: vec![],
+            reply_to: Some(inbound.message_id.clone()),
+            correlation_id: inbound.correlation_id.clone(),
+        };
+        store
+            .complete_inbound("telegram", "42", "43", &outbound)
+            .unwrap();
+        assert_eq!(
+            store.inbox_status("telegram", "42").unwrap().as_deref(),
+            Some("completed")
+        );
+        assert_eq!(
+            store.cursor("telegram").unwrap().as_deref(),
+            Some("43")
+        );
+        assert_eq!(
+            store.pending_outbox("telegram", 10).unwrap(),
+            vec![outbound]
+        );
+    }
+
+    /// When the outbox insert conflicts on `correlation_id`, the transaction
+    /// still commits with `ON CONFLICT DO NOTHING`: inbox is completed,
+    /// cursor is advanced, but no duplicate outbox row is created.
+    #[test]
+    fn completion_on_duplicate_correlation_id_is_idempotent() {
+        let (mut store, _dir) = test_store();
+
+        // Pre-populate an outbox row that will later collide on correlation_id.
+        let inbound = sample_inbound("42", "hello");
+        store.insert_inbound(&inbound).unwrap();
+        let original = OutboundMessage {
+            conversation_id: inbound.conversation_id.clone(),
+            content: MessageContent::Text {
+                text: "original".into(),
+            },
+            actions: vec![],
+            reply_to: Some(inbound.message_id.clone()),
+            correlation_id: "shared-corr".into(),
+        };
+        store
+            .complete_inbound("telegram", "42", "cursor-1", &original)
+            .unwrap();
+
+        // Insert a second inbox row and try to complete it with the SAME correlation_id.
+        let inbound2 = sample_inbound("99", "hi");
+        store.insert_inbound(&inbound2).unwrap();
+        let duplicate = OutboundMessage {
+            conversation_id: inbound2.conversation_id.clone(),
+            content: MessageContent::Text {
+                text: "duplicate".into(),
+            },
+            actions: vec![],
+            reply_to: Some(inbound2.message_id.clone()),
+            correlation_id: "shared-corr".into(), // same correlation_id
+        };
+        store
+            .complete_inbound("telegram", "99", "cursor-2", &duplicate)
+            .unwrap();
+
+        // Inbox for the second message is still completed.
+        assert_eq!(
+            store.inbox_status("telegram", "99").unwrap().as_deref(),
+            Some("completed")
+        );
+
+        // Cursor advanced to the latest value.
+        assert_eq!(
+            store.cursor("telegram").unwrap().as_deref(),
+            Some("cursor-2")
+        );
+
+        // Outbox has exactly one row (the original), not two.
+        let outbox = store.pending_outbox("telegram", 10).unwrap();
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(outbox[0].correlation_id, "shared-corr");
+        assert_eq!(
+            outbox[0].content,
+            MessageContent::Text {
+                text: "original".into()
+            }
         );
     }
 }
