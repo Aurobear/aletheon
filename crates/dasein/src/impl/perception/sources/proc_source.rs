@@ -10,6 +10,8 @@ use crate::r#impl::perception::event::*;
 pub struct ProcSource {
     last_load: Option<(f64, f64, f64)>,
     last_mem: Option<(u64, u64)>,
+    /// Reserved for future per-core-CPU threshold gating; threshold
+    /// is set at construction but not yet referenced by `poll()`.
     #[allow(dead_code)]
     high_cpu_threshold: f64,
     event_id_counter: u64,

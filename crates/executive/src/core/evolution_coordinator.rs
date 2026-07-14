@@ -19,6 +19,7 @@ use metacog::r#impl::meta_runtime::lineage::LineageTracker;
 use metacog::r#impl::morphogenesis::mutation_intent::MutationIntentGenerator;
 use metacog::r#impl::morphogenesis::pipeline::{MorphogenesisPipeline, PipelineResult};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -103,7 +104,7 @@ pub struct EvolutionCoordinator {
     intent_generator: MutationIntentGenerator,
     lineage: LineageTracker,
     recent_reflections: Arc<Mutex<Vec<ReflectionEntry>>>,
-    turn_counter: Arc<Mutex<usize>>,
+    turn_counter: Arc<AtomicUsize>,
     genome_config: Arc<Mutex<GenomeConfig>>,
 }
 
@@ -117,7 +118,7 @@ impl EvolutionCoordinator {
             intent_generator: MutationIntentGenerator::new(),
             lineage,
             recent_reflections: Arc::new(Mutex::new(Vec::new())),
-            turn_counter: Arc::new(Mutex::new(0)),
+            turn_counter: Arc::new(AtomicUsize::new(0)),
             genome_config: Arc::new(Mutex::new(GenomeConfig::default())),
         })
     }
@@ -197,11 +198,10 @@ impl EvolutionCoordinator {
 
         // Check if we should trigger evolution
         let should_trigger = {
-            let mut counter = self.turn_counter.lock().await;
-            *counter += 1;
+            let counter = self.turn_counter.fetch_add(1, Ordering::Relaxed) + 1;
             let n = self.config.trigger_every_n_turns;
             let on_fail = self.config.trigger_on_failure && !success;
-            (n > 0 && *counter % n == 0) || on_fail
+            (n > 0 && counter % n == 0) || on_fail
         };
 
         let (triggered, pipeline_results, lineage_added) = if should_trigger {
@@ -386,7 +386,7 @@ impl EvolutionCoordinator {
 
     /// Current turn count.
     pub async fn turn_count(&self) -> usize {
-        *self.turn_counter.lock().await
+        self.turn_counter.load(Ordering::Relaxed)
     }
 
     /// Snapshot of recent reflections.

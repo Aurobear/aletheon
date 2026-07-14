@@ -82,12 +82,14 @@ impl TurnToolExecutor {
     }
 
     /// Return the kernel operation id for this turn.
+    /// Reserved for future admission-controller diagnostics; not yet called.
     #[allow(dead_code)]
     pub(crate) fn operation_id(&self) -> OperationId {
         self.operation_id
     }
 
     /// Return the kernel process id for the main agent.
+    /// Reserved for future admission-controller diagnostics; not yet called.
     #[allow(dead_code)]
     pub(crate) fn process_id(&self) -> ProcessId {
         self.process_id
