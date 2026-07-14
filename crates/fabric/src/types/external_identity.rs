@@ -62,6 +62,7 @@ pub enum ExternalScope {
     UserInfoEmail,
     GmailReadonly,
     CalendarReadonly,
+    DriveReadonly,
     GmailModify,
     GmailSend,
     CalendarEventsWrite,
@@ -74,6 +75,7 @@ impl ExternalScope {
             Self::UserInfoEmail => "https://www.googleapis.com/auth/userinfo.email",
             Self::GmailReadonly => "https://www.googleapis.com/auth/gmail.readonly",
             Self::CalendarReadonly => "https://www.googleapis.com/auth/calendar.readonly",
+            Self::DriveReadonly => "https://www.googleapis.com/auth/drive.readonly",
             Self::GmailModify => "https://www.googleapis.com/auth/gmail.modify",
             Self::GmailSend => "https://www.googleapis.com/auth/gmail.send",
             Self::CalendarEventsWrite => "https://www.googleapis.com/auth/calendar.events",
@@ -90,7 +92,11 @@ impl ExternalScope {
     pub const fn is_m6_allowed(self) -> bool {
         matches!(
             self,
-            Self::OpenId | Self::UserInfoEmail | Self::GmailReadonly | Self::CalendarReadonly
+            Self::OpenId
+                | Self::UserInfoEmail
+                | Self::GmailReadonly
+                | Self::CalendarReadonly
+                | Self::DriveReadonly
         )
     }
 }

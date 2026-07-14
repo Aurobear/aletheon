@@ -155,6 +155,7 @@ fn fixture_with_config(
         GoogleApiEndpoints {
             gmail_base: endpoint.into(),
             calendar_base: endpoint.into(),
+            drive_base: endpoint.into(),
         },
     )
     .unwrap();

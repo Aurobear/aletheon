@@ -168,12 +168,17 @@ fn register_configured_google_read_tools(
         .context("opening external identity repository")?;
     let gmail_enabled = repository.has_active_scope(fabric::ExternalScope::GmailReadonly)?;
     let calendar_enabled = repository.has_active_scope(fabric::ExternalScope::CalendarReadonly)?;
-    let scopes = vec![
+    let mut scopes = vec![
         fabric::ExternalScope::OpenId,
         fabric::ExternalScope::UserInfoEmail,
         fabric::ExternalScope::GmailReadonly,
         fabric::ExternalScope::CalendarReadonly,
     ];
+    if std::env::var("ALETHEON_GOOGLE_DRIVE_SYNC_ENABLED")
+        .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+    {
+        scopes.push(fabric::ExternalScope::DriveReadonly);
+    }
     let tokens = corpus::tools::mcp::token_store::TokenStore::open_default()
         .context("opening encrypted Google credential vault")?;
     let oauth = corpus::tools::google::oauth::GoogleOAuthProvider::new(

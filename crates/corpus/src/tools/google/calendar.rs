@@ -22,7 +22,7 @@ pub trait CalendarCapability: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct GoogleCalendarAdapter {
-    client: GoogleApiClient,
+    pub(crate) client: GoogleApiClient,
 }
 
 impl GoogleCalendarAdapter {

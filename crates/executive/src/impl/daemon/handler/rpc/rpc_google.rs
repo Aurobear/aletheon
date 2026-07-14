@@ -153,7 +153,9 @@ impl RequestHandler {
                 && grant.scopes.iter().any(|scope| {
                     matches!(
                         scope,
-                        ExternalScope::GmailReadonly | ExternalScope::CalendarReadonly
+                        ExternalScope::GmailReadonly
+                            | ExternalScope::CalendarReadonly
+                            | ExternalScope::DriveReadonly
                     )
                 })
                 && grant.scopes.iter().all(|scope| !scope.is_write());
