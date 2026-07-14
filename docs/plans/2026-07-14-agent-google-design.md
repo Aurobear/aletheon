@@ -29,6 +29,7 @@ The implementation must start from these current facts:
 |---|---|---|
 | Daemon turns use `TurnPipeline`; the separate `TurnService` exposes `submit()` | `crates/executive/src/service/turn_pipeline.rs:40-67`, `crates/executive/src/service/turn_service.rs:14-55` | Channel adapters target a new daemon channel router backed by `TurnPipeline`; there is no `SessionService` |
 | Kernel processes have no arbitrary metadata or Goal attachment | `crates/fabric/src/types/process.rs:108-131` | `GoalSpec` cannot be attached to `ProcessRecord` without changing the kernel ABI |
+| Executive already has a SQLite `ObjectiveStore` with startup recovery | `crates/executive/src/impl/goal/mod.rs:12-49`, `crates/executive/src/impl/goal/store.rs:74-111`, `crates/executive/src/impl/daemon/handler/init.rs:249-278` | Evolve this store compatibly instead of creating a parallel Goal database |
 | `ProcessState` is a generic lifecycle state machine | `crates/fabric/src/types/process.rs:60-90` | Goal business states stay separate from process states |
 | `SubAgentSpawner` has one optional global runtime | `crates/executive/src/core/sub_agent.rs:120-130` | Per-agent runtime selection and escalation require a scoped extension |
 | `SupervisorTree` only decides restart count/group membership | `crates/kernel/src/supervision/tree.rs:8-51` | Backoff, evidence enrichment, failure classification, and provider switching are not supervisor features |
@@ -74,7 +75,7 @@ The implementation must start from these current facts:
        chat turn           goal command
           |                    |
           v                    v
-    TurnPipeline          GoalRepository (SQLite)
+    TurnPipeline          ObjectiveStore (evolved Goal repository)
                                |
                                v
                         GoalCoordinator
@@ -107,7 +108,7 @@ The implementation must start from these current facts:
 The architecture deliberately has two state layers:
 
 ```text
-GoalRepository: product continuity across restart
+ObjectiveStore (evolved Goal repository): product continuity across restart
 ProcessTable:   live execution lifecycle for the current daemon process
 ```
 
@@ -173,7 +174,7 @@ Retry exhaustion -> Failed
 
 ### 6.2 Persistence
 
-SQLite is authoritative for:
+The existing `ObjectiveStore` and `objectives` table are evolved compatibly into the Goal repository; no parallel `GoalRepository` or `goals` table is introduced. SQLite remains authoritative for:
 
 - immutable original intent and approved `GoalSpec`;
 - current Goal state and version;
