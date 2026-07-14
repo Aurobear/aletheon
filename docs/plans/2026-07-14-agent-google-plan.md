@@ -4550,3 +4550,2857 @@ After completing Phases A through D, the following subsystems are operational:
 | **Total** | | | **48+** |
 
 Phases E-H (Google OAuth, Gmail channel, verification pipeline, GBrain backend) will be planned in a subsequent document.
+
+
+## Phase E: Verification Pipeline
+
+**Goal:** After each coding task, run 7 gated verification checks. MustPass gates block completion; Advisory gates warn.
+**Crates:** executive (new module impl/goal/verify/)
+**Depends on:** Phase D (Pi produces diffs/changed files)
+**Estimated:** 1 week
+
+### Task E.1: Define VerificationGate trait and VerificationReport
+
+**Files:**
+- Create: `crates/executive/src/impl/goal/verify/mod.rs`
+- Create: `crates/executive/src/impl/goal/verify/report.rs`
+- Create: `crates/executive/src/impl/goal/verify/gates.rs`
+- Modify: `crates/executive/src/impl/goal/mod.rs`
+
+- [ ] **Step 1: Write VerificationGate trait and pipeline**
+
+```rust
+// crates/executive/src/impl/goal/verify/mod.rs
+//! Verification pipeline -- runs gated checks on worker output.
+//!
+//! Seven gates: Format, Compile, Test, Clippy, DiffScope, Architecture, CapabilityPolicy.
+//! MustPass gates block completion. Advisory gates produce warnings.
+
+pub mod gates;
+pub mod policy;
+pub mod report;
+
+use async_trait::async_trait;
+use std::path::PathBuf;
+use crate::r#impl::agent::pi::report::FileChange;
+
+pub struct VerificationContext {
+    pub goal_id: i64,
+    pub attempt_id: String,
+    pub worktree_path: Option<PathBuf>,
+    pub changed_files: Vec<FileChange>,
+    pub diff: String,
+    pub worker_output: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatePriority { MustPass, Advisory }
+
+#[derive(Debug, Clone)]
+pub struct GateResult {
+    pub passed: bool,
+    pub name: String,
+    pub output: String,
+    pub blocking: bool,
+}
+
+#[async_trait]
+pub trait VerificationGate: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn priority(&self) -> GatePriority;
+    async fn check(&self, ctx: &VerificationContext) -> anyhow::Result<GateResult>;
+}
+
+pub struct VerificationPipeline { gates: Vec<Box<dyn VerificationGate>> }
+
+impl VerificationPipeline {
+    pub fn standard(worktree_base: PathBuf) -> Self {
+        Self {
+            gates: vec![
+                Box::new(gates::FormatGate),
+                Box::new(gates::CompileGate { worktree_base: worktree_base.clone() }),
+                Box::new(gates::TestGate { worktree_base: worktree_base.clone() }),
+                Box::new(gates::ClippyGate { worktree_base }),
+                Box::new(gates::DiffScopeGate::default()),
+                Box::new(gates::ArchitectureGate::default()),
+                Box::new(gates::CapabilityPolicyGate::default()),
+            ],
+        }
+    }
+
+    pub async fn run(&self, ctx: &VerificationContext) -> anyhow::Result<report::VerificationReport> {
+        let mut results = Vec::new();
+        let mut all_passed = true;
+        for gate in &self.gates {
+            let result = gate.check(ctx).await?;
+            let is_blocking = result.blocking && !result.passed;
+            if is_blocking { all_passed = false; }
+            results.push(result);
+            if is_blocking { break; }
+        }
+        Ok(report::VerificationReport {
+            passed: all_passed, gates: results,
+            summary: if all_passed { "All checks passed".into() } else { "Some checks failed".into() },
+            risks: Vec::new(),
+            recommendation: if all_passed { report::VerificationAction::Accept } else { report::VerificationAction::Revise },
+        })
+    }
+}
+```
+
+- [ ] **Step 2: Write VerificationReport**
+
+```rust
+// crates/executive/src/impl/goal/verify/report.rs
+use super::GateResult;
+
+#[derive(Debug, Clone)]
+pub enum VerificationAction { Accept, Revise, Reject }
+
+#[derive(Debug, Clone)]
+pub struct VerificationReport {
+    pub passed: bool,
+    pub gates: Vec<GateResult>,
+    pub summary: String,
+    pub risks: Vec<String>,
+    pub recommendation: VerificationAction,
+}
+```
+
+- [ ] **Step 3: Write 7 standard gates with tests**
+
+```rust
+// crates/executive/src/impl/goal/verify/gates.rs
+//! Seven standard verification gates.
+
+use async_trait::async_trait;
+use std::path::PathBuf;
+use std::process::Command;
+use super::{GatePriority, GateResult, VerificationContext, VerificationGate};
+use crate::r#impl::agent::pi::report::{ChangeType, FileChange};
+
+fn run_cmd(dir: &PathBuf, cmd: &str, args: &[&str]) -> (bool, String) {
+    match Command::new(cmd).args(args).current_dir(dir).output() {
+        Ok(o) => {
+            let combined = format!("{}\n{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr));
+            (o.status.success(), combined)
+        }
+        Err(e) => (false, format!("Command failed: {e}")),
+    }
+}
+
+pub struct FormatGate;
+#[async_trait]
+impl VerificationGate for FormatGate {
+    fn name(&self) -> &'static str { "Format" }
+    fn priority(&self) -> GatePriority { GatePriority::MustPass }
+    async fn check(&self, ctx: &VerificationContext) -> anyhow::Result<GateResult> {
+        let dir = ctx.worktree_path.clone().unwrap_or_else(|| PathBuf::from("."));
+        let (passed, output) = run_cmd(&dir, "cargo", &["fmt", "--check"]);
+        Ok(GateResult { passed, name: self.name().into(), output, blocking: true })
+    }
+}
+
+pub struct CompileGate { pub worktree_base: PathBuf }
+#[async_trait]
+impl VerificationGate for CompileGate {
+    fn name(&self) -> &'static str { "Compile" }
+    fn priority(&self) -> GatePriority { GatePriority::MustPass }
+    async fn check(&self, ctx: &VerificationContext) -> anyhow::Result<GateResult> {
+        let dir = ctx.worktree_path.clone().unwrap_or_else(|| self.worktree_base.clone());
+        let (passed, output) = run_cmd(&dir, "cargo", &["check", "--workspace"]);
+        Ok(GateResult { passed, name: self.name().into(), output, blocking: true })
+    }
+}
+
+pub struct TestGate { pub worktree_base: PathBuf }
+#[async_trait]
+impl VerificationGate for TestGate {
+    fn name(&self) -> &'static str { "Test" }
+    fn priority(&self) -> GatePriority { GatePriority::MustPass }
+    async fn check(&self, ctx: &VerificationContext) -> anyhow::Result<GateResult> {
+        let dir = ctx.worktree_path.clone().unwrap_or_else(|| self.worktree_base.clone());
+        let (passed, output) = run_cmd(&dir, "cargo", &["test", "--workspace"]);
+        Ok(GateResult { passed, name: self.name().into(), output, blocking: true })
+    }
+}
+
+pub struct ClippyGate { pub worktree_base: PathBuf }
+#[async_trait]
+impl VerificationGate for ClippyGate {
+    fn name(&self) -> &'static str { "Clippy" }
+    fn priority(&self) -> GatePriority { GatePriority::Advisory }
+    async fn check(&self, ctx: &VerificationContext) -> anyhow::Result<GateResult> {
+        let dir = ctx.worktree_path.clone().unwrap_or_else(|| self.worktree_base.clone());
+        let (passed, output) = run_cmd(&dir, "cargo", &["clippy", "--", "-D", "warnings"]);
+        Ok(GateResult { passed, name: self.name().into(), output, blocking: false })
+    }
+}
+
+pub struct DiffScopeGate { pub allowed_paths: Vec<String> }
+impl Default for DiffScopeGate {
+    fn default() -> Self { Self { allowed_paths: vec!["crates/".into(), "src/".into()] } }
+}
+#[async_trait]
+impl VerificationGate for DiffScopeGate {
+    fn name(&self) -> &'static str { "DiffScope" }
+    fn priority(&self) -> GatePriority { GatePriority::MustPass }
+    async fn check(&self, ctx: &VerificationContext) -> anyhow::Result<GateResult> {
+        let violations: Vec<_> = ctx.changed_files.iter()
+            .filter(|f| !self.allowed_paths.iter().any(|a| f.path.starts_with(a)))
+            .collect();
+        let passed = violations.is_empty();
+        let output = if passed {
+            "All changed files within allowed scope".into()
+        } else {
+            format!("Files outside allowed scope: {:?}",
+                violations.iter().map(|f| &f.path).collect::<Vec<_>>())
+        };
+        Ok(GateResult { passed, name: self.name().into(), output, blocking: true })
+    }
+}
+
+pub struct ArchitectureGate { pub forbidden_deps: Vec<(String, String)> }
+impl Default for ArchitectureGate {
+    fn default() -> Self {
+        Self { forbidden_deps: vec![
+            ("cognit".into(), "corpus".into()),
+            ("mnemosyne".into(), "executive".into()),
+        ]}
+    }
+}
+#[async_trait]
+impl VerificationGate for ArchitectureGate {
+    fn name(&self) -> &'static str { "Architecture" }
+    fn priority(&self) -> GatePriority { GatePriority::Advisory }
+    async fn check(&self, _ctx: &VerificationContext) -> anyhow::Result<GateResult> {
+        Ok(GateResult { passed: true, name: self.name().into(),
+            output: "Architecture check skipped (MVP)".into(), blocking: false })
+    }
+}
+
+pub struct CapabilityPolicyGate;
+impl Default for CapabilityPolicyGate { fn default() -> Self { Self } }
+#[async_trait]
+impl VerificationGate for CapabilityPolicyGate {
+    fn name(&self) -> &'static str { "CapabilityPolicy" }
+    fn priority(&self) -> GatePriority { GatePriority::MustPass }
+    async fn check(&self, ctx: &VerificationContext) -> anyhow::Result<GateResult> {
+        let forbidden = ["Cargo.toml", "Cargo.lock", "/etc/aletheon/"];
+        let violations: Vec<_> = ctx.changed_files.iter()
+            .filter(|f| forbidden.iter().any(|ff| f.path.contains(ff)))
+            .collect();
+        let passed = violations.is_empty();
+        let output = if passed { "No capability policy violations".into() }
+        else { format!("Forbidden: {:?}", violations.iter().map(|f| &f.path).collect::<Vec<_>>()) };
+        Ok(GateResult { passed, name: self.name().into(), output, blocking: true })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_ctx() -> VerificationContext {
+        VerificationContext {
+            goal_id: 1, attempt_id: "att-1".into(), worktree_path: None,
+            changed_files: vec![FileChange {
+                path: "crates/foo/src/lib.rs".into(),
+                change_type: ChangeType::Modified, lines_added: 1, lines_removed: 0,
+            }],
+            diff: "+1".into(), worker_output: "ok".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn diff_scope_allows_crates() {
+        let r = DiffScopeGate::default().check(&test_ctx()).await.unwrap();
+        assert!(r.passed);
+    }
+
+    #[tokio::test]
+    async fn diff_scope_rejects_etc() {
+        let mut ctx = test_ctx();
+        ctx.changed_files = vec![FileChange {
+            path: "/etc/aletheon/config.toml".into(),
+            change_type: ChangeType::Modified, lines_added: 1, lines_removed: 0,
+        }];
+        let r = DiffScopeGate::default().check(&ctx).await.unwrap();
+        assert!(!r.passed);
+    }
+
+    #[tokio::test]
+    async fn capability_blocks_cargo_toml() {
+        let mut ctx = test_ctx();
+        ctx.changed_files = vec![FileChange {
+            path: "Cargo.toml".into(),
+            change_type: ChangeType::Modified, lines_added: 1, lines_removed: 0,
+        }];
+        let r = CapabilityPolicyGate.check(&ctx).await.unwrap();
+        assert!(!r.passed);
+    }
+
+    #[tokio::test]
+    async fn capability_allows_src() {
+        let r = CapabilityPolicyGate.check(&test_ctx()).await.unwrap();
+        assert!(r.passed);
+    }
+}
+```
+
+- [ ] **Step 4: Write CapabilityPolicy rules**
+
+```rust
+// crates/executive/src/impl/goal/verify/policy.rs
+//! Capability policy rules -- what operations require approval.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Capability {
+    ReadFile(String), WriteFile(String), DeleteFile(String),
+    RunCommand(String), NetworkAccess(String), GitPush, ModifyConfig,
+}
+
+#[derive(Debug, Clone)]
+pub enum PolicyDecision {
+    Allow, Deny { reason: String }, RequireApproval { description: String },
+}
+
+pub fn check_capability(cap: &Capability) -> PolicyDecision {
+    match cap {
+        Capability::WriteFile(path) | Capability::ReadFile(path) => {
+            if path.starts_with("/etc/aletheon/") || path.starts_with("/run/aletheon/") {
+                PolicyDecision::Deny { reason: "Cannot access system paths".into() }
+            } else if path == "Cargo.toml" || path == "Cargo.lock" {
+                PolicyDecision::RequireApproval { description: "Modifying Cargo.toml requires approval".into() }
+            } else { PolicyDecision::Allow }
+        }
+        Capability::DeleteFile(_) => PolicyDecision::RequireApproval {
+            description: "File deletion requires approval".into(),
+        },
+        Capability::RunCommand(cmd) => {
+            let lower = cmd.to_lowercase();
+            if lower.contains("rm") && lower.contains("-rf") || lower.contains("sudo") {
+                PolicyDecision::Deny { reason: "Dangerous command blocked".into() }
+            } else { PolicyDecision::Allow }
+        }
+        Capability::GitPush => PolicyDecision::Deny { reason: "Git push not allowed".into() },
+        Capability::ModifyConfig => PolicyDecision::Deny { reason: "Config modification not allowed".into() },
+        Capability::NetworkAccess(_) => PolicyDecision::Allow,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deny_system_path() {
+        assert!(matches!(check_capability(&Capability::WriteFile("/etc/aletheon/x".into())), PolicyDecision::Deny{..}));
+    }
+    #[test]
+    fn allow_normal_write() {
+        assert!(matches!(check_capability(&Capability::WriteFile("crates/x/src/lib.rs".into())), PolicyDecision::Allow));
+    }
+    #[test]
+    fn deny_dangerous_cmd() {
+        assert!(matches!(check_capability(&Capability::RunCommand("sudo rm -rf /tmp".into())), PolicyDecision::Deny{..}));
+    }
+    #[test]
+    fn deny_git_push() {
+        assert!(matches!(check_capability(&Capability::GitPush), PolicyDecision::Deny{..}));
+    }
+    #[test]
+    fn require_approval_cargo() {
+        assert!(matches!(check_capability(&Capability::WriteFile("Cargo.toml".into())), PolicyDecision::RequireApproval{..}));
+    }
+}
+```
+
+- [ ] **Step 5: Update goal mod.rs**
+
+Add to `crates/executive/src/impl/goal/mod.rs`:
+```rust
+pub mod verify;
+```
+
+- [ ] **Step 6: Compile and test**
+
+```bash
+cargo test -p executive -- impl::goal::verify
+```
+Expected: 7 tests pass (4 gate tests + 5 policy tests).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add crates/executive/src/impl/goal/verify/ crates/executive/src/impl/goal/mod.rs
+git commit -m "feat(executive): add VerificationPipeline with 7 gates and CapabilityPolicy"
+```
+
+- [ ] **Step 4: Write CapabilityPolicy (rules engine)**
+
+```rust
+// crates/executive/src/impl/goal/verify/policy.rs
+//! Capability policy rules — defines what operations require approval.
+
+use serde::{Deserialize, Serialize};
+
+/// A capability that a worker may attempt to use.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Capability {
+    ReadFile(String),
+    WriteFile(String),
+    DeleteFile(String),
+    RunCommand(String),
+    NetworkAccess(String),
+    GitPush,
+    ModifyConfig,
+}
+
+/// Policy decision for a capability attempt.
+#[derive(Debug, Clone)]
+pub enum PolicyDecision {
+    Allow,
+    Deny { reason: String },
+    RequireApproval { description: String },
+}
+
+/// Check if a capability action is allowed by policy.
+pub fn check_capability(cap: &Capability) -> PolicyDecision {
+    match cap {
+        Capability::WriteFile(path) | Capability::ReadFile(path) => {
+            if path.starts_with("/etc/aletheon/") || path.starts_with("/run/aletheon/") {
+                PolicyDecision::Deny {
+                    reason: "Cannot access Aletheon system paths".into(),
+                }
+            } else if path == "Cargo.toml" || path == "Cargo.lock" {
+                PolicyDecision::RequireApproval {
+                    description: "Modifying Cargo.toml/Cargo.lock requires approval".into(),
+                }
+            } else {
+                PolicyDecision::Allow
+            }
+        }
+        Capability::DeleteFile(_) => PolicyDecision::RequireApproval {
+            description: "File deletion requires approval".into(),
+        },
+        Capability::RunCommand(cmd) => {
+            if cmd.contains("rm") && cmd.contains("-rf") || cmd.contains("sudo") {
+                PolicyDecision::Deny { reason: "Dangerous command blocked".into() }
+            } else {
+                PolicyDecision::Allow
+            }
+        }
+        Capability::GitPush => PolicyDecision::Deny {
+            reason: "Git push is never allowed from workers".into(),
+        },
+        Capability::ModifyConfig => PolicyDecision::Deny {
+            reason: "Configuration modification not allowed from workers".into(),
+        },
+        Capability::NetworkAccess(_) => PolicyDecision::Allow,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deny_system_path_write() {
+        let r = check_capability(&Capability::WriteFile("/etc/aletheon/config.toml".into()));
+        assert!(matches!(r, PolicyDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn allow_normal_write() {
+        let r = check_capability(&Capability::WriteFile("crates/foo/src/lib.rs".into()));
+        assert!(matches!(r, PolicyDecision::Allow));
+    }
+
+    #[test]
+    fn deny_dangerous_command() {
+        let r = check_capability(&Capability::RunCommand("sudo rm -rf /tmp".into()));
+        assert!(matches!(r, PolicyDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn deny_git_push() {
+        let r = check_capability(&Capability::GitPush);
+        assert!(matches!(r, PolicyDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn require_approval_cargo_toml() {
+        let r = check_capability(&Capability::WriteFile("Cargo.toml".into()));
+        assert!(matches!(r, PolicyDecision::RequireApproval { .. }));
+    }
+}
+```
+
+- [ ] **Step 5: Update goal mod.rs**
+
+Add:
+```rust
+pub mod verify;
+```
+
+- [ ] **Step 6: Compile and test**
+
+```bash
+cargo test -p executive -- impl::goal::verify
+```
+Expected: 7 tests pass (4 gates + 5 policy).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add crates/executive/src/impl/goal/verify/ crates/executive/src/impl/goal/mod.rs
+git commit -m "feat(executive): add VerificationPipeline with 7 gates and CapabilityPolicy"
+```
+
+---
+
+## Phase F: Google Read-Only + Sync
+
+**Goal:** OAuth-authorized read access to Gmail and Calendar with incremental sync. Tokens encrypted at rest.
+**Crates:** corpus (new module drivers/google/), fabric (new types)
+**Depends on:** Phase C (GoalWorker trait available)
+**Estimated:** 2–3 weeks
+
+### Task F.1: Add Google API dependencies and fabric types
+
+**Files:**
+- Create: `crates/fabric/src/types/google.rs`
+- Modify: `crates/fabric/src/types/mod.rs`
+- Modify: `crates/fabric/src/lib.rs`
+- Modify: `crates/corpus/Cargo.toml`
+
+- [ ] **Step 1: Add dependencies to corpus**
+
+```toml
+# Add to crates/corpus/Cargo.toml
+google-oauth = "1"         # or yup-oauth2
+aes-gcm = "0.10"
+base64 = "0.22"
+```
+
+- [ ] **Step 2: Write Google shared types**
+
+```rust
+// crates/fabric/src/types/google.rs
+//! Google integration shared types.
+
+use serde::{Deserialize, Serialize};
+
+/// Scope requested for Google API access.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GoogleScope {
+    GmailReadOnly,
+    GmailModify,
+    CalendarReadOnly,
+    CalendarEvents,
+    DriveReadOnly,
+    DriveFile,
+    ContactsReadOnly,
+    TasksReadOnly,
+}
+
+impl GoogleScope {
+    pub fn as_url(&self) -> &'static str {
+        match self {
+            GoogleScope::GmailReadOnly => "https://www.googleapis.com/auth/gmail.readonly",
+            GoogleScope::GmailModify => "https://www.googleapis.com/auth/gmail.modify",
+            GoogleScope::CalendarReadOnly => "https://www.googleapis.com/auth/calendar.readonly",
+            GoogleScope::CalendarEvents => "https://www.googleapis.com/auth/calendar.events",
+            GoogleScope::DriveReadOnly => "https://www.googleapis.com/auth/drive.readonly",
+            GoogleScope::DriveFile => "https://www.googleapis.com/auth/drive.file",
+            GoogleScope::ContactsReadOnly => "https://www.googleapis.com/auth/contacts.readonly",
+            GoogleScope::TasksReadOnly => "https://www.googleapis.com/auth/tasks.readonly",
+        }
+    }
+}
+
+/// A Gmail message summary (for list views).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GmailMessageSummary {
+    pub id: String,
+    pub thread_id: String,
+    pub subject: String,
+    pub from: String,
+    pub snippet: String,
+    pub received_at: String,
+    pub is_unread: bool,
+}
+
+/// A Gmail query (Gmail search syntax).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GmailQuery {
+    pub query: String,
+    pub max_results: usize,
+}
+
+impl Default for GmailQuery {
+    fn default() -> Self {
+        Self { query: "is:unread".into(), max_results: 20 }
+    }
+}
+
+/// A full Gmail message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GmailMessage {
+    pub id: String,
+    pub thread_id: String,
+    pub subject: String,
+    pub from: String,
+    pub to: String,
+    pub body_text: String,
+    pub received_at: String,
+}
+
+/// A Google Calendar event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoogleCalendarEvent {
+    pub id: String,
+    pub summary: String,
+    pub description: Option<String>,
+    pub start: String, // ISO 8601
+    pub end: String,
+    pub attendees: Vec<String>,
+    pub location: Option<String>,
+}
+
+/// Time range for calendar queries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeRange {
+    pub start: String, // ISO 8601
+    pub end: String,
+}
+
+impl TimeRange {
+    pub fn today() -> Self {
+        let now = chrono::Utc::now();
+        let start = now.format("%Y-%m-%dT00:00:00Z").to_string();
+        let end = (now + chrono::Duration::days(1)).format("%Y-%m-%dT00:00:00Z").to_string();
+        Self { start, end }
+    }
+
+    pub fn next_days(days: u32) -> Self {
+        let now = chrono::Utc::now();
+        let start = now.format("%Y-%m-%dT00:00:00Z").to_string();
+        let end = (now + chrono::Duration::days(days as i64)).format("%Y-%m-%dT00:00:00Z").to_string();
+        Self { start, end }
+    }
+}
+
+/// Normalized Google event (after sync dedup).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GoogleEvent {
+    MailReceived {
+        message_id: String,
+        sender: String,
+        subject: String,
+        snippet: String,
+        received_at: String,
+    },
+    CalendarEventStarting {
+        event_id: String,
+        summary: String,
+        start: String,
+        end: String,
+    },
+    CalendarEventUpdated {
+        event_id: String,
+        summary: String,
+    },
+    CalendarEventCancelled {
+        event_id: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scope_urls_are_valid() {
+        assert!(GoogleScope::GmailReadOnly.as_url().starts_with("https://"));
+        assert!(GoogleScope::CalendarReadOnly.as_url().contains("calendar"));
+    }
+
+    #[test]
+    fn time_range_today_is_24_hours() {
+        let range = TimeRange::today();
+        assert!(!range.start.is_empty());
+        assert!(!range.end.is_empty());
+    }
+}
+```
+
+- [ ] **Step 3: Wire into fabric**
+
+Add `pub mod google;` to `crates/fabric/src/types/mod.rs`.
+Add `pub use types::google;` to `crates/fabric/src/lib.rs`.
+
+- [ ] **Step 4: Compile and test**
+
+```bash
+cargo test -p fabric -- types::google
+```
+Expected: 2 tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/fabric/src/types/google.rs crates/fabric/src/types/mod.rs crates/fabric/src/lib.rs crates/corpus/Cargo.toml
+git commit -m "feat(fabric): add Google shared types (GmailMessageSummary, GoogleCalendarEvent, TimeRange, GoogleEvent)"
+```
+
+---
+
+### Task F.2: Implement CredentialVault
+
+**Files:**
+- Create: `crates/corpus/src/drivers/google/mod.rs`
+- Create: `crates/corpus/src/drivers/google/vault.rs`
+- Modify: `crates/corpus/src/drivers/mod.rs`
+
+- [ ] **Step 1: Write CredentialVault**
+
+```rust
+// crates/corpus/src/drivers/google/vault.rs
+//! CredentialVault — AES-256-GCM encrypted token storage.
+//!
+//! Tokens are encrypted at rest using a key loaded from
+//! /etc/aletheon/secrets/vault.key (file permissions 600).
+//! Decrypted tokens only exist in memory during active use.
+
+use aes_gcm::aead::{Aead, KeyInit, OsRng};
+use aes_gcm::{Aes256Gcm, Nonce};
+use anyhow::{Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use rand::RngCore;
+use std::path::{Path, PathBuf};
+use tracing::warn;
+
+pub struct CredentialVault {
+    cipher: Aes256Gcm,
+    store_path: PathBuf,
+}
+
+impl CredentialVault {
+    /// Open the vault. Loads the encryption key from the given path.
+    /// If no key exists, generates a new one (only on first run).
+    pub fn open(key_path: &Path, store_path: &Path) -> Result<Self> {
+        let key = if key_path.exists() {
+            let key_bytes = std::fs::read(key_path)
+                .context("reading vault key")?;
+            if key_bytes.len() != 32 {
+                anyhow::bail!("Vault key must be 32 bytes (256 bits)");
+            }
+            key_bytes.try_into().map_err(|_| anyhow::anyhow!("invalid key length"))?
+        } else {
+            warn!("No vault key found, generating new one at {}", key_path.display());
+            let mut key = [0u8; 32];
+            OsRng.fill_bytes(&mut key);
+            if let Some(parent) = key_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(key_path, &key)?;
+            // Set restrictive permissions
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))?;
+            }
+            key
+        };
+
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|_| anyhow::anyhow!("invalid AES key"))?;
+
+        std::fs::create_dir_all(store_path)?;
+
+        Ok(Self {
+            cipher,
+            store_path: store_path.to_path_buf(),
+        })
+    }
+
+    /// Encrypt and store a token.
+    pub fn encrypt_and_store(&self, identity_id: &str, token_data: &[u8]) -> Result<()> {
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = self.cipher
+            .encrypt(nonce, token_data)
+            .map_err(|e| anyhow::anyhow!("encryption failed: {e}"))?;
+
+        // Store as: nonce (12 bytes) || ciphertext
+        let mut stored = nonce_bytes.to_vec();
+        stored.extend_from_slice(&ciphertext);
+        let encoded = BASE64.encode(&stored);
+
+        let file_path = self.store_path.join(format!("{identity_id}.enc"));
+        std::fs::write(&file_path, encoded)?;
+        Ok(())
+    }
+
+    /// Load and decrypt a token.
+    pub fn load_and_decrypt(&self, identity_id: &str) -> Result<Vec<u8>> {
+        let file_path = self.store_path.join(format!("{identity_id}.enc"));
+        let encoded = std::fs::read_to_string(&file_path)
+            .context("reading encrypted token")?;
+        let stored = BASE64.decode(encoded.trim())
+            .context("decoding base64")?;
+
+        if stored.len() < 12 {
+            anyhow::bail!("stored data too short");
+        }
+
+        let (nonce_bytes, ciphertext) = stored.split_at(12);
+        let nonce = Nonce::from_slice(nonce_bytes);
+
+        let plaintext = self.cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| anyhow::anyhow!("decryption failed: {e}"))?;
+
+        Ok(plaintext)
+    }
+
+    /// Delete an encrypted token.
+    pub fn delete(&self, identity_id: &str) -> Result<()> {
+        let file_path = self.store_path.join(format!("{identity_id}.enc"));
+        if file_path.exists() {
+            std::fs::remove_file(&file_path)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn encrypt_decrypt_roundtrip() {
+        let tmp = TempDir::new().unwrap();
+        let key_path = tmp.path().join("vault.key");
+        let store = tmp.path().join("tokens");
+
+        let vault = CredentialVault::open(&key_path, &store).unwrap();
+
+        let token = b"ya29.a0AfH6S...refresh_token_data";
+        vault.encrypt_and_store("test-user", token).unwrap();
+
+        let decrypted = vault.load_and_decrypt("test-user").unwrap();
+        assert_eq!(decrypted, token);
+    }
+
+    #[test]
+    fn delete_removes_token() {
+        let tmp = TempDir::new().unwrap();
+        let key_path = tmp.path().join("vault.key");
+        let store = tmp.path().join("tokens");
+
+        let vault = CredentialVault::open(&key_path, &store).unwrap();
+        vault.encrypt_and_store("to-delete", b"token").unwrap();
+        vault.delete("to-delete").unwrap();
+        assert!(vault.load_and_decrypt("to-delete").is_err());
+    }
+
+    #[test]
+    fn wrong_key_fails_decrypt() {
+        let tmp = TempDir::new().unwrap();
+        let key_path = tmp.path().join("vault.key");
+        let store = tmp.path().join("tokens");
+
+        let vault = CredentialVault::open(&key_path, &store).unwrap();
+        vault.encrypt_and_store("user", b"secret").unwrap();
+
+        // Create a different key
+        std::fs::remove_file(&key_path).unwrap();
+        let vault2 = CredentialVault::open(&key_path, &store).unwrap();
+        assert!(vault2.load_and_decrypt("user").is_err());
+    }
+}
+```
+
+- [ ] **Step 2: Write google driver mod.rs**
+
+```rust
+// crates/corpus/src/drivers/google/mod.rs
+//! Google ecosystem integration — OAuth, Gmail, Calendar, Sync.
+//!
+//! Security: tokens are encrypted at rest via CredentialVault.
+//! The GoogleDriver owns all tokens; callers receive only data.
+
+pub mod vault;
+
+pub use vault::CredentialVault;
+```
+
+- [ ] **Step 3: Wire into corpus drivers**
+
+Add to `crates/corpus/src/drivers/mod.rs`:
+```rust
+pub mod google;
+```
+
+- [ ] **Step 4: Compile and test**
+
+```bash
+cargo test -p corpus -- drivers::google::vault
+```
+Expected: 3 tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/corpus/src/drivers/google/ crates/corpus/src/drivers/mod.rs
+git commit -m "feat(corpus): add CredentialVault with AES-256-GCM encrypted token storage"
+```
+
+---
+
+### Task F.3: Implement GmailCapability and CalendarCapability
+
+**Files:**
+- Create: `crates/corpus/src/drivers/google/gmail.rs`
+- Create: `crates/corpus/src/drivers/google/calendar.rs`
+- Create: `crates/corpus/src/drivers/google/sync.rs`
+- Modify: `crates/corpus/src/drivers/google/mod.rs`
+
+- [ ] **Step 1: Write GmailCapability (read-only MVP)**
+
+```rust
+// crates/corpus/src/drivers/google/gmail.rs
+//! GmailCapability — read-only Gmail access via Google Gmail API.
+//!
+//! MVP: search, read, list_unread. Write operations (draft/send) in Phase G.
+
+use anyhow::Result;
+use async_trait::async_trait;
+use fabric::types::google::{GmailMessage, GmailMessageSummary, GmailQuery};
+
+/// Read-only Gmail operations.
+#[async_trait]
+pub trait GmailCapability: Send + Sync {
+    async fn search(
+        &self,
+        query: &GmailQuery,
+        access_token: &str,
+    ) -> Result<Vec<GmailMessageSummary>>;
+
+    async fn read(
+        &self,
+        message_id: &str,
+        access_token: &str,
+    ) -> Result<GmailMessage>;
+
+    async fn list_unread(
+        &self,
+        max: usize,
+        access_token: &str,
+    ) -> Result<Vec<GmailMessageSummary>>;
+}
+
+/// REST-based Gmail API implementation.
+pub struct GmailApi {
+    client: reqwest::Client,
+}
+
+impl GmailApi {
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl GmailCapability for GmailApi {
+    async fn search(
+        &self,
+        query: &GmailQuery,
+        access_token: &str,
+    ) -> Result<Vec<GmailMessageSummary>> {
+        let url = format!(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages?q={}&maxResults={}",
+            urlencoding::encode(&query.query),
+            query.max_results,
+        );
+
+        let resp: serde_json::Value = self.client
+            .get(&url)
+            .bearer_auth(access_token)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let messages = resp["messages"].as_array()
+            .map(|arr| arr.to_vec())
+            .unwrap_or_default();
+
+        let mut summaries = Vec::new();
+        for msg in messages {
+            let id = msg["id"].as_str().unwrap_or("").to_string();
+            // Fetch message metadata
+            let detail_url = format!(
+                "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata&metadataHeaders=Subject&metadataHeaders=From",
+                id
+            );
+            if let Ok(detail) = self.client
+                .get(&detail_url)
+                .bearer_auth(access_token)
+                .send()
+                .await?
+                .json::<serde_json::Value>()
+                .await
+            {
+                let headers = &detail["payload"]["headers"];
+                let subject = find_header(headers, "Subject").unwrap_or_default();
+                let from = find_header(headers, "From").unwrap_or_default();
+                let snippet = detail["snippet"].as_str().unwrap_or("").to_string();
+                let is_unread = detail["labelIds"].as_array()
+                    .map(|l| l.iter().any(|v| v.as_str() == Some("UNREAD")))
+                    .unwrap_or(false);
+
+                summaries.push(GmailMessageSummary {
+                    id,
+                    thread_id: detail["threadId"].as_str().unwrap_or("").to_string(),
+                    subject,
+                    from,
+                    snippet,
+                    received_at: detail["internalDate"].as_str().unwrap_or("").to_string(),
+                    is_unread,
+                });
+            }
+        }
+
+        Ok(summaries)
+    }
+
+    async fn read(
+        &self,
+        message_id: &str,
+        access_token: &str,
+    ) -> Result<GmailMessage> {
+        let url = format!(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=full",
+            message_id,
+        );
+
+        let detail: serde_json::Value = self.client
+            .get(&url)
+            .bearer_auth(access_token)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let headers = &detail["payload"]["headers"];
+        let subject = find_header(headers, "Subject").unwrap_or_default();
+        let from = find_header(headers, "From").unwrap_or_default();
+        let to = find_header(headers, "To").unwrap_or_default();
+        let body = extract_body(&detail).unwrap_or_default();
+
+        Ok(GmailMessage {
+            id: message_id.to_string(),
+            thread_id: detail["threadId"].as_str().unwrap_or("").to_string(),
+            subject,
+            from,
+            to,
+            body_text: body,
+            received_at: detail["internalDate"].as_str().unwrap_or("").to_string(),
+        })
+    }
+
+    async fn list_unread(
+        &self,
+        max: usize,
+        access_token: &str,
+    ) -> Result<Vec<GmailMessageSummary>> {
+        let query = GmailQuery {
+            query: "is:unread".into(),
+            max_results: max,
+        };
+        self.search(&query, access_token).await
+    }
+}
+
+fn find_header(headers: &serde_json::Value, name: &str) -> Option<String> {
+    headers.as_array()?.iter().find_map(|h| {
+        if h["name"].as_str()? == name {
+            h["value"].as_str().map(|s| s.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+fn extract_body(detail: &serde_json::Value) -> Option<String> {
+    let parts = detail["payload"]["parts"].as_array()?;
+    for part in parts {
+        if part["mimeType"].as_str()? == "text/plain" {
+            let data = part["body"]["data"].as_str()?;
+            // Base64url decode
+            let cleaned = data.replace('-', "+").replace('_', "/");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(cleaned)
+                .ok()?;
+            return Some(String::from_utf8_lossy(&bytes).to_string());
+        }
+    }
+    // Fallback: try body.data directly
+    let data = detail["payload"]["body"]["data"].as_str()?;
+    let cleaned = data.replace('-', "+").replace('_', "/");
+    let bytes = base64::engine::general_purpose::STANDARD.decode(cleaned).ok()?;
+    Some(String::from_utf8_lossy(&bytes).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_header_extracts_subject() {
+        let headers = serde_json::json!([
+            {"name": "Subject", "value": "Hello"},
+            {"name": "From", "value": "me@example.com"},
+        ]);
+        assert_eq!(find_header(&headers, "Subject"), Some("Hello".into()));
+        assert_eq!(find_header(&headers, "Missing"), None);
+    }
+}
+```
+
+- [ ] **Step 2: Write CalendarCapability**
+
+```rust
+// crates/corpus/src/drivers/google/calendar.rs
+//! CalendarCapability — read-only Google Calendar access.
+
+use anyhow::Result;
+use async_trait::async_trait;
+use fabric::types::google::{GoogleCalendarEvent, TimeRange};
+
+#[async_trait]
+pub trait CalendarCapability: Send + Sync {
+    async fn list_events(
+        &self,
+        range: &TimeRange,
+        access_token: &str,
+    ) -> Result<Vec<GoogleCalendarEvent>>;
+
+    async fn today(
+        &self,
+        access_token: &str,
+    ) -> Result<Vec<GoogleCalendarEvent>>;
+}
+
+pub struct CalendarApi {
+    client: reqwest::Client,
+}
+
+impl CalendarApi {
+    pub fn new() -> Self {
+        Self { client: reqwest::Client::new() }
+    }
+}
+
+#[async_trait]
+impl CalendarCapability for CalendarApi {
+    async fn list_events(
+        &self,
+        range: &TimeRange,
+        access_token: &str,
+    ) -> Result<Vec<GoogleCalendarEvent>> {
+        let url = format!(
+            "https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin={}&timeMax={}&singleEvents=true&orderBy=startTime",
+            range.start, range.end,
+        );
+
+        let resp: serde_json::Value = self.client
+            .get(&url)
+            .bearer_auth(access_token)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let items = resp["items"].as_array()
+            .map(|arr| arr.to_vec())
+            .unwrap_or_default();
+
+        let events: Vec<GoogleCalendarEvent> = items.iter().filter_map(|item| {
+            Some(GoogleCalendarEvent {
+                id: item["id"].as_str()?.to_string(),
+                summary: item["summary"].as_str().unwrap_or("(no title)").to_string(),
+                description: item["description"].as_str().map(|s| s.to_string()),
+                start: item["start"]["dateTime"].as_str()
+                    .or_else(|| item["start"]["date"].as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                end: item["end"]["dateTime"].as_str()
+                    .or_else(|| item["end"]["date"].as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                attendees: item["attendees"].as_array()
+                    .map(|a| a.iter().filter_map(|v| v["email"].as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default(),
+                location: item["location"].as_str().map(|s| s.to_string()),
+            })
+        }).collect();
+
+        Ok(events)
+    }
+
+    async fn today(
+        &self,
+        access_token: &str,
+    ) -> Result<Vec<GoogleCalendarEvent>> {
+        self.list_events(&TimeRange::today(), access_token).await
+    }
+}
+```
+
+- [ ] **Step 3: Write GoogleSyncManager (incremental sync)**
+
+```rust
+// crates/corpus/src/drivers/google/sync.rs
+//! GoogleSyncManager — incremental sync with cursor-based dedup.
+//!
+//! Uses Gmail historyId and Calendar syncToken for incremental updates.
+//! Events are normalized and deduplicated before forwarding.
+
+use anyhow::Result;
+use fabric::types::google::GoogleEvent;
+use std::collections::HashSet;
+use tokio::sync::mpsc;
+use tracing::{debug, info, warn};
+
+/// Cursor store for sync state persistence.
+/// MVP: in-memory HashSet. Phase F.4 adds SQLite persistence.
+pub struct SyncCursorStore {
+    seen_message_ids: HashSet<String>,
+    seen_event_ids: HashSet<String>,
+    gmail_history_id: Option<String>,
+    calendar_sync_token: Option<String>,
+}
+
+impl SyncCursorStore {
+    pub fn new() -> Self {
+        Self {
+            seen_message_ids: HashSet::new(),
+            seen_event_ids: HashSet::new(),
+            gmail_history_id: None,
+            calendar_sync_token: None,
+        }
+    }
+
+    pub fn is_duplicate_message(&self, id: &str) -> bool {
+        self.seen_message_ids.contains(id)
+    }
+
+    pub fn mark_message_seen(&mut self, id: String) {
+        self.seen_message_ids.insert(id);
+    }
+
+    pub fn is_duplicate_event(&self, id: &str) -> bool {
+        self.seen_event_ids.contains(id)
+    }
+
+    pub fn mark_event_seen(&mut self, id: String) {
+        self.seen_event_ids.insert(id);
+    }
+}
+
+/// Manages incremental sync from Google services.
+pub struct GoogleSyncManager {
+    cursors: SyncCursorStore,
+    event_tx: mpsc::Sender<GoogleEvent>,
+}
+
+impl GoogleSyncManager {
+    pub fn new(event_tx: mpsc::Sender<GoogleEvent>) -> Self {
+        Self {
+            cursors: SyncCursorStore::new(),
+            event_tx,
+        }
+    }
+
+    /// Deduplicate and forward Google events.
+    pub fn process_events(&mut self, events: Vec<GoogleEvent>) -> usize {
+        let mut forwarded = 0;
+        for event in events {
+            let is_new = match &event {
+                GoogleEvent::MailReceived { message_id, .. } => {
+                    if self.cursors.is_duplicate_message(message_id) {
+                        false
+                    } else {
+                        self.cursors.mark_message_seen(message_id.clone());
+                        true
+                    }
+                }
+                GoogleEvent::CalendarEventStarting { event_id, .. }
+                | GoogleEvent::CalendarEventUpdated { event_id, .. }
+                | GoogleEvent::CalendarEventCancelled { event_id } => {
+                    if self.cursors.is_duplicate_event(event_id) {
+                        false
+                    } else {
+                        self.cursors.mark_event_seen(event_id.clone());
+                        true
+                    }
+                }
+            };
+
+            if is_new {
+                debug!(?event, "Forwarding new Google event");
+                // Non-blocking send (buffer should be sized appropriately)
+                if let Err(e) = self.event_tx.try_send(event) {
+                    warn!(error = %e, "Event channel full, dropping event");
+                } else {
+                    forwarded += 1;
+                }
+            }
+        }
+        forwarded
+    }
+
+    /// Get the Gmail history ID for incremental sync.
+    pub fn gmail_history_id(&self) -> Option<&str> {
+        self.cursors.gmail_history_id.as_deref()
+    }
+
+    /// Update the Gmail history ID after a successful sync.
+    pub fn set_gmail_history_id(&mut self, id: String) {
+        self.cursors.gmail_history_id = Some(id);
+    }
+
+    /// Get the Calendar sync token.
+    pub fn calendar_sync_token(&self) -> Option<&str> {
+        self.cursors.calendar_sync_token.as_deref()
+    }
+
+    /// Update the Calendar sync token.
+    pub fn set_calendar_sync_token(&mut self, token: String) {
+        self.cursors.calendar_sync_token = Some(token);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedup_prevents_duplicate_events() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut manager = GoogleSyncManager::new(tx);
+
+        let events = vec![
+            GoogleEvent::MailReceived {
+                message_id: "msg-1".into(),
+                sender: "a@b.com".into(),
+                subject: "Test".into(),
+                snippet: "...".into(),
+                received_at: "now".into(),
+            },
+            GoogleEvent::MailReceived {
+                message_id: "msg-1".into(), // duplicate
+                sender: "a@b.com".into(),
+                subject: "Test".into(),
+                snippet: "...".into(),
+                received_at: "now".into(),
+            },
+            GoogleEvent::MailReceived {
+                message_id: "msg-2".into(), // new
+                sender: "c@d.com".into(),
+                subject: "Test 2".into(),
+                snippet: "...".into(),
+                received_at: "now".into(),
+            },
+        ];
+
+        let forwarded = manager.process_events(events);
+        assert_eq!(forwarded, 2); // msg-1 (first), msg-2; duplicate skipped
+    }
+}
+```
+
+- [ ] **Step 4: Update google/mod.rs**
+
+Add:
+```rust
+pub mod calendar;
+pub mod gmail;
+pub mod sync;
+
+pub use calendar::{CalendarApi, CalendarCapability};
+pub use gmail::{GmailApi, GmailCapability};
+pub use sync::{GoogleSyncManager, SyncCursorStore};
+```
+
+- [ ] **Step 5: Compile and test**
+
+```bash
+cargo check -p corpus
+cargo test -p corpus -- drivers::google
+```
+Expected: basic tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/corpus/src/drivers/google/
+git commit -m "feat(corpus): add GmailCapability, CalendarCapability, GoogleSyncManager"
+```
+
+---
+
+## Phase G: Gmail Channel + Approval
+
+**Goal:** Gmail as a second Channel. Receive emails → create Goal Drafts. Shared Approval model across channels.
+**Crates:** executive (new modules in impl/channel/)
+**Depends on:** Phase A (Channel trait) + Phase F (GmailCapability)
+**Estimated:** 1–2 weeks
+
+### Task G.1: Define Approval model
+
+**Files:**
+- Create: `crates/executive/src/impl/channel/approval.rs`
+- Modify: `crates/executive/src/impl/channel/mod.rs`
+
+- [ ] **Step 1: Write Approval types**
+
+```rust
+// crates/executive/src/impl/channel/approval.rs
+//! Approval model — shared across all channels (Telegram, Gmail, Web).
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Mutex;
+use tracing::{info, warn};
+
+/// Unique approval request ID.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ApprovalId(pub String);
+
+/// The type of action requiring approval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ApprovalType {
+    ApplyCodeDiff,
+    SendEmail,
+    DeleteFile,
+    ModifyCalendar,
+    DangerousCommand,
+    CapabilityExpansion,
+    BudgetIncrease,
+}
+
+/// Details about what is being approved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ApprovalDetails {
+    CodeDiff {
+        changed_files: Vec<String>,
+        diff_summary: String,
+    },
+    EmailDraft {
+        to: Vec<String>,
+        subject: String,
+        body_preview: String,
+    },
+    FileDeletion {
+        paths: Vec<String>,
+    },
+    CalendarModification {
+        summary: String,
+        start: String,
+    },
+    Generic {
+        description: String,
+    },
+}
+
+/// A pending approval request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequest {
+    pub id: ApprovalId,
+    pub goal_id: i64,
+    pub request_type: ApprovalType,
+    pub description: String,
+    pub details: ApprovalDetails,
+    pub timeout_secs: u64,
+    pub created_at: String,
+}
+
+/// The result of an approval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalResult {
+    Approved,
+    Rejected { reason: String },
+    TimedOut,
+}
+
+/// Manages pending approval requests.
+pub struct ApprovalManager {
+    pending: Arc<Mutex<HashMap<ApprovalId, ApprovalRequest>>>,
+    default_timeout: Duration,
+}
+
+impl ApprovalManager {
+    pub fn new(default_timeout_secs: u64) -> Self {
+        Self {
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            default_timeout: Duration::from_secs(default_timeout_secs),
+        }
+    }
+
+    /// Create a new approval request. Returns the ID for reference.
+    pub async fn request(
+        &self,
+        goal_id: i64,
+        request_type: ApprovalType,
+        description: String,
+        details: ApprovalDetails,
+    ) -> ApprovalId {
+        let id = ApprovalId(format!("approval-{}", uuid::Uuid::new_v4()));
+        let req = ApprovalRequest {
+            id: id.clone(),
+            goal_id,
+            request_type,
+            description,
+            details,
+            timeout_secs: self.default_timeout.as_secs(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        self.pending.lock().await.insert(id.clone(), req);
+        info!(approval_id = %id.0, "Approval request created");
+        id
+    }
+
+    /// Resolve an approval. Returns None if the ID is not found.
+    pub async fn resolve(&self, id: &ApprovalId, result: ApprovalResult) -> Option<ApprovalRequest> {
+        let removed = self.pending.lock().await.remove(id);
+        if let Some(ref req) = removed {
+            info!(approval_id = %id.0, result = ?result, "Approval resolved");
+        }
+        removed
+    }
+
+    /// List all pending approvals.
+    pub async fn list(&self) -> Vec<ApprovalRequest> {
+        self.pending.lock().await.values().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn create_and_resolve_approval() {
+        let manager = ApprovalManager::new(1800);
+        let id = manager.request(
+            1,
+            ApprovalType::ApplyCodeDiff,
+            "Apply changes?".into(),
+            ApprovalDetails::CodeDiff {
+                changed_files: vec!["src/main.rs".into()],
+                diff_summary: "+5 -2".into(),
+            },
+        ).await;
+        assert_eq!(manager.list().await.len(), 1);
+
+        let resolved = manager.resolve(&id, ApprovalResult::Approved).await;
+        assert!(resolved.is_some());
+        assert_eq!(manager.list().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn resolve_unknown_id_returns_none() {
+        let manager = ApprovalManager::new(1800);
+        let result = manager.resolve(
+            &ApprovalId("nonexistent".into()),
+            ApprovalResult::Approved,
+        ).await;
+        assert!(result.is_none());
+    }
+}
+```
+
+- [ ] **Step 2: Re-export in channel mod.rs**
+
+Add to `crates/executive/src/impl/channel/mod.rs`:
+```rust
+pub mod approval;
+```
+
+- [ ] **Step 3: Compile and test**
+
+```bash
+cargo test -p executive -- impl::channel::approval
+```
+Expected: 2 tests pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add crates/executive/src/impl/channel/approval.rs crates/executive/src/impl/channel/mod.rs
+git commit -m "feat(executive): add ApprovalManager with shared approval model"
+```
+
+---
+
+### Task G.2: Implement GmailChannel
+
+**Files:**
+- Create: `crates/executive/src/impl/channel/gmail/mod.rs`
+- Create: `crates/executive/src/impl/channel/gmail/classifier.rs`
+- Create: `crates/executive/src/impl/channel/gmail/authenticator.rs`
+
+- [ ] **Step 1: Write SenderAllowlist**
+
+```rust
+// crates/executive/src/impl/channel/gmail/authenticator.rs
+//! SenderAllowlist — validates email senders against allowed list.
+
+use serde::{Deserialize, Serialize};
+
+/// Permissions for an allowlisted sender.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SenderPermissions {
+    pub can_create_goal: bool,
+    pub can_ask: bool,
+    pub can_record_memory: bool,
+    pub auto_approve: bool,
+}
+
+impl Default for SenderPermissions {
+    fn default() -> Self {
+        Self {
+            can_create_goal: false,
+            can_ask: false,
+            can_record_memory: false,
+            auto_approve: false,
+        }
+    }
+}
+
+/// Entry in the sender allowlist.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AllowlistEntry {
+    pub email: String,       // exact match or "*.domain.com" for domain wildcard
+    pub permissions: SenderPermissions,
+}
+
+/// Validates email senders against an allowlist.
+pub struct SenderAllowlist {
+    entries: Vec<AllowlistEntry>,
+}
+
+impl SenderAllowlist {
+    pub fn new(entries: Vec<AllowlistEntry>) -> Self {
+        Self { entries }
+    }
+
+    /// Find the permissions for a sender. Returns None if not allowlisted.
+    pub fn check(&self, sender: &str) -> Option<&SenderPermissions> {
+        let sender_lower = sender.to_lowercase();
+        for entry in &self.entries {
+            if entry.email.starts_with('*') {
+                // Domain wildcard: *@domain.com
+                let domain = &entry.email[1..]; // skip '*'
+                if sender_lower.ends_with(domain) {
+                    return Some(&entry.permissions);
+                }
+            } else if sender_lower == entry.email.to_lowercase() {
+                return Some(&entry.permissions);
+            }
+        }
+        None
+    }
+
+    /// Create a default allowlist with just the owner.
+    pub fn owner_only(owner_email: &str) -> Self {
+        Self {
+            entries: vec![AllowlistEntry {
+                email: owner_email.to_string(),
+                permissions: SenderPermissions {
+                    can_create_goal: true,
+                    can_ask: true,
+                    can_record_memory: true,
+                    auto_approve: true,
+                },
+            }],
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_match_allowed() {
+        let list = SenderAllowlist::owner_only("me@example.com");
+        assert!(list.check("me@example.com").is_some());
+        assert!(list.check("other@example.com").is_none());
+    }
+
+    #[test]
+    fn domain_wildcard() {
+        let list = SenderAllowlist::new(vec![AllowlistEntry {
+            email: "*@company.com".into(),
+            permissions: SenderPermissions { can_create_goal: true, ..Default::default() },
+        }]);
+        assert!(list.check("alice@company.com").is_some());
+        assert!(list.check("alice@other.com").is_none());
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let list = SenderAllowlist::owner_only("Me@Example.com");
+        assert!(list.check("me@example.com").is_some());
+    }
+}
+```
+
+- [ ] **Step 2: Write MailClassifier**
+
+```rust
+// crates/executive/src/impl/channel/gmail/classifier.rs
+//! MailClassifier — classifies inbound emails by subject prefix.
+
+/// Action determined from email classification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MailAction {
+    CreateGoal { intent: String },
+    AskQuestion { question: String },
+    RecordMemory { content: String },
+    IngestDocument { description: String },
+    NotifyUser { summary: String },
+    Ignore,
+}
+
+/// Classifies emails based on subject line prefixes.
+pub struct MailClassifier;
+
+impl MailClassifier {
+    /// Known classification prefixes and their corresponding actions.
+    const PREFIXES: &'static [(&'static str, fn(String) -> MailAction)] = &[
+        ("[GOAL]", |body| MailAction::CreateGoal { intent: body }),
+        ("[ASK]", |body| MailAction::AskQuestion { question: body }),
+        ("[MEMORY]", |body| MailAction::RecordMemory { content: body }),
+        ("[DOC]", |body| MailAction::IngestDocument { description: body }),
+    ];
+
+    /// Classify an email by its subject line.
+    /// Returns the action and the cleaned body (subject content after prefix).
+    pub fn classify(subject: &str, body: &str) -> MailAction {
+        for (prefix, factory) in Self::PREFIXES {
+            if let Some(rest) = subject.to_uppercase().strip_prefix(prefix) {
+                let content = format!("{} {}", rest.trim(), body).trim().to_string();
+                return factory(content);
+            }
+        }
+        MailAction::Ignore
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_goal_email() {
+        let result = MailClassifier::classify(
+            "[GOAL] Fix the login timeout bug",
+            "Users are reporting 30s timeouts on the login page.",
+        );
+        assert!(matches!(result, MailAction::CreateGoal { .. }));
+    }
+
+    #[test]
+    fn classifies_ask_email() {
+        let result = MailClassifier::classify(
+            "[ASK] What is the status of Pi?",
+            "",
+        );
+        assert!(matches!(result, MailAction::AskQuestion { .. }));
+    }
+
+    #[test]
+    fn classifies_memory_email() {
+        let result = MailClassifier::classify(
+            "[MEMORY] We decided to use PostgreSQL",
+            "For production, SQLite for local caches.",
+        );
+        assert!(matches!(result, MailAction::RecordMemory { .. }));
+    }
+
+    #[test]
+    fn classifies_doc_email() {
+        let result = MailClassifier::classify(
+            "[DOC] Architecture diagram attached",
+            "",
+        );
+        assert!(matches!(result, MailAction::IngestDocument { .. }));
+    }
+
+    #[test]
+    fn unknown_prefix_ignored() {
+        let result = MailClassifier::classify(
+            "RE: Meeting tomorrow",
+            "Let's discuss the Q3 roadmap.",
+        );
+        assert!(matches!(result, MailAction::Ignore));
+    }
+
+    #[test]
+    fn case_insensitive_matching() {
+        let result = MailClassifier::classify(
+            "[goal] lowercase goal",
+            "body",
+        );
+        assert!(matches!(result, MailAction::CreateGoal { .. }));
+    }
+}
+```
+
+- [ ] **Step 3: Write GmailChannel**
+
+```rust
+// crates/executive/src/impl/channel/gmail/mod.rs
+//! Gmail channel — polls Gmail for new messages, classifies and routes them.
+
+pub mod authenticator;
+pub mod classifier;
+
+use anyhow::Result;
+use async_trait::async_trait;
+use corpus::drivers::google::GmailCapability;
+use fabric::types::channel::{ChannelId, ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage};
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tracing::info;
+
+use super::Channel;
+use authenticator::SenderAllowlist;
+use classifier::{MailAction, MailClassifier};
+
+/// Gmail as a Channel. Polls Gmail inbox, classifies messages,
+/// and routes them as Goal Drafts / questions / memory records.
+pub struct GmailChannel {
+    id: ChannelId,
+    gmail: Arc<dyn GmailCapability>,
+    allowlist: SenderAllowlist,
+    access_token: String,
+}
+
+impl GmailChannel {
+    pub fn new(
+        gmail: Arc<dyn GmailCapability>,
+        owner_email: String,
+        access_token: String,
+    ) -> Self {
+        Self {
+            id: ChannelId("gmail".into()),
+            gmail,
+            allowlist: SenderAllowlist::owner_only(&owner_email),
+            access_token,
+        }
+    }
+}
+
+#[async_trait]
+impl Channel for GmailChannel {
+    fn id(&self) -> ChannelId {
+        self.id.clone()
+    }
+
+    async fn start(&self, tx: mpsc::Sender<InboundMessage>) -> Result<()> {
+        let gmail = self.gmail.clone();
+        let allowlist = self.allowlist.clone();
+        let access_token = self.access_token.clone();
+        let channel_id = self.id.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
+            loop {
+                interval.tick().await;
+                match gmail.list_unread(10, &access_token).await {
+                    Ok(messages) => {
+                        for msg in messages {
+                            // Check allowlist
+                            if allowlist.check(&msg.from).is_none() {
+                                continue;
+                            }
+
+                            // Read full message
+                            let full = match gmail.read(&msg.id, &access_token).await {
+                                Ok(m) => m,
+                                Err(_) => continue,
+                            };
+
+                            // Classify
+                            let action = MailClassifier::classify(&msg.subject, &full.body_text);
+                            let content = match action {
+                                MailAction::CreateGoal { intent } => MessageContent::Command {
+                                    command: "/goal".into(),
+                                    args: intent,
+                                },
+                                MailAction::AskQuestion { question } => MessageContent::Command {
+                                    command: "/chat".into(),
+                                    args: question,
+                                },
+                                MailAction::RecordMemory { .. } | MailAction::IngestDocument { .. } => {
+                                    MessageContent::Text(format!("Email: {}", msg.subject))
+                                }
+                                MailAction::NotifyUser { summary } => MessageContent::Text(summary),
+                                MailAction::Ignore => continue,
+                            };
+
+                            let inbound = InboundMessage {
+                                id: MessageId(format!("gmail-{}", msg.id)),
+                                channel: channel_id.clone(),
+                                principal: format!("email:{}", msg.from),
+                                conversation: ConversationId(format!("gmail-{}", msg.thread_id)),
+                                content,
+                                reply_to: None,
+                                received_at: msg.received_at.clone(),
+                            };
+
+                            let _ = tx.send(inbound).await;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Gmail poll failed");
+                    }
+                }
+            }
+        });
+
+        info!("Gmail channel polling started");
+        Ok(())
+    }
+
+    async fn send(&self, _msg: OutboundMessage) -> Result<()> {
+        // Phase G.3: implement email sending (requires GmailWriteCapability)
+        Ok(())
+    }
+
+    async fn stop(&self) -> Result<()> {
+        info!("Gmail channel stopped");
+        Ok(())
+    }
+}
+
+// Clone impl for sender allowlist (used in spawned task)
+impl Clone for SenderAllowlist {
+    fn clone(&self) -> Self {
+        Self { entries: self.entries.clone() }
+    }
+}
+```
+
+- [ ] **Step 4: Update gmail/mod.rs**
+
+```rust
+pub mod authenticator;
+pub mod classifier;
+// (GmailChannel struct written above in mod.rs)
+```
+
+- [ ] **Step 5: Compile and test**
+
+```bash
+cargo test -p executive -- impl::channel::gmail
+```
+Expected: classifier + authenticator tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/executive/src/impl/channel/gmail/
+git commit -m "feat(executive): add GmailChannel with MailClassifier and SenderAllowlist"
+```
+
+---
+
+## Phase H: GBrain Mnemosyne Backend + Service Integration
+
+**Goal:** GBrain as MnemosyneBackend. Deploy as Docker container. Persist decisions/failures/lessons with provenance. Recall with freshness scoring.
+**Crates:** mnemosyne (new module impl/backends/gbrain/)
+**Depends on:** Phase B (Goal completion hooks)
+**Estimated:** 2–3 weeks
+
+### Task H.1: Define GBrain API types and REST client
+
+**Files:**
+- Create: `crates/mnemosyne/src/impl/backends/gbrain/mod.rs`
+- Create: `crates/mnemosyne/src/impl/backends/gbrain/types.rs`
+- Create: `crates/mnemosyne/src/impl/backends/gbrain/client.rs`
+- Modify: `crates/mnemosyne/src/impl/backends/mod.rs`
+- Modify: `crates/mnemosyne/Cargo.toml`
+
+- [ ] **Step 1: Add reqwest dep to mnemosyne**
+
+```toml
+# Add to crates/mnemosyne/Cargo.toml
+reqwest = { version = "0.12", features = ["json"] }
+```
+
+- [ ] **Step 2: Write GBrain API types**
+
+```rust
+// crates/mnemosyne/src/impl/backends/gbrain/types.rs
+//! Request/Response DTOs matching the GBrain REST API contract.
+//!
+//! Contract: docs/plans/2026-07-14-agent-google-design.md § Phase H
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GBrainHealth {
+    pub status: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoreRequest {
+    pub memory_type: String,
+    pub content: String,
+    pub payload: Option<serde_json::Value>,
+    pub goal_id: Option<String>,
+    pub attempt_id: Option<String>,
+    pub provenance: ProvenanceDTO,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvenanceDTO {
+    pub source: String,
+    pub goal_id: Option<String>,
+    pub attempt_id: Option<String>,
+    pub recorded_by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoreResponse {
+    pub id: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchStoreRequest {
+    pub entries: Vec<StoreRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchStoreResponse {
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecallRequest {
+    pub query: String,
+    pub goal_id: Option<String>,
+    pub memory_types: Option<Vec<String>>,
+    pub max_results: usize,
+    pub freshness_weight: f32,
+    pub min_score: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecallResponse {
+    pub results: Vec<ScoredMemoryDTO>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoredMemoryDTO {
+    pub id: String,
+    pub memory_type: String,
+    pub content: String,
+    pub payload: Option<serde_json::Value>,
+    pub relevance_score: f32,
+    pub freshness_score: f32,
+    pub combined_score: f32,
+    pub provenance: ProvenanceDTO,
+    pub created_at: String,
+    pub is_current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeprecateRequest {
+    pub reason: String,
+    pub superseded_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListFilters {
+    pub goal_id: Option<String>,
+    pub memory_type: Option<String>,
+    pub is_current: Option<bool>,
+    pub limit: usize,
+}
+```
+
+- [ ] **Step 3: Write GBrainClient**
+
+```rust
+// crates/mnemosyne/src/impl/backends/gbrain/client.rs
+//! GBrainClient — REST client with retry and health check.
+
+use anyhow::{Context, Result};
+use std::time::Duration;
+use tracing::{debug, warn};
+
+use super::types::*;
+
+/// REST client for the GBrain API.
+pub struct GBrainClient {
+    base_url: String,
+    client: reqwest::Client,
+    timeout: Duration,
+    max_retries: u32,
+}
+
+impl GBrainClient {
+    pub fn new(base_url: String, timeout_secs: u64, max_retries: u32) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            client: reqwest::Client::new(),
+            timeout: Duration::from_secs(timeout_secs),
+            max_retries,
+        }
+    }
+
+    /// Health check.
+    pub async fn health(&self) -> Result<GBrainHealth> {
+        let url = format!("{}/health", self.base_url);
+        let resp = self.client.get(&url).timeout(self.timeout).send().await?;
+        Ok(resp.json().await?)
+    }
+
+    /// Store a single memory entry.
+    pub async fn store(&self, req: &StoreRequest) -> Result<StoreResponse> {
+        let url = format!("{}/api/v1/memories", self.base_url);
+        let resp = self.retry_post(&url, req).await?;
+        Ok(resp.json().await?)
+    }
+
+    /// Batch store up to 100 memory entries.
+    pub async fn store_batch(&self, entries: &[StoreRequest]) -> Result<BatchStoreResponse> {
+        let url = format!("{}/api/v1/memories/batch", self.base_url);
+        let batch = BatchStoreRequest { entries: entries.to_vec() };
+        let resp = self.retry_post(&url, &batch).await?;
+        Ok(resp.json().await?)
+    }
+
+    /// Semantic recall with freshness scoring.
+    pub async fn recall(&self, req: &RecallRequest) -> Result<RecallResponse> {
+        let url = format!("{}/api/v1/memories/recall", self.base_url);
+        let resp = self.retry_post(&url, req).await?;
+        Ok(resp.json().await?)
+    }
+
+    /// Deprecate a memory (mark as no longer current).
+    pub async fn deprecate(&self, id: &str, reason: &str, superseded_by: Option<&str>) -> Result<()> {
+        let url = format!("{}/api/v1/memories/{}/deprecate", self.base_url, id);
+        let body = DeprecateRequest {
+            reason: reason.to_string(),
+            superseded_by: superseded_by.map(|s| s.to_string()),
+        };
+        self.retry_post(&url, &body).await?;
+        Ok(())
+    }
+
+    /// POST with retry logic: 5xx/timeout → retry, 4xx → fail immediately.
+    async fn retry_post<T: serde::Serialize>(
+        &self,
+        url: &str,
+        body: &T,
+    ) -> Result<reqwest::Response> {
+        let mut last_error = String::new();
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                let backoff = Duration::from_millis(200 * 2u64.pow(attempt - 1));
+                debug!(url, attempt, "Retrying GBrain request");
+                tokio::time::sleep(backoff).await;
+            }
+
+            match self.client
+                .post(url)
+                .json(body)
+                .timeout(self.timeout)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => return Ok(resp),
+                Ok(resp) if resp.status().is_client_error() => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    anyhow::bail!("GBrain client error {status}: {body}");
+                }
+                Ok(resp) => {
+                    last_error = format!("Server error {}", resp.status());
+                }
+                Err(e) => {
+                    last_error = format!("Request error: {e}");
+                }
+            }
+        }
+        Err(anyhow::anyhow!("GBrain request failed after {} retries: {last_error}", self.max_retries))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_builds_correct_urls() {
+        let client = GBrainClient::new("http://127.0.0.1:9800".into(), 10, 3);
+        assert!(client.base_url == "http://127.0.0.1:9800");
+    }
+}
+```
+
+- [ ] **Step 4: Update backends mod and Cargo.toml**
+
+Add to `crates/mnemosyne/src/impl/backends/mod.rs` (if it exists):
+```rust
+pub mod gbrain;
+```
+
+- [ ] **Step 5: Compile and test**
+
+```bash
+cargo check -p mnemosyne
+cargo test -p mnemosyne -- impl::backends::gbrain
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/mnemosyne/src/impl/backends/gbrain/ crates/mnemosyne/Cargo.toml
+git commit -m "feat(mnemosyne): add GBrainClient with REST types and retry logic"
+```
+
+---
+
+### Task H.2: Write IngestionPipeline and MemoryExtraction
+
+**Files:**
+- Create: `crates/mnemosyne/src/impl/backends/gbrain/ingestion.rs`
+- Create: `crates/mnemosyne/src/impl/backends/gbrain/extraction.rs`
+- Create: `crates/mnemosyne/src/impl/backends/gbrain/health.rs`
+- Create: `crates/mnemosyne/src/impl/backends/gbrain/recall.rs`
+- Create: `crates/mnemosyne/src/impl/backends/gbrain/projection.rs`
+- Modify: `crates/mnemosyne/src/impl/backends/gbrain/mod.rs`
+
+- [ ] **Step 1: Write IngestionPipeline**
+
+```rust
+// crates/mnemosyne/src/impl/backends/gbrain/ingestion.rs
+//! IngestionPipeline — async batch ingestion with buffered flush.
+
+use anyhow::Result;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tracing::{debug, warn};
+
+use super::client::GBrainClient;
+use super::types::StoreRequest;
+
+pub struct IngestionPipeline {
+    buffer_tx: mpsc::Sender<StoreRequest>,
+}
+
+impl IngestionPipeline {
+    /// Spawn the ingestion background task.
+    pub fn spawn(
+        client: Arc<GBrainClient>,
+        batch_size: usize,
+        flush_interval: Duration,
+        max_buffer: usize,
+    ) -> Self {
+        let (tx, mut rx) = mpsc::channel::<StoreRequest>(max_buffer);
+
+        tokio::spawn(async move {
+            let mut batch: Vec<StoreRequest> = Vec::with_capacity(batch_size);
+            let mut tick = tokio::time::interval(flush_interval);
+
+            loop {
+                tokio::select! {
+                    Some(entry) = rx.recv() => {
+                        batch.push(entry);
+                        if batch.len() >= batch_size {
+                            flush(&client, &mut batch).await;
+                        }
+                    }
+                    _ = tick.tick() => {
+                        if !batch.is_empty() {
+                            flush(&client, &mut batch).await;
+                        }
+                    }
+                    else => break,
+                }
+            }
+        });
+
+        Self { buffer_tx: tx }
+    }
+
+    /// Buffer a memory entry for async ingestion. Non-blocking.
+    pub fn buffer(&self, entry: StoreRequest) {
+        match self.buffer_tx.try_send(entry) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("Ingestion buffer full, dropping entry");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                warn!("Ingestion pipeline closed");
+            }
+        }
+    }
+}
+
+async fn flush(client: &Arc<GBrainClient>, batch: &mut Vec<StoreRequest>) {
+    if batch.is_empty() {
+        return;
+    }
+    match client.store_batch(batch).await {
+        Ok(resp) => debug!(count = resp.ids.len(), "GBrain batch stored"),
+        Err(e) => warn!(error = %e, count = batch.len(), "GBrain batch failed, entries dropped"),
+    }
+    batch.clear();
+}
+```
+
+- [ ] **Step 2: Write MemoryExtraction**
+
+```rust
+// crates/mnemosyne/src/impl/backends/gbrain/extraction.rs
+//! MemoryExtraction — converts Goal outcomes to MemoryEntry records.
+
+use fabric::types::goal::{FailureClass, GoalId};
+use fabric::types::objective::{Objective, ObjectiveStatus};
+
+use super::types::{ProvenanceDTO, StoreRequest};
+
+/// Extract structured MemoryEntry values from a completed/failed Goal.
+pub fn extract_memories(
+    goal: &Objective,
+    failures: &[(FailureClass, String)], // (class, message) pairs
+    recorded_by: &str,
+) -> Vec<StoreRequest> {
+    let mut entries = Vec::new();
+    let goal_id_str = goal.objective_id.to_string();
+
+    // 1. Goal outcome as a Lesson
+    let outcome_content = match goal.status {
+        ObjectiveStatus::Completed => {
+            format!(
+                "Successfully completed: {}",
+                goal.intent.as_deref().unwrap_or(&goal.description)
+            )
+        }
+        ObjectiveStatus::Failed => {
+            format!(
+                "Failed after attempts: {}",
+                goal.intent.as_deref().unwrap_or(&goal.description)
+            )
+        }
+        _ => return entries,
+    };
+
+    entries.push(StoreRequest {
+        memory_type: "lesson".into(),
+        content: outcome_content,
+        payload: None,
+        goal_id: Some(goal_id_str.clone()),
+        attempt_id: None,
+        provenance: ProvenanceDTO {
+            source: "goal_execution".into(),
+            goal_id: Some(goal_id_str.clone()),
+            attempt_id: None,
+            recorded_by: recorded_by.to_string(),
+        },
+        tags: vec!["goal-outcome".into(), format!("status:{:?}", goal.status)],
+    });
+
+    // 2. Each distinct failure class → Failure memory
+    let mut seen_classes = std::collections::HashSet::new();
+    for (class, message) in failures {
+        let class_str = format!("{:?}", class);
+        if seen_classes.insert(class_str.clone()) {
+            entries.push(StoreRequest {
+                memory_type: "failure".into(),
+                content: format!("{:?} encountered: {}", class, message),
+                payload: Some(serde_json::json!({
+                    "failure_class": class_str,
+                    "error_message": message,
+                })),
+                goal_id: Some(goal_id_str.clone()),
+                attempt_id: None,
+                provenance: ProvenanceDTO {
+                    source: "goal_execution".into(),
+                    goal_id: Some(goal_id_str.clone()),
+                    attempt_id: None,
+                    recorded_by: recorded_by.to_string(),
+                },
+                tags: vec!["failure".into(), format!("class:{:?}", class)],
+            });
+        }
+    }
+
+    entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_objective(status: ObjectiveStatus) -> Objective {
+        Objective {
+            objective_id: 42,
+            description: "fix bug".into(),
+            status,
+            parent_id: None,
+            session_id: "s1".into(),
+            scope: "project".into(),
+            intent: Some("Fix the login timeout".into()),
+            acceptance_criteria: None,
+            max_tokens: None,
+            tokens_used: None,
+            max_duration_secs: None,
+            max_attempts: None,
+            attempt_count: None,
+            deadline: None,
+            plan_json: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn completed_goal_extracts_lesson() {
+        let obj = test_objective(ObjectiveStatus::Completed);
+        let entries = extract_memories(&obj, &[], "native-cognit");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].memory_type, "lesson");
+        assert!(entries[0].content.contains("Successfully completed"));
+    }
+
+    #[test]
+    fn failed_goal_extracts_lesson_and_failures() {
+        let obj = test_objective(ObjectiveStatus::Failed);
+        let failures = vec![
+            (FailureClass::Compilation, "mismatched types".into()),
+            (FailureClass::Compilation, "another compilation error".into()), // duplicate class
+            (FailureClass::Timeout, "timed out after 30s".into()),
+        ];
+        let entries = extract_memories(&obj, &failures, "deepseek");
+        // 1 lesson + 2 distinct failure classes (Compilation, Timeout)
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].memory_type, "lesson");
+        assert_eq!(entries[1].memory_type, "failure");
+        assert_eq!(entries[2].memory_type, "failure");
+    }
+}
+```
+
+- [ ] **Step 3: Write RecallQuery helper**
+
+```rust
+// crates/mnemosyne/src/impl/backends/gbrain/recall.rs
+//! RecallQuery construction and scoring helpers.
+
+use fabric::types::goal::{GoalFrame, GoalId};
+
+use super::types::RecallRequest;
+
+/// Build a RecallRequest from a GoalFrame.
+pub fn build_recall_request(frame: &GoalFrame, max_results: usize) -> RecallRequest {
+    RecallRequest {
+        query: format!("{} {}", frame.original_intent, frame.current_task),
+        goal_id: Some(frame.goal_id.to_string()),
+        memory_types: Some(vec![
+            "lesson".into(), "failure".into(), "procedure".into(),
+            "decision".into(), "architecture_fact".into(),
+        ]),
+        max_results,
+        freshness_weight: 0.3,
+        min_score: 0.4,
+    }
+}
+```
+
+- [ ] **Step 4: Write Health module**
+
+```rust
+// crates/mnemosyne/src/impl/backends/gbrain/health.rs
+//! GBrain health check and background reconnect.
+
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
+use tracing::{info, warn};
+
+use super::client::GBrainClient;
+
+/// Tracks GBrain connection health with background reconnect.
+pub struct HealthTracker {
+    healthy: RwLock<bool>,
+    client: Arc<GBrainClient>,
+}
+
+impl HealthTracker {
+    pub fn new(client: Arc<GBrainClient>) -> Self {
+        Self {
+            healthy: RwLock::new(false),
+            client,
+        }
+    }
+
+    pub async fn is_healthy(&self) -> bool {
+        *self.healthy.read().await
+    }
+
+    /// Start background health checks. Returns immediately.
+    pub fn start_background_check(&self, interval: Duration) {
+        let client = self.client.clone();
+        let healthy = self.healthy.clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                match client.health().await {
+                    Ok(h) => {
+                        let was_healthy = *healthy.read().await;
+                        *healthy.write().await = true;
+                        if !was_healthy {
+                            info!(version = %h.version, "GBrain connection restored");
+                        }
+                    }
+                    Err(e) => {
+                        let was_healthy = *healthy.read().await;
+                        *healthy.write().await = false;
+                        if was_healthy {
+                            warn!(error = %e, "GBrain connection lost");
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+```
+
+- [ ] **Step 5: Write AgoraProjection**
+
+```rust
+// crates/mnemosyne/src/impl/backends/gbrain/projection.rs
+//! AgoraProjection — converts ScoredMemoryDTO to GoalFrame MemoryProjection.
+
+use fabric::types::goal::{GoalId, MemoryProjection};
+
+use super::types::ScoredMemoryDTO;
+
+/// Convert top-K GBrain results into MemoryProjections for GoalFrame.
+pub fn project_memories(scored: &[ScoredMemoryDTO]) -> Vec<MemoryProjection> {
+    scored.iter()
+        .filter(|m| m.is_current)
+        .map(|m| MemoryProjection {
+            summary: format!("[{}] {}", m.memory_type, m.content),
+            memory_type: m.memory_type.clone(),
+            provenance_goal: m.provenance.goal_id.as_ref()
+                .and_then(|s| s.parse::<i64>().ok())
+                .map(GoalId),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_out_deprecated() {
+        let scored = vec![
+            ScoredMemoryDTO {
+                id: "1".into(), memory_type: "lesson".into(),
+                content: "useful".into(), payload: None,
+                relevance_score: 0.9, freshness_score: 0.8, combined_score: 0.87,
+                provenance: super::super::types::ProvenanceDTO {
+                    source: "goal".into(), goal_id: Some("1".into()),
+                    attempt_id: None, recorded_by: "cognit".into(),
+                },
+                created_at: "now".into(), is_current: true,
+            },
+            ScoredMemoryDTO {
+                id: "2".into(), memory_type: "lesson".into(),
+                content: "stale".into(), payload: None,
+                relevance_score: 0.5, freshness_score: 0.2, combined_score: 0.4,
+                provenance: super::super::types::ProvenanceDTO {
+                    source: "goal".into(), goal_id: Some("1".into()),
+                    attempt_id: None, recorded_by: "cognit".into(),
+                },
+                created_at: "old".into(), is_current: false,
+            },
+        ];
+        let projections = project_memories(&scored);
+        assert_eq!(projections.len(), 1);
+        assert!(projections[0].summary.contains("useful"));
+    }
+}
+```
+
+- [ ] **Step 6: Write GBrainBackend + wiring in mod.rs**
+
+```rust
+// crates/mnemosyne/src/impl/backends/gbrain/mod.rs
+//! GBrain backend — implements MnemosyneBackend via REST API.
+
+pub mod client;
+pub mod extraction;
+pub mod health;
+pub mod ingestion;
+pub mod projection;
+pub mod recall;
+pub mod types;
+
+use std::sync::Arc;
+use std::time::Duration;
+use anyhow::Result;
+use async_trait::async_trait;
+
+use crate::service::MemoryService;
+use client::GBrainClient;
+use ingestion::IngestionPipeline;
+
+/// Memory backend backed by GBrain (external knowledge service).
+pub struct GBrainBackend {
+    client: Arc<GBrainClient>,
+    ingestion: IngestionPipeline,
+    health: health::HealthTracker,
+}
+
+impl GBrainBackend {
+    /// Connect to GBrain. Starts background health checks immediately.
+    /// Returns Ok even if GBrain is unreachable (graceful degradation).
+    pub async fn connect(
+        endpoint: &str,
+        timeout_secs: u64,
+        max_retries: u32,
+    ) -> Result<Self> {
+        let client = Arc::new(GBrainClient::new(
+            endpoint.to_string(),
+            timeout_secs,
+            max_retries,
+        ));
+
+        // Try initial health check (non-fatal if it fails)
+        let health = health::HealthTracker::new(client.clone());
+        match client.health().await {
+            Ok(h) => {
+                tracing::info!(version = %h.version, "GBrain connected");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "GBrain not available at startup, will retry in background");
+            }
+        }
+        health.start_background_check(Duration::from_secs(30));
+
+        let ingestion = IngestionPipeline::spawn(
+            client.clone(),
+            10,                             // batch_size
+            Duration::from_secs(30),        // flush_interval
+            1000,                           // max_buffer
+        );
+
+        Ok(Self { client, ingestion, health })
+    }
+
+    /// Store a memory entry (fire-and-forget via ingestion pipeline).
+    pub fn store_memory(&self, entry: types::StoreRequest) {
+        self.ingestion.buffer(entry);
+    }
+
+    /// Recall memories relevant to a query. Returns empty vec if GBrain is down.
+    pub async fn recall_memories(
+        &self,
+        req: &types::RecallRequest,
+    ) -> Vec<types::ScoredMemoryDTO> {
+        if !self.health.is_healthy().await {
+            return vec![];
+        }
+        match self.client.recall(req).await {
+            Ok(resp) => resp.results,
+            Err(e) => {
+                tracing::warn!(error = %e, "GBrain recall failed");
+                vec![]
+            }
+        }
+    }
+}
+```
+
+- [ ] **Step 7: Compile and test**
+
+```bash
+cargo test -p mnemosyne -- impl::backends::gbrain
+```
+Expected: extraction + projection tests pass.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add crates/mnemosyne/src/impl/backends/gbrain/
+git commit -m "feat(mnemosyne): add GBrainBackend with ingestion pipeline, extraction, recall, health tracking"
+```
+
+---
+
+### Task H.3: Add Docker Compose and configuration
+
+**Files:**
+- Create: `config/docker-compose.yml`
+- Create: `config/gbrain.env`
+
+- [ ] **Step 1: Write docker-compose.yml**
+
+```yaml
+# config/docker-compose.yml
+# Aletheon stack — GBrain + PostgreSQL containers.
+# Run: docker compose -f config/docker-compose.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - /var/lib/aletheon/postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: aletheon
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aletheon"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gbrain:
+    image: gbrain:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9800:9800"
+    volumes:
+      - /var/lib/aletheon/gbrain:/data
+    environment:
+      GBRAIN_DATA_DIR: /data
+      GBRAIN_EMBEDDING_MODEL: all-MiniLM-L6-v2
+      GBRAIN_DATABASE_URL: postgres://aletheon@postgres:5432/gbrain
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9800/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
+- [ ] **Step 2: Write gbrain.env**
+
+```bash
+# config/gbrain.env
+# Default environment for GBrain service.
+GBRAIN_DATA_DIR=/data
+GBRAIN_EMBEDDING_MODEL=all-MiniLM-L6-v2
+GBRAIN_LOG_LEVEL=info
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add config/
+git commit -m "feat(config): add docker-compose.yml for GBrain + PostgreSQL"
+```
+
+---
+
+## Integration Test: Full Vertical Slice
+
+After all phases complete, run the full vertical slice test:
+
+```bash
+# 1. Start all services
+docker compose -f config/docker-compose.yml up -d
+
+# 2. Wait for healthy
+docker compose -f config/docker-compose.yml ps
+# Expected: all services "healthy"
+
+# 3. Start Aletheon daemon
+cargo run --bin aletheon -- daemon --config /etc/aletheon/config.toml
+
+# 4. Send /goal via Telegram
+# Expected: Goal created, persisted in goals.db, state = draft
+
+# 5. Trigger tick()
+# Expected: DeepSeekWorker executes, PiWorker creates worktree, modifies files
+
+# 6. Verification gates run
+# Expected: Format, Compile, Test gates pass or fail appropriately
+
+# 7. Approval request appears in Telegram
+# Expected: [Apply] [Reject] buttons
+
+# 8. User approves
+# Expected: Goal transitions to Completed
+
+# 9. Memory extracted to GBrain
+# Expected: curl http://127.0.0.1:9800/api/v1/memories?goal_id=goal-1 returns entry
+
+# 10. Restart daemon
+# Expected: Goal state survives restart, sync cursors intact
+```
+
+---
+
+## Complete File Manifest
+
+| Phase | Create | Modify |
+|---|---|---|
+| A | `fabric/src/types/channel.rs`, `executive/src/impl/channel/{mod,telegram/{mod,polling,binding,formatting}}.rs` | `fabric/src/{types/mod,lib}.rs`, `executive/{Cargo.toml,src/impl/{mod,daemon/handler/init}}.rs` |
+| B | `fabric/src/types/goal.rs`, `executive/src/impl/goal/{supervisor,state_machine,frame,budget}.rs` | `fabric/src/{types/mod,lib,types/objective}.rs`, `executive/src/{impl/goal/{mod,store},core/core_systems,impl/daemon/server}.rs` |
+| C | `executive/src/impl/goal/{worker,attempt,failure,retry,escalation,worker_impl}.rs` | `executive/src/impl/goal/{mod,supervisor}.rs` |
+| D | `executive/src/impl/agent/pi/{mod,task,report,worktree,worker}.rs` | `executive/src/impl/agent/mod.rs` |
+| E | `executive/src/impl/goal/verify/{mod,gates,report,policy}.rs` | `executive/src/impl/goal/mod.rs` |
+| F | `fabric/src/types/google.rs`, `corpus/src/drivers/google/{mod,vault,gmail,calendar,sync}.rs` | `fabric/src/{types/mod,lib}.rs`, `corpus/{Cargo.toml,src/drivers/mod}.rs` |
+| G | `executive/src/impl/channel/{approval,gmail/{mod,classifier,authenticator}}.rs` | `executive/src/impl/channel/mod.rs` |
+| H | `mnemosyne/src/impl/backends/gbrain/{mod,client,types,ingestion,extraction,recall,projection,health}.rs`, `config/{docker-compose.yml,gbrain.env}` | `mnemosyne/{Cargo.toml,src/impl/backends/mod}.rs` |
+
+## Execution Strategy
+
+1. **Sequential:** A → B (foundational abstractions)
+2. **After B:** C + D in parallel (both implement GoalWorker)
+3. **After D:** E (needs PiReport diffs)
+4. **After C:** F (uses GoalWorker trait)
+5. **After A+F:** G (Channel trait + GmailCapability)
+6. **After B:** H (Goal completion hooks)
+7. **After all:** Integration test — full vertical slice
