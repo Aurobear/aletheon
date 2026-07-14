@@ -57,6 +57,7 @@ use crate::r#impl::channel::router::{
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
 use crate::r#impl::goal::ObjectiveStore;
+use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
 use crate::r#impl::runtime::{register_pi_runtime, ProviderWorkerRuntime};
 use aletheon_kernel::supervision::RestartPolicy;
 use corpus::hook::builtin::audit_hook;
@@ -304,6 +305,45 @@ impl RequestHandler {
         // Clock for monotonic/wall timestamps. Created early so
         // all subsystems (including SessionManager) can route through it.
         let clock = Arc::new(SystemClock::new());
+
+        // Reconcile retained coding worktrees before the Pi runtime can be
+        // registered. Any unsafe cleanup or exhausted budget fails closed for
+        // new coding work while leaving the rest of the daemon available.
+        let pi_work_allowed = if pi_runtime.enabled {
+            let recovery = objective_store
+                .lock()
+                .await
+                .coding_job_recovery_records()
+                .context("loading coding job recovery metadata")
+                .and_then(|records| {
+                    WorktreeRecoveryService::new(
+                        WorktreeRecoveryConfig::production(pi_runtime.worktree_base.clone()),
+                        records,
+                        clock.clone(),
+                    )
+                })
+                .and_then(|service| service.recover());
+            match recovery {
+                Ok(outcome) => {
+                    if !outcome.quarantined.is_empty() {
+                        warn!(
+                            count = outcome.quarantined.len(),
+                            "Unknown coding worktrees quarantined for manual review"
+                        );
+                    }
+                    if let Some(reason) = &outcome.blocked_reason {
+                        warn!(reason = %reason, "Pi coding work blocked by worktree recovery");
+                    }
+                    outcome.allow_new_pi_work
+                }
+                Err(error) => {
+                    warn!(error = %error, "Pi coding work blocked: worktree recovery failed");
+                    false
+                }
+            }
+        } else {
+            true
+        };
 
         // Multi-session setup
         let context_window = llm.max_context_length();
@@ -684,12 +724,14 @@ impl RequestHandler {
                 .await
                 .map(|backend| Arc::new(backend) as Arc<dyn fabric::sandbox::SandboxBackend>);
             let mut runtime = subsystems.runtime.lock().await;
-            if register_pi_runtime(
-                runtime.sub_agent_spawner_mut(),
-                &pi_runtime,
-                sandbox,
-                clock.clone(),
-            )? {
+            if pi_work_allowed
+                && register_pi_runtime(
+                    runtime.sub_agent_spawner_mut(),
+                    &pi_runtime,
+                    sandbox,
+                    clock.clone(),
+                )?
+            {
                 info!(runtime_id = "pi-coder", "Pi coding runtime registered");
             }
         }

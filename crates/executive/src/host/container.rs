@@ -19,10 +19,11 @@ use crate::core::runtime_core::RuntimeCore;
 use crate::host::load_dotenv;
 
 /// Verify that the given container runtime CLI is available on the system.
-fn check_container_cli(cmd: &str) -> Result<()> {
-    let output = std::process::Command::new(cmd)
+async fn check_container_cli(cmd: &str) -> Result<()> {
+    let output = tokio::process::Command::new(cmd)
         .arg("--version")
         .output()
+        .await
         .map_err(|_| {
             anyhow::anyhow!(
                 "Container runtime '{}' not found. Is docker or podman installed?",
@@ -86,7 +87,7 @@ impl crate::host::RuntimeHost for ContainerHost {
         self.core = Some(RuntimeCore::bootstrap(config_path, self.enable_evolution).await?);
 
         // ── Verify container runtime CLI ────────────────────────────
-        check_container_cli(&self.runtime_cmd)?;
+        check_container_cli(&self.runtime_cmd).await?;
 
         Ok(())
     }

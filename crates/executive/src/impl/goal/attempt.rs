@@ -40,7 +40,20 @@ impl ObjectiveStore {
         role: CognitiveRole,
         input: &serde_json::Value,
     ) -> Result<GoalAttempt> {
-        let attempt_id = AttemptId::new();
+        self.begin_attempt_with_id(AttemptId::new(), goal_id, sequence, runtime_id, role, input)
+    }
+
+    /// Persist a running attempt with a coordinator-allocated immutable ID.
+    /// Coding jobs need the ID in their runtime request before invocation.
+    pub(crate) fn begin_attempt_with_id(
+        &self,
+        attempt_id: AttemptId,
+        goal_id: GoalId,
+        sequence: u32,
+        runtime_id: &RuntimeId,
+        role: CognitiveRole,
+        input: &serde_json::Value,
+    ) -> Result<GoalAttempt> {
         let input_json = serde_json::to_string(input)?;
         let role = wire_value(role)?;
         let tx = self.db.unchecked_transaction()?;
@@ -212,12 +225,42 @@ impl ObjectiveStore {
         Ok(recovered)
     }
 
-    fn attempt(&self, attempt_id: AttemptId) -> Result<Option<GoalAttempt>> {
+    pub(crate) fn attempt(&self, attempt_id: AttemptId) -> Result<Option<GoalAttempt>> {
         let sql = format!("SELECT {ATTEMPT_COLS} FROM goal_attempts WHERE attempt_id = ?1");
         self.db
             .query_row(&sql, params![attempt_id.0.to_string()], map_attempt_row)
             .optional()
             .map_err(Into::into)
+    }
+
+    /// Add bounded verifier evidence to an already terminal attempt so the
+    /// next GoalFrame can carry deterministic failure context.
+    pub(crate) fn append_attempt_evidence(
+        &self,
+        attempt_id: AttemptId,
+        additional: &[AttemptEvidence],
+    ) -> Result<GoalAttempt> {
+        let mut attempt = self
+            .attempt(attempt_id)?
+            .context("attempt missing while appending verification evidence")?;
+        if attempt.status == AttemptStatus::Running {
+            bail!("cannot append verifier evidence to a running attempt");
+        }
+        attempt.evidence.extend(
+            additional
+                .iter()
+                .map(|item| item.bounded_for_persistence(MAX_ATTEMPT_FIELD_BYTES)),
+        );
+        let evidence_json = serde_json::to_string(&attempt.evidence)?;
+        if evidence_json.len() > MAX_ATTEMPT_FIELD_BYTES {
+            bail!("combined attempt evidence exceeds persistence limit");
+        }
+        self.db.execute(
+            "UPDATE goal_attempts SET evidence_json = ?1 WHERE attempt_id = ?2",
+            params![evidence_json, attempt_id.0.to_string()],
+        )?;
+        self.attempt(attempt_id)?
+            .context("attempt disappeared after appending verification evidence")
     }
 }
 

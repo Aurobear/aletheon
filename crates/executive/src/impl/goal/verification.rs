@@ -32,7 +32,45 @@ pub struct PersistedVerificationReport {
     pub created_at_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingJobRecoveryRecord {
+    pub job_id: CodingJobId,
+    pub worktree_ref: PathBuf,
+    pub status: CodingJobStatus,
+    pub updated_at_ms: i64,
+}
+
 impl ObjectiveStore {
+    /// Load only bounded metadata needed for startup worktree reconciliation.
+    /// Artifact contents are deliberately not read during this scan.
+    pub fn coding_job_recovery_records(&self) -> Result<Vec<CodingJobRecoveryRecord>> {
+        let mut statement = self.db.prepare(
+            "SELECT job_id, worktree_ref, status, updated_at_ms
+             FROM goal_coding_jobs ORDER BY created_at_ms, job_id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (job_id, worktree_ref, status, updated_at_ms) = row?;
+            let job_id = CodingJobId(uuid::Uuid::parse_str(&job_id)?);
+            let worktree_ref = PathBuf::from(worktree_ref);
+            validate_relative_ref(&worktree_ref, "worktree")?;
+            Ok(CodingJobRecoveryRecord {
+                job_id,
+                worktree_ref,
+                status: parse_coding_status(&status)?,
+                updated_at_ms,
+            })
+        })
+        .collect()
+    }
+
     pub fn persist_coding_job(
         &self,
         report: &CodingJobReport,

@@ -132,7 +132,7 @@ impl RuntimeFailure {
 }
 
 impl AttemptEvidence {
-    fn bounded_for_persistence(&self, max_bytes: usize) -> Self {
+    pub fn bounded_for_persistence(&self, max_bytes: usize) -> Self {
         Self {
             kind: redact_and_bound(&self.kind, max_bytes),
             summary: redact_and_bound(&self.summary, max_bytes),

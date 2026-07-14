@@ -140,6 +140,10 @@ pub use types::admission::{
     ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
 pub use types::agent::Pid;
+pub use types::approval::{
+    ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,
+    ApprovalRisk, ApprovalSnapshot, ApprovalStatus, ApprovalSubject,
+};
 pub use types::attempt::{
     AttemptEvidence, AttemptId, AttemptStatus, AttemptUsage, CognitiveRole, FailureClass,
     RuntimeFailure, RuntimeId, RuntimeResult,

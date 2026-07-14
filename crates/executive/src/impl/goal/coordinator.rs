@@ -4,15 +4,17 @@
 //! one turn request. The caller (M3 worker) is responsible for scheduling
 //! subsequent ticks.
 
+use crate::r#impl::approval::ApprovalRepository;
 use crate::r#impl::goal::budget::GoalBudgetRequest;
 use crate::r#impl::goal::transition::GoalTransitionError;
 use crate::r#impl::goal::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
-    AttemptRequest, ObjectiveStore, RetryPolicy,
+    AttemptRequest, CodingVerifier, ObjectiveStore, RetryPolicy,
 };
 use fabric::goal::{GoalId, GoalSnapshot, GoalState};
 use fabric::Clock;
 use fabric::ProcessId;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -51,6 +53,32 @@ impl GoalCoordinator {
         retry_policy: RetryPolicy,
     ) -> AttemptCoordinator {
         AttemptCoordinator::new(self.store.clone(), executor, clock, retry_policy)
+    }
+
+    /// Build a one-shot coordinator with the mandatory Pi verification gate.
+    pub fn coding_attempt_coordinator(
+        &self,
+        executor: Arc<dyn AttemptExecutor>,
+        clock: Arc<dyn Clock>,
+        retry_policy: RetryPolicy,
+        verifier: Arc<dyn CodingVerifier>,
+        worktree_base: impl AsRef<Path>,
+    ) -> Result<AttemptCoordinator, AttemptCoordinatorError> {
+        AttemptCoordinator::new(self.store.clone(), executor, clock, retry_policy)
+            .with_coding_verification(verifier, worktree_base)
+    }
+
+    pub fn approval_coding_attempt_coordinator(
+        &self,
+        executor: Arc<dyn AttemptExecutor>,
+        clock: Arc<dyn Clock>,
+        retry_policy: RetryPolicy,
+        verifier: Arc<dyn CodingVerifier>,
+        worktree_base: impl AsRef<Path>,
+        approvals: Arc<Mutex<ApprovalRepository>>,
+    ) -> Result<AttemptCoordinator, AttemptCoordinatorError> {
+        self.coding_attempt_coordinator(executor, clock, retry_policy, verifier, worktree_base)?
+            .with_approval_repository(approvals)
     }
 
     /// Schedule exactly one durable runtime attempt for a Running Goal.
