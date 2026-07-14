@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use chrono::Utc;
+use fabric::{wall_to_datetime, Clock};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
@@ -43,19 +43,21 @@ pub struct DaemonGuardian {
     pub crash_dir: PathBuf,
     crash_count: Arc<AtomicUsize>,
     safe_mode: Arc<Mutex<SafeMode>>,
+    clock: Arc<dyn Clock>,
 }
 
 impl DaemonGuardian {
     /// Create a new guardian. `data_dir` is the base directory; crash dumps
     /// are stored under `{data_dir}/crash/{timestamp}/`.
-    pub fn new(policy: PanicPolicy, data_dir: PathBuf) -> Self {
+    pub fn new(policy: PanicPolicy, data_dir: PathBuf, clock: Arc<dyn Clock>) -> Self {
         let crash_dir = data_dir.join("crash");
         Self {
             policy,
-            watchdog: WatchdogTimer::new(),
+            watchdog: WatchdogTimer::new(clock.clone()),
             crash_dir,
             crash_count: Arc::new(AtomicUsize::new(0)),
             safe_mode: Arc::new(Mutex::new(SafeMode::default())),
+            clock,
         }
     }
 
@@ -65,19 +67,20 @@ impl DaemonGuardian {
         let crash_count = Arc::clone(&self.crash_count);
         let policy = self.policy.clone();
         let safe_mode = Arc::clone(&self.safe_mode);
+        let clock = self.clock.clone();
 
         std::panic::set_hook(Box::new(move |info: &PanicHookInfo| {
             let count = crash_count.fetch_add(1, Ordering::SeqCst) + 1;
             error!(crash_count = count, "Panic caught by DaemonGuardian");
 
-            if let Err(e) = Self::write_crash_dump(&crash_dir, info) {
+            if let Err(e) = Self::write_crash_dump(&crash_dir, info, &*clock) {
                 error!(error = %e, "Failed to write crash dump");
             }
 
             match policy {
                 PanicPolicy::EnterSafeMode => {
                     if let Ok(mut sm) = safe_mode.lock() {
-                        sm.enter();
+                        sm.enter(&*clock);
                     }
                 }
                 PanicPolicy::NotifyAndExit => {
@@ -91,8 +94,14 @@ impl DaemonGuardian {
     }
 
     /// Write a crash dump directory for the given panic info.
-    fn write_crash_dump(crash_dir: &PathBuf, info: &PanicHookInfo) -> std::io::Result<()> {
-        let ts = Utc::now().format("%Y%m%dT%H%M%S%.3fZ").to_string();
+    fn write_crash_dump(
+        crash_dir: &PathBuf,
+        info: &PanicHookInfo,
+        clock: &dyn Clock,
+    ) -> std::io::Result<()> {
+        let ts = wall_to_datetime(clock.wall_now())
+            .format("%Y%m%dT%H%M%S%.3fZ")
+            .to_string();
         let dump_dir = crash_dir.join(&ts);
         std::fs::create_dir_all(&dump_dir)?;
 
@@ -158,13 +167,18 @@ impl DaemonGuardian {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use tempfile::TempDir;
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
 
     #[test]
     fn test_crash_dump_creation() {
         let tmp = TempDir::new().unwrap();
         let data_dir = tmp.path().to_path_buf();
-        let guardian = DaemonGuardian::new(PanicPolicy::default(), data_dir.clone());
+        let guardian = DaemonGuardian::new(PanicPolicy::default(), data_dir.clone(), test_clock());
         std::fs::create_dir_all(&guardian.crash_dir).unwrap();
 
         // Simulate writing a crash dump manually via the private helper
@@ -191,7 +205,11 @@ mod tests {
     #[test]
     fn test_recovery_protocol_selection() {
         let tmp = TempDir::new().unwrap();
-        let guardian = DaemonGuardian::new(PanicPolicy::RestartWithState, tmp.path().to_path_buf());
+        let guardian = DaemonGuardian::new(
+            PanicPolicy::RestartWithState,
+            tmp.path().to_path_buf(),
+            test_clock(),
+        );
 
         // 0 crashes -> policy default
         assert_eq!(
@@ -224,7 +242,11 @@ mod tests {
     #[test]
     fn test_panic_hook_installation() {
         let tmp = TempDir::new().unwrap();
-        let guardian = DaemonGuardian::new(PanicPolicy::default(), tmp.path().to_path_buf());
+        let guardian = DaemonGuardian::new(
+            PanicPolicy::default(),
+            tmp.path().to_path_buf(),
+            test_clock(),
+        );
         guardian.install_panic_hook();
 
         // Hook is installed — we can't easily trigger a real panic in a test

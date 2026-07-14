@@ -10,8 +10,11 @@ pub mod webhook;
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
+use fabric::wall_to_datetime;
+use fabric::Clock;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use cron::CronParser;
@@ -26,6 +29,7 @@ pub struct AutomationScheduler {
     automations: Vec<Automation>,
     running: bool,
     delivery: DeliveryManager,
+    clock: Arc<dyn Clock>,
 }
 
 /// A single automation definition.
@@ -87,11 +91,12 @@ pub const SILENT_MARKER: &str = "[SILENT]";
 // -- Scheduler implementation -------------------------------------------------
 
 impl AutomationScheduler {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             automations: Vec::new(),
             running: false,
             delivery: DeliveryManager::new(),
+            clock,
         }
     }
 
@@ -205,7 +210,7 @@ impl AutomationScheduler {
 
         // Bump counters.
         auto.daily_count += 1;
-        auto.last_run = Some(Utc::now().timestamp() as u64);
+        auto.last_run = Some(wall_to_datetime(self.clock.wall_now()).timestamp() as u64);
 
         // [SILENT] check.
         let delivered = if output.trim() == SILENT_MARKER {
@@ -256,7 +261,7 @@ impl AutomationScheduler {
 
 impl Default for AutomationScheduler {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
     }
 }
 
@@ -265,7 +270,12 @@ impl Default for AutomationScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use chrono::TimeZone;
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
 
     fn make_cron_auto(id: &str, expr: &str, limit: u32) -> Automation {
         Automation {
@@ -308,7 +318,7 @@ mod tests {
 
     #[test]
     fn add_and_list_automations() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched
             .add_automation(make_cron_auto("a1", "* * * * *", 10))
             .unwrap();
@@ -320,7 +330,7 @@ mod tests {
 
     #[test]
     fn add_duplicate_id_errors() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched
             .add_automation(make_cron_auto("dup", "* * * * *", 10))
             .unwrap();
@@ -331,7 +341,7 @@ mod tests {
 
     #[test]
     fn remove_automation() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched
             .add_automation(make_cron_auto("rm", "* * * * *", 10))
             .unwrap();
@@ -343,7 +353,7 @@ mod tests {
 
     #[test]
     fn get_automation_by_id() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched
             .add_automation(make_cron_auto("find-me", "* * * * *", 10))
             .unwrap();
@@ -355,7 +365,7 @@ mod tests {
 
     #[test]
     fn cron_check_matches_due_automation() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched
             .add_automation(make_cron_auto("every5", "*/5 * * * *", 100))
             .unwrap();
@@ -367,7 +377,7 @@ mod tests {
 
     #[test]
     fn cron_check_skips_non_matching() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched
             .add_automation(make_cron_auto("at30", "30 * * * *", 100))
             .unwrap();
@@ -382,7 +392,7 @@ mod tests {
     fn cron_check_respects_daily_limit() {
         let mut auto = make_cron_auto("limited", "* * * * *", 2);
         auto.daily_count = 2; // already at limit
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched.add_automation(auto).unwrap();
         let time = chrono::Utc.with_ymd_and_hms(2026, 6, 7, 10, 0, 0).unwrap();
         assert!(sched.check_cron(&time).is_empty());
@@ -392,7 +402,7 @@ mod tests {
     fn reset_daily_counts() {
         let mut auto = make_cron_auto("reset", "* * * * *", 10);
         auto.daily_count = 5;
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched.add_automation(auto).unwrap();
         sched.reset_daily_counts();
         assert_eq!(sched.list_automations()[0].daily_count, 0);
@@ -402,7 +412,7 @@ mod tests {
 
     #[test]
     fn webhook_trigger_matches() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched
             .add_automation(make_webhook_auto("wh1", vec!["push", "deploy"], "secret"))
             .unwrap();
@@ -416,7 +426,7 @@ mod tests {
 
     #[test]
     fn webhook_trigger_no_match() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched
             .add_automation(make_webhook_auto("wh1", vec!["push"], "secret"))
             .unwrap();
@@ -437,7 +447,7 @@ mod tests {
         auto.delivery = vec![DeliveryTarget::Local {
             path: tmp.path().to_path_buf(),
         }];
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched.add_automation(auto).unwrap();
 
         let result = sched
@@ -456,7 +466,7 @@ mod tests {
         auto.delivery = vec![DeliveryTarget::Local {
             path: tmp.path().to_path_buf(),
         }];
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched.add_automation(auto).unwrap();
 
         let result = sched
@@ -470,7 +480,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_increments_counters() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched
             .add_automation(make_cron_auto("ctr", "* * * * *", 10))
             .unwrap();
@@ -487,7 +497,7 @@ mod tests {
     async fn execute_respects_daily_limit() {
         let mut auto = make_cron_auto("full", "* * * * *", 1);
         auto.daily_count = 1;
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         sched.add_automation(auto).unwrap();
 
         let result = sched.execute_automation("full", "should fail").await;
@@ -498,7 +508,7 @@ mod tests {
 
     #[test]
     fn start_stop_running() {
-        let mut sched = AutomationScheduler::new();
+        let mut sched = AutomationScheduler::new(test_clock());
         assert!(!sched.is_running());
         sched.start();
         assert!(sched.is_running());

@@ -1,23 +1,26 @@
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tracing::{debug, warn};
 
 use super::types::*;
+use aletheon_kernel::chronos::Timer;
 
 pub struct HookDispatcher {
     config: super::config::HookConfig,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl HookDispatcher {
-    pub fn new(config: super::config::HookConfig) -> Self {
-        Self { config }
+    pub fn new(config: super::config::HookConfig, clock: Arc<dyn fabric::Clock>) -> Self {
+        Self { config, clock }
     }
 
     /// Try to create a HookDispatcher by loading config from all layers.
     /// Returns None if no hooks are configured (graceful degradation).
-    pub fn try_load() -> Option<Self> {
+    pub fn try_load(clock: Arc<dyn fabric::Clock>) -> Option<Self> {
         match super::config::HookConfig::load() {
-            Ok(config) => Some(Self::new(config)),
+            Ok(config) => Some(Self::new(config, clock)),
             Err(e) => {
                 warn!(error = %e, "Failed to load hook config; hook system disabled");
                 None
@@ -89,7 +92,7 @@ impl HookDispatcher {
 
         let timeout = Duration::from_secs(hook.timeout_sec);
 
-        match tokio::time::timeout(timeout, command.output()).await {
+        match Timer::timeout(&*self.clock, timeout, command.output()).await {
             Ok(Ok(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();

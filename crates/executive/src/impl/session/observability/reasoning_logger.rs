@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use fabric::wall_to_datetime;
+use fabric::Clock;
 use serde::{Deserialize, Serialize};
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
@@ -27,16 +30,22 @@ pub struct ReasoningEntry {
 pub struct ReasoningLogger {
     tx: mpsc::Sender<ReasoningEntry>,
     _handle: tokio::task::JoinHandle<()>,
+    clock: Arc<dyn Clock>,
 }
 
 impl ReasoningLogger {
     /// Create a new logger writing to the given directory.
-    pub async fn create(session_id: impl Into<String>, log_dir: &Path) -> Result<Self> {
+    pub async fn create(
+        session_id: impl Into<String>,
+        log_dir: &Path,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
         let session_id = session_id.into();
         fs::create_dir_all(log_dir).await?;
 
         let log_path = log_dir.join(format!("reasoning-{}.jsonl", session_id));
         let log_dir_owned = log_dir.to_path_buf();
+        let spawn_clock = clock.clone();
 
         let (tx, mut rx) = mpsc::channel::<ReasoningEntry>(512);
 
@@ -46,13 +55,14 @@ impl ReasoningLogger {
                 // Rotate if file exceeds limit
                 if let Ok(meta) = fs::metadata(&current_path).await {
                     if meta.len() >= MAX_FILE_SIZE {
-                        let rotated = rotate_path(&current_path);
+                        let rotated = rotate_path(&current_path, &*spawn_clock);
                         if fs::rename(&current_path, &rotated).await.is_ok() {
                             info!(from = %current_path.display(), to = %rotated.display(), "Rotated reasoning log");
                             // Fire-and-forget retention cleanup
                             let dir = log_dir_owned.clone();
+                            let cleanup_clock = spawn_clock.clone();
                             tokio::spawn(async move {
-                                cleanup_old_logs(&dir).await;
+                                cleanup_old_logs(&dir, &*cleanup_clock).await;
                             });
                         }
                     }
@@ -81,13 +91,14 @@ impl ReasoningLogger {
         Ok(Self {
             tx,
             _handle: handle,
+            clock,
         })
     }
 
     /// Log a reasoning entry.
     pub async fn log(&self, kind: impl Into<String>, payload: serde_json::Value) -> Result<()> {
         let entry = ReasoningEntry {
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
             session_id: String::new(), // caller context, can be enriched later
             kind: kind.into(),
             payload,
@@ -101,8 +112,8 @@ impl ReasoningLogger {
 }
 
 /// Generate a rotated file path by appending a timestamp.
-fn rotate_path(original: &Path) -> PathBuf {
-    let ts = Utc::now().format("%Y%m%d_%H%M%S");
+fn rotate_path(original: &Path, clock: &dyn Clock) -> PathBuf {
+    let ts = wall_to_datetime(clock.wall_now()).format("%Y%m%d_%H%M%S");
     let ext = original
         .extension()
         .and_then(|e| e.to_str())
@@ -118,8 +129,9 @@ fn rotate_path(original: &Path) -> PathBuf {
 }
 
 /// Delete log files older than RETENTION_DAYS.
-async fn cleanup_old_logs(dir: &Path) {
-    let cutoff = Utc::now() - chrono::Duration::days(RETENTION_DAYS);
+async fn cleanup_old_logs(dir: &Path, clock: &dyn Clock) {
+    let now_dt = wall_to_datetime(clock.wall_now());
+    let cutoff = now_dt - chrono::Duration::days(RETENTION_DAYS);
     let mut entries = match fs::read_dir(dir).await {
         Ok(e) => e,
         Err(_) => return,
@@ -145,12 +157,18 @@ async fn cleanup_old_logs(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::{TestClock, Timer};
     use tempfile::TempDir;
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
 
     #[tokio::test]
     async fn test_create_and_log() {
         let tmp = TempDir::new().unwrap();
-        let logger = ReasoningLogger::create("test-session", tmp.path())
+        let clock = test_clock();
+        let logger = ReasoningLogger::create("test-session", tmp.path(), clock.clone())
             .await
             .unwrap();
 
@@ -163,7 +181,7 @@ mod tests {
             .unwrap();
 
         // Give the writer task a moment
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        Timer::sleep(&*clock, std::time::Duration::from_millis(50)).await;
 
         // Verify the file exists and has content
         let entries: Vec<_> = std::fs::read_dir(tmp.path())
@@ -176,8 +194,9 @@ mod tests {
 
     #[test]
     fn test_rotate_path() {
+        let clock = TestClock::default();
         let p = PathBuf::from("/tmp/reasoning-abc.jsonl");
-        let rotated = rotate_path(&p);
+        let rotated = rotate_path(&p, &clock);
         assert!(rotated.to_string_lossy().contains("reasoning-abc_"));
         assert!(rotated.to_string_lossy().ends_with(".jsonl"));
     }

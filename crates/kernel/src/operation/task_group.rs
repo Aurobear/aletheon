@@ -1,3 +1,4 @@
+use crate::chronos::Timer;
 use fabric::{OperationExitReason, OperationId};
 use std::future::Future;
 use std::time::Duration;
@@ -64,14 +65,18 @@ impl OperationScope {
         }
     }
 
-    pub async fn cancel_and_drain(&mut self, grace: Duration) -> Vec<TaskExit> {
+    pub async fn cancel_and_drain(
+        &mut self,
+        clock: &dyn fabric::Clock,
+        grace: Duration,
+    ) -> Vec<TaskExit> {
         self.cancel.cancel();
         let mut exits = Vec::new();
         loop {
             if self.tasks.is_empty() {
                 break;
             }
-            match tokio::time::timeout(grace, self.join_next()).await {
+            match Timer::timeout(clock, grace, self.join_next()).await {
                 Ok(Some(exit)) => exits.push(exit),
                 Ok(None) => break,
                 Err(_) => {

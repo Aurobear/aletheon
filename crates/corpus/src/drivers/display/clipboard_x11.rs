@@ -1,8 +1,11 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
+
+use fabric::Clock;
 
 use super::clipboard::ClipboardDriver;
 
@@ -10,17 +13,19 @@ use super::clipboard::ClipboardDriver;
 ///
 /// Each operation opens a fresh connection (same pattern as X11DisplayDriver)
 /// to avoid Send/Sync issues with long-lived X11 connections.
-pub struct X11ClipboardDriver;
+pub struct X11ClipboardDriver {
+    clock: Arc<dyn Clock>,
+}
 
 impl Default for X11ClipboardDriver {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
     }
 }
 
 impl X11ClipboardDriver {
-    pub fn new() -> Self {
-        Self
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self { clock }
     }
 }
 
@@ -84,11 +89,11 @@ impl ClipboardDriver for X11ClipboardDriver {
         conn.flush().context("flush failed")?;
 
         // Poll for SelectionNotify with a timeout.
-        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        let deadline = self.clock.mono_now().0 + 500; // 500ms timeout
         let mut result = String::new();
 
         loop {
-            if std::time::Instant::now() > deadline {
+            if self.clock.mono_now().0 > deadline {
                 break; // timed out — return empty
             }
 
@@ -204,6 +209,8 @@ impl ClipboardDriver for X11ClipboardDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+    use std::sync::Arc;
 
     /// Round-trip test: only runs when a DISPLAY is available.
     #[test]
@@ -214,7 +221,7 @@ mod tests {
             return;
         }
 
-        let driver = X11ClipboardDriver::new();
+        let driver = X11ClipboardDriver::new(Arc::new(TestClock::default()));
 
         let test_text = "aletheon-x11-clipboard-test-42";
         if let Err(err) = driver.set_clipboard(test_text) {

@@ -25,7 +25,9 @@ impl ComputerCommands {
         #[cfg(not(feature = "ocr-tesseract"))]
         let ocr: Option<Box<dyn corpus::drivers::ocr::OcrDriver>> = Some(Box::new(MockOcrDriver));
         let window = DriverFactory::try_window();
-        let clipboard = DriverFactory::try_clipboard();
+        let clipboard = DriverFactory::try_clipboard(std::sync::Arc::new(
+            aletheon_kernel::chronos::SystemClock::new(),
+        ));
 
         Self {
             aci: Aci::new(input, display, a11y, ocr, window, clipboard),

@@ -1,9 +1,12 @@
 use std::ffi::CString;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
+use aletheon_kernel::chronos::Timer;
 use anyhow::Result;
 use fabric::debug::DebugEvent;
+use fabric::Clock;
 use nix::unistd::{Gid, Uid, User};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -24,6 +27,7 @@ pub struct UnixServer {
     owner_uid: u32,
     /// GID of the aletheon group — users in this group may also connect.
     group_gid: u32,
+    clock: Arc<dyn Clock>,
 }
 
 impl UnixServer {
@@ -33,6 +37,7 @@ impl UnixServer {
         cancel_token: CancellationToken,
         owner_uid: u32,
         group_gid: u32,
+        clock: Arc<dyn Clock>,
     ) -> Result<Self> {
         // Remove stale socket
         if socket_path.exists() {
@@ -55,6 +60,7 @@ impl UnixServer {
             connections: JoinSet::new(),
             owner_uid,
             group_gid,
+            clock,
         })
     }
 
@@ -102,7 +108,13 @@ impl UnixServer {
             "Draining in-flight connections..."
         );
         loop {
-            match tokio::time::timeout(Duration::from_secs(5), self.connections.join_next()).await {
+            match Timer::timeout(
+                &*self.clock,
+                Duration::from_secs(5),
+                self.connections.join_next(),
+            )
+            .await
+            {
                 Ok(Some(Ok(()))) => {
                     // Connection completed normally.
                 }

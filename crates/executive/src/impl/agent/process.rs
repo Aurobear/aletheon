@@ -10,6 +10,7 @@ use fabric::envelope::Envelope;
 use fabric::evolution::{
     AgentSpawnedPayload, AgentStartedPayload, AgentStoppedPayload, CognitivePulseEvent,
 };
+use fabric::Clock;
 use fabric::CommunicationBus;
 use fabric::EventType;
 use serde::{Deserialize, Serialize};
@@ -80,6 +81,7 @@ pub struct AgentProcess {
     config: AgentProcessConfig,
     pub inbox: Option<mpsc::Receiver<Envelope>>,
     pub last_heartbeat_ms: AtomicU64,
+    clock: Arc<dyn Clock>,
 }
 
 impl AgentProcess {
@@ -89,6 +91,7 @@ impl AgentProcess {
         task: String,
         bus: Arc<CommunicationBus>,
         config: AgentProcessConfig,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             pid: Pid::new(),
@@ -101,11 +104,12 @@ impl AgentProcess {
             config,
             inbox: None,
             last_heartbeat_ms: AtomicU64::new(0),
+            clock,
         }
     }
 
     /// Create a minimal AgentProcess (used by kernel — backward compat).
-    pub fn new_minimal(config: AgentProcessConfig) -> Self {
+    pub fn new_minimal(config: AgentProcessConfig, clock: Arc<dyn Clock>) -> Self {
         Self {
             pid: Pid::new(),
             state: AgentState::Idle,
@@ -117,6 +121,7 @@ impl AgentProcess {
             config,
             inbox: None,
             last_heartbeat_ms: AtomicU64::new(0),
+            clock,
         }
     }
 
@@ -183,7 +188,13 @@ impl AgentProcess {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No CommunicationBus attached"))?
             .clone();
-        let mut child = AgentProcess::new(Some(self.pid), child_task, bus.clone(), child_config);
+        let mut child = AgentProcess::new(
+            Some(self.pid),
+            child_task,
+            bus.clone(),
+            child_config,
+            self.clock.clone(),
+        );
         child.start().await?;
         let child_pid = child.pid;
 
@@ -255,10 +266,7 @@ impl AgentProcess {
 
     /// Record the current wall-clock time as the last heartbeat.
     pub fn touch_heartbeat(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let now = self.clock.wall_now().0 as u64;
         self.last_heartbeat_ms.store(now, Ordering::Relaxed);
     }
 }

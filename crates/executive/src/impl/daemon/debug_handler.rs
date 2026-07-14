@@ -9,11 +9,11 @@ use fabric::kernel::debug_bus::{
     DebugBusHook, EventFilter, EventRecorder, PerfCounter, RecorderSink, SubscriberSink,
 };
 use fabric::Clock;
+use fabric::MonoTime;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 
 // ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ struct ActiveRecording {
     #[allow(dead_code)]
     id: String,
     path: PathBuf,
-    started_at: Instant,
+    started_at: MonoTime,
     /// Index of the RecorderSink in the DebugBusHook's sinks vec.
     sink_index: usize,
 }
@@ -66,7 +66,7 @@ pub struct DebugHandler {
     perf: Arc<PerfCounter>,
     subscribers: Mutex<HashMap<String, mpsc::Sender<DebugEvent>>>,
     recordings: Mutex<HashMap<String, ActiveRecording>>,
-    started_at: Instant,
+    started_at: MonoTime,
     /// Clock for timestamp/sleep operations routed through kernel Timer.
     clock: Arc<dyn Clock>,
     /// Pending subscriber receivers, waiting for the server to drain them.
@@ -85,7 +85,7 @@ impl DebugHandler {
             perf,
             subscribers: Mutex::new(HashMap::new()),
             recordings: Mutex::new(HashMap::new()),
-            started_at: Instant::now(),
+            started_at: clock.mono_now(),
             clock,
             pending_subscriber_rx: Mutex::new(None),
         }
@@ -100,6 +100,17 @@ impl DebugHandler {
     /// Get a reference to the performance counter (shared with SessionGateway).
     pub fn perf_counter(&self) -> &PerfCounter {
         &self.perf
+    }
+
+    /// Elapsed duration since `started_at`, routed through the clock.
+    fn uptime(&self) -> std::time::Duration {
+        let now_ms = self.clock.mono_now().0;
+        std::time::Duration::from_millis(now_ms.saturating_sub(self.started_at.0))
+    }
+
+    fn elapsed_since(&self, since: MonoTime) -> std::time::Duration {
+        let now_ms = self.clock.mono_now().0;
+        std::time::Duration::from_millis(now_ms.saturating_sub(since.0))
     }
 
     /// Handle a debug.* JSON-RPC method.
@@ -199,7 +210,7 @@ impl DebugHandler {
 
     async fn handle_node_info(&self, id: &Value) -> Value {
         let perf = self.perf.snapshot();
-        let uptime = self.started_at.elapsed();
+        let uptime = self.uptime();
         let rss_kb = read_rss_kb().unwrap_or(0);
 
         json!({
@@ -255,7 +266,7 @@ impl DebugHandler {
             ActiveRecording {
                 id: rec_id.clone(),
                 path: path.clone(),
-                started_at: Instant::now(),
+                started_at: self.clock.mono_now(),
                 sink_index,
             },
         );
@@ -283,7 +294,7 @@ impl DebugHandler {
         match recording {
             Some(rec) => {
                 // Remove the RecorderSink from the hook and get the recorded events
-                let duration = rec.started_at.elapsed();
+                let duration = self.elapsed_since(rec.started_at);
                 let mut hook = self.hook.lock().await;
                 hook.remove_sink(rec.sink_index);
 
@@ -483,7 +494,7 @@ impl DebugHandler {
             let map = self.perf.tool_calls.lock().await;
             map.clone()
         };
-        let uptime = self.started_at.elapsed();
+        let uptime = self.uptime();
         let rss_kb = read_rss_kb().unwrap_or(0);
         let sub_count = self.subscribers.lock().await.len();
         let rec_count = self.recordings.lock().await.len();
@@ -539,7 +550,7 @@ impl DebugHandler {
                     {
                         "name": "daemon",
                         "running": true,
-                        "status_line": format!("uptime={}, turns={}", format_duration(self.started_at.elapsed()), perf.turn_count),
+                        "status_line": format!("uptime={}, turns={}", format_duration(self.uptime()), perf.turn_count),
                         "details": {
                             "pid": std::process::id(),
                             "tokens_in": perf.tokens_in,
@@ -571,7 +582,7 @@ impl DebugHandler {
                 let count = self.recordings.lock().await.len();
                 json!(count)
             }
-            "debug.uptime_secs" => json!(self.started_at.elapsed().as_secs()),
+            "debug.uptime_secs" => json!(self.uptime().as_secs()),
             "debug.memory_rss_kb" => json!(read_rss_kb().unwrap_or(0)),
             _ => {
                 return json!({
@@ -604,7 +615,7 @@ impl DebugHandler {
                     "agent.default_model": "deepseek-v4-flash",
                     "debug.subscriber_count": sub_count,
                     "debug.recording_count": rec_count,
-                    "debug.uptime_secs": self.started_at.elapsed().as_secs(),
+                    "debug.uptime_secs": self.uptime().as_secs(),
                     "debug.memory_rss_kb": read_rss_kb().unwrap_or(0),
                 }
             }

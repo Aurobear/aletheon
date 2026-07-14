@@ -9,7 +9,7 @@ pub use types::*;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 /// Core trait for rollback backends.
@@ -45,22 +45,25 @@ pub struct RollbackExecutor {
 }
 
 impl RollbackExecutor {
-    pub fn new(config: &RollbackConfig) -> Self {
+    pub fn new(config: &RollbackConfig, clock: Arc<dyn fabric::Clock>) -> Self {
         let mut backends: Vec<Box<dyn RollbackBackend>> = Vec::new();
 
         // Tier 3: btrfs (best)
         #[cfg(feature = "rollback-btrfs")]
         {
-            if let Some(btrfs) = BtrfsRollbackBackend::probe() {
+            if let Some(btrfs) = BtrfsRollbackBackend::probe(clock.clone()) {
                 backends.push(Box::new(btrfs));
             }
         }
 
         // Tier 2: File backup (always available)
-        backends.push(Box::new(FileBackupBackend::new(&config.protected_paths)));
+        backends.push(Box::new(FileBackupBackend::new(
+            &config.protected_paths,
+            clock.clone(),
+        )));
 
         // Tier 1: Audit only (always available, last resort)
-        backends.push(Box::new(AuditOnlyBackend));
+        backends.push(Box::new(AuditOnlyBackend::new(clock.clone())));
 
         info!(
             "Rollback engine initialized with {} backends, preference: {:?}",
@@ -163,7 +166,15 @@ impl RollbackExecutor {
 
 // === Tier 1: Audit Only (always available) ===
 
-pub struct AuditOnlyBackend;
+pub struct AuditOnlyBackend {
+    clock: Arc<dyn fabric::Clock>,
+}
+
+impl AuditOnlyBackend {
+    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
+        Self { clock }
+    }
+}
 
 #[async_trait]
 impl RollbackBackend for AuditOnlyBackend {
@@ -178,7 +189,10 @@ impl RollbackBackend for AuditOnlyBackend {
     }
 
     async fn create_snapshot(&self, context: &RollbackContext) -> Result<SnapshotId> {
-        let id = SnapshotId::new(RollbackTier::AuditOnly);
+        let id = SnapshotId::new(
+            RollbackTier::AuditOnly,
+            fabric::wall_to_datetime(self.clock.wall_now()),
+        );
         // Log the operation for manual rollback guidance
         tracing::info!(
             snapshot_id = %id.id,
@@ -216,10 +230,11 @@ pub struct FileBackupBackend {
     /// Paths excluded from rollback — reserved for future safety checks.
     #[allow(dead_code)]
     protected_paths: Vec<String>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl FileBackupBackend {
-    pub fn new(protected_paths: &[String]) -> Self {
+    pub fn new(protected_paths: &[String], clock: Arc<dyn fabric::Clock>) -> Self {
         let backup_dir = dirs::home_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
             .join(".aletheon")
@@ -228,14 +243,20 @@ impl FileBackupBackend {
         Self {
             backup_dir,
             protected_paths: protected_paths.to_vec(),
+            clock,
         }
     }
 
     #[cfg(test)]
-    fn with_backup_dir(backup_dir: std::path::PathBuf, protected_paths: &[String]) -> Self {
+    fn with_backup_dir(
+        backup_dir: std::path::PathBuf,
+        protected_paths: &[String],
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
         Self {
             backup_dir,
             protected_paths: protected_paths.to_vec(),
+            clock,
         }
     }
 
@@ -257,7 +278,10 @@ impl RollbackBackend for FileBackupBackend {
     }
 
     async fn create_snapshot(&self, context: &RollbackContext) -> Result<SnapshotId> {
-        let id = SnapshotId::new(RollbackTier::FileBackup);
+        let id = SnapshotId::new(
+            RollbackTier::FileBackup,
+            fabric::wall_to_datetime(self.clock.wall_now()),
+        );
         let snap_dir = self.snapshot_dir(&id.id);
         tokio::fs::create_dir_all(&snap_dir).await?;
 
@@ -387,7 +411,7 @@ impl RollbackBackend for FileBackupBackend {
                         .await?
                         .modified()
                         .map(chrono::DateTime::from)
-                        .unwrap_or_else(|_| Utc::now()),
+                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
                 });
             }
         }
@@ -401,7 +425,9 @@ impl RollbackBackend for FileBackupBackend {
             return Ok(0);
         }
 
-        let cutoff = std::time::SystemTime::now() - max_age;
+        let now = std::time::UNIX_EPOCH
+            + std::time::Duration::from_millis(self.clock.wall_now().0 as u64);
+        let cutoff = now - max_age;
         let mut entries = tokio::fs::read_dir(&self.backup_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             if let Ok(metadata) = entry.metadata().await {
@@ -423,11 +449,12 @@ impl RollbackBackend for FileBackupBackend {
 #[cfg(feature = "rollback-btrfs")]
 pub struct BtrfsRollbackBackend {
     snapshot_dir: std::path::PathBuf,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 #[cfg(feature = "rollback-btrfs")]
 impl BtrfsRollbackBackend {
-    pub fn probe() -> Option<Self> {
+    pub fn probe(clock: Arc<dyn fabric::Clock>) -> Option<Self> {
         // Check if btrfs tools are available
         if which::which("btrfs").is_err() {
             return None;
@@ -445,6 +472,7 @@ impl BtrfsRollbackBackend {
 
         Some(Self {
             snapshot_dir: std::path::PathBuf::from(fabric::paths::SNAPSHOT_DIR),
+            clock,
         })
     }
 }
@@ -463,7 +491,10 @@ impl RollbackBackend for BtrfsRollbackBackend {
     }
 
     async fn create_snapshot(&self, context: &RollbackContext) -> Result<SnapshotId> {
-        let id = SnapshotId::new(RollbackTier::AtomicSnapshot);
+        let id = SnapshotId::new(
+            RollbackTier::AtomicSnapshot,
+            fabric::wall_to_datetime(self.clock.wall_now()),
+        );
         let snap_path = self.snapshot_dir.join(&id.id);
 
         tokio::fs::create_dir_all(&self.snapshot_dir).await?;
@@ -556,7 +587,7 @@ impl RollbackBackend for BtrfsRollbackBackend {
                         .await?
                         .modified()
                         .map(|t| chrono::DateTime::from(t))
-                        .unwrap_or_else(|_| Utc::now()),
+                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
                 });
             }
         }
@@ -570,7 +601,9 @@ impl RollbackBackend for BtrfsRollbackBackend {
             return Ok(0);
         }
 
-        let cutoff = std::time::SystemTime::now() - max_age;
+        let now = std::time::UNIX_EPOCH
+            + std::time::Duration::from_millis(self.clock.wall_now().0 as u64);
+        let cutoff = now - max_age;
         let mut entries = tokio::fs::read_dir(&self.snapshot_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             if let Ok(metadata) = entry.metadata().await {
@@ -633,6 +666,15 @@ async fn restore_service_states(states: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
+    fn now_dt(clock: &dyn fabric::Clock) -> chrono::DateTime<chrono::Utc> {
+        fabric::wall_to_datetime(clock.wall_now())
+    }
 
     #[test]
     fn test_rollback_tier_ordering() {
@@ -642,7 +684,8 @@ mod tests {
 
     #[test]
     fn test_snapshot_id_new() {
-        let id = SnapshotId::new(RollbackTier::FileBackup);
+        let clock = test_clock();
+        let id = SnapshotId::new(RollbackTier::FileBackup, now_dt(&*clock));
         assert_eq!(id.tier, RollbackTier::FileBackup);
         assert!(!id.id.is_empty());
     }
@@ -658,7 +701,7 @@ mod tests {
     #[test]
     fn test_rollback_executor_creation() {
         let config = RollbackConfig::default();
-        let executor = RollbackExecutor::new(&config);
+        let executor = RollbackExecutor::new(&config, test_clock());
         // Should have at least file_backup + audit_only
         assert!(executor.backends.len() >= 2);
     }
@@ -666,7 +709,7 @@ mod tests {
     #[test]
     fn test_rollback_executor_select_auto() {
         let config = RollbackConfig::default();
-        let executor = RollbackExecutor::new(&config);
+        let executor = RollbackExecutor::new(&config, test_clock());
         let backend = executor.select_backend();
         assert!(backend.is_some());
         // Should select file_backup (highest tier available without btrfs)
@@ -679,7 +722,7 @@ mod tests {
             preference: RollbackPreference::Forbid,
             ..Default::default()
         };
-        let executor = RollbackExecutor::new(&config);
+        let executor = RollbackExecutor::new(&config, test_clock());
         let backend = executor.select_backend();
         assert!(backend.is_some());
         assert_eq!(backend.unwrap().name(), "audit_only");
@@ -687,7 +730,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_only_snapshot() {
-        let backend = AuditOnlyBackend;
+        let clock = test_clock();
+        let backend = AuditOnlyBackend::new(clock);
         let context = RollbackContext {
             operation: "test".to_string(),
             paths: vec!["/tmp/test".to_string()],
@@ -700,8 +744,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_only_rollback() {
-        let backend = AuditOnlyBackend;
-        let id = SnapshotId::new(RollbackTier::AuditOnly);
+        let clock = test_clock();
+        let backend = AuditOnlyBackend::new(clock.clone());
+        let id = SnapshotId::new(RollbackTier::AuditOnly, now_dt(&*clock));
         let result = backend.rollback(&id).await.unwrap();
         assert!(!result.success); // audit_only cannot rollback
         assert!(result.message.contains("manual"));
@@ -709,10 +754,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_backup_snapshot_and_rollback() {
+        let clock = test_clock();
         let dir = tempfile::tempdir().unwrap();
         let backup_dir = dir.path().join("snapshots");
         let source_path = dir.path().join("aletheon-test-snapshot");
-        let backend = FileBackupBackend::with_backup_dir(backup_dir, &[]);
+        let backend = FileBackupBackend::with_backup_dir(backup_dir, &[], clock);
         let context = RollbackContext {
             operation: "test".to_string(),
             paths: vec![source_path.to_string_lossy().to_string()],

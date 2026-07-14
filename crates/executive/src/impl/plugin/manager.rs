@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -285,10 +284,10 @@ impl Tool for PluginTool {
     }
 
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = Instant::now();
+        let start = _ctx.clock.mono_now();
 
         let result = self.runtime.execute(&self.name, &input).await;
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed = _ctx.clock.mono_now().0.saturating_sub(start.0);
 
         match result {
             Ok(value) => {

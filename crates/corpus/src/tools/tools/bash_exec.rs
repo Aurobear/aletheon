@@ -69,15 +69,16 @@ impl Tool for BashExecTool {
 
                 // Layer 2: Per-result overflow to file with head/tail truncation
                 let output_config = OutputConfig::default();
-                let processed = process_result("bash_exec", &captured.content, &output_config)
-                    .await
-                    .unwrap_or_else(|e| {
-                        tracing::warn!(error = %e, "Output processing failed, using inline");
-                        super::output::ProcessedOutput::Inline {
-                            content: captured.content.clone(),
-                            original_bytes: captured.content.len(),
-                        }
-                    });
+                let processed =
+                    process_result("bash_exec", &captured.content, &output_config, &*ctx.clock)
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(error = %e, "Output processing failed, using inline");
+                            super::output::ProcessedOutput::Inline {
+                                content: captured.content.clone(),
+                                original_bytes: captured.content.len(),
+                            }
+                        });
 
                 let content = processed.to_context_content().to_string();
                 let truncated = processed.was_truncated()

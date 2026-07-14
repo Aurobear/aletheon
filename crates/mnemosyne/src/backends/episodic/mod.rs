@@ -9,16 +9,22 @@ pub use schema::EpisodicMemory;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use fabric::{
-        BehaviorAdjustment, CompactStrategy, EvolutionLogEntry, MemoryBackend, MemoryEntry,
-        MemoryQuery, MemoryType, ReflectionEntry, ReflectionTrigger, Subsystem, SubsystemContext,
+        wall_to_datetime, BehaviorAdjustment, CompactStrategy, EvolutionLogEntry, MemoryBackend,
+        MemoryEntry, MemoryQuery, MemoryType, ReflectionEntry, ReflectionTrigger, Subsystem,
+        SubsystemContext,
     };
     use std::sync::Arc;
     use uuid::Uuid;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
-        Arc::new(aletheon_kernel::chronos::TestClock::default())
+        use std::sync::atomic::AtomicI64;
+        static COUNTER: AtomicI64 = AtomicI64::new(1);
+        let wall_ms = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Arc::new(aletheon_kernel::chronos::TestClock::new(
+            wall_ms,
+            wall_ms as u64,
+        ))
     }
 
     fn setup() -> (tempfile::NamedTempFile, EpisodicMemory) {
@@ -38,12 +44,13 @@ mod tests {
     }
 
     fn make_entry(content: &[u8]) -> MemoryEntry {
+        let clock = test_clock();
         MemoryEntry {
             id: Uuid::new_v4(),
             memory_type: MemoryType::Episodic,
             content: content.to_vec(),
             tags: vec!["test".into()],
-            created_at: Utc::now(),
+            created_at: wall_to_datetime(clock.wall_now()),
             access_count: 0,
             importance: 0.7,
             decay_rate: 0.1,
@@ -157,9 +164,10 @@ mod tests {
         outcome: fabric::ReflectionOutcome,
         task_summary: &str,
     ) -> ReflectionEntry {
+        let clock = test_clock();
         ReflectionEntry {
             id: Uuid::new_v4().to_string(),
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(clock.wall_now()),
             trigger,
             task_summary: task_summary.into(),
             outcome,
@@ -276,9 +284,10 @@ mod tests {
     }
 
     fn make_evolution_entry(trigger: &str, reflection_ids: Vec<&str>) -> EvolutionLogEntry {
+        let clock = test_clock();
         EvolutionLogEntry {
             id: format!("evo-{}", Uuid::new_v4()),
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(clock.wall_now()),
             trigger: trigger.to_string(),
             basis: reflection_ids.into_iter().map(|s| s.to_string()).collect(),
             patterns_detected: vec!["repeated failure in parser".to_string()],
@@ -361,14 +370,15 @@ mod tests {
         let (_tmp, mut mem) = setup();
         init_mem(&mut mem).await;
 
+        let clock = test_clock();
         let mut old_entry = make_entry(b"old important event");
         old_entry.importance = 0.9;
-        old_entry.created_at = Utc::now() - chrono::Duration::days(30);
+        old_entry.created_at = wall_to_datetime(clock.wall_now()) - chrono::Duration::days(30);
         mem.store(old_entry).await.unwrap();
 
         let mut recent_entry = make_entry(b"recent minor event");
         recent_entry.importance = 0.3;
-        recent_entry.created_at = Utc::now();
+        recent_entry.created_at = wall_to_datetime(clock.wall_now());
         mem.store(recent_entry).await.unwrap();
 
         let query = MemoryQuery {

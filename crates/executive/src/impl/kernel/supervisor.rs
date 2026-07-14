@@ -1,9 +1,12 @@
 //! AgentSupervisor — lifecycle management with exponential backoff and fast-fail detection.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use fabric::agent::Pid;
+use fabric::Clock;
+use fabric::MonoTime;
 use tokio::sync::RwLock;
 
 use crate::r#impl::agent::process::AgentProcessConfig;
@@ -80,8 +83,8 @@ struct SupervisedProcess {
     config: AgentProcessConfig,
     task: String,
     restart_count: u32,
-    last_heartbeat: Instant,
-    crash_times: Vec<Instant>,
+    last_heartbeat: MonoTime,
+    crash_times: Vec<MonoTime>,
     state: SupervisedState,
     parent: Option<Pid>,
 }
@@ -95,14 +98,16 @@ struct SupervisedProcess {
 pub struct AgentSupervisor {
     supervised: RwLock<HashMap<Pid, SupervisedProcess>>,
     policy: RestartPolicy,
+    clock: Arc<dyn Clock>,
 }
 
 impl AgentSupervisor {
     /// Create a new supervisor with the given restart policy.
-    pub fn new(policy: RestartPolicy) -> Self {
+    pub fn new(policy: RestartPolicy, clock: Arc<dyn Clock>) -> Self {
         Self {
             supervised: RwLock::new(HashMap::new()),
             policy,
+            clock,
         }
     }
 
@@ -118,7 +123,7 @@ impl AgentSupervisor {
             config,
             task,
             restart_count: 0,
-            last_heartbeat: Instant::now(),
+            last_heartbeat: self.clock.mono_now(),
             crash_times: Vec::new(),
             state: SupervisedState::Running,
             parent,
@@ -129,7 +134,7 @@ impl AgentSupervisor {
     /// Record a heartbeat for the given process.
     pub async fn heartbeat(&self, pid: Pid) {
         if let Some(proc) = self.supervised.write().await.get_mut(&pid) {
-            proc.last_heartbeat = Instant::now();
+            proc.last_heartbeat = self.clock.mono_now();
         }
     }
 
@@ -150,11 +155,11 @@ impl AgentSupervisor {
         }
 
         // 2. Record crash time and prune old ones outside the window.
-        let now = Instant::now();
+        let now = self.clock.mono_now();
         proc.crash_times.push(now);
         let window = self.policy.fast_fail_window;
         proc.crash_times
-            .retain(|t| now.duration_since(*t) <= window);
+            .retain(|t| Duration::from_millis(now.0.saturating_sub(t.0)) <= window);
 
         // 3. Check fast-fail threshold.
         if proc.crash_times.len() as u32 >= self.policy.fast_fail_threshold {
@@ -217,6 +222,11 @@ impl AgentSupervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
 
     fn make_config(id: &str) -> AgentProcessConfig {
         AgentProcessConfig {
@@ -228,7 +238,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_supervise_and_heartbeat() {
-        let supervisor = AgentSupervisor::new(RestartPolicy::default());
+        let supervisor = AgentSupervisor::new(RestartPolicy::default(), test_clock());
         let pid = Pid::new();
         supervisor
             .supervise(pid, "task-1".into(), make_config("a1"), None)
@@ -249,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_crash_restart_decision() {
-        let supervisor = AgentSupervisor::new(RestartPolicy::default());
+        let supervisor = AgentSupervisor::new(RestartPolicy::default(), test_clock());
         let pid = Pid::new();
         supervisor
             .supervise(pid, "task-1".into(), make_config("a1"), None)
@@ -266,7 +276,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_permanent_exit_code_parks() {
-        let supervisor = AgentSupervisor::new(RestartPolicy::default());
+        let supervisor = AgentSupervisor::new(RestartPolicy::default(), test_clock());
         let pid = Pid::new();
         supervisor
             .supervise(pid, "task-1".into(), make_config("a1"), None)
@@ -287,7 +297,7 @@ mod tests {
             fast_fail_threshold: 3,
             ..Default::default()
         };
-        let supervisor = AgentSupervisor::new(policy);
+        let supervisor = AgentSupervisor::new(policy, test_clock());
         let pid = Pid::new();
         supervisor
             .supervise(pid, "task-1".into(), make_config("a1"), None)
@@ -312,7 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exponential_backoff() {
-        let supervisor = AgentSupervisor::new(RestartPolicy::default());
+        let supervisor = AgentSupervisor::new(RestartPolicy::default(), test_clock());
         let pid = Pid::new();
         supervisor
             .supervise(pid, "task-1".into(), make_config("a1"), None)
@@ -345,7 +355,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mark_stable_resets_count() {
-        let supervisor = AgentSupervisor::new(RestartPolicy::default());
+        let supervisor = AgentSupervisor::new(RestartPolicy::default(), test_clock());
         let pid = Pid::new();
         supervisor
             .supervise(pid, "task-1".into(), make_config("a1"), None)

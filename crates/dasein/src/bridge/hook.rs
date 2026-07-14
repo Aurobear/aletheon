@@ -1,6 +1,7 @@
 use crate::r#impl::hook::dispatcher::HookDispatcher;
 use crate::r#impl::hook::types::{HandlerResult, HookContext, HookEventName};
 use fabric::self_field::Verdict;
+use std::sync::Arc;
 
 /// Bridges HookDispatcher into SelfField.
 pub struct HookBridge {
@@ -8,9 +9,9 @@ pub struct HookBridge {
 }
 
 impl HookBridge {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
-            dispatcher: HookDispatcher::try_load(),
+            dispatcher: HookDispatcher::try_load(clock),
         }
     }
 
@@ -65,6 +66,6 @@ impl HookBridge {
 
 impl Default for HookBridge {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
     }
 }

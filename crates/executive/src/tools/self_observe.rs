@@ -73,7 +73,7 @@ impl<T: DaseinOps + 'static> Tool for SelfObserveTool<T> {
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let query = input["query"].as_str().unwrap_or("full");
         let ctx = self.dasein.to_context_injection();
-        let start = std::time::Instant::now();
+        let start = _ctx.clock.mono_now();
 
         let content = match query {
             "mood" => format!("Mood: {:?}", ctx.mood),
@@ -111,7 +111,7 @@ impl<T: DaseinOps + 'static> Tool for SelfObserveTool<T> {
             content,
             is_error: false,
             metadata: ToolResultMeta {
-                execution_time_ms: start.elapsed().as_millis() as u64,
+                execution_time_ms: _ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
             },
         }

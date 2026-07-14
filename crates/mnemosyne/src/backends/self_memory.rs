@@ -398,12 +398,13 @@ mod tests {
     }
 
     fn make_identity_change(content: &[u8]) -> MemoryEntry {
+        let clock = test_clock();
         MemoryEntry {
             id: Uuid::new_v4(),
             memory_type: MemoryType::SelfMemory,
             content: content.to_vec(),
             tags: vec!["identity".into()],
-            created_at: Utc::now(),
+            created_at: wall_to_datetime(clock.wall_now()),
             access_count: 0,
             importance: 1.0,
             decay_rate: 0.0,

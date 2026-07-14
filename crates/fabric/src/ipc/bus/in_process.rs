@@ -17,6 +17,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::events::types::{Event, EventType, Priority};
 use crate::ipc::envelope::*;
 use crate::ipc::transport::{HealthStatus, Transport, TransportHealth, TransportKind};
+use crate::Clock;
 
 use crate::event_log::EventLog;
 use crate::events::routing_policy::{RouteAction, RoutingPolicy};
@@ -168,6 +169,10 @@ pub struct InProcessTransport {
 
     /// Transport metrics for health monitoring.
     metrics: TransportMetrics,
+
+    /// Optional clock for deterministic latency tracking and TTL checks.
+    /// When `None`, falls back to system time.
+    clock: Option<Arc<dyn Clock>>,
 }
 
 impl InProcessTransport {
@@ -182,7 +187,14 @@ impl InProcessTransport {
             event_log,
             sequence: std::sync::atomic::AtomicU64::new(0),
             metrics: TransportMetrics::new(),
+            clock: None,
         }
+    }
+
+    /// Attach a clock for deterministic time in tests.
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = Some(clock);
+        self
     }
 
     /// Create a new InProcessTransport with cross-process transport bridging.
@@ -203,6 +215,7 @@ impl InProcessTransport {
             event_log,
             sequence: std::sync::atomic::AtomicU64::new(0),
             metrics: TransportMetrics::new(),
+            clock: None,
         }
     }
 
@@ -329,7 +342,12 @@ impl Transport for InProcessTransport {
 
     async fn send(&self, envelope: Envelope) -> Result<()> {
         // Check TTL
-        if envelope.is_expired() {
+        let wall_now = self
+            .clock
+            .as_ref()
+            .map(|c| c.wall_now())
+            .unwrap_or_else(crate::ipc::envelope::system_wall_now);
+        if envelope.is_expired_at_wall(wall_now) {
             anyhow::bail!("envelope expired");
         }
 
@@ -376,6 +394,17 @@ impl Transport for InProcessTransport {
             error_rate,
         }
     }
+}
+
+/// Fallback monotonic time source when no clock is attached.
+/// Uses process-local [`std::time::Instant`] relative to first call.
+fn mono_now_fallback() -> crate::MonoTime {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let elapsed = START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64;
+    crate::MonoTime(elapsed)
 }
 
 /// Owned adapter to implement Event trait for Envelope (for event log recording).

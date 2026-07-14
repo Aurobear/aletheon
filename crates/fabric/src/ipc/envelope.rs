@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+use crate::types::time::WallTime;
+
 /// Unique message identifier.
 pub type EnvelopeId = u64;
 
@@ -99,8 +101,14 @@ pub struct Envelope {
 static ENVELOPE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl Envelope {
-    /// Create a new Envelope with auto-generated ID and timestamp.
-    pub fn new(source: Endpoint, target: Target, pattern: Pattern, payload: Payload) -> Self {
+    /// Create a new Envelope with auto-generated ID and explicit wall-clock timestamp.
+    pub fn new_at(
+        source: Endpoint,
+        target: Target,
+        pattern: Pattern,
+        payload: Payload,
+        timestamp: WallTime,
+    ) -> Self {
         Self {
             id: ENVELOPE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             correlation_id: None,
@@ -110,8 +118,17 @@ impl Envelope {
             priority: crate::events::types::Priority::Normal,
             ttl_ms: None,
             payload,
-            timestamp_ms: millis_now(),
+            timestamp_ms: wall_to_millis(timestamp),
         }
+    }
+
+    /// Create a new Envelope with auto-generated ID and timestamp.
+    ///
+    /// Uses `SystemTime::now()` for the timestamp. Prefer [`new_at`](Self::new_at)
+    /// when a [`Clock`](crate::Clock) is available so timestamps are observable
+    /// and testable.
+    pub fn new(source: Endpoint, target: Target, pattern: Pattern, payload: Payload) -> Self {
+        Self::new_at(source, target, pattern, payload, system_wall_now())
     }
 
     /// Create a Request envelope.
@@ -126,6 +143,25 @@ impl Envelope {
         )
     }
 
+    /// Create a Request envelope with explicit wall-clock timestamp.
+    pub fn request_at(
+        source: Endpoint,
+        target: Target,
+        payload: Payload,
+        timeout: Duration,
+        timestamp: WallTime,
+    ) -> Self {
+        Self::new_at(
+            source,
+            target,
+            Pattern::Request {
+                timeout_ms: timeout.as_millis() as u64,
+            },
+            payload,
+            timestamp,
+        )
+    }
+
     /// Create a Response envelope correlated to a request.
     pub fn response(request: &Envelope, payload: Payload) -> Self {
         Self {
@@ -137,7 +173,22 @@ impl Envelope {
             priority: request.priority,
             ttl_ms: None,
             payload,
-            timestamp_ms: millis_now(),
+            timestamp_ms: system_millis_now(),
+        }
+    }
+
+    /// Create a Response envelope correlated to a request, with explicit timestamp.
+    pub fn response_at(request: &Envelope, payload: Payload, timestamp: WallTime) -> Self {
+        Self {
+            id: ENVELOPE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            correlation_id: Some(request.id),
+            source: request.target.clone().into_endpoint(),
+            target: request.source.clone().into_target(),
+            pattern: Pattern::Response,
+            priority: request.priority,
+            ttl_ms: None,
+            payload,
+            timestamp_ms: wall_to_millis(timestamp),
         }
     }
 
@@ -168,10 +219,19 @@ impl Envelope {
         self
     }
 
-    /// Check if this envelope has expired.
+    /// Check if this envelope has expired against the current wall clock.
     pub fn is_expired(&self) -> bool {
         if let Some(ttl_ms) = self.ttl_ms {
-            millis_now() > self.timestamp_ms + ttl_ms
+            system_millis_now() > self.timestamp_ms + ttl_ms
+        } else {
+            false
+        }
+    }
+
+    /// Check if this envelope has expired at the given wall-clock time.
+    pub fn is_expired_at_wall(&self, now: WallTime) -> bool {
+        if let Some(ttl_ms) = self.ttl_ms {
+            wall_to_millis(now) > self.timestamp_ms + ttl_ms
         } else {
             false
         }
@@ -200,11 +260,20 @@ impl Endpoint {
     }
 }
 
-fn millis_now() -> u64 {
+/// Convert a [`WallTime`] to epoch milliseconds (u64).
+pub fn wall_to_millis(wt: WallTime) -> u64 {
+    wt.0 as u64
+}
+
+fn system_millis_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+pub fn system_wall_now() -> WallTime {
+    WallTime(system_millis_now() as i64)
 }
 
 /// Extension trait for converting Events into Envelopes.
@@ -212,6 +281,15 @@ pub trait EventEnvelopeExt {
     /// Wrap this Event as an Envelope payload.
     /// The Event is serialized to JSON for cross-process compatibility.
     fn into_envelope(self, source: Endpoint, target: Target, pattern: Pattern) -> Envelope;
+
+    /// Wrap this Event as an Envelope payload with an explicit timestamp.
+    fn into_envelope_at(
+        self,
+        source: Endpoint,
+        target: Target,
+        pattern: Pattern,
+        timestamp: WallTime,
+    ) -> Envelope;
 }
 
 impl<E: crate::events::types::Event> EventEnvelopeExt for E {
@@ -219,6 +297,19 @@ impl<E: crate::events::types::Event> EventEnvelopeExt for E {
         let priority = self.priority();
         let json = self.to_json();
         Envelope::new(source, target, pattern, Payload::Json(json)).with_priority(priority)
+    }
+
+    fn into_envelope_at(
+        self,
+        source: Endpoint,
+        target: Target,
+        pattern: Pattern,
+        timestamp: WallTime,
+    ) -> Envelope {
+        let priority = self.priority();
+        let json = self.to_json();
+        Envelope::new_at(source, target, pattern, Payload::Json(json), timestamp)
+            .with_priority(priority)
     }
 }
 

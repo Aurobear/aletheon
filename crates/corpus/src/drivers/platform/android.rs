@@ -13,21 +13,28 @@
 use super::adapter::*;
 use anyhow::Result;
 use async_trait::async_trait;
+use fabric::Clock;
+use std::sync::Arc;
+use std::time::Duration;
+
+use aletheon_kernel::chronos::Timer;
 
 /// Android platform adapter.
 ///
 /// Currently a stub. Full implementation requires Android NDK compilation.
-pub struct AndroidPlatformAdapter;
+pub struct AndroidPlatformAdapter {
+    clock: Arc<dyn Clock>,
+}
 
 impl Default for AndroidPlatformAdapter {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
     }
 }
 
 impl AndroidPlatformAdapter {
-    pub fn new() -> Self {
-        Self
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self { clock }
     }
 
     /// Check if running on Android.
@@ -139,7 +146,7 @@ impl PlatformAdapter for AndroidPlatformAdapter {
 
     async fn service_restart(&self, name: &str) -> Result<()> {
         self.service_stop(name).await?;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        Timer::sleep(&*self.clock, Duration::from_millis(100)).await;
         self.service_start(name).await
     }
 
@@ -210,6 +217,7 @@ impl PlatformAdapter for AndroidPlatformAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn test_android_detection() {
@@ -220,7 +228,8 @@ mod tests {
 
     #[test]
     fn test_android_adapter_capabilities() {
-        let adapter = AndroidPlatformAdapter::new();
+        let adapter =
+            AndroidPlatformAdapter::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let caps = adapter.capabilities();
         assert!(caps.has_binder);
         assert_eq!(caps.platform_name, "android");

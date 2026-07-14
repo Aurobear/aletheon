@@ -190,18 +190,19 @@ mod tests {
         // We can't easily simulate time passing in a unit test,
         // but we can test the structure by manually constructing records.
         let clock = test_clock();
+        let now = fabric::wall_to_datetime(clock.wall_now());
         let layer = ContinuityLayer {
             records: RwLock::new(vec![
                 LineageRecord {
                     identity_name: "aurb".to_string(),
                     identity_version: "0.1.0".to_string(),
-                    recorded_at: Utc::now() - Duration::hours(48),
+                    recorded_at: now - Duration::hours(48),
                     event: "init".to_string(),
                 },
                 LineageRecord {
                     identity_name: "aurb".to_string(),
                     identity_version: "0.2.0".to_string(),
-                    recorded_at: Utc::now(),
+                    recorded_at: now,
                     event: "upgrade".to_string(),
                 },
             ]),

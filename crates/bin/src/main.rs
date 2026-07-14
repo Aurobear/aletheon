@@ -8,10 +8,13 @@
 //!   version      Print version + git commit
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use aletheon_kernel::chronos::SystemClock;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use executive::host::RuntimeHost;
+use fabric::Clock;
 use tracing::info;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -108,11 +111,13 @@ async fn main() -> Result<()> {
 
             match daemon_mode {
                 DaemonMode::Systemd => {
+                    let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
                     let mut host = executive::host::systemd::SystemdHost::new(
                         config.clone(),
                         env.clone(),
                         socket_path,
                         *enable_evolution,
+                        clock,
                     );
                     host.init().await?;
                     Box::new(host).serve().await

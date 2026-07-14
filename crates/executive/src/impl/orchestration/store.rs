@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use fabric::Clock;
+
 use super::digraph::graph::{DiGraph, WorkflowDef};
 use super::digraph::state::GraphState;
 use super::registry::AgentRegistry;
@@ -86,10 +88,11 @@ impl WorkflowStore {
         name: &str,
         registry: &AgentRegistry,
         initial_state: GraphState,
+        clock: &dyn Clock,
     ) -> anyhow::Result<GraphState> {
         let graph = self.load(name)?;
         graph
-            .execute(registry, initial_state)
+            .execute(registry, initial_state, clock)
             .await
             .map_err(|e| anyhow::anyhow!("workflow '{name}' execution failed: {e}"))
     }
@@ -189,9 +192,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = WorkflowStore::new(dir.path()).unwrap();
         let registry = AgentRegistry::new();
+        let clock = aletheon_kernel::chronos::TestClock::default();
 
         let direct = sample_graph()
-            .execute(&registry, GraphState::new())
+            .execute(&registry, GraphState::new(), &clock)
             .await
             .unwrap();
         let direct_trace: Vec<(String, String)> = direct
@@ -201,7 +205,10 @@ mod tests {
             .collect();
 
         store.save("wf", &sample_graph()).unwrap();
-        let replayed = store.run("wf", &registry, GraphState::new()).await.unwrap();
+        let replayed = store
+            .run("wf", &registry, GraphState::new(), &clock)
+            .await
+            .unwrap();
         let replayed_trace: Vec<(String, String)> = replayed
             .log
             .iter()

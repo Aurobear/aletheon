@@ -8,6 +8,7 @@ use crate::core::core_systems::CoreSystems;
 use crate::core::session_gateway::SessionGateway;
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::r#impl::daemon::session_manager::SessionManager;
+use crate::service::TurnPipeline;
 use aletheon_kernel::operation::{OperationScope, OperationTable};
 use aletheon_kernel::process::ProcessTable;
 use aletheon_kernel::supervision::SupervisorTree;
@@ -19,7 +20,6 @@ use fabric::{
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -47,7 +47,7 @@ pub struct DaemonTurnOrchestrator {
     pub(crate) model_router: Arc<ModelRouter>,
     pub(crate) notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
     pub(crate) active_connections: Arc<AtomicUsize>,
-    pub(crate) started_at: Instant,
+    pub(crate) started_at: fabric::MonoTime,
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
     /// Per-turn operation scope for structured task cancellation (PR-3).
     ///
@@ -55,6 +55,9 @@ pub struct DaemonTurnOrchestrator {
     /// cooperative cancellation. `execute_turn()` drains the scope at turn end
     /// to guarantee no orphan tasks.
     pub(crate) current_scope: Mutex<Option<OperationScope>>,
+
+    // --- Shared turn pipeline ---
+    pub(crate) pipeline: Arc<TurnPipeline>,
 }
 
 impl DaemonTurnOrchestrator {
@@ -67,7 +70,7 @@ impl DaemonTurnOrchestrator {
         model_router: Arc<ModelRouter>,
         notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
         active_connections: Arc<AtomicUsize>,
-        started_at: Instant,
+        started_at: fabric::MonoTime,
         daemon_cancel_token: Option<CancellationToken>,
     ) -> Self {
         // Clone kernel primitives from the canonical ServicePorts instead of
@@ -79,6 +82,16 @@ impl DaemonTurnOrchestrator {
         let admission = subsystems.ports.admission.clone();
         let agora = subsystems.ports.agora.clone();
         let mailbox_service = subsystems.ports.mailbox_service.clone();
+
+        let pipeline = Arc::new(TurnPipeline::new(
+            subsystems.clone(),
+            sessions.clone(),
+            session_gateway.clone(),
+            llm.clone(),
+            model_router.clone(),
+            notify_tx.clone(),
+            daemon_cancel_token.clone(),
+        ));
 
         Self {
             process_table,
@@ -98,6 +111,7 @@ impl DaemonTurnOrchestrator {
             started_at,
             daemon_cancel_token,
             current_scope: Mutex::new(None),
+            pipeline,
         }
     }
 

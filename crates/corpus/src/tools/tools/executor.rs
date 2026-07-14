@@ -483,6 +483,8 @@ mod tests {
             })
             .collect();
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
         let elapsed = start.elapsed().as_millis() as u64;
@@ -602,6 +604,8 @@ mod tests {
             },
         ];
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
         let elapsed = start.elapsed().as_millis() as u64;
@@ -660,6 +664,8 @@ mod tests {
             },
         ];
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
         let elapsed = start.elapsed().as_millis() as u64;
@@ -700,6 +706,8 @@ mod tests {
             })
             .collect();
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
         let elapsed = start.elapsed().as_millis() as u64;
@@ -873,6 +881,8 @@ mod tests {
             })
             .collect();
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
         let elapsed = start.elapsed().as_millis() as u64;

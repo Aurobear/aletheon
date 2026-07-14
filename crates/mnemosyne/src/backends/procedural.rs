@@ -438,12 +438,13 @@ mod tests {
     }
 
     fn make_skill(name: &str, content: &[u8]) -> MemoryEntry {
+        let clock = test_clock();
         MemoryEntry {
             id: Uuid::new_v4(),
             memory_type: MemoryType::Procedural,
             content: content.to_vec(),
             tags: vec![name.into()],
-            created_at: Utc::now(),
+            created_at: wall_to_datetime(clock.wall_now()),
             access_count: 0,
             importance: 0.8,
             decay_rate: 0.0,
@@ -541,16 +542,17 @@ mod tests {
         let (_tmp, mut mem) = setup();
         init_mem(&mut mem).await;
 
+        let clock = test_clock();
         // Store an old high-importance skill
         let mut old_skill = make_skill("old-skill", b"old approach");
         old_skill.importance = 0.9;
-        old_skill.created_at = Utc::now() - chrono::Duration::days(60);
+        old_skill.created_at = wall_to_datetime(clock.wall_now()) - chrono::Duration::days(60);
         mem.store(old_skill).await.unwrap();
 
         // Store a recent moderate-importance skill
         let mut recent_skill = make_skill("recent-skill", b"new approach");
         recent_skill.importance = 0.5;
-        recent_skill.created_at = Utc::now();
+        recent_skill.created_at = wall_to_datetime(clock.wall_now());
         mem.store(recent_skill).await.unwrap();
 
         let query = MemoryQuery {

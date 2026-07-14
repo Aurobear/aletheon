@@ -6,7 +6,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use std::time::Instant;
 
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
@@ -278,10 +277,15 @@ impl RequestHandler {
             }
         };
 
+        // Clock for monotonic/wall timestamps. Created early so
+        // all subsystems (including SessionManager) can route through it.
+        let clock = Arc::new(SystemClock::new());
+
         // Multi-session setup
         let context_window = llm.max_context_length();
         let initial_session =
-            SessionManager::new(&data_dir, session_id.clone(), context_window).await?;
+            SessionManager::new(&data_dir, session_id.clone(), context_window, clock.clone())
+                .await?;
         info!(
             context_window = context_window,
             "Session context window configured"
@@ -291,10 +295,6 @@ impl RequestHandler {
         sessions.insert(session_id.clone(), initial_session.clone());
         let sessions = Arc::new(Mutex::new(sessions));
         let default_session_id = Arc::new(tokio::sync::Mutex::new(session_id.clone()));
-
-        // Clock for monotonic/wall timestamps. Created early so
-        // session_created_at timestamps are routed through Clock.
-        let clock = Arc::new(SystemClock::new());
 
         let session_created_at = {
             let mut m = HashMap::new();
@@ -307,14 +307,17 @@ impl RequestHandler {
         let mut tools = ToolRegistry::default();
         let _ = tools.register(Arc::new(CoreMemoryAppendTool {
             memory: core_memory.clone(),
+            clock: clock.clone(),
         }));
         let _ = tools.register(Arc::new(CoreMemoryReplaceTool {
             memory: core_memory.clone(),
+            clock: clock.clone(),
         }));
         let _ = tools.register(Arc::new(MemorySearchTool {
             recall: recall_memory.clone(),
             core_memory: core_memory.clone(),
             fact_store: Some(fact_store.clone()),
+            clock: clock.clone(),
         }));
 
         // MCP servers
@@ -346,7 +349,7 @@ impl RequestHandler {
         let sandbox = create_default_executor(sandbox_pref, clock.clone());
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
-        let (approval_gate, approval_rx) = SocketApprovalGate::new();
+        let (approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
         let tool_runner = Arc::new(Mutex::new(
             ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
                 .with_approval_gate(Arc::new(approval_gate)),
@@ -516,7 +519,7 @@ impl RequestHandler {
             storm_breaker_failure_count: 0,
             goal_tracker: cognit::harness::linear::goal_tracker::GoalTracker::new(clock.clone()),
         }));
-        let gw_started_at = std::time::Instant::now();
+        let gw_started_at = clock.mono_now();
         let session_gateway = Arc::new(SessionGateway::new(
             param_registry.clone(),
             debug_handler.clone(),
@@ -529,6 +532,7 @@ impl RequestHandler {
             recall_memory.clone(),
             self_field.clone(),
             llm.clone(),
+            clock.clone(),
         ));
 
         let ports = aletheon_kernel::service::ServicePorts::new()
@@ -544,6 +548,7 @@ impl RequestHandler {
                     fact_store.clone(),
                     core_memory.clone(),
                     episodic_memory.clone(),
+                    clock.clone(),
                 )),
                 episodic_memory,
                 recall_memory,
@@ -610,6 +615,9 @@ impl RequestHandler {
                 .sub_agent_spawner_mut()
                 .set_shared_tables(pt, ot);
         }
+
+        // Clone clock before the agent-tool closure consumes the original binding.
+        let clock_2 = clock.clone();
 
         // AgentTool — delegates to SubAgentSpawner for process tracking,
         // supervision, and cancellation, with inline LLM loop for execution.
@@ -818,7 +826,7 @@ impl RequestHandler {
             model_router.clone(),
             shared_notify_tx.clone(),
             active_connections.clone(),
-            Instant::now(),
+            clock_2.mono_now(),
             Some(cancel_token.clone()),
         ));
 
@@ -831,7 +839,7 @@ impl RequestHandler {
             model_router,
             notify_tx: None,
             active_connections,
-            started_at: Instant::now(),
+            started_at: clock_2.mono_now(),
             daemon_cancel_token: Some(cancel_token),
             turn_orchestrator,
         };
@@ -839,13 +847,16 @@ impl RequestHandler {
         // Register initial params
         {
             let data_dir_clone = handler.subsystems.session.data_dir.clone();
-            let started_at = std::time::Instant::now();
+            let started_at = clock_2.mono_now();
             param_registry
                 .declare(
                     "session.uptime_secs",
                     "session",
                     "Daemon uptime in seconds",
-                    move || json!(started_at.elapsed().as_secs()),
+                    move || {
+                        let elapsed_ms = clock_2.mono_now().0.saturating_sub(started_at.0);
+                        json!(elapsed_ms / 1000)
+                    },
                 )
                 .await;
             param_registry

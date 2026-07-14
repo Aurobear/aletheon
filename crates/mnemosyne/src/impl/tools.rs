@@ -12,6 +12,7 @@ use super::recall_memory::RecallMemory;
 /// Tool: core_memory_append -- append content to a Core Memory block.
 pub struct CoreMemoryAppendTool {
     pub memory: Arc<Mutex<CoreMemory>>,
+    pub clock: Arc<dyn fabric::Clock>,
 }
 
 #[async_trait]
@@ -38,19 +39,21 @@ impl Tool for CoreMemoryAppendTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(CoreMemoryAppendTool {
             memory: self.memory.clone(),
+            clock: self.clock.clone(),
         })
     }
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let label = input["label"].as_str().unwrap_or("");
         let content = input["content"].as_str().unwrap_or("");
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now().0;
         let mut mem = self.memory.lock().await;
+        let elapsed = self.clock.mono_now().0.saturating_sub(start);
         match mem.append(label, content) {
             Ok(_) => ToolResult {
                 content: format!("Appended to '{}'", label),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: elapsed,
                     truncated: false,
                 },
             },
@@ -58,7 +61,7 @@ impl Tool for CoreMemoryAppendTool {
                 content: format!("Error: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: elapsed,
                     truncated: false,
                 },
             },
@@ -69,6 +72,7 @@ impl Tool for CoreMemoryAppendTool {
 /// Tool: core_memory_replace -- replace content in a Core Memory block.
 pub struct CoreMemoryReplaceTool {
     pub memory: Arc<Mutex<CoreMemory>>,
+    pub clock: Arc<dyn fabric::Clock>,
 }
 
 #[async_trait]
@@ -96,20 +100,22 @@ impl Tool for CoreMemoryReplaceTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(CoreMemoryReplaceTool {
             memory: self.memory.clone(),
+            clock: self.clock.clone(),
         })
     }
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let label = input["label"].as_str().unwrap_or("");
         let old = input["old"].as_str().unwrap_or("");
         let new = input["new"].as_str().unwrap_or("");
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now().0;
         let mut mem = self.memory.lock().await;
+        let elapsed = self.clock.mono_now().0.saturating_sub(start);
         match mem.replace(label, old, new) {
             Ok(_) => ToolResult {
                 content: format!("Replaced in '{}'", label),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: elapsed,
                     truncated: false,
                 },
             },
@@ -117,7 +123,7 @@ impl Tool for CoreMemoryReplaceTool {
                 content: format!("Error: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: elapsed,
                     truncated: false,
                 },
             },
@@ -130,6 +136,7 @@ pub struct MemorySearchTool {
     pub recall: Arc<Mutex<RecallMemory>>,
     pub core_memory: Arc<Mutex<CoreMemory>>,
     pub fact_store: Option<Arc<Mutex<FactStore>>>,
+    pub clock: Arc<dyn fabric::Clock>,
 }
 
 impl MemorySearchTool {
@@ -217,12 +224,13 @@ impl Tool for MemorySearchTool {
             recall: self.recall.clone(),
             core_memory: self.core_memory.clone(),
             fact_store: self.fact_store.clone(),
+            clock: self.clock.clone(),
         })
     }
     async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let query = input["query"].as_str().unwrap_or("");
         let limit = input["limit"].as_u64().unwrap_or(5) as usize;
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now().0;
         let query_lower = query.to_lowercase();
         let mut all_results: Vec<String> = Vec::new();
 
@@ -271,12 +279,14 @@ impl Tool for MemorySearchTool {
             }
         }
 
+        let elapsed = self.clock.mono_now().0.saturating_sub(start);
+
         if all_results.is_empty() {
             ToolResult {
                 content: "No results found.".to_string(),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: elapsed,
                     truncated: false,
                 },
             }
@@ -286,7 +296,7 @@ impl Tool for MemorySearchTool {
                 content: all_results.join("\n"),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: elapsed,
                     truncated,
                 },
             }

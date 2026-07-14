@@ -2,19 +2,24 @@
 
 use std::sync::Arc;
 
+use aletheon_kernel::chronos::TestClock;
 use executive::r#impl::agent::process::AgentProcessConfig;
 use executive::r#impl::kernel::{AgentKernel, KernelError};
 use fabric::agent::Pid;
 use fabric::envelope::{Endpoint, Payload, Target};
-use fabric::CommunicationBus;
 use fabric::ForkDirective;
+use fabric::{Clock, CommunicationBus};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+fn test_clock() -> Arc<dyn Clock> {
+    Arc::new(TestClock::default())
+}
+
 fn make_kernel() -> AgentKernel {
-    AgentKernel::new(Arc::new(CommunicationBus::new()))
+    AgentKernel::new(Arc::new(CommunicationBus::new()), test_clock())
 }
 
 fn make_config(id: &str) -> AgentProcessConfig {

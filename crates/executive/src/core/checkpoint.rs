@@ -4,8 +4,8 @@
 //! One checkpoint per user turn. Uses Previewer trait to capture state.
 
 use fabric::tool::FileSnap;
+use fabric::{Clock, WallTime};
 use std::path::Path;
-use std::time::SystemTime;
 use tracing::info;
 
 /// Scope of rewind operation.
@@ -20,7 +20,7 @@ pub enum RewindScope {
 #[derive(Debug, Clone)]
 pub struct Checkpoint {
     pub turn: usize,
-    pub time: SystemTime,
+    pub time: WallTime,
     pub prompt: String,
     pub msg_index: usize,
     pub files: Vec<FileSnap>,
@@ -52,10 +52,11 @@ impl CheckpointStore {
         turn: usize,
         prompt: &str,
         msg_index: usize,
+        clock: &dyn Clock,
     ) -> std::io::Result<()> {
         self.current = Some(Checkpoint {
             turn,
-            time: SystemTime::now(),
+            time: clock.wall_now(),
             prompt: prompt.to_string(),
             msg_index,
             files: Vec::new(),
@@ -111,9 +112,14 @@ impl CheckpointStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use std::fs;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    fn test_clock() -> TestClock {
+        TestClock::default()
+    }
 
     #[test]
     fn checkpoint_captures_file_snap() {
@@ -140,14 +146,18 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut store = CheckpointStore::new(tmp.path());
 
-        store.open_checkpoint(1, "first turn", 0).unwrap();
+        store
+            .open_checkpoint(1, "first turn", 0, &test_clock())
+            .unwrap();
         store.add_snap(FileSnap {
             path: PathBuf::from("/tmp/test.txt"),
             content: Some("content".into()),
         });
         store.seal_checkpoint();
 
-        store.open_checkpoint(2, "second turn", 5).unwrap();
+        store
+            .open_checkpoint(2, "second turn", 5, &test_clock())
+            .unwrap();
         store.seal_checkpoint();
 
         assert_eq!(store.checkpoints().len(), 2);
@@ -162,7 +172,9 @@ mod tests {
         fs::write(&file, "original").unwrap();
 
         let mut store = CheckpointStore::new(tmp.path());
-        store.open_checkpoint(1, "turn 1", 0).unwrap();
+        store
+            .open_checkpoint(1, "turn 1", 0, &test_clock())
+            .unwrap();
         store.add_snap(FileSnap::capture(&file).unwrap());
         store.seal_checkpoint();
 
@@ -180,7 +192,9 @@ mod tests {
         let file = tmp.path().join("new.txt");
 
         let mut store = CheckpointStore::new(tmp.path());
-        store.open_checkpoint(1, "turn 1", 0).unwrap();
+        store
+            .open_checkpoint(1, "turn 1", 0, &test_clock())
+            .unwrap();
         store.add_snap(FileSnap::capture(&file).unwrap()); // None content
         store.seal_checkpoint();
 
@@ -197,7 +211,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut store = CheckpointStore::new(tmp.path());
 
-        store.open_checkpoint(5, "turn 5", 10).unwrap();
+        store
+            .open_checkpoint(5, "turn 5", 10, &test_clock())
+            .unwrap();
         store.seal_checkpoint();
 
         assert!(store.get_checkpoint(5).is_some());

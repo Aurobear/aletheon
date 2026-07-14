@@ -298,7 +298,6 @@ fn truncate(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use fabric::cognit::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
     use std::sync::Arc;
 
@@ -315,7 +314,9 @@ mod tests {
     ) -> ReflectionEntry {
         ReflectionEntry {
             id: id.to_string(),
-            timestamp: Utc::now(),
+            timestamp: fabric::wall_to_datetime(
+                aletheon_kernel::chronos::TestClock::default().wall_now(),
+            ),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: format!("task {}", id),
             outcome: ReflectionOutcome::Success,

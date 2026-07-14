@@ -3,9 +3,11 @@
 // is deprecated in favor of Envelope. EventLog::record() currently takes &dyn Event -
 // it should be updated to accept &Envelope once all callers use CommunicationBus.
 
+use crate::types::time::wall_to_datetime;
 use crate::{EventType, Priority};
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
@@ -19,6 +21,9 @@ pub struct LogEntry {
 pub struct EventLog {
     entries: VecDeque<LogEntry>,
     max_entries: usize,
+    /// Optional clock for deterministic wall-clock timestamps in tests.
+    /// When `None`, falls back to `chrono::Utc::now()`.
+    pub(crate) clock: Option<Arc<dyn crate::Clock>>,
 }
 
 impl EventLog {
@@ -26,12 +31,24 @@ impl EventLog {
         Self {
             entries: VecDeque::with_capacity(max_entries.min(10000)),
             max_entries,
+            clock: None,
         }
     }
 
+    /// Set a clock for deterministic wall-clock timestamps.
+    pub fn with_clock(mut self, clock: Arc<dyn crate::Clock>) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
     pub fn record(&mut self, event: &dyn crate::Event) {
+        let timestamp = self
+            .clock
+            .as_ref()
+            .map(|c| wall_to_datetime(c.wall_now()))
+            .unwrap_or_else(Utc::now);
         let entry = LogEntry {
-            timestamp: Utc::now(),
+            timestamp,
             event_type: event.event_type(),
             source: event.source().to_string(),
             priority: event.priority(),

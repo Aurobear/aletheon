@@ -199,9 +199,10 @@ mod tests {
         what_failed: Vec<&str>,
         learned: Vec<&str>,
     ) -> ReflectionEntry {
+        let clock = test_clock();
         ReflectionEntry {
             id: Uuid::new_v4().to_string(),
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(clock.wall_now()),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: task_summary.into(),
             outcome: ReflectionOutcome::Success,

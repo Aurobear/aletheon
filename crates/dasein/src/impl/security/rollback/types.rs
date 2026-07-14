@@ -23,11 +23,11 @@ pub struct SnapshotId {
 }
 
 impl SnapshotId {
-    pub fn new(tier: RollbackTier) -> Self {
+    pub fn new(tier: RollbackTier, created_at: DateTime<Utc>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             tier,
-            created_at: Utc::now(),
+            created_at,
         }
     }
 }

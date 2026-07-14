@@ -5,9 +5,11 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
 use serde::Deserialize;
+use std::sync::Arc;
 use tracing::debug;
+
+use fabric::{wall_to_datetime, Clock};
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -46,15 +48,17 @@ impl Default for EbpfConfig {
 pub struct EbpfSource {
     config: EbpfConfig,
     event_id_counter: u64,
+    clock: Arc<dyn Clock>,
     #[cfg(feature = "ebpf")]
     _bpf: Option<aya::Bpf>,
 }
 
 impl EbpfSource {
-    pub fn new(config: EbpfConfig) -> Self {
+    pub fn new(config: EbpfConfig, clock: Arc<dyn Clock>) -> Self {
         Self {
             config,
             event_id_counter: 0,
+            clock,
             #[cfg(feature = "ebpf")]
             _bpf: None,
         }
@@ -73,7 +77,7 @@ impl EbpfSource {
     ) -> PerceptionEvent {
         PerceptionEvent {
             id: self.next_id(),
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(self.clock.wall_now()),
             source: EventSource::Ebpf,
             category,
             priority,
@@ -247,7 +251,10 @@ impl PerceptionSource for EbpfSource {
 
 impl Default for EbpfSource {
     fn default() -> Self {
-        Self::new(EbpfConfig::default())
+        Self::new(
+            EbpfConfig::default(),
+            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+        )
     }
 }
 

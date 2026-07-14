@@ -100,7 +100,7 @@ pub use include::agora::{
 };
 pub use include::body::{Action, ActionResult, BodyRuntime};
 pub use include::capability_invoker::CapabilityInvoker;
-pub use include::chronos::Clock;
+pub use include::chronos::{Clock, Elapsed, Timer};
 pub use include::cognit::{
     BehaviorAdjustment, CognitOps, CostEstimate, Critique, EvolutionLogEntry, ExecutionResult,
     Experience, LearnedRule, Observation, Plan, PlanStep, Reflection, ReflectionEntry,

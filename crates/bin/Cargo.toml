@@ -16,6 +16,8 @@ integration-tests = []
 [dependencies]
 executive = { path = "../executive" }
 interact = { path = "../interact" }
+aletheon-kernel = { path = "../kernel" }
+fabric = { path = "../fabric" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 clap = { version = "4", features = ["derive"] }

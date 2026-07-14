@@ -12,6 +12,14 @@ use fabric::EventType;
 use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
+use aletheon_kernel::chronos::TestClock;
+use fabric::Clock;
+
+/// Helper: create a default TestClock for tests.
+fn make_clock() -> Arc<dyn Clock> {
+    Arc::new(TestClock::default())
+}
+
 /// Helper: create a CommunicationBus.
 fn make_bus() -> Arc<CommunicationBus> {
     Arc::new(CommunicationBus::new())
@@ -52,7 +60,7 @@ fn subscribe_to_event(bus: &CommunicationBus, event_type: EventType, flag: Arc<A
 async fn test_agent_process_lifecycle() {
     let bus = make_bus();
     let config = AgentProcessConfig::default();
-    let agent = AgentProcess::new(None, "test-task".to_string(), bus, config);
+    let agent = AgentProcess::new(None, "test-task".to_string(), bus, config, make_clock());
 
     // Initial state is Idle
     assert_eq!(agent.state(), AgentState::Idle);
@@ -70,6 +78,7 @@ async fn test_agent_process_lifecycle() {
         "test-task".to_string(),
         sub_bus.clone(),
         AgentProcessConfig::default(),
+        make_clock(),
     );
 
     // start() — state stays Idle (as per implementation) and publishes event
@@ -106,7 +115,7 @@ async fn test_agent_process_lifecycle() {
 async fn test_pulse_drives_agent() {
     let bus = make_bus();
     let config = AgentProcessConfig::default();
-    let mut agent = AgentProcess::new(None, "pulse-test".to_string(), bus, config);
+    let mut agent = AgentProcess::new(None, "pulse-test".to_string(), bus, config, make_clock());
 
     // Agent starts in Idle — on_pulse should be a no-op (returns Ok, stays Idle)
     let pulse = make_pulse(5_000);
@@ -136,7 +145,13 @@ async fn test_spawn_child_agent() {
     let bus = make_bus();
     let config = AgentProcessConfig::default();
 
-    let agent = AgentProcess::new(None, "parent-task".to_string(), bus.clone(), config);
+    let agent = AgentProcess::new(
+        None,
+        "parent-task".to_string(),
+        bus.clone(),
+        config,
+        make_clock(),
+    );
     let parent_pid = agent.pid();
 
     // Subscribe to AgentSpawned to verify the event
@@ -181,7 +196,7 @@ async fn test_spawn_child_blocked_when_disabled() {
         can_spawn: false,
         ..AgentProcessConfig::default()
     };
-    let agent = AgentProcess::new(None, "no-spawn-task".to_string(), bus, config);
+    let agent = AgentProcess::new(None, "no-spawn-task".to_string(), bus, config, make_clock());
 
     let result = agent.spawn_child("child-task".to_string()).await;
     assert!(

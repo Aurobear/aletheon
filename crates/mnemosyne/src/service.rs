@@ -16,8 +16,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::Utc;
-use fabric::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+use fabric::{self, wall_to_datetime, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -82,6 +81,7 @@ pub struct DefaultMemoryService {
     #[allow(dead_code)]
     core_memory: Arc<Mutex<CoreMemory>>,
     episodic: Arc<Mutex<EpisodicMemory>>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl DefaultMemoryService {
@@ -90,12 +90,14 @@ impl DefaultMemoryService {
         fact_store: Arc<Mutex<FactStore>>,
         core_memory: Arc<Mutex<CoreMemory>>,
         episodic: Arc<Mutex<EpisodicMemory>>,
+        clock: Arc<dyn fabric::Clock>,
     ) -> Self {
         Self {
             recall_memory,
             fact_store,
             core_memory,
             episodic,
+            clock,
         }
     }
 }
@@ -121,7 +123,7 @@ impl MemoryService for DefaultMemoryService {
             ExperienceEvent::Reflection { content } => {
                 let entry = ReflectionEntry {
                     id: Uuid::new_v4().to_string(),
-                    timestamp: Utc::now(),
+                    timestamp: wall_to_datetime(self.clock.wall_now()),
                     trigger: ReflectionTrigger::Manual,
                     task_summary: content.clone(),
                     outcome: ReflectionOutcome::Success,
@@ -176,12 +178,13 @@ mod tests {
     }
 
     async fn build_service(dir: &Path) -> DefaultMemoryService {
+        let clock = test_clock();
         let recall_memory = Arc::new(Mutex::new(
-            RecallMemory::new(&dir.join("recall.db"), test_clock()).unwrap(),
+            RecallMemory::new(&dir.join("recall.db"), clock.clone()).unwrap(),
         ));
         let fact_store = Arc::new(Mutex::new(FactStore::open(&dir.join("facts.db")).unwrap()));
         let core_memory = Arc::new(Mutex::new(CoreMemory::new()));
-        let mut episodic_memory = EpisodicMemory::new(dir.join("episodic.db"), test_clock());
+        let mut episodic_memory = EpisodicMemory::new(dir.join("episodic.db"), clock.clone());
         let ctx = SubsystemContext {
             name: "episodic_memory".into(),
             working_dir: dir.to_path_buf(),
@@ -190,7 +193,7 @@ mod tests {
         };
         episodic_memory.init(&ctx).await.unwrap();
         let episodic = Arc::new(Mutex::new(episodic_memory));
-        DefaultMemoryService::new(recall_memory, fact_store, core_memory, episodic)
+        DefaultMemoryService::new(recall_memory, fact_store, core_memory, episodic, clock)
     }
 
     #[tokio::test]

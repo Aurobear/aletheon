@@ -40,6 +40,7 @@ impl RequestHandler {
             &self.subsystems.session.data_dir,
             id.clone(),
             self.subsystems.session.context_window,
+            self.subsystems.ports.clock.clone(),
         )
         .await
         {

@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use fabric::wall_to_datetime;
+use fabric::Clock;
 use serde::{Deserialize, Serialize};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
@@ -84,11 +87,12 @@ pub struct EventJournal {
     _handle: tokio::task::JoinHandle<()>,
     session_id: String,
     db_path: PathBuf,
+    clock: Arc<dyn Clock>,
 }
 
 impl EventJournal {
     /// Create a new EventJournal for a session.
-    pub async fn create(session_id: &str, data_dir: &Path) -> Result<Self> {
+    pub async fn create(session_id: &str, data_dir: &Path, clock: Arc<dyn Clock>) -> Result<Self> {
         let log_path = data_dir.join(format!("{}.jsonl", session_id));
         let db_path = data_dir.join(format!("{}.db", session_id));
 
@@ -172,13 +176,14 @@ impl EventJournal {
             _handle: handle,
             session_id: session_id.to_string(),
             db_path,
+            clock,
         })
     }
 
     /// Append an event to the journal.
     pub async fn append(&self, event: SessionEvent) -> Result<()> {
         let entry = JournalEntry {
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(self.clock.wall_now()),
             session_id: self.session_id.clone(),
             event,
         };
@@ -294,14 +299,16 @@ pub struct RecoveryState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use tempfile;
 
     #[tokio::test]
     async fn journal_query_by_type() {
         let tmp = tempfile::tempdir().unwrap();
-        let journal = EventJournal::create("test-query", tmp.path())
-            .await
-            .unwrap();
+        let journal =
+            EventJournal::create("test-query", tmp.path(), Arc::new(TestClock::default()))
+                .await
+                .unwrap();
 
         // Append some events
         journal
@@ -347,9 +354,10 @@ mod tests {
     #[tokio::test]
     async fn journal_query_empty_returns_empty() {
         let tmp = tempfile::tempdir().unwrap();
-        let journal = EventJournal::create("test-empty", tmp.path())
-            .await
-            .unwrap();
+        let journal =
+            EventJournal::create("test-empty", tmp.path(), Arc::new(TestClock::default()))
+                .await
+                .unwrap();
         let results = journal.query(None, None, None, None).unwrap();
         assert!(results.is_empty());
     }

@@ -57,7 +57,10 @@ async fn operation_scope_cancel_and_drain_aborts_or_records_tasks() {
         token.cancelled().await;
         OperationExitReason::Cancelled(CancelReason::User)
     });
-    let exits = scope.cancel_and_drain(Duration::from_millis(50)).await;
+    let clock = TestClock::default();
+    let exits = scope
+        .cancel_and_drain(&clock, Duration::from_millis(50))
+        .await;
     assert_eq!(exits.len(), 1);
     assert!(matches!(
         exits[0].reason,

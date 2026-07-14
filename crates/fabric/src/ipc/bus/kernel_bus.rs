@@ -9,7 +9,7 @@ use crate::events::routing_policy::{RouteAction, RoutingPolicy};
 use crate::events::subscription::SubscriptionRegistry;
 use crate::ipc::envelope::{Endpoint, Payload, Target};
 use crate::ipc::transport::Transport;
-use crate::{AsyncEventHandler, Event, EventHandler, EventType, SubscriptionId};
+use crate::{AsyncEventHandler, Clock, Event, EventHandler, EventType, SubscriptionId, Timer};
 
 pub struct KernelEventBus {
     subscriptions: SubscriptionRegistry,
@@ -17,15 +17,27 @@ pub struct KernelEventBus {
     /// Optional transport for cross-process event bridging.
     /// When set, published events are also sent through this transport.
     transport: Option<Arc<dyn Transport>>,
+    /// Optional clock for deterministic wall-clock timestamps in tests.
+    /// When `None`, falls back to system time.
+    clock: Option<Arc<dyn Clock>>,
 }
 
 impl KernelEventBus {
+    /// Create a new KernelEventBus with no clock (uses system time).
     pub fn new(log_capacity: usize) -> Self {
         Self {
             subscriptions: SubscriptionRegistry::new(),
             event_log: Arc::new(RwLock::new(EventLog::new(log_capacity))),
             transport: None,
+            clock: None,
         }
+    }
+
+    /// Attach a clock for deterministic time in tests.
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.event_log.write().clock = Some(clock.clone());
+        self.clock = Some(clock);
+        self
     }
 
     /// Create a new KernelEventBus with cross-process transport bridging.
@@ -37,6 +49,7 @@ impl KernelEventBus {
             subscriptions: SubscriptionRegistry::new(),
             event_log: Arc::new(RwLock::new(EventLog::new(log_capacity))),
             transport: Some(transport),
+            clock: None,
         }
     }
 
@@ -75,11 +88,15 @@ impl KernelEventBus {
 
         // 4. Cross-process bridging: send through transport if available
         if let Some(transport) = &self.transport {
-            let envelope = crate::ipc::envelope::Envelope::new(
+            let envelope = crate::ipc::envelope::Envelope::new_at(
                 Endpoint::System,
                 Target::Broadcast,
                 crate::ipc::envelope::Pattern::Publish,
                 Payload::Json(event.to_json()),
+                self.clock
+                    .as_ref()
+                    .map(|c| c.wall_now())
+                    .unwrap_or_else(crate::ipc::envelope::system_wall_now),
             )
             .with_priority(event.priority());
             if let Err(e) = transport.send(envelope).await {
@@ -130,7 +147,11 @@ impl KernelEventBus {
         // Full implementation will use oneshot channels when response events are supported.
         warn!("request() not fully implemented in Phase 1; publishing event only");
         self.publish(event).await?;
-        tokio::time::sleep(timeout).await;
+        if let Some(ref clock) = self.clock {
+            Timer::sleep(clock.as_ref(), timeout).await;
+        } else {
+            tokio::time::sleep(timeout).await;
+        }
         Err(anyhow::anyhow!(
             "Request timeout — no response received (Phase 1 limitation)"
         ))

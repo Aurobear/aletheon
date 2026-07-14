@@ -8,6 +8,7 @@
 
 use crate::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, MessageId, SchemaId, Target};
 use crate::types::process::{NamespaceId, ProcessSignal};
+use crate::types::time::MonoTime;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -287,13 +288,22 @@ impl Mailbox for InProcessMailbox {
 /// Used by the kernel to route inter-process messages.
 pub struct InProcessMailboxService {
     mailboxes: Mutex<HashMap<Target, Arc<dyn Mailbox>>>,
+    /// Optional clock for deterministic monotonic timestamps in deadline checks.
+    clock: Option<Arc<dyn crate::Clock>>,
 }
 
 impl InProcessMailboxService {
     pub fn new() -> Self {
         Self {
             mailboxes: Mutex::new(HashMap::new()),
+            clock: None,
         }
+    }
+
+    /// Attach a clock for deterministic monotonic time in tests.
+    pub fn with_clock(mut self, clock: Arc<dyn crate::Clock>) -> Self {
+        self.clock = Some(clock);
+        self
     }
 }
 
@@ -327,7 +337,12 @@ impl MailboxService for InProcessMailboxService {
     }
 
     async fn route(&self, envelope: EnvelopeV2) -> DeliveryReceipt {
-        self.route_at(envelope, current_mono_millis()).await
+        let now = self
+            .clock
+            .as_ref()
+            .map(|c| c.mono_now())
+            .unwrap_or_else(current_mono_millis_fallback);
+        self.route_at(envelope, now.0).await
     }
 
     async fn route_at(&self, envelope: EnvelopeV2, now_mono_millis: u64) -> DeliveryReceipt {
@@ -355,12 +370,13 @@ impl MailboxService for InProcessMailboxService {
     }
 }
 
-fn current_mono_millis() -> u64 {
+fn current_mono_millis_fallback() -> MonoTime {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START
+    let elapsed = START
         .get_or_init(std::time::Instant::now)
         .elapsed()
-        .as_millis() as u64
+        .as_millis() as u64;
+    MonoTime(elapsed)
 }
 
 // ---------------------------------------------------------------------------

@@ -316,12 +316,18 @@ impl Default for CoreMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::{ReflectionOutcome, ReflectionTrigger};
+    use fabric::{wall_to_datetime, ReflectionOutcome, ReflectionTrigger};
+    use std::sync::Arc;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(aletheon_kernel::chronos::TestClock::default())
+    }
 
     fn make_reflection(what_worked: Vec<&str>, learned: Vec<&str>) -> ReflectionEntry {
+        let clock = test_clock();
         ReflectionEntry {
             id: "test-1".to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: wall_to_datetime(clock.wall_now()),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: "test task".to_string(),
             outcome: ReflectionOutcome::Success,

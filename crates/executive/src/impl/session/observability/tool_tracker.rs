@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use std::time::Instant;
+use std::sync::Arc;
 
+use fabric::Clock;
+use fabric::MonoTime;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -23,15 +25,18 @@ pub struct ToolCallState {
 /// Tracks tool calls through their lifecycle: registered -> called -> settled.
 pub struct ToolTracker {
     calls: HashMap<String, ToolCallState>,
-    created_at: Instant,
+    created_at: MonoTime,
+    clock: Arc<dyn Clock>,
 }
 
 impl ToolTracker {
     /// Create a new tracker.
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        let created_at = clock.mono_now();
         Self {
             calls: HashMap::new(),
-            created_at: Instant::now(),
+            created_at,
+            clock,
         }
     }
 
@@ -114,23 +119,28 @@ impl ToolTracker {
     }
 
     fn elapsed_ms(&self) -> u64 {
-        self.created_at.elapsed().as_millis() as u64
+        self.clock.mono_now().0.saturating_sub(self.created_at.0)
     }
 }
 
 impl Default for ToolTracker {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
+
+    fn test_tracker() -> ToolTracker {
+        ToolTracker::new(Arc::new(TestClock::default()))
+    }
 
     #[test]
     fn test_register_and_mark_called() {
-        let mut tracker = ToolTracker::new();
+        let mut tracker = test_tracker();
         tracker.register("call-1", "bash");
         assert_eq!(tracker.total_calls(), 1);
 
@@ -140,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_settle_and_unsettled() {
-        let mut tracker = ToolTracker::new();
+        let mut tracker = test_tracker();
         tracker.register("c1", "bash");
         tracker.register("c2", "read_file");
         tracker.mark_called("c1");
@@ -155,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_fail_unsettled() {
-        let mut tracker = ToolTracker::new();
+        let mut tracker = test_tracker();
         tracker.register("c1", "bash");
         tracker.register("c2", "read_file");
         tracker.mark_called("c1");

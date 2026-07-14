@@ -146,6 +146,7 @@ impl RequestHandler {
                         &self.subsystems.session.data_dir,
                         target_session_id.to_string(),
                         self.subsystems.session.context_window,
+                        self.subsystems.ports.clock.clone(),
                     )
                     .await
                     {
@@ -256,6 +257,7 @@ impl RequestHandler {
             &self.subsystems.session.data_dir,
             new_id.clone(),
             self.subsystems.session.context_window,
+            self.subsystems.ports.clock.clone(),
         )
         .await
         {
@@ -318,6 +320,7 @@ impl RequestHandler {
                                 &self.subsystems.session.data_dir,
                                 recent_id.clone(),
                                 self.subsystems.session.context_window,
+                                self.subsystems.ports.clock.clone(),
                             )
                             .await
                             {
@@ -352,6 +355,7 @@ impl RequestHandler {
                                 &self.subsystems.session.data_dir,
                                 recent_id.clone(),
                                 self.subsystems.session.context_window,
+                                self.subsystems.ports.clock.clone(),
                             )
                             .await
                             {
@@ -384,6 +388,7 @@ impl RequestHandler {
                         &self.subsystems.session.data_dir,
                         new_id.clone(),
                         self.subsystems.session.context_window,
+                        self.subsystems.ports.clock.clone(),
                     )
                     .await
                     {
@@ -430,6 +435,7 @@ impl RequestHandler {
             &self.subsystems.session.data_dir,
             new_id.clone(),
             self.subsystems.session.context_window,
+            self.subsystems.ports.clock.clone(),
         )
         .await
         {

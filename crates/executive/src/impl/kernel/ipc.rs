@@ -4,10 +4,12 @@
 //! `SharedScratchpad` (shared key-value store scoped to a task).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tokio::sync::{mpsc, RwLock};
 
 use fabric::agent::Pid;
+use fabric::Clock;
 use fabric::IpcMessage;
 
 // ---------------------------------------------------------------------------
@@ -93,6 +95,7 @@ impl std::error::Error for IpcSendError {}
 pub struct SharedScratchpad {
     task_id: String,
     entries: RwLock<HashMap<String, ScratchpadEntry>>,
+    clock: Arc<dyn Clock>,
 }
 
 /// A single entry in the scratchpad.
@@ -106,10 +109,11 @@ pub struct ScratchpadEntry {
 
 impl SharedScratchpad {
     /// Create a new empty scratchpad for the given task.
-    pub fn new(task_id: String) -> Self {
+    pub fn new(task_id: String, clock: Arc<dyn Clock>) -> Self {
         Self {
             task_id,
             entries: RwLock::new(HashMap::new()),
+            clock,
         }
     }
 
@@ -125,10 +129,7 @@ impl SharedScratchpad {
 
     /// Write (or overwrite) `key` with `value`, attributed to `writer`.
     pub async fn write(&self, key: &str, value: String, writer: Pid) {
-        let timestamp_ms = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let timestamp_ms = self.clock.wall_now().0 as u64;
         let entry = ScratchpadEntry {
             key: key.to_string(),
             value,
@@ -171,6 +172,7 @@ impl SharedScratchpad {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use fabric::MessageKind;
 
     #[tokio::test]
@@ -181,7 +183,7 @@ mod tests {
 
         let mut rx_b = ch.register(pid_b).await;
 
-        let msg = IpcMessage::task(pid_a, pid_b, "hello".to_string());
+        let msg = IpcMessage::task(pid_a, pid_b, "hello".to_string(), fabric::WallTime(0));
         ch.send(msg.clone()).await.expect("send should succeed");
 
         let received = rx_b.recv().await.expect("should receive message");
@@ -197,14 +199,14 @@ mod tests {
         let pid_a = Pid::new();
         let pid_unknown = Pid::new();
 
-        let msg = IpcMessage::task(pid_a, pid_unknown, "ghost".to_string());
+        let msg = IpcMessage::task(pid_a, pid_unknown, "ghost".to_string(), fabric::WallTime(0));
         let err = ch.send(msg).await.unwrap_err();
         assert!(matches!(err, IpcSendError::RecipientNotFound(p) if p == pid_unknown));
     }
 
     #[tokio::test]
     async fn test_shared_scratchpad_read_write() {
-        let sp = SharedScratchpad::new("task-1".to_string());
+        let sp = SharedScratchpad::new("task-1".to_string(), Arc::new(TestClock::default()));
         let pid = Pid::new();
 
         assert_eq!(sp.read("key").await, None);
@@ -215,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shared_scratchpad_delete() {
-        let sp = SharedScratchpad::new("task-2".to_string());
+        let sp = SharedScratchpad::new("task-2".to_string(), Arc::new(TestClock::default()));
         let pid = Pid::new();
 
         sp.write("k", "v".to_string(), pid).await;
@@ -227,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shared_scratchpad_snapshot() {
-        let sp = SharedScratchpad::new("task-3".to_string());
+        let sp = SharedScratchpad::new("task-3".to_string(), Arc::new(TestClock::default()));
         let pid = Pid::new();
 
         sp.write("a", "1".to_string(), pid).await;

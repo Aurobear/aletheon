@@ -1,8 +1,10 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 use tracing::{debug, info, warn};
 
+use fabric::Clock;
 use fabric::LlmProvider;
 use fabric::{ContentBlock, Message, Role};
 
@@ -25,7 +27,12 @@ pub struct SessionManager {
 impl SessionManager {
     /// Create a new SessionManager.  If a journal already exists for
     /// `session_id` the history is recovered automatically.
-    pub async fn new(data_dir: &Path, session_id: String, max_tokens: usize) -> Result<Self> {
+    pub async fn new(
+        data_dir: &Path,
+        session_id: String,
+        max_tokens: usize,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
         // Try to recover existing messages from journal
         let messages = match Self::recover(data_dir, &session_id).await {
             Some(msgs) if !msgs.is_empty() => {
@@ -39,7 +46,7 @@ impl SessionManager {
             _ => Vec::new(),
         };
 
-        let journal = EventJournal::create(&session_id, data_dir).await?;
+        let journal = EventJournal::create(&session_id, data_dir, clock).await?;
 
         Ok(Self {
             session_id,
@@ -430,10 +437,15 @@ fn is_session_corrupted(events: &[SessionEvent]) -> bool {
 #[cfg(test)]
 mod compaction_tests {
     use super::*;
+    use aletheon_kernel::chronos::TestClock;
     use async_trait::async_trait;
     use fabric::message::is_tool_message;
     use fabric::ToolDefinition;
     use fabric::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
 
     struct StubLlm;
 
@@ -473,7 +485,7 @@ mod compaction_tests {
     async fn compaction_tail_never_starts_with_tool_result() {
         let dir = tempfile::tempdir().unwrap();
         // small max_tokens so the threshold trips easily
-        let mut sm = SessionManager::new(dir.path(), "s1".into(), 1_000)
+        let mut sm = SessionManager::new(dir.path(), "s1".into(), 1_000, test_clock())
             .await
             .unwrap();
         // build a long history that interleaves tool_use/tool_result pairs
@@ -505,7 +517,7 @@ mod compaction_tests {
     async fn compacted_history_survives_reopen() {
         let dir = tempfile::tempdir().unwrap();
         {
-            let mut sm = SessionManager::new(dir.path(), "s2".into(), 1_000)
+            let mut sm = SessionManager::new(dir.path(), "s2".into(), 1_000, test_clock())
                 .await
                 .unwrap();
             for i in 0..12 {
@@ -516,7 +528,7 @@ mod compaction_tests {
             assert!(sm.compact_if_needed(&StubLlm).await);
         }
         // Reopen: recover must include the summary system message
-        let sm2 = SessionManager::new(dir.path(), "s2".into(), 1_000)
+        let sm2 = SessionManager::new(dir.path(), "s2".into(), 1_000, test_clock())
             .await
             .unwrap();
         let hist = sm2.history();
@@ -540,7 +552,7 @@ mod compaction_tests {
 
         // Create session, push tool messages
         {
-            let mut sm = SessionManager::new(dir.path(), session_id.clone(), 100_000)
+            let mut sm = SessionManager::new(dir.path(), session_id.clone(), 100_000, test_clock())
                 .await
                 .unwrap();
             sm.push_user("Read a file").await;
@@ -561,7 +573,7 @@ mod compaction_tests {
         }
 
         // Recover and verify tool messages are preserved
-        let sm2 = SessionManager::new(dir.path(), session_id, 100_000)
+        let sm2 = SessionManager::new(dir.path(), session_id, 100_000, test_clock())
             .await
             .unwrap();
         let hist = sm2.history();
