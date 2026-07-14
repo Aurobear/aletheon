@@ -338,7 +338,7 @@ pub fn redact_secrets(value: &str) -> String {
 /// Build a deterministic SHA-256 slug for a capture, mirroring aurb's
 /// `page.py:MemoryPage.for_session`.
 ///
-/// Key components: `{producer}\0{project}\0{session_id}` → SHA-256 → hex[:16]
+/// Key components: `{producer}\0{project}\0{session_id}` → SHA-256 → first 16 hex characters.
 /// Full slug: `{source}/sessions/{created_date}-{stable_id}`
 pub fn compute_slug(source: &str, project: &str, producer: &str, session_id: &str) -> String {
     let now = SystemTime::now()
@@ -481,8 +481,44 @@ struct OutboxLock {
 
 impl Drop for OutboxLock {
     fn drop(&mut self) {
-        let _ = self.file.unlock();
+        let _ = unlock_file(&self.file);
     }
+}
+
+#[cfg(unix)]
+fn lock_file(file: &fs::File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    // SAFETY: `file` owns a valid descriptor for the duration of this call.
+    let result = unsafe { nix::libc::flock(file.as_raw_fd(), nix::libc::LOCK_EX) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(unix))]
+fn lock_file(_file: &fs::File) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn unlock_file(file: &fs::File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    // SAFETY: `file` owns a valid descriptor for the duration of this call.
+    let result = unsafe { nix::libc::flock(file.as_raw_fd(), nix::libc::LOCK_UN) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(unix))]
+fn unlock_file(_file: &fs::File) -> std::io::Result<()> {
+    Ok(())
 }
 
 impl GbrainOutbox {
@@ -516,7 +552,7 @@ impl GbrainOutbox {
         self.ensure_dir()?;
         let path = self.dir.join(".lock");
         let file = secure_open_lock(&path)?;
-        file.lock()?;
+        lock_file(&file)?;
         Ok(OutboxLock { file })
     }
 
