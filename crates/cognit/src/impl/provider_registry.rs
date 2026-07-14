@@ -130,6 +130,19 @@ impl ProviderRegistry {
         Ok((provider, spec.to_string()))
     }
 
+    /// Resolve a configured role route without silently treating an unknown
+    /// alias as a model on the default provider.
+    pub fn resolve_role_alias(&self, spec: &str) -> anyhow::Result<(ProviderConfig, String)> {
+        let spec = spec.trim();
+        if spec.is_empty() {
+            anyhow::bail!("role runtime model alias must not be empty");
+        }
+        if spec.contains('/') || self.aliases.contains_key(spec) {
+            return self.resolve(spec);
+        }
+        anyhow::bail!("model alias '{}' not found", spec)
+    }
+
     /// Create an LlmProvider from config.
     pub fn create_provider(&self, config: &ProviderConfig, model: &str) -> Box<dyn LlmProvider> {
         let api_key = self.resolve_api_key(config);

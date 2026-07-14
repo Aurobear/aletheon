@@ -20,6 +20,7 @@ use super::RequestHandler;
 use crate::core::config::ExecutiveConfig;
 use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
+use crate::core::sub_agent::SubAgentSpawner;
 use crate::session::store::SessionStore;
 use cognit::core::reflector::Reflector;
 use cognit::r#impl::provider_registry::ProviderRegistry;
@@ -72,6 +73,73 @@ use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
+pub(crate) fn register_goal_runtimes(
+    spawner: &mut SubAgentSpawner,
+    config: &cognit::config::GoalRuntimeConfig,
+    providers: &ProviderRegistry,
+    tools: Arc<Mutex<ToolRegistry>>,
+    clock: Arc<dyn Clock>,
+) -> anyhow::Result<Vec<fabric::RuntimeId>> {
+    if !config.enabled {
+        return Ok(Vec::new());
+    }
+    let worker = config
+        .worker
+        .as_ref()
+        .context("goal runtime is enabled but worker routing is missing")?;
+    let reviewer = config
+        .reviewer
+        .as_ref()
+        .context("goal runtime is enabled but reviewer routing is missing")?;
+    if worker.runtime_id == reviewer.runtime_id {
+        anyhow::bail!("worker and reviewer runtime IDs must be distinct");
+    }
+
+    let routes = [
+        (worker, fabric::CognitiveRole::Worker),
+        (reviewer, fabric::CognitiveRole::Reviewer),
+    ];
+    let mut prepared = Vec::with_capacity(routes.len());
+    for (route, role) in routes {
+        if route.runtime_id.trim().is_empty() {
+            anyhow::bail!("goal runtime ID must not be empty");
+        }
+        let (provider_config, model) =
+            providers
+                .resolve_role_alias(&route.model_alias)
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "resolving runtime '{}': {}: {error}",
+                        route.runtime_id,
+                        route.model_alias
+                    )
+                })?;
+        let provider: Arc<dyn LlmProvider> =
+            Arc::from(providers.create_provider(&provider_config, &model));
+        let runtime_id = fabric::RuntimeId(route.runtime_id.clone());
+        let runtime = Arc::new(ProviderWorkerRuntime::new(
+            runtime_id.clone(),
+            role,
+            provider,
+            tools.clone(),
+            clock.clone(),
+            route.max_steps,
+            route.max_persisted_bytes,
+            route.allowed_tools.clone(),
+        ));
+        prepared.push((runtime_id, runtime));
+    }
+
+    let mut registered = Vec::with_capacity(prepared.len());
+    for (runtime_id, runtime) in prepared {
+        spawner
+            .runtime_registry_mut()
+            .register(runtime_id.clone(), runtime)?;
+        registered.push(runtime_id);
+    }
+    Ok(registered)
+}
+
 impl RequestHandler {
     /// Get a reference to the debug handler (for subscriber rx access).
     pub fn debug_handler(&self) -> &Arc<DebugHandler> {
@@ -104,6 +172,7 @@ impl RequestHandler {
         config: &DaemonConfig,
         registry: &ProviderRegistry,
         model_routing: crate::core::config::ModelRoutingConfig,
+        goal_runtime: cognit::config::GoalRuntimeConfig,
         evolution_enabled: bool,
         event_bus: Option<Arc<CommunicationBus>>,
         cancel_token: CancellationToken,
@@ -579,6 +648,22 @@ impl RequestHandler {
                 .with_runtime(sub_agent_runtime);
         }
 
+        // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
+        // Missing routes fail startup only when Goal execution is enabled.
+        {
+            let mut runtime = subsystems.runtime.lock().await;
+            let registered = register_goal_runtimes(
+                runtime.sub_agent_spawner_mut(),
+                &goal_runtime,
+                registry,
+                subsystems.corpus.tools.clone(),
+                clock.clone(),
+            )?;
+            if !registered.is_empty() {
+                info!(runtime_ids = ?registered, "Goal runtimes registered");
+            }
+        }
+
         // Repoint the sub-agent spawner at the shared kernel tables so
         // sub-agents register in the same ProcessTable/OperationTable as the
         // main agent (Phase 2c: enables fork-on-spawn for process parents).
@@ -1034,5 +1119,125 @@ impl RequestHandler {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod goal_runtime_tests {
+    use super::*;
+    use cognit::config::{
+        AppConfig, GoalRuntimeConfig, ProviderConfig, RoleRuntimeConfig, Transport,
+    };
+
+    fn provider(name: &str) -> ProviderConfig {
+        ProviderConfig {
+            name: name.into(),
+            base_url: "http://127.0.0.1:1".into(),
+            api_key: String::new(),
+            transport: Transport::Openai,
+            models: vec!["model".into()],
+            max_context_length: None,
+            pricing: None,
+        }
+    }
+
+    fn route(runtime_id: &str, model_alias: &str) -> RoleRuntimeConfig {
+        RoleRuntimeConfig {
+            runtime_id: runtime_id.into(),
+            model_alias: model_alias.into(),
+            max_steps: 2,
+            max_persisted_bytes: 1024,
+            allowed_tools: vec![],
+        }
+    }
+
+    fn register(
+        config: GoalRuntimeConfig,
+        app: AppConfig,
+    ) -> anyhow::Result<(SubAgentSpawner, Vec<fabric::RuntimeId>)> {
+        let providers = ProviderRegistry::from_config(&app)?;
+        let mut spawner = SubAgentSpawner::new();
+        let ids = register_goal_runtimes(
+            &mut spawner,
+            &config,
+            &providers,
+            Arc::new(Mutex::new(ToolRegistry::new())),
+            Arc::new(SystemClock::new()),
+        )?;
+        Ok((spawner, ids))
+    }
+
+    #[test]
+    fn disabled_goal_runtime_registers_nothing() {
+        let mut app = AppConfig::default();
+        app.providers.push(provider("p"));
+        let (spawner, ids) = register(GoalRuntimeConfig::default(), app).unwrap();
+        assert!(ids.is_empty());
+        assert!(!spawner
+            .runtime_registry()
+            .contains(&fabric::RuntimeId("deepseek-worker".into())));
+    }
+
+    #[test]
+    fn enabled_goal_runtime_rejects_missing_route_and_unknown_alias() {
+        let mut app = AppConfig::default();
+        app.providers.push(provider("p"));
+        let missing = GoalRuntimeConfig {
+            enabled: true,
+            worker: Some(route("deepseek-worker", "p/model")),
+            reviewer: None,
+        };
+        assert!(register(missing, app.clone())
+            .unwrap_err()
+            .to_string()
+            .contains("reviewer routing is missing"));
+
+        let unknown = GoalRuntimeConfig {
+            enabled: true,
+            worker: Some(route("deepseek-worker", "unknown-alias")),
+            reviewer: Some(route("escalation-reviewer", "p/model")),
+        };
+        assert!(register(unknown, app)
+            .unwrap_err()
+            .to_string()
+            .contains("model alias 'unknown-alias' not found"));
+    }
+
+    #[test]
+    fn same_provider_can_back_distinct_runtime_ids() {
+        let mut app = AppConfig::default();
+        app.providers.push(provider("shared"));
+        let config = GoalRuntimeConfig {
+            enabled: true,
+            worker: Some(route("deepseek-worker", "shared/worker-model")),
+            reviewer: Some(route("escalation-reviewer", "shared/reviewer-model")),
+        };
+        let (spawner, ids) = register(config, app).unwrap();
+        assert_eq!(ids.len(), 2);
+        for id in ids {
+            assert!(spawner.runtime_registry().contains(&id));
+        }
+    }
+
+    #[test]
+    fn distinct_providers_register_worker_and_reviewer() {
+        let mut app = AppConfig::default();
+        app.providers.push(provider("worker-provider"));
+        app.providers.push(provider("review-provider"));
+        let config = GoalRuntimeConfig {
+            enabled: true,
+            worker: Some(route("deepseek-worker", "worker-provider/model")),
+            reviewer: Some(route("escalation-reviewer", "review-provider/model")),
+        };
+        let (spawner, ids) = register(config, app).unwrap();
+        assert_eq!(
+            ids,
+            vec![
+                fabric::RuntimeId("deepseek-worker".into()),
+                fabric::RuntimeId("escalation-reviewer".into())
+            ]
+        );
+        assert!(spawner.runtime_registry().contains(&ids[0]));
+        assert!(spawner.runtime_registry().contains(&ids[1]));
     }
 }
