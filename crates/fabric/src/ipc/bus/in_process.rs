@@ -396,17 +396,6 @@ impl Transport for InProcessTransport {
     }
 }
 
-/// Fallback monotonic time source when no clock is attached.
-/// Uses process-local [`std::time::Instant`] relative to first call.
-fn mono_now_fallback() -> crate::MonoTime {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    let elapsed = START
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_millis() as u64;
-    crate::MonoTime(elapsed)
-}
-
 /// Owned adapter to implement Event trait for Envelope (for event log recording).
 struct OwnedEnvelopeEventAdapter {
     id: u64,
