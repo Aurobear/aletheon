@@ -2,15 +2,15 @@
 
 **Date:** 2026-07-14
 
-**Status:** Approved design
+**Status:** Draft — Conditional on R0 audit
 
-**Scope:** Reliability work remaining after the agent/Google M0-M9 program lands
+**Scope:** Candidate reliability work to reassess after the agent/Google M0-M9 program stabilizes
 
 ## 1. Context and objective
 
 The agent/Google program defines a restart-safe vertical slice whose durable domain state lives in SQLite while live execution continues through `TurnPipeline`, `ProcessTable`, `OperationTable`, admission, approval, and memory interfaces (`docs/plans/2026-07-14-agent-google-plan.md:5-9`). It also requires transactional migrations and optimistic versions (`docs/plans/2026-07-14-agent-google-plan.md:58-69`) plus atomic result/outbox, inbox-completion, and cursor persistence (`docs/plans/2026-07-14-agent-google-plan.md:97-110`).
 
-This design treats the completed M0-M9 implementation as its baseline. It does not duplicate that program. Its objective is to make the resulting runtime predictably recoverable across daemon crashes, ambiguous tool outcomes, delivery failures, cancellation, deadlines, and bounded shutdown.
+This draft targets the future, stabilized M0-M9 implementation as its baseline. The current branch is still changing and does not yet satisfy that premise. R0 must audit the stable code, resolve the architecture blockers in this document, and produce a revised design for approval before any reliability implementation plan is written.
 
 The design borrows reliability principles from Codex—bounded inputs, explicit persistence and recovery contracts, small public APIs, integration-test-first validation, and focused modules—without copying Codex's product-specific crate topology.
 
@@ -38,6 +38,23 @@ The design borrows reliability principles from Codex—bounded inputs, explicit 
 ## 3. Architectural constraints
 
 The existing plan makes daemon execution use `TurnPipeline` and keeps generic process state separate (`docs/plans/2026-07-14-agent-google-plan.md:40-55`). Goal execution is bounded: one `tick()` advances a bounded amount of work, and an unbounded model loop is forbidden (`docs/arch/agent-google/04_GOAL_RUNTIME_ARCHITECTURE.md:83-124`). Reliability hardening must preserve both properties.
+
+### 3.0 Current spec-to-code differences
+
+The following table records the current branch as observed on 2026-07-15. These are audit inputs, not implementation requirements, because the branch remains in active development.
+
+| Draft description | Current code reality | Agree? |
+|---|---|---|
+| M0-M9 is the completed baseline (`docs/plans/2026-07-14-runtime-reliability-design.md:7-13` before this revision) | Goal chat still reports that creation is unavailable (`crates/executive/src/impl/channel/router.rs:394-411`) | No |
+| Result, domain transition, inbox, outbox, and audit may share one SQLite transaction (`docs/plans/2026-07-14-runtime-reliability-design.md:75-77` before this revision) | Channel state uses a dedicated `channels.db` (`crates/executive/src/impl/channel/store.rs:12-18`) while Goal state uses `objectives.db` (`crates/executive/src/impl/daemon/handler/init.rs:254-257`) | No |
+| Every claimable record has owner, generation, lease, heartbeat, and version (`docs/plans/2026-07-14-runtime-reliability-design.md:102-110` before this revision) | `channel_inbox` has status and attempt count but none of those ownership fields (`crates/executive/src/impl/channel/store.rs:50-64`) | No |
+| Tool registration declares replay policy (`docs/plans/2026-07-14-runtime-reliability-design.md:133-140` before this revision) | Model-visible `ToolDefinition` contains only name, description, and input schema (`crates/fabric/src/types/llm_types.rs:12-18`) | No |
+| Tool execution persists Prepared, Dispatched, Observed, and Committed (`docs/plans/2026-07-14-runtime-reliability-design.md:120-131` before this revision) | `OperationTable` is an in-memory `HashMap` (`crates/kernel/src/operation/table.rs:16-35`) and `OperationState` has no recovery phase (`crates/fabric/src/types/operation.rs:50-94`) | No |
+| A stale lease generation cannot commit (`docs/plans/2026-07-14-runtime-reliability-design.md:110-115` before this revision) | Startup recovery changes Running Goals to Ready without an owner-generation predicate (`crates/executive/src/impl/goal/store.rs:244-285`) | No |
+| Outbox delivery has bounded retry and dead-letter behavior (`docs/plans/2026-07-14-runtime-reliability-design.md:79-81,142-145` before this revision) | Outbox selection continuously includes pending and failed rows, without a next-attempt or dead-letter condition (`crates/executive/src/impl/channel/store.rs:280-300`) | Partial |
+| Health represents Ready, Degraded, Draining, and Unhealthy (`docs/plans/2026-07-14-runtime-reliability-design.md:178-191` before this revision) | Health currently reports a fixed `status: ok` plus counters (`crates/executive/src/impl/daemon/handler/rpc/rpc_health.rs:93-115`) | No |
+
+R0 must regenerate this table from the stable branch. Line numbers and facts in this snapshot must not be reused without re-reading the code.
 
 ```text
 Telegram / CLI / future channels
@@ -74,7 +91,7 @@ Recovery orchestration belongs in `executive`, because it coordinates persistent
 
 ### 3.3 Durable Commit Boundary
 
-Where the final M0-M9 schema permits it, business result/error persistence, domain transition, inbox completion, outbox insertion, and a compact recovery audit record commit in one SQLite transaction. Repository APIs must expose the operation as a single semantic action rather than relying on callers to order several independent writes.
+The desired guarantee is one atomic local commit where all participating state shares a database. The current split between channel and Goal databases makes a cross-domain transaction impossible without changing the persistence topology. R0 must choose the atomicity model in section 9.1 before repository APIs are designed.
 
 ### 3.4 Delivery Dispatcher
 
@@ -82,7 +99,7 @@ External delivery happens only after the local commit. Delivery failure retries 
 
 ## 4. Work state and ownership
 
-Reliability state wraps durable work and does not replace `GoalState`, `ProcessState`, `OperationState`, or channel domain state.
+The following work state is a candidate model, not yet an approved schema. R0 must first identify the authoritative durable aggregate and prove that this model will not become a fifth competing business state machine.
 
 ```text
 Pending
@@ -99,7 +116,7 @@ Recoverable
    +---- inconsistent ------> Quarantined
 ```
 
-Every claimable record carries:
+If R0 approves lease-based durable claiming, every claimable record will carry:
 
 - `owner_instance_id`;
 - monotonically changing `lease_generation`;
@@ -119,7 +136,7 @@ The guarantees are:
 
 ## 5. Tool execution recovery
 
-Tool execution crosses the database boundary and therefore records four phases:
+The candidate tool recovery protocol records four phases across the database boundary:
 
 ```text
 Prepared -> Dispatched -> Observed -> Committed
@@ -130,7 +147,7 @@ Prepared -> Dispatched -> Observed -> Committed
 - `Observed`: an outcome exists; resume the local commit without calling the tool again.
 - `Committed`: no further execution occurs.
 
-Tool registration declares one reliability policy:
+The approved implementation must associate each executable tool with one reliability policy, but R0 must decide the metadata API and registration owner before this becomes an implementation requirement:
 
 - `ReadOnly`: automatic replay is allowed.
 - `Idempotent { key_scope }`: replay is allowed with a stable idempotency key.
@@ -190,7 +207,92 @@ Daemon health states are:
 
 Channel reachability alone does not establish readiness. Database write capability and a functioning recovery coordinator are required.
 
-## 9. Multi-round validation
+## 9. R0 architecture decisions
+
+R0 is a read-only audit and architecture decision gate. It starts only after the current implementation work is stable. It must resolve all four sections below, revise this draft, and obtain approval before any R1-R5 plan or production code is created.
+
+### 9.1 Persistence topology and atomicity
+
+R0 must trace every channel, Turn, Goal, attempt, result, and outbox write and select exactly one model:
+
+1. one database and connection for participating aggregates;
+2. SQLite `ATTACH` with documented deployment, locking, backup, and recovery constraints;
+3. separate databases coordinated through a durable saga/intent log and reconciliation.
+
+The audit must define the atomic local boundary, the consistency guarantee across databases, the authoritative recovery record, crash windows, compensation behavior, and migration path. Saga/intent log is the current preference because it preserves repository ownership, but it is not approved until the stable write paths are audited.
+
+### 9.2 Durable work, attempt, and side-effect schema
+
+R0 must map the identity and authority relationships among Turn, Goal, Process, Operation, channel state, and any reliability records. The candidate relationship is:
+
+```text
+Turn or Goal (business authority)
+  `-- Work (durable scheduling/recovery authority)
+       `-- Attempt (lease generation and execution outcome)
+            `-- SideEffect (tool or delivery uncertainty)
+```
+
+The audit must decide:
+
+- what `work_id` identifies and whether every Turn has a stable durable ID;
+- whether a Goal owns one Work or multiple Works over its lifecycle;
+- how attempts relate to kernel `ProcessTable` and the in-memory `OperationTable`;
+- which record is authoritative for each restart decision;
+- how illegal cross-state combinations are detected and reconciled;
+- which records are historical journals versus mutable state.
+
+No reliability wrapper may duplicate a business completion state already owned by Turn or Goal.
+
+### 9.3 Tool reliability metadata contract
+
+R0 must enumerate native, MCP, plugin, deferred, and legacy tool registration paths before selecting the public API. Candidate placements are a Tool trait contract, a `ToolRegistry` sidecar, or an admission-policy registry. A sidecar is currently preferred so model-visible `ToolDefinition` remains separate from execution policy, but it is not approved.
+
+The revised design must specify:
+
+- the metadata type and registry owner;
+- registration and validation for native, MCP, and plugin tools;
+- stable idempotency-key propagation;
+- legacy and dynamically discovered tool behavior;
+- fail-closed handling for missing metadata;
+- authorization and idempotency for approve, reject, and compensate actions.
+
+Until approved, an implementation must not add reliability fields to `ToolDefinition` or choose another public API opportunistically.
+
+### 9.4 Lifecycle supervisor and health contract
+
+Current lifecycle ownership is distributed: the host spawns MCP, runs the Unix server, cancels turns, and separately stops the pulse (`crates/executive/src/host/mod.rs:159-207`), while each Unix connection is drained with its own timeout (`crates/executive/src/impl/daemon/server.rs:106-135`). R0 must decide whether one `RuntimeSupervisor` owns:
+
+```text
+RuntimeSupervisor
+  |-- intake cancellation
+  |-- claim loop
+  |-- active attempts
+  |-- delivery dispatcher
+  |-- MCP server
+  |-- health state
+  `-- one global shutdown deadline
+```
+
+The revised design must define task registration, cancellation ordering, one global deadline, forced-abort semantics, state persistence before abort, and health/readiness ownership. The supervisor may coordinate lifecycle but must not absorb subsystem business logic.
+
+### 9.5 Quantitative contract register
+
+R0 must derive or propose explicit, testable values for each item below. No placeholder value may pass the next approval gate:
+
+- lease TTL and heartbeat interval;
+- startup recovery batch size;
+- maximum attempts, initial backoff, multiplier, jitter rule, and backoff cap;
+- one global shutdown deadline and its allocation policy;
+- soak duration, restart count, concurrency, and invariant checks;
+- dead-letter threshold, retention, inspection, and idempotent requeue behavior;
+- stale-generation updates returning `affected_rows == 0`;
+- persisted distinction between user and shutdown cancellation;
+- provider message ID and idempotency-key storage requirements;
+- readiness response schema, transport status mapping, and degraded behavior;
+- SQLite busy timeout, WAL checkpoint policy, and disk-full test method;
+- authorization and duplicate-action behavior for approve, reject, and compensate.
+
+## 10. Multi-round validation
 
 ### Round 1: post-M0-M9 architecture audit
 
@@ -251,18 +353,20 @@ Run, in order:
 
 Failures are classified as implementation, timing/test-harness, or contract failures. Increasing retry counts is not an acceptable substitute for diagnosis.
 
-## 10. Delivery stages
+## 11. Delivery stages
 
-1. **R0 — Baseline audit and invariant tests.** Verify the completed M0-M9 code and lock down current behavior.
+1. **R0 — Architecture decision gate.** After the branch stabilizes, re-audit actual M0-M9 code, resolve sections 9.1-9.5, revise this design, and obtain approval. R0 is not a production implementation stage.
 2. **R1 — Claiming, leases, and recovery coordination.** Add durable ownership with version-checked takeover.
 3. **R2 — Tool recovery semantics.** Add execution phases and explicit replay policies.
 4. **R3 — Outbox and shutdown hardening.** Separate delivery retry and enforce ordered draining.
 5. **R4 — Fault injection, end-to-end, and soak validation.** Exercise restart boundaries and concurrency.
 6. **R5 — Operations documentation and final architecture review.** Record invariants, recovery procedures, and remaining risks.
 
-Each stage must be independently reviewable and validated. It must not be mixed into the stage commits used to land M0-M9.
+No R1-R5 implementation plan may be written before the revised design passes the post-R0 approval gate. After approval, each implementation stage must be independently reviewable and validated and must not be mixed into the stage commits used to land M0-M9.
 
-## 11. Acceptance criteria
+## 12. Provisional acceptance criteria
+
+These criteria express desired reliability outcomes. They are not implementation-ready until R0 supplies the topology, schema, APIs, and quantitative values required to test them.
 
 - A crash at every identified persistence or side-effect boundary has a deterministic recovery outcome.
 - Duplicate inbound messages do not duplicate Turn/Goal creation or committed results.
@@ -275,13 +379,23 @@ Each stage must be independently reviewable and validated. It must not be mixed 
 - All five validation rounds pass, including repeated-restart soak invariants.
 - The final implementation preserves existing crate direction and uses the established Turn and Goal execution paths.
 
-## 12. Assumptions to verify before implementation
+## 13. R0 entry and exit criteria
 
-These are deliberate assumptions because tonight's M0-M9 implementation is still changing:
+R0 may start only when the owner declares the current M0-M9 implementation stable enough to audit and the working tree/target commits forming the baseline are identified.
+
+R0 must verify these current assumptions against that baseline:
 
 - The final channel repository exposes an atomic result/inbox/outbox commit operation.
 - The final Goal repository retains optimistic versions and a query for non-terminal work.
 - Tool invocations have stable operation identifiers that can carry recovery metadata.
 - The daemon has a single lifecycle boundary where intake, workers, delivery, and shutdown can be ordered.
 
-R0 must verify each assumption against final code. A failed assumption changes the implementation plan, not the reliability guarantees in this design.
+R0 exits only when it has:
+
+- regenerated the spec-to-code difference table with fresh anchors;
+- resolved sections 9.1-9.5 with code evidence;
+- revised architecture, schemas, contracts, and provisional acceptance criteria;
+- removed all undecided implementation-facing choices;
+- received explicit design approval.
+
+A failed assumption may change this design and its guarantees. Until R0 exits, this document must not be used to produce an R1-R5 implementation plan.
