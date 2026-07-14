@@ -128,6 +128,8 @@ mod tests {
             worktree: temp.path().canonicalize().unwrap(),
             base_commit: "0123456789abcdef".into(),
             changed_files: vec![],
+            allowed_paths: vec!["src".into()],
+            forbidden_paths: vec![".git".into()],
             capability_audit: CapabilityAuditSummary {
                 audit_present: true,
                 observed_capabilities: vec![],
