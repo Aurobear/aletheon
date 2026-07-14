@@ -7,6 +7,7 @@ use super::budget::{GoalBudgetError, GoalBudgetRequest};
 use super::transition::GoalTransitionError;
 use super::{GoalAttempt, GoalFrame, ObjectiveStore, RetryDecision, RetryPolicy};
 use crate::core::runtime_registry::RuntimeRegistry;
+use crate::r#impl::approval::{ApprovalCreate, ApprovalRepository};
 use crate::r#impl::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
 use crate::service::verification::{
     CapabilityAuditSummary, VerificationContext, VerificationSelection, VerificationService,
@@ -14,10 +15,12 @@ use crate::service::verification::{
 use async_trait::async_trait;
 use base64::Engine;
 use fabric::{
-    AttemptId, AttemptUsage, Clock, CodingJobReport, CognitiveRole, FailureClass, GoalBudgetUsage,
-    GoalId, GoalSnapshot, GoalState, GoalWaitReason, RuntimeFailure, RuntimeId, RuntimeResult,
-    VerificationReport,
+    ApprovalArtifactRef, ApprovalCategory, ApprovalRisk, ApprovalSubject, AttemptId, AttemptUsage,
+    Clock, CodingJobReport, CognitiveRole, FailureClass, GoalBudgetUsage, GoalId, GoalSnapshot,
+    GoalState, GoalWaitReason, RuntimeFailure, RuntimeId, RuntimeResult, VerificationReport,
 };
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -120,6 +123,7 @@ impl CodingVerifier for VerificationService {
 struct CodingVerification {
     verifier: Arc<dyn CodingVerifier>,
     worktree_base: PathBuf,
+    approvals: Option<Arc<Mutex<ApprovalRepository>>>,
 }
 
 /// Production executor backed by the configured RuntimeRegistry.
@@ -200,7 +204,21 @@ impl AttemptCoordinator {
         self.coding_verification = Some(CodingVerification {
             verifier,
             worktree_base: base,
+            approvals: None,
         });
+        Ok(self)
+    }
+
+    pub fn with_approval_repository(
+        mut self,
+        approvals: Arc<Mutex<ApprovalRepository>>,
+    ) -> Result<Self, AttemptCoordinatorError> {
+        let coding = self.coding_verification.as_mut().ok_or_else(|| {
+            AttemptCoordinatorError::Persistence(
+                "coding verification must be configured before approvals".into(),
+            )
+        })?;
+        coding.approvals = Some(approvals);
         Ok(self)
     }
 
@@ -452,7 +470,13 @@ impl AttemptCoordinator {
         if let Some(verification) = verification {
             if goal.state == GoalState::Running {
                 return self
-                    .outcome_for_verification(request, attempt, verification.report)
+                    .outcome_for_verification(
+                        request,
+                        pi_request,
+                        &persisted,
+                        attempt,
+                        verification.report,
+                    )
                     .map(Some);
             }
             return Ok(Some(AttemptCoordinationOutcome::Succeeded {
@@ -471,7 +495,8 @@ impl AttemptCoordinator {
                     .map(Some)
             }
         };
-        let outcome = self.outcome_for_verification(request, attempt, report)?;
+        let outcome =
+            self.outcome_for_verification(request, pi_request, &persisted, attempt, report)?;
         Ok(Some(outcome))
     }
 
@@ -536,7 +561,7 @@ impl AttemptCoordinator {
                 )
             }
         };
-        self.outcome_for_verification(request, attempt, report)
+        self.outcome_for_verification(request, pi_request, &persisted, attempt, report)
     }
 
     async fn run_and_persist_verification(
@@ -579,6 +604,8 @@ impl AttemptCoordinator {
     fn outcome_for_verification(
         &self,
         request: &AttemptRequest,
+        pi_request: &PiAttemptRequest,
+        persisted: &super::PersistedCodingJob,
         attempt: GoalAttempt,
         report: VerificationReport,
     ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
@@ -602,6 +629,34 @@ impl AttemptCoordinator {
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
         };
         if report.passed {
+            if let Some(approvals) = self
+                .coding_verification
+                .as_ref()
+                .and_then(|coding| coding.approvals.as_ref())
+            {
+                let approval = create_apply_approval(
+                    approvals,
+                    pi_request,
+                    persisted,
+                    &report,
+                    self.clock.wall_now().0,
+                )?;
+                let goal = self.transition_after(
+                    request.goal_id,
+                    GoalState::AwaitingHuman,
+                    Some(GoalWaitReason::HumanInput {
+                        prompt: format!("approval:{}", approval.id),
+                    }),
+                    serde_json::json!({
+                        "action": "coding_approval_requested",
+                        "attempt_id": attempt.id.0,
+                        "job_id": report.job_id.0,
+                        "approval_id": approval.id.0,
+                        "subject_hash": approval.subject_hash,
+                    }),
+                )?;
+                return Ok(AttemptCoordinationOutcome::Succeeded { attempt, goal });
+            }
             let goal = self.transition_after(
                 request.goal_id,
                 GoalState::Blocked,
@@ -849,4 +904,59 @@ fn resolve_worktree(base: &Path, relative: &Path) -> Result<PathBuf, String> {
         return Err("managed worktree escapes configured base".into());
     }
     Ok(path)
+}
+
+fn create_apply_approval(
+    approvals: &Arc<Mutex<ApprovalRepository>>,
+    pi_request: &PiAttemptRequest,
+    persisted: &super::PersistedCodingJob,
+    verification: &VerificationReport,
+    now_ms: i64,
+) -> Result<fabric::ApprovalSnapshot, AttemptCoordinatorError> {
+    if !verification.passed
+        || verification.job_id != persisted.report.job_id
+        || verification.goal_id != persisted.report.goal_id
+        || verification.attempt_id != persisted.report.attempt_id
+    {
+        return Err(AttemptCoordinatorError::Persistence(
+            "unverified or mismatched coding result cannot request approval".into(),
+        ));
+    }
+    let verification_json = serde_json::to_vec(verification)
+        .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
+    let verification_sha256 = format!("{:x}", Sha256::digest(verification_json));
+    let subject = ApprovalSubject {
+        category: ApprovalCategory::ApplyCode,
+        goal_id: persisted.report.goal_id,
+        attempt_id: Some(persisted.report.attempt_id),
+        job_id: Some(persisted.report.job_id),
+        attributes: BTreeMap::from([
+            ("base_commit".into(), persisted.report.base_commit.clone()),
+            ("diff_sha256".into(), persisted.diff_sha256.clone()),
+            ("verification_sha256".into(), verification_sha256),
+        ]),
+        allowed_scope: pi_request.job.workspace.allowed_paths().to_vec(),
+        apply_target: Some(PathBuf::from(".")),
+    };
+    let approval = approvals
+        .lock()
+        .unwrap()
+        .create(ApprovalCreate {
+            subject,
+            risk: ApprovalRisk::High,
+            summary: format!(
+                "Apply verified coding diff for Goal {} ({} changed files)",
+                persisted.report.goal_id.0,
+                persisted.report.changed_files.len()
+            ),
+            artifacts: vec![ApprovalArtifactRef {
+                kind: "diff".into(),
+                relative_path: persisted.diff_artifact_ref.clone(),
+                sha256: persisted.diff_sha256.clone(),
+            }],
+            created_at_ms: now_ms,
+            expires_at_ms: now_ms.saturating_add(24 * 60 * 60 * 1_000),
+        })
+        .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
+    Ok(approval)
 }
