@@ -7,8 +7,11 @@ use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::r#impl::channel::router::ChannelRouter;
+use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::goal::GoalCoordinator;
-use fabric::ConversationId;
+use fabric::channel::{MessageContent, OutboundMessage};
+use fabric::{ConversationId, GoogleEvent};
+use std::path::Path;
 
 #[async_trait]
 pub trait GoogleEventSink: Send + Sync {
@@ -131,10 +134,76 @@ pub trait GoogleMemoryProposalSink: Send + Sync {
     ) -> Result<(), String>;
 }
 
+pub trait GoogleNotificationSink: Send + Sync {
+    fn enqueue(
+        &self,
+        conversation_id: ConversationId,
+        event: &ExternalEventEnvelope,
+    ) -> Result<bool, String>;
+}
+
+struct ChannelRouterNotificationSink {
+    router: Arc<Mutex<ChannelRouter>>,
+}
+
+impl GoogleNotificationSink for ChannelRouterNotificationSink {
+    fn enqueue(
+        &self,
+        conversation_id: ConversationId,
+        event: &ExternalEventEnvelope,
+    ) -> Result<bool, String> {
+        self.router
+            .lock()
+            .unwrap()
+            .enqueue_google_notification(conversation_id, event)
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Production notification sink that persists directly into the shared channel
+/// outbox. It does not need to hold the async Telegram poll-loop router.
+pub struct DurableGoogleNotificationSink {
+    store: Mutex<ChannelStore>,
+}
+
+impl DurableGoogleNotificationSink {
+    pub fn open(path: &Path) -> anyhow::Result<Self> {
+        Ok(Self {
+            store: Mutex::new(ChannelStore::open(path)?),
+        })
+    }
+}
+
+impl GoogleNotificationSink for DurableGoogleNotificationSink {
+    fn enqueue(
+        &self,
+        conversation_id: ConversationId,
+        event: &ExternalEventEnvelope,
+    ) -> Result<bool, String> {
+        let Some(text) = bounded_notification_text(event) else {
+            return Ok(false);
+        };
+        self.store
+            .lock()
+            .unwrap()
+            .enqueue_outbound(
+                "telegram",
+                &OutboundMessage {
+                    conversation_id,
+                    content: MessageContent::Text { text },
+                    actions: Vec::new(),
+                    reply_to: None,
+                    correlation_id: event.id.to_string(),
+                },
+            )
+            .map_err(|error| error.to_string())
+    }
+}
+
 pub struct GoogleEventRouter {
     store: Arc<Mutex<GoogleSyncStore>>,
     goals: Arc<GoalCoordinator>,
-    channels: Arc<Mutex<ChannelRouter>>,
+    notifications: Arc<dyn GoogleNotificationSink>,
     current_tasks: Option<Arc<dyn GoogleCurrentTaskProjection>>,
     memory_proposals: Option<Arc<dyn GoogleMemoryProposalSink>>,
 }
@@ -148,7 +217,21 @@ impl GoogleEventRouter {
         Self {
             store,
             goals,
-            channels,
+            notifications: Arc::new(ChannelRouterNotificationSink { router: channels }),
+            current_tasks: None,
+            memory_proposals: None,
+        }
+    }
+
+    pub fn new_with_notifications(
+        store: Arc<Mutex<GoogleSyncStore>>,
+        goals: Arc<GoalCoordinator>,
+        notifications: Arc<dyn GoogleNotificationSink>,
+    ) -> Self {
+        Self {
+            store,
+            goals,
+            notifications,
             current_tasks: None,
             memory_proposals: None,
         }
@@ -199,11 +282,8 @@ impl GoogleEventSink for GoogleEventRouter {
                 .wake_for_google_event(&subscription.principal_id, event)
                 .map_err(|error| error.to_string())?;
             if let Some(conversation) = subscription.query.telegram_conversation_id {
-                self.channels
-                    .lock()
-                    .unwrap()
-                    .enqueue_google_notification(ConversationId(conversation), event)
-                    .map_err(|error| error.to_string())?;
+                self.notifications
+                    .enqueue(ConversationId(conversation), event)?;
             }
             if let (Some(task_id), Some(sink)) = (
                 subscription.query.current_task_id.as_deref(),
@@ -219,6 +299,22 @@ impl GoogleEventSink for GoogleEventRouter {
         }
         Ok(())
     }
+}
+
+fn bounded_notification_text(event: &ExternalEventEnvelope) -> Option<String> {
+    let summary = match &event.event {
+        GoogleEvent::MailReceived(change) | GoogleEvent::MailUpdated(change) => format!(
+            "Important mail from {}: {}",
+            change.message.from, change.message.subject
+        ),
+        GoogleEvent::CalendarEventCreated(calendar)
+        | GoogleEvent::CalendarEventUpdated(calendar) => {
+            format!("Calendar changed: {}", calendar.summary)
+        }
+        GoogleEvent::CalendarEventDeleted(_) => "Calendar event cancelled".into(),
+        _ => return None,
+    };
+    Some(summary.chars().take(2_000).collect())
 }
 
 fn stream_for(event: &ExternalEventEnvelope) -> super::SyncStream {

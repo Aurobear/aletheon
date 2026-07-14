@@ -901,7 +901,7 @@ impl ChannelRouter {
     /// re-executed because inbox completion and outbox insertion happen
     /// atomically before the send.
     pub async fn flush_pending_outbox(
-        &self,
+        &mut self,
         transport: &dyn ChannelTransport,
         limit: usize,
     ) -> anyhow::Result<usize> {

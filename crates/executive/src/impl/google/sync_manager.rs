@@ -277,6 +277,15 @@ impl GoogleSyncHandle {
         self.cancel.cancel();
     }
 
+    pub fn spawn_supervised<F, Fut>(&mut self, worker: F)
+    where
+        F: FnOnce(CancellationToken) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let cancel = self.cancel.child_token();
+        self.tasks.push(tokio::spawn(worker(cancel)));
+    }
+
     pub async fn shutdown(self) {
         self.cancel.cancel();
         for task in self.tasks {
