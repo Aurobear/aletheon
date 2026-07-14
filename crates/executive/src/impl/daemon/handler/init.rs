@@ -47,6 +47,10 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
 use crate::r#impl::agent_loader::AgentLoader;
+use crate::r#impl::channel::daemon_adapter::DaemonChannelTurnExecutor;
+use crate::r#impl::channel::router::{ChannelRouter, ChannelTransport, ChannelTurnExecutor};
+use crate::r#impl::channel::store::ChannelStore;
+use crate::r#impl::channel::telegram::TelegramTransport;
 use crate::r#impl::goal::ObjectiveStore;
 use aletheon_kernel::supervision::RestartPolicy;
 use corpus::hook::builtin::audit_hook;
@@ -201,6 +205,7 @@ impl RequestHandler {
         // Create session and journal
         let session_id = uuid::Uuid::new_v4().to_string();
         let data_dir = PathBuf::from(&config.data_dir);
+        let data_dir_for_telegram = data_dir.clone();
         std::fs::create_dir_all(&data_dir)
             .with_context(|| format!("creating data dir: {}", data_dir.display()))?;
         let session_store = SessionStore::new(&data_dir)?;
@@ -250,6 +255,34 @@ impl RequestHandler {
         let objective_store = ObjectiveStore::open(&aletheon_dir.join("objectives.db"))
             .context("opening objective store")?;
         let objective_store = Arc::new(Mutex::new(objective_store));
+
+        // M2: Recover persisted goal state — clear stale process links,
+        // map legacy active objectives, preserve suspended/awaiting states.
+        {
+            let store = objective_store.lock().await;
+            match store.recover_goals() {
+                Ok(recovered) if !recovered.is_empty() => {
+                    info!(
+                        count = recovered.len(),
+                        "Recovered persisted goals on start"
+                    );
+                    for g in &recovered {
+                        info!(
+                            goal_id = g.id.0,
+                            state = %g.state,
+                            version = g.version,
+                            "Goal recovered"
+                        );
+                    }
+                }
+                Ok(_) => {
+                    info!("No goals to recover");
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to recover goals on start");
+                }
+            }
+        }
 
         // Resume active objective for session continuity
         let resumed_objective = {
