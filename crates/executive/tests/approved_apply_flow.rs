@@ -469,6 +469,17 @@ async fn rejection_and_revision_transition_without_applying() {
             .state,
         GoalState::Cancelled
     );
+    assert_eq!(
+        std::fs::read_to_string(rejected.repository.join("allowed.txt")).unwrap(),
+        "before\n"
+    );
+    assert!(rejected
+        .approvals
+        .lock()
+        .unwrap()
+        .apply_receipt(rejected.approval_id)
+        .unwrap()
+        .is_none());
 }
 
 fn git(repo: &Path, args: &[&str]) {
