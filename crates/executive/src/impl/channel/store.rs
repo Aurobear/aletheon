@@ -5,7 +5,9 @@
 //! the existing objective database (`objectives.db`).
 
 use anyhow::{Context, Result};
+use fabric::channel::InboundMessage;
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 
 /// SQLite-backed channel store.
 ///
@@ -13,6 +15,13 @@ use rusqlite::Connection;
 /// Ownership mirrors `ObjectiveStore`: the struct holds `rusqlite::Connection`.
 pub struct ChannelStore {
     pub(crate) db: Connection,
+}
+
+/// Outcome of inserting a provider message into the inbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsertOutcome {
+    Inserted,
+    Duplicate,
 }
 
 impl ChannelStore {
@@ -111,11 +120,122 @@ impl ChannelStore {
         )?;
         Ok(count > 0)
     }
+
+    /// Bind an external identity to a principal, idempotent via INSERT OR IGNORE.
+    pub fn bind(&self, channel: &str, external: &str, principal: &str, status: &str) -> Result<()> {
+        self.db.execute(
+            "INSERT OR IGNORE INTO channel_binding (channel_id, external_id, principal_id, status)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![channel, external, principal, status],
+        )?;
+        Ok(())
+    }
+
+    /// Resolve the principal for a channel + external identity, only when status is 'active'.
+    pub fn resolve_principal(&self, channel: &str, external: &str) -> Result<Option<String>> {
+        let mut stmt = self.db.prepare(
+            "SELECT principal_id FROM channel_binding
+             WHERE channel_id = ?1 AND external_id = ?2 AND status = 'active'",
+        )?;
+        let principal: Option<String> = stmt
+            .query_row(rusqlite::params![channel, external], |r| r.get(0))
+            .optional()?;
+        Ok(principal)
+    }
+
+    /// Insert an inbound message. Returns `Inserted` on first insert,
+    /// `Duplicate` when the (channel_id, message_id) pair already exists.
+    pub fn insert_inbound(&mut self, message: &InboundMessage) -> Result<InsertOutcome> {
+        let payload = serde_json::to_string(message).context("serializing inbound message")?;
+        let affected = self.db.execute(
+            "INSERT OR IGNORE INTO channel_inbox
+                (channel_id, message_id, conversation_id, sender_id, payload_json, correlation_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                message.channel_id.0,
+                message.message_id.0,
+                message.conversation_id.0,
+                message.sender_id.0,
+                payload,
+                message.correlation_id,
+            ],
+        )?;
+        if affected == 1 {
+            Ok(InsertOutcome::Inserted)
+        } else {
+            Ok(InsertOutcome::Duplicate)
+        }
+    }
+
+    /// Load an inbound message by channel and message id. Returns `None` if not found.
+    pub fn load_inbound(&self, channel: &str, message_id: &str) -> Result<Option<InboundMessage>> {
+        let mut stmt = self.db.prepare(
+            "SELECT payload_json FROM channel_inbox
+             WHERE channel_id = ?1 AND message_id = ?2",
+        )?;
+        let payload: Option<String> = stmt
+            .query_row(rusqlite::params![channel, message_id], |r| r.get(0))
+            .optional()?;
+        match payload {
+            Some(p) => {
+                let msg: InboundMessage =
+                    serde_json::from_str(&p).context("deserializing inbound message")?;
+                Ok(Some(msg))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Return pending inbound messages for a channel, up to `limit`.
+    pub fn pending_inbound(&self, channel: &str, limit: usize) -> Result<Vec<InboundMessage>> {
+        let mut stmt = self.db.prepare(
+            "SELECT payload_json FROM channel_inbox
+             WHERE channel_id = ?1 AND status = 'pending'
+             ORDER BY created_at ASC
+             LIMIT ?2",
+        )?;
+        let rows: Vec<String> = stmt
+            .query_map(
+                rusqlite::params![channel, limit as i64],
+                |r| r.get(0),
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut msgs = Vec::with_capacity(rows.len());
+        for row in rows {
+            let msg: InboundMessage =
+                serde_json::from_str(&row).context("deserializing pending inbound message")?;
+            msgs.push(msg);
+        }
+        Ok(msgs)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fabric::channel::{ChannelId, ConversationId, ExternalSenderId, MessageContent, MessageId};
+
+    fn test_store() -> (ChannelStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("channels.db");
+        let store = ChannelStore::open(&path).unwrap();
+        (store, dir)
+    }
+
+    fn sample_inbound(message_id: &str, text: &str) -> InboundMessage {
+        InboundMessage {
+            channel_id: ChannelId("telegram".into()),
+            message_id: MessageId(message_id.into()),
+            conversation_id: ConversationId("1001".into()),
+            sender_id: ExternalSenderId("7".into()),
+            content: MessageContent::Text {
+                text: text.into(),
+            },
+            timestamp_ms: 1_720_000_000_000,
+            reply_to_action: None,
+            correlation_id: "corr-1".into(),
+        }
+    }
 
     #[test]
     fn migration_is_idempotent() {
@@ -132,5 +252,50 @@ mod tests {
         ] {
             assert!(store.table_exists(table).unwrap(), "missing {table}");
         }
+    }
+
+    #[test]
+    fn binding_resolves_only_active_principal() {
+        let (store, _dir) = test_store();
+        store.bind("telegram", "7", "owner", "active").unwrap();
+        assert_eq!(
+            store.resolve_principal("telegram", "7").unwrap().as_deref(),
+            Some("owner")
+        );
+        assert_eq!(store.resolve_principal("telegram", "8").unwrap(), None);
+    }
+
+    #[test]
+    fn rebinding_same_external_identity_is_idempotent() {
+        let (store, _dir) = test_store();
+        store.bind("telegram", "7", "owner", "active").unwrap();
+        store.bind("telegram", "7", "owner", "active").unwrap();
+        assert_eq!(
+            store.resolve_principal("telegram", "7").unwrap().as_deref(),
+            Some("owner")
+        );
+    }
+
+    #[test]
+    fn duplicate_provider_message_is_not_inserted_twice() {
+        let (mut store, _dir) = test_store();
+        let first = sample_inbound("42", "first");
+        let second = sample_inbound("42", "changed");
+        assert_eq!(
+            store.insert_inbound(&first).unwrap(),
+            InsertOutcome::Inserted
+        );
+        assert_eq!(
+            store.insert_inbound(&second).unwrap(),
+            InsertOutcome::Duplicate
+        );
+        assert_eq!(
+            store
+                .load_inbound("telegram", "42")
+                .unwrap()
+                .unwrap()
+                .content,
+            first.content
+        );
     }
 }
