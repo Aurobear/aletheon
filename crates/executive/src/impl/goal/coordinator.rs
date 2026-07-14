@@ -6,8 +6,9 @@
 
 use crate::r#impl::goal::budget::GoalBudgetRequest;
 use crate::r#impl::goal::transition::GoalTransitionError;
-use crate::r#impl::goal::ObjectiveStore;
+use crate::r#impl::goal::{AttemptCoordinator, AttemptExecutor, ObjectiveStore, RetryPolicy};
 use fabric::goal::{GoalId, GoalSnapshot, GoalState};
+use fabric::Clock;
 use fabric::ProcessId;
 use std::sync::{Arc, Mutex};
 
@@ -34,6 +35,18 @@ pub struct GoalCoordinator {
 impl GoalCoordinator {
     pub fn new(store: Arc<Mutex<ObjectiveStore>>) -> Self {
         Self { store }
+    }
+
+    /// Build the M3 one-shot attempt coordinator over this Goal store.
+    /// Scheduling remains outside both coordinators, so one tick cannot loop
+    /// into a second provider invocation.
+    pub fn attempt_coordinator(
+        &self,
+        executor: Arc<dyn AttemptExecutor>,
+        clock: Arc<dyn Clock>,
+        retry_policy: RetryPolicy,
+    ) -> AttemptCoordinator {
+        AttemptCoordinator::new(self.store.clone(), executor, clock, retry_policy)
     }
 
     /// Advance a goal by one bounded step.

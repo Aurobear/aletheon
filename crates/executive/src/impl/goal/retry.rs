@@ -209,10 +209,12 @@ mod tests {
         };
         let failure = failure(FailureClass::ProviderTransient, true);
         let delays: Vec<u64> = (1..=4)
-            .map(|count| match policy.decide(CognitiveRole::Worker, count, &failure, None) {
-                RetryDecision::RetrySame { after_ms, .. } => after_ms,
-                other => panic!("unexpected decision: {other:?}"),
-            })
+            .map(
+                |count| match policy.decide(CognitiveRole::Worker, count, &failure, None) {
+                    RetryDecision::RetrySame { after_ms, .. } => after_ms,
+                    other => panic!("unexpected decision: {other:?}"),
+                },
+            )
             .collect();
         assert_eq!(delays, vec![100, 200, 250, 250]);
     }

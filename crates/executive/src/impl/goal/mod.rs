@@ -7,6 +7,7 @@
 //! while keeping legacy Objective CRUD intact.
 
 mod attempt;
+mod attempt_coordinator;
 mod budget;
 pub mod coordinator;
 mod migrations;
@@ -15,6 +16,10 @@ pub(crate) mod store;
 mod transition;
 pub use self::coordinator::{GoalCoordinator, GoalTickOutcome};
 pub use attempt::GoalAttempt;
+pub use attempt_coordinator::{
+    AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
+    AttemptRequest, RegistryAttemptExecutor,
+};
 pub use retry::{RetryDecision, RetryPolicy};
 
 use anyhow::{Context, Result};
