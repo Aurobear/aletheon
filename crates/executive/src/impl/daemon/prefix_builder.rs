@@ -1,5 +1,5 @@
-use crate::CoreMemory;
 use corpus::skill::loader::LoadedSkill;
+use mnemosyne::CoreMemory;
 
 /// Builds a deterministic, cache-stable system prompt prefix.
 ///

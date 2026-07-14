@@ -119,9 +119,9 @@ pub use include::runtime::{
     AgentInfo, AgentStatus, RuntimeOps, ScheduleKind, ScheduledTask, StepResult,
 };
 pub use include::self_field::{
-    AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, AwarenessGrowthSuggestion, Care,
-    Conflict, Identity, Intent, IntentSource, MutationIntent, Resolution, RiskLevel, SelfAwareness,
-    SelfFieldOps, SelfState, Verdict, VerdictAction, VerdictHandler,
+    AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, AwarenessGrowthSuggestion,
+    AwarenessRiskLevel, Care, Conflict, Identity, Intent, IntentSource, MutationIntent, Resolution,
+    SelfAwareness, SelfFieldOps, SelfState, Verdict, VerdictAction, VerdictHandler,
 };
 pub use include::space::SpaceManager;
 pub use include::subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
@@ -137,7 +137,7 @@ pub use types::admission::{
     ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
 pub use types::agent::Pid;
-pub use types::capability::{Capability, CapabilitySet, PermissionLevel};
+pub use types::capability::{Capability, CapabilityLevel, CapabilitySet};
 pub use types::context::{Context, TraceState};
 pub use types::genome::Genome;
 pub use types::hook::{HookContext, HookPoint, HookResult, HookToolResult};

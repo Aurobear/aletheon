@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use fabric::WallTime;
 use serde::{Deserialize, Serialize};
 
 /// Unique event identifier.
@@ -8,7 +8,7 @@ pub type EventId = u64;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerceptionEvent {
     pub id: EventId,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: WallTime,
     pub source: EventSource,
     pub category: EventCategory,
     pub priority: Priority,

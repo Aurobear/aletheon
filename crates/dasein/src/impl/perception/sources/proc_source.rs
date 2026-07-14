@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use fabric::{wall_to_datetime, Clock};
+use fabric::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -42,7 +42,7 @@ impl ProcSource {
     ) -> PerceptionEvent {
         PerceptionEvent {
             id: self.next_id(),
-            timestamp: wall_to_datetime(self.clock.wall_now()),
+            timestamp: self.clock.wall_now(),
             source: EventSource::Proc,
             category,
             priority,

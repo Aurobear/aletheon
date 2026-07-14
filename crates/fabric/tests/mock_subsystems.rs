@@ -193,7 +193,7 @@ impl CognitOps for MockCognitCore {
             id: uuid::Uuid::new_v4(),
             steps: vec![],
             estimated_cost: CostEstimate::default(),
-            risk_level: self_field::RiskLevel::None,
+            risk_level: self_field::AwarenessRiskLevel::None,
             reasoning: "mock".to_string(),
             alternatives: vec![],
         })
@@ -243,20 +243,20 @@ async fn test_capability_set() {
     let caps = CapabilitySet::new()
         .with(Capability::new(
             "shell.execute",
-            PermissionLevel::SandboxWrite,
+            CapabilityLevel::SandboxWrite,
             "Run shell commands",
         ))
         .with(Capability::new(
             "memory.write",
-            PermissionLevel::ReadOnly,
+            CapabilityLevel::ReadOnly,
             "Write memories",
         ));
 
-    assert!(caps.has("shell.execute", PermissionLevel::SandboxWrite));
-    assert!(!caps.has("shell.execute", PermissionLevel::SystemChange));
+    assert!(caps.has("shell.execute", CapabilityLevel::SandboxWrite));
+    assert!(!caps.has("shell.execute", CapabilityLevel::SystemChange));
     assert!(caps.has_capability("memory.write"));
     assert!(!caps.has_capability("self.mutate"));
-    assert_eq!(caps.max_level(), PermissionLevel::SandboxWrite);
+    assert_eq!(caps.max_level(), CapabilityLevel::SandboxWrite);
 }
 
 #[tokio::test]

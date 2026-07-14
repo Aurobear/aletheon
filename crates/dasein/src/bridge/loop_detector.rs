@@ -1,5 +1,5 @@
 use crate::r#impl::security::{LoopDetector, LoopDetectorConfig, LoopVerdict};
-use fabric::self_field::{RiskLevel, Verdict};
+use fabric::self_field::{AwarenessRiskLevel, Verdict};
 use fabric::tool::ToolResult;
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -36,7 +36,7 @@ impl LoopBridge {
             }),
             LoopVerdict::Escalate { reason } => Some(Verdict::RequireConfirmation {
                 reason,
-                risk_level: RiskLevel::Critical,
+                risk_level: AwarenessRiskLevel::Critical,
             }),
             LoopVerdict::InterruptTurn { reason, .. } => Some(Verdict::Deny {
                 reason: format!("Turn interrupted: {}", reason),

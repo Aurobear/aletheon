@@ -92,7 +92,7 @@ impl SessionGateway {
                             } => "session_ended",
                         };
                         json!({
-                            "timestamp": entry.timestamp.to_rfc3339(),
+                            "timestamp": fabric::wall_to_datetime(entry.timestamp).to_rfc3339(),
                             "event_type": event_type_str,
                             "event": entry.event,
                         })

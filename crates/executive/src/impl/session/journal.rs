@@ -5,6 +5,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use fabric::wall_to_datetime;
 use fabric::Clock;
+use fabric::WallTime;
 use serde::{Deserialize, Serialize};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
@@ -67,7 +68,7 @@ pub enum SessionEvent {
 /// A journal entry with metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalEntry {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: WallTime,
     pub session_id: String,
     pub event: SessionEvent,
 }
@@ -163,7 +164,7 @@ impl EventJournal {
                             let _ = db.execute(
                                 "INSERT INTO events (timestamp, session_id, event_type, event_json) VALUES (?1, ?2, ?3, ?4)",
                                 rusqlite::params![
-                                    entry.timestamp.to_rfc3339(),
+                                    wall_to_datetime(entry.timestamp).to_rfc3339(),
                                     entry.session_id,
                                     event_type,
                                     json,
@@ -189,7 +190,7 @@ impl EventJournal {
     /// Append an event to the journal.
     pub async fn append(&self, event: SessionEvent) -> Result<()> {
         let entry = JournalEntry {
-            timestamp: wall_to_datetime(self.clock.wall_now()),
+            timestamp: self.clock.wall_now(),
             session_id: self.session_id.clone(),
             event,
         };

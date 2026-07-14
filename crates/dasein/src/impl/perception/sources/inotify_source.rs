@@ -6,7 +6,7 @@ use aletheon_kernel::chronos::Timer;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use fabric::{wall_to_datetime, Clock};
+use fabric::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -77,7 +77,7 @@ impl InotifySource {
                                     let _ = tx
                                         .send(PerceptionEvent {
                                             id: start_id + last_modified.len() as u64,
-                                            timestamp: wall_to_datetime(clock.wall_now()),
+                                            timestamp: clock.wall_now(),
                                             source: EventSource::Inotify,
                                             category: EventCategory::File,
                                             priority: Priority::Low,
@@ -88,7 +88,7 @@ impl InotifySource {
                                     let _ = tx
                                         .send(PerceptionEvent {
                                             id: start_id + last_modified.len() as u64 + 1000,
-                                            timestamp: wall_to_datetime(clock.wall_now()),
+                                            timestamp: clock.wall_now(),
                                             source: EventSource::Inotify,
                                             category: EventCategory::File,
                                             priority: Priority::Low,

@@ -13,7 +13,7 @@ use dasein::core::identity::IdentityLayer;
 use dasein::core::mutation::MutationLayer;
 use dasein::core::narrative::NarrativeLayer;
 use dasein::core::store::SelfFieldStore;
-use fabric::self_field::RiskLevel;
+use fabric::self_field::AwarenessRiskLevel;
 use fabric::{MutationIntent, Verdict};
 use serde_json::json;
 use std::sync::Arc;
@@ -125,7 +125,7 @@ fn cycle1_boundary_rule_roundtrip() {
         action_pattern: "deploy.*".to_string(),
         source_filter: None,
         action: BoundaryAction::Sandbox,
-        risk_level: RiskLevel::High,
+        risk_level: AwarenessRiskLevel::High,
         description: "sandbox all deploys".to_string(),
         immutable: false,
     });
@@ -133,7 +133,7 @@ fn cycle1_boundary_rule_roundtrip() {
         action_pattern: "rm *".to_string(),
         source_filter: None,
         action: BoundaryAction::Deny,
-        risk_level: RiskLevel::Critical,
+        risk_level: AwarenessRiskLevel::Critical,
         description: "no rm allowed".to_string(),
         immutable: true,
     });
@@ -322,7 +322,7 @@ fn full_e2e_two_cycles() {
         action_pattern: "deploy.*".to_string(),
         source_filter: None,
         action: BoundaryAction::Deny,
-        risk_level: RiskLevel::High,
+        risk_level: AwarenessRiskLevel::High,
         description: "deny deploys".to_string(),
         immutable: false,
     });
@@ -431,7 +431,7 @@ fn full_e2e_two_cycles() {
         action_pattern: "delete_*".to_string(),
         source_filter: None,
         action: BoundaryAction::RequireConfirmation,
-        risk_level: RiskLevel::Medium,
+        risk_level: AwarenessRiskLevel::Medium,
         description: "confirm deletes".to_string(),
         immutable: false,
     });

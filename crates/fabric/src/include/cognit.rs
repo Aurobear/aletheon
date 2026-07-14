@@ -18,7 +18,7 @@ pub struct Plan {
     pub id: uuid::Uuid,
     pub steps: Vec<PlanStep>,
     pub estimated_cost: CostEstimate,
-    pub risk_level: crate::RiskLevel,
+    pub risk_level: crate::AwarenessRiskLevel,
     pub reasoning: String,
     pub alternatives: Vec<Plan>,
 }
@@ -104,6 +104,7 @@ impl std::fmt::Display for ReflectionOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReflectionEntry {
     pub id: String,
+    // TODO: migrate to WallTime (multi-crate construction sites + chrono formatting in summary())
     pub timestamp: DateTime<Utc>,
     pub trigger: ReflectionTrigger,
     pub task_summary: String,
@@ -227,6 +228,7 @@ pub struct BehaviorAdjustment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionLogEntry {
     pub id: String,
+    // TODO: migrate to WallTime (multi-crate construction sites in cognit + mnemosyne)
     pub timestamp: DateTime<Utc>,
     /// What triggered this evolution (e.g., "periodic_review", "threshold_reached").
     pub trigger: String,

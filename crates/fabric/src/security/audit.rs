@@ -1,16 +1,16 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
 use super::risk_classifier::RiskCategory;
+use crate::types::time::WallTime;
 use crate::types::tool::PermissionLevel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditRecord {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: WallTime,
     pub session_id: String,
     pub turn_id: String,
     pub tool_name: String,

@@ -19,7 +19,7 @@ pub mod store;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Duration;
-use fabric::self_field::RiskLevel;
+use fabric::self_field::AwarenessRiskLevel;
 use fabric::{
     Care, Conflict, Context, Identity, Intent, MutationIntent, Resolution, Subsystem,
     SubsystemContext, SubsystemHealth, Verdict, Version,
@@ -428,13 +428,13 @@ impl fabric::SelfFieldOps for SelfField {
             }
         } else if care_score > 0.8 {
             // Fallback: historical inline rule (exact port, line-for-line).
-            if ctx.permissions.max_level() < fabric::PermissionLevel::SystemChange {
+            if ctx.permissions.max_level() < fabric::CapabilityLevel::SystemChange {
                 let verdict = Verdict::RequireConfirmation {
                     reason: format!(
                         "High care relevance ({:.2}) with insufficient permissions for action '{}'",
                         care_score, intent.action
                     ),
-                    risk_level: RiskLevel::Medium,
+                    risk_level: AwarenessRiskLevel::Medium,
                 };
                 self.narrative.record(
                     "permission_check",
@@ -500,7 +500,7 @@ impl fabric::SelfFieldOps for SelfField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::self_field::{ConflictSource, RiskLevel};
+    use fabric::self_field::{AwarenessRiskLevel, ConflictSource};
     use fabric::{IntentSource, SelfFieldOps};
     use serde_json::json;
     use std::path::PathBuf;
@@ -551,7 +551,7 @@ mod tests {
             action_pattern: "purge *".to_string(),
             source_filter: None,
             action: crate::core::boundary::BoundaryAction::Deny,
-            risk_level: RiskLevel::Critical,
+            risk_level: AwarenessRiskLevel::Critical,
             description: "no purge".to_string(),
             immutable: false,
         });
@@ -569,7 +569,7 @@ mod tests {
             action_pattern: "deploy.*".to_string(),
             source_filter: None,
             action: crate::core::boundary::BoundaryAction::Sandbox,
-            risk_level: RiskLevel::High,
+            risk_level: AwarenessRiskLevel::High,
             description: "sandbox deploys".to_string(),
             immutable: false,
         });
@@ -587,7 +587,7 @@ mod tests {
             action_pattern: "write.*".to_string(),
             source_filter: None,
             action: crate::core::boundary::BoundaryAction::RequireConfirmation,
-            risk_level: RiskLevel::Medium,
+            risk_level: AwarenessRiskLevel::Medium,
             description: "confirm writes".to_string(),
             immutable: false,
         });
@@ -688,7 +688,7 @@ mod tests {
         ) -> Option<Verdict> {
             Some(Verdict::RequireConfirmation {
                 reason: format!("stub gate for {action}"),
-                risk_level: RiskLevel::Medium,
+                risk_level: AwarenessRiskLevel::Medium,
             })
         }
     }

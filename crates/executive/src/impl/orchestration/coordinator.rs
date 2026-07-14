@@ -13,7 +13,7 @@
 
 use anyhow::Result;
 use fabric::cognit::Plan;
-use fabric::self_field::{RiskLevel, Verdict};
+use fabric::self_field::{AwarenessRiskLevel, Verdict};
 
 /// The outcome of arbitration — what the Engine should do next.
 #[derive(Debug, Clone)]
@@ -67,11 +67,11 @@ impl Coordinator {
     /// 3. `Verdict::Delay` → `ArbitrationResult::Delay`
     /// 4. `Verdict::RequireConfirmation` → `ArbitrationResult::AskConfirmation`
     /// 5. `Verdict::AllowWithModification` → `ArbitrationResult::Mutate`
-    /// 6. Plan `RiskLevel::Critical` → `ArbitrationResult::SandboxFirst`
-    /// 7. Plan `RiskLevel::High` + past failures → `ArbitrationResult::AskConfirmation`
-    /// 8. Plan `RiskLevel::High` + no failures → `ArbitrationResult::Execute`
-    /// 9. `Verdict::Allow` + `RiskLevel::Medium` → `ArbitrationResult::Execute`
-    /// 10. `Verdict::Allow` + `RiskLevel::Low` or `None` → `ArbitrationResult::Execute`
+    /// 6. Plan `AwarenessRiskLevel::Critical` → `ArbitrationResult::SandboxFirst`
+    /// 7. Plan `AwarenessRiskLevel::High` + past failures → `ArbitrationResult::AskConfirmation`
+    /// 8. Plan `AwarenessRiskLevel::High` + no failures → `ArbitrationResult::Execute`
+    /// 9. `Verdict::Allow` + `AwarenessRiskLevel::Medium` → `ArbitrationResult::Execute`
+    /// 10. `Verdict::Allow` + `AwarenessRiskLevel::Low` or `None` → `ArbitrationResult::Execute`
     ///
     /// Edge cases:
     /// - If past failures exist but user has overridden denials before, skip
@@ -126,7 +126,7 @@ impl Coordinator {
         // From here on, verdict is Allow. Apply risk-based logic on the plan.
 
         // 6. Critical risk — always sandbox first, regardless of history.
-        if plan.risk_level == RiskLevel::Critical {
+        if plan.risk_level == AwarenessRiskLevel::Critical {
             return Ok(ArbitrationResult::SandboxFirst {
                 reason: format!(
                     "Plan risk is Critical — sandbox first (plan: {})",
@@ -136,7 +136,7 @@ impl Coordinator {
         }
 
         // 7. High risk + past failures — ask for confirmation (unless user overrides).
-        if plan.risk_level == RiskLevel::High && memory.similar_action_failures > 0 {
+        if plan.risk_level == AwarenessRiskLevel::High && memory.similar_action_failures > 0 {
             if memory.user_has_overridden {
                 return Ok(ArbitrationResult::Execute);
             }
@@ -158,7 +158,7 @@ mod tests {
     use super::*;
     use fabric::cognit::CostEstimate;
 
-    fn make_plan(risk: RiskLevel, reasoning: &str) -> Plan {
+    fn make_plan(risk: AwarenessRiskLevel, reasoning: &str) -> Plan {
         Plan {
             id: uuid::Uuid::new_v4(),
             steps: vec![],
@@ -174,7 +174,7 @@ mod tests {
         let verdict = Verdict::Deny {
             reason: "unsafe".into(),
         };
-        let plan = make_plan(RiskLevel::None, "low risk plan");
+        let plan = make_plan(AwarenessRiskLevel::None, "low risk plan");
         let mem = MemoryContext::default();
 
         let result = Coordinator::arbitrate(&verdict, &plan, &mem).await.unwrap();
@@ -184,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn critical_risk_sandboxes_even_with_allow() {
         let verdict = Verdict::Allow;
-        let plan = make_plan(RiskLevel::Critical, "dangerous plan");
+        let plan = make_plan(AwarenessRiskLevel::Critical, "dangerous plan");
         let mem = MemoryContext::default();
 
         let result = Coordinator::arbitrate(&verdict, &plan, &mem).await.unwrap();
@@ -194,7 +194,7 @@ mod tests {
     #[tokio::test]
     async fn high_risk_with_failures_asks_confirmation() {
         let verdict = Verdict::Allow;
-        let plan = make_plan(RiskLevel::High, "risky plan");
+        let plan = make_plan(AwarenessRiskLevel::High, "risky plan");
         let mem = MemoryContext {
             similar_action_failures: 2,
             ..Default::default()
@@ -207,7 +207,7 @@ mod tests {
     #[tokio::test]
     async fn high_risk_user_override_skips_confirmation() {
         let verdict = Verdict::Allow;
-        let plan = make_plan(RiskLevel::High, "risky plan");
+        let plan = make_plan(AwarenessRiskLevel::High, "risky plan");
         let mem = MemoryContext {
             similar_action_failures: 3,
             user_has_overridden: true,
@@ -223,7 +223,7 @@ mod tests {
         let verdict = Verdict::AllowWithModification {
             modification: serde_json::json!({"step_0_timeout": 5000}),
         };
-        let plan = make_plan(RiskLevel::Medium, "plan");
+        let plan = make_plan(AwarenessRiskLevel::Medium, "plan");
         let mem = MemoryContext::default();
 
         let result = Coordinator::arbitrate(&verdict, &plan, &mem).await.unwrap();
@@ -233,7 +233,7 @@ mod tests {
     #[tokio::test]
     async fn allow_low_risk_executes() {
         let verdict = Verdict::Allow;
-        let plan = make_plan(RiskLevel::Low, "safe plan");
+        let plan = make_plan(AwarenessRiskLevel::Low, "safe plan");
         let mem = MemoryContext::default();
 
         let result = Coordinator::arbitrate(&verdict, &plan, &mem).await.unwrap();
@@ -246,7 +246,7 @@ mod tests {
             reason: "cooldown".into(),
             until: "2026-06-15T00:00:00Z".into(),
         };
-        let plan = make_plan(RiskLevel::None, "plan");
+        let plan = make_plan(AwarenessRiskLevel::None, "plan");
         let mem = MemoryContext::default();
 
         let result = Coordinator::arbitrate(&verdict, &plan, &mem).await.unwrap();
@@ -257,9 +257,9 @@ mod tests {
     async fn selffield_require_confirmation_propagates() {
         let verdict = Verdict::RequireConfirmation {
             reason: "external API call".into(),
-            risk_level: RiskLevel::Medium,
+            risk_level: AwarenessRiskLevel::Medium,
         };
-        let plan = make_plan(RiskLevel::Medium, "plan");
+        let plan = make_plan(AwarenessRiskLevel::Medium, "plan");
         let mem = MemoryContext::default();
 
         let result = Coordinator::arbitrate(&verdict, &plan, &mem).await.unwrap();

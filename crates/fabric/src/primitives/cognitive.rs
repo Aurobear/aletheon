@@ -3,8 +3,9 @@
 //! Existing types are re-exported from their current homes (no redefinition).
 //! Evidence is now defined in `fabric` for broader access.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+use crate::types::time::WallTime;
 
 // -- Re-exports of existing cognitive objects (single source of truth) --
 pub use crate::include::cognit::{Experience, Observation, Plan};
@@ -49,7 +50,7 @@ pub enum CommitmentStatus {
 pub struct Commitment {
     pub id: String,
     pub statement: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: WallTime,
     pub status: CommitmentStatus,
 }
 

@@ -76,12 +76,12 @@ impl PerceptionSource for MockPerceptionSource {
 mod tests {
     use super::*;
     use crate::r#impl::perception::event::*;
-    use chrono::Utc;
+    use fabric::WallTime;
 
     fn make_test_event(id: u64, msg: &str) -> PerceptionEvent {
         PerceptionEvent {
             id,
-            timestamp: Utc::now(),
+            timestamp: WallTime(0),
             source: EventSource::Proc,
             category: EventCategory::Process,
             priority: Priority::Normal,

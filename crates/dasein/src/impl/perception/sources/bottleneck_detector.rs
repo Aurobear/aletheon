@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tracing::info;
 
-use fabric::{wall_to_datetime, Clock};
+use fabric::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -85,7 +85,7 @@ pub struct BottleneckReport {
     pub current_value: f64,
     pub threshold: f64,
     pub suggestion: UpgradeSuggestion,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub timestamp: fabric::WallTime,
 }
 
 /// System metrics snapshot.
@@ -106,7 +106,7 @@ struct SystemMetrics {
     /// Reserved for future network bottleneck analysis.
     #[allow(dead_code)]
     net_tx_bytes: u64,
-    timestamp: chrono::DateTime<chrono::Utc>,
+    timestamp: fabric::WallTime,
 }
 
 /// Bottleneck detector perception source.
@@ -144,7 +144,7 @@ impl BottleneckDetector {
     ) -> PerceptionEvent {
         PerceptionEvent {
             id: self.next_id(),
-            timestamp: wall_to_datetime(self.clock.wall_now()),
+            timestamp: self.clock.wall_now(),
             source: EventSource::Proc,
             category,
             priority,
@@ -175,7 +175,7 @@ impl BottleneckDetector {
             disk_latency_us,
             net_rx_bytes,
             net_tx_bytes,
-            timestamp: wall_to_datetime(self.clock.wall_now()),
+            timestamp: self.clock.wall_now(),
         })
     }
 
@@ -469,7 +469,7 @@ mod tests {
                 program: "test".to_string(),
                 description: "test".to_string(),
             },
-            timestamp: wall_to_datetime(clock.wall_now()),
+            timestamp: clock.wall_now(),
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("Cpu"));

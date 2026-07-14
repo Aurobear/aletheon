@@ -8,7 +8,7 @@
 
 use fabric::context::Context;
 use fabric::policy::permission_authority::PermissionAuthority;
-use fabric::{PermissionLevel, RiskLevel, Verdict};
+use fabric::{AwarenessRiskLevel, CapabilityLevel, Verdict};
 
 /// The Runtime's permission authority.
 ///
@@ -34,12 +34,12 @@ impl PermissionAuthority for PermissionManager {
         // Exact port of crates/dasein/src/core/mod.rs:389-398.
         // Behavior-preserving: same threshold (0.8), same comparison
         // (max_level < SystemChange), same message format.
-        if care_score > 0.8 && ctx.permissions.max_level() < PermissionLevel::SystemChange {
+        if care_score > 0.8 && ctx.permissions.max_level() < CapabilityLevel::SystemChange {
             return Some(Verdict::RequireConfirmation {
                 reason: format!(
                     "High care relevance ({care_score:.2}) with insufficient permissions for action '{action}'"
                 ),
-                risk_level: RiskLevel::Medium,
+                risk_level: AwarenessRiskLevel::Medium,
             });
         }
         None
@@ -76,7 +76,7 @@ mod tests {
         let mut perms = CapabilitySet::new();
         perms.add(Capability::new(
             "system.admin",
-            fabric::PermissionLevel::SystemChange,
+            CapabilityLevel::SystemChange,
             "admin access",
         ));
         let mut ctx = Context::new("t", PathBuf::from("/tmp"));

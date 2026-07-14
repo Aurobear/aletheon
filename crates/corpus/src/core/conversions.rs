@@ -1,5 +1,5 @@
 use fabric::body::{Action, ActionResult};
-use fabric::capability::{Capability, PermissionLevel as AbiPermissionLevel};
+use fabric::capability::{Capability, CapabilityLevel as AbiPermissionLevel};
 use fabric::context::Context;
 use fabric::tool::{PermissionLevel as ToolPermissionLevel, ToolContext, ToolResult};
 use std::sync::Arc;
