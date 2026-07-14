@@ -90,6 +90,70 @@ sub-groups (`systems.memory`, `systems.security`, `systems.corpus`,
    `process.space` — do NOT create per-turn temporary SpaceIds. Space
    lifecycle = process lifecycle.
 
+## Architectural invariants (anti-shadow-system)
+
+One authoritative implementation per runtime concept. Every new feature MUST
+extend the existing implementation, never build a parallel one alongside it.
+
+This is not a style preference — it is the macro-kernel's core discipline
+(`docs/arch/Aletheon_MacroKernel_Architecture_Final(2).md:1073`):
+authoritative runtime objects, single state ownership, structured lifecycles,
+non-bypassable capability governance. Two implementations of the same concept
+produce two different safety policies, two memory paths, two Agora views, two
+scheduling policies — and the system quietly diverges until no one knows which
+path a given input takes.
+
+### The authoritative implementation per concept
+
+| Concept | One true implementation | Location |
+|---------|------------------------|----------|
+| Task/process lifecycle | `AgentProcess` + `SubAgentSpawner` + `ProcessTable` | `crates/executive/src/core/sub_agent.rs` |
+| Work scheduling + cancellation | `OperationTable` (cancellation tree) | `crates/kernel/src/operation/` |
+| Failure recovery + restart | `SupervisorTree` (OTP-style restart policies) | `crates/kernel/src/supervision/` |
+| Turn execution path | `TurnPipeline::run()` (PreTurn → ReActLoop → PostTurn) | `crates/executive/src/service/` |
+| Tool safety gate (per-call) | `SelfField::review()` inside ReActLoop | `crates/dasein/` — via TurnPipeline |
+| Shared state (working memory) | `Agora` (CAS propose → commit) | `crates/agora/` |
+| Memory persistence + recall | `Mnemosyne` backends (episodic / semantic / procedural) | `crates/mnemosyne/src/impl/backends/` |
+| Approval / human-in-the-loop | `SessionGateway::approval_flow` | `crates/executive/src/core/session_gateway/approval_flow.rs` |
+| OAuth token storage + refresh | `McpOAuthProvider` + `TokenStore` | `crates/corpus/src/tools/mcp/auth.rs` |
+| Budget + quota enforcement | `AdmissionController::admit()` | `crates/kernel/src/admission/` |
+
+A plan or design that introduces a new state machine, a new store, a new
+worker trait, a new token vault, a new approval manager, or a new execution
+loop MUST answer: **why does the existing implementation not fit, and what is
+the cost of extending it instead?** If the answer is "I didn't check," the
+plan is rejected.
+
+### Historical instances (this has happened multiple times)
+
+1. **Pre-convergence "multiple truth sources"** (2026-07-13 resolved):
+   three parallel ReActLoops (daemon chat, Executive, bin exec), each with
+   different safety/memory/Agora semantics. Resolved by unifying all paths
+   into `TurnPipeline::run()`. Documented in
+   `docs/arch/CURRENT_ARCHITECTURE_AND_COUPLING_ANALYSIS.md:235-236`.
+   This was the **most dangerous issue** in the project's history.
+
+2. **Agent-Google plan review** (2026-07-14): proposed `GoalSupervisor` +
+   `GoalWorker` + `GoalStore` duplicating `SubAgentSpawner` + `AgentProcess` +
+   `ProcessTable`; proposed `CredentialVault` duplicating `McpOAuthProvider` +
+   `TokenStore`; proposed `ApprovalManager` duplicating `approval_flow.rs`;
+   proposed `DeepSeekWorker::execute()` bypassing `TurnPipeline::run()`.
+   Review: `docs/plans/2026-07-14-agent-google-review.md`.
+
+### Design / Plan review checklist
+
+Before approving any design or plan that adds a new subsystem, verify:
+
+- [ ] Does an authoritative implementation for this concept already exist?
+- [ ] If yes, does the plan extend it or duplicate it?
+- [ ] Does the new feature route through `TurnPipeline::run()`?
+- [ ] Does tool execution go through `SelfField::review()`?
+- [ ] Do new state machines reuse `AgentProcess` / `OperationTable`?
+- [ ] Does new persistence extend an existing mnemosyne backend?
+- [ ] Does new auth/token storage extend `McpOAuthProvider` / `TokenStore`?
+- [ ] Does new approval logic integrate with `SessionGateway::approval_flow`?
+- [ ] Does new scheduling use `OperationTable`'s cancellation tree?
+
 ## Dependency injection
 
 - All time access MUST go through `dyn Clock` (not `chrono::Utc::now()` or

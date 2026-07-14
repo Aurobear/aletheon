@@ -65,6 +65,9 @@ pub struct RequestHandler {
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
     /// Macro-kernel turn orchestrator — handles the full pre/core/post turn pipeline.
     pub(crate) turn_orchestrator: Arc<DaemonTurnOrchestrator>,
+    /// Telegram poll-loop task handle — stored so daemon shutdown can await
+    /// graceful termination. `None` when Telegram is disabled or not yet started.
+    pub(crate) telegram_task: Option<Arc<tokio::task::JoinHandle<()>>>,
 }
 
 impl RequestHandler {

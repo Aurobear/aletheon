@@ -46,6 +46,10 @@ pub struct DaemonConfig {
     pub mcp_servers: Vec<corpus::tools::mcp::config::McpServerConfig>,
     /// Hook script configuration from the `hooks` config section.
     pub hooks: crate::core::config::HooksConfig,
+    /// Telegram owner-only control channel configuration.
+    pub telegram: cognit::config::TelegramConfig,
+    /// gbrain shared memory integration configuration.
+    pub gbrain_memory: cognit::config::GbrainMemoryConfig,
 }
 
 /// Default config file search paths.

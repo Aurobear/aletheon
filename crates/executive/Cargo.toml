@@ -34,9 +34,13 @@ sha2 = { workspace = true }
 urlencoding = { workspace = true }
 dirs = "5"
 nix = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
+http-body-util = "0.1"
 [lints]
 workspace = true

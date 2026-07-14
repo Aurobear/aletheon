@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
+use super::auth::BearerTokenAuth;
 use super::config::{McpConfig, McpTransportConfig, McpTrustLevel};
 use super::transport::McpTransport;
 use super::wrapper::McpToolWrapper;
@@ -71,6 +72,88 @@ impl McpClient {
         })
     }
 
+    /// Connect to an MCP server via Streamable HTTP and discover its tools.
+    pub async fn connect_http(
+        server_name: String,
+        url: &str,
+        auth: Option<BearerTokenAuth>,
+        trust_level: McpTrustLevel,
+    ) -> Result<Self> {
+        let mut transport = McpTransport::streamable_http(url, auth);
+
+        // Initialize handshake
+        let _init_result = transport
+            .request(
+                1,
+                "initialize",
+                serde_json::json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": { "name": "aletheon", "version": "0.1.0" }
+                }),
+            )
+            .await?;
+
+        tracing::info!(server = %server_name, "MCP HTTP server initialized");
+
+        // Discover tools
+        let tools_result = transport
+            .request(2, "tools/list", serde_json::json!({}))
+            .await?;
+        let tools = Self::parse_tools(&tools_result);
+
+        tracing::info!(server = %server_name, count = tools.len(), "MCP HTTP tools discovered");
+
+        Ok(Self {
+            server_name,
+            transport,
+            next_id: 3,
+            trust_level,
+            tools,
+        })
+    }
+
+    /// Connect to an MCP server via SSE and discover its tools.
+    pub async fn connect_sse(
+        server_name: String,
+        url: &str,
+        auth: Option<BearerTokenAuth>,
+        trust_level: McpTrustLevel,
+    ) -> Result<Self> {
+        let mut transport = McpTransport::sse(url, auth).await?;
+
+        // Initialize handshake
+        let _init_result = transport
+            .request(
+                1,
+                "initialize",
+                serde_json::json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": { "name": "aletheon", "version": "0.1.0" }
+                }),
+            )
+            .await?;
+
+        tracing::info!(server = %server_name, "MCP SSE server initialized");
+
+        // Discover tools
+        let tools_result = transport
+            .request(2, "tools/list", serde_json::json!({}))
+            .await?;
+        let tools = Self::parse_tools(&tools_result);
+
+        tracing::info!(server = %server_name, count = tools.len(), "MCP SSE tools discovered");
+
+        Ok(Self {
+            server_name,
+            transport,
+            next_id: 3,
+            trust_level,
+            tools,
+        })
+    }
+
     fn parse_tools(result: &Value) -> Vec<McpTool> {
         let mut tools = Vec::new();
         if let Some(tools_array) = result.get("tools").and_then(|v| v.as_array()) {
@@ -116,6 +199,15 @@ impl McpClient {
                 }),
             )
             .await?;
+        if result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            // Do not copy server-provided text into the error: it may contain
+            // credentials or other sensitive request context.
+            anyhow::bail!("MCP tool '{}' reported an application error", tool_name);
+        }
         Ok(result)
     }
 }
@@ -140,6 +232,13 @@ impl McpConnectionManager {
             if !server_config.enabled {
                 continue;
             }
+
+            // Resolve bearer token from environment
+            let auth: Option<BearerTokenAuth> = server_config
+                .bearer_token_env
+                .as_ref()
+                .map(|env_var| BearerTokenAuth::new(env_var.clone()));
+
             match &server_config.transport {
                 McpTransportConfig::Stdio { command, args } => {
                     match McpClient::connect_stdio(
@@ -163,11 +262,49 @@ impl McpConnectionManager {
                         }
                     }
                 }
-                _ => {
-                    tracing::warn!(
-                        server = %server_config.name,
-                        "HTTP/SSE transport not yet implemented"
-                    );
+                McpTransportConfig::StreamableHttp { url } => {
+                    match McpClient::connect_http(
+                        server_config.name.clone(),
+                        url,
+                        auth.clone(),
+                        server_config.trust,
+                    )
+                    .await
+                    {
+                        Ok(client) => {
+                            self.clients
+                                .insert(server_config.name.clone(), Arc::new(Mutex::new(client)));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                server = %server_config.name,
+                                error = %e,
+                                "Failed to connect MCP server via HTTP"
+                            );
+                        }
+                    }
+                }
+                McpTransportConfig::Sse { url } => {
+                    match McpClient::connect_sse(
+                        server_config.name.clone(),
+                        url,
+                        auth.clone(),
+                        server_config.trust,
+                    )
+                    .await
+                    {
+                        Ok(client) => {
+                            self.clients
+                                .insert(server_config.name.clone(), Arc::new(Mutex::new(client)));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                server = %server_config.name,
+                                error = %e,
+                                "Failed to connect MCP server via SSE"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -180,7 +317,10 @@ impl McpConnectionManager {
         for (server_name, client_arc) in &self.clients {
             // We need to block briefly to read the tools list.
             // Since connect_all has already completed, the mutex is uncontested.
-            let client = client_arc.blocking_lock();
+            let Ok(client) = client_arc.try_lock() else {
+                tracing::warn!(server = %server_name, "MCP client busy during tool discovery");
+                continue;
+            };
             let prefix = if self.config.tool_name_prefix {
                 format!("{}__", server_name)
             } else {
@@ -213,8 +353,38 @@ impl McpConnectionManager {
         self.clients.get(server_name)
     }
 
+    /// Call a tool on a named server and return the raw result.
+    ///
+    /// Returns an error if the server is not connected or the tool call fails.
+    /// Token values never appear in error messages.
+    pub async fn call_tool(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        args: Value,
+    ) -> Result<Value> {
+        let client_arc = self
+            .clients
+            .get(server_name)
+            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+        let mut client = client_arc.lock().await;
+        client.call_tool(tool_name, args).await
+    }
+
     /// Number of connected servers.
     pub fn connected_count(&self) -> usize {
         self.clients.len()
+    }
+
+    /// Whether a connected server advertised every required tool.
+    pub fn server_has_tools(&self, server_name: &str, required: &[&str]) -> bool {
+        self.clients.get(server_name).is_some_and(|client| {
+            let Ok(client) = client.try_lock() else {
+                return false;
+            };
+            required
+                .iter()
+                .all(|name| client.tools.iter().any(|tool| tool.name == *name))
+        })
     }
 }

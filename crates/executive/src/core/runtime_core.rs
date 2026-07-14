@@ -102,6 +102,7 @@ impl RuntimeCore {
                     },
                     trust: corpus::tools::mcp::config::McpTrustLevel::LocalTrusted,
                     enabled: true,
+                    bearer_token_env: s.bearer_token_env.clone(),
                 })
                 .collect(),
             hooks: {
@@ -114,6 +115,8 @@ impl RuntimeCore {
                 };
                 rt_config.hooks
             },
+            telegram: app_config.telegram.clone(),
+            gbrain_memory: app_config.memory.gbrain.clone(),
         };
 
         // ── Event bus ───────────────────────────────────────────────

@@ -29,6 +29,7 @@
 //! - **MailboxService**: registered per agent process for future inter-process comms.
 
 mod execute;
+pub mod gbrain;
 pub(crate) mod helpers;
 mod injection;
 mod lifecycle;

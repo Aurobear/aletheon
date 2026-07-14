@@ -78,6 +78,11 @@ impl RequestHandler {
             "goal.show" => self.handle_goal_show(&id, &request).await,
             "goal.status" => self.handle_goal_status(&id, &request).await,
             "goal.resume" => self.handle_goal_resume(&id, &request).await,
+            "goal.create" => self.handle_goal_create(&id, &request).await,
+            "goal.list" => self.handle_goal_list(&id, &request).await,
+            "goal.pause" => self.handle_goal_pause(&id, &request).await,
+            "goal.run" => self.handle_goal_run(&id, &request).await,
+            "goal.cancel" => self.handle_goal_cancel(&id, &request).await,
 
             // ── Turn lifecycle (PR-3) ─────────────────────────────────
             "turn.wait" => self.handle_turn_wait(&id, &request).await,

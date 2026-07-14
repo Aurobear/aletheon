@@ -47,6 +47,14 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
 use crate::r#impl::agent_loader::AgentLoader;
+use crate::r#impl::channel::daemon_adapter::{
+    DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
+};
+use crate::r#impl::channel::router::{
+    ChannelGoalExecutor, ChannelRouter, ChannelTransport, ChannelTurnExecutor,
+};
+use crate::r#impl::channel::store::ChannelStore;
+use crate::r#impl::channel::telegram::TelegramTransport;
 use crate::r#impl::goal::ObjectiveStore;
 use aletheon_kernel::supervision::RestartPolicy;
 use corpus::hook::builtin::audit_hook;
@@ -201,6 +209,7 @@ impl RequestHandler {
         // Create session and journal
         let session_id = uuid::Uuid::new_v4().to_string();
         let data_dir = PathBuf::from(&config.data_dir);
+        let data_dir_for_telegram = data_dir.clone();
         std::fs::create_dir_all(&data_dir)
             .with_context(|| format!("creating data dir: {}", data_dir.display()))?;
         let session_store = SessionStore::new(&data_dir)?;
@@ -250,6 +259,34 @@ impl RequestHandler {
         let objective_store = ObjectiveStore::open(&aletheon_dir.join("objectives.db"))
             .context("opening objective store")?;
         let objective_store = Arc::new(Mutex::new(objective_store));
+
+        // M2: Recover persisted goal state — clear stale process links,
+        // map legacy active objectives, preserve suspended/awaiting states.
+        {
+            let store = objective_store.lock().await;
+            match store.recover_goals() {
+                Ok(recovered) if !recovered.is_empty() => {
+                    info!(
+                        count = recovered.len(),
+                        "Recovered persisted goals on start"
+                    );
+                    for g in &recovered {
+                        info!(
+                            goal_id = g.id.0,
+                            state = %g.state,
+                            version = g.version,
+                            "Goal recovered"
+                        );
+                    }
+                }
+                Ok(_) => {
+                    info!("No goals to recover");
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to recover goals on start");
+                }
+            }
+        }
 
         // Resume active objective for session continuity
         let resumed_objective = {
@@ -320,7 +357,9 @@ impl RequestHandler {
             clock: clock.clone(),
         }));
 
-        // MCP servers
+        // MCP servers. Keep the manager alive: gbrain recall/capture calls the
+        // same authenticated connections after startup tool registration.
+        let mut retained_mcp = None;
         {
             let mcp_config = corpus::tools::mcp::config::McpConfig {
                 servers: config.mcp_servers.clone(),
@@ -340,6 +379,22 @@ impl RequestHandler {
                     tracing::warn!(tool = %name, error = %e, "skip MCP tool (name clash?)");
                 } else {
                     info!(tool = %name, "Registered MCP tool");
+                }
+            }
+            if config.gbrain_memory.enabled {
+                let required = if config.gbrain_memory.capture_enabled {
+                    &["query", "get_page", "put_page"][..]
+                } else {
+                    &["query", "get_page"][..]
+                };
+                if mcp.server_has_tools(&config.gbrain_memory.server_name, required) {
+                    retained_mcp = Some(Arc::new(mcp));
+                } else {
+                    tracing::warn!(
+                        server = %config.gbrain_memory.server_name,
+                        ?required,
+                        "gbrain disabled: server disconnected or required tools missing"
+                    );
                 }
             }
         }
@@ -543,6 +598,8 @@ impl RequestHandler {
             self_field,
             reflector,
             memory: crate::core::MemoryGroup {
+                gbrain: retained_mcp,
+                gbrain_config: config.gbrain_memory.clone(),
                 memory_service: Arc::new(mnemosyne::DefaultMemoryService::new(
                     recall_memory.clone(),
                     fact_store.clone(),
@@ -830,7 +887,12 @@ impl RequestHandler {
             Some(cancel_token.clone()),
         ));
 
-        let handler = Self {
+        // Clone these before they are moved into the handler struct
+        // so they are available for Telegram channel initialization.
+        let _turn_orch_for_telegram = turn_orchestrator.clone();
+        let _cancel_for_telegram = cancel_token.clone();
+
+        let mut handler = Self {
             subsystems,
             sessions,
             session_gateway,
@@ -842,6 +904,7 @@ impl RequestHandler {
             started_at: clock_2.mono_now(),
             daemon_cancel_token: Some(cancel_token),
             turn_orchestrator,
+            telegram_task: None,
         };
 
         // Register initial params
@@ -921,6 +984,135 @@ impl RequestHandler {
             hr.execute(&ctx).await;
         }
 
+        // -- Telegram channel initialization (M1) -------------------------------
+        let telegram_cfg = &config.telegram;
+        if telegram_cfg.enabled {
+            info!("Telegram channel enabled — initializing owner-only control channel");
+            let jh = Self::init_telegram_channel(
+                telegram_cfg,
+                data_dir_for_telegram,
+                _turn_orch_for_telegram,
+                handler.subsystems.memory.objective_store.clone(),
+                _cancel_for_telegram,
+            );
+            handler.telegram_task = Some(Arc::new(jh));
+        } else {
+            info!("Telegram channel disabled");
+        }
+
         Ok(handler)
+    }
+
+    /// Build the Telegram long-poll channel transport, router, and spawn the
+    /// poll loop. Returns the task handle for graceful shutdown.
+    fn init_telegram_channel(
+        cfg: &cognit::config::TelegramConfig,
+        data_dir: PathBuf,
+        orchestrator: Arc<crate::service::DaemonTurnOrchestrator>,
+        objective_store: Arc<Mutex<ObjectiveStore>>,
+        cancel: CancellationToken,
+    ) -> tokio::task::JoinHandle<()> {
+        let store_path = data_dir.join("channels.db");
+        let store = ChannelStore::open(&store_path).expect("opening channel store for Telegram");
+        let cursor: Option<String> = store.cursor("telegram").unwrap_or(None);
+
+        if let Some(owner_id) = cfg.owner_user_id {
+            let external = format!("telegram:{}", owner_id);
+            store
+                .bind("telegram", &external, "owner", "active")
+                .expect("binding Telegram owner");
+            info!(owner_id = owner_id, "Telegram owner binding seeded");
+        } else {
+            warn!("Telegram enabled but owner_user_id not set");
+        }
+
+        let token = cfg
+            .bot_token_env
+            .as_ref()
+            .and_then(|env_name| std::env::var(env_name).ok())
+            .unwrap_or_default();
+        if token.is_empty() {
+            warn!(
+                env = ?cfg.bot_token_env,
+                "Telegram bot token not found in environment"
+            );
+        }
+
+        let poll_timeout = cfg.poll_timeout_secs.clamp(1, 50);
+        let transport = TelegramTransport::new(token, None, poll_timeout, cancel.clone());
+
+        let turn_executor: Arc<dyn ChannelTurnExecutor> =
+            Arc::new(DaemonChannelTurnExecutor::new(orchestrator));
+
+        let goal_executor: Arc<dyn ChannelGoalExecutor> =
+            Arc::new(DaemonChannelGoalExecutor::new(objective_store));
+        let router = ChannelRouter::new(store, turn_executor).with_goal_executor(goal_executor);
+
+        tokio::spawn(async move {
+            Self::telegram_poll_loop(router, transport, cursor, cancel).await;
+        })
+    }
+
+    /// Long-poll loop with jittered exponential backoff and cancellation.
+    async fn telegram_poll_loop(
+        mut router: ChannelRouter,
+        transport: TelegramTransport,
+        mut cursor: Option<String>,
+        cancel: CancellationToken,
+    ) {
+        let mut backoff_ms: u64 = 1_000;
+        let max_backoff_ms: u64 = 60_000;
+
+        loop {
+            if cancel.is_cancelled() {
+                info!("Telegram poll loop exited (cancel token fired)");
+                break;
+            }
+
+            let result = tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("Telegram poll loop cancelled during receive wait");
+                    break;
+                }
+                r = transport.receive(cursor.clone()) => r,
+            };
+
+            match result {
+                Ok(envelopes) => {
+                    backoff_ms = 1_000;
+                    if envelopes.is_empty() {
+                        continue;
+                    }
+                    let mut sorted: Vec<_> = envelopes;
+                    sorted.sort_by_key(|e| e.message.message_id.0.parse::<i64>().unwrap_or(0));
+                    for envelope in sorted {
+                        let next_cursor = envelope.next_cursor.clone();
+                        match router.process(&transport, envelope).await {
+                            Ok(()) => {
+                                cursor = Some(next_cursor);
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "Telegram router process failed");
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e.to_string(), backoff_ms, "Telegram receive error, backing off");
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    let jitter_ns = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.subsec_nanos())
+                        .unwrap_or(0);
+                    let jitter_ms = (backoff_ms / 4).saturating_mul(jitter_ns as u64 % 101 / 100);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms + jitter_ms))
+                        .await;
+                    backoff_ms = (backoff_ms * 2).min(max_backoff_ms);
+                }
+            }
+        }
     }
 }
