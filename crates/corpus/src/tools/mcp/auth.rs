@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::fs;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use fabric::Clock;
 use serde::{Deserialize, Serialize};
+
+pub use super::token_store::{TokenEntry, TokenStore};
 
 /// Minimal percent-encoding for URL query parameters (RFC 3986 unreserved set).
 fn percent_encode(input: &str) -> String {
@@ -120,99 +120,6 @@ impl fmt::Display for BearerTokenAuth {
             Some(_) => write!(f, "BearerTokenAuth(<redacted>)"),
             None => write!(f, "BearerTokenAuth(no token)"),
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// TokenStore -- persistent OAuth token storage
-// ---------------------------------------------------------------------------
-
-/// A single stored token entry.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TokenEntry {
-    pub access_token: String,
-    pub refresh_token: Option<String>,
-    /// Unix epoch seconds when the access token expires.
-    pub expires_at: u64,
-    pub token_type: String,
-    pub scopes: Vec<String>,
-}
-
-/// Persistent storage for OAuth tokens, keyed by MCP server id.
-#[derive(Debug)]
-pub struct TokenStore {
-    storage_path: PathBuf,
-    tokens: HashMap<String, TokenEntry>,
-}
-
-impl TokenStore {
-    /// Create a store backed by the given file path.
-    ///
-    /// If the file exists it is loaded; otherwise the store starts empty.
-    pub fn new(storage_path: PathBuf) -> Result<Self> {
-        let tokens = if storage_path.exists() {
-            let data = fs::read_to_string(&storage_path)
-                .with_context(|| format!("reading token store {}", storage_path.display()))?;
-            serde_json::from_str(&data)
-                .with_context(|| format!("parsing token store {}", storage_path.display()))?
-        } else {
-            HashMap::new()
-        };
-        Ok(Self {
-            storage_path,
-            tokens,
-        })
-    }
-
-    /// Default store at `~/.config/aletheon/mcp_tokens.json`.
-    pub fn default_path() -> Result<PathBuf> {
-        Ok(fabric::paths::mcp_tokens_path())
-    }
-
-    /// Create a store at the default path, creating parent directories as
-    /// needed.
-    pub fn open_default() -> Result<Self> {
-        let path = Self::default_path()?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-        }
-        Self::new(path)
-    }
-
-    /// Get the stored entry for a server, if any.
-    pub fn get(&self, server_id: &str) -> Option<&TokenEntry> {
-        self.tokens.get(server_id)
-    }
-
-    /// Insert or update a token entry for the given server.
-    pub fn set(&mut self, server_id: impl Into<String>, entry: TokenEntry) {
-        self.tokens.insert(server_id.into(), entry);
-    }
-
-    /// Remove a token entry. Returns the removed entry, if any.
-    pub fn remove(&mut self, server_id: &str) -> Option<TokenEntry> {
-        self.tokens.remove(server_id)
-    }
-
-    /// Persist current state to disk.
-    pub fn save(&self) -> Result<()> {
-        if let Some(parent) = self.storage_path.parent() {
-            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-        }
-        let json = serde_json::to_string_pretty(&self.tokens).context("serializing token store")?;
-        fs::write(&self.storage_path, json)
-            .with_context(|| format!("writing token store {}", self.storage_path.display()))?;
-        Ok(())
-    }
-
-    /// Return the number of stored entries.
-    pub fn len(&self) -> usize {
-        self.tokens.len()
-    }
-
-    /// Return whether the store is empty.
-    pub fn is_empty(&self) -> bool {
-        self.tokens.is_empty()
     }
 }
 
