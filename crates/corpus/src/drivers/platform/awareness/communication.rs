@@ -114,7 +114,7 @@ pub struct JsonRpcError {
 ///
 /// Implementations handle the transport layer (Unix sockets, TCP, etc.)
 /// while callers use this trait for protocol-level interaction.
-#[deprecated(note = "No implementations exist — design placeholder, not yet wired to a transport")]
+// NOTE: No implementations exist yet. Design placeholder, not yet wired to a transport.
 #[async_trait]
 pub trait AgentCommunication: Send + Sync {
     /// Send a message to a specific agent.
