@@ -30,6 +30,9 @@ pub struct CommandOutput {
     pub cancelled: bool,
     pub stdout: String,
     pub stderr: String,
+    /// Exact captured bytes, retained for binary-safe git diff/artifact handling.
+    pub stdout_bytes: Vec<u8>,
+    pub stderr_bytes: Vec<u8>,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
 }
@@ -73,6 +76,8 @@ impl CommandRunner {
                 cancelled: true,
                 stdout: String::new(),
                 stderr: String::new(),
+                stdout_bytes: vec![],
+                stderr_bytes: vec![],
                 stdout_truncated: false,
                 stderr_truncated: false,
             });
@@ -149,13 +154,17 @@ impl CommandRunner {
             .map_err(|error| CommandRunnerError::Join(error.to_string()))?
             .map_err(CommandRunnerError::Io)?;
 
+        let stdout_text = String::from_utf8_lossy(&stdout.bytes).into_owned();
+        let stderr_text = String::from_utf8_lossy(&stderr.bytes).into_owned();
         Ok(CommandOutput {
             exit_code: status.and_then(|status| status.code()),
             elapsed_ms: started.elapsed().as_millis() as u64,
             timed_out,
             cancelled,
-            stdout: String::from_utf8_lossy(&stdout.bytes).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr.bytes).into_owned(),
+            stdout: stdout_text,
+            stderr: stderr_text,
+            stdout_bytes: stdout.bytes,
+            stderr_bytes: stderr.bytes,
             stdout_truncated: stdout.truncated,
             stderr_truncated: stderr.truncated,
         })

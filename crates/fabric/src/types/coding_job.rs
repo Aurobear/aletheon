@@ -22,17 +22,14 @@ impl Default for CodingJobId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum CodingNetworkPolicy {
+    #[default]
     Disabled,
-    AllowHosts { hosts: Vec<String> },
-}
-
-impl Default for CodingNetworkPolicy {
-    fn default() -> Self {
-        Self::Disabled
-    }
+    AllowHosts {
+        hosts: Vec<String>,
+    },
 }
 
 /// Canonical repository root plus lexical path policy.
