@@ -126,6 +126,24 @@ impl ExternalIdentityRepository {
         Ok(bindings)
     }
 
+    pub fn list_active(
+        &self,
+    ) -> Result<Vec<(ExternalIdentity, CapabilityGrant)>, ExternalRepositoryError> {
+        let mut statement = self.db.prepare(
+            "SELECT i.identity_id,i.provider,i.principal_id,i.provider_subject,i.email,
+                    i.alias,i.state,i.created_at_ms,i.updated_at_ms,i.version,
+                    g.scopes_json,g.state,g.granted_at_ms,g.revoked_at_ms,g.version
+             FROM external_identities i JOIN capability_grants g USING(identity_id)
+             WHERE i.state='active' AND g.state='active'
+             ORDER BY i.created_at_ms,i.identity_id LIMIT 1000",
+        )?;
+        let bindings = statement
+            .query_map([], decode_binding)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ExternalRepositoryError::from)?;
+        Ok(bindings)
+    }
+
     pub fn has_active_scope(&self, scope: ExternalScope) -> Result<bool, ExternalRepositoryError> {
         let mut statement = self.db.prepare(
             "SELECT g.scopes_json FROM capability_grants g

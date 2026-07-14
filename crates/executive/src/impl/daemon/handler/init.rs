@@ -29,7 +29,9 @@ use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::tools::google::{
-    GoogleApiClient, GoogleApiEndpoints, GoogleCalendarAdapter, GoogleGmailAdapter,
+    CalendarSyncConfig, CalendarSynchronizer, DriveSyncConfig, DriveSynchronizer,
+    GmailHistorySyncConfig, GmailHistorySynchronizer, GoogleApiClient, GoogleApiEndpoints,
+    GoogleCalendarAdapter, GoogleDriveAdapter, GoogleGmailAdapter,
 };
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
@@ -153,7 +155,13 @@ fn register_configured_google_read_tools(
     tools: &mut ToolRegistry,
     objective_db_path: &std::path::Path,
     clock: Arc<dyn Clock>,
-) -> anyhow::Result<Option<Arc<GoogleIntegration>>> {
+    cancel: &CancellationToken,
+) -> anyhow::Result<
+    Option<(
+        Arc<GoogleIntegration>,
+        crate::r#impl::google::GoogleSyncHandle,
+    )>,
+> {
     let client_id = match std::env::var("ALETHEON_GOOGLE_CLIENT_ID") {
         Ok(value) if !value.trim().is_empty() => value,
         _ => return Ok(None),
@@ -166,6 +174,7 @@ fn register_configured_google_read_tools(
 
     let repository = ExternalIdentityRepository::open(objective_db_path)
         .context("opening external identity repository")?;
+    let active_bindings = repository.list_active()?;
     let gmail_enabled = repository.has_active_scope(fabric::ExternalScope::GmailReadonly)?;
     let calendar_enabled = repository.has_active_scope(fabric::ExternalScope::CalendarReadonly)?;
     let mut scopes = vec![
@@ -187,7 +196,7 @@ fn register_configured_google_read_tools(
         redirect_uri,
         scopes,
         tokens,
-        clock,
+        clock.clone(),
     )?;
     let repository = Arc::new(std::sync::Mutex::new(repository));
     let oauth = Arc::new(Mutex::new(oauth));
@@ -203,11 +212,96 @@ fn register_configured_google_read_tools(
             as Arc<dyn corpus::tools::google::GmailCapability>
     });
     let calendar = calendar_enabled.then(|| {
-        Arc::new(GoogleCalendarAdapter::new(client))
+        Arc::new(GoogleCalendarAdapter::new(client.clone()))
             as Arc<dyn corpus::tools::google::CalendarCapability>
     });
     tools.register_google_read_tools(gmail, calendar, accounts)?;
-    Ok(Some(integration))
+
+    let store = Arc::new(std::sync::Mutex::new(
+        crate::r#impl::google::GoogleSyncStore::open(objective_db_path)?,
+    ));
+    let mut manager = crate::r#impl::google::GoogleSyncManager::new(
+        store,
+        format!("daemon-{}", uuid::Uuid::new_v4()),
+        clock.clone(),
+        crate::r#impl::google::GoogleSyncManagerConfig::default(),
+    )?;
+    let drive_enabled = std::env::var("ALETHEON_GOOGLE_DRIVE_SYNC_ENABLED")
+        .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"));
+    let selected_drive_files = std::env::var("ALETHEON_GOOGLE_DRIVE_FILE_IDS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<std::collections::HashSet<_>>();
+    let now_ms = clock.wall_now().0.max(0);
+    for (identity, grant) in active_bindings {
+        if grant.scopes.contains(&fabric::ExternalScope::GmailReadonly) {
+            manager.register(crate::r#impl::google::GoogleSyncRegistration {
+                principal: identity.principal_id.clone(),
+                account_id: identity.id,
+                stream: crate::r#impl::google::SyncStream::GmailHistory,
+                initial_cursor: None,
+                cursor_generation: 1,
+                poller: Arc::new(crate::r#impl::google::GmailHistoryPoller(
+                    GmailHistorySynchronizer::new(
+                        GoogleGmailAdapter::new(client.clone()),
+                        GmailHistorySyncConfig::default(),
+                    )?,
+                )),
+            })?;
+        }
+        if grant
+            .scopes
+            .contains(&fabric::ExternalScope::CalendarReadonly)
+        {
+            manager.register(crate::r#impl::google::GoogleSyncRegistration {
+                principal: identity.principal_id.clone(),
+                account_id: identity.id,
+                stream: crate::r#impl::google::SyncStream::Calendar,
+                initial_cursor: None,
+                cursor_generation: 1,
+                poller: Arc::new(crate::r#impl::google::CalendarDeltaPoller(
+                    CalendarSynchronizer::new(
+                        GoogleCalendarAdapter::new(client.clone()),
+                        CalendarSyncConfig {
+                            window_start_ms: now_ms.saturating_sub(30 * 86_400_000),
+                            window_end_ms: now_ms.saturating_add(365 * 86_400_000),
+                            timezone: "UTC".into(),
+                            max_pages: 20,
+                            page_size: 250,
+                        },
+                    )?,
+                )),
+            })?;
+        }
+        if drive_enabled && grant.scopes.contains(&fabric::ExternalScope::DriveReadonly) {
+            manager.register(crate::r#impl::google::GoogleSyncRegistration {
+                principal: identity.principal_id,
+                account_id: identity.id,
+                stream: crate::r#impl::google::SyncStream::DriveChanges,
+                initial_cursor: None,
+                cursor_generation: 1,
+                poller: Arc::new(crate::r#impl::google::DriveChangesPoller(
+                    DriveSynchronizer::new(
+                        GoogleDriveAdapter::new(client.clone()),
+                        DriveSyncConfig {
+                            selected_file_ids: selected_drive_files.clone(),
+                            content_mime_allowlist: std::collections::HashSet::new(),
+                            download_content: false,
+                            max_content_bytes: 8 * 1_048_576,
+                            max_pages: 20,
+                            max_changes: 2_000,
+                            page_size: 100,
+                        },
+                    )?,
+                )),
+            })?;
+        }
+    }
+    let sync = manager.start(cancel);
+    Ok(Some((integration, sync)))
 }
 
 impl RequestHandler {
@@ -460,15 +554,17 @@ impl RequestHandler {
             fact_store: Some(fact_store.clone()),
             clock: clock.clone(),
         }));
-        let google = match register_configured_google_read_tools(
+        let (google, google_sync) = match register_configured_google_read_tools(
             &mut tools,
             &objective_db_path,
             clock.clone(),
+            &cancel_token,
         ) {
-            Ok(integration) => integration,
+            Ok(Some((integration, sync))) => (Some(integration), Some(sync)),
+            Ok(None) => (None, None),
             Err(error) => {
                 warn!(error = %error, "Google read integration disabled");
-                None
+                (None, None)
             }
         };
 
@@ -1087,6 +1183,7 @@ impl RequestHandler {
             daemon_cancel_token: Some(cancel_token),
             turn_orchestrator,
             telegram_task: None,
+            google_sync: google_sync.map(|handle| Arc::new(Mutex::new(Some(handle)))),
             approved_apply: approved_apply.clone(),
             google,
         };

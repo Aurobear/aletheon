@@ -74,6 +74,13 @@ pub struct SyncCommitOutcome {
     pub cursor: GoogleSyncCursor,
 }
 
+#[derive(Debug, Clone)]
+pub struct GoogleOutboxClaim {
+    pub outbox_id: String,
+    pub event: ExternalEventEnvelope,
+    pub attempt_count: u32,
+}
+
 pub struct GoogleSyncStore {
     db: Connection,
     #[cfg(test)]
@@ -297,6 +304,178 @@ impl GoogleSyncStore {
                 |row| row.get(0),
             )
             .map_err(Into::into)
+    }
+
+    pub fn acquire_lease(
+        &self,
+        account_id: ExternalIdentityId,
+        stream: SyncStream,
+        owner: &str,
+        now_ms: i64,
+        lease_duration_ms: i64,
+    ) -> Result<bool, SyncStoreError> {
+        if owner.is_empty()
+            || owner.len() > 256
+            || now_ms < 0
+            || !(1_000..=300_000).contains(&lease_duration_ms)
+        {
+            return Err(SyncStoreError::InvalidInput);
+        }
+        let expires = now_ms.saturating_add(lease_duration_ms);
+        let changed = self.db.execute(
+            "INSERT INTO google_sync_leases(account_id,stream,lease_owner,lease_expires_at_ms,version)
+             VALUES(?1,?2,?3,?4,0)
+             ON CONFLICT(account_id,stream) DO UPDATE SET
+                lease_owner=excluded.lease_owner,
+                lease_expires_at_ms=excluded.lease_expires_at_ms,
+                version=google_sync_leases.version+1
+             WHERE google_sync_leases.lease_owner=excluded.lease_owner
+                OR google_sync_leases.lease_expires_at_ms<=?5",
+            params![account_id.to_string(), stream.as_str(), owner, expires, now_ms],
+        )?;
+        Ok(changed == 1)
+    }
+
+    pub fn release_lease(
+        &self,
+        account_id: ExternalIdentityId,
+        stream: SyncStream,
+        owner: &str,
+    ) -> Result<bool, SyncStoreError> {
+        Ok(self.db.execute(
+            "DELETE FROM google_sync_leases
+             WHERE account_id=?1 AND stream=?2 AND lease_owner=?3",
+            params![account_id.to_string(), stream.as_str(), owner],
+        )? == 1)
+    }
+
+    pub fn record_sync_failure(
+        &self,
+        account_id: ExternalIdentityId,
+        stream: SyncStream,
+        now_ms: i64,
+        retry_after_ms: Option<i64>,
+        health_state: &str,
+    ) -> Result<GoogleSyncCursor, SyncStoreError> {
+        if now_ms < 0
+            || retry_after_ms.is_some_and(|value| value < now_ms)
+            || !matches!(
+                health_state,
+                "retrying" | "circuit_open" | "auth_required" | "revoked"
+            )
+        {
+            return Err(SyncStoreError::InvalidInput);
+        }
+        let changed = self.db.execute(
+            "UPDATE google_sync_cursors SET
+                last_error_ms=?1,retry_count=retry_count+1,retry_after_ms=?2,
+                health_state=?3,version=version+1
+             WHERE account_id=?4 AND stream=?5",
+            params![
+                now_ms,
+                retry_after_ms,
+                health_state,
+                account_id.to_string(),
+                stream.as_str()
+            ],
+        )?;
+        if changed != 1 {
+            return Err(SyncStoreError::CursorNotInitialized);
+        }
+        self.cursor(account_id, stream)?
+            .ok_or(SyncStoreError::CursorNotInitialized)
+    }
+
+    pub fn claim_outbox(
+        &self,
+        owner: &str,
+        now_ms: i64,
+        claim_duration_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<GoogleOutboxClaim>, SyncStoreError> {
+        if owner.is_empty()
+            || owner.len() > 256
+            || now_ms < 0
+            || !(1_000..=300_000).contains(&claim_duration_ms)
+            || !(1..=100).contains(&limit)
+        {
+            return Err(SyncStoreError::InvalidInput);
+        }
+        let tx = self.db.unchecked_transaction()?;
+        let expires = now_ms.saturating_add(claim_duration_ms);
+        let mut statement = tx.prepare(
+            "SELECT outbox_id FROM google_event_outbox
+             WHERE status IN ('pending','failed')
+                OR (status='claimed' AND claim_expires_at_ms<=?1)
+             ORDER BY created_at_ms,outbox_id LIMIT ?2",
+        )?;
+        let ids = statement
+            .query_map(params![now_ms, limit as i64], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        let mut claims = Vec::with_capacity(ids.len());
+        for id in ids {
+            let changed = tx.execute(
+                "UPDATE google_event_outbox SET
+                    status='claimed',claim_owner=?1,claim_expires_at_ms=?2,
+                    attempt_count=attempt_count+1,updated_at_ms=?3
+                 WHERE outbox_id=?4 AND (
+                    status IN ('pending','failed')
+                    OR (status='claimed' AND claim_expires_at_ms<=?3)
+                 )",
+                params![owner, expires, now_ms, id],
+            )?;
+            if changed == 1 {
+                let (json, attempts) = tx.query_row(
+                    "SELECT e.envelope_json,o.attempt_count
+                     FROM google_event_outbox o JOIN google_events e ON e.event_id=o.event_id
+                     WHERE o.outbox_id=?1",
+                    [&id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?)),
+                )?;
+                claims.push(GoogleOutboxClaim {
+                    outbox_id: id,
+                    event: serde_json::from_str(&json)?,
+                    attempt_count: attempts,
+                });
+            }
+        }
+        tx.commit()?;
+        Ok(claims)
+    }
+
+    pub fn acknowledge_outbox(
+        &self,
+        outbox_id: &str,
+        owner: &str,
+        now_ms: i64,
+    ) -> Result<bool, SyncStoreError> {
+        Ok(self.db.execute(
+            "UPDATE google_event_outbox SET
+                status='delivered',claim_owner=NULL,claim_expires_at_ms=NULL,
+                last_error_code=NULL,updated_at_ms=?1,delivered_at_ms=?1
+             WHERE outbox_id=?2 AND status='claimed' AND claim_owner=?3",
+            params![now_ms, outbox_id, owner],
+        )? == 1)
+    }
+
+    pub fn fail_outbox(
+        &self,
+        outbox_id: &str,
+        owner: &str,
+        error_code: &str,
+        now_ms: i64,
+    ) -> Result<bool, SyncStoreError> {
+        if error_code.is_empty() || error_code.len() > 256 {
+            return Err(SyncStoreError::InvalidInput);
+        }
+        Ok(self.db.execute(
+            "UPDATE google_event_outbox SET
+                status='failed',claim_owner=NULL,claim_expires_at_ms=NULL,
+                last_error_code=?1,updated_at_ms=?2
+             WHERE outbox_id=?3 AND status='claimed' AND claim_owner=?4",
+            params![error_code, now_ms, outbox_id, owner],
+        )? == 1)
     }
 
     #[cfg(test)]

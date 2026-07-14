@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 10;
+const CURRENT_VERSION: u32 = 11;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -375,6 +375,19 @@ CREATE INDEX IF NOT EXISTS idx_google_event_outbox_pending
     ON google_event_outbox(status, created_at_ms);
 ";
 
+const MIGRATION_11: &str = "
+CREATE TABLE IF NOT EXISTS google_sync_leases (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL CHECK(stream IN ('gmail_history','calendar','drive_changes')),
+    lease_owner TEXT NOT NULL,
+    lease_expires_at_ms INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(account_id, stream)
+);
+CREATE INDEX IF NOT EXISTS idx_google_sync_leases_expiry
+    ON google_sync_leases(lease_expires_at_ms);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -470,6 +483,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
         tx.commit()?;
     }
 
+    if version < 11 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 11 transaction")?;
+        tx.execute_batch(MIGRATION_11)?;
+        tx.pragma_update(None, "user_version", 11)?;
+        tx.commit()?;
+    }
+
     // Verify we're at the expected version.
     let current: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     anyhow::ensure!(
@@ -536,14 +558,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 10);
+        assert_eq!(v1, 11);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 10);
+        assert_eq!(v2, 11);
     }
 
     #[test]

@@ -20,6 +20,11 @@ impl RequestHandler {
         if let Some(ref token) = self.daemon_cancel_token {
             token.cancel();
         }
+        if let Some(sync) = &self.google_sync {
+            if let Some(handle) = sync.lock().await.take() {
+                handle.shutdown().await;
+            }
+        }
         json!({
             "jsonrpc": "2.0",
             "id": id,
