@@ -55,10 +55,12 @@ use tracing::{info, warn};
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::r#impl::channel::daemon_adapter::{
     DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
+    DaemonGmailDraftApprovalExecutor,
 };
+use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::channel::router::{
     ChannelApprovalExecutor, ChannelGoalExecutor, ChannelRouter, ChannelTransport,
-    ChannelTurnExecutor,
+    ChannelTurnExecutor, GmailDraftApprovalExecutor,
 };
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
@@ -151,17 +153,18 @@ pub(crate) fn register_goal_runtimes(
     Ok(registered)
 }
 
+type ConfiguredGoogleReadTools = (
+    Arc<GoogleIntegration>,
+    crate::r#impl::google::GoogleSyncHandle,
+    Arc<std::sync::Mutex<crate::r#impl::google::GoogleSyncStore>>,
+);
+
 fn register_configured_google_read_tools(
     tools: &mut ToolRegistry,
     objective_db_path: &std::path::Path,
     clock: Arc<dyn Clock>,
     cancel: &CancellationToken,
-) -> anyhow::Result<
-    Option<(
-        Arc<GoogleIntegration>,
-        crate::r#impl::google::GoogleSyncHandle,
-    )>,
-> {
+) -> anyhow::Result<Option<ConfiguredGoogleReadTools>> {
     let client_id = match std::env::var("ALETHEON_GOOGLE_CLIENT_ID") {
         Ok(value) if !value.trim().is_empty() => value,
         _ => return Ok(None),
@@ -221,7 +224,7 @@ fn register_configured_google_read_tools(
         crate::r#impl::google::GoogleSyncStore::open(objective_db_path)?,
     ));
     let mut manager = crate::r#impl::google::GoogleSyncManager::new(
-        store,
+        store.clone(),
         format!("daemon-{}", uuid::Uuid::new_v4()),
         clock.clone(),
         crate::r#impl::google::GoogleSyncManagerConfig::default(),
@@ -301,7 +304,7 @@ fn register_configured_google_read_tools(
         }
     }
     let sync = manager.start(cancel);
-    Ok(Some((integration, sync)))
+    Ok(Some((integration, sync, store)))
 }
 
 impl RequestHandler {
@@ -406,6 +409,10 @@ impl RequestHandler {
             crate::r#impl::approval::ApprovalRepository::open(&objective_db_path)
                 .context("opening approval repository")?;
         let approval_repository = Arc::new(std::sync::Mutex::new(approval_repository));
+        let gmail_goal_drafts = Arc::new(std::sync::Mutex::new(
+            GmailGoalDraftCoordinator::open(&objective_db_path)
+                .context("opening Gmail Goal draft coordinator")?,
+        ));
 
         // M3: terminalize stale runtime calls before making their Goals ready.
         // Recovery records cancellation evidence and never invokes a runtime.
@@ -554,19 +561,64 @@ impl RequestHandler {
             fact_store: Some(fact_store.clone()),
             clock: clock.clone(),
         }));
-        let (google, google_sync) = match register_configured_google_read_tools(
-            &mut tools,
-            &objective_db_path,
-            clock.clone(),
-            &cancel_token,
-        ) {
-            Ok(Some((integration, sync))) => (Some(integration), Some(sync)),
-            Ok(None) => (None, None),
-            Err(error) => {
-                warn!(error = %error, "Google read integration disabled");
-                (None, None)
-            }
-        };
+        let (google, mut google_sync, google_sync_store) =
+            match register_configured_google_read_tools(
+                &mut tools,
+                &objective_db_path,
+                clock.clone(),
+                &cancel_token,
+            ) {
+                Ok(Some((integration, sync, store))) => {
+                    (Some(integration), Some(sync), Some(store))
+                }
+                Ok(None) => (None, None, None),
+                Err(error) => {
+                    warn!(error = %error, "Google read integration disabled");
+                    (None, None, None)
+                }
+            };
+        if let (Some(handle), Some(store)) = (google_sync.as_mut(), google_sync_store) {
+            let goal_store = Arc::new(std::sync::Mutex::new(
+                ObjectiveStore::open(&objective_db_path)
+                    .context("opening Google event Goal store")?,
+            ));
+            let goals = Arc::new(crate::r#impl::goal::GoalCoordinator::new(goal_store));
+            let notifications = Arc::new(
+                crate::r#impl::google::DurableGoogleNotificationSink::open(
+                    &data_dir.join("channels.db"),
+                )
+                .context("opening Google notification outbox")?,
+            );
+            let sink = Arc::new(
+                crate::r#impl::google::GoogleEventRouter::new_with_notifications(
+                    store.clone(),
+                    goals,
+                    notifications,
+                ),
+            );
+            let dispatcher = crate::r#impl::google::GoogleEventDispatcher::new(
+                store,
+                sink,
+                format!("daemon-dispatch-{}", uuid::Uuid::new_v4()),
+                30_000,
+            )?;
+            let dispatch_clock = clock.clone();
+            handle.spawn_supervised(move |cancel| async move {
+                loop {
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    let now_ms = dispatch_clock.wall_now().0.max(0);
+                    if let Err(error) = dispatcher.dispatch_due(now_ms, 100, &cancel).await {
+                        warn!(error = %error, "Google event dispatch failed");
+                    }
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+                    }
+                }
+            });
+        }
 
         // MCP servers. Keep the manager alive: gbrain recall/capture calls the
         // same authenticated connections after startup tool registration.
@@ -1275,6 +1327,7 @@ impl RequestHandler {
                 _turn_orch_for_telegram,
                 handler.subsystems.memory.objective_store.clone(),
                 handler.subsystems.memory.approval_repository.clone(),
+                gmail_goal_drafts,
                 approved_apply,
                 handler.google.clone(),
                 _cancel_for_telegram,
@@ -1295,6 +1348,7 @@ impl RequestHandler {
         orchestrator: Arc<crate::service::DaemonTurnOrchestrator>,
         objective_store: Arc<Mutex<ObjectiveStore>>,
         approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+        gmail_goal_drafts: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>,
         approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
         google: Option<Arc<GoogleIntegration>>,
         cancel: CancellationToken,
@@ -1340,6 +1394,9 @@ impl RequestHandler {
         let mut router = ChannelRouter::new(store, turn_executor)
             .with_goal_executor(goal_executor)
             .with_approval_repository(approval_repository);
+        let gmail_executor: Arc<dyn GmailDraftApprovalExecutor> =
+            Arc::new(DaemonGmailDraftApprovalExecutor::new(gmail_goal_drafts));
+        router = router.with_gmail_draft_executor(gmail_executor);
         if let Some(google) = google {
             router = router.with_google_accounts(google);
         }
@@ -1410,6 +1467,10 @@ impl RequestHandler {
                         warn!(error = %error, "Loading pending Telegram approvals failed")
                     }
                 }
+            }
+
+            if let Err(error) = router.flush_pending_outbox(&transport, 100).await {
+                warn!(error = %error, "Flushing durable Telegram outbox failed");
             }
 
             let result = tokio::select! {

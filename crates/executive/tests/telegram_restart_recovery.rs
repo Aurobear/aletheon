@@ -219,7 +219,7 @@ async fn crash_after_outbox_commit_flush_sends_without_turn() {
     let store2 = ChannelStore::open(&db_path).unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
-    let router = ChannelRouter::new(store2, executor.clone());
+    let mut router = ChannelRouter::new(store2, executor.clone());
 
     let count = router.flush_pending_outbox(&transport, 10).await.unwrap();
     assert_eq!(count, 1, "should flush exactly one pending outbox message");
@@ -322,7 +322,7 @@ async fn crash_after_send_before_mark_retry_may_duplicate_outbound() {
     let store2 = ChannelStore::open(&db_path).unwrap();
     let executor2 = Arc::new(FakeTurnExecutor::default());
     let transport2 = FakeTransport::new();
-    let router2 = ChannelRouter::new(store2, executor2.clone());
+    let mut router2 = ChannelRouter::new(store2, executor2.clone());
 
     let count = router2.flush_pending_outbox(&transport2, 10).await.unwrap();
     assert_eq!(count, 1, "should flush the artificially-pending outbox");

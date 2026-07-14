@@ -179,7 +179,7 @@ async fn notification_is_bounded_persisted_and_retried_after_restart() {
         "failed"
     );
     drop(router);
-    let restarted = f.router();
+    let mut restarted = f.router();
     assert_eq!(
         restarted
             .flush_pending_outbox(&transport, 10)
