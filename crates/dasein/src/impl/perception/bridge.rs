@@ -13,6 +13,8 @@ pub struct PerceptionBridge {
     buffer: Vec<PerceptionEvent>,
     buffer_max: usize,
     flush_interval: Duration,
+    /// Held for future timestamp-coordination features;
+    /// currently set at construction but unused in the bridge loop.
     #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
 }

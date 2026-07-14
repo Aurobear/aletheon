@@ -5,6 +5,7 @@
 //! - RuleExtractedEvent (when batch threshold reached)
 //! - EvolutionTriggeredEvent (when evolution conditions met)
 
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -42,8 +43,8 @@ pub struct ToolObservationHandler {
     scheduler: Arc<LlmScheduler>,
     config: ObserverConfig,
     reflection_buffer: Mutex<Vec<ReflectionPayload>>,
-    consecutive_failures: Mutex<usize>,
-    last_confidence: Mutex<f64>,
+    consecutive_failures: AtomicUsize,
+    last_confidence: AtomicU64,
 }
 
 impl ToolObservationHandler {
@@ -52,8 +53,8 @@ impl ToolObservationHandler {
             scheduler,
             config,
             reflection_buffer: Mutex::new(Vec::new()),
-            consecutive_failures: Mutex::new(0),
-            last_confidence: Mutex::new(1.0),
+            consecutive_failures: AtomicUsize::new(0),
+            last_confidence: AtomicU64::new(1.0_f64.to_bits()),
         }
     }
 
@@ -66,10 +67,13 @@ impl ToolObservationHandler {
         events.push(EvolutionEvent::Reflection(reflection.clone()));
 
         // 2. Track consecutive failures
-        let mut failures = self.consecutive_failures.lock().await;
         match reflection.assessment {
-            Assessment::Failure => *failures += 1,
-            _ => *failures = 0,
+            Assessment::Failure => {
+                self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {
+                self.consecutive_failures.store(0, Ordering::Relaxed);
+            }
         }
 
         // 3. Buffer reflection
@@ -87,10 +91,11 @@ impl ToolObservationHandler {
             }
 
             // 5. Check evolution trigger conditions
-            let should_trigger = *failures >= self.config.consecutive_failure_threshold;
+            let failures = self.consecutive_failures.load(Ordering::Relaxed);
+            let should_trigger = failures >= self.config.consecutive_failure_threshold;
             let confidence_dropped = {
-                let last = self.last_confidence.lock().await;
-                *last - reflection.confidence > self.config.confidence_drop_threshold
+                let last = f64::from_bits(self.last_confidence.load(Ordering::Relaxed));
+                last - reflection.confidence > self.config.confidence_drop_threshold
             };
 
             if should_trigger || confidence_dropped {
@@ -109,7 +114,8 @@ impl ToolObservationHandler {
             }
 
             // Update confidence tracking
-            *self.last_confidence.lock().await = reflection.confidence;
+            self.last_confidence
+                .store(reflection.confidence.to_bits(), Ordering::Relaxed);
 
             // Clear buffer after processing
             buffer.clear();

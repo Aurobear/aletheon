@@ -228,6 +228,9 @@ pub trait AgoraOps: Send + Sync {
     }
 
     /// Public watch surface: return commits after `cursor` (poll-style).
+    ///
+    /// Future poll-style commit watcher — retained as public API surface but not yet called.
+    #[allow(dead_code)]
     async fn watch(&self, session: &str, cursor: u64) -> Vec<AgoraCommit> {
         self.changes_since(session, cursor).await
     }

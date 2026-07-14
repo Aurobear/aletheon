@@ -43,11 +43,15 @@ pub struct RequestHandler {
     /// Session gateway for external agent debug access.
     pub(crate) session_gateway: Arc<SessionGateway>,
     /// Communication bus (always available after init).
+    /// Only used by the currently-dead `sf_review`/`sf_narrate` bus fallback paths;
+    /// will become live when those methods are re-plumbed.
     #[allow(dead_code)]
     pub(crate) bus: Arc<CommunicationBus>,
     /// Default LLM provider.
     pub(crate) llm: Arc<dyn LlmProvider>,
     /// Model router for per-task-type model selection.
+    /// Stored for future handler-level routing; the live path passes a clone
+    /// directly to the orchestrator at construction time (`init.rs`).
     #[allow(dead_code)]
     pub(crate) model_router: Arc<ModelRouter>,
     /// Per-connection notification channel for JSON-RPC push.
@@ -65,6 +69,7 @@ pub struct RequestHandler {
 impl RequestHandler {
     /// Review an intent through SelfField via CommunicationBus.
     /// Falls back to direct lock if bus is not configured.
+    /// Reserved for future bus-based SelfField integration; not yet called.
     #[allow(dead_code)]
     pub(crate) async fn sf_review(
         &self,
@@ -115,6 +120,7 @@ impl RequestHandler {
 
     /// Record a narrative entry in SelfField via CommunicationBus.
     /// Falls back to direct lock if bus is not configured.
+    /// Reserved for future bus-based SelfField integration; not yet called.
     #[allow(dead_code)]
     pub(crate) async fn sf_narrate(&self, event: &str, reason: &str) {
         let req = SelfFieldRequest::Narrate {
@@ -150,6 +156,7 @@ impl RequestHandler {
     }
 
     /// Post-turn coordination: update Dasein mood from turn output.
+    /// Reserved for future Dasein mood-feedback integration; not yet called.
     #[allow(dead_code)]
     pub(crate) async fn coordinate(&self, turn: &usize, turn_text: &str) {
         let sf = self.subsystems.self_field.lock().await;
@@ -168,6 +175,8 @@ impl RequestHandler {
     /// byte-stable for provider cache hits.
     ///
     /// Returns empty string if the queue is empty (no injections needed).
+    /// Reserved for future handler-based memory injection; the live path uses
+    /// `TurnPipeline::compose_memory_block` instead.
     #[allow(dead_code)]
     pub(crate) async fn compose_memory_block(&self) -> String {
         let mut queue = self.subsystems.session.memory_queue.lock().await;

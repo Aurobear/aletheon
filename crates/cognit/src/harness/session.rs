@@ -42,7 +42,6 @@ pub trait CognitiveSession: Send {
 }
 
 pub struct LinearCognitiveSession {
-    #[allow(dead_code)]
     inner: ReActLoop,
 }
 

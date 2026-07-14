@@ -86,6 +86,8 @@ pub struct CognitCore {
     dual_model: Option<DualModelBridge>,
     learning: Option<LearningBridge>,
     awareness_generator: AwarenessGenerator,
+    /// Held for late-init use and future Clock-dependent features;
+    /// currently only consumed at construction via clone() into components.
     #[allow(dead_code)]
     clock: Arc<dyn Clock>,
 }

@@ -81,6 +81,7 @@ pub trait LlmProvider: Send + Sync {
     ///
     /// Default implementation uses `name()` and `max_context_length()`.
     /// Providers can override to return a more specific model name.
+    #[deprecated(note = "Use `name()` and `max_context_length()` directly instead")]
     fn model_info(&self) -> ModelInfo {
         ModelInfo {
             name: self.name().to_string(),
