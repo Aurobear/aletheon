@@ -7,6 +7,7 @@ pub mod pre_turn;
 pub mod turn_pipeline;
 pub mod turn_service;
 pub mod turn_services;
+pub mod verification;
 
 pub use daemon_turn::DaemonTurnOrchestrator;
 pub use exec_session::ExecSessionBuilder;
