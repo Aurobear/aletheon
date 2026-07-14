@@ -4,7 +4,11 @@
 //! the channel router from the daemon runtime, plus a pure content-routing
 //! function so the router is testable without constructing the full stack.
 
-use fabric::channel::{InboundMessage, MessageContent, OutboundMessage};
+use std::sync::Arc;
+
+use fabric::channel::{ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage};
+
+use super::store::{ChannelStore, InsertOutcome};
 
 // ---------------------------------------------------------------------------
 // Transport trait
@@ -32,6 +36,7 @@ pub trait ChannelTransport: Send + Sync {
 
 /// A provider message bundled with the cursor to use for the next
 /// receive window.
+#[derive(Debug)]
 pub struct ProviderEnvelope {
     pub message: InboundMessage,
     pub next_cursor: String,
@@ -65,7 +70,7 @@ pub trait ChannelTurnExecutor: Send + Sync {
 
 /// Classification of an inbound message for routing purposes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum RoutedInput {
+pub enum RoutedInput {
     /// `/start` — respond with a greeting, no LLM call.
     Greeting,
     /// Text to be executed as a chat turn.
@@ -79,7 +84,7 @@ enum RoutedInput {
 /// Classify a [`MessageContent`] into a [`RoutedInput`].
 ///
 /// This is a pure function with no side-effects or async — easy to test.
-fn route_content(content: &MessageContent) -> RoutedInput {
+pub fn route_content(content: &MessageContent) -> RoutedInput {
     match content {
         MessageContent::Command { command, args } => match command.as_str() {
             "/start" => RoutedInput::Greeting,
@@ -95,6 +100,218 @@ fn route_content(content: &MessageContent) -> RoutedInput {
                 RoutedInput::Chat(text.clone())
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Channel router
+// ---------------------------------------------------------------------------
+
+/// Durable owner-only channel message router.
+///
+/// Owns a [`ChannelStore`] for persistence and delegates AI turns to a
+/// [`ChannelTurnExecutor`]. Rejection-check happens before the LLM is
+/// invoked, and turn outcomes are persisted before the network send so
+/// that a send failure retries only the outbox — never the LLM turn.
+pub struct ChannelRouter {
+    store: ChannelStore,
+    turn_executor: Arc<dyn ChannelTurnExecutor>,
+}
+
+impl ChannelRouter {
+    /// Create a new router that owns `store` and uses `turn_executor` for
+    /// AI turn execution.
+    pub fn new(store: ChannelStore, turn_executor: Arc<dyn ChannelTurnExecutor>) -> Self {
+        Self {
+            store,
+            turn_executor,
+        }
+    }
+
+    /// Process a single provider message envelope.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Insert into inbox; skip if duplicate.
+    /// 2. Resolve the sender's active binding to a principal.
+    /// 3. Unknown senders are marked rejected and cursor is advanced
+    ///    (no LLM invocation, no outbox).
+    /// 4. Normalize content via [`route_content`].
+    /// 5. Execute the AI turn only for chat messages.
+    /// 6. Build an outbound DTO from the routed input and optional AI reply.
+    /// 7. Persist inbox-completed + outbox + cursor in one transaction.
+    /// 8. Send the outbound message through the transport.
+    /// 9. Mark the outbox row as sent or failed (never rolls back the
+    ///    completed turn).
+    pub async fn process(
+        &mut self,
+        transport: &dyn ChannelTransport,
+        envelope: ProviderEnvelope,
+    ) -> anyhow::Result<()> {
+        let message = &envelope.message;
+        let channel = message.channel_id.0.as_str();
+
+        // 1. Insert into inbox; duplicate messages are silently skipped.
+        match self.store.insert_inbound(message)? {
+            InsertOutcome::Duplicate => return Ok(()),
+            InsertOutcome::Inserted => { /* continue processing */ }
+        }
+
+        // 2. Resolve the active principal binding for this sender.
+        let principal = self
+            .store
+            .resolve_principal(channel, &message.sender_id.0)?;
+
+        // 3. Unknown sender: mark rejected, advance cursor, no LLM turn.
+        if principal.is_none() {
+            self.reject_inbound(channel, &message.message_id.0, &envelope.next_cursor)?;
+            return Ok(());
+        }
+
+        // 4. Normalize the message content through command routing.
+        let routed = route_content(&message.content);
+
+        // 5. Execute AI turn only for chat messages.
+        let mut ai_reply: Option<String> = None;
+        if let RoutedInput::Chat(text) = &routed {
+            match self
+                .turn_executor
+                .execute(text, &message.correlation_id)
+                .await
+            {
+                Ok(reply) => ai_reply = Some(reply),
+                Err(e) => {
+                    // Executor failure: mark inbox failed so it stays
+                    // retryable, do NOT advance the cursor.
+                    self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
+                    return Err(e);
+                }
+            }
+        }
+
+        // 6. Build the outbound message DTO.
+        let outbound = build_outbound(
+            &routed,
+            &message.conversation_id,
+            &message.message_id,
+            &message.correlation_id,
+            ai_reply.as_deref(),
+        );
+
+        // 7. Persist inbox+outbox+cursor in one atomic transaction.
+        self.store.complete_inbound(
+            channel,
+            &message.message_id.0,
+            &envelope.next_cursor,
+            &outbound,
+        )?;
+
+        // 8. Attempt the network send.
+        match transport.send(&outbound).await {
+            Ok(_provider_msg_id) => {
+                // 9a. Mark outbox row as sent.
+                self.store.db.execute(
+                    "UPDATE channel_outbox SET status = 'sent', updated_at = datetime('now')
+                     WHERE correlation_id = ?1",
+                    rusqlite::params![message.correlation_id],
+                )?;
+            }
+            Err(e) => {
+                // 9b. Mark outbox row as failed so it can be retried
+                //     independently of the already-completed inbox turn.
+                self.store.db.execute(
+                    "UPDATE channel_outbox SET status = 'failed', last_error = ?1, updated_at = datetime('now')
+                     WHERE correlation_id = ?2",
+                    rusqlite::params![e.to_string(), message.correlation_id],
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Mark an inbox message as rejected and advance the cursor.
+    ///
+    /// No outbox row is created — rejected senders receive no reply.
+    fn reject_inbound(
+        &mut self,
+        channel: &str,
+        message_id: &str,
+        next_cursor: &str,
+    ) -> anyhow::Result<()> {
+        let tx = self.store.db.transaction()?;
+
+        tx.execute(
+            "UPDATE channel_inbox SET status = 'rejected', result_json = '{\"reason\":\"unknown sender\"}', updated_at = datetime('now')
+             WHERE channel_id = ?1 AND message_id = ?2",
+            rusqlite::params![channel, message_id],
+        )?;
+
+        tx.execute(
+            "INSERT INTO channel_cursor (channel_id, cursor, updated_at)
+             VALUES (?1, ?2, datetime('now'))
+             ON CONFLICT(channel_id) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at",
+            rusqlite::params![channel, next_cursor],
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Mark an inbox message as failed (leaving it retryable) without
+    /// advancing the cursor.
+    fn fail_inbound(
+        &mut self,
+        channel: &str,
+        message_id: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        self.store.db.execute(
+            "UPDATE channel_inbox SET status = 'failed', result_json = ?3,
+             attempt_count = attempt_count + 1, updated_at = datetime('now')
+             WHERE channel_id = ?1 AND message_id = ?2",
+            rusqlite::params![channel, message_id, format!(r#"{{"error":"{}"}}"#, error)],
+        )?;
+        Ok(())
+    }
+
+    /// Expose the store for tests to inspect state.
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn store(&self) -> &ChannelStore {
+        &self.store
+    }
+}
+
+/// Build an [`OutboundMessage`] from a routed input and optional AI reply.
+fn build_outbound(
+    routed: &RoutedInput,
+    conversation_id: &ConversationId,
+    message_id: &MessageId,
+    correlation_id: &str,
+    ai_reply: Option<&str>,
+) -> OutboundMessage {
+    let content = match routed {
+        RoutedInput::Chat(_) => MessageContent::Text {
+            text: ai_reply.unwrap_or_default().to_string(),
+        },
+        RoutedInput::Greeting => MessageContent::Text {
+            text: "Hello! I am Aletheon. How can I help you today?".into(),
+        },
+        RoutedInput::GoalUnavailable => MessageContent::Text {
+            text: "Objective creation via chat is not yet available (targeting M2).".into(),
+        },
+        RoutedInput::Unsupported(_) => MessageContent::Text {
+            text: "I don't recognize your identity. Please contact an administrator.".into(),
+        },
+    };
+
+    OutboundMessage {
+        conversation_id: conversation_id.clone(),
+        content,
+        actions: vec![],
+        reply_to: Some(message_id.clone()),
+        correlation_id: correlation_id.to_string(),
     }
 }
 
