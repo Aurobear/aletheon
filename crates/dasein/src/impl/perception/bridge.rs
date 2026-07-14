@@ -127,7 +127,7 @@ mod tests {
     ) -> PerceptionEvent {
         PerceptionEvent {
             id: 1,
-            timestamp: fabric::wall_to_datetime(clock.wall_now()),
+            timestamp: clock.wall_now(),
             source: EventSource::Proc,
             category: EventCategory::Process,
             priority,

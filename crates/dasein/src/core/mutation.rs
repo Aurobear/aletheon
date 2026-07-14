@@ -4,7 +4,7 @@
 //! Irreversible mutations to core identity fields are auto-denied.
 
 use chrono::{DateTime, Utc};
-use fabric::self_field::RiskLevel;
+use fabric::self_field::AwarenessRiskLevel;
 use fabric::{MutationIntent, Verdict};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ impl MutationLayer {
                     "Non-reversible mutation to '{}' requires confirmation",
                     mutation.target
                 ),
-                risk_level: RiskLevel::High,
+                risk_level: AwarenessRiskLevel::High,
             };
         }
 

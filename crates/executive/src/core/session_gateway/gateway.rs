@@ -41,14 +41,14 @@ use super::subsystem_query::SubsystemRegistry;
 use crate::core::config::ExecutiveConfig;
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use crate::r#impl::daemon::session_manager::SessionManager;
-use crate::CoreMemory;
-use crate::RecallMemory;
 #[cfg(test)]
 use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
 #[cfg(test)]
 use cognit::harness::linear::goal_tracker::GoalTracker;
 use dasein::SelfField;
 use fabric::LlmProvider;
+use mnemosyne::CoreMemory;
+use mnemosyne::RecallMemory;
 
 /// Session Gateway — unified facade for external debug access.
 ///

@@ -4,7 +4,7 @@
 //! first match wins. Uses glob patterns for action matching.
 
 use anyhow::Result;
-use fabric::self_field::RiskLevel;
+use fabric::self_field::AwarenessRiskLevel;
 use fabric::{Intent, IntentSource, Verdict};
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,7 @@ pub struct BoundaryRule {
     /// What to do when matched.
     pub action: BoundaryAction,
     /// Risk level assigned to this rule's action.
-    pub risk_level: RiskLevel,
+    pub risk_level: AwarenessRiskLevel,
     /// Human-readable description.
     pub description: String,
     /// If true, this rule cannot be relaxed or tightened by evolution.
@@ -64,7 +64,7 @@ impl BoundaryLayer {
             action_pattern: pattern.to_string(),
             source_filter: None,
             action: verdict,
-            risk_level: RiskLevel::Medium,
+            risk_level: AwarenessRiskLevel::Medium,
             description: origin.to_string(),
             immutable,
         };
@@ -210,8 +210,8 @@ impl BoundaryLayer {
 
                 let action: BoundaryAction =
                     serde_json::from_str(&action_json).unwrap_or(BoundaryAction::Deny);
-                let risk_level: RiskLevel =
-                    serde_json::from_str(&risk_json).unwrap_or(RiskLevel::Medium);
+                let risk_level: AwarenessRiskLevel =
+                    serde_json::from_str(&risk_json).unwrap_or(AwarenessRiskLevel::Medium);
                 let source_filter: Option<IntentSource> =
                     source_json.and_then(|s| serde_json::from_str(&s).ok());
 
@@ -260,7 +260,7 @@ mod tests {
             action_pattern: "rm *".to_string(),
             source_filter: None,
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::Critical,
+            risk_level: AwarenessRiskLevel::Critical,
             description: "no rm allowed".to_string(),
             immutable: false,
         });
@@ -278,7 +278,7 @@ mod tests {
             action_pattern: "exec.*".to_string(),
             source_filter: None,
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::High,
+            risk_level: AwarenessRiskLevel::High,
             description: "deny exec".to_string(),
             immutable: false,
         });
@@ -286,7 +286,7 @@ mod tests {
             action_pattern: "exec.safe".to_string(),
             source_filter: None,
             action: BoundaryAction::Sandbox,
-            risk_level: RiskLevel::Low,
+            risk_level: AwarenessRiskLevel::Low,
             description: "sandbox safe exec".to_string(),
             immutable: false,
         });
@@ -304,7 +304,7 @@ mod tests {
             action_pattern: "deploy.*".to_string(),
             source_filter: None,
             action: BoundaryAction::Sandbox,
-            risk_level: RiskLevel::High,
+            risk_level: AwarenessRiskLevel::High,
             description: "sandbox deployments".to_string(),
             immutable: false,
         });
@@ -321,7 +321,7 @@ mod tests {
             action_pattern: "rm *".to_string(),
             source_filter: None,
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::Critical,
+            risk_level: AwarenessRiskLevel::Critical,
             description: "no rm".to_string(),
             immutable: false,
         });
@@ -337,7 +337,7 @@ mod tests {
             action_pattern: "*".to_string(),
             source_filter: Some(IntentSource::External),
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::Critical,
+            risk_level: AwarenessRiskLevel::Critical,
             description: "deny all external".to_string(),
             immutable: false,
         });
@@ -358,7 +358,7 @@ mod tests {
             action_pattern: "write.*".to_string(),
             source_filter: None,
             action: BoundaryAction::RequireConfirmation,
-            risk_level: RiskLevel::Medium,
+            risk_level: AwarenessRiskLevel::Medium,
             description: "confirm writes".to_string(),
             immutable: false,
         });
@@ -383,7 +383,7 @@ mod tests {
             action_pattern: "danger.*".to_string(),
             source_filter: None,
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::High,
+            risk_level: AwarenessRiskLevel::High,
             description: "test".to_string(),
             immutable: false,
         });
@@ -401,7 +401,7 @@ mod tests {
             action_pattern: "risky.*".to_string(),
             source_filter: None,
             action: BoundaryAction::Sandbox,
-            risk_level: RiskLevel::High,
+            risk_level: AwarenessRiskLevel::High,
             description: "test".to_string(),
             immutable: false,
         });
@@ -419,7 +419,7 @@ mod tests {
             action_pattern: "rm *".to_string(),
             source_filter: None,
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::Critical,
+            risk_level: AwarenessRiskLevel::Critical,
             description: "immutable rm".to_string(),
             immutable: true,
         });
@@ -437,7 +437,7 @@ mod tests {
             action_pattern: "watch.*".to_string(),
             source_filter: None,
             action: BoundaryAction::Sandbox,
-            risk_level: RiskLevel::Low,
+            risk_level: AwarenessRiskLevel::Low,
             description: "immutable watch".to_string(),
             immutable: true,
         });

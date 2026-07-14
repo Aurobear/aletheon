@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub struct LineageRecord {
     pub identity_name: String,
     pub identity_version: String,
+    // TODO: migrate to WallTime (extensive chrono Duration arithmetic, SQLite rfc3339, tests)
     pub recorded_at: DateTime<Utc>,
     pub event: String,
 }

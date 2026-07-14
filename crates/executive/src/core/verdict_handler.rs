@@ -261,7 +261,7 @@ impl VerdictHandler for DefaultVerdictHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::self_field::{IntentSource, RiskLevel};
+    use fabric::self_field::{AwarenessRiskLevel, IntentSource};
     use serde_json::json;
 
     fn test_intent() -> Intent {
@@ -576,7 +576,7 @@ mod tests {
         let handler = DefaultVerdictHandler::with_confirm_callback(Box::new(|_, _| true));
         let verdict = Verdict::RequireConfirmation {
             reason: "risky".to_string(),
-            risk_level: RiskLevel::High,
+            risk_level: AwarenessRiskLevel::High,
         };
         let action = handler.handle(&verdict, &test_intent(), &test_ctx());
         match action {
@@ -590,7 +590,7 @@ mod tests {
         let handler = DefaultVerdictHandler::with_confirm_callback(Box::new(|_, _| false));
         let verdict = Verdict::RequireConfirmation {
             reason: "risky".to_string(),
-            risk_level: RiskLevel::High,
+            risk_level: AwarenessRiskLevel::High,
         };
         let action = handler.handle(&verdict, &test_intent(), &test_ctx());
         match action {
@@ -606,7 +606,7 @@ mod tests {
         let handler = DefaultVerdictHandler::new();
         let verdict = Verdict::RequireConfirmation {
             reason: "needs approval".to_string(),
-            risk_level: RiskLevel::Medium,
+            risk_level: AwarenessRiskLevel::Medium,
         };
         let action = handler.handle(&verdict, &test_intent(), &test_ctx());
         match action {

@@ -7,8 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use fabric::wall_to_datetime;
+use fabric::WallTime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -59,8 +58,8 @@ pub struct Task {
     pub subject: String,
     pub description: String,
     pub status: TaskStatus,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: WallTime,
+    pub updated_at: WallTime,
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +79,7 @@ impl TaskStore {
         }
     }
 
-    pub fn create(&mut self, subject: String, description: String, now: DateTime<Utc>) -> Task {
+    pub fn create(&mut self, subject: String, description: String, now: WallTime) -> Task {
         let id = Uuid::new_v4().to_string();
         let task = Task {
             id: id.clone(),
@@ -102,12 +101,7 @@ impl TaskStore {
         self.tasks.values().cloned().collect()
     }
 
-    pub fn update_status(
-        &mut self,
-        id: &str,
-        status: TaskStatus,
-        now: DateTime<Utc>,
-    ) -> Option<Task> {
+    pub fn update_status(&mut self, id: &str, status: TaskStatus, now: WallTime) -> Option<Task> {
         if let Some(task) = self.tasks.get_mut(id) {
             task.status = status;
             task.updated_at = now;
@@ -199,7 +193,7 @@ impl Tool for TaskCreateTool {
 
         let description = input["description"].as_str().unwrap_or("").to_string();
 
-        let now = wall_to_datetime(ctx.clock.wall_now());
+        let now = ctx.clock.wall_now();
         let task = self.store.lock().create(subject, description, now);
 
         ToolResult {
@@ -316,7 +310,7 @@ impl Tool for TaskUpdateTool {
         match self
             .store
             .lock()
-            .update_status(id, status, wall_to_datetime(ctx.clock.wall_now()))
+            .update_status(id, status, ctx.clock.wall_now())
         {
             Some(task) => ToolResult {
                 content: serde_json::to_string_pretty(&task).unwrap_or_default(),
@@ -507,7 +501,7 @@ mod tests {
         let task = store.create(
             "Fix bug".to_string(),
             "Fix the null pointer".to_string(),
-            Utc::now(),
+            WallTime(0),
         );
         let id = task.id.clone();
         assert_eq!(task.status, TaskStatus::Pending);
@@ -523,7 +517,7 @@ mod tests {
 
         // update status
         let updated = store
-            .update_status(&id, TaskStatus::InProgress, Utc::now())
+            .update_status(&id, TaskStatus::InProgress, WallTime(0))
             .unwrap();
         assert_eq!(updated.status, TaskStatus::InProgress);
 
@@ -554,7 +548,7 @@ mod tests {
         let store = new_shared_task_store();
         store
             .lock()
-            .create("A".to_string(), "".to_string(), Utc::now());
+            .create("A".to_string(), "".to_string(), WallTime(0));
 
         let tool = TaskListTool::new(Arc::clone(&store));
         let result = tool.execute(json!({}), &ctx()).await;
@@ -570,7 +564,7 @@ mod tests {
         let store = new_shared_task_store();
         let task = store
             .lock()
-            .create("B".to_string(), "".to_string(), Utc::now());
+            .create("B".to_string(), "".to_string(), WallTime(0));
         let id = task.id.clone();
 
         let tool = TaskUpdateTool::new(Arc::clone(&store));
@@ -588,12 +582,12 @@ mod tests {
         let store = new_shared_task_store();
         let task = store
             .lock()
-            .create("C".to_string(), "".to_string(), Utc::now());
+            .create("C".to_string(), "".to_string(), WallTime(0));
         let id = task.id.clone();
 
         store
             .lock()
-            .update_status(&id, TaskStatus::InProgress, Utc::now());
+            .update_status(&id, TaskStatus::InProgress, WallTime(0));
 
         let tool = TaskGetTool::new(Arc::clone(&store));
         let result = tool.execute(json!({"id": id}), &ctx()).await;

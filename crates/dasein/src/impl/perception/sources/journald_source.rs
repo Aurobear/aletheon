@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use fabric::{wall_to_datetime, Clock};
+use fabric::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -88,7 +88,7 @@ impl JournaldSource {
                     let _ = tx
                         .send(PerceptionEvent {
                             id,
-                            timestamp: wall_to_datetime(clock.wall_now()),
+                            timestamp: clock.wall_now(),
                             source: EventSource::Journald,
                             category: EventCategory::Service,
                             priority: match priority {

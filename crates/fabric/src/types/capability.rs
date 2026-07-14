@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Tool-level (L0-L3) maps to these ABI-level semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
-pub enum PermissionLevel {
+pub enum CapabilityLevel {
     /// Read-only operations (no side effects).
     #[default]
     ReadOnly = 0,
@@ -31,7 +31,7 @@ pub struct Capability {
     /// Capability name (e.g., "shell.execute", "memory.write", "self.mutate").
     pub name: String,
     /// Maximum permission level this capability grants.
-    pub level: PermissionLevel,
+    pub level: CapabilityLevel,
     /// Human-readable description.
     pub description: String,
 }
@@ -39,7 +39,7 @@ pub struct Capability {
 impl Capability {
     pub fn new(
         name: impl Into<String>,
-        level: PermissionLevel,
+        level: CapabilityLevel,
         description: impl Into<String>,
     ) -> Self {
         Self {
@@ -73,7 +73,7 @@ impl CapabilitySet {
     }
 
     /// Check if the set includes a capability with at least the given level.
-    pub fn has(&self, name: &str, min_level: PermissionLevel) -> bool {
+    pub fn has(&self, name: &str, min_level: CapabilityLevel) -> bool {
         self.capabilities
             .iter()
             .any(|c| c.name == name && c.level >= min_level)
@@ -85,12 +85,12 @@ impl CapabilitySet {
     }
 
     /// Get the maximum permission level across all capabilities.
-    pub fn max_level(&self) -> PermissionLevel {
+    pub fn max_level(&self) -> CapabilityLevel {
         self.capabilities
             .iter()
             .map(|c| c.level)
             .max()
-            .unwrap_or(PermissionLevel::ReadOnly)
+            .unwrap_or(CapabilityLevel::ReadOnly)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Capability> {

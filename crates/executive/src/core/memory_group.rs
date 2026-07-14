@@ -10,8 +10,8 @@ use mnemosyne::FactStore;
 use mnemosyne::MemoryService;
 
 use crate::r#impl::goal::ObjectiveStore;
-use crate::CoreMemory;
-use crate::RecallMemory;
+use mnemosyne::CoreMemory;
+use mnemosyne::RecallMemory;
 
 pub struct MemoryGroup {
     pub episodic_memory: Arc<Mutex<EpisodicMemory>>,

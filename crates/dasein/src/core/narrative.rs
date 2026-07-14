@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use fabric::WallTime;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +22,7 @@ pub struct NarrativeEntry {
     pub reason: String,
     pub action: Option<String>,
     pub verdict: Option<String>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: WallTime,
 }
 
 /// Summary of narrative patterns and trends.
@@ -82,7 +83,7 @@ impl NarrativeLayer {
             reason: reason.to_string(),
             action: action.map(|s| s.to_string()),
             verdict: Some(format!("{:?}", verdict)),
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
+            timestamp: self.clock.wall_now(),
         };
         let mut buffer = self.buffer.write();
         if buffer.len() >= self.capacity {
@@ -98,7 +99,7 @@ impl NarrativeLayer {
             reason: reason.to_string(),
             action: None,
             verdict: None,
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
+            timestamp: self.clock.wall_now(),
         };
         let mut buffer = self.buffer.write();
         if buffer.len() >= self.capacity {
@@ -279,7 +280,7 @@ impl NarrativeLayer {
                 entry.reason,
                 entry.action,
                 entry.verdict,
-                entry.timestamp.to_rfc3339(),
+                fabric::wall_to_datetime(entry.timestamp).to_rfc3339(),
             ])
             .context("Failed to insert narrative entry")?;
         }
@@ -305,8 +306,8 @@ impl NarrativeLayer {
                     action: row.get(2)?,
                     verdict: row.get(3)?,
                     timestamp: DateTime::parse_from_rfc3339(&ts_str)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
+                        .map(|dt| WallTime(dt.with_timezone(&Utc).timestamp_millis()))
+                        .unwrap_or_else(|_| self.clock.wall_now()),
                 })
             })
             .context("Failed to query narrative_entries")?;

@@ -23,7 +23,7 @@ pub enum Verdict {
     /// Require user confirmation before proceeding.
     RequireConfirmation {
         reason: String,
-        risk_level: RiskLevel,
+        risk_level: AwarenessRiskLevel,
     },
     /// Must run in sandbox first.
     SandboxFirst { reason: String },
@@ -33,7 +33,7 @@ pub enum Verdict {
 
 /// Risk level for actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum RiskLevel {
+pub enum AwarenessRiskLevel {
     None = 0,
     Low = 1,
     Medium = 2,
@@ -95,11 +95,23 @@ pub struct Conflict {
 /// Source of a conflicting opinion.
 #[derive(Debug, Clone)]
 pub enum ConflictSource {
-    User { intent: String },
-    Brain { proposal: String, confidence: f64 },
-    Body { objection: String, risk: RiskLevel },
-    Memory { evidence: String },
-    Self_ { concern: String },
+    User {
+        intent: String,
+    },
+    Brain {
+        proposal: String,
+        confidence: f64,
+    },
+    Body {
+        objection: String,
+        risk: AwarenessRiskLevel,
+    },
+    Memory {
+        evidence: String,
+    },
+    Self_ {
+        concern: String,
+    },
 }
 
 /// Resolution of a conflict.

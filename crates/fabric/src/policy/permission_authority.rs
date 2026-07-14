@@ -31,7 +31,7 @@ pub trait PermissionAuthority: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RiskLevel;
+    use crate::AwarenessRiskLevel;
     use std::path::PathBuf;
 
     struct AlwaysConfirm;
@@ -44,7 +44,7 @@ mod tests {
         ) -> Option<Verdict> {
             Some(Verdict::RequireConfirmation {
                 reason: format!("policy requires confirmation for '{action}'"),
-                risk_level: RiskLevel::Medium,
+                risk_level: AwarenessRiskLevel::Medium,
             })
         }
     }

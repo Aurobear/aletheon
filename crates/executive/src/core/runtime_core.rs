@@ -29,7 +29,7 @@ use aletheon_kernel::chronos::SystemClock;
 
 use crate::r#impl::daemon::handler::RequestHandler;
 use crate::r#impl::daemon::DaemonConfig;
-use crate::ProviderRegistry;
+use cognit::r#impl::provider_registry::ProviderRegistry;
 
 use dasein::r#impl::perception::PerceptionEvent;
 

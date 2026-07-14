@@ -19,7 +19,6 @@ pub mod host;
 pub use aletheon_kernel as kernel;
 
 // Re-export from core for backward compatibility
-pub use cognit::harness::linear::{ReActLoop, TurnMetrics};
 pub use core::config::{
     AgentConfig, AppConfig, DaemonConfig, ExecutiveConfig, HooksConfig, McpServerConfig,
     MemoryConfig, PluginsConfig, ProviderConfig, SandboxConfig, Transport,
@@ -35,21 +34,8 @@ pub use r#impl::orchestration;
 pub use r#impl::plugin;
 pub use r#impl::session;
 
-// Re-export provider registry from brain-core
-pub use cognit::r#impl::provider_registry::ProviderRegistry;
-
-// Re-export memory types (now in the memory crate, Group B Phase 2)
-pub use mnemosyne::memory_tools;
-pub use mnemosyne::CoreMemory;
-pub use mnemosyne::RecallMemory;
-
 // ── Re-exports for CLI exec path (bin crate uses these via executive) ───
 pub use crate::service::exec_session::ExecSessionBuilder;
-pub use cognit::harness::HarnessConfig;
-pub use corpus::security::approval::{ApprovalGate, TerminalApprovalGate};
-pub use corpus::security::audit::AuditLogger;
-pub use corpus::security::runner::ToolRunnerWithGuard;
-pub use corpus::tools::tools::{ToolContext, ToolRegistry};
 pub use fabric::types::admission::RiskLevel;
 pub use fabric::{
     AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,

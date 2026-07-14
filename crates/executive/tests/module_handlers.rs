@@ -27,7 +27,7 @@ use dasein::core::{SelfField, SelfFieldConfig};
 use dasein::r#impl::perception::event::{
     EventCategory, EventData, EventSource, PerceptionEvent, Priority as EventPriority,
 };
-use executive::CoreMemory;
+use mnemosyne::CoreMemory;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -308,7 +308,7 @@ async fn test_perception_module_publishes_to_topic() {
     // Send a Critical event (published immediately, not buffered).
     let event = PerceptionEvent {
         id: 1,
-        timestamp: chrono::Utc::now(),
+        timestamp: fabric::WallTime(0),
         source: EventSource::Proc,
         category: EventCategory::Process,
         priority: EventPriority::Critical,
@@ -379,7 +379,7 @@ async fn test_perception_module_buffered_events_flushed() {
     for i in 0..2 {
         let event = PerceptionEvent {
             id: i + 1,
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::WallTime(0),
             source: EventSource::Inotify,
             category: EventCategory::File,
             priority: EventPriority::Normal,

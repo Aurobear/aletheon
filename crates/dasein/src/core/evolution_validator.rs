@@ -352,7 +352,7 @@ mod tests {
     use super::*;
     use crate::core::boundary::{BoundaryAction, BoundaryRule};
     use crate::core::{SelfField, SelfFieldConfig};
-    use fabric::self_field::RiskLevel;
+    use fabric::self_field::AwarenessRiskLevel;
 
     fn make_self_field() -> SelfField {
         SelfField::new(SelfFieldConfig::default())
@@ -423,7 +423,7 @@ mod tests {
             action_pattern: "rm *".to_string(),
             source_filter: None,
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::Critical,
+            risk_level: AwarenessRiskLevel::Critical,
             description: "no rm".to_string(),
             immutable: true,
         });
@@ -557,7 +557,7 @@ mod tests {
             action_pattern: "test.*".to_string(),
             source_filter: None,
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::Low,
+            risk_level: AwarenessRiskLevel::Low,
             description: "test rule".to_string(),
             immutable: false,
         });
