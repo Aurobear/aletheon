@@ -1,6 +1,7 @@
 //! Security pipeline and sandbox execution.
 
 pub mod approval;
+pub mod credential_vault;
 pub mod exec_policy;
 pub mod permission_rules;
 pub mod runner;

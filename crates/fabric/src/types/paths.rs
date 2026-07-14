@@ -59,6 +59,16 @@ pub fn mcp_tokens_path() -> PathBuf {
     xdg_config_dir().join("mcp_tokens.json")
 }
 
+/// Encrypted OAuth credential vault: ~/.config/aletheon/credentials.vault
+pub fn credential_vault_path() -> PathBuf {
+    xdg_config_dir().join("credentials.vault")
+}
+
+/// System-owned OAuth credential master key.
+pub fn credential_master_key_path() -> PathBuf {
+    PathBuf::from("/etc/aletheon/credential-vault.key")
+}
+
 /// Config file path: ~/.aletheon/config.toml
 pub fn config_file() -> PathBuf {
     config_dir().join("config.toml")

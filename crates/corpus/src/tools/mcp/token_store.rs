@@ -62,6 +62,11 @@ pub trait TokenPersistence: Send + Sync {
     fn load_all(&self) -> Result<HashMap<TokenKey, TokenEntry>>;
     fn replace_all(&self, entries: &HashMap<TokenKey, TokenEntry>) -> Result<()>;
 
+    /// Remove legacy persistence after a verified one-shot migration.
+    fn finalize_migration(&self) -> Result<()> {
+        Ok(())
+    }
+
     fn read(&self, key: &TokenKey) -> Result<Option<TokenEntry>> {
         Ok(self.load_all()?.remove(key))
     }
@@ -138,6 +143,26 @@ impl TokenPersistence for JsonTokenPersistence {
         let json = serde_json::to_vec_pretty(entries).context("serializing token store")?;
         self.atomic_write(&json)
     }
+
+    fn finalize_migration(&self) -> Result<()> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+        let len = fs::metadata(&self.path)?.len();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.path)?;
+        let zeros = vec![0_u8; usize::try_from(len).unwrap_or(0).min(16 * 1024 * 1024)];
+        file.write_all(&zeros)?;
+        file.sync_all()?;
+        drop(file);
+        fs::remove_file(&self.path)?;
+        if let Some(parent) = self.path.parent() {
+            OpenOptions::new().read(true).open(parent)?.sync_all()?;
+        }
+        Ok(())
+    }
 }
 
 pub struct TokenStore {
@@ -167,11 +192,21 @@ impl TokenStore {
     }
 
     pub fn default_path() -> Result<PathBuf> {
-        Ok(fabric::paths::mcp_tokens_path())
+        Ok(fabric::paths::credential_vault_path())
     }
 
     pub fn open_default() -> Result<Self> {
-        Self::new(Self::default_path()?)
+        let persistence = crate::security::credential_vault::CredentialVault::open(
+            Self::default_path()?,
+            &fabric::paths::credential_master_key_path(),
+        )?;
+        Self::from_persistence(Box::new(persistence))
+    }
+
+    /// Legacy plaintext path is exposed only for an explicit one-shot
+    /// migration; it is never read by `open_default`.
+    pub fn legacy_default_path() -> PathBuf {
+        fabric::paths::mcp_tokens_path()
     }
 
     pub fn get(&self, server_id: &str) -> Option<&TokenEntry> {
@@ -216,6 +251,7 @@ impl TokenStore {
         for key in self.tokens.keys() {
             self.persistence.delete(key)?;
         }
+        self.persistence.finalize_migration()?;
         Ok(self.tokens.len())
     }
 
