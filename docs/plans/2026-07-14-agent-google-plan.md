@@ -4037,3 +4037,516 @@ mod tests {
 git add crates/executive/src/impl/agent/pi/mod.rs         crates/executive/src/impl/agent/pi/task.rs         crates/executive/src/impl/agent/pi/report.rs
 git commit -m "feat(agent): add PiSubagentTask and PiSubagentReport types"
 ```
+
+
+## Task D.2: Implement WorktreeManager
+
+### D.2.1 Create `crates/executive/src/impl/agent/pi/worktree.rs`
+
+- [ ] Create the file with the following content including 2 integration tests:
+
+```rust
+//! WorktreeManager -- creates and cleans up Git worktrees for isolated Pi runs.
+
+use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use tracing::{info, warn};
+
+/// Handle to a created Git worktree. Cleans up on Drop.
+pub struct WorktreeHandle {
+    /// Path to the created worktree.
+    pub path: PathBuf,
+    /// Name of the branch checked out in the worktree.
+    pub branch: String,
+}
+
+impl Drop for WorktreeHandle {
+    fn drop(&mut self) {
+        if self.path.exists() {
+            if let Err(e) = Self::remove_worktree(&self.path) {
+                warn!(
+                    path = %self.path.display(),
+                    error = %e,
+                    "failed to clean up worktree on drop"
+                );
+            }
+        }
+    }
+}
+
+impl WorktreeHandle {
+    /// Remove a git worktree using `git worktree remove`.
+    fn remove_worktree(path: &Path) -> Result<()> {
+        let output = Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(path)
+            .output()
+            .context("git worktree remove failed")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git worktree remove: {}", stderr);
+        }
+        Ok(())
+    }
+}
+
+/// Manages creation and diff collection for Git worktrees.
+pub struct WorktreeManager {
+    /// Path to the main repository.
+    repo_path: PathBuf,
+}
+
+impl WorktreeManager {
+    pub fn new(repo_path: impl Into<PathBuf>) -> Self {
+        Self {
+            repo_path: repo_path.into(),
+        }
+    }
+
+    /// Create a new Git worktree on a unique branch.
+    pub fn create(&self, branch_name: &str) -> Result<WorktreeHandle> {
+        let worktree_path = self.repo_path.join(format!("worktrees/{}", branch_name));
+
+        // Remove any stale worktree at this path.
+        if worktree_path.exists() {
+            let _ = std::fs::remove_dir_all(&worktree_path);
+            let _ = Command::new("git")
+                .args(["worktree", "prune"])
+                .current_dir(&self.repo_path)
+                .output();
+        }
+
+        // Create the worktree.
+        let output = Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                branch_name,
+                worktree_path.to_str().unwrap(),
+                "HEAD",
+            ])
+            .current_dir(&self.repo_path)
+            .output()
+            .context("git worktree add failed")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git worktree add: {}", stderr);
+        }
+
+        info!(
+            branch = branch_name,
+            path = %worktree_path.display(),
+            "worktree created"
+        );
+
+        Ok(WorktreeHandle {
+            path: worktree_path,
+            branch: branch_name.to_string(),
+        })
+    }
+
+    /// Collect a unified diff between the worktree branch and its base.
+    pub fn collect_diff(&self, handle: &WorktreeHandle) -> Result<String> {
+        let output = Command::new("git")
+            .args(["diff", &format!("HEAD...{}", handle.branch)])
+            .current_dir(&self.repo_path)
+            .output()
+            .context("git diff failed")?;
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// List files changed in the worktree.
+    pub fn changed_files(&self, handle: &WorktreeHandle) -> Result<Vec<String>> {
+        let output = Command::new("git")
+            .args([
+                "diff",
+                "--name-only",
+                &format!("HEAD...{}", handle.branch),
+            ])
+            .current_dir(&self.repo_path)
+            .output()
+            .context("git diff --name-only failed")?;
+
+        let text = String::from_utf8_lossy(&output.stdout);
+        Ok(text.lines().map(|s| s.to_string()).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+    use tempfile::tempdir;
+
+    fn init_test_repo(dir: &Path) {
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        // Create an initial commit so we can branch.
+        std::fs::write(dir.join("README.md"), "# test").unwrap();
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+    }
+
+    #[test]
+    fn create_worktree_succeeds() {
+        let dir = tempdir().unwrap();
+        init_test_repo(dir.path());
+
+        let manager = WorktreeManager::new(dir.path().to_path_buf());
+        let handle = manager.create("test-branch").unwrap();
+        assert!(handle.path.exists());
+        assert!(handle.path.join("README.md").exists());
+        // Clean up
+        drop(handle);
+    }
+
+    #[test]
+    fn changed_files_after_modification() {
+        let dir = tempdir().unwrap();
+        init_test_repo(dir.path());
+
+        let manager = WorktreeManager::new(dir.path().to_path_buf());
+        let handle = manager.create("test-branch-2").unwrap();
+
+        // Modify a file in the worktree.
+        std::fs::write(handle.path.join("src"), "// new code").unwrap();
+        Command::new("git")
+            .args(["add", "src"])
+            .current_dir(&handle.path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "add src"])
+            .current_dir(&handle.path)
+            .output()
+            .unwrap();
+
+        let files = manager.changed_files(&handle).unwrap();
+        assert!(!files.is_empty());
+        // Clean up
+        drop(handle);
+    }
+}
+```
+
+### D.2.2 Commit
+
+- [ ] Run:
+```bash
+git add crates/executive/src/impl/agent/pi/worktree.rs
+git commit -m "feat(agent): add WorktreeManager for isolated Pi subagent execution"
+```
+
+## Task D.3: Implement PiWorker (GoalWorker)
+
+### D.3.1 Create `crates/executive/src/impl/agent/pi/worker.rs`
+
+- [ ] Create the file with the following content including 3 parse tests:
+
+```rust
+//! PiWorker -- GoalWorker implementation that spawns a Pi coding subagent.
+
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+use fabric::types::goal::{GoalFrame, WorkerKind};
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::Arc;
+use tokio::process::Command as TokioCommand;
+use tokio::time::{timeout, Duration};
+use tracing::info;
+
+use super::report::PiSubagentReport;
+use super::task::PiSubagentTask;
+use super::worktree::WorktreeManager;
+use crate::impl::goal::worker::{GoalWorker, WorkerOutput};
+
+/// Worker that executes goals by spawning a Pi coding subagent process.
+pub struct PiWorker {
+    /// Path to the Pi binary.
+    pi_binary: PathBuf,
+    /// Repository path for worktree creation.
+    repo_path: PathBuf,
+    /// Optional shared WorktreeManager (created per-call if None).
+    worktree_manager: Option<Arc<WorktreeManager>>,
+}
+
+impl PiWorker {
+    pub fn new(pi_binary: PathBuf, repo_path: PathBuf) -> Self {
+        Self {
+            pi_binary,
+            repo_path,
+            worktree_manager: None,
+        }
+    }
+
+    /// Parse PiSubagentReport from the Pi process stdout.
+    /// Expects the Pi process to print a JSON report at the end of its output.
+    pub fn parse_report(output: &str) -> Result<PiSubagentReport> {
+        // The Pi process outputs the JSON report as the last non-empty line,
+        // or as a dedicated "--report" marker line followed by JSON.
+        let lines: Vec<&str> = output.lines().collect();
+
+        // Try to find a JSON object at the end of the output.
+        for line in lines.iter().rev() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('{') && trimmed.ends_with('}') {
+                return serde_json::from_str(trimmed)
+                    .context("failed to parse Pi report JSON");
+            }
+        }
+
+        // If no JSON report found, treat the entire output as a failure.
+        Ok(PiSubagentReport::failure(
+            "no structured report found in Pi output",
+            vec![output.to_string()],
+            0,
+        ))
+    }
+
+    /// Build a task specification from a goal frame.
+    fn build_task(&self, frame: &GoalFrame) -> PiSubagentTask {
+        PiSubagentTask::new(&frame.current_task)
+            .with_timeout(frame.remaining_budget.max_duration_secs)
+    }
+}
+
+#[async_trait]
+impl GoalWorker for PiWorker {
+    fn kind(&self) -> WorkerKind {
+        WorkerKind::Pi
+    }
+
+    async fn execute(&self, frame: &GoalFrame) -> Result<WorkerOutput> {
+        let task = self.build_task(frame);
+        let manager = self
+            .worktree_manager
+            .clone()
+            .unwrap_or_else(|| Arc::new(WorktreeManager::new(self.repo_path.clone())));
+
+        let branch = format!(
+            "pi-goal-{}-attempt-{}",
+            frame.goal_id.0,
+            frame.remaining_budget.attempt_count + 1
+        );
+        let handle = manager.create(&branch)?;
+
+        // Serialize task to JSON for stdin.
+        let task_json = serde_json::to_string(&task)?;
+
+        info!(
+            goal_id = %frame.goal_id,
+            branch = %branch,
+            "spawning Pi subagent"
+        );
+
+        let mut child = TokioCommand::new(&self.pi_binary)
+            .arg("--task-stdin")
+            .arg("--worktree")
+            .arg(&handle.path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("failed to spawn Pi process")?;
+
+        // Write task to stdin and close it.
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            stdin.write_all(task_json.as_bytes()).await?;
+            drop(stdin);
+        }
+
+        let timeout_dur = Duration::from_secs(task.timeout_secs);
+        let output = timeout(timeout_dur, child.wait_with_output())
+            .await
+            .context("Pi process timed out")?
+            .context("Pi process failed")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        // Parse the report.
+        let report = Self::parse_report(&stdout)?;
+
+        // Collect diff from the worktree.
+        let diff = manager.collect_diff(&handle).ok();
+
+        // Drop the worktree handle to clean up.
+        drop(handle);
+
+        let tokens_used = report.tokens_used;
+        let success = report.success && output.status.success();
+
+        Ok(WorkerOutput {
+            text: format!(
+                "Pi report:
+{}
+Diff:
+{}",
+                report.summary,
+                diff.unwrap_or_default()
+            ),
+            success,
+            tokens_used,
+            failure: if success {
+                None
+            } else {
+                Some(crate::impl::goal::worker::ClassifiedFailure {
+                    class: fabric::types::goal::FailureClass::ToolFailure,
+                    message: report.errors.join("; "),
+                })
+            },
+            artifacts: report.changed_files.iter().map(|f| f.path.clone()).collect(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_report_from_json_line() {
+        let report = PiSubagentReport::success(
+            "done",
+            vec![],
+            Some("diff".into()),
+            100,
+        );
+        let json = serde_json::to_string(&report).unwrap();
+        let output = format!("some log output
+{}
+more logs", json);
+
+        let parsed = PiWorker::parse_report(&output).unwrap();
+        assert!(parsed.success);
+        assert_eq!(parsed.summary, "done");
+    }
+
+    #[test]
+    fn parse_report_no_json_returns_failure() {
+        let output = "just some random output
+no json here";
+        let report = PiWorker::parse_report(output).unwrap();
+        assert!(!report.success);
+        assert!(report.summary.contains("no structured report"));
+    }
+
+    #[test]
+    fn parse_report_with_multiple_json_lines_picks_last() {
+        let report1 = PiSubagentReport::failure("first", vec![], 10);
+        let report2 = PiSubagentReport::success("second", vec![], 20);
+        let json1 = serde_json::to_string(&report1).unwrap();
+        let json2 = serde_json::to_string(&report2).unwrap();
+        let output = format!("{}
+{}", json1, json2);
+
+        let parsed = PiWorker::parse_report(&output).unwrap();
+        assert!(parsed.success);
+        assert_eq!(parsed.summary, "second");
+    }
+}
+```
+
+### D.3.2 Modify `crates/executive/Cargo.toml` (if needed)
+
+- [ ] Verify that required dependencies are present. The PiWorker uses:
+  - `tokio` (already present with "full" features)
+  - `serde_json` (already present)
+  - `anyhow` (already present)
+  - `async-trait` (already present)
+  - `tempfile` (already in dev-dependencies)
+
+No new dependencies needed for Phase D.
+
+### D.3.3 Commit
+
+- [ ] Run:
+```bash
+git add crates/executive/src/impl/agent/pi/worker.rs
+git commit -m "feat(agent): implement PiWorker -- GoalWorker that spawns Pi subagent with worktree isolation"
+```
+
+### D.3.4 End-to-end compilation and test
+
+- [ ] Run:
+```bash
+cargo check --workspace 2>&1
+```
+
+**Expected output:** Clean compilation of all crates, no errors.
+
+- [ ] Run tests:
+```bash
+cargo test -p executive --lib -- impl::agent::pi 2>&1
+```
+
+**Expected output:**
+```
+running 7 tests
+test impl::agent::pi::task::tests::new_task_has_default_constraints ... ok
+test impl::agent::pi::task::tests::builder_methods_work ... ok
+test impl::agent::pi::report::tests::success_report_has_no_errors ... ok
+test impl::agent::pi::report::tests::failure_report_has_errors_and_no_changes ... ok
+test impl::agent::pi::worktree::tests::create_worktree_succeeds ... ok
+test impl::agent::pi::worktree::tests::changed_files_after_modification ... ok
+test impl::agent::pi::worker::tests::parse_report_from_json_line ... ok
+test impl::agent::pi::worker::tests::parse_report_no_json_returns_failure ... ok
+test impl::agent::pi::worker::tests::parse_report_with_multiple_json_lines_picks_last ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored
+```
+
+- [ ] Run full workspace tests:
+```bash
+cargo test --workspace 2>&1
+```
+
+**Expected output:** All tests across the workspace pass. Flaky tests (like the known `execute_script_hook_inject`) may be skipped or retried.
+
+- [ ] Commit formatting:
+```bash
+cargo fmt --all
+git add -u
+git commit -m "chore: cargo fmt after Phase D PiWorker integration"
+```
+
+---
+# Phase Summary
+
+After completing Phases A through D, the following subsystems are operational:
+
+| Phase | Deliverable | Crates | Tests |
+|-------|------------|--------|-------|
+| A | Channel types, Channel trait/registry, TelegramChannel, daemon routing | fabric, executive | 7 |
+| B | Goal types, extended schema, GoalSupervisor, state machine, frame builder | fabric, executive | 13 |
+| C | GoalWorker trait, AttemptRecord, FailureClass, RetryPolicy, Escalation, DeepSeekWorker | executive | 19 |
+| D | PiSubagentTask/Report, WorktreeManager, PiWorker | executive | 9 |
+| **Total** | | | **48+** |
+
+Phases E-H (Google OAuth, Gmail channel, verification pipeline, GBrain backend) will be planned in a subsequent document.
