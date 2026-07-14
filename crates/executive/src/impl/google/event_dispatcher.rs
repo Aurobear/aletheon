@@ -134,6 +134,26 @@ pub trait GoogleMemoryProposalSink: Send + Sync {
     ) -> Result<(), String>;
 }
 
+#[async_trait]
+pub trait GoogleMailIngressSink: Send + Sync {
+    async fn ingest_mail(
+        &self,
+        event: &ExternalEventEnvelope,
+        cancel: &CancellationToken,
+    ) -> Result<(), String>;
+}
+
+#[async_trait]
+impl GoogleMailIngressSink for crate::r#impl::channel::gmail::GmailGoalEventIngress {
+    async fn ingest_mail(
+        &self,
+        event: &ExternalEventEnvelope,
+        cancel: &CancellationToken,
+    ) -> Result<(), String> {
+        self.ingest(event, cancel).await.map(|_| ())
+    }
+}
+
 pub trait GoogleNotificationSink: Send + Sync {
     fn enqueue(
         &self,
@@ -204,6 +224,7 @@ pub struct GoogleEventRouter {
     store: Arc<Mutex<GoogleSyncStore>>,
     goals: Arc<GoalCoordinator>,
     notifications: Arc<dyn GoogleNotificationSink>,
+    mail_ingress: Option<Arc<dyn GoogleMailIngressSink>>,
     current_tasks: Option<Arc<dyn GoogleCurrentTaskProjection>>,
     memory_proposals: Option<Arc<dyn GoogleMemoryProposalSink>>,
 }
@@ -218,6 +239,7 @@ impl GoogleEventRouter {
             store,
             goals,
             notifications: Arc::new(ChannelRouterNotificationSink { router: channels }),
+            mail_ingress: None,
             current_tasks: None,
             memory_proposals: None,
         }
@@ -232,6 +254,7 @@ impl GoogleEventRouter {
             store,
             goals,
             notifications,
+            mail_ingress: None,
             current_tasks: None,
             memory_proposals: None,
         }
@@ -239,6 +262,11 @@ impl GoogleEventRouter {
 
     pub fn with_current_tasks(mut self, sink: Arc<dyn GoogleCurrentTaskProjection>) -> Self {
         self.current_tasks = Some(sink);
+        self
+    }
+
+    pub fn with_mail_ingress(mut self, sink: Arc<dyn GoogleMailIngressSink>) -> Self {
+        self.mail_ingress = Some(sink);
         self
     }
 
@@ -277,6 +305,11 @@ impl GoogleEventSink for GoogleEventRouter {
                 .matching_subscriptions(event, stream, generation)
                 .map_err(|error| error.to_string())?
         };
+        if matches!(event.event, GoogleEvent::MailReceived(_)) {
+            if let Some(ingress) = &self.mail_ingress {
+                ingress.ingest_mail(event, cancel).await?;
+            }
+        }
         for subscription in subscriptions {
             self.goals
                 .wake_for_google_event(&subscription.principal_id, event)

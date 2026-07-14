@@ -14,7 +14,8 @@ pub struct GmailHeader {
     pub value: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AuthenticationRequirement {
     SpfOrDkim,
     Spf,
@@ -52,6 +53,10 @@ pub enum SenderPolicyError {
 }
 
 impl GmailSenderPolicy {
+    pub fn validate(&self) -> Result<(), SenderPolicyError> {
+        validate_policy(self)
+    }
+
     pub fn verify(
         &self,
         headers: &[GmailHeader],

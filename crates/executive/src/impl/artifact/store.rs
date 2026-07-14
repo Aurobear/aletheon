@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::r#impl::goal::migrations;
 
@@ -51,7 +52,7 @@ pub struct ArtifactRecord {
 }
 
 pub struct ArtifactStore {
-    db: Connection,
+    db: Mutex<Connection>,
     root: PathBuf,
 }
 
@@ -67,7 +68,10 @@ impl ArtifactStore {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
-        Ok(Self { db, root })
+        Ok(Self {
+            db: Mutex::new(db),
+            root,
+        })
     }
 
     pub fn begin(&self, metadata: ArtifactMetadata, max_bytes: u64) -> Result<ArtifactWriter> {
@@ -113,7 +117,8 @@ impl ArtifactStore {
         } else {
             std::fs::rename(&writer.temp, &final_path)?;
         }
-        self.db.execute(
+        let db = self.db.lock().unwrap();
+        db.execute(
             "INSERT OR IGNORE INTO external_artifacts(
                 artifact_id,sha256,size_bytes,mime_type,provider,account_id,
                 provider_message_id,provider_part_id,source_timestamp_ms,scan_status,
@@ -134,7 +139,7 @@ impl ArtifactStore {
                 writer.metadata.created_at_ms
             ],
         )?;
-        self.db.execute(
+        db.execute(
             "INSERT OR IGNORE INTO external_artifact_sources(
                 artifact_id,provider,account_id,provider_message_id,provider_part_id,
                 source_timestamp_ms,created_at_ms
@@ -149,12 +154,15 @@ impl ArtifactStore {
                 writer.metadata.created_at_ms
             ],
         )?;
+        drop(db);
         self.get(&artifact_id)?
             .context("artifact metadata write failed")
     }
 
     pub fn get(&self, artifact_id: &str) -> Result<Option<ArtifactRecord>> {
         self.db
+            .lock()
+            .unwrap()
             .query_row(
                 "SELECT sha256,size_bytes,mime_type,relative_path,scan_status
                  FROM external_artifacts WHERE artifact_id=?1",
@@ -198,7 +206,7 @@ impl ArtifactStore {
             ),
             "invalid scan transition"
         );
-        Ok(self.db.execute(
+        Ok(self.db.lock().unwrap().execute(
             "UPDATE external_artifacts SET scan_status=?1
              WHERE artifact_id=?2 AND scan_status='unscanned'",
             params![next.as_str(), artifact_id],
