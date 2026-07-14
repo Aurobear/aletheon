@@ -6,8 +6,10 @@
 //! M2 extends the schema with goal-specific columns, event log, and budget ledger,
 //! while keeping legacy Objective CRUD intact.
 
+mod budget;
 mod migrations;
 pub(crate) mod store;
+mod transition;
 
 use anyhow::{Context, Result};
 use fabric::goal::{
