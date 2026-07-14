@@ -256,6 +256,39 @@ impl ChannelRouter {
         self
     }
 
+    /// Persist a normalized Google notification before Telegram delivery.
+    /// The event ID is the cross-restart idempotency key.
+    pub fn enqueue_google_notification(
+        &self,
+        conversation_id: ConversationId,
+        event: &fabric::ExternalEventEnvelope,
+    ) -> anyhow::Result<bool> {
+        let summary = match &event.event {
+            fabric::GoogleEvent::MailReceived(change)
+            | fabric::GoogleEvent::MailUpdated(change) => format!(
+                "Important mail from {}: {}",
+                change.message.from, change.message.subject
+            ),
+            fabric::GoogleEvent::CalendarEventCreated(calendar)
+            | fabric::GoogleEvent::CalendarEventUpdated(calendar) => {
+                format!("Calendar changed: {}", calendar.summary)
+            }
+            fabric::GoogleEvent::CalendarEventDeleted(_) => "Calendar event cancelled".into(),
+            _ => return Ok(false),
+        };
+        let text: String = summary.chars().take(2_000).collect();
+        self.store.enqueue_outbound(
+            "telegram",
+            &OutboundMessage {
+                conversation_id,
+                content: MessageContent::Text { text },
+                actions: Vec::new(),
+                reply_to: None,
+                correlation_id: event.id.to_string(),
+            },
+        )
+    }
+
     pub fn with_approval_repository(mut self, repository: Arc<Mutex<ApprovalRepository>>) -> Self {
         self.approval_repository = Some(repository);
         self

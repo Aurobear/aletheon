@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 10;
+const CURRENT_VERSION: u32 = 13;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -375,6 +375,66 @@ CREATE INDEX IF NOT EXISTS idx_google_event_outbox_pending
     ON google_event_outbox(status, created_at_ms);
 ";
 
+const MIGRATION_11: &str = "
+CREATE TABLE IF NOT EXISTS google_sync_leases (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL CHECK(stream IN ('gmail_history','calendar','drive_changes')),
+    lease_owner TEXT NOT NULL,
+    lease_expires_at_ms INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(account_id, stream)
+);
+CREATE INDEX IF NOT EXISTS idx_google_sync_leases_expiry
+    ON google_sync_leases(lease_expires_at_ms);
+";
+
+const MIGRATION_12: &str = "
+CREATE TABLE IF NOT EXISTS gmail_channel_inbox (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    verified_principal_id TEXT,
+    sender_address TEXT,
+    sender_policy_version INTEGER,
+    classification TEXT NOT NULL
+        CHECK(classification IN ('ask','goal','memory','doc','notification','quarantine')),
+    evidence_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','accepted','quarantined','completed')),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(account_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_gmail_channel_inbox_status
+    ON gmail_channel_inbox(status, created_at_ms);
+";
+
+const MIGRATION_13: &str = "
+CREATE TABLE IF NOT EXISTS external_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    sha256 TEXT NOT NULL UNIQUE,
+    size_bytes INTEGER NOT NULL,
+    mime_type TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    provider_message_id TEXT NOT NULL,
+    provider_part_id TEXT NOT NULL,
+    source_timestamp_ms INTEGER NOT NULL,
+    scan_status TEXT NOT NULL CHECK(scan_status IN ('unscanned','clean','quarantined','rejected')),
+    relative_path TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS external_artifact_sources (
+    artifact_id TEXT NOT NULL REFERENCES external_artifacts(artifact_id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    provider_message_id TEXT NOT NULL,
+    provider_part_id TEXT NOT NULL,
+    source_timestamp_ms INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(artifact_id, provider, account_id, provider_message_id, provider_part_id)
+);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -470,6 +530,33 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
         tx.commit()?;
     }
 
+    if version < 11 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 11 transaction")?;
+        tx.execute_batch(MIGRATION_11)?;
+        tx.pragma_update(None, "user_version", 11)?;
+        tx.commit()?;
+    }
+
+    if version < 12 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 12 transaction")?;
+        tx.execute_batch(MIGRATION_12)?;
+        tx.pragma_update(None, "user_version", 12)?;
+        tx.commit()?;
+    }
+
+    if version < 13 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 13 transaction")?;
+        tx.execute_batch(MIGRATION_13)?;
+        tx.pragma_update(None, "user_version", 13)?;
+        tx.commit()?;
+    }
+
     // Verify we're at the expected version.
     let current: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     anyhow::ensure!(
@@ -536,14 +623,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 10);
+        assert_eq!(v1, 13);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 10);
+        assert_eq!(v2, 13);
     }
 
     #[test]

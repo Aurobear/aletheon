@@ -56,6 +56,7 @@ pub trait GoogleCredentialSource: Send + Sync {
 pub struct GoogleApiEndpoints {
     pub gmail_base: String,
     pub calendar_base: String,
+    pub drive_base: String,
 }
 
 impl Default for GoogleApiEndpoints {
@@ -63,6 +64,7 @@ impl Default for GoogleApiEndpoints {
         Self {
             gmail_base: "https://gmail.googleapis.com/gmail/v1".into(),
             calendar_base: "https://www.googleapis.com/calendar/v3".into(),
+            drive_base: "https://www.googleapis.com/drive/v3".into(),
         }
     }
 }
@@ -127,6 +129,77 @@ impl GoogleApiClient {
             };
             match response.status().as_u16() {
                 200..=299 => return decode_bounded(response, cancel).await,
+                401 if !refreshed => {
+                    token = self
+                        .credentials
+                        .refresh_access_token(principal, account, required_scope)
+                        .await?;
+                    refreshed = true;
+                }
+                401 => return Err(GoogleApiError::ReauthorizationRequired),
+                403 => return Err(GoogleApiError::ScopeDenied),
+                404 | 410 => return Err(GoogleApiError::CursorExpired),
+                429 if !rate_retried => {
+                    rate_retried = true;
+                    let delay = retry_after(&response);
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Err(GoogleApiError::Cancelled),
+                        _ = tokio::time::sleep(delay) => {}
+                    }
+                }
+                429 => return Err(GoogleApiError::RateLimited),
+                _ => return Err(GoogleApiError::ProviderUnavailable),
+            }
+        }
+    }
+
+    pub(crate) async fn get_bounded_bytes(
+        &self,
+        principal: &PrincipalId,
+        account: ExternalIdentityId,
+        required_scope: ExternalScope,
+        url: reqwest::Url,
+        max_bytes: usize,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<u8>, GoogleApiError> {
+        if max_bytes == 0 || max_bytes > 16 * 1_048_576 {
+            return Err(GoogleApiError::InvalidRequest);
+        }
+        let mut token = self
+            .credentials
+            .access_token(principal, account, required_scope)
+            .await?;
+        let mut refreshed = false;
+        let mut rate_retried = false;
+        loop {
+            let response = tokio::select! {
+                _ = cancel.cancelled() => return Err(GoogleApiError::Cancelled),
+                response = self.client.get(url.clone()).bearer_auth(token.expose()).send() => {
+                    response.map_err(|_| GoogleApiError::ProviderUnavailable)?
+                }
+            };
+            match response.status().as_u16() {
+                200..=299 => {
+                    if response
+                        .content_length()
+                        .is_some_and(|length| length > max_bytes as u64)
+                    {
+                        return Err(GoogleApiError::ResponseTooLarge);
+                    }
+                    let mut bytes = Vec::new();
+                    let mut stream = response.bytes_stream();
+                    while let Some(chunk) = tokio::select! {
+                        _ = cancel.cancelled() => return Err(GoogleApiError::Cancelled),
+                        chunk = stream.next() => chunk,
+                    } {
+                        let chunk = chunk.map_err(|_| GoogleApiError::ProviderUnavailable)?;
+                        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                            return Err(GoogleApiError::ResponseTooLarge);
+                        }
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    return Ok(bytes);
+                }
                 401 if !refreshed => {
                     token = self
                         .credentials

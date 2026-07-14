@@ -138,6 +138,7 @@ fn gmail(endpoint: &str, credentials: Arc<Credentials>) -> GoogleGmailAdapter {
             GoogleApiEndpoints {
                 gmail_base: endpoint.into(),
                 calendar_base: endpoint.into(),
+                drive_base: endpoint.into(),
             },
         )
         .unwrap(),
@@ -151,6 +152,7 @@ fn calendar(endpoint: &str, credentials: Arc<Credentials>) -> GoogleCalendarAdap
             GoogleApiEndpoints {
                 gmail_base: endpoint.into(),
                 calendar_base: endpoint.into(),
+                drive_base: endpoint.into(),
             },
         )
         .unwrap(),

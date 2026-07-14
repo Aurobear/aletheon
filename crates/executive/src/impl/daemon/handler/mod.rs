@@ -68,6 +68,8 @@ pub struct RequestHandler {
     /// Telegram poll-loop task handle — stored so daemon shutdown can await
     /// graceful termination. `None` when Telegram is disabled or not yet started.
     pub(crate) telegram_task: Option<Arc<tokio::task::JoinHandle<()>>>,
+    /// Google poll-loop supervisor handle, retained for graceful shutdown.
+    pub(crate) google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
     /// Durable approval-to-apply bridge shared by local RPC and channels.
     pub(crate) approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
     /// Configured Google control plane. Credentials remain behind its vault-owning boundary.

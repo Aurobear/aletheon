@@ -512,6 +512,7 @@ fn external_scope(scope: &str) -> Result<ExternalScope> {
         ExternalScope::UserInfoEmail,
         ExternalScope::GmailReadonly,
         ExternalScope::CalendarReadonly,
+        ExternalScope::DriveReadonly,
     ]
     .into_iter()
     .find(|candidate| candidate.oauth_name() == scope)
@@ -523,6 +524,14 @@ mod tests {
     use super::*;
     use aletheon_kernel::chronos::TestClock;
     use http_body_util::{BodyExt, Full};
+
+    #[test]
+    fn drive_read_scope_is_supported_without_changing_default_scope_sets() {
+        assert_eq!(
+            external_scope(ExternalScope::DriveReadonly.oauth_name()).unwrap(),
+            ExternalScope::DriveReadonly
+        );
+    }
     use hyper::body::{Bytes, Incoming};
     use hyper::service::service_fn;
     use hyper::{Request, Response, StatusCode};

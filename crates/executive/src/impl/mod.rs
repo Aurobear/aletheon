@@ -2,6 +2,7 @@ pub mod agent;
 pub mod agent_loader;
 pub mod agents;
 pub mod approval;
+pub mod artifact;
 pub mod automation;
 pub mod channel;
 pub mod daemon;
