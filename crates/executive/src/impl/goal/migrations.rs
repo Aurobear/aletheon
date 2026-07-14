@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 14;
+const CURRENT_VERSION: u32 = 15;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -467,6 +467,27 @@ CREATE TABLE IF NOT EXISTS gmail_goal_draft_revisions (
 );
 ";
 
+/// Migration 15 — immutable, approval-bound Gmail report delivery outbox.
+const MIGRATION_15: &str = "
+CREATE TABLE IF NOT EXISTS gmail_report_outbox (
+    approval_id TEXT NOT NULL REFERENCES approval_requests(approval_id),
+    report_sha256 TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    subject_sha256 TEXT NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('pending','ambiguous','sent','failed')),
+    provider_message_id TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    reconciled_at_ms INTEGER,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(approval_id, report_sha256)
+);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -598,6 +619,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
         tx.commit()?;
     }
 
+    if version < 15 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 15 transaction")?;
+        tx.execute_batch(MIGRATION_15)?;
+        tx.pragma_update(None, "user_version", 15)?;
+        tx.commit()?;
+    }
+
     // Verify we're at the expected version.
     let current: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     anyhow::ensure!(
@@ -664,14 +694,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 14);
+        assert_eq!(v1, 15);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 14);
+        assert_eq!(v2, 15);
     }
 
     #[test]
@@ -701,6 +731,7 @@ mod tests {
         assert!(tables.iter().any(|n| n == "goal_completion_summaries"));
         assert!(tables.iter().any(|n| n == "gmail_goal_drafts"));
         assert!(tables.iter().any(|n| n == "gmail_goal_draft_revisions"));
+        assert!(tables.iter().any(|n| n == "gmail_report_outbox"));
     }
 
     #[test]

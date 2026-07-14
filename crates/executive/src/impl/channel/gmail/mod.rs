@@ -3,6 +3,7 @@
 pub mod classifier;
 pub mod goal_draft;
 pub mod ingest;
+pub mod report;
 pub mod sender_policy;
 
 use self::classifier::{classify_verified_subject, GmailClassification};
