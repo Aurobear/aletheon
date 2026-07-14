@@ -50,6 +50,7 @@ pub struct DaseinModule {
     // Runtime
     sorge: SorgeLoop,
     event_tx: mpsc::Sender<DaseinEvent>,
+    #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
 }
 

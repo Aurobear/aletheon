@@ -13,6 +13,7 @@ pub struct PerceptionBridge {
     buffer: Vec<PerceptionEvent>,
     buffer_max: usize,
     flush_interval: Duration,
+    #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
 }
 

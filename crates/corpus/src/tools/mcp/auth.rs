@@ -245,6 +245,14 @@ fn now_epoch_secs(clock: &dyn Clock) -> u64 {
 // McpOAuthProvider -- OAuth 2.0 Authorization Code flow
 // ---------------------------------------------------------------------------
 
+/// OAuth 2.0 endpoint URLs.
+#[derive(Debug, Clone)]
+pub struct OAuthEndpoints {
+    pub auth_url: String,
+    pub token_url: String,
+    pub redirect_uri: String,
+}
+
 /// OAuth 2.0 authorization code flow for MCP servers.
 ///
 /// Implements the standard three-legged OAuth flow:
@@ -255,9 +263,7 @@ fn now_epoch_secs(clock: &dyn Clock) -> u64 {
 pub struct McpOAuthProvider {
     client_id: String,
     client_secret: Option<String>,
-    auth_url: String,
-    token_url: String,
-    redirect_uri: String,
+    endpoints: OAuthEndpoints,
     scopes: Vec<String>,
     server_id: String,
     token_store: TokenStore,
@@ -270,9 +276,7 @@ impl McpOAuthProvider {
     /// Create a new OAuth provider.
     pub fn new(
         client_id: impl Into<String>,
-        auth_url: impl Into<String>,
-        token_url: impl Into<String>,
-        redirect_uri: impl Into<String>,
+        endpoints: OAuthEndpoints,
         scopes: Vec<String>,
         server_id: impl Into<String>,
         token_store: TokenStore,
@@ -281,9 +285,7 @@ impl McpOAuthProvider {
         Self {
             client_id: client_id.into(),
             client_secret: None,
-            auth_url: auth_url.into(),
-            token_url: token_url.into(),
-            redirect_uri: redirect_uri.into(),
+            endpoints,
             scopes,
             server_id: server_id.into(),
             token_store,
@@ -316,9 +318,9 @@ impl McpOAuthProvider {
         let scope_str = self.scopes.join(" ");
         let url = format!(
             "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
-            self.auth_url,
+            self.endpoints.auth_url,
             percent_encode(&self.client_id),
-            percent_encode(&self.redirect_uri),
+            percent_encode(&self.endpoints.redirect_uri),
             percent_encode(&scope_str),
             percent_encode(&state_str),
         );
@@ -361,7 +363,7 @@ impl McpOAuthProvider {
         let mut params = vec![
             ("grant_type", "authorization_code"),
             ("code", code),
-            ("redirect_uri", &self.redirect_uri),
+            ("redirect_uri", &self.endpoints.redirect_uri),
             ("client_id", &self.client_id),
         ];
         let secret_ref;
@@ -372,7 +374,7 @@ impl McpOAuthProvider {
 
         let client = reqwest::blocking::Client::new();
         let resp = client
-            .post(&self.token_url)
+            .post(&self.endpoints.token_url)
             .form(&params)
             .send()
             .context("token exchange HTTP request failed")?;
@@ -413,7 +415,7 @@ impl McpOAuthProvider {
 
         let client = reqwest::blocking::Client::new();
         let resp = client
-            .post(&self.token_url)
+            .post(&self.endpoints.token_url)
             .form(&params)
             .send()
             .context("token refresh HTTP request failed")?;
@@ -681,9 +683,11 @@ mod tests {
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
             "my-client-id",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost:8765/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost:8765/callback".into(),
+            },
             vec!["openid".into(), "profile".into()],
             "test-server",
             store,
@@ -712,9 +716,11 @@ mod tests {
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
@@ -735,9 +741,11 @@ mod tests {
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
@@ -779,9 +787,11 @@ mod tests {
         let store = TokenStore::new(path.clone()).unwrap();
         let provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
@@ -806,9 +816,11 @@ mod tests {
         let store = TokenStore::new(path).unwrap();
         let provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
@@ -842,9 +854,11 @@ mod tests {
         let store = TokenStore::new(path).unwrap();
         let provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec!["read".into()],
             "srv",
             store,
@@ -881,9 +895,11 @@ mod tests {
         let store = TokenStore::new(path).unwrap();
         let provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,
@@ -938,9 +954,11 @@ mod tests {
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
             "cid",
-            "https://auth.example.com/authorize",
-            "https://auth.example.com/token",
-            "http://localhost/callback",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                redirect_uri: "http://localhost/callback".into(),
+            },
             vec![],
             "srv",
             store,

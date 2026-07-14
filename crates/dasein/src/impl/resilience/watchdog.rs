@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(test)]
 use aletheon_kernel::chronos::Timer;
 use fabric::{Clock, MonoTime};
 use tokio::sync::watch;
