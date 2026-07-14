@@ -6,6 +6,7 @@ pub mod automation;
 pub mod channel;
 pub mod daemon;
 pub mod engine;
+pub mod external;
 pub mod goal;
 pub mod hook_lifecycle;
 pub mod kernel;
