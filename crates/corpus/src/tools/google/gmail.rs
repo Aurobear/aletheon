@@ -38,6 +38,57 @@ pub trait GmailCapability: Send + Sync {
     ) -> Result<GmailMessage, GoogleApiError>;
 }
 
+/// Bounded full-message view used by the authenticated Gmail channel. This is
+/// deliberately separate from [`GmailCapability`] so read-only model tools do
+/// not expose raw authentication headers or attachment identifiers.
+#[async_trait]
+pub trait GmailIngressCapability: Send + Sync {
+    async fn read_ingress_message(
+        &self,
+        principal: &PrincipalId,
+        account: ExternalIdentityId,
+        message_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<GmailIngressMessage, GoogleApiError>;
+
+    async fn read_ingress_attachment(
+        &self,
+        principal: &PrincipalId,
+        account: ExternalIdentityId,
+        message_id: &str,
+        attachment_id: &str,
+        max_decoded_bytes: usize,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<u8>, GoogleApiError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GmailIngressHeader {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GmailIngressPart {
+    pub part_id: String,
+    pub mime_type: String,
+    pub filename: Option<String>,
+    pub declared_size: Option<u64>,
+    pub inline_body: Option<Vec<u8>>,
+    pub attachment_id: Option<String>,
+    pub parts: Vec<GmailIngressPart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GmailIngressMessage {
+    pub account_id: ExternalIdentityId,
+    pub message_id: String,
+    pub thread_id: String,
+    pub source_timestamp_ms: i64,
+    pub headers: Vec<GmailIngressHeader>,
+    pub root: GmailIngressPart,
+}
+
 #[derive(Debug, Clone)]
 pub struct GoogleGmailAdapter {
     pub(crate) client: GoogleApiClient,
@@ -189,6 +240,110 @@ impl GmailCapability for GoogleGmailAdapter {
     }
 }
 
+#[async_trait]
+impl GmailIngressCapability for GoogleGmailAdapter {
+    async fn read_ingress_message(
+        &self,
+        principal: &PrincipalId,
+        account: ExternalIdentityId,
+        message_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<GmailIngressMessage, GoogleApiError> {
+        validate_provider_id(message_id)?;
+        let mut url = reqwest::Url::parse(&format!(
+            "{}/users/me/messages/{}",
+            self.client.endpoints().gmail_base.trim_end_matches('/'),
+            message_id
+        ))
+        .map_err(|_| GoogleApiError::InvalidRequest)?;
+        url.query_pairs_mut().append_pair("format", "full");
+        let raw: RawMessage = self
+            .client
+            .get_json(
+                principal,
+                account,
+                ExternalScope::GmailReadonly,
+                url,
+                cancel,
+            )
+            .await?;
+        if raw.id != message_id {
+            return Err(GoogleApiError::MalformedResponse);
+        }
+        let source_timestamp_ms = raw
+            .internal_date
+            .as_deref()
+            .and_then(|value| value.parse().ok())
+            .ok_or(GoogleApiError::MalformedResponse)?;
+        let payload = raw.payload.ok_or(GoogleApiError::MalformedResponse)?;
+        let headers = payload
+            .headers
+            .iter()
+            .map(|header| GmailIngressHeader {
+                name: header.name.clone(),
+                value: header.value.clone(),
+            })
+            .collect();
+        Ok(GmailIngressMessage {
+            account_id: account,
+            message_id: raw.id,
+            thread_id: raw.thread_id,
+            source_timestamp_ms,
+            headers,
+            root: normalize_ingress_part(payload, 0)?,
+        })
+    }
+
+    async fn read_ingress_attachment(
+        &self,
+        principal: &PrincipalId,
+        account: ExternalIdentityId,
+        message_id: &str,
+        attachment_id: &str,
+        max_decoded_bytes: usize,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<u8>, GoogleApiError> {
+        validate_provider_id(message_id)?;
+        validate_provider_id(attachment_id)?;
+        if max_decoded_bytes == 0 || max_decoded_bytes > 8 * 1_048_576 {
+            return Err(GoogleApiError::InvalidRequest);
+        }
+        let url = reqwest::Url::parse(&format!(
+            "{}/users/me/messages/{}/attachments/{}",
+            self.client.endpoints().gmail_base.trim_end_matches('/'),
+            message_id,
+            attachment_id
+        ))
+        .map_err(|_| GoogleApiError::InvalidRequest)?;
+        let encoded_cap = max_decoded_bytes
+            .checked_mul(4)
+            .and_then(|value| value.checked_div(3))
+            .and_then(|value| value.checked_add(16 * 1024))
+            .ok_or(GoogleApiError::InvalidRequest)?
+            .min(16 * 1_048_576);
+        let bytes = self
+            .client
+            .get_bounded_bytes(
+                principal,
+                account,
+                ExternalScope::GmailReadonly,
+                url,
+                encoded_cap,
+                cancel,
+            )
+            .await?;
+        let raw: RawAttachment =
+            serde_json::from_slice(&bytes).map_err(|_| GoogleApiError::MalformedResponse)?;
+        let decoded = URL_SAFE_NO_PAD
+            .decode(raw.data)
+            .map_err(|_| GoogleApiError::MalformedResponse)?;
+        if decoded.len() > max_decoded_bytes || raw.size.is_some_and(|size| size != decoded.len()) {
+            return Err(GoogleApiError::ResponseTooLarge);
+        }
+        Ok(decoded)
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawMessageList {
@@ -218,6 +373,10 @@ struct RawMessage {
 
 #[derive(Deserialize)]
 struct RawPayload {
+    #[serde(default, rename = "partId")]
+    part_id: String,
+    #[serde(default)]
+    filename: String,
     #[serde(default)]
     headers: Vec<RawHeader>,
     body: Option<RawBody>,
@@ -236,6 +395,65 @@ struct RawHeader {
 #[derive(Deserialize)]
 struct RawBody {
     data: Option<String>,
+    #[serde(rename = "attachmentId")]
+    attachment_id: Option<String>,
+    size: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct RawAttachment {
+    data: String,
+    size: Option<usize>,
+}
+
+fn normalize_ingress_part(
+    payload: RawPayload,
+    depth: usize,
+) -> Result<GmailIngressPart, GoogleApiError> {
+    if depth > 16 || payload.parts.len() > 200 {
+        return Err(GoogleApiError::ResponseTooLarge);
+    }
+    let inline_body = payload
+        .body
+        .as_ref()
+        .and_then(|body| body.data.as_deref())
+        .map(|data| {
+            URL_SAFE_NO_PAD
+                .decode(data)
+                .map_err(|_| GoogleApiError::MalformedResponse)
+        })
+        .transpose()?;
+    if inline_body
+        .as_ref()
+        .is_some_and(|body| body.len() > 256 * 1_024)
+    {
+        return Err(GoogleApiError::ResponseTooLarge);
+    }
+    let declared_size = payload
+        .body
+        .as_ref()
+        .and_then(|body| body.size)
+        .map(|value| value as u64);
+    let attachment_id = payload
+        .body
+        .as_ref()
+        .and_then(|body| body.attachment_id.clone());
+    let parts = payload
+        .parts
+        .into_iter()
+        .map(|part| normalize_ingress_part(part, depth + 1))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(GmailIngressPart {
+        part_id: payload.part_id,
+        mime_type: payload
+            .mime_type
+            .unwrap_or_else(|| "application/octet-stream".into()),
+        filename: (!payload.filename.is_empty()).then_some(payload.filename),
+        declared_size,
+        inline_body,
+        attachment_id,
+        parts,
+    })
 }
 
 fn normalize_summary(

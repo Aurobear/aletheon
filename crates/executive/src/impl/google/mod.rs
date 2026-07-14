@@ -6,8 +6,8 @@ pub mod sync_manager;
 
 pub use event_dispatcher::{
     DispatchOutcome, DurableGoogleNotificationSink, GoogleCurrentTaskProjection,
-    GoogleEventDispatcher, GoogleEventRouter, GoogleEventSink, GoogleMemoryProposalSink,
-    GoogleNotificationSink,
+    GoogleEventDispatcher, GoogleEventRouter, GoogleEventSink, GoogleMailIngressSink,
+    GoogleMemoryProposalSink, GoogleNotificationSink,
 };
 pub use sync_manager::{
     CalendarDeltaPoller, DriveChangesPoller, GmailHistoryPoller, GooglePollBatch,

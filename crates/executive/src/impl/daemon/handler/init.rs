@@ -57,7 +57,9 @@ use crate::r#impl::channel::daemon_adapter::{
     DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
     DaemonGmailDraftApprovalExecutor,
 };
-use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
+use crate::r#impl::channel::gmail::{
+    load_gmail_ingress_policies, GmailGoalDraftCoordinator, GmailGoalEventIngress,
+};
 use crate::r#impl::channel::router::{
     ChannelApprovalExecutor, ChannelGoalExecutor, ChannelRouter, ChannelTransport,
     ChannelTurnExecutor, GmailDraftApprovalExecutor,
@@ -157,6 +159,7 @@ type ConfiguredGoogleReadTools = (
     Arc<GoogleIntegration>,
     crate::r#impl::google::GoogleSyncHandle,
     Arc<std::sync::Mutex<crate::r#impl::google::GoogleSyncStore>>,
+    Option<Arc<GmailGoalEventIngress>>,
 );
 
 fn register_configured_google_read_tools(
@@ -210,15 +213,40 @@ fn register_configured_google_read_tools(
     ));
     let accounts = Arc::new(ExecutiveGoogleAccountResolver::new(repository));
     let client = GoogleApiClient::new(credentials, GoogleApiEndpoints::default())?;
-    let gmail = gmail_enabled.then(|| {
-        Arc::new(GoogleGmailAdapter::new(client.clone()))
-            as Arc<dyn corpus::tools::google::GmailCapability>
-    });
+    let gmail_adapter = gmail_enabled.then(|| Arc::new(GoogleGmailAdapter::new(client.clone())));
+    let gmail = gmail_adapter
+        .clone()
+        .map(|adapter| adapter as Arc<dyn corpus::tools::google::GmailCapability>);
     let calendar = calendar_enabled.then(|| {
         Arc::new(GoogleCalendarAdapter::new(client.clone()))
             as Arc<dyn corpus::tools::google::CalendarCapability>
     });
     tools.register_google_read_tools(gmail, calendar, accounts)?;
+
+    let gmail_ingress = match (
+        gmail_adapter,
+        std::env::var_os("ALETHEON_GMAIL_INGRESS_POLICY_FILE"),
+    ) {
+        (Some(adapter), Some(path)) => {
+            let owners = active_bindings
+                .iter()
+                .map(|(identity, _)| (identity.id, identity.principal_id.clone()))
+                .collect::<std::collections::HashMap<_, _>>();
+            let policies = load_gmail_ingress_policies(std::path::Path::new(&path), &owners)
+                .context("loading Gmail ingress policies")?;
+            let artifact_root = objective_db_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("external-artifacts");
+            Some(Arc::new(GmailGoalEventIngress::new(
+                adapter,
+                objective_db_path,
+                &artifact_root,
+                policies,
+            )?))
+        }
+        _ => None,
+    };
 
     let store = Arc::new(std::sync::Mutex::new(
         crate::r#impl::google::GoogleSyncStore::open(objective_db_path)?,
@@ -304,7 +332,7 @@ fn register_configured_google_read_tools(
         }
     }
     let sync = manager.start(cancel);
-    Ok(Some((integration, sync, store)))
+    Ok(Some((integration, sync, store, gmail_ingress)))
 }
 
 impl RequestHandler {
@@ -561,20 +589,20 @@ impl RequestHandler {
             fact_store: Some(fact_store.clone()),
             clock: clock.clone(),
         }));
-        let (google, mut google_sync, google_sync_store) =
+        let (google, mut google_sync, google_sync_store, gmail_ingress) =
             match register_configured_google_read_tools(
                 &mut tools,
                 &objective_db_path,
                 clock.clone(),
                 &cancel_token,
             ) {
-                Ok(Some((integration, sync, store))) => {
-                    (Some(integration), Some(sync), Some(store))
+                Ok(Some((integration, sync, store, gmail_ingress))) => {
+                    (Some(integration), Some(sync), Some(store), gmail_ingress)
                 }
-                Ok(None) => (None, None, None),
+                Ok(None) => (None, None, None, None),
                 Err(error) => {
                     warn!(error = %error, "Google read integration disabled");
-                    (None, None, None)
+                    (None, None, None, None)
                 }
             };
         if let (Some(handle), Some(store)) = (google_sync.as_mut(), google_sync_store) {
@@ -589,13 +617,15 @@ impl RequestHandler {
                 )
                 .context("opening Google notification outbox")?,
             );
-            let sink = Arc::new(
-                crate::r#impl::google::GoogleEventRouter::new_with_notifications(
-                    store.clone(),
-                    goals,
-                    notifications,
-                ),
+            let mut event_router = crate::r#impl::google::GoogleEventRouter::new_with_notifications(
+                store.clone(),
+                goals,
+                notifications,
             );
+            if let Some(ingress) = gmail_ingress {
+                event_router = event_router.with_mail_ingress(ingress);
+            }
+            let sink = Arc::new(event_router);
             let dispatcher = crate::r#impl::google::GoogleEventDispatcher::new(
                 store,
                 sink,

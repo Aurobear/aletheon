@@ -1,6 +1,7 @@
 //! Authenticated Gmail channel ingress and durable classification.
 
 pub mod classifier;
+pub mod event_ingress;
 pub mod goal_draft;
 pub mod ingest;
 pub mod report;
@@ -9,6 +10,7 @@ pub mod sender_policy;
 use self::classifier::{classify_verified_subject, GmailClassification};
 use self::sender_policy::{GmailHeader, GmailSenderPolicy};
 use crate::r#impl::goal::migrations;
+pub use event_ingress::{load_gmail_ingress_policies, GmailGoalEventIngress, GmailIngressPolicy};
 use fabric::{ExternalIdentityId, PrincipalId};
 pub use goal_draft::{GmailGoalDraft, GmailGoalDraftCoordinator};
 use rusqlite::{params, Connection, OptionalExtension};
