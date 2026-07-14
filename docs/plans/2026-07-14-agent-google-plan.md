@@ -1,861 +1,572 @@
-# Agent-Google Integration — Implementation Plan
+# Aletheon Personal Agent Integration Implementation Plan
 
-> **For agentic workers:** Use `/workflow feature` to implement this plan phase-by-phase. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Use `workflow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the 8-phase Aletheon agent-Google integration: Telegram channel, Goal Runtime, DeepSeek/Pi workers, verification pipeline, Google OAuth+sync, Gmail channel+approval, and GBrain backend.
+**Goal:** Deliver a restart-safe Telegram-to-Goal-to-worker/Pi-to-verification-to-approval vertical slice, then add secure Google and optional GBrain integrations without inventing capabilities the current code lacks.
 
-**Architecture:** Integrate into existing crates (executive, corpus, mnemosyne, fabric). Extend existing `SubAgentRuntime`/`SubAgentSpawner`/`SupervisorTree` rather than building parallel worker/supervisor/store abstractions. Channel abstraction routes external messages through existing `DaemonTurnOrchestrator`. Google OAuth uses existing `McpServerConfig` infrastructure. Verification runs as `PostTurnHook`. Approval extends existing `SessionGateway::approval_flow`.
+**Architecture:** Durable domain state lives in SQLite repositories; live work uses the existing `TurnPipeline`, `ProcessTable`, `OperationTable`, admission, approval, and memory interfaces. Runtime choice/retry is per attempt, verification is a cancellable job stage, Google credentials are encrypted before persistence, and GBrain composes behind `MemoryService`.
 
-**Tech Stack:** Rust (tokio async), rusqlite (SQLite), reqwest (HTTP), teloxide (Telegram), Docker Compose (GBrain+PostgreSQL).
-
-**Spec:** `docs/plans/2026-07-14-agent-google-design.md`
+**Tech Stack:** Rust, Tokio, SQLite/rusqlite, serde, existing Aletheon kernel/executive/corpus/mnemosyne abstractions, Telegram Bot API, OAuth 2.0, MCP, reqwest, git worktrees.
 
 ---
 
-## 1. Phase Dependency Graph
+## 1. How to execute this program
 
-```
-A ──→ B ──→ C ──→ D ──→ E
-              │
-              └──→ F ──→ G
-                        │
-              └──→ H ──┘
-```
+This is a master plan for several independently releasable subsystems. Do not implement all milestones in one branch. Each milestone must receive its own detailed TDD execution plan immediately before implementation; the tasks below define exact scope, contracts, files, validation, and completion gates for that plan.
 
-| Phase | Name | Depends On | Crates |
-|-------|------|-----------|--------|
-| A | Channel Core + Telegram | none | fabric, executive |
-| B | Goal Runtime v1 | A | fabric, executive |
-| C | DeepSeek Runtime | B | executive |
-| D | Pi Coding Subagent | B | executive |
-| E | Verification Pipeline | D | executive (service/) |
-| F | Google OAuth + Sync | B | corpus |
-| G | Gmail Channel + Approval | A, F | executive |
-| H | GBrain Backend | B | mnemosyne |
+Dependency order:
 
----
-
-## 2. Relationship to Existing Infrastructure
-
-Every new concept maps to an existing component. No parallel shadow systems.
-
-| New Concept | Existing Component | File |
-|---|---|---|
-| Channel trait | New; routes into `DaemonTurnOrchestrator` | `crates/executive/src/service/daemon_turn/orchestrator.rs` |
-| ChannelRegistry | New; registered during daemon init | `crates/executive/src/impl/daemon/handler/init.rs` |
-| GoalSpec (type only) | New type in `fabric/src/types/goal.rs` (no GoalStore/GoalSupervisor) | — |
-| AgentState extensions | Extend `ProcessState`/`AgentProfile` in fabric | `crates/fabric/src/lib.rs` |
-| DeepSeekRuntime | Implements `SubAgentRuntime` trait | `crates/executive/src/core/sub_agent.rs:47` |
-| PiRuntime | Implements `SubAgentRuntime` trait | `crates/executive/src/core/sub_agent.rs:47` |
-| Goal retry | `SupervisorTree` restart policies | `aletheon_kernel::supervision::RestartPolicy` |
-| Goal escalation | Supervisor policy with different runtime dispatch | `aletheon_kernel::supervision::SupervisorTree` |
-| Verification pipeline | `PostTurnHook` registered in hook system | `crates/executive/src/service/post_turn.rs` |
-| Google OAuth | `McpServerConfig` (add OAuth fields) | `crates/corpus/src/tools/mcp/config.rs` |
-| Gmail/Calendar MCP tools | MCP tool servers configured via `McpServerConfig` | — |
-| GoogleSyncManager | New; polls Gmail+Calendar, converts to `InboundMessage` | — |
-| ApprovalRequest types | Extend `SessionGateway::approval_flow` | `crates/executive/src/core/session_gateway/approval_flow.rs` |
-| GBrain backend | New memory backend in mnemosyne | `crates/mnemosyne/src/impl/backends/` |
-
----
-
-## 3. Phase A: Channel Core + Telegram
-
-**Estimated:** 1-2 weeks | **Crates:** fabric, executive
-
-### Task A.1: Add channel types to fabric
-
-Create `crates/fabric/src/types/channel.rs` with these types:
-
-- `ChannelId(String)`, `MessageId(String)`, `ConversationId(String)` — newtype wrappers for channel-scoped identifiers.
-- `MessageContent` — enum with variants: `Text { text }`, `Command { command, args }`, `File { name, mime_type, data_base64 }`, `Voice { transcription, audio_base64 }`. Serde tag `"type"` with `rename_all = "snake_case"`.
-- `UserAction` — struct: `action_id`, `action_type` (ActionType enum: Approve, Reject, ViewDiff, RequestRevision, Custom), `label`, `payload`.
-- `InboundMessage` — struct with fields: `channel_id: ChannelId`, `message_id: MessageId`, `conversation_id: Option<ConversationId>`, `sender_id: String`, `content: MessageContent`, `timestamp: String`, `reply_to_action: Option<String>`. **These field names are canonical across all phases — Phase G must use these exact names, not `id`, `channel`, `principal`, `conversation`, or `received_at`.**
-- `OutboundMessage` — struct: `channel_id: ChannelId`, `conversation_id: Option<ConversationId>`, `content: MessageContent`, `actions: Vec<UserAction>`.
-- Include `#[cfg(test)]` module with serde round-trip tests for each `MessageContent` variant and an `OutboundMessage` with actions serialization test.
-
-Wire into fabric: add `pub mod channel;` to `crates/fabric/src/types/mod.rs`, add `pub use types::channel;` to `crates/fabric/src/lib.rs`.
-
-- [ ] Create `crates/fabric/src/types/channel.rs`
-- [ ] Modify `crates/fabric/src/types/mod.rs` — add `pub mod channel;`
-- [ ] Modify `crates/fabric/src/lib.rs` — add `pub use types::channel;`
-- [ ] Commit
-
-### Task A.2: Define Channel trait and ChannelRegistry
-
-Create `crates/executive/src/impl/channel/mod.rs`:
-
-Define `Channel` trait with async methods:
-```rust
-#[async_trait]
-pub trait Channel: Send + Sync {
-    fn channel_id(&self) -> &ChannelId;
-    async fn start(&self, tx: mpsc::Sender<InboundMessage>) -> Result<()>;
-    async fn send(&self, msg: OutboundMessage) -> Result<()>;
-    async fn shutdown(&self) -> Result<()>;
-}
+```text
+M0 -> M1 -> M2 -> M3 -> M4 -> M5
+       |      |                  |
+       |      +-------> M8       +---- deployment hardening
+       +-----> M6 -> M7
 ```
 
-Define `ChannelRegistry` — owns `HashMap<ChannelId, Arc<dyn Channel>>` and an `mpsc::Receiver<InboundMessage>`. Methods: `register()`, `send_to()`, `take_receiver()`, `shutdown_all()`. The registry is held by the daemon; incoming messages flow through the receiver channel.
+Every milestone ends with `cargo fmt --all -- --check`, scoped tests, `cargo test --workspace`, and `cargo build --workspace`. Do not begin a dependent milestone while its prerequisite has failing validation.
 
-Include tests: two mock channels registered, message sent to one, message from the other received through the stream.
+## 2. M0 — Baseline and schema conventions
 
-Add `pub mod channel;` to `crates/executive/src/impl/mod.rs`.
+**Requirement anchors:** preserve existing conversation behavior (`docs/arch/agent-google/05_IMPLEMENTATION_ROADMAP.md:52-59`) and use persistent Goals (`docs/arch/agent-google/04_GOAL_RUNTIME_ARCHITECTURE.md:6-44`).
 
-- [ ] Create `crates/executive/src/impl/channel/mod.rs`
-- [ ] Modify `crates/executive/src/impl/mod.rs` — add `pub mod channel;`
-- [ ] Commit
+**Code anchors:** daemon execution is `TurnPipeline` (`crates/executive/src/service/turn_pipeline.rs:40-67`); generic process state is `crates/fabric/src/types/process.rs:60-90`.
 
-### Task A.3: Implement TelegramChannel
+### Task M0.1: Record baseline behavior
 
-Create directory `crates/executive/src/impl/channel/telegram/` with these files:
+**Files:**
+- Create: `crates/executive/tests/agent_integration_baseline.rs`
+- Inspect: `crates/executive/tests/turn_service_equivalence.rs`
+- Inspect: `crates/executive/tests/turn_pipeline_order.rs`
 
-- `mod.rs` — `TelegramChannel` struct (holds `teloxide::Bot`, `chat_ids: Mutex<Vec<i64>>`), implements `Channel` trait. On `start()`, spawns polling task. On `send()`, formats and dispatches `OutboundMessage` to each registered chat.
-- `polling.rs` — long-polling loop using `teloxide` `GetUpdates`; parses Telegram `Update` into `InboundMessage` (maps text to `MessageContent::Text`, `/command` to `MessageContent::Command`, attachments to `MessageContent::File`). Sends through the `mpsc::Sender` provided at `start()`.
-- `binding.rs` — `TelegramBinding` struct and `BindingState` enum (Active, Paused) for managing one Telegram bot instance per daemon. Handles bot token from environment/config.
-- `formatting.rs` — `format_outbound()` converts `OutboundMessage` to Telegram `SendMessage` with inline keyboard markup for `actions`. Includes tests for action keyboard generation and markdown escaping.
+- [ ] Add a regression test proving an ordinary chat turn still completes through the existing path without Goal metadata.
+- [ ] Add a regression test proving current `ProcessState` transitions remain unchanged.
+- [ ] Run `cargo test -p executive --test agent_integration_baseline`; expect PASS.
+- [ ] Run `cargo test -p executive --test turn_service_equivalence --test turn_pipeline_order`; expect PASS.
 
-Add `teloxide = "0.13"` to `crates/executive/Cargo.toml`.
+### Task M0.2: Define SQLite migration conventions
 
-- [ ] Create `crates/executive/src/impl/channel/telegram/` directory with mod.rs, polling.rs, binding.rs, formatting.rs
-- [ ] Modify `crates/executive/Cargo.toml` — add teloxide dependency
-- [ ] Commit
+**Files:**
+- Create: `crates/executive/src/impl/persistence/mod.rs`
+- Create: `crates/executive/src/impl/persistence/migrations.rs`
+- Modify: `crates/executive/src/impl/mod.rs`
+- Test: unit tests beside `migrations.rs`
 
-### Task A.4: Integrate ChannelRouter into daemon initialization
+- [ ] Write failing tests for fresh-database migration, repeated migration, transaction rollback, and schema-version rejection.
+- [ ] Implement numbered, transactional migrations using the repository's existing SQLite dependency and connection conventions.
+- [ ] Require unique constraints for provider IDs and optimistic `version` columns for mutable aggregate rows.
+- [ ] Run `cargo test -p executive -- impl::persistence::migrations`; expect PASS.
 
-Modify `crates/executive/src/impl/daemon/handler/init.rs`:
+### Task M0.3: Baseline gate
 
-- Add `channel_registry: Arc<ChannelRegistry>` field to the handler context struct.
-- During daemon startup, construct `ChannelRegistry`, register `TelegramChannel`, call `registry.take_receiver()`, and spawn a background task that reads from the receiver and dispatches each `InboundMessage` into the turn orchestrator.
-- Implement `process_channel_message(msg: InboundMessage)` on the handler — converts channel message into an agent turn, preserving `channel_id`, `sender_id`, `conversation_id`, and `reply_to_action` for context routing.
+- [ ] Run `cargo fmt --all -- --check`; expect exit 0.
+- [ ] Run `cargo test --workspace`; expect exit 0.
+- [ ] Run `cargo build --workspace`; expect exit 0.
+- [ ] Inspect the staged diff and commit only M0 files with a conventional subject and a body explaining the baseline and migration guarantees.
 
-Modify `crates/executive/src/impl/daemon/server.rs` — add `channel_registry` to the `RequestHandler` struct initialization.
+**M0 acceptance:** existing turn/process behavior is protected and later repositories share one migration discipline.
 
-- [ ] Modify `crates/executive/src/impl/daemon/handler/init.rs` — add channel registry + dispatch loop
-- [ ] Modify `crates/executive/src/impl/daemon/server.rs` — wire channel_registry into RequestHandler
-- [ ] Commit
+## 3. M1 — Durable Telegram chat vertical slice
 
-### Task A.5: Compilation and tests
+**Requirement anchors:** Telegram owner binding, long polling, mapping, offset persistence, and unknown-user rejection (`docs/arch/agent-google/05_IMPLEMENTATION_ROADMAP.md:61-70`).
 
-- [ ] `cargo test -p fabric -- types::channel` — channel type serde round-trips
-- [ ] `cargo test -p executive -- impl::channel` — ChannelRegistry register/send/receive
-- [ ] `cargo test -p executive -- impl::channel::telegram` — formatting + binding tests
-- [ ] `cargo build --workspace` — no regressions
-- [ ] Commit
+### Task M1.1: Define channel contracts
 
-**Phase A acceptance:** Channel types compile and serialize; Channel trait + registry pass tests; Telegram polling loop parses messages; daemon init wires registry and dispatches to turn orchestrator.
+**Files:**
+- Create: `crates/fabric/src/types/channel.rs`
+- Modify: `crates/fabric/src/types/mod.rs`
+- Modify: `crates/fabric/src/lib.rs`
+- Test: unit tests beside `channel.rs`
 
----
+- [ ] Define serializable `ChannelId`, `MessageId`, `ConversationId`, `ExternalSenderId`, `InboundMessage`, `OutboundMessage`, `MessageContent`, `UserAction`, `ActionType`, and `ChannelHealth`.
+- [ ] Keep provider identities external; do not claim they are already `PrincipalId` before binding.
+- [ ] Write round-trip tests for text, command, and approval-action messages.
+- [ ] Run `cargo test -p fabric -- types::channel`; expect PASS.
 
-## 4. Phase B: Goal Runtime v1
+### Task M1.2: Add durable inbox and binding repositories
 
-**Estimated:** 2-3 weeks | **Depends on:** Phase A | **Crates:** fabric, executive
+**Files:**
+- Create: `crates/executive/src/impl/channel/mod.rs`
+- Create: `crates/executive/src/impl/channel/inbox.rs`
+- Create: `crates/executive/src/impl/channel/binding.rs`
+- Modify: `crates/executive/src/impl/mod.rs`
+- Modify: `crates/executive/src/impl/persistence/migrations.rs`
 
-**Architecture:** Goals extend the existing AgentProcess model. There is no standalone `GoalSupervisor`, `GoalStore`, 10-state FSM, `objectives_v2` table, or `ALTER TABLE` migrations. Goal lifecycle is managed by the existing `ProcessState` / `SupervisorTree` machinery.
+- [ ] Add `channel_inbox`, `channel_outbox`, `channel_cursor`, and `channel_binding` tables.
+- [ ] Enforce unique `(channel_id, message_id)` inbox rows and unique external binding keys.
+- [ ] Write failing tests for duplicate insert, incomplete-row recovery, cursor advancement, unknown binding, and owner pre-binding.
+- [ ] Implement repository transactions so result/outbox persistence, inbox completion, and cursor advancement commit atomically.
+- [ ] Run `cargo test -p executive -- impl::channel::inbox impl::channel::binding`; expect PASS.
 
-### Task B.1: Define GoalSpec type in fabric
+### Task M1.3: Implement router-to-TurnPipeline adapter
 
-Create `crates/fabric/src/types/goal.rs`:
+**Files:**
+- Create: `crates/executive/src/impl/channel/router.rs`
+- Modify: `crates/executive/src/service/daemon_turn/orchestrator.rs`
+- Modify: `crates/executive/src/impl/daemon/handler/init.rs`
+- Test: `crates/executive/tests/channel_router.rs`
 
-Define `GoalSpec` — the canonical goal definition type:
-```rust
-pub struct GoalSpec {
-    pub goal_id: String,
-    pub description: String,
-    pub criteria: Vec<String>,
-    pub priority: GoalPriority,
-    pub max_attempts: u32,
-    pub max_cost_usd: Option<f64>,
-    pub timeout_secs: u64,
-    pub auto_approve: bool,
-    pub tags: Vec<String>,
-    pub parent_goal_id: Option<String>,
-}
-```
+- [ ] Write tests proving unknown senders are rejected before an LLM call, duplicate messages create one turn, one conversation is ordered, and two conversations may progress independently.
+- [ ] Route chat input into the existing daemon `TurnPipeline`; do not introduce a `SessionService` type.
+- [ ] Persist outbound replies before marking the inbound row complete.
+- [ ] Add cancellation-aware shutdown that stops intake, drains bounded work, and leaves incomplete rows recoverable.
+- [ ] Run `cargo test -p executive --test channel_router`; expect PASS.
 
-Define `GoalPriority` enum: Critical, High, Normal, Low. Define `GoalPhase` enum: Planning, Executing, Verifying, AwaitingApproval, AwaitingHuman, Completed, Failed, Cancelled.
+### Task M1.4: Implement Telegram provider
 
-Define `MemoryProjection` struct — result of recalling past experiences for a goal:
-```rust
-pub struct MemoryProjection {
-    pub relevant_facts: Vec<String>,
-    pub past_experiences: Vec<String>,
-    pub summary: String,
-    pub memory_type: String,
-    pub provenance_goal: String,
-    pub retrieved_at: String,
-    pub freshness: f64,
-}
-```
-**Phase H references these fields** — `summary`, `memory_type`, and `provenance_goal` must be present.
+**Files:**
+- Create: `crates/executive/src/impl/channel/telegram/mod.rs`
+- Create: `crates/executive/src/impl/channel/telegram/polling.rs`
+- Create: `crates/executive/src/impl/channel/telegram/formatting.rs`
+- Modify: `crates/executive/Cargo.toml`
+- Modify: daemon configuration files discovered during the milestone plan
 
-Extend `ProcessState` in fabric to include two new variants: `AwaitingApproval` and `AwaitingHuman`. These are used when a goal pauses for channel-based approval or user input.
+- [ ] Add mocked-provider tests for owner allow-list, unknown-user rejection, stable message IDs, offset restart, retry/backoff, button callbacks, and reply formatting.
+- [ ] Implement long polling with persisted cursor and bounded exponential backoff.
+- [ ] Support `/start` and `/chat`; parse Goal commands but return a clear “Goal runtime not enabled” response until M2.
+- [ ] Never advance the Telegram offset before the local inbox transaction commits.
+- [ ] Run `cargo test -p executive -- impl::channel::telegram`; expect PASS.
 
-Wire into fabric: add `pub mod goal;` to `crates/fabric/src/types/mod.rs`, add `pub use types::goal;` to `crates/fabric/src/lib.rs`.
+### Task M1.5: M1 release gate
 
-- [ ] Create `crates/fabric/src/types/goal.rs` with GoalSpec, GoalPriority, GoalPhase, MemoryProjection
-- [ ] Extend `ProcessState` with `AwaitingApproval` and `AwaitingHuman` variants (in fabric lib.rs or types)
-- [ ] Modify `crates/fabric/src/types/mod.rs` — add `pub mod goal;`
-- [ ] Modify `crates/fabric/src/lib.rs` — add `pub use types::goal;`
-- [ ] Commit
+- [ ] Execute a mocked end-to-end owner chat and daemon restart test.
+- [ ] Run full workspace formatting, tests, and build.
+- [ ] Commit M1 in reviewable stages: contracts, persistence, router, Telegram adapter, validation.
 
-### Task B.2: Goal prompt assembly in SubAgentRuntime
+**M1 acceptance:** owner phone chat works; duplicate or replayed updates do not duplicate turns; unknown users consume no model resources; restart resumes incomplete work.
 
-Create `crates/executive/src/impl/goal/mod.rs` with:
-- `goal_prompt.rs` — assembles agent prompts from `GoalSpec` + channel context + `MemoryProjection`. Produces system prompt text and initial task description. Does NOT persist goals — that is handled by Mnemosyne recall.
-- `goal_routing.rs` — determines which `SubAgentRuntime` to dispatch based on goal type (coding goals route to PiRuntime; research/reasoning to DeepSeekRuntime). Reads from `GoalSpec.tags`.
+## 4. M2 — One persistent bounded Goal
 
-Goals are ephemeral — they live as `AgentProcess` entries in the kernel ProcessTable. Persistence is via Mnemosyne journal (last N session entries), not a dedicated store.
+**Requirement anchors:** persistent Goal and immutable intent (`docs/arch/agent-google/04_GOAL_RUNTIME_ARCHITECTURE.md:6-44`, `:81`); bounded tick (`:83-125`); pause/resume/cancel (`:343-369`).
 
-- [ ] Create `crates/executive/src/impl/goal/mod.rs` with goal_prompt and goal_routing submodules
-- [ ] Modify `crates/executive/src/impl/mod.rs` — add `pub mod goal;`
-- [ ] Commit
+### Task M2.1: Define Goal domain types without changing ProcessState
 
-### Task B.3: Wire goal spawning into daemon handler
+**Files:**
+- Create: `crates/fabric/src/types/goal.rs`
+- Modify: `crates/fabric/src/types/mod.rs`
+- Modify: `crates/fabric/src/lib.rs`
 
-Modify `crates/executive/src/impl/daemon/handler/init.rs`:
+- [ ] Define `GoalId`, `GoalSpec`, `GoalState`, `GoalWaitReason`, `GoalBudget`, `GoalBudgetUsage`, `GoalVersion`, `GoalSnapshot`, and typed transition errors.
+- [ ] Keep Goal states out of `ProcessState`; link a Goal to `Option<ProcessId>` only while live.
+- [ ] Write tests for the legal transition matrix, immutable original intent, serde compatibility, and terminal states.
+- [ ] Run `cargo test -p fabric -- types::goal`; expect PASS.
 
-- When `MessageContent::Command { command: "goal", args }` is received, parse args into a `GoalSpec` (description from args), create an `AgentProcess` via `SubAgentSpawner`, and set the process state to `Planning`.
-- When a goal reaches a gate requiring approval, transition to `AwaitingApproval` and send an `OutboundMessage` with `ActionType::Approve`/`ActionType::Reject` actions back through the originating channel.
-- On `ActionType::Approve` reply (tracked via `reply_to_action`), transition state and resume execution.
+### Task M2.2: Implement GoalRepository
 
-Modify `crates/executive/src/impl/daemon/server.rs` — ensure goal-related state transitions are visible through existing debug/session handlers.
+**Files:**
+- Create: `crates/executive/src/impl/goal/mod.rs`
+- Create: `crates/executive/src/impl/goal/repository.rs`
+- Create: `crates/executive/src/impl/goal/model.rs`
+- Modify: `crates/executive/src/impl/persistence/migrations.rs`
 
-- [ ] Modify `crates/executive/src/impl/daemon/handler/init.rs` — handle "goal" command, spawn via SubAgentSpawner
-- [ ] Modify `crates/executive/src/impl/daemon/server.rs` — expose goal state in handlers
-- [ ] Commit
+- [ ] Add `goals`, `goal_events`, `goal_tasks`, `goal_attempts`, and `goal_budget_ledger` tables.
+- [ ] Write tests for create/load/list, optimistic-version conflict, transition+journal atomicity, immutable spec fields, and non-terminal recovery.
+- [ ] Store timestamps and versions explicitly; do not serialize the entire aggregate as an opaque unqueryable blob.
+- [ ] Run `cargo test -p executive -- impl::goal::repository`; expect PASS.
 
-### Task B.4: Compilation and tests
+### Task M2.3: Implement bounded GoalCoordinator
 
-- [ ] `cargo test -p fabric -- types::goal` — GoalSpec serde, MemoryProjection field presence
-- [ ] `cargo test -p executive -- impl::goal` — prompt assembly, routing dispatch
-- [ ] `cargo build --workspace` — no regressions
-- [ ] Commit
+**Files:**
+- Create: `crates/executive/src/impl/goal/coordinator.rs`
+- Create: `crates/executive/src/impl/goal/budget.rs`
+- Modify: `crates/executive/src/impl/daemon/handler/init.rs`
+- Test: `crates/executive/tests/goal_lifecycle.rs`
 
-**Phase B acceptance:** GoalSpec type compiles; MemoryProjection includes all 7 fields; ProcessState has AwaitingApproval + AwaitingHuman; `/goal` command via Telegram spawns an AgentProcess; approval actions flow through the channel.
+- [ ] Write tests proving one tick performs at most one transition/attempt, budget exhaustion blocks before work, deadline expiry fails predictably, pause prevents execution, cancellation reaches `OperationTable`, and restart clears stale process linkage.
+- [ ] Create a kernel process when a Goal begins/resumes; retain Goal state in SQLite when that process exits.
+- [ ] Reserve and settle token/cost/attempt usage separately from capability admission.
+- [ ] Run `cargo test -p executive --test goal_lifecycle`; expect PASS.
 
----
+### Task M2.4: Wire Telegram Goal commands
 
-## 5. Phase C: DeepSeek Runtime
+**Files:**
+- Modify: `crates/executive/src/impl/channel/router.rs`
+- Modify: `crates/executive/src/impl/channel/telegram/formatting.rs`
+- Test: `crates/executive/tests/telegram_goal_commands.rs`
 
-**Estimated:** 1-2 weeks | **Depends on:** Phase B | **Crates:** executive
+- [ ] Test `/goal`, `/goals`, `/status`, `/pause`, `/resume`, and `/cancel` against a temporary database.
+- [ ] Compile the user's intent into a Draft `GoalSpec`, show it to the owner, and require approval before entering Ready.
+- [ ] Ensure `/status` reads the repository rather than an in-memory `SubAgentSpawner` map.
+- [ ] Run `cargo test -p executive --test telegram_goal_commands`; expect PASS.
 
-**Architecture:** DeepSeekRuntime implements `SubAgentRuntime` trait at `crates/executive/src/core/sub_agent.rs:47`. No `GoalWorker` trait, no `WorkerRegistry`, no standalone `RetryPolicy` module, no standalone `Escalation` module. Retry is handled by `SupervisorTree` restart policies. Escalation is a supervisor policy that spawns a replacement sub-agent with a different runtime (e.g., Claude) when DeepSeek fails repeatedly.
+### Task M2.5: M2 release gate
 
-### Task C.1: Implement DeepSeekRuntime
+- [ ] Create a Goal, stop the daemon, restart it, and prove original intent/state/budget remain intact.
+- [ ] Run full workspace formatting, tests, and build.
+- [ ] Commit domain types, repository, coordinator, command wiring, and validation separately.
 
-Create `crates/executive/src/impl/runtime/deepseek.rs`:
+**M2 acceptance:** one active Goal survives restart, performs bounded ticks, and supports status/pause/resume/cancel without modifying generic `ProcessState`.
 
-`DeepSeekRuntime` struct holds:
+## 5. M3 — Per-attempt runtime, retry, and escalation
 
-- An `Arc<dyn LlmProvider>` — the DeepSeek API provider (setup via existing provider config).
-- Optional goal context: `Option<GoalSpec>` for goal-aware prompt construction.
-- `cancel: CancellationToken` for cooperative cancellation.
-- `attempt_count: AtomicU32` for tracking within a single runtime session.
+**Requirement anchors:** independent attempts (`docs/arch/agent-google/04_GOAL_RUNTIME_ARCHITECTURE.md:166-181`), bounded retry/escalation (`:183-237`), model roles (`:270-296`).
 
-Implements `SubAgentRuntime::run(&self, task: &str, cancel: CancellationToken) -> Result<String, String>`:
+### Task M3.1: Add per-spawn runtime selection
 
-1. Constructs messages from goal context + task description.
-2. Calls `provider.complete(&self, messages: &[Message], tools: &[ToolDefinition]) -> Result<LlmResponse>` **(not `chat()` — see `crates/fabric/src/types/llm_types.rs:61`)**.
-3. Handles tool calls by dispatching to existing tool registry.
-4. Loops until stop reason or exhaustion.
-5. Returns final response text on success, error string on failure.
+**Files:**
+- Modify: `crates/executive/src/core/sub_agent.rs`
+- Create: `crates/executive/src/core/runtime_registry.rs`
+- Modify: `crates/executive/src/core/mod.rs`
+- Test: existing `crates/executive/tests/supervision.rs` plus new runtime-selection cases
 
-- [ ] Create `crates/executive/src/impl/runtime/deepseek.rs`
-- [ ] Create `crates/executive/src/impl/runtime/mod.rs` — `pub mod deepseek;`
-- [ ] Modify `crates/executive/src/impl/mod.rs` — add `pub mod runtime;`
-- [ ] Commit
+- [ ] Preserve `with_runtime()` as the default compatibility path.
+- [ ] Add `RuntimeId`, `RuntimeRegistry`, and a per-spawn method selecting a registered runtime.
+- [ ] Write tests proving two simultaneous agents use different runtimes and a missing runtime fails before process execution.
+- [ ] Do not add provider selection behavior to `SupervisorTree`.
+- [ ] Run `cargo test -p executive --test supervision`; expect PASS.
 
-### Task C.2: Failure classification and retry via SupervisorTree
+### Task M3.2: Implement DeepSeek runtime as a normal provider-backed worker
 
-When `DeepSeekRuntime::run()` fails, the error propagates through `SubAgentSpawner`, which transitions the sub-agent's `ProcessState` to `Failed`. The `SupervisorTree` at `crates/executive/src/core/sub_agent.rs:25` consults its `RestartPolicy`:
+**Files:**
+- Create: `crates/executive/src/impl/runtime/mod.rs`
+- Create: `crates/executive/src/impl/runtime/deepseek.rs`
+- Modify: `crates/executive/src/impl/mod.rs`
 
-- Classify failures into: transient (network timeout, rate limit — retry), permanent (auth error, invalid model — escalate), tool error (tool call failed — retry with reduced tool set), token budget exceeded (truncate context and retry).
-- Transient: restart with backoff (exponential, max 3 retries).
-- Permanent: escalate — spawn a replacement sub-agent with Claude runtime via `RuntimeTask` dispatch.
-- Tool error: restart once with a reduced tool set (omit the failing tool).
-- Token budget: restart once with truncated conversation history.
+- [ ] Test prompt construction, cancellation, usage extraction, tool-call limits, and provider errors with a fake `LlmProvider`.
+- [ ] Call `LlmProvider::complete()` as defined at `crates/fabric/src/types/llm_types.rs:61-65`.
+- [ ] Keep retry outside the runtime; one `run()` call is one attempt.
+- [ ] Run `cargo test -p executive -- impl::runtime::deepseek`; expect PASS.
 
-Implement `classify_failure(error: &str) -> FailureClass` in `deepseek.rs` as a private function. The `SupervisorTree` already supports `RestartDecision` — configure the policy accordingly.
+### Task M3.3: Add AttemptCoordinator
 
-- [ ] Implement `classify_failure()` in `crates/executive/src/impl/runtime/deepseek.rs`
-- [ ] Configure `SupervisorTree` restart policies for DeepSeek sub-agents in handler init
-- [ ] Commit
+**Files:**
+- Create: `crates/executive/src/impl/goal/attempt.rs`
+- Create: `crates/executive/src/impl/goal/retry.rs`
+- Modify: `crates/executive/src/impl/goal/coordinator.rs`
 
-### Task C.3: Compilation and tests
+- [ ] Define structured `FailureClass`, `RetryPolicy`, `EscalationStep`, and `AttemptEvidence`.
+- [ ] Test transient backoff, compile-evidence retry, non-retryable auth/policy failure, repeated-failure escalation, budget exhaustion, and cancellation during backoff.
+- [ ] Persist every attempt before scheduling the next one.
+- [ ] Use `SupervisorTree` only for unexpected live-process restart limits.
+- [ ] Run `cargo test -p executive -- impl::goal::attempt impl::goal::retry`; expect PASS.
 
-- [ ] `cargo test -p executive -- impl::runtime::deepseek` — runtime construction, failure classification
-- [ ] `cargo build --workspace` — no regressions
-- [ ] Commit
+### Task M3.4: M3 release gate
 
-**Phase C acceptance:** DeepSeekRuntime implements SubAgentRuntime; uses `provider.complete()` (not `chat()`); failures classified correctly; SupervisorTree restarts transient errors and escalates permanent errors.
+- [ ] Demonstrate a failed worker attempt retrying with evidence and escalating to a distinct fake runtime.
+- [ ] Run full workspace validation.
+- [ ] Commit runtime registry, DeepSeek runtime, attempt policy, and integration separately.
 
----
+**M3 acceptance:** runtime selection is per agent; attempts are durable; retry/backoff/model switching are explicit and bounded.
 
-## 6. Phase D: Pi Coding Subagent
+## 6. M4 — Pi worktree and verification
 
-**Estimated:** 1-2 weeks | **Depends on:** Phase B | **Crates:** executive
+**Requirement anchors:** Pi isolation (`docs/arch/agent-google/05_IMPLEMENTATION_ROADMAP.md:94-105`) and verification evidence (`:107-116`).
 
-**Architecture:** PiRuntime implements `SubAgentRuntime` trait. No `PiWorker as GoalWorker`, no new `impl/agent/pi/` directory. PiRuntime is spawned by `SubAgentSpawner::with_runtime()` like any other runtime.
+### Task M4.1: Define coding job contracts
 
-### Task D.1: Define PiSubagentTask and PiSubagentReport
+**Files:**
+- Create: `crates/fabric/src/types/coding_job.rs`
+- Modify: `crates/fabric/src/types/mod.rs`
+- Modify: `crates/fabric/src/lib.rs`
 
-Create `crates/executive/src/impl/runtime/pi_types.rs`:
+- [ ] Define `CodingJobSpec`, `WorkspaceBoundary`, `ChangedFile`, `CodingJobReport`, `VerificationCheck`, and `VerificationReport`.
+- [ ] Test serde and path-boundary normalization, including traversal and symlink escape cases.
+- [ ] Run `cargo test -p fabric -- types::coding_job`; expect PASS.
 
-- `PiSubagentTask` — struct: `task_id`, `description`, `changed_files: Vec<String>`, `diff: String`, `tests_run: usize`, `tests_passed: usize`, `linter_output: String`, `build_status: BuildStatus`.
-- `PiSubagentReport` — struct: `task`, `verification_report: Option<VerificationReport>`, `commit_hash: Option<String>`, `duration_secs: f64`, `retries: u32`.
-- `FileChange` — struct: `path: String`, `change_type: ChangeType` (Added, Modified, Deleted), `lines_added: u32`, `lines_removed: u32`.
-- `BuildStatus` — enum: Success, Failed(String), NotAttempted.
+### Task M4.2: Implement WorktreeManager
 
-These types are used by the verification pipeline (Phase E) to inspect Pi output.
+**Files:**
+- Create: `crates/corpus/src/tools/subagent/mod.rs`
+- Create: `crates/corpus/src/tools/subagent/worktree.rs`
+- Modify: `crates/corpus/src/tools/mod.rs`
 
-- [ ] Create `crates/executive/src/impl/runtime/pi_types.rs`
-- [ ] Modify `crates/executive/src/impl/runtime/mod.rs` — add `pub mod pi_types;`
-- [ ] Commit
+- [ ] Test creation from a known base commit, main-worktree immutability, diff collection, success cleanup, failed-worktree retention, TTL pruning, count cap, and disk-budget refusal.
+- [ ] Invoke git through `tokio::process::Command` with cancellation and timeouts.
+- [ ] Never run destructive cleanup outside the configured worktree base.
+- [ ] Run `cargo test -p corpus -- tools::subagent::worktree`; expect PASS.
 
-### Task D.2: Implement PiRuntime
+### Task M4.3: Implement PiRuntime with fail-closed sandboxing
 
-Create `crates/executive/src/impl/runtime/pi.rs`:
+**Files:**
+- Create: `crates/executive/src/impl/runtime/pi.rs`
+- Modify: `crates/executive/src/impl/runtime/mod.rs`
+- Test: `crates/executive/tests/pi_runtime.rs`
 
-`PiRuntime` struct holds:
+- [ ] Test unavailable sandbox, network denial configuration, timeout, cancellation, stdout/stderr capture, process-group termination, forbidden-path modification, and report generation.
+- [ ] Treat no isolation as an error; do not silently use a no-op backend.
+- [ ] Make one runtime call correspond to one durable attempt.
+- [ ] Run `cargo test -p executive --test pi_runtime`; expect PASS.
 
-- An `Arc<dyn LlmProvider>` — the coding LLM.
-- `worktree_base: PathBuf` — root for git worktrees.
-- `cancel: CancellationToken`.
+### Task M4.4: Implement VerificationService
 
-Implements `SubAgentRuntime::run(&self, task: &str, cancel: CancellationToken) -> Result<String, String>`:
+**Files:**
+- Create: `crates/executive/src/service/verification/mod.rs`
+- Create: `crates/executive/src/service/verification/command.rs`
+- Create: `crates/executive/src/service/verification/policy.rs`
+- Modify: `crates/executive/src/service/mod.rs`
+- Test: `crates/executive/tests/verification_service.rs`
 
-1. Creates a git worktree at `worktree_base/goal-{id}/` (using `git worktree add`).
-2. Runs LLM coding loop via `provider.complete()` with file-editing tools.
-3. After each tool call, collects `FileChange` entries.
-4. On completion, produces a `PiSubagentReport` with file changes, diff, test results.
-5. Cleans up worktree on success (keeps on failure for debugging).
-6. Calls `provider.complete()` (not `chat()` — see B.1).
+- [ ] Test pass/fail/timeout/cancel/output-limit behavior for format, check/build, relevant tests, diff scope, and capability policy.
+- [ ] Run commands with `tokio::process::Command`; never block an async worker with `std::process::Command`.
+- [ ] Mark required checks blocking and clippy/architecture advisory for the initial release.
+- [ ] Persist the verification report before moving the Goal to AwaitingApproval.
+- [ ] Run `cargo test -p executive --test verification_service`; expect PASS.
 
-Include `WorktreeManager` helper — creates, lists, and prunes git worktrees. Uses `std::process::Command` to invoke `git worktree`.
+### Task M4.5: M4 release gate
 
-- [ ] Create `crates/executive/src/impl/runtime/pi.rs`
-- [ ] Modify `crates/executive/src/impl/runtime/mod.rs` — add `pub mod pi;`
-- [ ] Commit
+- [ ] Execute a fake coding change in a temporary repository and prove the main worktree is unchanged.
+- [ ] Demonstrate that failed required verification prevents completion.
+- [ ] Run full workspace validation and commit in focused stages.
 
-### Task D.3: Compilation and tests
+**M4 acceptance:** Pi edits only an isolated worktree, produces a structured report, and cannot reach approval without required evidence.
 
-- [ ] `cargo test -p executive -- impl::runtime::pi` — PiRuntime construction, worktree lifecycle
-- [ ] `cargo test -p executive -- impl::runtime::pi_types` — task/report serde
-- [ ] `cargo build --workspace` — no regressions
-- [ ] Commit
+## 7. M5 — Durable approval and controlled apply
 
-**Phase D acceptance:** PiRuntime implements SubAgentRuntime; creates git worktrees; produces PiSubagentReport with FileChange list; cleans up on success; uses `provider.complete()`.
+**Code anchors:** current synchronous approval gate is `crates/corpus/src/security/socket_approval.rs:15-54`; current pump is `crates/executive/src/service/turn_pipeline.rs:604-633`.
 
----
+### Task M5.1: Add durable ApprovalRepository
 
-## 7. Phase E: Verification Pipeline
+**Files:**
+- Create: `crates/executive/src/impl/approval/mod.rs`
+- Create: `crates/executive/src/impl/approval/repository.rs`
+- Modify: `crates/executive/src/impl/persistence/migrations.rs`
 
-**Estimated:** 1 week | **Depends on:** Phase D | **Crates:** executive
+- [ ] Define request ID, Goal/attempt references, operation category, risk, summary, expiry, status, and resolution metadata.
+- [ ] Test one-time resolution, duplicate callbacks, expiry-to-deny, restart recovery, wrong-principal denial, and optimistic conflict.
+- [ ] Keep `SocketApprovalGate` for synchronous live-turn tool requests; do not overload it as the durable store.
+- [ ] Run `cargo test -p executive -- impl::approval`; expect PASS.
 
-**Architecture:** Verification runs as a `PostTurnHook` registered in the existing hook system at `crates/executive/src/service/post_turn.rs`. When PiRuntime completes a coding turn, the post-turn pipeline runs 7 verification gates on the output. No separate `impl/goal/verify/` directory — verification lives in `crates/executive/src/service/`.
+### Task M5.2: Route trusted Telegram approvals
 
-### Task E.1: Define VerificationGate trait
+**Files:**
+- Modify: `crates/executive/src/impl/channel/router.rs`
+- Modify: `crates/executive/src/impl/channel/telegram/formatting.rs`
+- Modify: `crates/executive/src/impl/goal/coordinator.rs`
 
-Create `crates/executive/src/service/verify.rs`:
+- [ ] Test approve/reject buttons, textual commands, expired IDs, replay, and untrusted sender.
+- [ ] Bind every approval to one owner principal and one immutable operation summary.
+- [ ] Resume the Goal by repository transition after approval; never rely on an in-memory oneshot surviving restart.
+- [ ] Run approval and Telegram command tests; expect PASS.
 
-Define `VerificationContext` struct: `goal_id`, `attempt_id`, `worktree_path`, `changed_files: Vec<FileChange>`, `diff: String`, `worker_output: String`.
+### Task M5.3: Add controlled apply operation
 
-Define traits and types:
-```rust
-#[async_trait]
-pub trait VerificationGate: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn priority(&self) -> GatePriority;
-    async fn check(&self, ctx: &VerificationContext) -> Result<GateResult>;
-}
-```
+**Files:**
+- Create: `crates/corpus/src/tools/subagent/apply.rs`
+- Modify: `crates/corpus/src/tools/subagent/mod.rs`
+- Modify: Goal coordinator integration files
 
-`GatePriority` enum: MustPass, Advisory. `GateResult` struct: `passed: bool`, `name: String`, `output: String`, `blocking: bool`. `VerificationReport` struct: `passed: bool`, `gates: Vec<GateResult>`, `summary: String`, `risks: Vec<String>`, `recommendation: VerificationAction`. `VerificationAction` enum: Accept, Revise, Reject.
+- [ ] Test stale base commit, conflicting patch, scope escape, rejected approval, cancellation, and successful apply.
+- [ ] Require a valid unexpired approval and re-check diff scope immediately before applying.
+- [ ] Do not push, merge, or mutate protected branches automatically.
+- [ ] Run scoped apply tests; expect PASS.
 
-- [ ] Create `crates/executive/src/service/verify.rs`
-- [ ] Modify `crates/executive/src/service/mod.rs` — add `pub mod verify;`
-- [ ] Commit
+### Task M5.4: First usable release gate
 
-### Task E.2: Implement 7 standard gates
+- [ ] Run the complete mocked Telegram `/goal` flow through restart, worker, Pi, verification, approval, controlled apply, and completion summary.
+- [ ] Prove rejection leaves the main worktree unchanged.
+- [ ] Run full workspace validation and commit focused stages.
 
-Add `Gates` submodule in `crates/executive/src/service/verify.rs`:
+**M5 acceptance:** the source roadmap's first vertical slice works without losing state across daemon restart.
 
-1. **FormatGate** (MustPass) — runs `cargo fmt --check` in worktree. Fails if any file is unformatted.
-2. **CompileGate** (MustPass) — runs `cargo build` in worktree. Fails on compile errors.
-3. **TestGate** (MustPass) — runs `cargo test` in worktree. Fails if any test fails.
-4. **ClippyGate** (Advisory) — runs `cargo clippy -- -D warnings`. Warns on lint violations.
-5. **DiffScopeGate** (MustPass) — checks that changed files are within allowed paths (no changes to `Cargo.lock` alone, no `src/` outside expected modules). Compares against `ALLOWED_WRITE_PATHS`.
-6. **ArchitectureGate** (Advisory) — checks that no new file violates layer boundaries (no fabric importing executive, etc.).
-7. **CapabilityPolicyGate** (MustPass) — checks that tool calls made during the coding task were within the sub-agent's capability policy.
+## 8. M6 — Encrypted Google OAuth and manual read-only tools
 
-Each gate uses `std::process::Command` to invoke cargo/git tools. All gates are async-compatible (`async fn check`).
+**Requirement anchors:** encrypted credentials and read-only Gmail/Calendar (`docs/arch/agent-google/05_IMPLEMENTATION_ROADMAP.md:128-138`).
 
-- [ ] Implement all 7 gates with tests in `crates/executive/src/service/verify.rs`
-- [ ] Commit
+**Code anchor:** current `TokenStore::save()` writes JSON directly (`crates/corpus/src/tools/mcp/auth.rs:197-205`).
 
-### Task E.3: Register as PostTurnHook
+### Task M6.1: Introduce token persistence abstraction
 
-Create `crates/executive/src/service/verify/hook.rs`:
+**Files:**
+- Modify: `crates/corpus/src/tools/mcp/auth.rs`
+- Create: `crates/corpus/src/tools/mcp/token_store.rs`
+- Create: `crates/corpus/src/tools/mcp/encrypted_token_store.rs`
+- Modify: `crates/corpus/Cargo.toml`
 
-Define a `PostTurnHook` implementation that:
-1. Checks if the turn was a PiRuntime coding turn (inspects `TurnResult` for `SubAgentHandle` with PiRuntime type).
-2. Constructs `VerificationContext` from the turn result.
-3. Runs `VerificationPipeline::standard()` with all 7 gates.
-4. If MustPass gates fail, sets `TurnStop::Blocked` with the verification report.
-5. If Advisory gates warn, attaches warnings to the turn result without blocking.
+- [ ] Write tests proving ciphertext does not contain access/refresh tokens, wrong keys fail closed, tampering is detected, restrictive file permissions are applied, and legacy plaintext requires explicit migration.
+- [ ] Keep OAuth protocol logic in `McpOAuthProvider`; inject token persistence behind a trait.
+- [ ] Load the encryption key from an external secret source and never persist it beside ciphertext.
+- [ ] Run `cargo test -p corpus -- tools::mcp::token_store tools::mcp::encrypted_token_store`; expect PASS.
 
-Modify `crates/executive/src/service/post_turn.rs` — register the verification hook in `PostTurnPipeline::run()`.
+### Task M6.2: Configure Google OAuth
 
-- [ ] Create `crates/executive/src/service/verify/hook.rs`
-- [ ] Modify `crates/executive/src/service/post_turn.rs` — register verification hook
-- [ ] Modify `crates/executive/src/service/mod.rs` if needed
-- [ ] Commit
+**Files:**
+- Create: `crates/corpus/src/tools/mcp/google_auth.rs`
+- Modify: `crates/corpus/src/tools/mcp/mod.rs`
 
-### Task E.4: Tests
+- [ ] Test Google endpoint/scopes, CSRF state, code exchange, refresh, log redaction, and token-store restart using mock HTTP endpoints.
+- [ ] Require read-only scopes initially.
+- [ ] Do not enable Google startup if secure persistence is unavailable.
+- [ ] Run scoped OAuth tests; expect PASS.
 
-- [ ] `cargo test -p executive -- service::verify` — all 7 gates, pipeline run, MustPass blocks, Advisory warns
-- [ ] `cargo test -p executive -- service::post_turn` — hook integration
-- [ ] `cargo build --workspace` — no regressions
-- [ ] Commit
+### Task M6.3: Add manual read-only Gmail and Calendar capabilities
 
-**Phase E acceptance:** 7 gates defined; MustPass gates block turn completion; Advisory gates produce warnings; verification hooks run automatically after Pi coding turns.
+**Files:**
+- Create or configure provider tools under `crates/corpus/src/tools/google/`
+- Modify tool registration at the current registry discovered during milestone planning
+- Test with mock MCP/provider endpoints
 
----
+- [ ] Test Gmail search/read and Calendar list operations through capability admission.
+- [ ] Verify refresh tokens and authorization headers never enter tool results or model-visible errors.
+- [ ] Expose the read-only capabilities to Telegram chat through the existing ReAct tool path.
+- [ ] Run scoped tool tests and a mocked Telegram query.
 
-## 8. Phase F: Google OAuth + Sync
+### Task M6.4: M6 release gate
 
-**Estimated:** 1-2 weeks | **Depends on:** Phase B | **Crates:** corpus
+- [ ] Inspect the token file and prove no plaintext token is present.
+- [ ] Query mocked unread mail and today's events through Telegram.
+- [ ] Run full workspace validation and commit encryption, OAuth, and tools separately.
 
-**Architecture:** Google OAuth is configured via `McpServerConfig` (extend with OAuth fields). Gmail and Calendar are MCP tool servers — no custom REST clients needed for read operations. No `CredentialVault`, no `drivers/google/vault.rs`, no AES-256-GCM deps. A `GoogleSyncManager` polls Gmail+Calendar and converts events into `InboundMessage` for the channel system.
+**M6 acceptance:** secure Google OAuth survives restart and supports admitted read-only Gmail/Calendar queries.
 
-### Task F.1: Extend McpServerConfig for OAuth
+## 9. M7 — Google sync and Gmail Draft Goal channel
 
-Modify `crates/corpus/src/tools/mcp/config.rs`:
+**Requirement anchors:** cursor recovery/dedup (`docs/arch/agent-google/05_IMPLEMENTATION_ROADMAP.md:140-151`) and Draft Goal behavior (`:153-162`).
 
-Add an `McpOAuthConfig` struct to `McpServerConfig`:
-```rust
-pub struct McpOAuthConfig {
-    pub provider: OAuthProvider,
-    pub client_id: String,
-    pub client_secret: String,
-    pub scopes: Vec<String>,
-    pub token_url: String,
-    pub auth_url: String,
-    pub redirect_uri: String,
-}
-pub enum OAuthProvider { Google, GitHub, Custom(String) }
-```
+### Task M7.1: Add normalized Google event types and cursor repository
 
-Add `oauth: Option<McpOAuthConfig>` field to `McpServerConfig`.
+**Files:**
+- Create: `crates/fabric/src/types/google.rs`
+- Modify: `crates/fabric/src/types/mod.rs`
+- Modify: `crates/fabric/src/lib.rs`
+- Create: `crates/executive/src/impl/google/cursor.rs`
+- Modify: `crates/executive/src/impl/persistence/migrations.rs`
 
-The existing MCP auth module at `crates/corpus/src/tools/mcp/auth.rs` handles token exchange and refresh. Extend it to support the Google OAuth flow.
+- [ ] Test event serde, stable provider IDs, cursor compare-and-swap, duplicate event suppression, and crash-before/after-dispatch recovery.
+- [ ] Persist provider cursor only after normalized events are durably inserted.
+- [ ] Run scoped fabric/executive tests; expect PASS.
 
-- [ ] Modify `crates/corpus/src/tools/mcp/config.rs` — add McpOAuthConfig
-- [ ] Modify `crates/corpus/src/tools/mcp/auth.rs` — add Google OAuth token exchange
-- [ ] Commit
+### Task M7.2: Implement dedicated GoogleSyncManager
 
-### Task F.2: Define Google sync types in fabric
+**Files:**
+- Create: `crates/executive/src/impl/google/mod.rs`
+- Create: `crates/executive/src/impl/google/sync.rs`
+- Modify: `crates/executive/src/impl/mod.rs`
 
-Create `crates/fabric/src/types/google.rs`:
+- [ ] Test Gmail history pagination, Calendar sync-token invalidation/full rescan, rate-limit backoff, cancellation, dedup, and restart.
+- [ ] Use a dedicated provider client for background sync; do not route polling through an LLM tool call.
+- [ ] Feed normalized events into the durable inbox/event repository.
+- [ ] Run `cargo test -p executive -- impl::google`; expect PASS.
 
-Define shared types: `GmailMessageSummary` (id, thread_id, subject, from, snippet, received_at, is_unread), `GmailQuery` (query string, max_results), `GoogleCalendarEvent` (id, summary, description, start, end, attendees, location), `TimeRange` (start, end), `GoogleEvent` enum (MailReceived, CalendarEventStarting, CalendarEventUpdated, CalendarEventCancelled).
+### Task M7.3: Implement Gmail channel as untrusted Draft input
 
-Wire into fabric: add `pub mod google;` to `crates/fabric/src/types/mod.rs`, add `pub use types::google;` to `crates/fabric/src/lib.rs`.
+**Files:**
+- Create: `crates/executive/src/impl/channel/gmail/mod.rs`
+- Modify: `crates/executive/src/impl/channel/mod.rs`
+- Modify: `crates/executive/src/impl/channel/router.rs`
 
-- [ ] Create `crates/fabric/src/types/google.rs`
-- [ ] Modify `crates/fabric/src/types/mod.rs` — add `pub mod google;`
-- [ ] Modify `crates/fabric/src/lib.rs` — add `pub use types::google;`
-- [ ] Commit
+- [ ] Test allow-listed sender, unknown sender, duplicate message, `[GOAL]`, `[ASK]`, attachments metadata, and spoofing-policy rejection.
+- [ ] Map `[GOAL]` only to `GoalState::Draft` and send confirmation to trusted Telegram.
+- [ ] Do not execute or approve destructive operations based solely on email sender text.
+- [ ] Run Gmail channel tests; expect PASS.
 
-### Task F.3: Implement GoogleSyncManager
+### Task M7.4: M7 release gate
 
-Create `crates/corpus/src/drivers/google/sync.rs`:
+- [ ] Demonstrate cursor restart without duplicate normalized events.
+- [ ] Demonstrate `[GOAL]` email creating one Draft and requiring Telegram confirmation.
+- [ ] Run full workspace validation and commit cursor, sync, and Gmail channel separately.
 
-`GoogleSyncManager` struct holds:
-- `reqwest::Client` for API calls.
-- MCP tool client handles for Gmail and Calendar (discovered via MCP server).
-- Polling interval configuration.
+**M7 acceptance:** Google sync is restart-safe and Gmail cannot bypass trusted-channel approval.
 
-Methods:
-- `start()` — spawns a background task that polls Gmail (list unread messages) and Calendar (upcoming events) on a configurable interval (default 60s).
-- Converts new Gmail messages into `GoogleEvent::MailReceived`.
-- Converts new/updated/cancelled calendar events into `GoogleEvent::CalendarEvent*` variants.
-- `set_callback(f: impl Fn(GoogleEvent))` — registers a callback that the daemon wires to convert `GoogleEvent` into `InboundMessage` for the Gmail channel (Phase G).
+## 10. M8 — Optional GBrain MemoryService backend
 
-This is the **only** new file in `drivers/google/`. No vault, no credential store — OAuth tokens come from `McpServerConfig` auth module.
+**Requirement anchors:** GBrain stores decisions/outcomes with provenance/freshness and cannot mutate Dasein (`docs/arch/agent-google/05_IMPLEMENTATION_ROADMAP.md:118-126`).
 
-- [ ] Create `crates/corpus/src/drivers/google/sync.rs`
-- [ ] Create `crates/corpus/src/drivers/google/mod.rs` — `pub mod sync;`
-- [ ] Modify `crates/corpus/src/drivers/mod.rs` — add `pub mod google;`
-- [ ] Commit
+**Code anchor:** `MemoryService` contract is `crates/mnemosyne/src/service.rs:67-74`; current backend root is `crates/mnemosyne/src/backends/`.
 
-### Task F.4: Compilation and tests
+### Task M8.1: Implement client/config/DTOs in the correct backend path
 
-- [ ] `cargo test -p fabric -- types::google` — type serde
-- [ ] `cargo test -p corpus -- drivers::google::sync` — sync manager construction, event conversion
-- [ ] `cargo build --workspace` — no regressions
-- [ ] Commit
+**Files:**
+- Create: `crates/mnemosyne/src/backends/gbrain/mod.rs`
+- Create: `crates/mnemosyne/src/backends/gbrain/client.rs`
+- Create: `crates/mnemosyne/src/backends/gbrain/config.rs`
+- Create: `crates/mnemosyne/src/backends/gbrain/types.rs`
+- Modify: `crates/mnemosyne/src/backends/mod.rs`
+- Modify: `crates/mnemosyne/Cargo.toml`
 
-**Phase F acceptance:** McpServerConfig supports Google OAuth; MCP auth handles token exchange; GoogleSyncManager polls Gmail+Calendar; no CredentialVault, no AES-256-GCM deps.
+- [ ] Test health, authentication, timeouts, 4xx/5xx mapping, recall provenance, freshness, and temporal validity with a mock HTTP server.
+- [ ] Keep API keys out of logs and model-visible errors.
+- [ ] Run `cargo test -p mnemosyne -- backends::gbrain`; expect PASS.
 
----
+### Task M8.2: Add durable ingestion spool
 
-## 9. Phase G: Gmail Channel + Approval
+**Files:**
+- Create: `crates/mnemosyne/src/backends/gbrain/spool.rs`
+- Create: `crates/mnemosyne/src/backends/gbrain/pipeline.rs`
 
-**Estimated:** 1-2 weeks | **Depends on:** Phase A, Phase F | **Crates:** executive
+- [ ] Test daemon restart, GBrain outage, retry/backoff, successful dequeue, malformed-entry dead-lettering, capacity refusal, and no silent drop.
+- [ ] Store queued entries in SQLite before acknowledging `record()`.
+- [ ] Recover pending rows at service startup.
+- [ ] Run spool/pipeline tests; expect PASS.
 
-**Architecture:** Approval extends the existing `SessionGateway::approval_flow` module at `crates/executive/src/core/session_gateway/approval_flow.rs`. No standalone `ApprovalManager` module. The GmailChannel implements the `Channel` trait and receives inbound messages from `GoogleSyncManager`.
+### Task M8.3: Implement and compose MemoryService
 
-### Task G.1: Extend SessionGateway approval_flow
+**Files:**
+- Create: `crates/mnemosyne/src/backends/gbrain/backend.rs`
+- Create: `crates/mnemosyne/src/service/composite.rs`
+- Modify: `crates/mnemosyne/src/service.rs` or convert it to a module during the detailed milestone plan
+- Modify: daemon memory bootstrap files discovered during milestone planning
 
-Modify `crates/executive/src/core/session_gateway/approval_flow.rs`:
+- [ ] Add contract tests for `record`, `recall`, `consolidate`, and `forget`.
+- [ ] Test degraded recall fallback, recovery, result merging/dedup, and the prohibition on Dasein mutation.
+- [ ] Keep the local service available when GBrain is disabled or unhealthy.
+- [ ] Run MemoryService contract and integration tests; expect PASS.
 
-Add `ApprovalRequest` type:
-```rust
-pub struct ApprovalRequest {
-    pub id: String,
-    pub goal_id: String,
-    pub request_type: ApprovalType,
-    pub description: String,
-    pub details: ApprovalDetails,
-    pub timeout_secs: u64,
-    pub created_at: String,
-    pub channel_id: String,
-    pub conversation_id: Option<String>,
-}
-```
+### Task M8.4: Add deployment assets
 
-Add `ApprovalType` enum: ApplyCodeDiff, SendEmail, DeleteFile, ModifyCalendar, DangerousCommand, CapabilityExpansion, BudgetIncrease.
+**Files:**
+- Create: `docker-compose.gbrain.yml`
+- Create: documented example environment file without secrets
+- Modify: existing configuration schema and example files discovered during milestone planning
 
-Add `ApprovalDetails` enum with variants: CodeDiff { changed_files, diff_summary }, EmailDraft { to, subject, body_preview }, FileDeletion { paths }, CalendarModification { summary, start }, Generic { description }.
+- [ ] Add PostgreSQL and GBrain health checks with dependency ordering.
+- [ ] Bind service ports to localhost by default.
+- [ ] Validate `docker compose -f docker-compose.gbrain.yml config`; expect exit 0.
+- [ ] Run an opt-in integration test against the composed service.
 
-Add `ApprovalResult` enum: Approved, Rejected { reason }, TimedOut.
+### Task M8.5: M8 release gate
 
-Add methods to `SessionGateway`:
-- `request_approval(req: ApprovalRequest)` — stores in pending map, sends `OutboundMessage` with `UserAction::Approve`/`UserAction::Reject` through the originating channel.
-- `resolve_approval(id: &str, result: ApprovalResult)` — resolves pending request, returns the original `ApprovalRequest`.
+- [ ] Stop GBrain during ingestion and prove queued knowledge survives both process restarts.
+- [ ] Restore GBrain and prove the queue drains and recalled entries retain provenance.
+- [ ] Run full workspace validation and commit client, spool, service adapter, and deployment assets separately.
 
-The pending store is a `HashMap<String, ApprovalRequest>` protected by the existing `Mutex<SessionManager>`.
+**M8 acceptance:** GBrain is an optional, degradable `MemoryService` extension with durable ingestion and no core-runtime dependency.
 
-- [ ] Modify `crates/executive/src/core/session_gateway/approval_flow.rs` — add ApprovalRequest types and methods
-- [ ] Commit
+## 11. M9 — Deployment hardening
 
-### Task G.2: Implement GmailChannel
+**Requirement anchors:** systemd, backups, Tailscale, secret management, health checks, log rotation, and quotas (`docs/arch/agent-google/05_IMPLEMENTATION_ROADMAP.md:178-188`).
 
-Create `crates/executive/src/impl/channel/gmail/mod.rs`:
+- [ ] Add systemd units with restart limits, restricted filesystem access, and explicit secret-file paths.
+- [ ] Add backup/restore tests for Goal, inbox, cursor, approval, OAuth ciphertext, and GBrain spool databases.
+- [ ] Add health reporting for Telegram, Google OAuth/sync, Goal scheduler, worktree disk budget, and GBrain.
+- [ ] Add log redaction regression tests and rotation policy.
+- [ ] Bind services to localhost/Tailscale interfaces only; do not expose public unauthenticated ports.
+- [ ] Exercise restore on a clean host before declaring production readiness.
 
-`GmailChannel` struct holds:
-- `reqwest::Client` for Gmail API access.
-- OAuth token (from `McpServerConfig`).
-- `polling_interval: Duration`.
-- `last_check: Mutex<String>` (ISO 8601 timestamp).
+**M9 acceptance:** a clean-host restore recovers durable state, secrets remain external, health failures are visible, and disk/process growth is bounded.
 
-Implements `Channel` trait:
-- `start()` — spawns a polling task that calls `GoogleSyncManager` to fetch unread messages, converts each `GmailMessageSummary` into an `InboundMessage` with:
-  - `channel_id: ChannelId("gmail")`
-  - `message_id: MessageId(email.message_id)` **(not `id`)**
-  - `conversation_id: Option<ConversationId>` — set from `email.thread_id` **(not `conversation`)**
-  - `sender_id: email.from` **(not `principal`)**
-  - `content: MessageContent::Text { text: email.snippet }`
-  - `timestamp: email.received_at` **(not `received_at` on InboundMessage — it is `timestamp`; see Phase A field spec)**
-  - `reply_to_action: None`
-- `send()` — converts `OutboundMessage` to Gmail draft/send via Gmail API (write operations: `POST /gmail/v1/users/me/messages/send`). Maps `OutboundMessage.actions` to inline reply options.
+## 12. Program-wide traceability
 
-**Critical B.2 fix:** Every `InboundMessage` constructed in Phase G must use the field names defined in Phase A: `channel_id`, `message_id`, `conversation_id`, `sender_id`, `content`, `timestamp`, `reply_to_action`. Fields like `id`, `channel`, `principal`, `conversation`, `reply_to`, `received_at` are **not valid** on `InboundMessage`.
-
-On test: spawn the channel, simulate an incoming email, verify field names and routing correctness.
-
-- [ ] Create `crates/executive/src/impl/channel/gmail/mod.rs`
-- [ ] Modify `crates/executive/src/impl/channel/mod.rs` — register GmailChannel
-- [ ] Commit
-
-### Task G.3: Compilation and tests
-
-- [ ] `cargo test -p executive -- core::session_gateway::approval_flow` — request, resolve, timeout
-- [ ] `cargo test -p executive -- impl::channel::gmail` — InboundMessage field names, send draft, polling
-- [ ] `cargo build --workspace` — no regressions
-- [ ] Commit
-
-**Phase G acceptance:** ApprovalRequest extends SessionGateway; GmailChannel implements Channel trait; InboundMessage field names match Phase A spec exactly; write operations send via Gmail API.
-
----
-
-## 10. Phase H: GBrain Memory Backend
-
-**Estimated:** 1-2 weeks | **Depends on:** Phase B | **Crates:** mnemosyne
-
-**Architecture:** GBrain is a new memory backend in `crates/mnemosyne/src/impl/backends/gbrain/`. It implements the existing Mnemosyne backend trait (or defines its own REST-based backend). Docker Compose manages the GBrain service + PostgreSQL.
-
-### Task H.1: Define GBrain API types and REST client
-
-Create `crates/mnemosyne/src/impl/backends/gbrain/types.rs`:
-
-DTOs matching the GBrain REST API contract from `docs/plans/2026-07-14-agent-google-design.md Phase H`:
-- `GBrainHealth` — status, version.
-- `StoreRequest` — memory_type, content, payload, goal_id, attempt_id, provenance (ProvenanceDTO), tags.
-- `ProvenanceDTO` — source, goal_id, attempt_id, recorded_by.
-- `StoreResponse` — id, created_at.
-- `BatchStoreRequest` / `BatchStoreResponse`.
-- `RecallRequest` — query, goal_id, memory_types, max_results, freshness_weight, min_score.
-- `RecallResponse` / `ScoredMemoryDTO`.
-- `ForgetRequest` / `ForgetResponse`.
-
-Create `crates/mnemosyne/src/impl/backends/gbrain/client.rs`:
-
-`GBrainClient` struct holds `reqwest::Client` + `base_url: String`. Methods:
-- `health_check() -> Result<GBrainHealth>`
-- `store(req: StoreRequest) -> Result<StoreResponse>`
-- `store_batch(reqs: Vec<StoreRequest>) -> Result<BatchStoreResponse>`
-- `recall(req: RecallRequest) -> Result<RecallResponse>`
-- `forget(req: ForgetRequest) -> Result<ForgetResponse>`
-
-All methods are async, JSON-encoded, with error handling for connection/timeout/4xx/5xx.
-
-Add `reqwest = { version = "0.12", features = ["json"] }` to `crates/mnemosyne/Cargo.toml`.
-
-- [ ] Create `crates/mnemosyne/src/impl/backends/gbrain/types.rs`
-- [ ] Create `crates/mnemosyne/src/impl/backends/gbrain/client.rs`
-- [ ] Modify `crates/mnemosyne/Cargo.toml` — add reqwest
-- [ ] Commit
-
-### Task H.2: Write IngestionPipeline, MemoryExtraction, and Recall
-
-Create `crates/mnemosyne/src/impl/backends/gbrain/ingestion.rs`:
-
-`IngestionPipeline` — async batch ingestion with buffered flush:
-- `spawn(client, batch_size, flush_interval, max_buffer)` — spawns a background task that buffers `StoreRequest` entries and flushes them in batches to the GBrain API.
-- `buffer(entry: StoreRequest)` — non-blocking enqueue; drops entries if buffer is full (with warning log).
-
-Create `crates/mnemosyne/src/impl/backends/gbrain/extraction.rs`:
-
-`MemoryExtractor` — converts session events into `StoreRequest` entries:
-- Extracts facts, decisions, errors, and context from session transcripts.
-- Tags entries by goal_id, attempt_id, event type.
-- Produces `ProvenanceDTO` with recorded_by = "aletheon-agent".
-
-Create `crates/mnemosyne/src/impl/backends/gbrain/recall.rs`:
-
-`MemoryRecall` — queries GBrain for relevant memories:
-- Builds `RecallRequest` from a query + optional goal_id.
-- **B.3 fix:** Maps `RecallResponse.results` into `MemoryProjection` structs with all required fields: `relevant_facts`, `past_experiences`, `summary`, `memory_type`, `provenance_goal`, `retrieved_at`, `freshness`.
-- `memory_type` is set from the result's type tag.
-- `provenance_goal` is extracted from `ScoredMemoryDTO.provenance.goal_id`.
-- `summary` is the first 200 chars of the stored content.
-- Returns `Vec<MemoryProjection>`.
-
-Create `crates/mnemosyne/src/impl/backends/gbrain/health.rs`:
-
-GBrain health check — pings the health endpoint on startup and periodically.
-
-- [ ] Create ingestion.rs, extraction.rs, recall.rs, health.rs
-- [ ] Implement MemoryProjection mapping with all 7 fields in recall.rs
-- [ ] Commit
-
-### Task H.3: Wire into mnemosyne backend registry
-
-Create `crates/mnemosyne/src/impl/backends/gbrain/mod.rs`:
-
-Public module re-exports: `GBrainClient`, `IngestionPipeline`, `MemoryExtractor`, `MemoryRecall`, types module.
-
-Modify `crates/mnemosyne/src/impl/backends/mod.rs` — add `pub mod gbrain;`.
-
-- [ ] Create `crates/mnemosyne/src/impl/backends/gbrain/mod.rs`
-- [ ] Modify `crates/mnemosyne/src/impl/backends/mod.rs` — add gbrain module
-- [ ] Commit
-
-### Task H.4: Add Docker Compose and configuration
-
-Add `docker-compose.gbrain.yml` at repo root:
-
-Services: `gbrain` (GBrain API, port 8080), `postgres` (PostgreSQL 16, port 5432, volume for data). GBrain depends on postgres. Environment variables for database connection, API keys, log level.
-
-Add configuration section to Aletheon's config TOML:
-```toml
-[gbrain]
-base_url = "http://localhost:8080"
-batch_size = 50
-flush_interval_sec = 30
-max_buffer = 1000
-ingestion_enabled = true
-health_check_interval_sec = 30
-```
-
-- [ ] Create `docker-compose.gbrain.yml`
-- [ ] Add gbrain config section to existing agent config
-- [ ] Commit
-
-### Task H.5: Compilation and tests
-
-- [ ] `cargo test -p mnemosyne -- impl::backends::gbrain` — client CRUD, ingestion pipeline, recall projection
-- [ ] `cargo test -p mnemosyne -- impl::backends::gbrain::recall::memory_projection_fields` — verify all 7 MemoryProjection fields populated
-- [ ] `cargo build --workspace` — no regressions
-- [ ] Commit
-
-**Phase H acceptance:** GBrainClient connects to REST API; IngestionPipeline buffers and flushes; MemoryRecall produces MemoryProjection with all 7 fields; Docker Compose starts GBrain + PostgreSQL.
-
----
-
-## 11. File Manifest
-
-### Files Created
-
-| Phase | File | Purpose |
-|-------|------|---------|
-| A | `crates/fabric/src/types/channel.rs` | Channel type definitions |
-| A | `crates/executive/src/impl/channel/mod.rs` | Channel trait + ChannelRegistry |
-| A | `crates/executive/src/impl/channel/telegram/mod.rs` | TelegramChannel implementation |
-| A | `crates/executive/src/impl/channel/telegram/polling.rs` | Long-polling loop |
-| A | `crates/executive/src/impl/channel/telegram/binding.rs` | Bot binding config |
-| A | `crates/executive/src/impl/channel/telegram/formatting.rs` | Message formatting |
-| B | `crates/fabric/src/types/goal.rs` | GoalSpec, GoalPriority, GoalPhase, MemoryProjection |
-| B | `crates/executive/src/impl/goal/mod.rs` | Goal prompt assembly + routing |
-| C | `crates/executive/src/impl/runtime/mod.rs` | Runtime module |
-| C | `crates/executive/src/impl/runtime/deepseek.rs` | DeepSeekRuntime (SubAgentRuntime impl) |
-| D | `crates/executive/src/impl/runtime/pi_types.rs` | PiSubagentTask, PiSubagentReport, FileChange |
-| D | `crates/executive/src/impl/runtime/pi.rs` | PiRuntime (SubAgentRuntime impl) |
-| E | `crates/executive/src/service/verify.rs` | VerificationGate trait + 7 gates + pipeline |
-| E | `crates/executive/src/service/verify/hook.rs` | PostTurnHook registration |
-| F | `crates/fabric/src/types/google.rs` | Google shared types |
-| F | `crates/corpus/src/drivers/google/mod.rs` | Google driver module |
-| F | `crates/corpus/src/drivers/google/sync.rs` | GoogleSyncManager |
-| G | `crates/executive/src/impl/channel/gmail/mod.rs` | GmailChannel implementation |
-| H | `crates/mnemosyne/src/impl/backends/gbrain/mod.rs` | GBrain backend module |
-| H | `crates/mnemosyne/src/impl/backends/gbrain/types.rs` | GBrain API DTOs |
-| H | `crates/mnemosyne/src/impl/backends/gbrain/client.rs` | GBrain REST client |
-| H | `crates/mnemosyne/src/impl/backends/gbrain/ingestion.rs` | IngestionPipeline |
-| H | `crates/mnemosyne/src/impl/backends/gbrain/extraction.rs` | MemoryExtractor |
-| H | `crates/mnemosyne/src/impl/backends/gbrain/recall.rs` | MemoryRecall + MemoryProjection mapping |
-| H | `crates/mnemosyne/src/impl/backends/gbrain/health.rs` | Health check |
-| H | `docker-compose.gbrain.yml` | GBrain + PostgreSQL services |
-
-### Files Modified
-
-| Phase | File | Change |
-|-------|------|--------|
-| A | `crates/fabric/src/types/mod.rs` | Add `pub mod channel;` |
-| A | `crates/fabric/src/lib.rs` | Add `pub use types::channel;` |
-| A | `crates/executive/src/impl/mod.rs` | Add `pub mod channel;` |
-| A | `crates/executive/Cargo.toml` | Add teloxide dep |
-| A | `crates/executive/src/impl/daemon/handler/init.rs` | Add channel_registry, dispatch loop |
-| A | `crates/executive/src/impl/daemon/server.rs` | Wire channel_registry |
-| B | `crates/fabric/src/types/mod.rs` | Add `pub mod goal;` |
-| B | `crates/fabric/src/lib.rs` | Add `pub use types::goal;`, extend ProcessState |
-| B | `crates/executive/src/impl/mod.rs` | Add `pub mod goal;` |
-| B | `crates/executive/src/impl/daemon/handler/init.rs` | Handle /goal command |
-| B | `crates/executive/src/impl/daemon/server.rs` | Expose goal state |
-| C | `crates/executive/src/impl/mod.rs` | Add `pub mod runtime;` |
-| D | `crates/executive/src/impl/runtime/mod.rs` | Add pi_types, pi modules |
-| E | `crates/executive/src/service/mod.rs` | Add verify module |
-| E | `crates/executive/src/service/post_turn.rs` | Register verification hook |
-| F | `crates/fabric/src/types/mod.rs` | Add `pub mod google;` |
-| F | `crates/fabric/src/lib.rs` | Add `pub use types::google;` |
-| F | `crates/corpus/src/tools/mcp/config.rs` | Add McpOAuthConfig |
-| F | `crates/corpus/src/tools/mcp/auth.rs` | Add Google OAuth token exchange |
-| F | `crates/corpus/src/drivers/mod.rs` | Add google module |
-| G | `crates/executive/src/impl/channel/mod.rs` | Register GmailChannel |
-| G | `crates/executive/src/core/session_gateway/approval_flow.rs` | Add ApprovalRequest types + methods |
-| H | `crates/mnemosyne/src/impl/backends/mod.rs` | Add gbrain module |
-| H | `crates/mnemosyne/Cargo.toml` | Add reqwest dep |
-
----
-
-## 12. Execution Strategy
-
-**Sequential within phases, parallel across independent phases:**
-
-1. **Phase A** — first; all other phases depend on channel types.
-2. **Phase B** — after A; defines goal types used by C, D, E, F, H.
-3. **Phases C, D, F, H** — in parallel after B (all four are independent):
-   - C (DeepSeekRuntime) and D (PiRuntime) both implement SubAgentRuntime independently.
-   - F (Google OAuth) and H (GBrain) are separate crates with no cross-dependencies.
-4. **Phase E** — after D (needs PiSubagentReport + FileChange types from D).
-5. **Phase G** — after A + F (needs Channel trait from A, GoogleSyncManager from F).
-
-**Estimated total:** 8-12 weeks (2 developers).
-
----
-
-## 13. Acceptance Criteria
-
-### Phase A
-- [ ] Channel types (`InboundMessage`, `OutboundMessage`, `MessageContent`) compile and serialize correctly
-- [ ] `Channel` trait defines `start()`, `send()`, `shutdown()` contract
-- [ ] `ChannelRegistry` registers channels and routes messages
-- [ ] `TelegramChannel` polls Telegram API, parses text/commands/files into `InboundMessage`
-- [ ] Daemon init spawns channel dispatch loop; incoming messages enter turn orchestrator
-- [ ] All unit tests pass; workspace builds without regressions
-
-### Phase B
-- [ ] `GoalSpec` type compiles with all fields; serde round-trips
-- [ ] `MemoryProjection` includes all 7 fields: `relevant_facts`, `past_experiences`, `summary`, `memory_type`, `provenance_goal`, `retrieved_at`, `freshness`
-- [ ] `ProcessState` has `AwaitingApproval` and `AwaitingHuman` variants
-- [ ] `/goal` command parsed from Telegram, spawns AgentProcess via SubAgentSpawner
-- [ ] Approval actions (`Approve`/`Reject`) flow through the channel and transition process state
-- [ ] No `GoalSupervisor`, `GoalStore`, `objectives_v2` table, or `ALTER TABLE` migrations exist
-- [ ] All unit tests pass; workspace builds without regressions
-
-### Phase C
-- [ ] `DeepSeekRuntime` implements `SubAgentRuntime` trait
-- [ ] Uses `provider.complete()`, **not** `provider.chat()`
-- [ ] `classify_failure()` correctly categorizes transient/permanent/tool/token errors
-- [ ] SupervisorTree retries transient errors with backoff (max 3)
-- [ ] Permanent errors escalate to Claude runtime
-- [ ] No `GoalWorker` trait, `WorkerRegistry`, or standalone `RetryPolicy`/`Escalation` modules exist
-- [ ] All unit tests pass; workspace builds without regressions
-
-### Phase D
-- [ ] `PiRuntime` implements `SubAgentRuntime` trait
-- [ ] `PiSubagentTask` and `PiSubagentReport` types compile and serialize
-- [ ] PiRuntime creates git worktrees, runs coding loop, produces report with FileChange list
-- [ ] Worktrees cleaned up on success, preserved on failure
-- [ ] Uses `provider.complete()`, **not** `provider.chat()`
-- [ ] No `PiWorker as GoalWorker`, no `impl/agent/pi/` directory
-- [ ] All unit tests pass; workspace builds without regressions
-
-### Phase E
-- [ ] `VerificationGate` trait defined with `check()` method
-- [ ] All 7 gates implemented: Format, Compile, Test, Clippy, DiffScope, Architecture, CapabilityPolicy
-- [ ] MustPass gates block turn completion; Advisory gates produce warnings
-- [ ] Verification runs as `PostTurnHook` in `crates/executive/src/service/`, **not** `impl/goal/verify/`
-- [ ] Hook registered in `PostTurnPipeline::run()`
-- [ ] All unit tests pass; workspace builds without regressions
-
-### Phase F
-- [ ] `McpServerConfig` extended with `McpOAuthConfig` (Google OAuth provider)
-- [ ] MCP auth module handles Google token exchange
-- [ ] `GoogleSyncManager` polls Gmail and Calendar APIs, converts events to `GoogleEvent`
-- [ ] No `CredentialVault`, `vault.rs`, `drivers/google/` directory (beyond sync.rs), or AES-256-GCM deps exist
-- [ ] All unit tests pass; workspace builds without regressions
-
-### Phase G
-- [ ] `ApprovalRequest` types extend `SessionGateway::approval_flow`
-- [ ] `GmailChannel` implements `Channel` trait
-- [ ] All `InboundMessage` field names match Phase A spec: `channel_id`, `message_id`, `conversation_id`, `sender_id`, `content`, `timestamp`, `reply_to_action`. No `id`, `channel`, `principal`, `conversation`, `reply_to`, `received_at`.
-- [ ] No standalone `ApprovalManager` module exists
-- [ ] All unit tests pass; workspace builds without regressions
-
-### Phase H
-- [ ] `GBrainClient` connects to REST API; health check passes
-- [ ] `IngestionPipeline` buffers and flushes batches to GBrain
-- [ ] `MemoryRecall` returns `MemoryProjection` with all 7 fields populated (including `summary`, `memory_type`, `provenance_goal`)
-- [ ] `docker-compose.gbrain.yml` starts GBrain + PostgreSQL successfully
-- [ ] All unit tests pass; workspace builds without regressions
-
----
-
-## 14. What Was Removed vs. What Was Added
-
-| Removed (parallel shadow system) | Replaced By (existing infrastructure) |
+| Design requirement | Implemented by |
 |---|---|
-| GoalSupervisor trait + 10-state FSM | AgentProcess lifecycle via ProcessState/SupervisorTree |
-| GoalStore + objectives_v2 table + ALTER TABLE | Ephemeral goals in ProcessTable; persistence via Mnemosyne journal |
-| GoalWorker trait + WorkerRegistry | SubAgentRuntime trait + SubAgentSpawner::with_runtime() |
-| Standalone RetryPolicy module | SupervisorTree restart policies |
-| Standalone Escalation module | Supervisor policy dispatching different runtime |
-| PiWorker as GoalWorker | PiRuntime implements SubAgentRuntime |
-| impl/agent/pi/ directory | impl/runtime/pi.rs |
-| impl/goal/verify/ directory | service/verify.rs + PostTurnHook |
-| CredentialVault + vault.rs + AES-256-GCM | McpServerConfig OAuth + MCP auth module |
-| drivers/google/ directory (gmail.rs, calendar.rs) | MCP tool servers + GoogleSyncManager (sync.rs only) |
-| ApprovalManager standalone module | SessionGateway::approval_flow extension |
-| ~5400 lines of inline Rust code | 3-5 line task descriptions |
+| Existing chat remains primary | M0, M1 |
+| Reliable Telegram transport | M1 |
+| Persistent bounded Goal | M2 |
+| Durable attempts and escalation | M3 |
+| Pi isolation and evidence | M4 |
+| Durable human approval | M5 |
+| Encrypted Google read-only integration | M6 |
+| Restart-safe sync and Gmail Draft Goals | M7 |
+| Optional GBrain backend | M8 |
+| Operational recovery and hardening | M9 |
+
+## 13. Explicit prohibitions
+
+- [ ] Do not add Goal-specific variants to `ProcessState`.
+- [ ] Do not claim `TokenStore` encryption until the ciphertext tests pass.
+- [ ] Do not use `SupervisorTree` as a model router.
+- [ ] Do not use one global runtime to represent heterogeneous concurrent workers.
+- [ ] Do not run long verification commands inside the context-free `PostTurnPipeline`.
+- [ ] Do not use `std::process::Command` in async job paths.
+- [ ] Do not acknowledge provider events before durable local commit.
+- [ ] Do not silently drop memory ingestion on buffer pressure.
+- [ ] Do not allow Gmail alone to authorize execution.
+- [ ] Do not make GBrain a prerequisite for the core Goal loop.
+- [ ] Do not push, merge, or mutate protected branches automatically.
+
+## 14. Plan self-review checklist
+
+- [ ] Re-read the relevant requirement source and cited code symbols before writing each milestone's detailed execution plan.
+- [ ] Replace line ranges if current code moved; never rely on stale anchors.
+- [ ] Ensure each detailed plan contains actual test code, implementation code, exact commands, and expected output.
+- [ ] Search the detailed plan for `TBD`, `TODO`, “implement later”, and vague error-handling instructions; none may remain.
+- [ ] Confirm every new persisted state has migration, restart, conflict, and corruption tests.
+- [ ] Confirm every external operation has timeout, cancellation, redaction, and approval behavior.
