@@ -25,6 +25,12 @@ pub struct McpServerConfig {
     pub transport: McpTransportConfig,
     pub trust: McpTrustLevel,
     pub enabled: bool,
+    /// Name of the environment variable that holds the bearer token.
+    ///
+    /// The variable is resolved during connection, not deserialization.
+    /// An absent variable when a name is configured is a connection error.
+    #[serde(default)]
+    pub bearer_token_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

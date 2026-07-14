@@ -59,3 +59,6 @@ sandbox-primitives = ["nix"]
 
 [dev-dependencies]
 tokio-test = "0.4"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
+http-body-util = "0.1"
