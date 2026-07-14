@@ -76,6 +76,11 @@ pub trait ChannelGoalExecutor: Send + Sync {
     async fn cancel(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
 }
 
+#[async_trait::async_trait]
+pub trait ChannelApprovalExecutor: Send + Sync {
+    async fn execute_resolved(&self, approval_id: ApprovalId) -> anyhow::Result<()>;
+}
+
 // ---------------------------------------------------------------------------
 // Input routing (pure)
 // ---------------------------------------------------------------------------
@@ -215,6 +220,7 @@ pub struct ChannelRouter {
     turn_executor: Arc<dyn ChannelTurnExecutor>,
     goal_executor: Option<Arc<dyn ChannelGoalExecutor>>,
     approval_repository: Option<Arc<Mutex<ApprovalRepository>>>,
+    approval_executor: Option<Arc<dyn ChannelApprovalExecutor>>,
 }
 
 impl ChannelRouter {
@@ -226,6 +232,7 @@ impl ChannelRouter {
             turn_executor,
             goal_executor: None,
             approval_repository: None,
+            approval_executor: None,
         }
     }
 
@@ -234,10 +241,15 @@ impl ChannelRouter {
         self
     }
 
+    pub fn with_approval_executor(mut self, executor: Arc<dyn ChannelApprovalExecutor>) -> Self {
+        self.approval_executor = Some(executor);
+        self
+    }
+
     /// Persist an approval notification before network delivery. Message text
     /// contains only bounded summaries and trusted artifact references.
     pub async fn notify_approval(
-        &self,
+        &mut self,
         transport: &dyn ChannelTransport,
         conversation_id: ConversationId,
         approval: &ApprovalSnapshot,
@@ -377,8 +389,8 @@ impl ChannelRouter {
         Ok(format!("Goal {}: {}", goal.id.0, goal.state))
     }
 
-    fn execute_approval_action(
-        &self,
+    async fn execute_approval_action(
+        &mut self,
         principal: &str,
         action_data: &str,
         now_ms: i64,
@@ -395,9 +407,9 @@ impl ChannelRouter {
             principal_id: PrincipalId(principal.to_owned()),
             channel: "telegram".into(),
         };
-        let repository = repository.lock().unwrap();
-        match action {
+        let result = match action {
             "view_diff" => {
+                let repository = repository.lock().unwrap();
                 let approval = repository
                     .get(id)?
                     .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
@@ -406,13 +418,14 @@ impl ChannelRouter {
                     .iter()
                     .find(|artifact| artifact.kind == "diff")
                     .ok_or_else(|| anyhow::anyhow!("approval diff artifact is unavailable"))?;
-                Ok(format!(
+                return Ok(format!(
                     "Verified diff reference: {} (sha256 {}).",
                     artifact.relative_path.display(),
                     artifact.sha256
-                ))
+                ));
             }
             "apply" => {
+                let repository = repository.lock().unwrap();
                 let current = repository
                     .get(id)?
                     .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
@@ -423,9 +436,10 @@ impl ChannelRouter {
                     ApprovalDecision::Approve,
                     now_ms,
                 )?;
-                Ok(format!("Approval {}: {}", resolved.id, "approved"))
+                (resolved, "approved")
             }
             "revision" | "reject" => {
+                let repository = repository.lock().unwrap();
                 let current = repository
                     .get(id)?
                     .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
@@ -437,10 +451,14 @@ impl ChannelRouter {
                     ApprovalDecision::Reject { reason },
                     now_ms,
                 )?;
-                Ok(format!("Approval {}: rejected", resolved.id))
+                (resolved, "rejected")
             }
             _ => anyhow::bail!("unknown approval action"),
+        };
+        if let Some(executor) = &self.approval_executor {
+            executor.execute_resolved(result.0.id).await?;
         }
+        Ok(format!("Approval {}: {}", result.0.id, result.1))
     }
 
     /// Process a single provider message envelope.
@@ -485,13 +503,18 @@ impl ChannelRouter {
 
         // 4. Resolve approval callbacks from authoritative repository state;
         // callback payload contains no subject details.
-        let approval_reply = message.reply_to_action.as_deref().map(|action| {
-            self.execute_approval_action(
-                principal.as_deref().expect("principal checked above"),
-                action,
-                message.timestamp_ms,
+        let approval_reply = if let Some(action) = message.reply_to_action.as_deref() {
+            Some(
+                self.execute_approval_action(
+                    principal.as_deref().expect("principal checked above"),
+                    action,
+                    message.timestamp_ms,
+                )
+                .await,
             )
-        });
+        } else {
+            None
+        };
 
         // 5. Normalize ordinary message content through command routing.
         let routed = route_content(&message.content);

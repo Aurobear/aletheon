@@ -21,14 +21,44 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
 pub struct ApplyCoordinatorConfig {
-    pub repository_root: PathBuf,
     pub worktree_base: PathBuf,
     pub timeout: Duration,
 }
 
 #[async_trait]
 pub trait ManagedWorktreeCleaner: Send + Sync {
-    async fn cleanup(&self, job_id: fabric::CodingJobId, worktree: &Path) -> anyhow::Result<()>;
+    async fn cleanup(
+        &self,
+        job_id: fabric::CodingJobId,
+        repository_root: &Path,
+        worktree: &Path,
+    ) -> anyhow::Result<()>;
+}
+
+#[derive(Debug, Default)]
+pub struct GitManagedWorktreeCleaner;
+
+#[async_trait]
+impl ManagedWorktreeCleaner for GitManagedWorktreeCleaner {
+    async fn cleanup(
+        &self,
+        _: fabric::CodingJobId,
+        repository_root: &Path,
+        worktree: &Path,
+    ) -> anyhow::Result<()> {
+        if !worktree.exists() {
+            return Ok(());
+        }
+        let status = tokio::process::Command::new("git")
+            .args(["worktree", "remove", "--force", "--"])
+            .arg(worktree)
+            .current_dir(repository_root)
+            .kill_on_drop(true)
+            .status()
+            .await?;
+        anyhow::ensure!(status.success(), "git worktree remove failed");
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,9 +244,9 @@ impl ApplyCoordinator {
                 .map_err(|error| ApplyCoordinationError::Operation(error.to_string()))?;
             self.transition_terminal(receipt.goal_id, GoalState::Completed, &receipt)?;
             self.record_summary(approval_id)?;
-            let (job_id, worktree) = self.worktree_for(&approval)?;
+            let (job_id, repository_root, worktree) = self.worktree_for(&approval)?;
             self.cleaner
-                .cleanup(job_id, &worktree)
+                .cleanup(job_id, &repository_root, &worktree)
                 .await
                 .map_err(|error| ApplyCoordinationError::Cleanup(error.to_string()))?;
             Ok(ApplyCoordinationOutcome::Applied(receipt))
@@ -376,7 +406,7 @@ impl ApplyCoordinator {
         applier
             .apply(
                 ApplySpec {
-                    repository_root: self.config.repository_root.clone(),
+                    repository_root: approved_repository_root(approval)?,
                     expected_head: coding.report.base_commit.clone(),
                     diff_artifact: artifact_dir.join(&coding.diff_artifact_ref),
                     diff_sha256: coding.diff_sha256,
@@ -445,9 +475,9 @@ impl ApplyCoordinator {
             self.transition_terminal(receipt.goal_id, target, receipt)?;
         }
         if receipt.success {
-            let (job_id, worktree) = self.worktree_for(approval)?;
+            let (job_id, repository_root, worktree) = self.worktree_for(approval)?;
             self.cleaner
-                .cleanup(job_id, &worktree)
+                .cleanup(job_id, &repository_root, &worktree)
                 .await
                 .map_err(|error| ApplyCoordinationError::Cleanup(error.to_string()))?;
         }
@@ -457,7 +487,7 @@ impl ApplyCoordinator {
     fn worktree_for(
         &self,
         approval: &fabric::ApprovalSnapshot,
-    ) -> Result<(fabric::CodingJobId, PathBuf), ApplyCoordinationError> {
+    ) -> Result<(fabric::CodingJobId, PathBuf, PathBuf), ApplyCoordinationError> {
         let job_id = approval
             .subject
             .job_id
@@ -485,7 +515,9 @@ impl ApplyCoordinator {
                 "worktree escaped managed base".into(),
             ));
         }
-        Ok((job_id, path))
+        let repository_root = approved_repository_root(approval)
+            .map_err(|error| ApplyCoordinationError::Cleanup(error.to_string()))?;
+        Ok((job_id, repository_root, path))
     }
 
     fn record_summary(&self, approval_id: ApprovalId) -> Result<(), ApplyCoordinationError> {
@@ -553,6 +585,23 @@ fn attribute(approval: &fabric::ApprovalSnapshot, name: &str) -> Result<String, 
         .get(name)
         .cloned()
         .ok_or_else(|| format!("approval missing {name}"))
+}
+
+fn approved_repository_root(approval: &fabric::ApprovalSnapshot) -> Result<PathBuf, ApplyError> {
+    let raw = approval
+        .subject
+        .attributes
+        .get("repository_root")
+        .ok_or_else(|| ApplyError::Unauthorized("approval missing repository_root".into()))?;
+    let path = PathBuf::from(raw)
+        .canonicalize()
+        .map_err(|error| ApplyError::Unauthorized(format!("repository_root: {error}")))?;
+    if !path.is_absolute() || !path.join(".git").exists() {
+        return Err(ApplyError::Unauthorized(
+            "approved repository_root is not a git worktree".into(),
+        ));
+    }
+    Ok(path)
 }
 
 fn approval_error(error: ApprovalRepositoryError) -> ApplyCoordinationError {

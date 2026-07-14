@@ -22,7 +22,7 @@ pub struct MemoryGroup {
     pub auto_memory: Arc<Mutex<AutoMemory>>,
     pub objective_store: Arc<Mutex<ObjectiveStore>>,
     /// Durable protected-operation approvals stored beside Goal state.
-    pub approval_repository: Arc<Mutex<ApprovalRepository>>,
+    pub approval_repository: Arc<std::sync::Mutex<ApprovalRepository>>,
     /// Unified facade over the 6 memory objects above (docs/arch §11).
     /// Built from the same `Arc<Mutex<_>>` handles; additive, does not
     /// replace direct field access elsewhere.

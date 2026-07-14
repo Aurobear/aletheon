@@ -32,7 +32,7 @@ struct Cleaner {
 
 #[async_trait]
 impl ManagedWorktreeCleaner for Cleaner {
-    async fn cleanup(&self, _: CodingJobId, worktree: &Path) -> anyhow::Result<()> {
+    async fn cleanup(&self, _: CodingJobId, _: &Path, worktree: &Path) -> anyhow::Result<()> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if worktree.exists() {
             std::fs::remove_dir_all(worktree)?;
@@ -184,6 +184,10 @@ impl Fixture {
                     job_id: Some(job_id),
                     attributes: BTreeMap::from([
                         ("base_commit".into(), base),
+                        (
+                            "repository_root".into(),
+                            repository.to_string_lossy().into_owned(),
+                        ),
                         ("diff_sha256".into(), diff_hash.clone()),
                         ("verification_sha256".into(), verification_hash),
                     ]),
@@ -253,7 +257,6 @@ impl Fixture {
             ))),
             Arc::new(TestClock),
             ApplyCoordinatorConfig {
-                repository_root: self.repository.clone(),
                 worktree_base: self.worktree_base.clone(),
                 timeout: Duration::from_secs(5),
             },

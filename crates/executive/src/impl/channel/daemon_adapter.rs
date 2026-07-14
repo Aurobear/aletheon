@@ -6,10 +6,13 @@
 
 use std::sync::Arc;
 
-use crate::r#impl::channel::router::{ChannelGoalExecutor, ChannelTurnExecutor};
+use crate::r#impl::approval::ApplyCoordinator;
+use crate::r#impl::channel::router::{
+    ChannelApprovalExecutor, ChannelGoalExecutor, ChannelTurnExecutor,
+};
 use crate::r#impl::goal::ObjectiveStore;
 use crate::service::DaemonTurnOrchestrator;
-use fabric::{GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId};
+use fabric::{ApprovalId, GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId};
 use tokio::sync::Mutex;
 
 /// Wraps a `DaemonTurnOrchestrator` so the channel router can invoke
@@ -20,6 +23,36 @@ pub struct DaemonChannelTurnExecutor {
 
 pub struct DaemonChannelGoalExecutor {
     store: Arc<Mutex<ObjectiveStore>>,
+}
+
+pub struct DaemonChannelApprovalExecutor {
+    coordinator: Arc<ApplyCoordinator>,
+    owner_process: ProcessId,
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+impl DaemonChannelApprovalExecutor {
+    pub fn new(
+        coordinator: Arc<ApplyCoordinator>,
+        owner_process: ProcessId,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Self {
+        Self {
+            coordinator,
+            owner_process,
+            cancel,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ChannelApprovalExecutor for DaemonChannelApprovalExecutor {
+    async fn execute_resolved(&self, approval_id: ApprovalId) -> anyhow::Result<()> {
+        self.coordinator
+            .coordinate(approval_id, self.owner_process, self.cancel.child_token())
+            .await?;
+        Ok(())
+    }
 }
 
 impl DaemonChannelGoalExecutor {

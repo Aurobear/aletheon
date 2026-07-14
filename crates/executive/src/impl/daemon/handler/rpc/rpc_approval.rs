@@ -9,6 +9,7 @@ use crate::r#impl::approval::{
 };
 use fabric::{ApprovalId, PrincipalId};
 use serde_json::{json, Value};
+use tokio_util::sync::CancellationToken;
 
 const INVALID_PARAMS: i64 = -32602;
 const APPROVAL_NOT_FOUND: i64 = -32041;
@@ -41,7 +42,7 @@ impl RequestHandler {
             Err(error) => return rpc_error(id, APPROVAL_STORAGE, error.to_string()),
         };
         let now_ms = self.subsystems.ports.clock.wall_now().0;
-        let repository = self.subsystems.memory.approval_repository.lock().await;
+        let repository = self.subsystems.memory.approval_repository.lock().unwrap();
         match list(&repository, &context, now_ms) {
             Ok(approvals) => json!({"jsonrpc":"2.0", "id":id, "result":{"approvals":approvals}}),
             Err(error) => repository_error(id, error),
@@ -57,7 +58,7 @@ impl RequestHandler {
             Ok(value) => value,
             Err(message) => return rpc_error(id, INVALID_PARAMS, message),
         };
-        let repository = self.subsystems.memory.approval_repository.lock().await;
+        let repository = self.subsystems.memory.approval_repository.lock().unwrap();
         match show(&repository, &context, approval_id) {
             Ok(approval) => json!({"jsonrpc":"2.0", "id":id, "result":{"approval":approval}}),
             Err(error) => repository_error(id, error),
@@ -94,16 +95,41 @@ impl RequestHandler {
             None => return rpc_error(id, INVALID_PARAMS, "version must be an unsigned integer"),
         };
         let now_ms = self.subsystems.ports.clock.wall_now().0;
-        let repository = self.subsystems.memory.approval_repository.lock().await;
-        match resolve(
-            &repository,
-            &context,
-            approval_id,
-            version,
-            decision,
-            now_ms,
-        ) {
-            Ok(approval) => json!({"jsonrpc":"2.0", "id":id, "result":{"approval":approval}}),
+        let resolved = {
+            let repository = self.subsystems.memory.approval_repository.lock().unwrap();
+            resolve(
+                &repository,
+                &context,
+                approval_id,
+                version,
+                decision,
+                now_ms,
+            )
+        };
+        match resolved {
+            Ok(approval) => {
+                if let Some(coordinator) = &self.approved_apply {
+                    let owner = self
+                        .subsystems
+                        .main_agent_process_id
+                        .lock()
+                        .await
+                        .unwrap_or_else(fabric::ProcessId::new);
+                    if let Err(error) = coordinator
+                        .coordinate(approval.id, owner, CancellationToken::new())
+                        .await
+                    {
+                        return rpc_error(id, APPROVAL_STORAGE, error.to_string());
+                    }
+                } else if approval.category == fabric::ApprovalCategory::ApplyCode {
+                    return rpc_error(
+                        id,
+                        APPROVAL_STORAGE,
+                        "approved apply runtime is unavailable",
+                    );
+                }
+                json!({"jsonrpc":"2.0", "id":id, "result":{"approval":approval}})
+            }
             Err(error) => repository_error(id, error),
         }
     }

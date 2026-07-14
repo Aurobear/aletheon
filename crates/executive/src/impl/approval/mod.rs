@@ -5,7 +5,7 @@ mod repository;
 
 pub use apply_coordinator::{
     ApplyCoordinationError, ApplyCoordinationOutcome, ApplyCoordinator, ApplyCoordinatorConfig,
-    ManagedWorktreeCleaner,
+    GitManagedWorktreeCleaner, ManagedWorktreeCleaner,
 };
 
 pub use repository::{

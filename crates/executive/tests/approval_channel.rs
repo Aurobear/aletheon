@@ -150,7 +150,7 @@ async fn notification_is_bounded_persisted_and_retried_after_restart() {
         calls: AtomicUsize::new(0),
         sent: Mutex::new(vec![]),
     };
-    let router = f.router();
+    let mut router = f.router();
     assert!(!router
         .notify_approval(&transport, ConversationId("1001".into()), &f.approval, 100)
         .await

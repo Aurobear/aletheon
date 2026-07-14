@@ -137,6 +137,10 @@ impl Fixture {
                     job_id: Some(job_id),
                     attributes: BTreeMap::from([
                         ("base_commit".into(), report.base_commit.clone()),
+                        (
+                            "repository_root".into(),
+                            temp.path().to_string_lossy().into_owned(),
+                        ),
                         ("diff_sha256".into(), diff_hash.clone()),
                         ("verification_sha256".into(), verification_hash),
                     ]),
