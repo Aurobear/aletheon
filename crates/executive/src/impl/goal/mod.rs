@@ -10,6 +10,7 @@ mod attempt;
 mod attempt_coordinator;
 mod budget;
 pub mod coordinator;
+mod frame;
 mod migrations;
 mod retry;
 pub(crate) mod store;
@@ -20,6 +21,7 @@ pub use attempt_coordinator::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
     AttemptRequest, RegistryAttemptExecutor,
 };
+pub use frame::{GoalAttemptSummary, GoalFrame, GoalRemainingBudget};
 pub use retry::{RetryDecision, RetryPolicy};
 
 use anyhow::{Context, Result};

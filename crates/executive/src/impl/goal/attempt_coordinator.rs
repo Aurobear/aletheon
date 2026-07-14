@@ -5,7 +5,7 @@
 
 use super::budget::{GoalBudgetError, GoalBudgetRequest};
 use super::transition::GoalTransitionError;
-use super::{GoalAttempt, ObjectiveStore, RetryDecision, RetryPolicy};
+use super::{GoalAttempt, GoalFrame, ObjectiveStore, RetryDecision, RetryPolicy};
 use crate::core::runtime_registry::RuntimeRegistry;
 use async_trait::async_trait;
 use fabric::{
@@ -161,6 +161,7 @@ impl AttemptCoordinator {
 
         let reservation_id;
         let running_attempt;
+        let rendered_task;
         {
             let store = self.store.lock().unwrap();
             let goal = store
@@ -176,6 +177,12 @@ impl AttemptCoordinator {
                     actual: goal.version,
                 });
             }
+
+            let previous_attempts = store
+                .attempts_for_goal(request.goal_id, usize::MAX)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
+            let frame = GoalFrame::build(&goal, &previous_attempts, &request.task);
+            rendered_task = frame.render();
 
             let reservation = store
                 .reserve_goal_budget(
@@ -194,6 +201,7 @@ impl AttemptCoordinator {
             let input = serde_json::json!({
                 "task": request.task,
                 "goal_version": request.expected_version,
+                "goal_frame": frame,
             });
             match store.begin_attempt(
                 request.goal_id,
@@ -211,7 +219,7 @@ impl AttemptCoordinator {
         }
 
         let runtime_outcome = tokio::select! {
-            outcome = self.executor.run_once(&request.runtime_id, &request.task, cancel.clone()) => outcome,
+            outcome = self.executor.run_once(&request.runtime_id, &rendered_task, cancel.clone()) => outcome,
             _ = cancel.cancelled() => Err(cancelled_failure()),
         };
 

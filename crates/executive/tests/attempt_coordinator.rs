@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 struct FakeExecutor {
     available: HashSet<RuntimeId>,
     outcomes: Mutex<VecDeque<Result<RuntimeResult, RuntimeFailure>>>,
+    tasks: Mutex<Vec<String>>,
     calls: AtomicUsize,
     active: Arc<AtomicUsize>,
 }
@@ -29,6 +30,7 @@ impl FakeExecutor {
         Self {
             available: available.into_iter().collect(),
             outcomes: Mutex::new(outcomes.into()),
+            tasks: Mutex::new(vec![]),
             calls: AtomicUsize::new(0),
             active: Arc::new(AtomicUsize::new(0)),
         }
@@ -52,10 +54,11 @@ impl AttemptExecutor for FakeExecutor {
     async fn run_once(
         &self,
         _runtime_id: &RuntimeId,
-        _task: &str,
+        task: &str,
         cancel: CancellationToken,
     ) -> Result<RuntimeResult, RuntimeFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.tasks.lock().unwrap().push(task.to_owned());
         self.active.fetch_add(1, Ordering::SeqCst);
         let _guard = ActiveGuard(self.active.clone());
         let outcome = self.outcomes.lock().unwrap().pop_front();
@@ -236,6 +239,10 @@ async fn success_persists_one_attempt_settles_usage_and_completes_goal() {
     assert_eq!(goal.state, GoalState::Completed);
     assert_eq!(h.executor.calls.load(Ordering::SeqCst), 1);
     assert_eq!(h.executor.active.load(Ordering::SeqCst), 0);
+    let prompt = &h.executor.tasks.lock().unwrap()[0];
+    assert!(prompt.starts_with("<goal_frame version=\"m3\">"));
+    assert!(prompt.contains("implement a durable feature"));
+    assert!(prompt.contains("run the bounded task"));
     assert_eq!(
         h.store
             .lock()
