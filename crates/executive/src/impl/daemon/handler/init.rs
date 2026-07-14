@@ -680,10 +680,16 @@ impl RequestHandler {
         // Coding jobs are fail-closed: only a probed namespace backend may
         // register the stable `pi-coder` runtime ID.
         {
-            let sandbox = corpus::security::sandbox::BubblewrapBackend::probe(clock.clone())
+            let sandbox = corpus::security::sandbox::BubblewrapBackend::probe_async(clock.clone())
+                .await
                 .map(|backend| Arc::new(backend) as Arc<dyn fabric::sandbox::SandboxBackend>);
             let mut runtime = subsystems.runtime.lock().await;
-            if register_pi_runtime(runtime.sub_agent_spawner_mut(), &pi_runtime, sandbox)? {
+            if register_pi_runtime(
+                runtime.sub_agent_spawner_mut(),
+                &pi_runtime,
+                sandbox,
+                clock.clone(),
+            )? {
                 info!(runtime_id = "pi-coder", "Pi coding runtime registered");
             }
         }
