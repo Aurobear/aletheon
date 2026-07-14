@@ -28,9 +28,10 @@ use fabric::ipc::envelope_v2::Target;
 use fabric::ipc::mailbox::{InProcessMailbox, InProcessMailboxService, Mailbox, MailboxService};
 use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use fabric::{
-    AgentProfileId, CancelReason, Clock, ExitReason, NamespaceId, OperationExitReason,
-    OperationKind, OperationManager, OperationRequest, ProcessId, ProcessManager, ProcessSignal,
-    ProcessSnapshot, ProcessState, SpawnSpec, SubAgentState, Timer,
+    AgentProfileId, AttemptUsage, CancelReason, Clock, ExitReason, FailureClass, NamespaceId,
+    OperationExitReason, OperationKind, OperationManager, OperationRequest, ProcessId,
+    ProcessManager, ProcessSignal, ProcessSnapshot, ProcessState, RuntimeFailure, RuntimeResult,
+    SpawnSpec, SubAgentState, Timer,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -50,6 +51,32 @@ pub trait SubAgentRuntime: Send + Sync {
     /// Receives the task description and a cancellation token. Returns the
     /// final response text or an error.
     async fn run(&self, task: &str, cancel: CancellationToken) -> Result<String, String>;
+
+    /// Execute a task and return structured attempt data.
+    ///
+    /// The default preserves compatibility with legacy runtimes that only
+    /// implement [`Self::run`]. Production runtimes can override this method
+    /// to provide metered usage, evidence, and a precise failure class.
+    async fn run_attempt(
+        &self,
+        task: &str,
+        cancel: CancellationToken,
+    ) -> Result<RuntimeResult, RuntimeFailure> {
+        self.run(task, cancel)
+            .await
+            .map(|output| RuntimeResult {
+                output,
+                usage: AttemptUsage::default(),
+                evidence: vec![],
+            })
+            .map_err(|message| RuntimeFailure {
+                class: FailureClass::ToolFailure,
+                message,
+                retryable: false,
+                usage: AttemptUsage::default(),
+                evidence: vec![],
+            })
+    }
 }
 
 /// Owned, boxed future for spawn() compatibility.
@@ -695,6 +722,27 @@ mod lifecycle_tests {
     use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId};
     use fabric::ipc::mailbox::DeliveryReceipt;
     use fabric::SubAgentState;
+
+    struct LegacyRuntime;
+
+    #[async_trait]
+    impl SubAgentRuntime for LegacyRuntime {
+        async fn run(&self, task: &str, _cancel: CancellationToken) -> Result<String, String> {
+            Ok(format!("legacy:{task}"))
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_runtime_uses_structured_attempt_adapter() {
+        let result = LegacyRuntime
+            .run_attempt("task", CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(result.output, "legacy:task");
+        assert_eq!(result.usage, AttemptUsage::default());
+        assert!(result.evidence.is_empty());
+    }
 
     #[tokio::test]
     async fn spawn_starts_in_created_and_legal_transitions_advance() {
