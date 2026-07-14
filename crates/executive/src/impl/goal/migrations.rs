@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 4;
+const CURRENT_VERSION: u32 = 5;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -144,6 +144,64 @@ BEGIN
 END;
 ";
 
+/// Migration 5 — restart-safe protected-operation approvals and audit events.
+const MIGRATION_5: &str = "
+CREATE TABLE IF NOT EXISTS approval_requests (
+    approval_id TEXT PRIMARY KEY,
+    objective_id INTEGER NOT NULL REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    attempt_id TEXT REFERENCES goal_attempts(attempt_id) ON DELETE CASCADE,
+    job_id TEXT REFERENCES goal_coding_jobs(job_id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    subject_json TEXT NOT NULL,
+    subject_hash TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    artifacts_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    expires_at_ms INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected','expired','consumed')),
+    version INTEGER NOT NULL DEFAULT 0,
+    resolution_principal TEXT,
+    resolution_channel TEXT,
+    resolution_time_ms INTEGER,
+    resolution_reason TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_active_subject
+    ON approval_requests(category, subject_hash)
+    WHERE status IN ('pending','approved');
+CREATE INDEX IF NOT EXISTS idx_approval_pending_owner
+    ON approval_requests(owner_id, status, expires_at_ms);
+
+CREATE TABLE IF NOT EXISTS approval_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    approval_id TEXT NOT NULL REFERENCES approval_requests(approval_id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    UNIQUE(approval_id, version)
+);
+
+CREATE TRIGGER IF NOT EXISTS approval_requests_immutable_subject
+BEFORE UPDATE OF approval_id, objective_id, attempt_id, job_id, owner_id, category,
+                 risk, subject_json, subject_hash, summary, artifacts_json,
+                 created_at_ms, expires_at_ms
+ON approval_requests
+BEGIN
+    SELECT RAISE(ABORT, 'approval subject is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS approval_events_append_only_update
+BEFORE UPDATE ON approval_events BEGIN
+    SELECT RAISE(ABORT, 'approval events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS approval_events_append_only_delete
+BEFORE DELETE ON approval_events BEGIN
+    SELECT RAISE(ABORT, 'approval events are append-only');
+END;
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -182,6 +240,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
             .context("begin migration 4 transaction")?;
         tx.execute_batch(MIGRATION_4)?;
         tx.pragma_update(None, "user_version", 4)?;
+        tx.commit()?;
+    }
+
+    if version < 5 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 5 transaction")?;
+        tx.execute_batch(MIGRATION_5)?;
+        tx.pragma_update(None, "user_version", 5)?;
         tx.commit()?;
     }
 
@@ -251,14 +318,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 4);
+        assert_eq!(v1, 5);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 4);
+        assert_eq!(v2, 5);
     }
 
     #[test]
@@ -277,6 +344,8 @@ mod tests {
         assert!(tables.iter().any(|n| n == "goal_attempts"));
         assert!(tables.iter().any(|n| n == "goal_coding_jobs"));
         assert!(tables.iter().any(|n| n == "goal_verification_reports"));
+        assert!(tables.iter().any(|n| n == "approval_requests"));
+        assert!(tables.iter().any(|n| n == "approval_events"));
     }
 
     #[test]

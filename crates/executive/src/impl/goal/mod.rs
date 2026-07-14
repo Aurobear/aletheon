@@ -11,7 +11,7 @@ mod attempt_coordinator;
 mod budget;
 pub mod coordinator;
 mod frame;
-mod migrations;
+pub(crate) mod migrations;
 mod retry;
 pub(crate) mod store;
 mod transition;
