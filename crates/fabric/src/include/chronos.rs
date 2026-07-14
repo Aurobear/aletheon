@@ -3,9 +3,8 @@
 //! The [`Clock`] trait provides wall-clock and monotonic time sources.
 //! The [`Timer`] trait provides async sleep / timeout operations.
 //!
-//! Implementations live in `aletheon_kernel::chronos`:
-//! - [`SystemClock`] / [`SystemTimer`] for production (tokio-based).
-//! - [`TestClock`]   / [`TestTimer`]   for deterministic tests.
+//! Implementations live in `aletheon_kernel::chronos` (see
+//! `SystemClock`, `SystemTimer`, `TestClock`, `TestTimer`).
 
 use std::future::Future;
 use std::time::Duration;
@@ -40,8 +39,8 @@ impl std::error::Error for Elapsed {}
 /// Async timer abstraction.
 ///
 /// Implementations in `aletheon_kernel::chronos`:
-/// - [`SystemTimer`] — delegates to `tokio::time` (production).
-/// - [`TestTimer`]  — uses a Notify priority-queue driven by clock
+/// - `SystemTimer` — delegates to `tokio::time` (production).
+/// - `TestTimer`  — uses a Notify priority-queue driven by clock
 ///   advancement for deterministic tests.
 pub trait Timer: Send + Sync {
     /// Check whether `deadline` has expired at the given monotonic time.
