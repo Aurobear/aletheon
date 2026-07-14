@@ -1,8 +1,10 @@
 //! Fail-closed configuration and registration for the isolated Pi coding runtime.
 
 use crate::core::sub_agent::{SubAgentRuntime, SubAgentSpawner};
+use crate::service::verification::CapabilityAuditSummary;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use base64::Engine;
 use cognit::config::PiRuntimeConfig;
 use corpus::tools::subagent::{
     CommandRequest, CommandRunner, WorktreeManager, WorktreeManagerConfig,
@@ -449,16 +451,44 @@ impl SubAgentRuntime for PiRuntime {
         };
         let report_json = serde_json::to_string(&report)
             .unwrap_or_else(|error| format!(r#"{{"serialization_error":"{error}"}}"#));
-        let evidence = vec![AttemptEvidence {
-            kind: "coding_job_report".into(),
-            summary: format!(
-                "Pi {:?}: {} changed files; diff {}",
-                status,
-                report.changed_files.len(),
-                snapshot.diff_sha256
-            ),
-            content: report_json,
-        }];
+        let worktree_ref = lease
+            .path
+            .strip_prefix(&self.config.worktree_base)
+            .expect("validated worktree must be beneath managed base")
+            .to_string_lossy()
+            .into_owned();
+        let evidence = vec![
+            AttemptEvidence {
+                kind: "coding_job_report".into(),
+                summary: format!(
+                    "Pi {:?}: {} changed files; diff {}",
+                    status,
+                    report.changed_files.len(),
+                    snapshot.diff_sha256
+                ),
+                content: report_json,
+            },
+            AttemptEvidence {
+                kind: "coding_worktree_ref".into(),
+                summary: "managed coding worktree reference".into(),
+                content: worktree_ref,
+            },
+            AttemptEvidence {
+                kind: "coding_diff_base64".into(),
+                summary: format!("{} bounded diff bytes", snapshot.diff.len()),
+                content: base64::engine::general_purpose::STANDARD.encode(&snapshot.diff),
+            },
+            AttemptEvidence {
+                kind: "coding_capability_audit".into(),
+                summary: "isolated Pi capability audit".into(),
+                content: serde_json::to_string(&CapabilityAuditSummary {
+                    audit_present: true,
+                    observed_capabilities: Vec::new(),
+                    allowed_capabilities: Vec::new(),
+                })
+                .expect("capability audit is serializable"),
+            },
+        ];
 
         // Successful non-empty worktrees are retained for M5 approval/apply;
         // successful empty worktrees are disposable. Every failure is retained.

@@ -20,7 +20,7 @@ pub use self::coordinator::{GoalCoordinator, GoalTickOutcome};
 pub use attempt::GoalAttempt;
 pub use attempt_coordinator::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
-    AttemptRequest, RegistryAttemptExecutor,
+    AttemptRequest, CodingVerifier, RegistryAttemptExecutor,
 };
 pub use frame::{GoalAttemptSummary, GoalFrame, GoalRemainingBudget};
 pub use retry::{RetryDecision, RetryPolicy};

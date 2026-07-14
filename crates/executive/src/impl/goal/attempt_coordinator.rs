@@ -7,12 +7,19 @@ use super::budget::{GoalBudgetError, GoalBudgetRequest};
 use super::transition::GoalTransitionError;
 use super::{GoalAttempt, GoalFrame, ObjectiveStore, RetryDecision, RetryPolicy};
 use crate::core::runtime_registry::RuntimeRegistry;
+use crate::r#impl::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
+use crate::service::verification::{
+    CapabilityAuditSummary, VerificationContext, VerificationSelection, VerificationService,
+};
 use async_trait::async_trait;
+use base64::Engine;
 use fabric::{
-    AttemptUsage, Clock, CognitiveRole, FailureClass, GoalBudgetUsage, GoalId, GoalSnapshot,
-    GoalState, GoalWaitReason, RuntimeFailure, RuntimeId, RuntimeResult,
+    AttemptId, AttemptUsage, Clock, CodingJobReport, CognitiveRole, FailureClass, GoalBudgetUsage,
+    GoalId, GoalSnapshot, GoalState, GoalWaitReason, RuntimeFailure, RuntimeId, RuntimeResult,
+    VerificationReport,
 };
 use std::fmt;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -87,6 +94,34 @@ pub trait AttemptExecutor: Send + Sync {
     ) -> Result<RuntimeResult, RuntimeFailure>;
 }
 
+#[async_trait]
+pub trait CodingVerifier: Send + Sync {
+    async fn verify_coding_attempt(
+        &self,
+        context: &VerificationContext,
+        cancel: CancellationToken,
+    ) -> Result<VerificationReport, String>;
+}
+
+#[async_trait]
+impl CodingVerifier for VerificationService {
+    async fn verify_coding_attempt(
+        &self,
+        context: &VerificationContext,
+        cancel: CancellationToken,
+    ) -> Result<VerificationReport, String> {
+        self.verify(context, cancel)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Clone)]
+struct CodingVerification {
+    verifier: Arc<dyn CodingVerifier>,
+    worktree_base: PathBuf,
+}
+
 /// Production executor backed by the configured RuntimeRegistry.
 pub struct RegistryAttemptExecutor {
     registry: Arc<RuntimeRegistry>,
@@ -129,6 +164,7 @@ pub struct AttemptCoordinator {
     executor: Arc<dyn AttemptExecutor>,
     clock: Arc<dyn Clock>,
     retry_policy: RetryPolicy,
+    coding_verification: Option<CodingVerification>,
 }
 
 impl AttemptCoordinator {
@@ -143,7 +179,29 @@ impl AttemptCoordinator {
             executor,
             clock,
             retry_policy,
+            coding_verification: None,
         }
+    }
+
+    pub fn with_coding_verification(
+        mut self,
+        verifier: Arc<dyn CodingVerifier>,
+        worktree_base: impl AsRef<Path>,
+    ) -> Result<Self, AttemptCoordinatorError> {
+        let base = worktree_base
+            .as_ref()
+            .canonicalize()
+            .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
+        if !base.is_dir() {
+            return Err(AttemptCoordinatorError::Persistence(
+                "coding worktree base is not a directory".into(),
+            ));
+        }
+        self.coding_verification = Some(CodingVerification {
+            verifier,
+            worktree_base: base,
+        });
+        Ok(self)
     }
 
     /// Execute exactly one durable attempt and persist the next Goal state.
@@ -152,6 +210,33 @@ impl AttemptCoordinator {
         request: AttemptRequest,
         cancel: CancellationToken,
     ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
+        let is_coding = request.runtime_id.0 == PI_CODER_RUNTIME_ID;
+        let mut pi_request = if is_coding {
+            Some(
+                serde_json::from_str::<PiAttemptRequest>(&request.task).map_err(|error| {
+                    AttemptCoordinatorError::Persistence(format!(
+                        "invalid pi-coder attempt request: {error}"
+                    ))
+                })?,
+            )
+        } else {
+            None
+        };
+        if is_coding && self.coding_verification.is_none() {
+            return Err(AttemptCoordinatorError::Persistence(
+                "pi-coder verification lifecycle is not configured".into(),
+            ));
+        }
+
+        if let Some(pi_request) = pi_request.as_ref() {
+            if let Some(outcome) = self
+                .resume_coding_attempt(&request, pi_request, cancel.clone())
+                .await?
+            {
+                return Ok(outcome);
+            }
+        }
+
         // Resolve before budget reservation or attempt creation.
         if !self.executor.is_available(&request.runtime_id) {
             return Err(AttemptCoordinatorError::RuntimeUnavailable(
@@ -181,8 +266,20 @@ impl AttemptCoordinator {
             let previous_attempts = store
                 .attempts_for_goal(request.goal_id, usize::MAX)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
-            let frame = GoalFrame::build(&goal, &previous_attempts, &request.task);
-            rendered_task = frame.render();
+            let frame_task = pi_request
+                .as_ref()
+                .map(|coding| coding.task_input.as_str())
+                .unwrap_or(request.task.as_str());
+            let frame = GoalFrame::build(&goal, &previous_attempts, frame_task);
+            rendered_task = if let Some(coding) = pi_request.as_mut() {
+                coding.job.goal_id = request.goal_id;
+                coding.job.attempt_id = AttemptId::new();
+                coding.task_input = frame.render();
+                serde_json::to_string(coding)
+                    .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
+            } else {
+                frame.render()
+            };
 
             let reservation = store
                 .reserve_goal_budget(
@@ -202,14 +299,27 @@ impl AttemptCoordinator {
                 "task": request.task,
                 "goal_version": request.expected_version,
                 "goal_frame": frame,
+                "runtime_request": pi_request,
             });
-            match store.begin_attempt(
-                request.goal_id,
-                request.sequence,
-                &request.runtime_id,
-                request.role,
-                &input,
-            ) {
+            let begun = if let Some(coding) = pi_request.as_ref() {
+                store.begin_attempt_with_id(
+                    coding.job.attempt_id,
+                    request.goal_id,
+                    request.sequence,
+                    &request.runtime_id,
+                    request.role,
+                    &input,
+                )
+            } else {
+                store.begin_attempt(
+                    request.goal_id,
+                    request.sequence,
+                    &request.runtime_id,
+                    request.role,
+                    &input,
+                )
+            };
+            match begun {
                 Ok(attempt) => running_attempt = attempt,
                 Err(error) => {
                     let _ = store.revoke_goal_budget(&reservation_id);
@@ -243,6 +353,18 @@ impl AttemptCoordinator {
                 .map_err(AttemptCoordinatorError::Budget)?;
             attempt
         };
+
+        if let Some(pi_request) = pi_request.as_ref() {
+            return self
+                .finish_coding_attempt(
+                    &request,
+                    pi_request,
+                    runtime_outcome,
+                    terminal_attempt,
+                    cancel,
+                )
+                .await;
+        }
 
         match runtime_outcome {
             Ok(_) => {
@@ -288,6 +410,270 @@ impl AttemptCoordinator {
                 })
             }
         }
+    }
+
+    async fn resume_coding_attempt(
+        &self,
+        request: &AttemptRequest,
+        pi_request: &PiAttemptRequest,
+        cancel: CancellationToken,
+    ) -> Result<Option<AttemptCoordinationOutcome>, AttemptCoordinatorError> {
+        let (persisted, verification, attempt, goal) = {
+            let store = self.store.lock().unwrap();
+            let Some(persisted) = store
+                .load_coding_job(pi_request.job.job_id)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
+            else {
+                return Ok(None);
+            };
+            if persisted.report.goal_id != request.goal_id {
+                return Err(AttemptCoordinatorError::Persistence(
+                    "persisted coding job belongs to another goal".into(),
+                ));
+            }
+            let verification = store
+                .load_verification_report(pi_request.job.job_id)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
+            let attempt = store
+                .attempt(persisted.report.attempt_id)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
+                .ok_or_else(|| {
+                    AttemptCoordinatorError::Persistence(
+                        "persisted coding attempt is missing".into(),
+                    )
+                })?;
+            let goal = store
+                .get_goal(request.goal_id)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
+                .ok_or(AttemptCoordinatorError::GoalNotFound(request.goal_id))?;
+            (persisted, verification, attempt, goal)
+        };
+
+        if let Some(verification) = verification {
+            if goal.state == GoalState::Running {
+                return self
+                    .outcome_for_verification(request, attempt, verification.report)
+                    .map(Some);
+            }
+            return Ok(Some(AttemptCoordinationOutcome::Succeeded {
+                attempt,
+                goal,
+            }));
+        }
+        let report = match self
+            .run_and_persist_verification(pi_request, &persisted, &attempt.evidence, cancel)
+            .await
+        {
+            Ok(report) => report,
+            Err(error) => {
+                return self
+                    .block_coding_service_error(request.goal_id, attempt, &error.to_string())
+                    .map(Some)
+            }
+        };
+        let outcome = self.outcome_for_verification(request, attempt, report)?;
+        Ok(Some(outcome))
+    }
+
+    async fn finish_coding_attempt(
+        &self,
+        request: &AttemptRequest,
+        pi_request: &PiAttemptRequest,
+        runtime_outcome: Result<RuntimeResult, RuntimeFailure>,
+        attempt: GoalAttempt,
+        cancel: CancellationToken,
+    ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
+        let evidence = match &runtime_outcome {
+            Ok(result) => &result.evidence,
+            Err(failure) => &failure.evidence,
+        };
+        let bundle = match parse_coding_evidence(evidence) {
+            Ok(bundle) => bundle,
+            Err(error) => return self.block_coding_service_error(request.goal_id, attempt, &error),
+        };
+        if bundle.report.goal_id != request.goal_id
+            || bundle.report.attempt_id != attempt.id
+            || bundle.report.job_id != pi_request.job.job_id
+        {
+            return self.block_coding_service_error(
+                request.goal_id,
+                attempt,
+                "Pi coding evidence identity mismatch",
+            );
+        }
+        let persisted = {
+            let store = self.store.lock().unwrap();
+            match store
+                .load_coding_job(bundle.report.job_id)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
+            {
+                Some(existing) => existing,
+                None => store
+                    .persist_coding_job(
+                        &bundle.report,
+                        &bundle.worktree_ref,
+                        &bundle.diff,
+                        self.clock.wall_now().0,
+                    )
+                    .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?,
+            }
+        };
+
+        if let Err(failure) = runtime_outcome {
+            return self.failure_outcome(request, attempt, failure);
+        }
+
+        let report = match self
+            .run_and_persist_verification(pi_request, &persisted, evidence, cancel)
+            .await
+        {
+            Ok(report) => report,
+            Err(error) => {
+                return self.block_coding_service_error(
+                    request.goal_id,
+                    attempt,
+                    &error.to_string(),
+                )
+            }
+        };
+        self.outcome_for_verification(request, attempt, report)
+    }
+
+    async fn run_and_persist_verification(
+        &self,
+        pi_request: &PiAttemptRequest,
+        persisted: &super::PersistedCodingJob,
+        evidence: &[fabric::AttemptEvidence],
+        cancel: CancellationToken,
+    ) -> Result<VerificationReport, AttemptCoordinatorError> {
+        let coding = self.coding_verification.as_ref().ok_or_else(|| {
+            AttemptCoordinatorError::Persistence("coding verification is not configured".into())
+        })?;
+        let worktree = resolve_worktree(&coding.worktree_base, &persisted.worktree_ref)
+            .map_err(AttemptCoordinatorError::Persistence)?;
+        let audit = capability_audit(evidence).map_err(AttemptCoordinatorError::Persistence)?;
+        let context = VerificationContext {
+            job_id: persisted.report.job_id,
+            goal_id: persisted.report.goal_id,
+            attempt_id: persisted.report.attempt_id,
+            worktree,
+            base_commit: persisted.report.base_commit.clone(),
+            changed_files: persisted.report.changed_files.clone(),
+            allowed_paths: pi_request.job.workspace.allowed_paths().to_vec(),
+            forbidden_paths: pi_request.job.workspace.forbidden_paths().to_vec(),
+            capability_audit: audit,
+            selection: VerificationSelection::default(),
+        };
+        let report = coding
+            .verifier
+            .verify_coding_attempt(&context, cancel)
+            .await
+            .map_err(AttemptCoordinatorError::Persistence)?;
+        let store = self.store.lock().unwrap();
+        store
+            .persist_verification_report(&report, self.clock.wall_now().0)
+            .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
+        Ok(report)
+    }
+
+    fn outcome_for_verification(
+        &self,
+        request: &AttemptRequest,
+        attempt: GoalAttempt,
+        report: VerificationReport,
+    ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
+        let verification_evidence: Vec<_> = report
+            .checks
+            .iter()
+            .filter(|check| !check.passed || !check.evidence.is_empty())
+            .map(|check| fabric::AttemptEvidence {
+                kind: format!("verification_{}", check.name),
+                summary: check.summary.clone(),
+                content: check.evidence.join("\n"),
+            })
+            .collect();
+        let attempt = if verification_evidence.is_empty() {
+            attempt
+        } else {
+            self.store
+                .lock()
+                .unwrap()
+                .append_attempt_evidence(attempt.id, &verification_evidence)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
+        };
+        if report.passed {
+            let goal = self.transition_after(
+                request.goal_id,
+                GoalState::Blocked,
+                Some(GoalWaitReason::ExternalEvent {
+                    key: "approval required".into(),
+                }),
+                serde_json::json!({
+                    "action": "coding_verification_passed",
+                    "attempt_id": attempt.id.0,
+                    "job_id": report.job_id.0,
+                }),
+            )?;
+            return Ok(AttemptCoordinationOutcome::Succeeded { attempt, goal });
+        }
+        let failure = RuntimeFailure {
+            class: FailureClass::ToolFailure,
+            message: "required coding verification failed".into(),
+            retryable: true,
+            usage: AttemptUsage::default(),
+            evidence: verification_evidence,
+        };
+        self.failure_outcome(request, attempt, failure)
+    }
+
+    fn failure_outcome(
+        &self,
+        request: &AttemptRequest,
+        attempt: GoalAttempt,
+        failure: RuntimeFailure,
+    ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
+        let attempt_count = {
+            let store = self.store.lock().unwrap();
+            store
+                .attempts_for_goal(request.goal_id, usize::MAX)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
+                .into_iter()
+                .filter(|candidate| candidate.role == request.role)
+                .count() as u32
+        };
+        let decision = self.retry_policy.decide(
+            request.role,
+            attempt_count,
+            &failure,
+            request.escalation_runtime_id.as_ref(),
+        );
+        let goal = self.persist_decision(request.goal_id, attempt.id.0.to_string(), &decision)?;
+        Ok(AttemptCoordinationOutcome::Failed {
+            attempt,
+            decision,
+            goal,
+        })
+    }
+
+    fn block_coding_service_error(
+        &self,
+        goal_id: GoalId,
+        attempt: GoalAttempt,
+        error: &str,
+    ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
+        let goal = self.transition_after(
+            goal_id,
+            GoalState::Blocked,
+            Some(GoalWaitReason::ExternalEvent {
+                key: "verification service error".into(),
+            }),
+            serde_json::json!({
+                "action": "coding_verification_service_error",
+                "attempt_id": attempt.id.0,
+                "error": error,
+            }),
+        )?;
+        Ok(AttemptCoordinationOutcome::Succeeded { attempt, goal })
     }
 
     fn persist_decision(
@@ -394,4 +780,73 @@ fn usage_for_budget(usage: &AttemptUsage) -> GoalBudgetUsage {
         cost_usd: usage.cost_usd.unwrap_or_default(),
         attempts: 1,
     }
+}
+
+struct CodingEvidenceBundle {
+    report: CodingJobReport,
+    worktree_ref: PathBuf,
+    diff: Vec<u8>,
+}
+
+fn parse_coding_evidence(
+    evidence: &[fabric::AttemptEvidence],
+) -> Result<CodingEvidenceBundle, String> {
+    let content = |kind: &str| {
+        evidence
+            .iter()
+            .find(|item| item.kind == kind)
+            .map(|item| item.content.as_str())
+            .ok_or_else(|| format!("Pi result is missing {kind} evidence"))
+    };
+    let report = serde_json::from_str::<CodingJobReport>(content("coding_job_report")?)
+        .map_err(|error| format!("invalid coding job report: {error}"))?;
+    let worktree_ref = PathBuf::from(content("coding_worktree_ref")?);
+    validate_relative_worktree_ref(&worktree_ref)?;
+    let diff = base64::engine::general_purpose::STANDARD
+        .decode(content("coding_diff_base64")?)
+        .map_err(|error| format!("invalid coding diff encoding: {error}"))?;
+    Ok(CodingEvidenceBundle {
+        report,
+        worktree_ref,
+        diff,
+    })
+}
+
+fn capability_audit(
+    evidence: &[fabric::AttemptEvidence],
+) -> Result<CapabilityAuditSummary, String> {
+    let item = evidence
+        .iter()
+        .find(|item| item.kind == "coding_capability_audit")
+        .ok_or_else(|| "Pi result is missing capability audit evidence".to_string())?;
+    serde_json::from_str(&item.content)
+        .map(CapabilityAuditSummary::normalized)
+        .map_err(|error| format!("invalid capability audit evidence: {error}"))
+}
+
+fn validate_relative_worktree_ref(path: &Path) -> Result<(), String> {
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err("invalid managed worktree reference".into());
+    }
+    Ok(())
+}
+
+fn resolve_worktree(base: &Path, relative: &Path) -> Result<PathBuf, String> {
+    validate_relative_worktree_ref(relative)?;
+    let path = base
+        .join(relative)
+        .canonicalize()
+        .map_err(|error| format!("resolving managed worktree: {error}"))?;
+    if !path.starts_with(base) || !path.is_dir() {
+        return Err("managed worktree escapes configured base".into());
+    }
+    Ok(path)
 }
