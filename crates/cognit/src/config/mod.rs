@@ -49,6 +49,42 @@ pub struct AppConfig {
     pub evolution: EvolutionSettings,
     #[serde(default)]
     pub telegram: TelegramConfig,
+    #[serde(default)]
+    pub goal_runtime: Option<GoalRuntimeConfig>,
+}
+
+/// Provider/model routing for durable Goal worker attempts.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GoalRuntimeConfig {
+    /// Enables autonomous Goal attempts. Both worker and reviewer are required.
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub worker: Option<RoleRuntimeConfig>,
+    #[serde(default)]
+    pub reviewer: Option<RoleRuntimeConfig>,
+}
+
+/// One cognitive role mapped to a stable runtime and strict model alias/spec.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoleRuntimeConfig {
+    pub runtime_id: String,
+    /// A key from `[model_aliases]` or an explicit `provider/model` spec.
+    pub model_alias: String,
+    #[serde(default = "default_role_runtime_max_steps")]
+    pub max_steps: usize,
+    #[serde(default = "default_role_runtime_max_persisted_bytes")]
+    pub max_persisted_bytes: usize,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+}
+
+fn default_role_runtime_max_steps() -> usize {
+    8
+}
+
+fn default_role_runtime_max_persisted_bytes() -> usize {
+    16 * 1024
 }
 
 /// Agent-level settings.
@@ -554,6 +590,11 @@ impl AppConfig {
             self.model_routing.auto_memory = other.model_routing.auto_memory;
         }
 
+        // Goal runtimes are an explicit all-or-nothing routing block.
+        if other.goal_runtime.is_some() {
+            self.goal_runtime = other.goal_runtime;
+        }
+
         // Sandbox: override if non-default
         if other.sandbox.preference != default_sandbox_preference() {
             self.sandbox.preference = other.sandbox.preference;
@@ -686,6 +727,44 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn goal_runtime_defaults_disabled_without_claiming_providers() {
+        let config = AppConfig::default();
+        assert!(config.goal_runtime.is_none());
+    }
+
+    #[test]
+    fn goal_runtime_role_routing_parses_and_merges() {
+        let parsed: AppConfig = toml::from_str(
+            r#"
+            [goal_runtime]
+            enabled = true
+
+            [goal_runtime.worker]
+            runtime_id = "deepseek-worker"
+            model_alias = "deepseek"
+            max_steps = 6
+            allowed_tools = ["file_read", "grep"]
+
+            [goal_runtime.reviewer]
+            runtime_id = "escalation-reviewer"
+            model_alias = "reviewer/model"
+            "#,
+        )
+        .unwrap();
+        let goal_runtime = parsed.goal_runtime.as_ref().unwrap();
+        assert!(goal_runtime.enabled);
+        assert_eq!(goal_runtime.worker.as_ref().unwrap().max_steps, 6);
+        assert_eq!(
+            goal_runtime.reviewer.as_ref().unwrap().max_persisted_bytes,
+            16 * 1024
+        );
+
+        let mut base = AppConfig::default();
+        base.merge(parsed.clone());
+        assert_eq!(base.goal_runtime, parsed.goal_runtime);
+    }
 
     #[test]
     fn provider_pricing_parses_and_defaults_to_none() {

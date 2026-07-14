@@ -31,6 +31,7 @@
 | SystemdHost | ✅ Implemented | `crates/executive/src/host/systemd.rs` | sd_notify(READY/WATCHDOG/STOPPING), SIGTERM handler |
 | ContainerHost | ✅ Implemented | `crates/executive/src/host/container.rs` | Docker/Podman container lifecycle via CLI |
 | RuntimeCore (host-agnostic) | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Shared bootstrap for all host types |
+| Goal role runtime routing | ✅ Implemented | `crates/executive/src/impl/daemon/handler/init.rs` | Optional worker/reviewer runtimes resolved through ProviderRegistry |
 | `aletheon exec` (CI/CD) | ✅ Implemented | `crates/bin/src/main.rs` | Non-interactive batch execution |
 
 ---
@@ -181,6 +182,41 @@ let (default_provider_config, default_model) = registry.resolve("")?;
 ```
 
 `ProviderRegistry` 从 TOML 配置的 `[providers]` 表构建。`resolve("")` 返回默认 provider（配置中的第一个）。后续 `RequestHandler` 通过 `registry.resolve_and_create("")` 创建 `LlmProvider` trait object。
+
+#### 3.3.1 Goal worker/reviewer runtime routing
+
+Goal attempt execution is disabled unless `[goal_runtime] enabled = true`.
+Enabling it requires both a worker and a reviewer route. Each route names a
+stable runtime ID plus either a strict key from `[model_aliases]` or an explicit
+`provider/model` specification; an unknown bare alias fails daemon startup
+instead of silently falling back to the default provider.
+
+```toml
+[model_aliases]
+deepseek = "deepseek/deepseek-chat"
+reviewer = "anthropic/claude-sonnet"
+
+[goal_runtime]
+enabled = true
+
+[goal_runtime.worker]
+runtime_id = "deepseek-worker"
+model_alias = "deepseek"
+max_steps = 8
+max_persisted_bytes = 16384
+allowed_tools = ["file_read", "file_write", "grep"]
+
+[goal_runtime.reviewer]
+runtime_id = "escalation-reviewer"
+model_alias = "reviewer"
+max_steps = 6
+max_persisted_bytes = 16384
+allowed_tools = ["file_read", "grep"]
+```
+
+The runtime implementation does not inspect provider brands. Provider
+transport and model selection remain `ProviderRegistry` configuration, while
+`RuntimeRegistry` only maps the stable runtime IDs used by Goal attempts.
 
 ### 3.4 感知管理器启动
 

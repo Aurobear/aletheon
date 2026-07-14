@@ -10,4 +10,5 @@ pub mod hook_lifecycle;
 pub mod kernel;
 pub mod orchestration;
 pub mod plugin;
+pub mod runtime;
 pub mod session;

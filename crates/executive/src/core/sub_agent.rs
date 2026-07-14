@@ -16,6 +16,7 @@
 //! spawned sub-agents execute real LLM + tool work instead of the no-op stub.
 //! Without a runtime, the spawned task waits for cancellation (test/dev mode).
 
+use crate::core::runtime_registry::RuntimeRegistry;
 use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
@@ -28,9 +29,10 @@ use fabric::ipc::envelope_v2::Target;
 use fabric::ipc::mailbox::{InProcessMailbox, InProcessMailboxService, Mailbox, MailboxService};
 use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use fabric::{
-    AgentProfileId, CancelReason, Clock, ExitReason, NamespaceId, OperationExitReason,
-    OperationKind, OperationManager, OperationRequest, ProcessId, ProcessManager, ProcessSignal,
-    ProcessSnapshot, ProcessState, SpawnSpec, SubAgentState, Timer,
+    AgentProfileId, AttemptUsage, CancelReason, Clock, ExitReason, FailureClass, NamespaceId,
+    OperationExitReason, OperationKind, OperationManager, OperationRequest, ProcessId,
+    ProcessManager, ProcessSignal, ProcessSnapshot, ProcessState, RuntimeFailure, RuntimeId,
+    RuntimeResult, SpawnSpec, SubAgentState, Timer,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -50,6 +52,32 @@ pub trait SubAgentRuntime: Send + Sync {
     /// Receives the task description and a cancellation token. Returns the
     /// final response text or an error.
     async fn run(&self, task: &str, cancel: CancellationToken) -> Result<String, String>;
+
+    /// Execute a task and return structured attempt data.
+    ///
+    /// The default preserves compatibility with legacy runtimes that only
+    /// implement [`Self::run`]. Production runtimes can override this method
+    /// to provide metered usage, evidence, and a precise failure class.
+    async fn run_attempt(
+        &self,
+        task: &str,
+        cancel: CancellationToken,
+    ) -> Result<RuntimeResult, RuntimeFailure> {
+        self.run(task, cancel)
+            .await
+            .map(|output| RuntimeResult {
+                output,
+                usage: AttemptUsage::default(),
+                evidence: vec![],
+            })
+            .map_err(|message| RuntimeFailure {
+                class: FailureClass::ToolFailure,
+                message,
+                retryable: false,
+                usage: AttemptUsage::default(),
+                evidence: vec![],
+            })
+    }
 }
 
 /// Owned, boxed future for spawn() compatibility.
@@ -114,6 +142,8 @@ struct SubAgentEntry {
     /// Saved spawn parameters so we can restart on failure.
     task: String,
     parent_turn_id: String,
+    /// Runtime selected before process creation; reused for crash restart.
+    runtime_id: Option<RuntimeId>,
 }
 
 /// Spawns and tracks sub-agents.
@@ -125,9 +155,7 @@ pub struct SubAgentSpawner {
     supervisor: SupervisorTree,
     /// Clock for timeout/sleep operations routed through Timer.
     clock: Arc<dyn Clock>,
-    /// Optional execution runtime — when set, spawned sub-agents run real
-    /// LLM + tool work. When `None`, the stub waits for cancellation.
-    runtime: Option<Arc<dyn SubAgentRuntime>>,
+    runtime_registry: RuntimeRegistry,
 }
 
 impl fmt::Debug for SubAgentSpawner {
@@ -138,7 +166,7 @@ impl fmt::Debug for SubAgentSpawner {
             .field("operation_table", &self.operation_table)
             .field("mailbox_service", &self.mailbox_service)
             .field("supervisor", &self.supervisor)
-            .field("runtime", &self.runtime.as_ref().map(|_| "SubAgentRuntime"))
+            .field("runtime_registry", &self.runtime_registry)
             .finish()
     }
 }
@@ -171,7 +199,7 @@ impl SubAgentSpawner {
             mailbox_service: Arc::new(InProcessMailboxService::new()),
             supervisor: SupervisorTree::new(),
             clock,
-            runtime: None,
+            runtime_registry: RuntimeRegistry::new(),
         }
     }
 
@@ -193,7 +221,15 @@ impl SubAgentSpawner {
     /// runtime. Without it, the spawned task waits for cancellation (the
     /// dev/test stub).
     pub fn with_runtime(&mut self, runtime: Arc<dyn SubAgentRuntime>) {
-        self.runtime = Some(runtime);
+        self.runtime_registry.set_default(runtime);
+    }
+
+    pub fn runtime_registry(&self) -> &RuntimeRegistry {
+        &self.runtime_registry
+    }
+
+    pub fn runtime_registry_mut(&mut self) -> &mut RuntimeRegistry {
+        &mut self.runtime_registry
     }
 
     /// Mailbox registry used by sub-agent process collaboration.
@@ -228,6 +264,39 @@ impl SubAgentSpawner {
         parent_turn_id: String,
         restart_policy: RestartPolicy,
     ) -> anyhow::Result<SubAgentHandle> {
+        let default_id = RuntimeRegistry::default_id();
+        let runtime_id = self
+            .runtime_registry
+            .contains(&default_id)
+            .then_some(default_id);
+        self.spawn_selected(task, parent_turn_id, runtime_id, restart_policy)
+            .await
+    }
+
+    /// Spawn with an explicitly selected runtime.
+    pub async fn spawn_with_runtime(
+        &mut self,
+        task: String,
+        parent_turn_id: String,
+        runtime_id: RuntimeId,
+        restart_policy: RestartPolicy,
+    ) -> anyhow::Result<SubAgentHandle> {
+        self.spawn_selected(task, parent_turn_id, Some(runtime_id), restart_policy)
+            .await
+    }
+
+    async fn spawn_selected(
+        &mut self,
+        task: String,
+        parent_turn_id: String,
+        runtime_id: Option<RuntimeId>,
+        restart_policy: RestartPolicy,
+    ) -> anyhow::Result<SubAgentHandle> {
+        // Resolve before creating any process, operation, or mailbox record.
+        let runtime = runtime_id
+            .as_ref()
+            .map(|id| self.runtime_registry.resolve(id))
+            .transpose()?;
         let process = self
             .process_table
             .spawn(SpawnSpec {
@@ -261,8 +330,7 @@ impl SubAgentSpawner {
 
         // Spawn the actual execution payload: real LLM+tool work when a
         // runtime is attached, cancellation-wait stub otherwise.
-        if let Some(ref runtime) = self.runtime {
-            let rt = runtime.clone();
+        if let Some(rt) = runtime {
             let task_clone = task.clone();
             let cancel = token.clone();
             scope.spawn("sub-agent-execution", async move {
@@ -304,6 +372,7 @@ impl SubAgentSpawner {
                 scope,
                 task,
                 parent_turn_id,
+                runtime_id,
             },
         );
         Ok(handle)
@@ -393,6 +462,7 @@ impl SubAgentSpawner {
                 scope,
                 task,
                 parent_turn_id,
+                runtime_id: None,
             },
         );
         Ok(handle)
@@ -413,6 +483,13 @@ impl SubAgentSpawner {
     /// A clone of the agent's cancellation token from its operation task group.
     pub fn cancel_token(&self, id: &str) -> Option<CancellationToken> {
         self.agents.get(id).map(|e| e.scope.token())
+    }
+
+    /// Runtime selected for this entry, if it owns an execution task.
+    pub fn runtime_id(&self, id: &str) -> Option<&RuntimeId> {
+        self.agents
+            .get(id)
+            .and_then(|entry| entry.runtime_id.as_ref())
     }
 
     pub async fn snapshot(&self, id: &str) -> anyhow::Result<Option<ProcessSnapshot>> {
@@ -568,17 +645,21 @@ impl SubAgentSpawner {
     /// spawns a fresh process with the same restart policy, and inserts the
     /// new entry under the new agent id.
     async fn restart_agent(&mut self, failed_id: &str) -> Result<(), TransitionError> {
-        let (task, parent_turn_id) = {
+        let (task, parent_turn_id, runtime_id) = {
             let entry = self
                 .agents
                 .get(failed_id)
                 .ok_or_else(|| TransitionError::Unknown(failed_id.to_string()))?;
-            (entry.task.clone(), entry.parent_turn_id.clone())
+            (
+                entry.task.clone(),
+                entry.parent_turn_id.clone(),
+                entry.runtime_id.clone(),
+            )
         };
         // Spawn replacement; use Never for the replacement to avoid infinite
         // restart chains — the supervisor already tracks the restart count on
         // the original ProcessId.
-        self.spawn_with_policy(task, parent_turn_id, RestartPolicy::Never)
+        self.spawn_selected(task, parent_turn_id, runtime_id, RestartPolicy::Never)
             .await
             .map_err(|e| TransitionError::Kernel(e.to_string()))?;
         Ok(())
@@ -695,6 +776,27 @@ mod lifecycle_tests {
     use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId};
     use fabric::ipc::mailbox::DeliveryReceipt;
     use fabric::SubAgentState;
+
+    struct LegacyRuntime;
+
+    #[async_trait]
+    impl SubAgentRuntime for LegacyRuntime {
+        async fn run(&self, task: &str, _cancel: CancellationToken) -> Result<String, String> {
+            Ok(format!("legacy:{task}"))
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_runtime_uses_structured_attempt_adapter() {
+        let result = LegacyRuntime
+            .run_attempt("task", CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(result.output, "legacy:task");
+        assert_eq!(result.usage, AttemptUsage::default());
+        assert!(result.evidence.is_empty());
+    }
 
     #[tokio::test]
     async fn spawn_starts_in_created_and_legal_transitions_advance() {

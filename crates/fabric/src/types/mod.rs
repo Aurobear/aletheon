@@ -2,6 +2,7 @@
 
 pub mod admission;
 pub mod agent;
+pub mod attempt;
 pub mod capability;
 pub mod channel;
 pub mod context;

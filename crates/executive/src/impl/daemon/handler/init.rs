@@ -20,6 +20,7 @@ use super::RequestHandler;
 use crate::core::config::ExecutiveConfig;
 use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
+use crate::core::sub_agent::SubAgentSpawner;
 use crate::session::store::SessionStore;
 use cognit::core::reflector::Reflector;
 use cognit::r#impl::provider_registry::ProviderRegistry;
@@ -56,6 +57,7 @@ use crate::r#impl::channel::router::{
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
 use crate::r#impl::goal::ObjectiveStore;
+use crate::r#impl::runtime::ProviderWorkerRuntime;
 use aletheon_kernel::supervision::RestartPolicy;
 use corpus::hook::builtin::audit_hook;
 use corpus::security::storm_breaker::StormBreaker;
@@ -69,102 +71,73 @@ use mnemosyne::FactStore;
 use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
-use crate::core::sub_agent::SubAgentRuntime;
-use async_trait::async_trait;
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
-// ---------------------------------------------------------------------------
-// DaemonSubAgentRuntime — production sub-agent execution
-// ---------------------------------------------------------------------------
-
-/// Production sub-agent execution runtime: single-turn LLM completion with
-/// optional tool calls. Wired into `SubAgentSpawner` so spawned sub-agents
-/// perform real reasoning work instead of the cancellation-wait stub.
-struct DaemonSubAgentRuntime {
-    llm: Arc<dyn LlmProvider>,
+pub(crate) fn register_goal_runtimes(
+    spawner: &mut SubAgentSpawner,
+    config: &cognit::config::GoalRuntimeConfig,
+    providers: &ProviderRegistry,
     tools: Arc<Mutex<ToolRegistry>>,
-}
-
-#[async_trait]
-impl SubAgentRuntime for DaemonSubAgentRuntime {
-    async fn run(&self, task: &str, cancel: CancellationToken) -> Result<String, String> {
-        let messages = vec![fabric::Message::user(task)];
-        // Run up to 8 reasoning steps; respect cancellation between each.
-        let mut current = messages;
-        let mut final_text = String::new();
-        for _step in 0..8 {
-            if cancel.is_cancelled() {
-                return Err("sub-agent cancelled".into());
-            }
-            let tool_defs: Vec<fabric::ToolDefinition> = {
-                let reg = self.tools.lock().await;
-                reg.definitions()
-            };
-            let response = self
-                .llm
-                .complete(&current, &tool_defs)
-                .await
-                .map_err(|e| format!("LLM error: {e}"))?;
-
-            let mut text_parts: Vec<String> = Vec::new();
-            let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
-            for block in &response.content {
-                match block {
-                    fabric::ContentBlock::Text { text } => text_parts.push(text.clone()),
-                    fabric::ContentBlock::ToolUse { id, name, input } => {
-                        tool_calls.push((id.clone(), name.clone(), input.clone()));
-                    }
-                    _ => {}
-                }
-            }
-
-            if tool_calls.is_empty() {
-                final_text = text_parts.join("\n");
-                break;
-            }
-
-            // Push assistant response with tool calls.
-            current.push(fabric::Message {
-                role: fabric::Role::Assistant,
-                content: response.content.clone(),
-            });
-
-            // Execute tools and push results.
-            for (call_id, name, input) in tool_calls {
-                if cancel.is_cancelled() {
-                    return Err("sub-agent cancelled".into());
-                }
-                let result = {
-                    let reg = self.tools.lock().await;
-                    match reg.get(&name) {
-                        Some(tool) => {
-                            let ctx = fabric::tool::ToolContext {
-                                working_dir: std::env::current_dir().unwrap_or_default(),
-                                session_id: "sub-agent".into(),
-                                clock: std::sync::Arc::new(SystemClock::new()),
-                            };
-                            tool.execute(input, &ctx).await
-                        }
-                        None => fabric::tool::ToolResult {
-                            content: format!("Unknown tool: {name}"),
-                            is_error: true,
-                            metadata: fabric::tool::ToolResultMeta::default(),
-                        },
-                    }
-                };
-                current.push(fabric::Message::tool_result(
-                    &call_id,
-                    &result.content,
-                    result.is_error,
-                ));
-            }
-        }
-        if final_text.is_empty() {
-            Ok("(sub-agent produced no text output)".into())
-        } else {
-            Ok(final_text)
-        }
+    clock: Arc<dyn Clock>,
+) -> anyhow::Result<Vec<fabric::RuntimeId>> {
+    if !config.enabled {
+        return Ok(Vec::new());
     }
+    let worker = config
+        .worker
+        .as_ref()
+        .context("goal runtime is enabled but worker routing is missing")?;
+    let reviewer = config
+        .reviewer
+        .as_ref()
+        .context("goal runtime is enabled but reviewer routing is missing")?;
+    if worker.runtime_id == reviewer.runtime_id {
+        anyhow::bail!("worker and reviewer runtime IDs must be distinct");
+    }
+
+    let routes = [
+        (worker, fabric::CognitiveRole::Worker),
+        (reviewer, fabric::CognitiveRole::Reviewer),
+    ];
+    let mut prepared = Vec::with_capacity(routes.len());
+    for (route, role) in routes {
+        if route.runtime_id.trim().is_empty() {
+            anyhow::bail!("goal runtime ID must not be empty");
+        }
+        let (provider_config, model) =
+            providers
+                .resolve_role_alias(&route.model_alias)
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "resolving runtime '{}': {}: {error}",
+                        route.runtime_id,
+                        route.model_alias
+                    )
+                })?;
+        let provider: Arc<dyn LlmProvider> =
+            Arc::from(providers.create_provider(&provider_config, &model));
+        let runtime_id = fabric::RuntimeId(route.runtime_id.clone());
+        let runtime = Arc::new(ProviderWorkerRuntime::new(
+            runtime_id.clone(),
+            role,
+            provider,
+            tools.clone(),
+            clock.clone(),
+            route.max_steps,
+            route.max_persisted_bytes,
+            route.allowed_tools.clone(),
+        ));
+        prepared.push((runtime_id, runtime));
+    }
+
+    let mut registered = Vec::with_capacity(prepared.len());
+    for (runtime_id, runtime) in prepared {
+        spawner
+            .runtime_registry_mut()
+            .register(runtime_id.clone(), runtime)?;
+        registered.push(runtime_id);
+    }
+    Ok(registered)
 }
 
 impl RequestHandler {
@@ -199,6 +172,7 @@ impl RequestHandler {
         config: &DaemonConfig,
         registry: &ProviderRegistry,
         model_routing: crate::core::config::ModelRoutingConfig,
+        goal_runtime: cognit::config::GoalRuntimeConfig,
         evolution_enabled: bool,
         event_bus: Option<Arc<CommunicationBus>>,
         cancel_token: CancellationToken,
@@ -260,10 +234,22 @@ impl RequestHandler {
             .context("opening objective store")?;
         let objective_store = Arc::new(Mutex::new(objective_store));
 
-        // M2: Recover persisted goal state — clear stale process links,
-        // map legacy active objectives, preserve suspended/awaiting states.
+        // M3: terminalize stale runtime calls before making their Goals ready.
+        // Recovery records cancellation evidence and never invokes a runtime.
         {
             let store = objective_store.lock().await;
+            let stale_attempts = store
+                .recover_stale_attempts()
+                .context("recovering stale goal attempts")?;
+            if !stale_attempts.is_empty() {
+                info!(
+                    count = stale_attempts.len(),
+                    "Cancelled stale goal attempts on start"
+                );
+            }
+
+            // M2: clear stale process links, map legacy active objectives, and
+            // preserve suspended/awaiting states.
             match store.recover_goals() {
                 Ok(recovered) if !recovered.is_empty() => {
                     info!(
@@ -647,16 +633,47 @@ impl RequestHandler {
         // Wire sub-agent execution runtime so spawned sub-agents run real
         // LLM + tool reasoning instead of the cancellation-wait stub.
         {
-            let sub_agent_runtime = Arc::new(DaemonSubAgentRuntime {
-                llm: llm.clone(),
-                tools: subsystems.corpus.tools.clone(),
-            });
+            let allowed_tools = subsystems
+                .corpus
+                .tools
+                .lock()
+                .await
+                .list()
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let sub_agent_runtime = Arc::new(ProviderWorkerRuntime::new(
+                fabric::RuntimeId("default".into()),
+                fabric::CognitiveRole::Worker,
+                llm.clone(),
+                subsystems.corpus.tools.clone(),
+                clock.clone(),
+                8,
+                16 * 1024,
+                allowed_tools,
+            ));
             subsystems
                 .runtime
                 .lock()
                 .await
                 .sub_agent_spawner_mut()
                 .with_runtime(sub_agent_runtime);
+        }
+
+        // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
+        // Missing routes fail startup only when Goal execution is enabled.
+        {
+            let mut runtime = subsystems.runtime.lock().await;
+            let registered = register_goal_runtimes(
+                runtime.sub_agent_spawner_mut(),
+                &goal_runtime,
+                registry,
+                subsystems.corpus.tools.clone(),
+                clock.clone(),
+            )?;
+            if !registered.is_empty() {
+                info!(runtime_ids = ?registered, "Goal runtimes registered");
+            }
         }
 
         // Repoint the sub-agent spawner at the shared kernel tables so
@@ -1114,5 +1131,125 @@ impl RequestHandler {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod goal_runtime_tests {
+    use super::*;
+    use cognit::config::{
+        AppConfig, GoalRuntimeConfig, ProviderConfig, RoleRuntimeConfig, Transport,
+    };
+
+    fn provider(name: &str) -> ProviderConfig {
+        ProviderConfig {
+            name: name.into(),
+            base_url: "http://127.0.0.1:1".into(),
+            api_key: String::new(),
+            transport: Transport::Openai,
+            models: vec!["model".into()],
+            max_context_length: None,
+            pricing: None,
+        }
+    }
+
+    fn route(runtime_id: &str, model_alias: &str) -> RoleRuntimeConfig {
+        RoleRuntimeConfig {
+            runtime_id: runtime_id.into(),
+            model_alias: model_alias.into(),
+            max_steps: 2,
+            max_persisted_bytes: 1024,
+            allowed_tools: vec![],
+        }
+    }
+
+    fn register(
+        config: GoalRuntimeConfig,
+        app: AppConfig,
+    ) -> anyhow::Result<(SubAgentSpawner, Vec<fabric::RuntimeId>)> {
+        let providers = ProviderRegistry::from_config(&app)?;
+        let mut spawner = SubAgentSpawner::new();
+        let ids = register_goal_runtimes(
+            &mut spawner,
+            &config,
+            &providers,
+            Arc::new(Mutex::new(ToolRegistry::new())),
+            Arc::new(SystemClock::new()),
+        )?;
+        Ok((spawner, ids))
+    }
+
+    #[test]
+    fn disabled_goal_runtime_registers_nothing() {
+        let mut app = AppConfig::default();
+        app.providers.push(provider("p"));
+        let (spawner, ids) = register(GoalRuntimeConfig::default(), app).unwrap();
+        assert!(ids.is_empty());
+        assert!(!spawner
+            .runtime_registry()
+            .contains(&fabric::RuntimeId("deepseek-worker".into())));
+    }
+
+    #[test]
+    fn enabled_goal_runtime_rejects_missing_route_and_unknown_alias() {
+        let mut app = AppConfig::default();
+        app.providers.push(provider("p"));
+        let missing = GoalRuntimeConfig {
+            enabled: true,
+            worker: Some(route("deepseek-worker", "p/model")),
+            reviewer: None,
+        };
+        assert!(register(missing, app.clone())
+            .unwrap_err()
+            .to_string()
+            .contains("reviewer routing is missing"));
+
+        let unknown = GoalRuntimeConfig {
+            enabled: true,
+            worker: Some(route("deepseek-worker", "unknown-alias")),
+            reviewer: Some(route("escalation-reviewer", "p/model")),
+        };
+        assert!(register(unknown, app)
+            .unwrap_err()
+            .to_string()
+            .contains("model alias 'unknown-alias' not found"));
+    }
+
+    #[test]
+    fn same_provider_can_back_distinct_runtime_ids() {
+        let mut app = AppConfig::default();
+        app.providers.push(provider("shared"));
+        let config = GoalRuntimeConfig {
+            enabled: true,
+            worker: Some(route("deepseek-worker", "shared/worker-model")),
+            reviewer: Some(route("escalation-reviewer", "shared/reviewer-model")),
+        };
+        let (spawner, ids) = register(config, app).unwrap();
+        assert_eq!(ids.len(), 2);
+        for id in ids {
+            assert!(spawner.runtime_registry().contains(&id));
+        }
+    }
+
+    #[test]
+    fn distinct_providers_register_worker_and_reviewer() {
+        let mut app = AppConfig::default();
+        app.providers.push(provider("worker-provider"));
+        app.providers.push(provider("review-provider"));
+        let config = GoalRuntimeConfig {
+            enabled: true,
+            worker: Some(route("deepseek-worker", "worker-provider/model")),
+            reviewer: Some(route("escalation-reviewer", "review-provider/model")),
+        };
+        let (spawner, ids) = register(config, app).unwrap();
+        assert_eq!(
+            ids,
+            vec![
+                fabric::RuntimeId("deepseek-worker".into()),
+                fabric::RuntimeId("escalation-reviewer".into())
+            ]
+        );
+        assert!(spawner.runtime_registry().contains(&ids[0]));
+        assert!(spawner.runtime_registry().contains(&ids[1]));
     }
 }
