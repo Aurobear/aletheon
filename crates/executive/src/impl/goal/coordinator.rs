@@ -5,12 +5,14 @@
 //! subsequent ticks.
 
 use crate::r#impl::approval::ApprovalRepository;
+use crate::r#impl::approval::{ApplyCoordinator, ApplyCoordinatorConfig, ManagedWorktreeCleaner};
 use crate::r#impl::goal::budget::GoalBudgetRequest;
 use crate::r#impl::goal::transition::GoalTransitionError;
 use crate::r#impl::goal::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
     AttemptRequest, CodingVerifier, ObjectiveStore, RetryPolicy,
 };
+use aletheon_kernel::operation::OperationTable;
 use fabric::goal::{GoalId, GoalSnapshot, GoalState};
 use fabric::Clock;
 use fabric::ProcessId;
@@ -79,6 +81,24 @@ impl GoalCoordinator {
     ) -> Result<AttemptCoordinator, AttemptCoordinatorError> {
         self.coding_attempt_coordinator(executor, clock, retry_policy, verifier, worktree_base)?
             .with_approval_repository(approvals)
+    }
+
+    pub fn approved_apply_coordinator(
+        &self,
+        approvals: Arc<Mutex<ApprovalRepository>>,
+        operations: Arc<OperationTable>,
+        clock: Arc<dyn Clock>,
+        config: ApplyCoordinatorConfig,
+        cleaner: Arc<dyn ManagedWorktreeCleaner>,
+    ) -> Result<ApplyCoordinator, crate::r#impl::approval::ApplyCoordinationError> {
+        ApplyCoordinator::new(
+            self.store.clone(),
+            approvals,
+            operations,
+            clock,
+            config,
+            cleaner,
+        )
     }
 
     /// Schedule exactly one durable runtime attempt for a Running Goal.

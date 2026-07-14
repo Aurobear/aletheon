@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 6;
+const CURRENT_VERSION: u32 = 7;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -219,6 +219,24 @@ CREATE TABLE IF NOT EXISTS approval_deliveries (
 );
 ";
 
+/// Migration 7 — one durable apply claim and receipt per approved request.
+const MIGRATION_7: &str = "
+CREATE TABLE IF NOT EXISTS approval_apply_operations (
+    approval_id TEXT PRIMARY KEY REFERENCES approval_requests(approval_id) ON DELETE CASCADE,
+    operation_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed','cancelled')),
+    started_at_ms INTEGER NOT NULL,
+    finished_at_ms INTEGER,
+    error TEXT
+);
+CREATE TABLE IF NOT EXISTS approval_apply_receipts (
+    approval_id TEXT PRIMARY KEY REFERENCES approval_requests(approval_id) ON DELETE CASCADE,
+    operation_id TEXT NOT NULL UNIQUE REFERENCES approval_apply_operations(operation_id),
+    receipt_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -275,6 +293,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
             .context("begin migration 6 transaction")?;
         tx.execute_batch(MIGRATION_6)?;
         tx.pragma_update(None, "user_version", 6)?;
+        tx.commit()?;
+    }
+
+    if version < 7 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 7 transaction")?;
+        tx.execute_batch(MIGRATION_7)?;
+        tx.pragma_update(None, "user_version", 7)?;
         tx.commit()?;
     }
 
@@ -344,14 +371,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 6);
+        assert_eq!(v1, 7);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 6);
+        assert_eq!(v2, 7);
     }
 
     #[test]
@@ -373,6 +400,8 @@ mod tests {
         assert!(tables.iter().any(|n| n == "approval_requests"));
         assert!(tables.iter().any(|n| n == "approval_events"));
         assert!(tables.iter().any(|n| n == "approval_deliveries"));
+        assert!(tables.iter().any(|n| n == "approval_apply_operations"));
+        assert!(tables.iter().any(|n| n == "approval_apply_receipts"));
     }
 
     #[test]
