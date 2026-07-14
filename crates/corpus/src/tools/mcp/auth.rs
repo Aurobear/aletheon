@@ -7,8 +7,10 @@ use fabric::Clock;
 use serde::{Deserialize, Serialize};
 
 pub use super::token_store::{TokenEntry, TokenStore};
+use crate::tools::google::oauth::{AsyncOAuthClient, OAuthClientConfig};
 
 /// Minimal percent-encoding for URL query parameters (RFC 3986 unreserved set).
+#[cfg(test)]
 fn percent_encode(input: &str) -> String {
     let mut out = String::with_capacity(input.len() * 3);
     for byte in input.bytes() {
@@ -34,6 +36,7 @@ fn percent_encode(input: &str) -> String {
 ///
 /// Both `BearerTokenAuth` and `McpOAuthProvider` implement this trait so that
 /// transports can be generic over the authentication mechanism.
+#[async_trait::async_trait]
 pub trait McpAuth: Send + Sync {
     /// Return HTTP headers to attach to MCP requests.
     ///
@@ -48,7 +51,7 @@ pub trait McpAuth: Send + Sync {
     /// Attempt to refresh credentials.
     ///
     /// `BearerTokenAuth` is a no-op (returns `Ok(())`).
-    fn refresh(&mut self) -> Result<()>;
+    async fn refresh(&mut self) -> Result<()>;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +97,7 @@ impl BearerTokenAuth {
     }
 }
 
+#[async_trait::async_trait]
 impl McpAuth for BearerTokenAuth {
     fn get_headers(&self) -> HashMap<String, String> {
         let mut headers = HashMap::new();
@@ -108,7 +112,7 @@ impl McpAuth for BearerTokenAuth {
         false
     }
 
-    fn refresh(&mut self) -> Result<()> {
+    async fn refresh(&mut self) -> Result<()> {
         // Nothing to refresh -- token is read from env on demand.
         Ok(())
     }
@@ -128,13 +132,26 @@ impl fmt::Display for BearerTokenAuth {
 // ---------------------------------------------------------------------------
 
 /// CSRF state parameter used during the OAuth authorization flow.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthState {
     pub state: String,
     /// Unix epoch seconds when this state was created.
     pub created_at: u64,
     /// The MCP server id this authorization is for.
     pub server_id: String,
+    #[serde(skip)]
+    pkce_verifier: String,
+}
+
+impl fmt::Debug for OAuthState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthState")
+            .field("state", &self.state)
+            .field("created_at", &self.created_at)
+            .field("server_id", &self.server_id)
+            .field("pkce_verifier", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Maximum age (in seconds) of an OAuth state before it is considered stale.
@@ -177,6 +194,7 @@ pub struct McpOAuthProvider {
     /// Pending authorization states (state -> OAuthState).
     pending_states: HashMap<String, OAuthState>,
     clock: Arc<dyn Clock>,
+    oauth_client: AsyncOAuthClient,
 }
 
 impl McpOAuthProvider {
@@ -189,8 +207,18 @@ impl McpOAuthProvider {
         token_store: TokenStore,
         clock: Arc<dyn Clock>,
     ) -> Self {
+        let client_id = client_id.into();
+        let oauth_client = AsyncOAuthClient::new(OAuthClientConfig {
+            client_id: client_id.clone(),
+            client_secret: None,
+            redirect_uri: endpoints.redirect_uri.clone(),
+            auth_url: endpoints.auth_url.clone(),
+            token_url: endpoints.token_url.clone(),
+            revocation_url: None,
+        })
+        .expect("static MCP OAuth client configuration must build");
         Self {
-            client_id: client_id.into(),
+            client_id,
             client_secret: None,
             endpoints,
             scopes,
@@ -198,12 +226,23 @@ impl McpOAuthProvider {
             token_store,
             pending_states: HashMap::new(),
             clock,
+            oauth_client,
         }
     }
 
     /// Set the optional client secret (for confidential clients).
     pub fn with_client_secret(mut self, secret: impl Into<String>) -> Self {
-        self.client_secret = Some(secret.into());
+        let secret = secret.into();
+        self.client_secret = Some(secret.clone());
+        self.oauth_client = AsyncOAuthClient::new(OAuthClientConfig {
+            client_id: self.client_id.clone(),
+            client_secret: Some(secret),
+            redirect_uri: self.endpoints.redirect_uri.clone(),
+            auth_url: self.endpoints.auth_url.clone(),
+            token_url: self.endpoints.token_url.clone(),
+            revocation_url: None,
+        })
+        .expect("static MCP OAuth client configuration must build");
         self
     }
 
@@ -218,19 +257,16 @@ impl McpOAuthProvider {
             state: state_str.clone(),
             created_at: now,
             server_id: self.server_id.clone(),
+            pkce_verifier: crate::tools::google::oauth::generate_pkce_verifier(),
         };
         self.pending_states
             .insert(state_str.clone(), oauth_state.clone());
 
-        let scope_str = self.scopes.join(" ");
-        let url = format!(
-            "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
-            self.endpoints.auth_url,
-            percent_encode(&self.client_id),
-            percent_encode(&self.endpoints.redirect_uri),
-            percent_encode(&scope_str),
-            percent_encode(&state_str),
-        );
+        let challenge = crate::tools::google::oauth::pkce_challenge(&oauth_state.pkce_verifier);
+        let url = self
+            .oauth_client
+            .authorization_url(&state_str, &challenge, &self.scopes, false)
+            .expect("validated MCP OAuth authorization URL");
         (url, oauth_state)
     }
 
@@ -238,7 +274,7 @@ impl McpOAuthProvider {
     /// redirects back from the authorization server).
     ///
     /// Returns the newly stored `TokenEntry`.
-    pub fn callback(&mut self, code: &str, state: &str) -> Result<TokenEntry> {
+    pub async fn callback(&mut self, code: &str, state: &str) -> Result<TokenEntry> {
         // Verify CSRF state.
         let oauth_state = self
             .pending_states
@@ -255,7 +291,7 @@ impl McpOAuthProvider {
         }
 
         // Exchange code for tokens via HTTP POST.
-        let entry = self.exchange_code(code)?;
+        let entry = self.exchange_code(code, &oauth_state.pkce_verifier).await?;
 
         // Persist.
         self.token_store
@@ -266,75 +302,24 @@ impl McpOAuthProvider {
     }
 
     /// Perform the token exchange HTTP request.
-    fn exchange_code(&self, code: &str) -> Result<TokenEntry> {
-        let mut params = vec![
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", &self.endpoints.redirect_uri),
-            ("client_id", &self.client_id),
-        ];
-        let secret_ref;
-        if let Some(ref secret) = self.client_secret {
-            secret_ref = secret.as_str();
-            params.push(("client_secret", secret_ref));
-        }
-
-        let client = reqwest::blocking::Client::new();
-        let resp = client
-            .post(&self.endpoints.token_url)
-            .form(&params)
-            .send()
-            .context("token exchange HTTP request failed")?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().unwrap_or_default();
-            anyhow::bail!("token exchange failed ({}): {}", status, body);
-        }
-
-        let raw: serde_json::Value = resp.json().context("parsing token response")?;
-        parse_token_response(&raw, &*self.clock)
+    async fn exchange_code(&self, code: &str, verifier: &str) -> Result<TokenEntry> {
+        self.oauth_client
+            .exchange_code(code, verifier, &self.scopes, now_epoch_secs(&*self.clock))
+            .await
     }
 
     /// Refresh the access token using the stored refresh token.
-    fn do_refresh(&mut self) -> Result<TokenEntry> {
+    async fn do_refresh(&mut self) -> Result<TokenEntry> {
         let current = self
             .token_store
             .get(&self.server_id)
             .context("no token entry to refresh")?
             .clone();
 
-        let refresh_token = current
-            .refresh_token
-            .as_deref()
-            .context("no refresh token available")?;
-
-        let mut params = vec![
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("client_id", self.client_id.as_str()),
-        ];
-        let secret_ref;
-        if let Some(ref secret) = self.client_secret {
-            secret_ref = secret.as_str();
-            params.push(("client_secret", secret_ref));
-        }
-
-        let client = reqwest::blocking::Client::new();
-        let resp = client
-            .post(&self.endpoints.token_url)
-            .form(&params)
-            .send()
-            .context("token refresh HTTP request failed")?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().unwrap_or_default();
-            anyhow::bail!("token refresh failed ({}): {}", status, body);
-        }
-
-        let raw: serde_json::Value = resp.json().context("parsing refresh response")?;
-        let entry = parse_token_response(&raw, &*self.clock)?;
+        let entry = self
+            .oauth_client
+            .refresh(&current, &self.scopes, now_epoch_secs(&*self.clock))
+            .await?;
 
         self.token_store.set(&self.server_id, entry.clone());
         self.token_store.save()?;
@@ -360,6 +345,7 @@ impl McpOAuthProvider {
     }
 }
 
+#[async_trait::async_trait]
 impl McpAuth for McpOAuthProvider {
     fn get_headers(&self) -> HashMap<String, String> {
         let mut headers = HashMap::new();
@@ -379,8 +365,8 @@ impl McpAuth for McpOAuthProvider {
         }
     }
 
-    fn refresh(&mut self) -> Result<()> {
-        self.do_refresh()?;
+    async fn refresh(&mut self) -> Result<()> {
+        self.do_refresh().await?;
         Ok(())
     }
 }
@@ -400,6 +386,7 @@ impl fmt::Display for McpOAuthProvider {
 // ---------------------------------------------------------------------------
 
 /// Parse the JSON response from a token endpoint into a `TokenEntry`.
+#[cfg(test)]
 fn parse_token_response(raw: &serde_json::Value, clock: &dyn Clock) -> Result<TokenEntry> {
     let access_token = raw["access_token"]
         .as_str()
@@ -480,8 +467,8 @@ mod tests {
         std::env::remove_var("TEST_MCP_TOKEN_DISPLAY");
     }
 
-    #[test]
-    fn bearer_trait_get_headers_with_token() {
+    #[tokio::test]
+    async fn bearer_trait_get_headers_with_token() {
         std::env::set_var("TEST_BEARER_TRAIT", "abc123");
         let mut auth = BearerTokenAuth::new("TEST_BEARER_TRAIT");
         let headers = auth.get_headers();
@@ -490,7 +477,7 @@ mod tests {
             Some("Bearer abc123")
         );
         assert!(!auth.is_expired());
-        assert!(auth.refresh().is_ok());
+        assert!(auth.refresh().await.is_ok());
         std::env::remove_var("TEST_BEARER_TRAIT");
     }
 
@@ -617,8 +604,8 @@ mod tests {
 
     // -- CSRF state verification -------------------------------------------
 
-    #[test]
-    fn oauth_csrf_state_rejects_unknown_state() {
+    #[tokio::test]
+    async fn oauth_csrf_state_rejects_unknown_state() {
         let dir = tempfile::tempdir().unwrap();
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
@@ -634,7 +621,7 @@ mod tests {
             test_clock(),
         );
 
-        let result = provider.callback("any-code", "bogus-state");
+        let result = provider.callback("any-code", "bogus-state").await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -642,8 +629,8 @@ mod tests {
             .contains("unknown or already-consumed"));
     }
 
-    #[test]
-    fn oauth_csrf_state_double_consume_rejected() {
+    #[tokio::test]
+    async fn oauth_csrf_state_double_consume_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let store = TokenStore::new(dir.path().join("t.json")).unwrap();
         let mut provider = McpOAuthProvider::new(
@@ -661,9 +648,9 @@ mod tests {
 
         let (_, state) = provider.authorize_url();
         // First consume will fail at HTTP exchange, but state is removed.
-        let _ = provider.callback("code", &state.state);
+        let _ = provider.callback("code", &state.state).await;
         // Second consume should fail with "unknown state".
-        let result = provider.callback("code", &state.state);
+        let result = provider.callback("code", &state.state).await;
         assert!(result.is_err());
     }
 

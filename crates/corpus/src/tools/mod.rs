@@ -1,5 +1,6 @@
 //! Tool implementations, hooks, skills, and MCP client.
 
+pub mod google;
 pub mod hooks;
 pub mod mcp;
 pub mod skills;

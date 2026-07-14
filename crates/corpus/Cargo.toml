@@ -30,7 +30,7 @@ atspi = { version = "0.30", features = ["zbus"], optional = true }
 tesseract = { version = "0.15", optional = true }
 zbus = { version = "4", optional = true }
 # From tools
-reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 tree-sitter = { workspace = true }
 tree-sitter-rust = { workspace = true }
 tempfile = "3"
