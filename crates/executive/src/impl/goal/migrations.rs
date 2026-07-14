@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 11;
+const CURRENT_VERSION: u32 = 12;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -388,6 +388,26 @@ CREATE INDEX IF NOT EXISTS idx_google_sync_leases_expiry
     ON google_sync_leases(lease_expires_at_ms);
 ";
 
+const MIGRATION_12: &str = "
+CREATE TABLE IF NOT EXISTS gmail_channel_inbox (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    verified_principal_id TEXT,
+    sender_address TEXT,
+    sender_policy_version INTEGER,
+    classification TEXT NOT NULL
+        CHECK(classification IN ('ask','goal','memory','doc','notification','quarantine')),
+    evidence_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','accepted','quarantined','completed')),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(account_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_gmail_channel_inbox_status
+    ON gmail_channel_inbox(status, created_at_ms);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -492,6 +512,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
         tx.commit()?;
     }
 
+    if version < 12 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 12 transaction")?;
+        tx.execute_batch(MIGRATION_12)?;
+        tx.pragma_update(None, "user_version", 12)?;
+        tx.commit()?;
+    }
+
     // Verify we're at the expected version.
     let current: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     anyhow::ensure!(
@@ -558,14 +587,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 11);
+        assert_eq!(v1, 12);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 11);
+        assert_eq!(v2, 12);
     }
 
     #[test]
