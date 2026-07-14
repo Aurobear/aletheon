@@ -932,6 +932,15 @@ fn create_apply_approval(
         job_id: Some(persisted.report.job_id),
         attributes: BTreeMap::from([
             ("base_commit".into(), persisted.report.base_commit.clone()),
+            (
+                "repository_root".into(),
+                pi_request
+                    .job
+                    .workspace
+                    .repository_root()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             ("diff_sha256".into(), persisted.diff_sha256.clone()),
             ("verification_sha256".into(), verification_sha256),
             (

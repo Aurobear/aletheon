@@ -49,10 +49,11 @@ use tracing::{info, warn};
 
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::r#impl::channel::daemon_adapter::{
-    DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
+    DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
 };
 use crate::r#impl::channel::router::{
-    ChannelGoalExecutor, ChannelRouter, ChannelTransport, ChannelTurnExecutor,
+    ChannelApprovalExecutor, ChannelGoalExecutor, ChannelRouter, ChannelTransport,
+    ChannelTurnExecutor,
 };
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
@@ -232,9 +233,17 @@ impl RequestHandler {
         let fact_store = Arc::new(Mutex::new(fact_store));
 
         // ObjectiveStore
-        let objective_store = ObjectiveStore::open(&aletheon_dir.join("objectives.db"))
-            .context("opening objective store")?;
+        let objective_db_path = aletheon_dir.join("objectives.db");
+        let objective_store =
+            ObjectiveStore::open(&objective_db_path).context("opening objective store")?;
         let objective_store = Arc::new(Mutex::new(objective_store));
+        let apply_objective_store = Arc::new(std::sync::Mutex::new(
+            ObjectiveStore::open(&objective_db_path).context("opening apply objective store")?,
+        ));
+        let approval_repository =
+            crate::r#impl::approval::ApprovalRepository::open(&objective_db_path)
+                .context("opening approval repository")?;
+        let approval_repository = Arc::new(std::sync::Mutex::new(approval_repository));
 
         // M3: terminalize stale runtime calls before making their Goals ready.
         // Recovery records cancellation evidence and never invokes a runtime.
@@ -640,6 +649,7 @@ impl RequestHandler {
                 fact_store,
                 auto_memory,
                 objective_store,
+                approval_repository,
             },
             security: crate::core::SecurityGroup {
                 tool_runner,
@@ -782,7 +792,7 @@ impl RequestHandler {
                 let exec_for_agents = subsystems.runtime.clone();
                 let main_slot = subsystems.main_agent_process_id.clone();
 
-                let _clock_for_agents = clock.clone();
+                let clock_for_agents = clock.clone();
                 let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
                     Arc::new(move |system_prompt, user_prompt, allowed_tools| {
                         let llm = llm_for_agents.clone();
@@ -792,7 +802,7 @@ impl RequestHandler {
                         let sp = system_prompt;
                         let up = user_prompt;
                         let at = allowed_tools;
-                        let clock = clock.clone();
+                        let clock = clock_for_agents.clone();
                         Box::pin(async move {
                             // 1. Register tracked sub-agent with SubAgentSpawner.
                             let agent_id = {
@@ -964,6 +974,22 @@ impl RequestHandler {
             Some(cancel_token.clone()),
         ));
 
+        let approved_apply = if pi_runtime.enabled && pi_work_allowed {
+            Some(Arc::new(crate::r#impl::approval::ApplyCoordinator::new(
+                apply_objective_store,
+                subsystems.memory.approval_repository.clone(),
+                subsystems.ports.operation_table.clone(),
+                clock.clone(),
+                crate::r#impl::approval::ApplyCoordinatorConfig {
+                    worktree_base: pi_runtime.worktree_base.clone(),
+                    timeout: std::time::Duration::from_secs(60),
+                },
+                Arc::new(crate::r#impl::approval::GitManagedWorktreeCleaner),
+            )?))
+        } else {
+            None
+        };
+
         // Clone these before they are moved into the handler struct
         // so they are available for Telegram channel initialization.
         let _turn_orch_for_telegram = turn_orchestrator.clone();
@@ -982,6 +1008,7 @@ impl RequestHandler {
             daemon_cancel_token: Some(cancel_token),
             turn_orchestrator,
             telegram_task: None,
+            approved_apply: approved_apply.clone(),
         };
 
         // Register initial params
@@ -1070,6 +1097,8 @@ impl RequestHandler {
                 data_dir_for_telegram,
                 _turn_orch_for_telegram,
                 handler.subsystems.memory.objective_store.clone(),
+                handler.subsystems.memory.approval_repository.clone(),
+                approved_apply,
                 _cancel_for_telegram,
             );
             handler.telegram_task = Some(Arc::new(jh));
@@ -1087,6 +1116,8 @@ impl RequestHandler {
         data_dir: PathBuf,
         orchestrator: Arc<crate::service::DaemonTurnOrchestrator>,
         objective_store: Arc<Mutex<ObjectiveStore>>,
+        approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+        approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
         cancel: CancellationToken,
     ) -> tokio::task::JoinHandle<()> {
         let store_path = data_dir.join("channels.db");
@@ -1123,10 +1154,33 @@ impl RequestHandler {
 
         let goal_executor: Arc<dyn ChannelGoalExecutor> =
             Arc::new(DaemonChannelGoalExecutor::new(objective_store));
-        let router = ChannelRouter::new(store, turn_executor).with_goal_executor(goal_executor);
+        let approval_repository_for_poll = approval_repository.clone();
+        let approval_conversation = cfg
+            .owner_user_id
+            .map(|id| fabric::channel::ConversationId(id.to_string()));
+        let mut router = ChannelRouter::new(store, turn_executor)
+            .with_goal_executor(goal_executor)
+            .with_approval_repository(approval_repository);
+        if let Some(coordinator) = approved_apply {
+            let executor: Arc<dyn ChannelApprovalExecutor> =
+                Arc::new(DaemonChannelApprovalExecutor::new(
+                    coordinator,
+                    fabric::ProcessId::new(),
+                    cancel.clone(),
+                ));
+            router = router.with_approval_executor(executor);
+        }
 
         tokio::spawn(async move {
-            Self::telegram_poll_loop(router, transport, cursor, cancel).await;
+            Self::telegram_poll_loop(
+                router,
+                transport,
+                cursor,
+                approval_repository_for_poll,
+                approval_conversation,
+                cancel,
+            )
+            .await;
         })
     }
 
@@ -1135,6 +1189,8 @@ impl RequestHandler {
         mut router: ChannelRouter,
         transport: TelegramTransport,
         mut cursor: Option<String>,
+        approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+        approval_conversation: Option<fabric::channel::ConversationId>,
         cancel: CancellationToken,
     ) {
         let mut backoff_ms: u64 = 1_000;
@@ -1144,6 +1200,34 @@ impl RequestHandler {
             if cancel.is_cancelled() {
                 info!("Telegram poll loop exited (cancel token fired)");
                 break;
+            }
+
+            if let Some(conversation) = &approval_conversation {
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let pending = approval_repository
+                    .lock()
+                    .unwrap()
+                    .list_pending(&fabric::PrincipalId("owner".into()), now_ms);
+                match pending {
+                    Ok(pending) => {
+                        for approval in pending {
+                            if let Err(error) = router
+                                .notify_approval(
+                                    &transport,
+                                    conversation.clone(),
+                                    &approval,
+                                    now_ms,
+                                )
+                                .await
+                            {
+                                warn!(approval_id = %approval.id, error = %error, "Telegram approval notification failed");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "Loading pending Telegram approvals failed")
+                    }
+                }
             }
 
             let result = tokio::select! {

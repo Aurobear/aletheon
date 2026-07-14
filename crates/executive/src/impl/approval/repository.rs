@@ -2,7 +2,7 @@ use crate::r#impl::goal::migrations;
 use fabric::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,
     ApprovalRisk, ApprovalSnapshot, ApprovalStatus, ApprovalSubject, AttemptId, CodingJobId,
-    GoalId, PrincipalId,
+    GoalId, OperationId, PrincipalId,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde::{de::DeserializeOwned, Serialize};
@@ -49,6 +49,35 @@ pub struct ApprovalDelivery {
     pub updated_at_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct ApprovalApplyReceipt {
+    pub approval_id: ApprovalId,
+    pub operation_id: OperationId,
+    pub goal_id: GoalId,
+    pub success: bool,
+    pub applied_head: Option<String>,
+    pub diff_sha256: String,
+    pub changed_paths: Vec<std::path::PathBuf>,
+    pub error: Option<String>,
+    pub finished_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalApplyOperation {
+    pub approval_id: ApprovalId,
+    pub operation_id: OperationId,
+    pub status: String,
+    pub started_at_ms: i64,
+    pub finished_at_ms: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalApplyClaim {
+    Claimed(ApprovalApplyOperation),
+    Existing(ApprovalApplyOperation),
+}
+
 #[derive(Debug, Clone)]
 pub struct ApprovalChannelPolicy {
     allowed: BTreeSet<String>,
@@ -88,6 +117,164 @@ impl ApprovalRepository {
     pub fn with_channel_policy(mut self, policy: ApprovalChannelPolicy) -> Self {
         self.channel_policy = policy;
         self
+    }
+
+    pub fn claim_apply(
+        &self,
+        approval_id: ApprovalId,
+        operation_id: OperationId,
+        now_ms: i64,
+    ) -> Result<ApprovalApplyClaim, ApprovalRepositoryError> {
+        let approval = self
+            .get(approval_id)?
+            .ok_or(ApprovalRepositoryError::NotFound(approval_id))?;
+        if approval.status != ApprovalStatus::Approved {
+            return Err(ApprovalRepositoryError::NotApproved);
+        }
+        let changed = self.db.execute(
+            "INSERT OR IGNORE INTO approval_apply_operations (
+                approval_id, operation_id, status, started_at_ms
+             ) VALUES (?1,?2,'running',?3)",
+            params![
+                approval_id.0.to_string(),
+                operation_id.0.to_string(),
+                now_ms
+            ],
+        )?;
+        let operation = self
+            .apply_operation(approval_id)?
+            .ok_or_else(|| ApprovalRepositoryError::Storage("apply claim disappeared".into()))?;
+        Ok(if changed == 1 {
+            ApprovalApplyClaim::Claimed(operation)
+        } else {
+            ApprovalApplyClaim::Existing(operation)
+        })
+    }
+
+    pub fn apply_operation(
+        &self,
+        approval_id: ApprovalId,
+    ) -> Result<Option<ApprovalApplyOperation>, ApprovalRepositoryError> {
+        self.db
+            .query_row(
+                "SELECT operation_id,status,started_at_ms,finished_at_ms,error
+                 FROM approval_apply_operations WHERE approval_id=?1",
+                params![approval_id.0.to_string()],
+                |row| {
+                    let operation: String = row.get(0)?;
+                    let operation = uuid::Uuid::parse_str(&operation).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            error.into(),
+                        )
+                    })?;
+                    Ok(ApprovalApplyOperation {
+                        approval_id,
+                        operation_id: OperationId(operation),
+                        status: row.get(1)?,
+                        started_at_ms: row.get(2)?,
+                        finished_at_ms: row.get(3)?,
+                        error: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn apply_receipt(
+        &self,
+        approval_id: ApprovalId,
+    ) -> Result<Option<ApprovalApplyReceipt>, ApprovalRepositoryError> {
+        self.db
+            .query_row(
+                "SELECT receipt_json FROM approval_apply_receipts WHERE approval_id=?1",
+                params![approval_id.0.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|json| from_wire(&json))
+            .transpose()
+    }
+
+    pub fn finish_apply(
+        &self,
+        receipt: &ApprovalApplyReceipt,
+    ) -> Result<ApprovalSnapshot, ApprovalRepositoryError> {
+        if let Some(existing) = self.apply_receipt(receipt.approval_id)? {
+            if existing == *receipt {
+                return self
+                    .get(receipt.approval_id)?
+                    .ok_or(ApprovalRepositoryError::NotFound(receipt.approval_id));
+            }
+            return Err(ApprovalRepositoryError::AlreadyDecided);
+        }
+        let operation = self
+            .apply_operation(receipt.approval_id)?
+            .ok_or(ApprovalRepositoryError::ApplyNotClaimed)?;
+        if operation.operation_id != receipt.operation_id || operation.status != "running" {
+            return Err(ApprovalRepositoryError::AlreadyDecided);
+        }
+        let current = self
+            .get(receipt.approval_id)?
+            .ok_or(ApprovalRepositoryError::NotFound(receipt.approval_id))?;
+        let next = current.consume(current.version)?;
+        let tx = self.db.unchecked_transaction()?;
+        let changed = tx.execute(
+            "UPDATE approval_requests SET status='consumed',version=?1
+             WHERE approval_id=?2 AND version=?3 AND status='approved'",
+            params![
+                next.version,
+                receipt.approval_id.0.to_string(),
+                current.version
+            ],
+        )?;
+        if changed != 1 {
+            return Err(ApprovalRepositoryError::VersionConflict {
+                expected: current.version,
+                actual: self
+                    .get(receipt.approval_id)?
+                    .map(|v| v.version)
+                    .unwrap_or(0),
+            });
+        }
+        tx.execute(
+            "UPDATE approval_apply_operations SET status=?1,finished_at_ms=?2,error=?3
+             WHERE approval_id=?4 AND operation_id=?5 AND status='running'",
+            params![
+                if receipt.success {
+                    "succeeded"
+                } else {
+                    "failed"
+                },
+                receipt.finished_at_ms,
+                receipt.error,
+                receipt.approval_id.0.to_string(),
+                receipt.operation_id.0.to_string(),
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO approval_apply_receipts
+             (approval_id,operation_id,receipt_json,created_at_ms) VALUES (?1,?2,?3,?4)",
+            params![
+                receipt.approval_id.0.to_string(),
+                receipt.operation_id.0.to_string(),
+                wire(receipt)?,
+                receipt.finished_at_ms,
+            ],
+        )?;
+        append_event(
+            &tx,
+            receipt.approval_id,
+            next.version,
+            "consumed",
+            &serde_json::json!({"operation_id":receipt.operation_id.0,"success":receipt.success}),
+            receipt.finished_at_ms,
+        )?;
+        tx.commit()?;
+        self.get(receipt.approval_id)?
+            .ok_or(ApprovalRepositoryError::NotFound(receipt.approval_id))
     }
 
     pub fn record_delivery_pending(
@@ -658,6 +845,8 @@ pub enum ApprovalRepositoryError {
     ActiveSubjectConflict,
     ReferenceMismatch,
     InvalidRequest,
+    NotApproved,
+    ApplyNotClaimed,
     VersionConflict { expected: u64, actual: u64 },
     Contract(ApprovalContractError),
     Sql(rusqlite::Error),

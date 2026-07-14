@@ -14,6 +14,7 @@ mod frame;
 pub(crate) mod migrations;
 mod retry;
 pub(crate) mod store;
+mod summary;
 mod transition;
 mod verification;
 pub use self::coordinator::{GoalCoordinator, GoalTickOutcome};
@@ -24,6 +25,10 @@ pub use attempt_coordinator::{
 };
 pub use frame::{GoalAttemptSummary, GoalFrame, GoalRemainingBudget};
 pub use retry::{RetryDecision, RetryPolicy};
+pub use summary::{
+    GoalApplyOutcomeSummary, GoalApprovalOutcomeSummary, GoalAttemptOutcomeSummary,
+    GoalCheckOutcomeSummary, GoalCompletionSummary,
+};
 pub use verification::{CodingJobRecoveryRecord, PersistedCodingJob, PersistedVerificationReport};
 
 use anyhow::{Context, Result};
