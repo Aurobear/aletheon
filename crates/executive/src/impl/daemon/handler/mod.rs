@@ -70,6 +70,8 @@ pub struct RequestHandler {
     pub(crate) telegram_task: Option<Arc<tokio::task::JoinHandle<()>>>,
     /// Durable approval-to-apply bridge shared by local RPC and channels.
     pub(crate) approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
+    /// Configured Google control plane. Credentials remain behind its vault-owning boundary.
+    pub(crate) google: Option<Arc<crate::r#impl::external::GoogleIntegration>>,
 }
 
 impl RequestHandler {

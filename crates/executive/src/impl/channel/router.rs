@@ -63,7 +63,17 @@ pub trait ChannelTurnExecutor: Send + Sync {
     ///
     /// Returns the result text on success or a stable error string on
     /// failure.
-    async fn execute(&self, message: &str, correlation_id: &str) -> anyhow::Result<String>;
+    async fn execute(
+        &self,
+        principal: &str,
+        message: &str,
+        correlation_id: &str,
+    ) -> anyhow::Result<String>;
+}
+
+#[async_trait::async_trait]
+pub trait GoogleChannelAccountDirectory: Send + Sync {
+    async fn active_account_labels(&self, principal: &str) -> anyhow::Result<Vec<String>>;
 }
 
 #[async_trait::async_trait]
@@ -221,6 +231,7 @@ pub struct ChannelRouter {
     goal_executor: Option<Arc<dyn ChannelGoalExecutor>>,
     approval_repository: Option<Arc<Mutex<ApprovalRepository>>>,
     approval_executor: Option<Arc<dyn ChannelApprovalExecutor>>,
+    google_accounts: Option<Arc<dyn GoogleChannelAccountDirectory>>,
 }
 
 impl ChannelRouter {
@@ -233,7 +244,16 @@ impl ChannelRouter {
             goal_executor: None,
             approval_repository: None,
             approval_executor: None,
+            google_accounts: None,
         }
+    }
+
+    pub fn with_google_accounts(
+        mut self,
+        accounts: Arc<dyn GoogleChannelAccountDirectory>,
+    ) -> Self {
+        self.google_accounts = Some(accounts);
+        self
     }
 
     pub fn with_approval_repository(mut self, repository: Arc<Mutex<ApprovalRepository>>) -> Self {
@@ -526,17 +546,42 @@ impl ChannelRouter {
         });
         if message.reply_to_action.is_none() {
             if let RoutedInput::Chat(text) = &routed {
-                match self
-                    .turn_executor
-                    .execute(text, &message.correlation_id)
-                    .await
+                let principal = principal.as_deref().expect("principal checked above");
+                let mut selected_query = None;
+                if channel == "telegram"
+                    && super::telegram::is_google_read_query(text)
+                    && self.google_accounts.is_some()
                 {
-                    Ok(reply) => ai_reply = Some(reply),
-                    Err(e) => {
-                        // Executor failure: mark inbox failed so it stays
-                        // retryable, do NOT advance the cursor.
-                        self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
-                        return Err(e);
+                    let labels = self
+                        .google_accounts
+                        .as_ref()
+                        .expect("checked above")
+                        .active_account_labels(principal)
+                        .await?;
+                    if labels.len() > 1 {
+                        ai_reply = Some(super::telegram::account_choice_prompt(&labels));
+                    } else if let Some(label) = labels.first() {
+                        selected_query =
+                            Some(super::telegram::selected_account_context(label, text));
+                    }
+                }
+                if ai_reply.is_some() {
+                    // Account selection is the only preflight response. The
+                    // actual provider query always continues through ReAct.
+                } else {
+                    let query = selected_query.as_deref().unwrap_or(text);
+                    match self
+                        .turn_executor
+                        .execute(principal, query, &message.correlation_id)
+                        .await
+                    {
+                        Ok(reply) => ai_reply = Some(reply),
+                        Err(e) => {
+                            // Executor failure: mark inbox failed so it stays
+                            // retryable, do NOT advance the cursor.
+                            self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
+                            return Err(e);
+                        }
                     }
                 }
             }
@@ -661,11 +706,39 @@ impl ChannelRouter {
             let routed = route_content(&msg.content);
             let mut ai_reply: Option<String> = None;
             if let RoutedInput::Chat(text) = &routed {
-                match self.turn_executor.execute(text, &msg.correlation_id).await {
-                    Ok(reply) => ai_reply = Some(reply),
-                    Err(e) => {
-                        self.fail_inbound(channel_str, &msg.message_id.0, &e.to_string())?;
-                        return Err(e);
+                let principal = principal.as_deref().expect("principal checked above");
+                let mut selected_query = None;
+                if channel_str == "telegram"
+                    && super::telegram::is_google_read_query(text)
+                    && self.google_accounts.is_some()
+                {
+                    let labels = self
+                        .google_accounts
+                        .as_ref()
+                        .expect("checked above")
+                        .active_account_labels(principal)
+                        .await?;
+                    if labels.len() > 1 {
+                        ai_reply = Some(super::telegram::account_choice_prompt(&labels));
+                    } else if let Some(label) = labels.first() {
+                        selected_query =
+                            Some(super::telegram::selected_account_context(label, text));
+                    }
+                }
+                if ai_reply.is_some() {
+                    // Persist the same bounded account prompt used by the live path.
+                } else {
+                    let query = selected_query.as_deref().unwrap_or(text);
+                    match self
+                        .turn_executor
+                        .execute(principal, query, &msg.correlation_id)
+                        .await
+                    {
+                        Ok(reply) => ai_reply = Some(reply),
+                        Err(e) => {
+                            self.fail_inbound(channel_str, &msg.message_id.0, &e.to_string())?;
+                            return Err(e);
+                        }
                     }
                 }
             }

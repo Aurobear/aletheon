@@ -1,5 +1,6 @@
 //! Asynchronous OAuth 2.0 Authorization Code + PKCE client for Google.
 
+use super::client::{GoogleAccessToken, GoogleApiError};
 use crate::tools::mcp::token_store::{TokenEntry, TokenKey, TokenStore};
 use aes_gcm::aead::rand_core::RngCore;
 use aes_gcm::aead::OsRng;
@@ -438,6 +439,31 @@ impl GoogleOAuthProvider {
             .await?;
         self.tokens.set_key(key, refreshed);
         self.tokens.save()
+    }
+
+    pub fn access_credential(
+        &self,
+        identity_id: ExternalIdentityId,
+    ) -> Result<GoogleAccessToken, GoogleApiError> {
+        let key = TokenKey::external(IdentityProvider::Google, identity_id);
+        let entry = self
+            .tokens
+            .get_key(&key)
+            .ok_or(GoogleApiError::CredentialUnavailable)?;
+        if entry.expires_at <= now_secs(&*self.clock) {
+            return Err(GoogleApiError::ReauthorizationRequired);
+        }
+        GoogleAccessToken::new(entry.access_token.clone())
+    }
+
+    pub async fn refresh_credential(
+        &mut self,
+        identity_id: ExternalIdentityId,
+    ) -> Result<GoogleAccessToken, GoogleApiError> {
+        self.refresh(identity_id)
+            .await
+            .map_err(|_| GoogleApiError::ReauthorizationRequired)?;
+        self.access_credential(identity_id)
     }
 
     pub async fn revoke(&mut self, identity_id: ExternalIdentityId) -> Result<()> {

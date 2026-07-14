@@ -6,6 +6,7 @@
 mod rpc_admin;
 mod rpc_approval;
 mod rpc_goal;
+mod rpc_google;
 mod rpc_health;
 mod rpc_memory;
 mod rpc_reflection;
@@ -54,6 +55,16 @@ impl RequestHandler {
             "model_list" => self.handle_model_list(&id, &request).await,
             "model_switch" => self.handle_model_switch(&id, &request).await,
             "tools/list" => self.handle_tools_list(&id, &request).await,
+            "google.authorization.start" => {
+                self.handle_google_authorization_start(&id, &request).await
+            }
+            "google.authorization.callback" => {
+                self.handle_google_authorization_callback(&id, &request)
+                    .await
+            }
+            "google.accounts.list" => self.handle_google_accounts_list(&id, &request).await,
+            "google.accounts.revoke" => self.handle_google_account_revoke(&id, &request).await,
+            "google.token.refresh" => self.handle_google_token_refresh(&id, &request).await,
             "hooks_list" => self.handle_hooks_list(&id, &request).await,
             "sub_agents" => self.handle_sub_agents(&id, &request).await,
 

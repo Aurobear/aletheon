@@ -126,6 +126,51 @@ impl ExternalIdentityRepository {
         Ok(bindings)
     }
 
+    pub fn has_active_scope(&self, scope: ExternalScope) -> Result<bool, ExternalRepositoryError> {
+        let mut statement = self.db.prepare(
+            "SELECT g.scopes_json FROM capability_grants g
+             JOIN external_identities i USING(identity_id)
+             WHERE g.state='active' AND i.state='active'",
+        )?;
+        for scopes_json in statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+        {
+            let scopes: Vec<ExternalScope> = serde_json::from_str(&scopes_json)?;
+            if scopes.contains(&scope) && scopes.iter().all(|candidate| !candidate.is_write()) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn resolve_account(
+        &self,
+        principal_id: &PrincipalId,
+        account_reference: &str,
+    ) -> Result<Option<ExternalIdentityId>, ExternalRepositoryError> {
+        if let Ok(uuid) = uuid::Uuid::parse_str(account_reference) {
+            let id = ExternalIdentityId(uuid);
+            return Ok(self.get(principal_id, id)?.map(|_| id));
+        }
+        let mut statement = self.db.prepare(
+            "SELECT identity_id FROM external_identities
+             WHERE principal_id=?1 AND alias=?2 AND state='active'
+             ORDER BY identity_id LIMIT 2",
+        )?;
+        let ids = statement
+            .query_map(params![principal_id.0, account_reference], |row| {
+                let value: String = row.get(0)?;
+                parse_uuid(&value, 0).map(ExternalIdentityId)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        match ids.as_slice() {
+            [] => Ok(None),
+            [id] => Ok(Some(*id)),
+            _ => Err(ExternalRepositoryError::AmbiguousAccount),
+        }
+    }
+
     pub fn update_grant(
         &self,
         principal_id: &PrincipalId,
@@ -294,6 +339,7 @@ pub enum ExternalRepositoryError {
     Contract(String),
     DuplicateBinding,
     NotFound,
+    AmbiguousAccount,
     VersionConflict { expected: u64, actual: u64 },
 }
 
@@ -304,6 +350,7 @@ impl fmt::Display for ExternalRepositoryError {
             Self::Contract(message) => write!(f, "external identity contract failed: {message}"),
             Self::DuplicateBinding => f.write_str("external account is already bound"),
             Self::NotFound => f.write_str("external account not found"),
+            Self::AmbiguousAccount => f.write_str("external account alias is ambiguous"),
             Self::VersionConflict { expected, actual } => {
                 write!(
                     f,

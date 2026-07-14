@@ -28,6 +28,9 @@ use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
+use corpus::tools::google::{
+    GoogleApiClient, GoogleApiEndpoints, GoogleCalendarAdapter, GoogleGmailAdapter,
+};
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
 use fabric::hook::{HookContext, HookPoint};
@@ -57,6 +60,10 @@ use crate::r#impl::channel::router::{
 };
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
+use crate::r#impl::external::{
+    ExecutiveGoogleAccountResolver, ExecutiveGoogleCredentialSource, ExternalIdentityRepository,
+    GoogleIntegration,
+};
 use crate::r#impl::goal::ObjectiveStore;
 use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
 use crate::r#impl::runtime::{register_pi_runtime, ProviderWorkerRuntime};
@@ -140,6 +147,62 @@ pub(crate) fn register_goal_runtimes(
         registered.push(runtime_id);
     }
     Ok(registered)
+}
+
+fn register_configured_google_read_tools(
+    tools: &mut ToolRegistry,
+    objective_db_path: &std::path::Path,
+    clock: Arc<dyn Clock>,
+) -> anyhow::Result<Option<Arc<GoogleIntegration>>> {
+    let client_id = match std::env::var("ALETHEON_GOOGLE_CLIENT_ID") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => return Ok(None),
+    };
+    let redirect_uri = std::env::var("ALETHEON_GOOGLE_REDIRECT_URI")
+        .context("ALETHEON_GOOGLE_REDIRECT_URI is required when Google is configured")?;
+    let client_secret = std::env::var("ALETHEON_GOOGLE_CLIENT_SECRET")
+        .ok()
+        .filter(|value| !value.is_empty());
+
+    let repository = ExternalIdentityRepository::open(objective_db_path)
+        .context("opening external identity repository")?;
+    let gmail_enabled = repository.has_active_scope(fabric::ExternalScope::GmailReadonly)?;
+    let calendar_enabled = repository.has_active_scope(fabric::ExternalScope::CalendarReadonly)?;
+    let scopes = vec![
+        fabric::ExternalScope::OpenId,
+        fabric::ExternalScope::UserInfoEmail,
+        fabric::ExternalScope::GmailReadonly,
+        fabric::ExternalScope::CalendarReadonly,
+    ];
+    let tokens = corpus::tools::mcp::token_store::TokenStore::open_default()
+        .context("opening encrypted Google credential vault")?;
+    let oauth = corpus::tools::google::oauth::GoogleOAuthProvider::new(
+        client_id,
+        client_secret,
+        redirect_uri,
+        scopes,
+        tokens,
+        clock,
+    )?;
+    let repository = Arc::new(std::sync::Mutex::new(repository));
+    let oauth = Arc::new(Mutex::new(oauth));
+    let integration = Arc::new(GoogleIntegration::new(repository.clone(), oauth.clone()));
+    let credentials = Arc::new(ExecutiveGoogleCredentialSource::new(
+        repository.clone(),
+        oauth,
+    ));
+    let accounts = Arc::new(ExecutiveGoogleAccountResolver::new(repository));
+    let client = GoogleApiClient::new(credentials, GoogleApiEndpoints::default())?;
+    let gmail = gmail_enabled.then(|| {
+        Arc::new(GoogleGmailAdapter::new(client.clone()))
+            as Arc<dyn corpus::tools::google::GmailCapability>
+    });
+    let calendar = calendar_enabled.then(|| {
+        Arc::new(GoogleCalendarAdapter::new(client))
+            as Arc<dyn corpus::tools::google::CalendarCapability>
+    });
+    tools.register_google_read_tools(gmail, calendar, accounts)?;
+    Ok(Some(integration))
 }
 
 impl RequestHandler {
@@ -392,6 +455,17 @@ impl RequestHandler {
             fact_store: Some(fact_store.clone()),
             clock: clock.clone(),
         }));
+        let google = match register_configured_google_read_tools(
+            &mut tools,
+            &objective_db_path,
+            clock.clone(),
+        ) {
+            Ok(integration) => integration,
+            Err(error) => {
+                warn!(error = %error, "Google read integration disabled");
+                None
+            }
+        };
 
         // MCP servers. Keep the manager alive: gbrain recall/capture calls the
         // same authenticated connections after startup tool registration.
@@ -1009,6 +1083,7 @@ impl RequestHandler {
             turn_orchestrator,
             telegram_task: None,
             approved_apply: approved_apply.clone(),
+            google,
         };
 
         // Register initial params
@@ -1099,6 +1174,7 @@ impl RequestHandler {
                 handler.subsystems.memory.objective_store.clone(),
                 handler.subsystems.memory.approval_repository.clone(),
                 approved_apply,
+                handler.google.clone(),
                 _cancel_for_telegram,
             );
             handler.telegram_task = Some(Arc::new(jh));
@@ -1118,6 +1194,7 @@ impl RequestHandler {
         objective_store: Arc<Mutex<ObjectiveStore>>,
         approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
         approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
+        google: Option<Arc<GoogleIntegration>>,
         cancel: CancellationToken,
     ) -> tokio::task::JoinHandle<()> {
         let store_path = data_dir.join("channels.db");
@@ -1161,6 +1238,9 @@ impl RequestHandler {
         let mut router = ChannelRouter::new(store, turn_executor)
             .with_goal_executor(goal_executor)
             .with_approval_repository(approval_repository);
+        if let Some(google) = google {
+            router = router.with_google_accounts(google);
+        }
         if let Some(coordinator) = approved_apply {
             let executor: Arc<dyn ChannelApprovalExecutor> =
                 Arc::new(DaemonChannelApprovalExecutor::new(
