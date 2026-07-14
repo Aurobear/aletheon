@@ -247,4 +247,48 @@ impl ObjectiveStore {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
     }
+
+    /// Recover goals at daemon startup.
+    ///
+    /// Policy:
+    /// - Running goals: clear stale process link, transition to Ready, log event
+    /// - Draft, Ready, Suspended, AwaitingHuman, Blocked: leave as-is
+    /// - Terminal: not returned by `recoverable_goals()`
+    pub fn recover_goals(&self) -> Result<Vec<GoalSnapshot>> {
+        let candidates = self.recoverable_goals()?;
+        let mut recovered = Vec::with_capacity(candidates.len());
+
+        for goal in candidates {
+            match goal.state {
+                GoalState::Running => {
+                    let tx = self.db.unchecked_transaction()?;
+                    let new_version = goal.version + 1;
+                    tx.execute(
+                        "UPDATE objectives SET goal_state = 'ready', process_id = NULL,
+                         version = ?1, updated_at = datetime('now')
+                         WHERE objective_id = ?2",
+                        rusqlite::params![new_version, goal.id.0],
+                    )?;
+                    tx.execute(
+                        "INSERT INTO goal_events (objective_id, version, event_type, payload_json)
+                         VALUES (?1, ?2, 'recovered', ?3)",
+                        rusqlite::params![
+                            goal.id.0,
+                            new_version,
+                            serde_json::json!({"action": "recover", "from": "running", "to": "ready"}).to_string(),
+                        ],
+                    )?;
+                    tx.commit()?;
+                    let fresh = self
+                        .get_goal(goal.id)?
+                        .ok_or_else(|| anyhow::anyhow!("goal {} disappeared during recovery", goal.id))?;
+                    recovered.push(fresh);
+                }
+                _ => {
+                    recovered.push(goal);
+                }
+            }
+        }
+        Ok(recovered)
+    }
 }
