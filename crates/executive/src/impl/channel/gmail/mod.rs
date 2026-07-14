@@ -1,6 +1,7 @@
 //! Authenticated Gmail channel ingress and durable classification.
 
 pub mod classifier;
+pub mod ingest;
 pub mod sender_policy;
 
 use self::classifier::{classify_verified_subject, GmailClassification};
