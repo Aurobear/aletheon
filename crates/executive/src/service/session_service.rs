@@ -4,7 +4,8 @@ use std::{collections::HashSet, sync::Arc};
 
 use anyhow::{bail, Result};
 use fabric::{
-    SessionAppendStore, SessionFork, SessionId, SessionRecord, SessionStatus,
+    AppendOutcome, ContentBlock, ItemId, ItemPayload, ItemRecord, Message, Role,
+    SessionAppendStore, SessionFork, SessionId, SessionRecord, SessionStatus, TurnId,
     SESSION_SCHEMA_VERSION,
 };
 use tokio::sync::Mutex;
@@ -58,6 +59,52 @@ impl SessionService {
         })
     }
 
+    /// Ensure a legacy session has a canonical Session/Turn/Item projection.
+    ///
+    /// Import is intentionally append-only: an existing canonical history is
+    /// never rewritten from the compatibility journal.
+    pub async fn ensure_legacy_projection(
+        &self,
+        session_id: &SessionId,
+        messages: &[Message],
+        created_at_ms: u64,
+    ) -> Result<()> {
+        if self.store.load_session(session_id).await?.is_none() {
+            self.store
+                .create(SessionRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: session_id.clone(),
+                    parent: None,
+                    created_at_ms,
+                    status: SessionStatus::Active,
+                })
+                .await?;
+        }
+        if !self.store.load_items(session_id, None).await?.is_empty() {
+            return Ok(());
+        }
+
+        let mut sequence = 1;
+        for message in messages {
+            let turn_id = TurnId::new();
+            for payload in legacy_message_payloads(message) {
+                let item = ItemRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: ItemId::new(),
+                    session_id: session_id.clone(),
+                    turn_id,
+                    sequence,
+                    created_at_ms,
+                    payload,
+                };
+                match self.store.append(session_id, sequence, item).await? {
+                    AppendOutcome::Appended | AppendOutcome::AlreadyPresent => sequence += 1,
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn fork(&self, parent: &SessionId, through_sequence: u64) -> Result<SessionRecord> {
         let child = SessionRecord {
             schema_version: SESSION_SCHEMA_VERSION,
@@ -99,4 +146,45 @@ impl SessionService {
         interrupted.insert(session_id.0.clone());
         Ok(InterruptOutcome::Interrupted)
     }
+}
+
+fn legacy_message_payloads(message: &Message) -> Vec<ItemPayload> {
+    let mut payloads = Vec::new();
+    for block in &message.content {
+        let payload = match block {
+            ContentBlock::Text { text } => match message.role {
+                Role::User => ItemPayload::UserMessage {
+                    content: text.clone(),
+                },
+                Role::Assistant => ItemPayload::AssistantMessage {
+                    content: text.clone(),
+                },
+                Role::System => ItemPayload::SystemNotice {
+                    content: text.clone(),
+                },
+            },
+            ContentBlock::ToolUse { id, name, input } => ItemPayload::ToolCall {
+                call_id: id.clone(),
+                name: name.clone(),
+                input: input.clone(),
+            },
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => ItemPayload::ToolResult {
+                call_id: tool_use_id.clone(),
+                content: content.clone(),
+                is_error: *is_error,
+                permit_id: None,
+                audit_id: None,
+            },
+            ContentBlock::System { text, .. } => ItemPayload::SystemNotice {
+                content: text.clone(),
+            },
+            ContentBlock::Thinking { .. } | ContentBlock::Image { .. } => continue,
+        };
+        payloads.push(payload);
+    }
+    payloads
 }

@@ -49,8 +49,8 @@ impl RequestHandler {
         let params = &request["params"];
         let description = params["description"].as_str().unwrap_or("");
         let scope = params["scope"].as_str().unwrap_or("session");
-        let session_id = match self.get_or_create_session(None).await {
-            Ok(value) => value.0,
+        let session_id = match self.ports.sessions.current().await {
+            Ok(value) => value.session_id,
             Err(error) => {
                 return json!({
                     "jsonrpc": "2.0",
@@ -170,8 +170,8 @@ impl RequestHandler {
             });
         }
         let scope = params["scope"].as_str().unwrap_or("session");
-        let session_id = match self.get_or_create_session(None).await {
-            Ok(value) => value.0,
+        let session_id = match self.ports.sessions.current().await {
+            Ok(value) => value.session_id,
             Err(error) => {
                 return json!({
                     "jsonrpc": "2.0",

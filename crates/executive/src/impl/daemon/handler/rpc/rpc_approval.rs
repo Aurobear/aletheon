@@ -16,7 +16,7 @@ const APPROVAL_STORAGE: i64 = -32040;
 
 impl RequestHandler {
     async fn authenticated_approval_context(&self) -> Result<ApprovalContext, anyhow::Error> {
-        let session_id = self.get_or_create_session(None).await?.0;
+        let session_id = self.ports.sessions.current().await?.session_id;
         Ok(ApprovalContext {
             principal_id: PrincipalId(session_id),
             channel: "local_rpc".into(),

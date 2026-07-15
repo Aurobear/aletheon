@@ -1059,18 +1059,6 @@ impl RequestHandler {
         let context_assembler = Arc::new(crate::service::context_assembler::ContextAssembler::new(
             context_source,
         ));
-        let legacy_sessions: Arc<
-            dyn crate::service::legacy_session_service::LegacySessionUseCases,
-        > = Arc::new(
-            crate::service::legacy_session_service::LegacySessionService::new(
-                sessions.clone(),
-                default_session_id.clone(),
-                session_created_at.clone(),
-                data_dir.clone(),
-                context_window,
-                clock.clone(),
-            ),
-        );
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
             kernel,
             domains,
@@ -1103,13 +1091,13 @@ impl RequestHandler {
                 hooks_config,
             },
             session: crate::core::SessionGroup {
-                default_session_id,
-                session_created_at,
+                default_session_id: default_session_id.clone(),
+                session_created_at: session_created_at.clone(),
                 cached_prefix,
                 memory_queue,
                 context_window,
                 config_prompt: config.system_prompt.clone(),
-                data_dir,
+                data_dir: data_dir.clone(),
             },
             pipeline,
             debug_handler,
@@ -1536,6 +1524,22 @@ impl RequestHandler {
                 goal_worker: goal_worker_task.clone(),
             }),
         );
+        let legacy_sessions: Arc<
+            dyn crate::service::legacy_session_service::LegacySessionUseCases,
+        > = Arc::new(
+            crate::service::legacy_session_service::LegacySessionService::new(
+                crate::service::legacy_session_service::LegacySessionResources {
+                    registry: sessions.clone(),
+                    default_id: default_session_id,
+                    created_at: session_created_at,
+                    data_dir,
+                    context_window,
+                    clock: clock.clone(),
+                    llm: llm.clone(),
+                    canonical: turn_orchestrator.session_service.clone(),
+                },
+            ),
+        );
         let handler_ports = Arc::new(super::ports::HandlerPorts::new(
             fact_use_cases,
             goal_use_cases,
@@ -1546,7 +1550,6 @@ impl RequestHandler {
         let mut handler = Self {
             ports: handler_ports,
             subsystems,
-            sessions,
             session_gateway,
             bus,
             llm,

@@ -6,7 +6,6 @@ pub(crate) mod format;
 mod init;
 mod ports;
 mod rpc;
-mod session_routing;
 pub(crate) mod tool_executor;
 mod turn_handler;
 
@@ -19,7 +18,6 @@ use fabric::Timer;
 use tokio_util::sync::CancellationToken;
 
 use super::model_router::ModelRouter;
-use super::session_manager::SessionManager;
 use crate::core::core_systems::CoreSystems;
 use crate::service::DaemonTurnOrchestrator;
 use fabric::envelope::Payload;
@@ -28,9 +26,7 @@ use fabric::CommunicationBus;
 use fabric::LlmProvider;
 use fabric::{Context as AbiContext, Intent, SelfFieldOps, Verdict};
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::path::Path;
 use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 
@@ -44,8 +40,6 @@ pub struct RequestHandler {
     pub(crate) ports: Arc<ports::HandlerPorts>,
     /// All subsystem types — becomes `Arc<dyn TraitOps>` in Group B.
     pub(crate) subsystems: Arc<CoreSystems>,
-    /// Multi-session registry.
-    pub(crate) sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
     /// Session gateway for external agent debug access.
     pub(crate) session_gateway: Arc<SessionGateway>,
     /// Communication bus (always available after init).
@@ -409,26 +403,11 @@ impl RequestHandler {
     /// Without this, a TUI launched in one checkout inherits tool paths from
     /// the last TUI that happened to use the daemon's global default session.
     async fn select_workspace_session(&self, working_dir: &Path) -> anyhow::Result<()> {
-        static WORKSPACE_SESSIONS: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
-        let routing = WORKSPACE_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut routing = routing.lock().await;
-
-        if let Some(session_id) = routing.get(working_dir).cloned() {
-            *self.subsystems.session.default_session_id.lock().await = session_id;
-            return Ok(());
-        }
-
-        let session_id = uuid::Uuid::new_v4().to_string();
-        let manager = SessionManager::new(
-            &self.subsystems.session.data_dir,
-            session_id.clone(),
-            self.subsystems.session.context_window,
-            self.subsystems.kernel.clock(),
-        )
-        .await?;
-        self.register_default_session(session_id.clone(), manager)
-            .await;
-        routing.insert(working_dir.to_path_buf(), session_id.clone());
+        let session_id = self
+            .ports
+            .sessions
+            .route_workspace(working_dir.to_path_buf())
+            .await?;
         tracing::info!(%session_id, cwd = %working_dir.display(), "Selected new workspace session");
         Ok(())
     }

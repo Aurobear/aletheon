@@ -21,19 +21,15 @@ impl RequestHandler {
             .session_id
             .clone();
         let iteration = self.subsystems.runtime.lock().await.iteration();
-        let turn_count = {
-            let (_sid, sm_arc) = match self.get_or_create_session(None).await {
-                Ok(v) => v,
-                Err(e) => {
-                    return json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": { "code": -32000, "message": e.to_string() }
-                    })
-                }
-            };
-            let tc = sm_arc.lock().await.turn_count();
-            tc
+        let turn_count = match self.ports.sessions.current().await {
+            Ok(snapshot) => snapshot.turn_count,
+            Err(error) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32000, "message": error.to_string() }
+                })
+            }
         };
 
         // Reflection and evolution counts from episodic memory
@@ -102,7 +98,12 @@ impl RequestHandler {
         let active = self
             .active_connections
             .load(std::sync::atomic::Ordering::Relaxed);
-        let session_count = self.sessions.lock().await.len();
+        let session_count = self
+            .ports
+            .sessions
+            .list()
+            .await
+            .map_or(0, |items| items.len());
         let minimum_free_bytes = std::env::var("ALETHEON_MINIMUM_FREE_BYTES")
             .ok()
             .and_then(|value| value.parse().ok())
