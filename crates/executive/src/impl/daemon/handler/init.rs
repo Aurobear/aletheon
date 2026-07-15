@@ -1012,10 +1012,11 @@ impl RequestHandler {
         );
         let gbrain_worker_task = gbrain_runtime.worker_task;
 
-        let ports = aletheon_kernel::service::ServicePorts::new()
-            .with_agora(Arc::new(agora::AgoraRegistry::new()));
+        let kernel = Arc::new(aletheon_kernel::KernelRuntime::new());
+        let domains = crate::core::DomainPorts::new(Arc::new(agora::AgoraRegistry::new()));
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
-            ports,
+            kernel,
+            domains,
             runtime: Arc::new(Mutex::new(runtime)),
             self_field,
             reflector,
@@ -1134,18 +1135,15 @@ impl RequestHandler {
             None
         };
 
-        // Repoint the sub-agent spawner at the shared kernel tables so
-        // sub-agents register in the same ProcessTable/OperationTable as the
-        // main agent (Phase 2c: enables fork-on-spawn for process parents).
+        // Repoint the sub-agent spawner at the shared opaque runtime so all
+        // agents use the same authoritative lifecycle state.
         {
-            let pt = subsystems.ports.process_table.clone();
-            let ot = subsystems.ports.operation_table.clone();
             subsystems
                 .runtime
                 .lock()
                 .await
                 .sub_agent_spawner_mut()
-                .set_shared_tables(pt, ot);
+                .set_kernel(subsystems.kernel.clone());
         }
 
         // Clone clock before the agent-tool closure consumes the original binding.
@@ -1367,7 +1365,7 @@ impl RequestHandler {
                 crate::r#impl::approval::ApplyCoordinator::new(
                     apply_objective_store,
                     subsystems.memory.approval_repository.clone(),
-                    subsystems.ports.operation_table.clone(),
+                    subsystems.kernel.clone(),
                     clock.clone(),
                     crate::r#impl::approval::ApplyCoordinatorConfig {
                         worktree_base: pi_runtime.worktree_base.clone(),

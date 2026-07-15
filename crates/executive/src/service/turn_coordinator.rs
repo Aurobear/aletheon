@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, future::Future, sync::Arc};
 
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 use anyhow::{anyhow, Result};
 use fabric::{
     CancelReason, ItemId, ItemPayload, ItemRecord, MonoDeadline, OperationKind, OperationManager,
@@ -26,17 +26,17 @@ pub struct ActiveTurn {
 }
 
 pub struct TurnCoordinator {
-    operations: Arc<aletheon_kernel::operation::OperationTable>,
+    kernel: Arc<KernelRuntime>,
     clock: Arc<dyn fabric::Clock>,
     store: Arc<dyn SessionAppendStore>,
     active: Arc<Mutex<HashMap<String, ActiveTurn>>>,
 }
 
 impl TurnCoordinator {
-    pub fn new(ports: &ServicePorts, store: Arc<dyn SessionAppendStore>) -> Self {
+    pub fn new(kernel: Arc<KernelRuntime>, store: Arc<dyn SessionAppendStore>) -> Self {
         Self {
-            operations: ports.operation_table.clone(),
-            clock: ports.clock.clone(),
+            clock: kernel.clock(),
+            kernel,
             store,
             active: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -73,7 +73,7 @@ impl TurnCoordinator {
         Fut: Future<Output = Result<TurnExecution>>,
     {
         let operation = self
-            .operations
+            .kernel
             .submit(OperationRequest {
                 owner: request.process_id,
                 parent: None,
@@ -84,7 +84,7 @@ impl TurnCoordinator {
             })
             .await?;
         let has_deadline = request.deadline.is_some();
-        self.operations.start(operation.id).await?;
+        self.kernel.start_operation(operation.id).await?;
         request.operation_id = operation.id;
         let cancel = CancellationToken::new();
         self.active.lock().await.insert(
@@ -103,10 +103,10 @@ impl TurnCoordinator {
             Ok(result) => {
                 let terminal = match result.stop {
                     TurnStop::Completed if result.metrics.completed_normally => {
-                        self.operations.succeed(operation.id).await
+                        self.kernel.succeed_operation(operation.id).await
                     }
                     TurnStop::Cancelled => {
-                        self.operations
+                        self.kernel
                             .cancel(
                                 operation.id,
                                 if has_deadline {
@@ -118,8 +118,8 @@ impl TurnCoordinator {
                             .await
                     }
                     _ => {
-                        self.operations
-                            .fail(operation.id, format!("{:?}", result.stop))
+                        self.kernel
+                            .fail_operation(operation.id, format!("{:?}", result.stop))
                             .await
                     }
                 };
@@ -127,8 +127,8 @@ impl TurnCoordinator {
                 Ok(result)
             }
             Err(error) => {
-                self.operations
-                    .fail(operation.id, error.to_string())
+                self.kernel
+                    .fail_operation(operation.id, error.to_string())
                     .await?;
                 Err(error)
             }

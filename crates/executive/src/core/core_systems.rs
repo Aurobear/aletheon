@@ -19,7 +19,7 @@ use crate::core::memory_group::MemoryGroup;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::core::security_group::SecurityGroup;
 use crate::core::session_group::SessionGroup;
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use cognit::core::reflector::Reflector;
@@ -27,16 +27,13 @@ use cognit::core::reflector::Reflector;
 /// Bundle of subsystem types.
 ///
 /// In Group B, each field transitions to `Arc<dyn TraitOps>`.
-/// New code should prefer `ports: ServicePorts` for kernel primitives;
-/// domain-specific services (memory, corpus, etc.) remain in `CoreSystems`
-/// until their port structs are defined.
+/// Kernel mechanisms and cognitive domain ports are separate authorities.
 pub struct CoreSystems {
-    /// Kernel service ports — the canonical access point for process/operation/
-    /// supervision/clock/mailbox/admission/agora/budget/lease primitives.
-    ///
-    /// This field is the first step of Phase 6A contraction. Over time, more
-    /// services will migrate from `CoreSystems` into `ServicePorts`.
-    pub ports: ServicePorts,
+    /// Opaque authority for process, operation, space and resource lifecycle.
+    pub kernel: Arc<KernelRuntime>,
+
+    /// Executive-owned cognitive domain composition; never stored in Kernel.
+    pub domains: crate::core::DomainPorts,
 
     // --- Orchestrator ---
     pub runtime: Arc<Mutex<AletheonExecutive>>,

@@ -1,15 +1,22 @@
 //! Opaque, domain-neutral Kernel lifecycle composition.
 
+use crate::admission::budget::InMemoryBudgetController;
+use crate::admission::lease::InMemoryResourceLeaseManager;
+use crate::admission::ProductionAdmissionController;
 use crate::chronos::SystemClock;
 use crate::operation::OperationTable;
 use crate::process::ProcessTable;
 use crate::space::InMemorySpaceManager;
+use crate::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
+use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::{
-    CancelReason, Clock, ContextSpace, ExitReason, ExitStatus, OperationHandle, OperationId,
-    OperationManager, OperationRecord, OperationRequest, OperationResult, ProcessHandle, ProcessId,
-    ProcessManager, ProcessSignal, ProcessSnapshot, SpaceId, SpawnSpec,
+    AdmissionController, CancelReason, Clock, ContextBinding, ContextSpace, ExitReason, ExitStatus,
+    OperationHandle, OperationId, OperationManager, OperationRecord, OperationRequest,
+    OperationResult, ProcessHandle, ProcessId, ProcessManager, ProcessSignal, ProcessSnapshot,
+    SpaceId, SpawnSpec,
 };
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// The sole cross-table lifecycle handle.
 ///
@@ -20,14 +27,54 @@ pub struct KernelRuntime {
     spaces: Arc<InMemorySpaceManager>,
     processes: Arc<ProcessTable>,
     operations: Arc<OperationTable>,
+    supervisor: Mutex<SupervisorTree>,
+    mailboxes: Arc<InProcessMailboxService>,
+    admission: Arc<dyn AdmissionController>,
+    budget: Arc<InMemoryBudgetController>,
+    leases: Arc<InMemoryResourceLeaseManager>,
 }
 
 impl KernelRuntime {
     pub fn new() -> Self {
-        Self::with_clock(Arc::new(SystemClock::new()))
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
+        let budget = Arc::new(InMemoryBudgetController::new());
+        let leases = Arc::new(InMemoryResourceLeaseManager::new());
+        let admission: Arc<dyn AdmissionController> = Arc::new(
+            ProductionAdmissionController::new(clock.clone())
+                .with_budget(budget.clone())
+                .with_leases(leases.clone())
+                .with_sandbox_available(false),
+        );
+        Self::with_components(clock, admission, budget, leases)
     }
 
     pub fn with_clock(clock: Arc<dyn Clock>) -> Self {
+        let budget = Arc::new(InMemoryBudgetController::new());
+        let leases = Arc::new(InMemoryResourceLeaseManager::new());
+        let admission: Arc<dyn AdmissionController> = Arc::new(
+            ProductionAdmissionController::new(clock.clone())
+                .with_budget(budget.clone())
+                .with_leases(leases.clone())
+                .with_sandbox_available(false),
+        );
+        Self::with_components(clock, admission, budget, leases)
+    }
+
+    pub fn with_admission(clock: Arc<dyn Clock>, admission: Arc<dyn AdmissionController>) -> Self {
+        Self::with_components(
+            clock,
+            admission,
+            Arc::new(InMemoryBudgetController::new()),
+            Arc::new(InMemoryResourceLeaseManager::new()),
+        )
+    }
+
+    fn with_components(
+        clock: Arc<dyn Clock>,
+        admission: Arc<dyn AdmissionController>,
+        budget: Arc<InMemoryBudgetController>,
+        leases: Arc<InMemoryResourceLeaseManager>,
+    ) -> Self {
         let spaces = Arc::new(InMemorySpaceManager::new());
         let processes = Arc::new(ProcessTable::with_space_manager(
             clock.clone(),
@@ -39,11 +86,44 @@ impl KernelRuntime {
             spaces,
             processes,
             operations,
+            supervisor: Mutex::new(SupervisorTree::new()),
+            mailboxes: Arc::new(InProcessMailboxService::new()),
+            admission,
+            budget,
+            leases,
         }
     }
 
     pub fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
+    }
+
+    pub fn admission(&self) -> Arc<dyn AdmissionController> {
+        self.admission.clone()
+    }
+
+    pub fn mailbox_service(&self) -> Arc<InProcessMailboxService> {
+        self.mailboxes.clone()
+    }
+
+    pub fn budget_controller(&self) -> Arc<InMemoryBudgetController> {
+        self.budget.clone()
+    }
+
+    pub fn lease_manager(&self) -> Arc<InMemoryResourceLeaseManager> {
+        self.leases.clone()
+    }
+
+    pub async fn supervise(&self, process: ProcessId, policy: RestartPolicy) {
+        self.supervisor.lock().await.supervise(process, policy);
+    }
+
+    pub async fn record_supervised_exit(
+        &self,
+        process: ProcessId,
+        reason: &ExitReason,
+    ) -> RestartDecision {
+        self.supervisor.lock().await.record_exit(process, reason)
     }
 
     pub async fn spawn_process(&self, spec: SpawnSpec) -> anyhow::Result<ProcessHandle> {
@@ -66,6 +146,20 @@ impl KernelRuntime {
         self.processes.wait(id).await
     }
 
+    pub async fn set_active_operation(
+        &self,
+        process: ProcessId,
+        operation: Option<OperationId>,
+    ) -> anyhow::Result<()> {
+        self.processes
+            .set_active_operation(process, operation)
+            .await
+    }
+
+    pub async fn reap_process(&self, id: ProcessId) -> anyhow::Result<fabric::ProcessRecord> {
+        self.processes.reap(id).await
+    }
+
     pub async fn submit_operation(
         &self,
         request: OperationRequest,
@@ -73,6 +167,16 @@ impl KernelRuntime {
         let owner = self.processes.inspect(request.owner).await?;
         anyhow::ensure!(!owner.state.is_terminal(), "operation owner is terminal");
         self.operations.submit(request).await
+    }
+
+    pub async fn submit_operation_with_id(
+        &self,
+        id: OperationId,
+        request: OperationRequest,
+    ) -> anyhow::Result<OperationHandle> {
+        let owner = self.processes.inspect(request.owner).await?;
+        anyhow::ensure!(!owner.state.is_terminal(), "operation owner is terminal");
+        self.operations.submit_with_id(id, request).await
     }
 
     pub async fn start_operation(&self, id: OperationId) -> anyhow::Result<()> {
@@ -117,6 +221,23 @@ impl KernelRuntime {
 
     pub fn inspect_space(&self, id: SpaceId) -> Option<ContextSpace> {
         self.spaces.get_space(id)
+    }
+
+    pub fn upsert_space_binding(&self, id: SpaceId, binding: ContextBinding) {
+        self.spaces.upsert_binding(id, binding);
+    }
+
+    pub fn set_space_overlay(
+        &self,
+        id: SpaceId,
+        key: impl Into<String>,
+        value: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        self.spaces.set_overlay(id, key, value)
+    }
+
+    pub fn release_space(&self, id: SpaceId) -> bool {
+        self.spaces.release(id)
     }
 }
 

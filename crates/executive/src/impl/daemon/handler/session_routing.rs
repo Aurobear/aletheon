@@ -41,7 +41,7 @@ impl RequestHandler {
             &self.subsystems.session.data_dir,
             id.clone(),
             self.subsystems.session.context_window,
-            self.subsystems.ports.clock.clone(),
+            self.subsystems.kernel.clock(),
         )
         .await
         {
@@ -54,7 +54,7 @@ impl RequestHandler {
                     .session_created_at
                     .lock()
                     .await
-                    .insert(id.clone(), self.subsystems.ports.clock.mono_now());
+                    .insert(id.clone(), self.subsystems.kernel.clock().mono_now());
                 info!(session_id = %id, "Session created on demand");
                 Ok((id, sm))
             }
@@ -94,6 +94,9 @@ impl RequestHandler {
             .session_created_at
             .lock()
             .await
-            .insert(session_id.clone(), self.subsystems.ports.clock.mono_now());
+            .insert(
+                session_id.clone(),
+                self.subsystems.kernel.clock().mono_now(),
+            );
     }
 }

@@ -315,7 +315,6 @@ impl RequestHandler {
         ) {
             let service = crate::service::session_service::SessionService::new(
                 self.turn_orchestrator.coordinator.store(),
-                self.turn_orchestrator.operation_table.clone(),
                 self.turn_orchestrator.coordinator.active_index(),
             );
             let session_id = fabric::SessionId(
@@ -428,7 +427,7 @@ impl RequestHandler {
             &self.subsystems.session.data_dir,
             session_id.clone(),
             self.subsystems.session.context_window,
-            self.subsystems.ports.clock.clone(),
+            self.subsystems.kernel.clock(),
         )
         .await?;
         self.register_default_session(session_id.clone(), manager)

@@ -168,7 +168,7 @@ impl RequestHandler {
                         &self.subsystems.session.data_dir,
                         target_session_id.to_string(),
                         self.subsystems.session.context_window,
-                        self.subsystems.ports.clock.clone(),
+                        self.subsystems.kernel.clock(),
                     )
                     .await
                     {
@@ -297,7 +297,7 @@ impl RequestHandler {
             &self.subsystems.session.data_dir,
             new_id.clone(),
             self.subsystems.session.context_window,
-            self.subsystems.ports.clock.clone(),
+            self.subsystems.kernel.clock(),
         )
         .await
         {
@@ -360,7 +360,7 @@ impl RequestHandler {
                                 &self.subsystems.session.data_dir,
                                 recent_id.clone(),
                                 self.subsystems.session.context_window,
-                                self.subsystems.ports.clock.clone(),
+                                self.subsystems.kernel.clock(),
                             )
                             .await
                             {
@@ -395,7 +395,7 @@ impl RequestHandler {
                                 &self.subsystems.session.data_dir,
                                 recent_id.clone(),
                                 self.subsystems.session.context_window,
-                                self.subsystems.ports.clock.clone(),
+                                self.subsystems.kernel.clock(),
                             )
                             .await
                             {
@@ -428,7 +428,7 @@ impl RequestHandler {
                         &self.subsystems.session.data_dir,
                         new_id.clone(),
                         self.subsystems.session.context_window,
-                        self.subsystems.ports.clock.clone(),
+                        self.subsystems.kernel.clock(),
                     )
                     .await
                     {
@@ -475,13 +475,13 @@ impl RequestHandler {
             &self.subsystems.session.data_dir,
             new_id.clone(),
             self.subsystems.session.context_window,
-            self.subsystems.ports.clock.clone(),
+            self.subsystems.kernel.clock(),
         )
         .await
         {
             Ok(new_sm) => {
                 let created_at =
-                    wall_to_datetime(self.subsystems.ports.clock.wall_now()).to_rfc3339();
+                    wall_to_datetime(self.subsystems.kernel.clock().wall_now()).to_rfc3339();
                 let sm = Arc::new(tokio::sync::Mutex::new(new_sm));
                 self.sessions.lock().await.insert(new_id.clone(), sm);
                 self.subsystems
@@ -489,7 +489,7 @@ impl RequestHandler {
                     .session_created_at
                     .lock()
                     .await
-                    .insert(new_id.clone(), self.subsystems.ports.clock.mono_now());
+                    .insert(new_id.clone(), self.subsystems.kernel.clock().mono_now());
                 json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -520,7 +520,13 @@ impl RequestHandler {
             let created_at = created_at_map
                 .get(sid)
                 .map(|t| {
-                    let elapsed_ms = self.subsystems.ports.clock.mono_now().0.saturating_sub(t.0);
+                    let elapsed_ms = self
+                        .subsystems
+                        .kernel
+                        .clock()
+                        .mono_now()
+                        .0
+                        .saturating_sub(t.0);
                     let secs = elapsed_ms / 1000;
                     format!("{}s ago", secs)
                 })

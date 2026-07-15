@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::harness_factory::CognitiveSessionFactory;
@@ -39,10 +39,10 @@ fn policy_contains_all_mode_differences() {
 
 #[tokio::test]
 async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
-    let ports = ServicePorts::new();
+    let kernel = Arc::new(KernelRuntime::new());
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = TurnCoordinator::new(&ports, store.clone());
+    let coordinator = TurnCoordinator::new(kernel.clone(), store.clone());
     let captured = Arc::new(tokio::sync::Mutex::new(None));
     let capture = captured.clone();
     let result = coordinator
@@ -80,9 +80,8 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
         .await
         .unwrap();
     assert_eq!(result.output, "answer");
-    let operation = ports
-        .operation_table
-        .inspect(captured.lock().await.unwrap())
+    let operation = kernel
+        .inspect_operation(captured.lock().await.unwrap())
         .await
         .unwrap();
     assert_eq!(operation.kind, fabric::OperationKind::Turn);
@@ -103,10 +102,10 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
 
 #[tokio::test]
 async fn failure_is_terminal_and_remains_replayable() {
-    let ports = ServicePorts::new();
+    let kernel = Arc::new(KernelRuntime::new());
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = TurnCoordinator::new(&ports, store.clone());
+    let coordinator = TurnCoordinator::new(kernel.clone(), store.clone());
     let result = coordinator
         .submit_with(
             request("failed"),
@@ -192,15 +191,15 @@ async fn daemon_then_exec_restart_projects_prior_canonical_context() {
     let db = dir.path().join("sessions.db");
     let captures = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     for policy in [TurnPolicy::daemon(), TurnPolicy::exec()] {
-        let ports = Arc::new(ServicePorts::new());
+        let kernel = Arc::new(KernelRuntime::new());
         let store: Arc<dyn SessionAppendStore> =
             Arc::new(CanonicalSessionStore::open(&db).unwrap());
-        let coordinator = Arc::new(TurnCoordinator::new(ports.as_ref(), store));
+        let coordinator = Arc::new(TurnCoordinator::new(kernel.clone(), store));
         TurnService::new(
             Arc::new(EmptyServices),
             PreTurnPipeline,
             PostTurnPipeline,
-            ports,
+            kernel,
         )
         .with_coordinator(coordinator)
         .with_policy(policy)

@@ -11,13 +11,10 @@ use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::r#impl::session::canonical_store::{default_session_db_path, CanonicalSessionStore};
 use crate::service::turn_coordinator::TurnCoordinator;
 use crate::service::TurnPipeline;
-use aletheon_kernel::operation::{OperationScope, OperationTable};
-use aletheon_kernel::process::ProcessTable;
-use aletheon_kernel::supervision::SupervisorTree;
-use fabric::ipc::mailbox::InProcessMailboxService;
+use aletheon_kernel::operation::OperationScope;
+use aletheon_kernel::KernelRuntime;
 use fabric::{
-    AdmissionController, AgoraOps, Clock, LlmProvider, OperationId, OperationManager, ProcessId,
-    ProcessManager, ProcessSignal,
+    AdmissionController, AgoraOps, Clock, LlmProvider, OperationId, ProcessId, ProcessSignal,
 };
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
@@ -33,13 +30,10 @@ use tokio_util::sync::CancellationToken;
 #[allow(dead_code)]
 pub struct DaemonTurnOrchestrator {
     // --- Kernel primitives ---
-    pub(crate) process_table: Arc<ProcessTable>,
-    pub(crate) operation_table: Arc<OperationTable>,
-    pub(crate) supervisor: Arc<Mutex<SupervisorTree>>,
+    pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) admission: Arc<dyn AdmissionController>,
     pub(crate) agora: Option<Arc<dyn AgoraOps>>,
-    pub(crate) mailbox_service: Arc<InProcessMailboxService>,
 
     // --- Subsystem handles (mirrors RequestHandler fields) ---
     pub(crate) subsystems: Arc<CoreSystems>,
@@ -76,15 +70,11 @@ impl DaemonTurnOrchestrator {
         started_at: fabric::MonoTime,
         daemon_cancel_token: Option<CancellationToken>,
     ) -> Self {
-        // Clone kernel primitives from the canonical ServicePorts instead of
-        // constructing independent instances (PR-1: fix double-instance).
-        let clock = subsystems.ports.clock.clone();
-        let process_table = subsystems.ports.process_table.clone();
-        let operation_table = subsystems.ports.operation_table.clone();
-        let supervisor = subsystems.ports.supervisor.clone();
-        let admission = subsystems.ports.admission.clone();
-        let agora = subsystems.ports.agora.clone();
-        let mailbox_service = subsystems.ports.mailbox_service.clone();
+        // Clone the one opaque Kernel runtime; cognitive domains stay separate.
+        let clock = subsystems.kernel.clock();
+        let kernel = subsystems.kernel.clone();
+        let admission = kernel.admission();
+        let agora = Some(subsystems.domains.agora());
 
         let pipeline = Arc::new(TurnPipeline::new(
             subsystems.clone(),
@@ -104,18 +94,15 @@ impl DaemonTurnOrchestrator {
             CanonicalSessionStore::open(":memory:").expect("in-memory canonical session store")
         });
         let coordinator = Arc::new(TurnCoordinator::new(
-            &subsystems.ports,
+            kernel.clone(),
             Arc::new(canonical_store),
         ));
 
         Self {
-            process_table,
-            operation_table,
-            supervisor,
+            kernel,
             clock,
             admission,
             agora,
-            mailbox_service,
             subsystems,
             sessions,
             session_gateway,
@@ -146,7 +133,7 @@ impl DaemonTurnOrchestrator {
         &self,
         operation_id: OperationId,
     ) -> anyhow::Result<fabric::OperationResult> {
-        self.operation_table.wait(operation_id).await
+        self.kernel.wait_operation(operation_id).await
     }
 
     /// Cancel an in-flight turn operation.
@@ -169,8 +156,8 @@ impl DaemonTurnOrchestrator {
     /// Stopping → Exited/Failed, and any in-flight operations are cancelled via
     /// the operation tree's parent-cancel propagation.
     pub async fn exit_process(&self, process_id: ProcessId) -> anyhow::Result<()> {
-        self.process_table
-            .signal(process_id, ProcessSignal::Terminate)
+        self.kernel
+            .signal_process(process_id, ProcessSignal::Terminate)
             .await
     }
 }

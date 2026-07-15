@@ -112,9 +112,8 @@ impl DaemonTurnOrchestrator {
                         "Running ExperienceSummarizer (periodic trigger)"
                     );
                     if let Ok(recent) = mem.recall_reflections(20) {
-                        let summarizer = cognit::core::ExperienceSummarizer::new(
-                            self.subsystems.ports.clock.clone(),
-                        );
+                        let summarizer =
+                            cognit::core::ExperienceSummarizer::new(self.subsystems.kernel.clock());
                         if let Some(evo_entry) = summarizer.summarize(&recent) {
                             if let Err(e) = mem.store_evolution_log(&evo_entry) {
                                 warn!(error = %e, "Failed to store evolution log");
@@ -162,10 +161,7 @@ impl DaemonTurnOrchestrator {
     /// workspace is durable as append-only commits; snapshots/checkpoints are
     /// a separate storage concern.
     pub(crate) async fn commit_agora_snapshot(&self, session: &str, since_version: u64) {
-        let Some(agora) = self.subsystems.ports.agora.as_ref() else {
-            tracing::warn!(target: "agora", "ServicePorts.agora missing; skipping agora commit persistence");
-            return;
-        };
+        let agora = self.subsystems.domains.agora();
         let commits = agora.changes_since(session, since_version).await;
         if commits.is_empty() {
             return;
@@ -285,9 +281,8 @@ impl TurnPipeline {
                         "Running ExperienceSummarizer (periodic trigger)"
                     );
                     if let Ok(recent) = mem.recall_reflections(20) {
-                        let summarizer = cognit::core::ExperienceSummarizer::new(
-                            self.subsystems.ports.clock.clone(),
-                        );
+                        let summarizer =
+                            cognit::core::ExperienceSummarizer::new(self.subsystems.kernel.clock());
                         if let Some(evo_entry) = summarizer.summarize(&recent) {
                             if let Err(e) = mem.store_evolution_log(&evo_entry) {
                                 warn!(error = %e, "Failed to store evolution log");
@@ -331,10 +326,7 @@ impl TurnPipeline {
 
     /// Persist Agora commits at turn end.
     pub(crate) async fn commit_agora_snapshot(&self, session: &str, since_version: u64) {
-        let Some(agora) = self.subsystems.ports.agora.as_ref() else {
-            tracing::warn!(target: "agora", "ServicePorts.agora missing; skipping agora commit persistence");
-            return;
-        };
+        let agora = self.subsystems.domains.agora();
         let commits = agora.changes_since(session, since_version).await;
         if commits.is_empty() {
             return;

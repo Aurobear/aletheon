@@ -34,7 +34,6 @@ pub struct SessionService {
 impl SessionService {
     pub fn new(
         store: Arc<dyn SessionAppendStore>,
-        _operations: Arc<aletheon_kernel::operation::OperationTable>,
         active: Arc<Mutex<std::collections::HashMap<String, ActiveTurn>>>,
     ) -> Self {
         Self {

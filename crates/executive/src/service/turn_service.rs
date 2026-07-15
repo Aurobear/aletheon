@@ -4,7 +4,7 @@ use crate::service::turn_coordinator::{cancelled_result, TurnCoordinator, TurnEx
 use crate::service::turn_policy::TurnPolicy;
 use crate::service::{PostTurnPipeline, PreTurnPipeline};
 use aletheon_kernel::chronos::SystemTimer;
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 use anyhow::Result;
 use async_trait::async_trait;
 use cognit::harness::HarnessConfig;
@@ -32,17 +32,17 @@ impl TurnService {
         services: Arc<dyn TurnServices>,
         pre_turn: PreTurnPipeline,
         post_turn: PostTurnPipeline,
-        ports: Arc<ServicePorts>,
+        kernel: Arc<KernelRuntime>,
     ) -> Self {
         let store =
             Arc::new(CanonicalSessionStore::open(":memory:").expect("in-memory session store"));
-        let coordinator = Arc::new(TurnCoordinator::new(ports.as_ref(), store));
+        let coordinator = Arc::new(TurnCoordinator::new(kernel.clone(), store));
         Self {
             services,
             pre_turn,
             post_turn,
             factory: Arc::new(LinearCognitiveSessionFactory::new(HarnessConfig::default())),
-            clock: ports.clock.clone(),
+            clock: kernel.clock(),
             coordinator,
             policy: TurnPolicy::exec(),
         }

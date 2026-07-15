@@ -29,7 +29,7 @@ use anyhow::Result;
 use tracing::info;
 
 use aletheon_kernel::chronos::SystemClock;
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 use cognit::config::AppConfig;
 use cognit::harness::HarnessConfig;
 use cognit::r#impl::provider_registry::ProviderRegistry;
@@ -153,8 +153,7 @@ impl ExecSessionBuilder {
 
         let session_id = uuid::Uuid::new_v4().to_string();
 
-        // Create kernel service ports for process/operation tracking + admission gating.
-        let ports = Arc::new(ServicePorts::new());
+        let kernel = Arc::new(KernelRuntime::new());
 
         let executor = Arc::new(CorpusToolExecutor::new(
             tool_registry.clone(),
@@ -169,15 +168,14 @@ impl ExecSessionBuilder {
             SandboxRequirement::NotRequired,
             CancellationToken::new(),
         ));
-        let capability =
-            CapabilityRuntimeFactory::build(ports.admission.clone(), executor, authority);
+        let capability = CapabilityRuntimeFactory::build(kernel.admission(), executor, authority);
 
         let session_db = default_session_db_path();
         if let Some(parent) = session_db.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let coordinator = Arc::new(TurnCoordinator::new(
-            ports.as_ref(),
+            kernel.clone(),
             Arc::new(CanonicalSessionStore::open(session_db)?),
         ));
 
@@ -193,7 +191,7 @@ impl ExecSessionBuilder {
             max_iterations: self.max_turns,
             ..Default::default()
         };
-        let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, ports)
+        let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel)
             .with_coordinator(coordinator)
             .with_harness_config(harness_config);
 
@@ -227,7 +225,7 @@ impl TurnServices for ExecTurnServices {
     /// Exec sessions are single-user CLI runs with no shared workspace.
     /// Agora is intentionally absent — this is not a degraded daemon path.
     /// If shared cognitive workspace is ever needed in exec mode, inject
-    /// `ServicePorts::with_agora(registry)` and pass the agora handle here.
+    /// an Executive-owned DomainPorts Agora handle here.
     async fn agora_view(&self, _session_id: &str) -> Result<fabric::AgoraView> {
         // Exec sessions are single-user CLI runs with no shared workspace.
         // Agora is intentionally absent by default.

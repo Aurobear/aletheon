@@ -41,7 +41,7 @@ impl RequestHandler {
             Ok(value) => value,
             Err(error) => return rpc_error(id, APPROVAL_STORAGE, error.to_string()),
         };
-        let now_ms = self.subsystems.ports.clock.wall_now().0;
+        let now_ms = self.subsystems.kernel.clock().wall_now().0;
         let repository = self.subsystems.memory.approval_repository.lock().unwrap();
         match list(&repository, &context, now_ms) {
             Ok(approvals) => json!({"jsonrpc":"2.0", "id":id, "result":{"approvals":approvals}}),
@@ -94,7 +94,7 @@ impl RequestHandler {
             Some(value) => value,
             None => return rpc_error(id, INVALID_PARAMS, "version must be an unsigned integer"),
         };
-        let now_ms = self.subsystems.ports.clock.wall_now().0;
+        let now_ms = self.subsystems.kernel.clock().wall_now().0;
         let resolved = {
             let repository = self.subsystems.memory.approval_repository.lock().unwrap();
             resolve(

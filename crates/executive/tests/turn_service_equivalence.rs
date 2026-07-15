@@ -1,15 +1,15 @@
 use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{NoopTurnEventSink, OperationId, ProcessId, StubTurnServices, TurnRequest, TurnStop};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-fn test_ports() -> Arc<ServicePorts> {
+fn test_kernel() -> Arc<KernelRuntime> {
     let clock: Arc<dyn fabric::Clock> = Arc::new(TestClock::default());
     let admission: Arc<dyn fabric::AdmissionController> =
         Arc::new(aletheon_kernel::admission::AllowAllAdmissionController::new(clock.clone()));
-    Arc::new(ServicePorts::for_testing(clock, admission))
+    Arc::new(KernelRuntime::with_admission(clock, admission))
 }
 
 #[tokio::test]
@@ -18,7 +18,7 @@ async fn turn_service_submits_one_turn() {
         Arc::new(StubTurnServices),
         PreTurnPipeline,
         PostTurnPipeline,
-        test_ports(),
+        test_kernel(),
     );
 
     let result = service
@@ -169,13 +169,13 @@ async fn daemon_and_exec_turn_services_match_scripted_tool_order_and_output() {
         daemon_services.clone(),
         PreTurnPipeline,
         PostTurnPipeline,
-        test_ports(),
+        test_kernel(),
     );
     let exec = TurnService::new(
         exec_services.clone(),
         PreTurnPipeline,
         PostTurnPipeline,
-        test_ports(),
+        test_kernel(),
     );
 
     let make_request = || TurnRequest {
@@ -298,7 +298,7 @@ impl TurnServices for HangingServices {
 async fn deadline_timeout_returns_cancelled() {
     // Deadline 100ms, LLM takes 500ms — deadline fires first.
     let services = Arc::new(HangingServices::new(500));
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports());
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_kernel());
 
     let result = service
         .submit(
@@ -326,7 +326,7 @@ async fn deadline_timeout_returns_cancelled() {
 #[tokio::test]
 async fn no_deadline_completes_normally() {
     let services = Arc::new(EquivalenceServices::new());
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports());
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_kernel());
 
     let result = service
         .submit(
@@ -351,7 +351,7 @@ async fn no_deadline_completes_normally() {
 #[tokio::test]
 async fn deadline_not_exceeded_completes_normally() {
     let services = Arc::new(EquivalenceServices::new());
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports());
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_kernel());
 
     // Deadline is ample (60s) — the turn completes well before it.
     let result = service
@@ -378,7 +378,7 @@ async fn deadline_not_exceeded_completes_normally() {
 async fn clock_measures_elapsed_for_turn_metrics() {
     let clock = Arc::new(TestClock::new(0, 0));
     let services = Arc::new(EquivalenceServices::new());
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports())
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_kernel())
         .with_clock(clock.clone());
 
     // Advance the clock by 42ms during the turn (the turn itself runs fast,
@@ -423,7 +423,7 @@ async fn clock_deadline_short_returns_cancelled() {
     // 1 ms deadline fires well before the turn completes.
     let clock = Arc::new(TestClock::new(0, 0));
     let services = Arc::new(HangingServices::new(500));
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports())
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_kernel())
         .with_clock(clock.clone());
 
     let result = service
@@ -452,7 +452,7 @@ async fn clock_deadline_long_completes_normally() {
     // well before 5000 ms, so the turn completes normally.
     let clock = Arc::new(TestClock::new(0, 0));
     let services = Arc::new(EquivalenceServices::new());
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports())
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_kernel())
         .with_clock(clock.clone());
 
     let result = service

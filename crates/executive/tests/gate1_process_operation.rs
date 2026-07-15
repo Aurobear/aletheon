@@ -26,7 +26,7 @@
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::operation::{OperationScope, OperationTable};
 use aletheon_kernel::process::ProcessTable;
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
     CancelReason, MonoDeadlineMillis, NoopTurnEventSink, OperationExitReason, OperationId,
@@ -41,11 +41,11 @@ use std::time::Duration;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn test_ports() -> Arc<ServicePorts> {
+fn test_kernel() -> Arc<KernelRuntime> {
     let clock: Arc<dyn fabric::Clock> = Arc::new(TestClock::default());
     let admission: Arc<dyn fabric::AdmissionController> =
         Arc::new(aletheon_kernel::admission::AllowAllAdmissionController::new(clock.clone()));
-    Arc::new(ServicePorts::for_testing(clock, admission))
+    Arc::new(KernelRuntime::with_admission(clock, admission))
 }
 
 /// Stub TurnServices that returns a simple text response immediately.
@@ -165,23 +165,22 @@ async fn sub_agent_created_in_process_table() {
 
 #[tokio::test]
 async fn every_turn_has_operation_id() {
-    let ports = test_ports();
+    let kernel = test_kernel();
     let services = stub_services();
-    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, ports.clone());
+    let turn_service =
+        TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel.clone());
 
     // Pre-register a process in the ProcessTable so TurnService picks it up.
-    let handle = ports
-        .process_table
-        .spawn(SpawnSpec {
+    let handle = kernel
+        .spawn_process(SpawnSpec {
             namespace: fabric::NamespaceId("gate-1-turn".into()),
             initial_operation: Some(OperationKind::Turn),
             ..SpawnSpec::default()
         })
         .await
         .expect("pre-spawn process");
-    ports
-        .process_table
-        .signal(handle.id, ProcessSignal::Start)
+    kernel
+        .signal_process(handle.id, ProcessSignal::Start)
         .await
         .unwrap();
 
@@ -205,9 +204,8 @@ async fn every_turn_has_operation_id() {
     assert!(result.metrics.completed_normally);
 
     // Verify the process is still in the ProcessTable and in Running state.
-    let process_snapshot = ports
-        .process_table
-        .inspect(handle.id)
+    let process_snapshot = kernel
+        .inspect_process(handle.id)
         .await
         .expect("process should be in table after turn");
     assert_eq!(process_snapshot.state, ProcessState::Running);
@@ -460,8 +458,8 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
     let services = Arc::new(HangingServices {
         llm: HangingLlm { hang_ms: 500 },
     });
-    let ports = test_ports();
-    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, ports);
+    let kernel = test_kernel();
+    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel);
 
     let result = turn_service
         .submit(

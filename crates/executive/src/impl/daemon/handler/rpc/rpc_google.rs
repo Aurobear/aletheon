@@ -61,7 +61,7 @@ impl RequestHandler {
             }
             _ => return rpc_error(id, GOOGLE_INVALID_PARAMS, "invalid_google_alias"),
         };
-        let now_ms = self.subsystems.ports.clock.wall_now().0;
+        let now_ms = self.subsystems.kernel.clock().wall_now().0;
         match google
             .complete_authorization(&principal, code, state, alias, now_ms)
             .await
@@ -115,7 +115,7 @@ impl RequestHandler {
                 _ => return rpc_error(id, GOOGLE_FORBIDDEN, "google_account_not_found"),
             }
         };
-        let now_ms = self.subsystems.ports.clock.wall_now().0;
+        let now_ms = self.subsystems.kernel.clock().wall_now().0;
         if repository
             .lock()
             .unwrap()

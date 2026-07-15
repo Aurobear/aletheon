@@ -2,6 +2,7 @@ pub mod checkpoint;
 pub mod config;
 pub mod core_systems;
 pub mod corpus_group;
+pub mod domain_ports;
 pub mod evolution_coordinator;
 pub mod memory_group;
 pub mod mode_router;
@@ -22,6 +23,7 @@ pub use config::{
 };
 pub use core_systems::CoreSystems;
 pub use corpus_group::CorpusGroup;
+pub use domain_ports::DomainPorts;
 pub use evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 pub use memory_group::MemoryGroup;
 pub use mode_router::ModeRouter;

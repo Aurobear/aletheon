@@ -12,21 +12,18 @@ use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreaming
 use crate::service::daemon_turn::helpers::{bounded_text_history, build_request_messages};
 use crate::service::governed_capability::{CapabilityRuntimeFactory, RegistryAuthorityProvider};
 use aletheon_kernel::chronos::SystemTimer;
-use aletheon_kernel::operation::{OperationScope, OperationTable};
-use aletheon_kernel::process::ProcessTable;
-use aletheon_kernel::space::InMemorySpaceManager;
-use aletheon_kernel::supervision::SupervisorTree;
+use aletheon_kernel::operation::OperationScope;
+use aletheon_kernel::KernelRuntime;
 use cognit::harness::event_sink::{ChannelEventSink, Event};
 use cognit::harness::linear::TurnMetrics;
 use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::include::agora::{AgoraOperation, WorkspaceCommitPermit};
-use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
 use fabric::{
     AdmissionController, AgoraOps, AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock,
     ContextBinding, Intent, IntentSource, LlmProvider, Message, OperationId, PrincipalId,
-    ProcessId, ProcessManager, Role, SandboxRequirement, SessionId, SpaceId, Timer, TurnRequest,
+    ProcessId, Role, SandboxRequirement, SessionId, SpaceId, Timer, TurnRequest,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -56,11 +53,7 @@ pub struct TurnPipeline {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) admission: Arc<dyn AdmissionController>,
     pub(crate) agora: Option<Arc<dyn AgoraOps>>,
-    pub(crate) mailbox_service: Arc<InProcessMailboxService>,
-    pub(crate) process_table: Arc<ProcessTable>,
-    pub(crate) operation_table: Arc<OperationTable>,
-    pub(crate) space_manager: Arc<InMemorySpaceManager>,
-    pub(crate) supervisor: Arc<Mutex<SupervisorTree>>,
+    pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
 }
@@ -76,14 +69,10 @@ impl TurnPipeline {
         notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
         daemon_cancel_token: Option<CancellationToken>,
     ) -> Self {
-        let clock = subsystems.ports.clock.clone();
-        let process_table = subsystems.ports.process_table.clone();
-        let operation_table = subsystems.ports.operation_table.clone();
-        let supervisor = subsystems.ports.supervisor.clone();
-        let admission = subsystems.ports.admission.clone();
-        let agora = subsystems.ports.agora.clone();
-        let mailbox_service = subsystems.ports.mailbox_service.clone();
-        let space_manager = subsystems.ports.space_manager.clone();
+        let clock = subsystems.kernel.clock();
+        let kernel = subsystems.kernel.clone();
+        let admission = kernel.admission();
+        let agora = Some(subsystems.domains.agora());
 
         Self {
             subsystems,
@@ -95,11 +84,7 @@ impl TurnPipeline {
             clock,
             admission,
             agora,
-            mailbox_service,
-            process_table,
-            operation_table,
-            space_manager,
-            supervisor,
+            kernel,
             current_scope: Arc::new(Mutex::new(None)),
             daemon_cancel_token,
         }
@@ -344,7 +329,7 @@ impl TurnPipeline {
         let mut agora_version = if let Some(ref agora) = agora {
             agora.version(&sess_id).await.unwrap_or(0)
         } else {
-            tracing::warn!(target: "agora", "ServicePorts.agora is not configured; shared evidence commits disabled for this turn");
+            tracing::warn!(target: "agora", "DomainPorts.agora is not configured; shared evidence commits disabled for this turn");
             0
         };
         let agora_start_version = agora_version;
@@ -352,24 +337,24 @@ impl TurnPipeline {
         // session, not per turn). Bindings are upserted so the Agora version is
         // refreshed in place rather than accumulating. Space is released on
         // process exit (see orchestrator::exit_process).
-        let agent_space = match self.process_table.inspect(main_pid).await {
+        let agent_space = match self.kernel.inspect_process(main_pid).await {
             Ok(snap) => snap.space,
             Err(e) => {
                 tracing::warn!(target: "space", error = %e, "inspect(main_pid) failed; using ephemeral space for this turn");
                 SpaceId::new()
             }
         };
-        self.space_manager.upsert_binding(
+        self.kernel.upsert_space_binding(
             agent_space,
             ContextBinding::Session(SessionId(sess_id.clone())),
         );
-        self.space_manager.upsert_binding(
+        self.kernel.upsert_space_binding(
             agent_space,
             ContextBinding::Agora(AgoraSpaceId(sess_id.clone()), AgoraVersion(agora_version)),
         );
         if let Err(e) =
-            self.space_manager
-                .set_overlay(agent_space, "turn_input", serde_json::json!(message))
+            self.kernel
+                .set_space_overlay(agent_space, "turn_input", serde_json::json!(message))
         {
             tracing::warn!(target: "space", error = %e, "failed to store turn input overlay");
         }
@@ -573,7 +558,7 @@ impl TurnPipeline {
                             } else {
                                 tracing::warn!(
                                     target: "agora",
-                                    "ServicePorts.agora missing; skipping shared evidence commit"
+                                    "DomainPorts.agora missing; skipping shared evidence commit"
                                 );
                             }
                         }

@@ -2,9 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::operation::OperationTable;
-use aletheon_kernel::process::ProcessTable;
 use aletheon_kernel::supervision::RestartPolicy;
+use aletheon_kernel::KernelRuntime;
 use corpus::tools::tools::agent_tool::{AgentDefinition, AgentTool, ExecuteSubAgentFn};
 use fabric::{Clock, ProcessSnapshot, SubAgentState, Tool, ToolContext};
 use tokio::sync::Mutex;
@@ -36,11 +35,8 @@ fn context(root: &std::path::Path) -> ToolContext {
 
 #[tokio::test]
 async fn successful_agent_tool_vertical_slice_records_kernel_and_mailbox_evidence() {
-    let process_table = Arc::new(ProcessTable::new(clock()));
-    let operation_table = Arc::new(OperationTable::new(clock()));
-    let spawner = Arc::new(Mutex::new(SubAgentSpawner::with_tables(
-        process_table,
-        operation_table,
+    let spawner = Arc::new(Mutex::new(SubAgentSpawner::with_kernel(
+        Arc::new(KernelRuntime::with_clock(clock())),
         clock(),
     )));
     let observed = Arc::new(Mutex::new(None::<(Vec<String>, ProcessSnapshot, bool)>));

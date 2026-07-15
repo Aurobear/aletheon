@@ -22,17 +22,17 @@ use std::future::Future;
 use std::pin::Pin;
 
 use aletheon_kernel::chronos::{SystemClock, SystemTimer};
-use aletheon_kernel::operation::{OperationScope, OperationTable};
-use aletheon_kernel::process::ProcessTable;
-use aletheon_kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
+use aletheon_kernel::operation::OperationScope;
+use aletheon_kernel::supervision::{RestartDecision, RestartPolicy};
+use aletheon_kernel::KernelRuntime;
 use fabric::ipc::envelope_v2::Target;
 use fabric::ipc::mailbox::{InProcessMailbox, InProcessMailboxService, Mailbox, MailboxService};
 use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use fabric::{
     AgentProfileId, AttemptUsage, CancelReason, Clock, ExitReason, FailureClass, NamespaceId,
-    OperationExitReason, OperationKind, OperationManager, OperationRequest, ProcessId,
-    ProcessManager, ProcessSignal, ProcessSnapshot, ProcessState, RuntimeFailure, RuntimeId,
-    RuntimeResult, SpawnSpec, SubAgentState, Timer,
+    OperationExitReason, OperationKind, OperationRequest, ProcessId, ProcessSignal,
+    ProcessSnapshot, ProcessState, RuntimeFailure, RuntimeId, RuntimeResult, SpawnSpec,
+    SubAgentState, Timer,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -149,10 +149,7 @@ struct SubAgentEntry {
 /// Spawns and tracks sub-agents.
 pub struct SubAgentSpawner {
     agents: HashMap<String, SubAgentEntry>,
-    process_table: Arc<ProcessTable>,
-    operation_table: Arc<OperationTable>,
-    mailbox_service: Arc<InProcessMailboxService>,
-    supervisor: SupervisorTree,
+    kernel: Arc<KernelRuntime>,
     /// Clock for timeout/sleep operations routed through Timer.
     clock: Arc<dyn Clock>,
     runtime_registry: RuntimeRegistry,
@@ -162,10 +159,7 @@ impl fmt::Debug for SubAgentSpawner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubAgentSpawner")
             .field("agents", &self.agents)
-            .field("process_table", &self.process_table)
-            .field("operation_table", &self.operation_table)
-            .field("mailbox_service", &self.mailbox_service)
-            .field("supervisor", &self.supervisor)
+            .field("kernel", &self.kernel)
             .field("runtime_registry", &self.runtime_registry)
             .finish()
     }
@@ -180,39 +174,22 @@ impl Default for SubAgentSpawner {
 impl SubAgentSpawner {
     pub fn new() -> Self {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-        Self::with_tables(
-            Arc::new(ProcessTable::new(clock.clone())),
-            Arc::new(OperationTable::new(clock.clone())),
-            clock,
-        )
+        Self::with_kernel(Arc::new(KernelRuntime::with_clock(clock.clone())), clock)
     }
 
-    pub fn with_tables(
-        process_table: Arc<ProcessTable>,
-        operation_table: Arc<OperationTable>,
-        clock: Arc<dyn Clock>,
-    ) -> Self {
+    pub fn with_kernel(kernel: Arc<KernelRuntime>, clock: Arc<dyn Clock>) -> Self {
         Self {
             agents: HashMap::new(),
-            process_table,
-            operation_table,
-            mailbox_service: Arc::new(InProcessMailboxService::new()),
-            supervisor: SupervisorTree::new(),
+            kernel,
             clock,
             runtime_registry: RuntimeRegistry::new(),
         }
     }
 
-    /// Repoint this spawner at externally-owned kernel tables so sub-agents
-    /// register in the same ProcessTable/OperationTable as the main agent.
+    /// Repoint this spawner at the shared opaque KernelRuntime.
     /// Safe to call at bootstrap before any sub-agent is spawned.
-    pub fn set_shared_tables(
-        &mut self,
-        process_table: Arc<ProcessTable>,
-        operation_table: Arc<OperationTable>,
-    ) {
-        self.process_table = process_table;
-        self.operation_table = operation_table;
+    pub fn set_kernel(&mut self, kernel: Arc<KernelRuntime>) {
+        self.kernel = kernel;
     }
 
     /// Attach a sub-agent execution runtime.
@@ -234,7 +211,7 @@ impl SubAgentSpawner {
 
     /// Mailbox registry used by sub-agent process collaboration.
     pub fn mailbox_service(&self) -> Arc<InProcessMailboxService> {
-        self.mailbox_service.clone()
+        self.kernel.mailbox_service()
     }
 
     /// Routing target for a live sub-agent's mailbox.
@@ -298,8 +275,8 @@ impl SubAgentSpawner {
             .map(|id| self.runtime_registry.resolve(id))
             .transpose()?;
         let process = self
-            .process_table
-            .spawn(SpawnSpec {
+            .kernel
+            .spawn_process(SpawnSpec {
                 profile: AgentProfileId("sub-agent".into()),
                 namespace: NamespaceId(parent_turn_id.clone()),
                 initial_operation: Some(OperationKind::SubAgent),
@@ -307,21 +284,22 @@ impl SubAgentSpawner {
             })
             .await?;
         let operation = self
-            .operation_table
-            .submit(OperationRequest {
+            .kernel
+            .submit_operation(OperationRequest {
                 owner: process.id,
                 parent: None,
                 kind: OperationKind::SubAgent,
                 deadline: None,
             })
             .await?;
-        self.operation_table.start(operation.id).await?;
-        self.process_table
+        self.kernel.start_operation(operation.id).await?;
+        self.kernel
             .set_active_operation(process.id, Some(operation.id))
             .await?;
         let mailbox_target = Self::mailbox_target_for(process.id);
         let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(64));
-        self.mailbox_service
+        self.kernel
+            .mailbox_service()
             .register(mailbox_target.clone(), mailbox)
             .await?;
 
@@ -353,13 +331,13 @@ impl SubAgentSpawner {
             });
         }
 
-        let snapshot = self.process_table.inspect(process.id).await?;
+        let snapshot = self.kernel.inspect_process(process.id).await?;
         let id = process.id.0.to_string();
         let handle =
             Self::handle_from_snapshot(id.clone(), task.clone(), parent_turn_id.clone(), &snapshot);
 
         // Register with supervisor for failure-restart tracking.
-        self.supervisor.supervise(process.id, restart_policy);
+        self.kernel.supervise(process.id, restart_policy).await;
 
         self.agents.insert(
             id,
@@ -406,8 +384,8 @@ impl SubAgentSpawner {
         parent: Option<ProcessId>,
     ) -> anyhow::Result<SubAgentHandle> {
         let process = self
-            .process_table
-            .spawn(SpawnSpec {
+            .kernel
+            .spawn_process(SpawnSpec {
                 parent,
                 profile: AgentProfileId("sub-agent".into()),
                 namespace: NamespaceId(parent_turn_id.clone()),
@@ -416,21 +394,22 @@ impl SubAgentSpawner {
             })
             .await?;
         let operation = self
-            .operation_table
-            .submit(OperationRequest {
+            .kernel
+            .submit_operation(OperationRequest {
                 owner: process.id,
                 parent: None,
                 kind: OperationKind::SubAgent,
                 deadline: None,
             })
             .await?;
-        self.operation_table.start(operation.id).await?;
-        self.process_table
+        self.kernel.start_operation(operation.id).await?;
+        self.kernel
             .set_active_operation(process.id, Some(operation.id))
             .await?;
         let mailbox_target = Self::mailbox_target_for(process.id);
         let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(64));
-        self.mailbox_service
+        self.kernel
+            .mailbox_service()
             .register(mailbox_target.clone(), mailbox)
             .await?;
 
@@ -443,13 +422,13 @@ impl SubAgentSpawner {
             OperationExitReason::Cancelled(CancelReason::User)
         });
 
-        let snapshot = self.process_table.inspect(process.id).await?;
+        let snapshot = self.kernel.inspect_process(process.id).await?;
         let id = process.id.0.to_string();
         let handle =
             Self::handle_from_snapshot(id.clone(), task.clone(), parent_turn_id.clone(), &snapshot);
 
         // Register with supervisor for failure-restart tracking.
-        self.supervisor.supervise(process.id, restart_policy);
+        self.kernel.supervise(process.id, restart_policy).await;
 
         self.agents.insert(
             id,
@@ -496,7 +475,7 @@ impl SubAgentSpawner {
         let Some(entry) = self.agents.get(id) else {
             return Ok(None);
         };
-        Ok(Some(self.process_table.inspect(entry.process_id).await?))
+        Ok(Some(self.kernel.inspect_process(entry.process_id).await?))
     }
 
     /// Attempt a legal-only lifecycle transition and mirror it into the process table.
@@ -522,43 +501,43 @@ impl SubAgentSpawner {
         match next {
             SubAgentState::Running => {
                 let current = self
-                    .process_table
-                    .inspect(process_id)
+                    .kernel
+                    .inspect_process(process_id)
                     .await
                     .map_err(|e| TransitionError::Kernel(e.to_string()))?
                     .state;
                 if current == ProcessState::Created {
-                    self.process_table
-                        .signal(process_id, ProcessSignal::Start)
+                    self.kernel
+                        .signal_process(process_id, ProcessSignal::Start)
                         .await
                         .map_err(|e| TransitionError::Kernel(e.to_string()))?;
                 } else if current == ProcessState::Waiting {
-                    self.process_table
-                        .signal(process_id, ProcessSignal::Resume)
+                    self.kernel
+                        .signal_process(process_id, ProcessSignal::Resume)
                         .await
                         .map_err(|e| TransitionError::Kernel(e.to_string()))?;
                 }
             }
             SubAgentState::Waiting => self
-                .process_table
-                .signal(process_id, ProcessSignal::Wait)
+                .kernel
+                .signal_process(process_id, ProcessSignal::Wait)
                 .await
                 .map_err(|e| TransitionError::Kernel(e.to_string()))?,
             SubAgentState::Completed => self
-                .process_table
-                .mark_exit(process_id, ExitReason::Completed)
+                .kernel
+                .exit_process(process_id, ExitReason::Completed)
                 .await
                 .map_err(|e| TransitionError::Kernel(e.to_string()))?,
             SubAgentState::Failed => {
-                self.process_table
-                    .mark_exit(process_id, ExitReason::Failed("sub-agent failed".into()))
+                self.kernel
+                    .exit_process(process_id, ExitReason::Failed("sub-agent failed".into()))
                     .await
                     .map_err(|e| TransitionError::Kernel(e.to_string()))?;
 
                 // Consult supervisor for restart decision.
                 let snapshot = self
-                    .process_table
-                    .inspect(process_id)
+                    .kernel
+                    .inspect_process(process_id)
                     .await
                     .map_err(|e| TransitionError::Kernel(e.to_string()))?;
                 let exit_reason = snapshot
@@ -566,7 +545,10 @@ impl SubAgentSpawner {
                     .as_ref()
                     .map(|e| e.reason.clone())
                     .unwrap_or(ExitReason::Failed("unknown".into()));
-                let decision = self.supervisor.record_exit(process_id, &exit_reason);
+                let decision = self
+                    .kernel
+                    .record_supervised_exit(process_id, &exit_reason)
+                    .await;
 
                 match decision {
                     RestartDecision::Restart { attempt } => {
@@ -627,8 +609,8 @@ impl SubAgentSpawner {
                 }
             }
             SubAgentState::Destroyed => self
-                .process_table
-                .signal(process_id, ProcessSignal::Terminate)
+                .kernel
+                .signal_process(process_id, ProcessSignal::Terminate)
                 .await
                 .map_err(|e| TransitionError::Kernel(e.to_string()))?,
             SubAgentState::Created => {}
@@ -691,7 +673,7 @@ impl SubAgentSpawner {
             .ok_or_else(|| anyhow::anyhow!("unknown sub-agent: {id}"))?;
         let pid = entry.process_id;
         SystemTimer
-            .timeout(timeout, self.process_table.wait(pid))
+            .timeout(timeout, self.kernel.wait_process(pid))
             .await
             .map_err(|_| anyhow::anyhow!("wait timed out for sub-agent: {id}"))?
             .map_err(|e| anyhow::anyhow!("process wait error: {e}"))?;
@@ -703,19 +685,22 @@ impl SubAgentSpawner {
         let Some(mut entry) = self.agents.remove(id) else {
             return Ok(false);
         };
-        self.mailbox_service.unregister(&entry.mailbox_target).await;
+        self.kernel
+            .mailbox_service()
+            .unregister(&entry.mailbox_target)
+            .await;
         let _task_exits = entry
             .scope
             .cancel_and_drain(self.clock.as_ref(), Duration::from_millis(50))
             .await;
-        self.operation_table
-            .cancel(entry.operation_id, CancelReason::User)
+        self.kernel
+            .cancel_operation(entry.operation_id, CancelReason::User)
             .await?;
-        self.process_table
-            .signal(entry.process_id, ProcessSignal::Terminate)
+        self.kernel
+            .signal_process(entry.process_id, ProcessSignal::Terminate)
             .await?;
-        let _ = self.process_table.wait(entry.process_id).await?;
-        let _ = self.process_table.reap(entry.process_id).await?;
+        let _ = self.kernel.wait_process(entry.process_id).await?;
+        let _ = self.kernel.reap_process(entry.process_id).await?;
         Ok(true)
     }
 
@@ -936,22 +921,17 @@ mod lifecycle_tests {
 
     #[tokio::test]
     async fn spawn_tracked_with_parent_forks_child_space_from_shared_table() {
-        use aletheon_kernel::space::InMemorySpaceManager;
         use fabric::types::space::{ContextBinding, SessionId};
 
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-        let sm = Arc::new(InMemorySpaceManager::new());
-        let process_table = Arc::new(ProcessTable::with_space_manager(clock.clone(), sm.clone()));
-        let operation_table = Arc::new(OperationTable::new(clock.clone()));
-
-        let mut s =
-            SubAgentSpawner::with_tables(process_table.clone(), operation_table.clone(), clock);
+        let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
+        let mut s = SubAgentSpawner::with_kernel(kernel.clone(), clock);
 
         // Spawn a "main" process directly in the shared table and seed a
         // binding on its space.
-        let main = process_table.spawn(SpawnSpec::default()).await.unwrap();
-        let main_space = process_table.inspect(main.id).await.unwrap().space;
-        sm.upsert_binding(main_space, ContextBinding::Session(SessionId("s".into())));
+        let main = kernel.spawn_process(SpawnSpec::default()).await.unwrap();
+        let main_space = kernel.inspect_process(main.id).await.unwrap().space;
+        kernel.upsert_space_binding(main_space, ContextBinding::Session(SessionId("s".into())));
 
         let handle = s
             .spawn_tracked_with_parent(
@@ -965,7 +945,7 @@ mod lifecycle_tests {
         let child_space = s.snapshot(&handle.id).await.unwrap().unwrap().space;
 
         assert_ne!(child_space, main_space, "child gets its own forked space");
-        let bindings = sm.get_bindings(child_space).unwrap();
+        let bindings = kernel.inspect_space(child_space).unwrap().bindings;
         assert!(
             bindings
                 .iter()

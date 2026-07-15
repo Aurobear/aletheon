@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::session_service::{InterruptOutcome, SessionService};
 use executive::service::turn_coordinator::{cancelled_result, TurnCoordinator, TurnExecution};
@@ -21,10 +21,10 @@ fn request(session: &str) -> TurnRequest {
 
 #[tokio::test]
 async fn resume_fork_replay_and_interrupt_share_canonical_state() {
-    let ports = Arc::new(ServicePorts::new());
+    let kernel = Arc::new(KernelRuntime::new());
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = Arc::new(TurnCoordinator::new(ports.as_ref(), store.clone()));
+    let coordinator = Arc::new(TurnCoordinator::new(kernel, store.clone()));
     coordinator
         .submit_with(
             request("base"),
@@ -45,11 +45,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
         )
         .await
         .unwrap();
-    let service = SessionService::new(
-        store.clone(),
-        ports.operation_table.clone(),
-        coordinator.active_index(),
-    );
+    let service = SessionService::new(store.clone(), coordinator.active_index());
     let resumed = service.resume(&SessionId("base".into())).await.unwrap();
     assert_eq!(resumed.next_sequence, 3);
     assert_eq!(resumed.messages.len(), 2);

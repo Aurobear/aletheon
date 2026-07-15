@@ -69,7 +69,7 @@ impl TurnToolExecutor {
         let inner = Arc::new(CorpusToolExecutor::new(
             subsystems.corpus.tools.clone(),
             subsystems.security.tool_runner.clone(),
-            subsystems.ports.clock.clone(),
+            subsystems.kernel.clock(),
         ));
         Self {
             inner,

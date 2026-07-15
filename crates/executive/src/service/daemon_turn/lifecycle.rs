@@ -4,9 +4,7 @@
 use super::orchestrator::DaemonTurnOrchestrator;
 use crate::service::turn_pipeline::TurnPipeline;
 use aletheon_kernel::supervision::RestartPolicy;
-use fabric::{
-    AgentId, NamespaceId, OperationKind, ProcessId, ProcessManager, ProcessSignal, SpawnSpec,
-};
+use fabric::{AgentId, NamespaceId, OperationKind, ProcessId, ProcessSignal, SpawnSpec};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -18,21 +16,23 @@ impl DaemonTurnOrchestrator {
             return Ok(pid);
         }
         let handle = self
-            .process_table
-            .spawn(SpawnSpec {
+            .kernel
+            .spawn_process(SpawnSpec {
                 agent_id: AgentId::new(),
                 namespace: NamespaceId("daemon".into()),
                 initial_operation: Some(OperationKind::Turn),
                 ..SpawnSpec::default()
             })
             .await?;
-        self.process_table
-            .signal(handle.id, ProcessSignal::Start)
+        self.kernel
+            .signal_process(handle.id, ProcessSignal::Start)
             .await?;
-        self.supervisor.lock().await.supervise(
-            handle.id,
-            RestartPolicy::RestartOnFailure { max_restarts: 3 },
-        );
+        self.kernel
+            .supervise(
+                handle.id,
+                RestartPolicy::RestartOnFailure { max_restarts: 3 },
+            )
+            .await;
         *guard = Some(handle.id);
         info!(process_id = ?handle.id, "Main daemon agent registered in process table");
         Ok(handle.id)
