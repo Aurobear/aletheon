@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 use cognit::harness::event_sink::ChannelEventSink;
 use cognit::harness::linear::{DynLlmRef, TurnMetrics};
-use dasein::SelfField;
 use fabric::{LlmProvider, Message, ToolDefinition, TurnRequest};
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::core::config::ExecutiveConfig;
@@ -17,7 +15,7 @@ pub struct DaemonStreamingTurnContext<F> {
     pub execute_tool: F,
     pub event_sink: ChannelEventSink,
     pub request_messages: Vec<Message>,
-    pub self_field: Arc<Mutex<SelfField>>,
+    pub dasein_context: Arc<dyn Fn() -> Option<String> + Send + Sync>,
     /// Per-turn cancellation token from the OperationScope (PR-3).
     ///
     /// Checked cooperatively by the execute_tool closure before each tool call.
@@ -46,7 +44,7 @@ where
         execute_tool,
         event_sink,
         request_messages,
-        self_field,
+        dasein_context,
         cancel_token,
         clock,
     } = context;
@@ -55,12 +53,7 @@ where
         crate::service::harness_factory::build_configured_react_loop(&config, clock);
     react_loop.seed_messages(request_messages);
     react_loop.set_goal(request.input.clone());
-    react_loop.set_dasein_context_provider(Box::new(move || {
-        self_field
-            .try_lock()
-            .ok()
-            .and_then(|sf| sf.dasein_prompt_injection())
-    }));
+    react_loop.set_dasein_context_provider(Box::new(move || dasein_context()));
     use cognit::harness::event_sink::{Event, EventSink};
     event_sink.emit(Event::GoalSet {
         goal: request.input,

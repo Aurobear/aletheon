@@ -33,7 +33,5 @@ pub mod gbrain;
 pub(crate) mod helpers;
 mod lifecycle;
 mod orchestrator;
-mod self_field;
-mod session;
 
 pub use orchestrator::DaemonTurnOrchestrator;

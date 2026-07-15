@@ -135,4 +135,27 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
         );
     }
     assert!(pipeline.contains("post_turn_projection"));
+    for forbidden in [
+        "self.subsystems",
+        "sm_arc.lock()",
+        "storm_breaker.lock()",
+        "hook_registry.lock()",
+        "approval_rx.lock()",
+        "pending_approvals.lock()",
+    ] {
+        assert!(
+            !pipeline.contains(forbidden),
+            "pipeline bypasses runtime port with {forbidden}"
+        );
+    }
+
+    let context = pipeline.find(".assemble(&context_request").unwrap();
+    let model = pipeline.find(".models.select").unwrap();
+    let capability = pipeline.find(".capabilities").unwrap();
+    assert!(context < model && model < capability);
+
+    let coordinator = include_str!("../src/service/turn_coordinator.rs");
+    let settlement = coordinator.find("terminal?;").unwrap();
+    let projection = coordinator.find("dispatch.projector.project").unwrap();
+    assert!(settlement < projection);
 }

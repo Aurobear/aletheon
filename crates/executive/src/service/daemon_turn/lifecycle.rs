@@ -2,7 +2,6 @@
 //! TurnPipeline turn-token methods.
 
 use super::orchestrator::DaemonTurnOrchestrator;
-use crate::service::turn_pipeline::TurnPipeline;
 use aletheon_kernel::supervision::RestartPolicy;
 use fabric::{AgentId, NamespaceId, OperationKind, ProcessId, ProcessSignal, SpawnSpec};
 use tokio_util::sync::CancellationToken;
@@ -39,8 +38,7 @@ impl DaemonTurnOrchestrator {
     }
 }
 
-#[allow(dead_code)]
-impl TurnPipeline {
+impl DaemonTurnOrchestrator {
     pub(crate) async fn begin_turn_token(&self) -> CancellationToken {
         let ct = CancellationToken::new();
         let mut token = self.subsystems.cancel_token.lock().await;

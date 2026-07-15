@@ -5,13 +5,11 @@
 
 use crate::core::core_systems::CoreSystems;
 use crate::core::session_gateway::SessionGateway;
-use crate::r#impl::daemon::handler::tool_executor::TurnToolExecutor;
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::service::daemon_turn::helpers::bounded_text_history;
-use crate::service::governed_capability::{CapabilityRuntimeFactory, RegistryAuthorityProvider};
-use aletheon_kernel::chronos::SystemTimer;
+use crate::service::governed_capability::CapabilityExecutionContext;
 use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::KernelRuntime;
 use cognit::harness::event_sink::{ChannelEventSink, Event};
@@ -21,9 +19,9 @@ use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::include::agora::{AgoraOperation, WorkspaceCommitPermit};
 use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
 use fabric::{
-    AdmissionController, AgoraOps, AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock,
-    ContextBinding, Intent, IntentSource, LlmProvider, Message, OperationId, PrincipalId,
-    ProcessId, Role, SandboxRequirement, SessionId, SpaceId, Timer, TurnRequest,
+    AgoraOps, AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock, ContextBinding,
+    Intent, IntentSource, LlmProvider, OperationId, PrincipalId, ProcessId, Role,
+    SandboxRequirement, SessionId, SpaceId, TurnRequest,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -44,14 +42,9 @@ use tracing::{debug, info, warn};
 /// via Arc fields.
 #[allow(dead_code)]
 pub struct TurnPipeline {
-    pub(crate) subsystems: Arc<CoreSystems>,
-    pub(crate) sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
     pub(crate) session_gateway: Arc<SessionGateway>,
-    pub(crate) llm: Arc<dyn LlmProvider>,
-    pub(crate) model_router: Arc<ModelRouter>,
     pub(crate) notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
     pub(crate) clock: Arc<dyn Clock>,
-    pub(crate) admission: Arc<dyn AdmissionController>,
     pub(crate) agora: Option<Arc<dyn AgoraOps>>,
     pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
@@ -60,6 +53,7 @@ pub struct TurnPipeline {
     pub(crate) canonical_sessions: Arc<crate::service::session_service::SessionService>,
     pub(crate) post_turn_projection:
         Arc<dyn crate::service::post_turn_projection::PostTurnProjection>,
+    pub(crate) runtime_ports: Arc<crate::service::turn_runtime_ports::TurnRuntimePorts>,
 }
 
 impl TurnPipeline {
@@ -85,15 +79,19 @@ impl TurnPipeline {
                 subsystems.clone(),
             ),
         );
+        let runtime_ports = Arc::new(
+            crate::service::turn_runtime_ports::TurnRuntimePorts::production(
+                subsystems.clone(),
+                model_router,
+                llm.clone(),
+                admission,
+                sessions.clone(),
+            ),
+        );
         Self {
-            subsystems,
-            sessions,
             session_gateway,
-            llm,
-            model_router,
             notify_tx,
             clock,
-            admission,
             agora,
             kernel,
             current_scope: Arc::new(Mutex::new(None)),
@@ -101,6 +99,7 @@ impl TurnPipeline {
             context_assembler,
             canonical_sessions,
             post_turn_projection,
+            runtime_ports,
         }
     }
 
@@ -136,7 +135,11 @@ impl TurnPipeline {
         };
         let sf_ctx =
             fabric::Context::new(&turn_request.session_id, turn_request.working_dir.clone());
-        let verdict = self.sf_review(&intent, &sf_ctx).await;
+        let verdict = self
+            .runtime_ports
+            .self_policy
+            .review(&intent, &sf_ctx)
+            .await;
 
         // Sandbox requirement from SelfField verdict — passed to tool admission.
         let mut sandbox_requirement = SandboxRequirement::NotRequired;
@@ -144,14 +147,20 @@ impl TurnPipeline {
         match verdict {
             Ok(fabric::Verdict::Deny { ref reason }) => {
                 warn!(reason = %reason, "SelfField denied chat intent");
-                self.sf_narrate("chat_denied", reason).await;
+                self.runtime_ports
+                    .self_policy
+                    .narrate("chat_denied", reason)
+                    .await;
                 return Ok(
                     json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32010, "message": format!("Intent denied by SelfField: {}", reason)}}),
                 );
             }
             Ok(fabric::Verdict::SandboxFirst { ref reason }) => {
                 warn!(reason = %reason, "SelfField requires sandbox; tools will be gated through admission");
-                self.sf_narrate("chat_sandbox_required", reason).await;
+                self.runtime_ports
+                    .self_policy
+                    .narrate("chat_sandbox_required", reason)
+                    .await;
                 sandbox_requirement = SandboxRequirement::Required;
             }
             Err(ref e) => {
@@ -164,83 +173,24 @@ impl TurnPipeline {
         }
 
         // -- Context source preparation --
-        {
-            let mut sb = self.subsystems.security.storm_breaker.lock().await;
-            sb.reset();
-        }
+        self.runtime_ports.storm.reset().await;
         let mut effective_message = String::new();
 
         // -- Configured pre_turn hook scripts --
-        if !self.subsystems.corpus.hooks_config.pre_turn.is_empty() {
-            let hook_session_id = self.get_or_create_session(None).await?.0;
-            let hook_input = serde_json::json!({"prompt": message, "session_id": hook_session_id});
-            for script_path in &self.subsystems.corpus.hooks_config.pre_turn {
-                let path = crate::r#impl::daemon::handler::format::expand_tilde(script_path);
-                if !std::path::Path::new(&path).exists() {
-                    tracing::warn!(path = %path, "Hook script not found, skipping");
-                    continue;
-                }
-                let spawn_result = tokio::process::Command::new(&path)
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::null())
-                    .spawn();
-                match spawn_result {
-                    Ok(mut child) => {
-                        if let Some(stdin) = child.stdin.take() {
-                            let input = hook_input.to_string();
-                            tokio::spawn(async move {
-                                use tokio::io::AsyncWriteExt;
-                                let mut stdin = stdin;
-                                let _ = stdin.write_all(input.as_bytes()).await;
-                            });
-                        }
-                        let mut stdout_pipe = child.stdout.take();
-                        match SystemTimer
-                            .timeout(std::time::Duration::from_secs(30), child.wait())
-                            .await
-                        {
-                            Ok(Ok(status)) if status.success() => {
-                                if let Some(ref mut stdout) = stdout_pipe {
-                                    use tokio::io::AsyncReadExt;
-                                    let mut buf = String::new();
-                                    if stdout.read_to_string(&mut buf).await.is_ok()
-                                        && !buf.is_empty()
-                                    {
-                                        effective_message
-                                            .push_str(&format!("\n[Hook output]\n{}\n", buf));
-                                    }
-                                }
-                            }
-                            Ok(Ok(status)) => {
-                                tracing::warn!(path = %path, code = status.code(), "Hook script exited with non-zero status");
-                            }
-                            Ok(Err(e)) => {
-                                tracing::warn!(path = %path, error = %e, "Hook script I/O error");
-                            }
-                            Err(_) => {
-                                tracing::warn!(path = %path, "Hook script timed out (30s)");
-                                child.kill().await.ok();
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(path = %path, error = %e, "Failed to spawn hook script");
-                    }
-                }
-            }
-        }
+        let hook_session_id = self.runtime_ports.sessions.current().await?.0;
+        effective_message.push_str(
+            &self
+                .runtime_ports
+                .hooks
+                .run_pre_turn_script(&message, &hook_session_id)
+                .await,
+        );
 
         effective_message.push_str(&message);
 
         // -- PreTurn hooks --
         {
-            let (sess_id, turn_count) = {
-                let (_sid, sm_arc) = self.get_or_create_session(None).await?;
-                let sm = sm_arc.lock().await;
-                (sm.session_id.clone(), sm.turn_count())
-            };
-            let hr = self.subsystems.corpus.hook_registry.lock().await;
+            let (sess_id, turn_count) = self.runtime_ports.sessions.current().await?;
             let ctx = HookContext {
                 point: HookPoint::PreTurn,
                 session_id: sess_id,
@@ -251,7 +201,7 @@ impl TurnPipeline {
                 message: Some(message.clone()),
                 metadata: HashMap::new(),
             };
-            match hr.execute(&ctx).await {
+            match self.runtime_ports.hooks.execute(ctx).await {
                 HookResult::Block { reason } => {
                     warn!(reason = %reason, "PreTurn hook blocked");
                     return Ok(
@@ -266,55 +216,39 @@ impl TurnPipeline {
             }
         }
 
-        // Push user message into session history
-        {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await?;
-            let mut sm = sm_arc.lock().await;
-            sm.push_user(&message).await;
-        }
-        // Persist user message to recall memory
-        {
-            let (sess_id, sm_arc) = self.get_or_create_session(None).await?;
-            let turn_count = sm_arc.lock().await.turn_count();
-            let observed_at = fabric::wall_to_datetime(self.clock.wall_now());
-            let _ = self
-                .subsystems
-                .memory
-                .memory_service
-                .record(mnemosyne::ExperienceEvent::Message {
-                    session: sess_id.clone(),
-                    role: "user".into(),
-                    content: message.clone(),
-                    metadata: mnemosyne::MemoryMetadata::local(
-                        format!("message:{sess_id}:user:{turn_count}"),
-                        format!("{sess_id}:user:{turn_count}"),
-                        observed_at,
-                    ),
-                })
-                .await;
-            let hr = self.subsystems.corpus.hook_registry.lock().await;
-            let ctx = HookContext {
-                point: HookPoint::OnMemoryStore,
-                session_id: sess_id.clone(),
-                turn_count,
-                tool_name: None,
-                tool_input: None,
-                tool_result: None,
-                message: Some(message.clone()),
-                metadata: HashMap::new(),
-            };
-            hr.execute(&ctx).await;
-        }
+        let (sess_id, turn_count) = self.runtime_ports.sessions.begin_user(&message).await?;
 
-        // -- Tool setup --
-        let tool_defs = {
-            let tools = self.subsystems.corpus.tools.lock().await;
-            tools.definitions()
+        // Canonical Session/Turn/Item history is the only model replay source.
+        let existing_messages = {
+            let mut full_history = self
+                .canonical_sessions
+                .resume(&fabric::SessionId(turn_request.session_id.clone()))
+                .await?
+                .messages;
+            if full_history.last().is_some_and(|last| {
+                last.role == Role::User
+                    && last.content.iter().any(
+                        |block| matches!(block, ContentBlock::Text { text } if text == &message),
+                    )
+            }) {
+                full_history.pop();
+            }
+            bounded_text_history(&full_history)
         };
+
+        let mut context_request = turn_request.clone();
+        context_request.input = effective_message;
+        let request_messages = self
+            .context_assembler
+            .assemble(&context_request, &existing_messages)
+            .await?
+            .messages;
+
+        // LLM selection
+        let llm = self.runtime_ports.models.select(&message);
+
+        // -- Governed capability setup --
         let working_dir = turn_request.working_dir.clone();
-        let (sess_id, sm_arc) = self.get_or_create_session(None).await?;
-        let turn_count = sm_arc.lock().await.turn_count();
-        drop(sm_arc);
 
         // Context Space seed — user turn input is private overlay data, not
         // shared Agora fact. Shared visibility requires an explicit proposal.
@@ -352,30 +286,27 @@ impl TurnPipeline {
             tracing::warn!(target: "space", error = %e, "failed to store turn input overlay");
         }
 
-        let self_field_arc_for_react = self.subsystems.self_field.clone();
+        let dasein_context = self.runtime_ports.self_policy.dasein_context_provider();
         let session_id_for_agora = sess_id.clone();
         let agora_for_events = agora.clone();
         let clock_for_agora = self.clock.clone();
 
-        let tool_executor = Arc::new(TurnToolExecutor::new(
-            &self.subsystems,
-            sess_id.clone(),
-            turn_count,
-            working_dir.clone(),
-            operation_id,
-            main_pid,
-        ));
-
-        let authority = Arc::new(RegistryAuthorityProvider::new(
-            corpus::tool_risk_levels(&self.subsystems.corpus.tools).await,
-            principal,
-            sess_id.clone(),
-            working_dir,
-            sandbox_requirement,
-            scope_token.clone(),
-        ));
-        let capability =
-            CapabilityRuntimeFactory::build(self.admission.clone(), tool_executor, authority);
+        let prepared = self
+            .runtime_ports
+            .capabilities
+            .prepare(CapabilityExecutionContext {
+                process_id: main_pid,
+                operation_id,
+                principal,
+                session_id: sess_id.clone(),
+                working_dir,
+                sandbox: sandbox_requirement,
+                cancel: scope_token.clone(),
+                turn_count,
+            })
+            .await?;
+        let tool_defs = prepared.definitions;
+        let capability = prepared.invoker;
 
         let execute_tool = move |tool_id: &str, name: &str, input: &serde_json::Value| {
             let capability = capability.clone();
@@ -392,19 +323,6 @@ impl TurnPipeline {
                     })
                     .await;
                 (result.output, result.is_error)
-            }
-        };
-
-        // LLM selection
-        let task_type = self.model_router.classify_message(&message);
-        let llm: Arc<dyn LlmProvider> = match self.model_router.create_provider(task_type) {
-            Ok(provider) => {
-                info!(task = ?task_type, model = provider.name(), "Model selected by router");
-                Arc::from(provider)
-            }
-            Err(e) => {
-                warn!(error = %e, task = ?task_type, "ModelRouter failed, falling back to default");
-                self.llm.clone()
             }
         };
 
@@ -426,35 +344,9 @@ impl TurnPipeline {
             }
         });
 
-        let config = self.subsystems.runtime.lock().await.config().clone();
+        let config = self.runtime_ports.config.config().await;
         let goal_message = message.to_string();
         let goal_message_for_gw = goal_message.clone();
-
-        // Canonical Session/Turn/Item history is the only model replay source.
-        let existing_messages = {
-            let mut full_history = self
-                .canonical_sessions
-                .resume(&fabric::SessionId(turn_request.session_id.clone()))
-                .await?
-                .messages;
-            if full_history.last().is_some_and(|last| {
-                last.role == Role::User
-                    && last.content.iter().any(
-                        |block| matches!(block, ContentBlock::Text { text } if text == &message),
-                    )
-            }) {
-                full_history.pop();
-            }
-            bounded_text_history(&full_history)
-        };
-
-        let mut context_request = turn_request.clone();
-        context_request.input = effective_message;
-        let request_messages = self
-            .context_assembler
-            .assemble(&context_request, &existing_messages)
-            .await?
-            .messages;
 
         // Spawn ReAct loop
         let mut react_task = tokio::spawn(submit_streaming_daemon_turn(
@@ -466,15 +358,13 @@ impl TurnPipeline {
                 execute_tool,
                 event_sink,
                 request_messages,
-                self_field: self_field_arc_for_react,
+                dasein_context,
                 cancel_token: scope_token,
                 clock: self.clock.clone(),
             },
         ));
 
         // -- Event + approval pumping loop --
-        let approval_rx = self.subsystems.security.approval_rx.clone();
-        let pending_approvals = self.subsystems.security.pending_approvals.clone();
         let notify_tx = self.notify_tx.clone();
 
         let mut tool_calls_for_session: Vec<(String, String, serde_json::Value)> = Vec::new();
@@ -572,26 +462,18 @@ impl TurnPipeline {
                         }
                     }
                 }
-                Some(pending) = async {
-                    let mut rx = approval_rx.lock().await;
-                    rx.recv().await
-                } => {
-                    let approval_id = uuid::Uuid::new_v4().to_string();
+                Some(pending) = self.runtime_ports.approvals.next() => {
                     let notification = json!({
                         "jsonrpc": "2.0",
                         "method": "approval_request",
                         "params": {
-                            "approval_id": approval_id,
-                            "tool": pending.request.tool,
-                            "action_summary": pending.request.action_summary,
-                            "risk_level": pending.request.risk_level,
-                            "detail": pending.request.detail,
+                            "approval_id": pending.approval_id,
+                            "tool": pending.tool,
+                            "action_summary": pending.action_summary,
+                            "risk_level": pending.risk_level,
+                            "detail": pending.detail,
                         }
                     });
-                    {
-                        let mut map = pending_approvals.lock().await;
-                        map.insert(approval_id.clone(), pending.respond);
-                    }
                     {
                         let guard = notify_tx.lock().await;
                         if let Some(ref tx) = *guard {
@@ -669,14 +551,13 @@ impl TurnPipeline {
                 .iter()
                 .map(|(_, name, _)| name.clone())
                 .collect();
-            let sb = self.subsystems.security.storm_breaker.lock().await;
             self.session_gateway
                 .update_turn_state(
                     turn_count,
                     metrics.tool_errors,
                     metrics.tool_calls_made,
                     tool_names,
-                    sb.failure_count(),
+                    self.runtime_ports.storm.failure_count().await,
                     Some(goal_message_for_gw.clone()),
                 )
                 .await;
@@ -687,10 +568,13 @@ impl TurnPipeline {
         } else {
             fabric::dasein::OutcomeStatus::Failed
         };
-        self.coordinate(&turn_count, &text, outcome_status).await;
+        self.runtime_ports
+            .self_policy
+            .coordinate(turn_count, &text, outcome_status)
+            .await;
 
-        self.subsystems
-            .debug_perf
+        self.runtime_ports
+            .observability
             .record_turn(acc_tokens_in, acc_tokens_out);
 
         let msg_preview_end = message
@@ -698,56 +582,28 @@ impl TurnPipeline {
             .nth(60)
             .map(|(i, _)| i)
             .unwrap_or(message.len());
-        self.sf_narrate(
-            "chat_completed",
-            &format!(
-                "User asked: '{}...' | Response: {} chars",
-                &message[..msg_preview_end],
-                text.len(),
-            ),
-        )
-        .await;
+        self.runtime_ports
+            .self_policy
+            .narrate(
+                "chat_completed",
+                &format!(
+                    "User asked: '{}...' | Response: {} chars",
+                    &message[..msg_preview_end],
+                    text.len(),
+                ),
+            )
+            .await;
 
-        // Session history push
-        let turn = if turn_succeeded {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await?;
-            let mut sm = sm_arc.lock().await;
-            if !tool_calls_for_session.is_empty() {
-                let content_blocks: Vec<ContentBlock> = tool_calls_for_session
-                    .iter()
-                    .map(|(tid, name, input)| ContentBlock::ToolUse {
-                        id: tid.clone(),
-                        name: name.clone(),
-                        input: input.clone(),
-                    })
-                    .collect();
-                sm.push_message(Message {
-                    role: Role::Assistant,
-                    content: content_blocks,
-                })
-                .await;
-                let result_blocks: Vec<ContentBlock> = tool_results_for_session
-                    .iter()
-                    .map(|(call_id, content, is_error)| ContentBlock::ToolResult {
-                        tool_use_id: call_id.clone(),
-                        content: content.clone(),
-                        is_error: *is_error,
-                    })
-                    .collect();
-                sm.push_message(Message {
-                    role: Role::User,
-                    content: result_blocks,
-                })
-                .await;
-            }
-            sm.push_assistant(&text).await;
-            let _ = sm.compact_if_needed(&*self.llm).await;
-            sm.turn_count()
-        } else {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await?;
-            let sm = sm_arc.lock().await;
-            sm.turn_count()
-        };
+        let turn = self
+            .runtime_ports
+            .sessions
+            .finish(
+                turn_succeeded,
+                &tool_calls_for_session,
+                &tool_results_for_session,
+                &text,
+            )
+            .await?;
 
         // -- PR-3: drain the per-turn OperationScope (guarantees no orphan tasks) --
         {

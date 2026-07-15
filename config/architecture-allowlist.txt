@@ -25,7 +25,6 @@ core_systems_field|crates/executive/src/impl/daemon/handler/turn_handler.rs| let
 core_systems_field|crates/executive/src/impl/memory_projection.rs| match self.memory.record(event).await {
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.runtime.clone(),
-core_systems_field|crates/executive/src/service/turn_pipeline.rs| let config = self.subsystems.runtime.lock().await.config().clone();
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::HookRegistry;
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/core/memory_group.rs|use mnemosyne::FactStore;
@@ -92,4 +91,4 @@ raw_process|crates/executive/src/impl/approval/apply_coordinator.rs| let status 
 raw_process|crates/executive/src/impl/automation/script.rs| let mut cmd = tokio::process::Command::new("sh");
 raw_process|crates/executive/src/impl/daemon/handler/mod.rs| let spawn_result = tokio::process::Command::new(&path)
 raw_process|crates/executive/src/impl/plugin/runtime.rs| let mut cmd = tokio::process::Command::new(program);
-raw_process|crates/executive/src/service/turn_pipeline.rs| let spawn_result = tokio::process::Command::new(&path)
+raw_process|crates/executive/src/service/turn_runtime_ports.rs| let spawned = tokio::process::Command::new(&path)

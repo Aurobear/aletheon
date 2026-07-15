@@ -115,10 +115,12 @@
 - Modify: `crates/executive/src/impl/daemon/handler/tool_executor.rs`
 - Test: `crates/executive/tests/turn_use_case_ports.rs`
 
-- [ ] Define narrow ports for hook execution, storm-breaker state, model selection, Self policy, governed capability execution, and approval; keep capability/approval calls synchronous in the turn.
-- [ ] Define `PostTurnProjection::project` with a bounded immutable turn outcome; move non-blocking memory, Agora trace, reflection, and evolution updates behind the projection port.
-- [ ] Make projection failure observable but non-destructive to an already-settled turn; keep approval/capability failure turn-blocking.
-- [ ] Test ordering `context -> model -> governed capability -> terminal settlement -> projection`, projection outage behavior, and no direct domain lock from `TurnPipeline`.
+- [x] Define narrow ports for hook execution, storm-breaker state, model selection, Self policy, governed capability execution, and approval; keep capability/approval calls synchronous in the turn.
+- [x] Define `PostTurnProjection::project` with a bounded immutable turn outcome; move non-blocking memory, Agora trace, reflection, and evolution updates behind the projection port.
+- [x] Make projection failure observable but non-destructive to an already-settled turn; keep approval/capability failure turn-blocking.
+- [x] Test ordering `context -> model -> governed capability -> terminal settlement -> projection`, projection outage behavior, and no direct domain lock from `TurnPipeline`.
+
+**Task 6 evidence:** synchronous hook, storm, model, Self policy, session-state, approval, and governed-capability contracts are defined and composed at `crates/executive/src/service/turn_runtime_ports.rs:22-162`; the capability adapter remains the only turn path to `CapabilityRuntimeFactory`, so authorization and execution stay blocking. `TurnPipeline` holds only narrow runtime/projection services and protocol/kernel handles at `crates/executive/src/service/turn_pipeline.rs:43-105`; its live call order is context assembly, model selection, then governed capability preparation at `crates/executive/src/service/turn_pipeline.rs:243-310`, with no `self.subsystems` or concrete domain lock. The immutable projection outcome and production projection fan-out are at `crates/executive/src/service/post_turn_projection.rs:15-271`. `TurnCoordinator` appends terminal canonical state and settles the Kernel operation before spawning projection at `crates/executive/src/service/turn_coordinator.rs:98-140`; projection errors are logged and cannot change the returned settled result. Ordering/outage/static-boundary coverage is at `crates/executive/tests/turn_use_case_ports.rs`; turn-port (2), pipeline-order (2), coordinator (4), lifecycle (1), and equivalence (8) tests pass with all-target Executive Clippy and architecture fitness at 94 findings.
 
 ### Task 7: Build private HandlerPorts and remove CoreSystems from RequestHandler
 
