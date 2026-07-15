@@ -76,6 +76,8 @@ pub struct RequestHandler {
     pub(crate) approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
     /// Configured Google control plane. Credentials remain behind its vault-owning boundary.
     pub(crate) google: Option<Arc<crate::r#impl::external::GoogleIntegration>>,
+    /// Sanitized readiness state; payload data and error bodies never enter it.
+    pub(crate) health: Arc<crate::r#impl::health::HealthRegistry>,
 }
 
 impl RequestHandler {

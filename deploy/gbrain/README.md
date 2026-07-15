@@ -13,8 +13,8 @@ Aletheon MemoryService
 
 Use GBrain release `v0.42.59.0` at commit
 `5008b287e47bf791132eedfebf66bdef11e9398c`. Build the image from that checkout
-and give it the local tag shown in `.env.example`; never deploy an unpinned
-`latest` tag. The captured `tools/list` response is
+and record its immutable `RepoDigests` value in the operator-owned `.env`;
+never deploy by tag or image ID. The captured `tools/list` response is
 [`config/gbrain/tools-schema.json`](../../config/gbrain/tools-schema.json).
 Aletheon validates the exact required input schemas for `query`, `search`,
 `get_page`, and `put_page` before enabling supplemental memory.
@@ -26,6 +26,8 @@ git -C /path/to/gbrain fetch --tags
 git -C /path/to/gbrain checkout --detach 5008b287e47bf791132eedfebf66bdef11e9398c
 test "$(git -C /path/to/gbrain rev-parse HEAD)" = 5008b287e47bf791132eedfebf66bdef11e9398c
 docker build -t gbrain:5008b287e47bf791132eedfebf66bdef11e9398c /path/to/gbrain
+docker image inspect gbrain:5008b287e47bf791132eedfebf66bdef11e9398c \
+  --format '{{join .RepoDigests "\n"}}'
 ```
 
 ## Secrets and startup
@@ -34,14 +36,13 @@ Copy `.env.example` to `.env`, create distinct least-privilege read and write
 token files, and keep both outside Git:
 
 ```bash
-install -d -m 0700 deploy/gbrain/secrets
-install -m 0600 /dev/null deploy/gbrain/secrets/read-token
-install -m 0600 /dev/null deploy/gbrain/secrets/write-token
+sudo install -d -o aletheon -g aletheon -m 0750 /var/lib/aletheon/gbrain/{brain,database}
+sudo install -m 0600 /dev/null /etc/aletheon/credentials/gbrain-read.token
+sudo install -m 0600 /dev/null /etc/aletheon/credentials/gbrain-write.token
 # Populate through the local secret manager, not shell history.
+scripts/verify-compose.sh deploy/gbrain/.env
 docker compose --env-file deploy/gbrain/.env \
-  -f deploy/gbrain/compose.yaml config
-docker compose --env-file deploy/gbrain/.env \
-  -f deploy/gbrain/compose.yaml up -d
+  -f deploy/gbrain/compose.yaml -f deploy/compose.production.yaml up -d
 ```
 
 The compose file mounts secret files rather than embedding values. If the
@@ -91,8 +92,8 @@ bearer_token_env = "GBRAIN_TOKEN"
 ## Health and spool operations
 
 ```bash
-docker compose --env-file deploy/gbrain/.env -f deploy/gbrain/compose.yaml ps
-docker compose --env-file deploy/gbrain/.env -f deploy/gbrain/compose.yaml logs --tail=200 gbrain
+docker compose --env-file deploy/gbrain/.env -f deploy/gbrain/compose.yaml -f deploy/compose.production.yaml ps
+docker compose --env-file deploy/gbrain/.env -f deploy/gbrain/compose.yaml -f deploy/compose.production.yaml logs --tail=200 gbrain
 sqlite3 ~/.aletheon/memory/gbrain-spool.db \
   'select record_id,state,attempts,next_attempt_ms,lease_until_ms from gbrain_queue order by updated_ms;'
 sqlite3 ~/.aletheon/memory/gbrain-spool.db \
@@ -109,16 +110,14 @@ then the old directory is renamed. Preserve it until migration is audited.
 Stop writers or take storage-consistent snapshots. Back up all three durable
 components together:
 
-1. `gbrain_brain` volume (Markdown/frontmatter pages);
-2. `gbrain_database` volume (index/database state);
+1. `/var/lib/aletheon/gbrain/brain` bind volume (Markdown/frontmatter);
+2. `/var/lib/aletheon/gbrain/database` bind volume (index/database state);
 3. `~/.aletheon/memory/gbrain-spool.db` plus `-wal`/`-shm` while live.
 
 ```bash
-docker compose --env-file deploy/gbrain/.env -f deploy/gbrain/compose.yaml stop gbrain
-docker run --rm -v aletheon-gbrain_gbrain_brain:/data -v "$PWD/backups:/backup" alpine \
-  tar czf /backup/gbrain-brain.tgz -C /data .
-docker run --rm -v aletheon-gbrain_gbrain_database:/data -v "$PWD/backups:/backup" alpine \
-  tar czf /backup/gbrain-database.tgz -C /data .
+docker compose --env-file deploy/gbrain/.env -f deploy/gbrain/compose.yaml -f deploy/compose.production.yaml stop gbrain
+tar czf backups/gbrain-brain.tgz -C /var/lib/aletheon/gbrain/brain .
+tar czf backups/gbrain-database.tgz -C /var/lib/aletheon/gbrain/database .
 cp ~/.aletheon/memory/gbrain-spool.db* backups/
 ```
 

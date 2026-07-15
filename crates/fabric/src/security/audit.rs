@@ -1,5 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -36,20 +38,30 @@ impl AuditLogger {
         tokio::spawn(async move {
             use std::io::Write;
 
+            let mut previous_hash = read_last_hash(&log_path).unwrap_or_else(|| "0".repeat(64));
+
             info!(path = %log_path.display(), "Audit logger started");
 
             while let Some(record) = rx.recv().await {
-                match serde_json::to_string(&record) {
+                let record = sanitize_record(record);
+                match chained_json(&record, &previous_hash) {
                     Ok(json) => {
                         // Append to JSONL file
-                        match std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&log_path)
+                        let mut options = OpenOptions::new();
+                        options.create(true).append(true);
+                        #[cfg(unix)]
                         {
+                            use std::os::unix::fs::OpenOptionsExt;
+                            options.mode(0o600);
+                        }
+                        match options.open(&log_path) {
                             Ok(mut file) => {
                                 if writeln!(file, "{}", json).is_err() {
                                     error!("Failed to write audit record");
+                                } else if let Some(hash) =
+                                    json.get("_record_hash").and_then(serde_json::Value::as_str)
+                                {
+                                    previous_hash = hash.to_owned();
                                 }
                             }
                             Err(e) => {
@@ -78,5 +90,183 @@ impl AuditLogger {
 
     pub fn log_sync(&self, record: AuditRecord) {
         let _ = self.tx.try_send(record);
+    }
+}
+
+const MAX_AUDIT_STRING_BYTES: usize = 8 * 1024;
+
+fn sanitize_record(mut record: AuditRecord) -> AuditRecord {
+    record.session_id = redact_sensitive_text(&record.session_id, 256);
+    record.turn_id = redact_sensitive_text(&record.turn_id, 256);
+    record.tool_name = redact_sensitive_text(&record.tool_name, 256);
+    record.loop_verdict = redact_sensitive_text(&record.loop_verdict, 512);
+    record.sandbox_backend = record
+        .sandbox_backend
+        .map(|value| redact_sensitive_text(&value, 256));
+    record.result_summary = record
+        .result_summary
+        .map(|value| redact_sensitive_text(&value, MAX_AUDIT_STRING_BYTES));
+    redact_json(&mut record.args, None);
+    record
+}
+
+fn chained_json(
+    record: &AuditRecord,
+    previous_hash: &str,
+) -> serde_json::Result<serde_json::Value> {
+    let record_value = serde_json::to_value(record)?;
+    let canonical = serde_json::to_vec(&record_value)?;
+    let mut hasher = Sha256::new();
+    hasher.update(previous_hash.as_bytes());
+    hasher.update(&canonical);
+    let record_hash = format!("{:x}", hasher.finalize());
+    let mut object = record_value.as_object().cloned().unwrap_or_default();
+    object.insert("_previous_hash".into(), previous_hash.into());
+    object.insert("_record_hash".into(), record_hash.into());
+    Ok(object.into())
+}
+
+fn read_last_hash(path: &PathBuf) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let last = content.lines().rev().find(|line| !line.trim().is_empty())?;
+    serde_json::from_str::<serde_json::Value>(last)
+        .ok()?
+        .get("_record_hash")?
+        .as_str()
+        .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .map(str::to_owned)
+}
+
+fn redact_json(value: &mut serde_json::Value, key: Option<&str>) {
+    if key.is_some_and(sensitive_key) {
+        *value = serde_json::Value::String("[REDACTED]".into());
+        return;
+    }
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                redact_json(value, Some(key));
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                redact_json(value, key);
+            }
+        }
+        serde_json::Value::String(text) => {
+            *text = redact_sensitive_text(text, MAX_AUDIT_STRING_BYTES);
+        }
+        _ => {}
+    }
+}
+
+fn sensitive_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    [
+        "authorization",
+        "cookie",
+        "token",
+        "password",
+        "secret",
+        "api_key",
+        "email_body",
+        "provider_payload",
+        "prompt",
+        "credentials",
+    ]
+    .iter()
+    .any(|needle| key == *needle || key.ends_with(&format!("_{needle}")))
+}
+
+/// Redact common credential forms and bound untrusted text before it reaches
+/// durable audit or support output.
+pub fn redact_sensitive_text(value: &str, max_bytes: usize) -> String {
+    let normalized: String = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    let mut words = normalized.split_whitespace().peekable();
+    let mut redacted = String::with_capacity(normalized.len().min(max_bytes));
+    while let Some(word) = words.next() {
+        if !redacted.is_empty() {
+            redacted.push(' ');
+        }
+        let lower = word.to_ascii_lowercase();
+        if matches!(lower.as_str(), "bearer" | "authorization:" | "cookie:") {
+            redacted.push_str("[REDACTED]");
+            let _ = words.next();
+        } else if lower.starts_with("sk-")
+            || lower.starts_with("ghp_")
+            || lower.starts_with("xox")
+            || lower.contains("/etc/aletheon/credentials/")
+            || assignment_is_sensitive(&lower)
+        {
+            redacted.push_str("[REDACTED]");
+        } else {
+            redacted.push_str(word);
+        }
+    }
+    if redacted.len() > max_bytes {
+        let mut end = max_bytes;
+        while !redacted.is_char_boundary(end) {
+            end -= 1;
+        }
+        redacted.truncate(end);
+    }
+    redacted
+}
+
+fn assignment_is_sensitive(word: &str) -> bool {
+    let Some((key, _)) = word.split_once('=') else {
+        return false;
+    };
+    sensitive_key(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_keys_tokens_control_characters_and_bounds_text() {
+        let mut value = serde_json::json!({
+            "Authorization": "Bearer canary-auth",
+            "email_body": "canary-email",
+            "nested": {"message": "token=canary-token\nnext sk-canary"},
+        });
+        redact_json(&mut value, None);
+        let rendered = value.to_string();
+        assert!(!rendered.contains("canary"));
+        assert!(!rendered.contains("\\n"));
+        assert!(redact_sensitive_text(&"x".repeat(20_000), 128).len() <= 128);
+    }
+
+    #[test]
+    fn audit_hash_chain_links_records() {
+        let record = AuditRecord {
+            timestamp: WallTime(1),
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+            tool_name: "tool".into(),
+            args: serde_json::json!({}),
+            permission_level: PermissionLevel::L0,
+            risk_category: RiskCategory::ReadOnly,
+            loop_verdict: "allow".into(),
+            result_summary: None,
+            is_error: false,
+            sandbox_backend: None,
+            elapsed_ms: 2,
+        };
+        let first = chained_json(&record, &"0".repeat(64)).unwrap();
+        let first_hash = first["_record_hash"].as_str().unwrap();
+        let second = chained_json(&record, first_hash).unwrap();
+        assert_eq!(second["_previous_hash"], first_hash);
+        assert_ne!(second["_record_hash"], first["_record_hash"]);
     }
 }

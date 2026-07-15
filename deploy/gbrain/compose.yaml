@@ -2,23 +2,35 @@ name: aletheon-gbrain
 
 services:
   gbrain:
-    # Build this immutable local tag from the pinned commit documented in README.
-    image: ${GBRAIN_IMAGE:?set GBRAIN_IMAGE to the pinned local image tag}
+    # Deployment requires an immutable content digest, never a mutable tag.
+    image: ${GBRAIN_IMAGE_REPOSITORY:-gbrain}@${GBRAIN_IMAGE_DIGEST:?set pinned sha256 digest}
     command: ["bun", "run", "src/cli.ts", "serve", "--http", "--port", "9020"]
+    user: "${GBRAIN_UID:-10001}:${GBRAIN_GID:-10001}"
     init: true
     restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: ${GBRAIN_PIDS_LIMIT:-256}
     environment:
       HOME: /var/lib/gbrain
       GBRAIN_READ_TOKEN_FILE: /run/secrets/gbrain_read_token
       GBRAIN_WRITE_TOKEN_FILE: /run/secrets/gbrain_write_token
     ports:
-      - "${GBRAIN_BIND_ADDRESS:-127.0.0.1}:${GBRAIN_PORT:-9020}:9020"
+      - "127.0.0.1:${GBRAIN_PORT:-9020}:9020"
     volumes:
       - gbrain_brain:/var/lib/gbrain/brain
       - gbrain_database:/var/lib/gbrain/database
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+      - /var/lib/gbrain/.cache:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=${GBRAIN_UID:-10001},gid=${GBRAIN_GID:-10001}
     secrets:
-      - gbrain_read_token
-      - gbrain_write_token
+      - source: gbrain_read_token
+        target: gbrain_read_token
+        mode: 0400
+      - source: gbrain_write_token
+        target: gbrain_write_token
+        mode: 0400
     healthcheck:
       test:
         - CMD
@@ -42,8 +54,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    networks:
-      - memory
+    networks: [memory]
 
 networks:
   memory:
@@ -51,10 +62,22 @@ networks:
 
 volumes:
   gbrain_brain:
+    name: aletheon-gbrain-brain
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GBRAIN_BRAIN_DIR:-/var/lib/aletheon/gbrain/brain}
   gbrain_database:
+    name: aletheon-gbrain-database
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GBRAIN_DATABASE_DIR:-/var/lib/aletheon/gbrain/database}
 
 secrets:
   gbrain_read_token:
-    file: ${GBRAIN_READ_TOKEN_FILE:-./secrets/read-token}
+    file: ${GBRAIN_READ_TOKEN_FILE:-/etc/aletheon/credentials/gbrain-read.token}
   gbrain_write_token:
-    file: ${GBRAIN_WRITE_TOKEN_FILE:-./secrets/write-token}
+    file: ${GBRAIN_WRITE_TOKEN_FILE:-/etc/aletheon/credentials/gbrain-write.token}

@@ -1,24 +1,79 @@
 [Unit]
 Description=Aletheon Agent Daemon
+Documentation=file:/usr/share/doc/aletheon/systemd.md
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=exec
 User=aletheon
 Group=aletheon
-# Directories are created by systemd's StateDirectory/RuntimeDirectory below
-# (owned by User/Group, with correct modes). A manual mkdir here would run as
-# the unprivileged service user and fail on /var/lib and /run.
-ExecStart=/usr/bin/aletheon daemon --socket /run/aletheon/aletheon.sock
-ExecStop=/bin/kill -TERM $MAINPID
-Restart=on-failure
-RestartSec=2
-NoNewPrivileges=yes
-EnvironmentFile=-/etc/aletheon/.env
+UMask=0027
 StateDirectory=aletheon
+StateDirectoryMode=0750
 RuntimeDirectory=aletheon
+RuntimeDirectoryMode=0750
+CacheDirectory=aletheon
+CacheDirectoryMode=0750
+ExecStartPre=/usr/libexec/aletheon/verify-systemd.sh --preflight --binary /usr/bin/aletheon --config /etc/aletheon/config.toml
+ExecStartPre=/usr/libexec/aletheon/aletheon-secret-audit.sh --validate /etc/aletheon/credentials
+ExecStart=/usr/bin/aletheon daemon --config /etc/aletheon/config.toml --socket /run/aletheon/aletheon.sock
+ExecStartPost=/usr/libexec/aletheon/verify-systemd.sh --readiness --socket /run/aletheon/aletheon.sock --timeout 30
+ExecStop=/bin/kill -TERM $MAINPID
+TimeoutStopSec=30
+KillMode=mixed
+Restart=on-failure
+RestartSec=5
 LimitNOFILE=65536
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aletheon
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=1000
+
+# Credentials are read-only files below $CREDENTIALS_DIRECTORY. The unit never
+# embeds secret values or loads a plaintext EnvironmentFile.
+LoadCredential=provider.env:/etc/aletheon/credentials/provider.env
+LoadCredential=telegram.env:/etc/aletheon/credentials/telegram.env
+LoadCredential=google-vault.key:/etc/aletheon/credentials/google-vault.key
+LoadCredential=gbrain.env:/etc/aletheon/credentials/gbrain.env
+# Parse environment records only from systemd's private, read-only credential
+# copies. The persistent files are never used as EnvironmentFile inputs.
+EnvironmentFile=-%d/provider.env
+EnvironmentFile=-%d/telegram.env
+EnvironmentFile=-%d/gbrain.env
+Environment=ALETHEON_CREDENTIAL_VAULT_PATH=/var/lib/aletheon/state/credentials.vault
+Environment=ALETHEON_CREDENTIAL_MASTER_KEY_PATH=%d/google-vault.key
+Environment=ALETHEON_BACKUP_REQUIRED=1
+Environment=ALETHEON_DATA_ROOT=/var/lib/aletheon
+Environment=ALETHEON_MINIMUM_FREE_BYTES=5368709120
+Environment=ALETHEON_MAXIMUM_BACKUP_AGE_SECS=129600
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/aletheon /var/cache/aletheon /run/aletheon
+ReadOnlyPaths=/etc/aletheon
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+
+# Do not set RestrictNamespaces: Pi/bubblewrap requires user/mount namespaces.
+# Do not enable WatchdogSec until the daemon emits sd_notify watchdog heartbeats.
 
 [Install]
 WantedBy=multi-user.target

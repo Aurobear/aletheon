@@ -50,6 +50,8 @@ pub struct DaemonConfig {
     pub telegram: cognit::config::TelegramConfig,
     /// gbrain shared memory integration configuration.
     pub gbrain_memory: cognit::config::GbrainMemoryConfig,
+    /// Typed deployment paths, quotas, integrations, and health policy.
+    pub deployment: cognit::config::DeploymentConfig,
 }
 
 /// Default config file search paths.

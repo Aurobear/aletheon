@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::r#impl::goal::migrations;
+use crate::r#impl::storage_quota::{StorageClass, StorageQuota, StorageReservation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactScanStatus {
@@ -54,6 +55,7 @@ pub struct ArtifactRecord {
 pub struct ArtifactStore {
     db: Mutex<Connection>,
     root: PathBuf,
+    quota: Option<StorageQuota>,
 }
 
 impl ArtifactStore {
@@ -71,7 +73,13 @@ impl ArtifactStore {
         Ok(Self {
             db: Mutex::new(db),
             root,
+            quota: None,
         })
+    }
+
+    pub fn with_quota(mut self, quota: StorageQuota) -> Self {
+        self.quota = Some(quota);
+        self
     }
 
     pub fn begin(&self, metadata: ArtifactMetadata, max_bytes: u64) -> Result<ArtifactWriter> {
@@ -81,6 +89,11 @@ impl ArtifactStore {
             "invalid artifact cap"
         );
         let temp = self.root.join(format!(".upload-{}", uuid::Uuid::new_v4()));
+        let reservation = self
+            .quota
+            .as_ref()
+            .map(|quota| quota.reserve(StorageClass::Artifacts, max_bytes, 1))
+            .transpose()?;
         let file = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -92,6 +105,7 @@ impl ArtifactStore {
             size: 0,
             max_bytes,
             metadata,
+            reservation,
         })
     }
 
@@ -155,6 +169,9 @@ impl ArtifactStore {
             ],
         )?;
         drop(db);
+        if let Some(reservation) = writer.reservation.take() {
+            reservation.commit();
+        }
         self.get(&artifact_id)?
             .context("artifact metadata write failed")
     }
@@ -221,6 +238,7 @@ pub struct ArtifactWriter {
     size: u64,
     max_bytes: u64,
     metadata: ArtifactMetadata,
+    reservation: Option<StorageReservation>,
 }
 
 impl ArtifactWriter {
