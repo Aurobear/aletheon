@@ -47,11 +47,15 @@ impl TurnPipeline {
             return;
         }
         let server_name = gb_cfg.server_name.clone();
-        let source = gb_cfg.source.clone();
-        let general_source = gb_cfg.general_source.clone();
-        let timeout_ms = gb_cfg.timeout_ms;
-        let max_results = gb_cfg.max_results;
-        let max_chars = gb_cfg.max_chars;
+        let source = gb_cfg.write_source.clone();
+        let general_source = gb_cfg
+            .read_sources
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| "general".into());
+        let timeout_ms = gb_cfg.request_timeout_ms;
+        let max_results = gb_cfg.recall_limit;
+        let max_chars = gb_cfg.max_content_bytes;
         let recall_result = tokio::time::timeout(
             Duration::from_millis(timeout_ms),
             do_gbrain_recall(
@@ -790,12 +794,12 @@ impl TurnPipeline {
     /// and atomically enqueues. Does NOT send to gbrain directly.
     pub fn capture_gbrain_summary(&self, capture: &GbrainCapture) -> Result<PathBuf, String> {
         let gb_cfg = &self.subsystems.memory.gbrain_config;
-        if !gb_cfg.enabled || !gb_cfg.capture_enabled {
+        if !gb_cfg.enabled || !gb_cfg.projection_enabled {
             return Err("gbrain capture is disabled".to_string());
         }
         GbrainOutbox::validate_capture(capture)?;
 
-        let source = gb_cfg.source.trim();
+        let source = gb_cfg.write_source.trim();
         if source.is_empty() {
             return Err("gbrain source must not be empty".to_string());
         }
@@ -803,7 +807,7 @@ impl TurnPipeline {
         let slug = compute_slug(source, &capture.workspace, producer, &capture.session_id);
         let markdown = capture_to_markdown_for(capture, &slug, source, producer);
 
-        let outbox = GbrainOutbox::new(&gb_cfg.outbox_dir);
+        let outbox = GbrainOutbox::new(&gb_cfg.legacy_outbox_dir);
         outbox
             .enqueue(&slug, &markdown)
             .map_err(|e| format!("outbox enqueue: {e}"))
@@ -821,11 +825,11 @@ impl TurnPipeline {
             }
         };
         let gb_cfg = &self.subsystems.memory.gbrain_config;
-        if !gb_cfg.enabled || !gb_cfg.capture_enabled {
+        if !gb_cfg.enabled || !gb_cfg.projection_enabled {
             return (0, 0);
         }
         let server_name = gb_cfg.server_name.clone();
-        let outbox = GbrainOutbox::new(&gb_cfg.outbox_dir);
+        let outbox = GbrainOutbox::new(&gb_cfg.legacy_outbox_dir);
 
         let put_page = |slug: String, markdown: String| {
             let gb = gbrain.clone();

@@ -105,7 +105,7 @@ impl MemoryMetadata {
         TemporalState::Current
     }
 
-    fn validate(&self) -> anyhow::Result<()> {
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.record_id.trim().is_empty(),
             "memory record ID is required"

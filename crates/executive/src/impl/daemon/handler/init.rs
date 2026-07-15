@@ -675,7 +675,7 @@ impl RequestHandler {
                 }
             }
             if config.gbrain_memory.enabled {
-                let required = if config.gbrain_memory.capture_enabled {
+                let required = if config.gbrain_memory.projection_enabled {
                     &["query", "get_page", "put_page"][..]
                 } else {
                     &["query", "get_page"][..]
