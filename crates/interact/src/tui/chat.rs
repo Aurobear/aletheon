@@ -223,14 +223,12 @@ impl ExecEntry {
                     ),
                 ]));
             }
-        } else if self.finished && self.is_error {
-            if !self.output.is_empty() {
-                for line in self.output.lines().take(3) {
-                    lines.push(Line::from(vec![
-                        Span::styled("  └ ", Style::default().fg(Color::Red)),
-                        Span::raw(line.to_string()),
-                    ]));
-                }
+        } else if self.finished && self.is_error && !self.output.is_empty() {
+            for line in self.output.lines().take(3) {
+                lines.push(Line::from(vec![
+                    Span::styled("  └ ", Style::default().fg(Color::Red)),
+                    Span::raw(line.to_string()),
+                ]));
             }
         }
 
