@@ -118,6 +118,17 @@ impl BubblewrapBackend {
         args.push(config.working_dir.clone());
         args.push(config.working_dir.clone());
 
+        // Re-protect repository metadata and local secret stores after the
+        // working directory bind. Later bwrap mounts override earlier ones.
+        for relative in [".git", ".env", ".aletheon", ".ssh"] {
+            let protected = Path::new(&config.working_dir).join(relative);
+            if protected.exists() {
+                args.push("--ro-bind".into());
+                args.push(protected.to_string_lossy().into_owned());
+                args.push(protected.to_string_lossy().into_owned());
+            }
+        }
+
         // Tmpfs for /tmp
         args.push("--tmpfs".into());
         args.push("/tmp".into());
@@ -266,5 +277,31 @@ mod tests {
             ["/opt/pi/bin/pi", "--task", "literal;not-shell"]
         );
         assert!(!wrapped.args.iter().any(|arg| arg == "-c"));
+    }
+
+    #[test]
+    fn protected_metadata_is_rebound_after_writable_worktree() {
+        let temp = tempfile::tempdir().unwrap();
+        let work = temp.path().join("project");
+        std::fs::create_dir_all(work.join(".git")).unwrap();
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let config = SandboxConfig {
+            working_dir: work.to_string_lossy().into_owned(),
+            env_vars: Default::default(),
+        };
+        let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
+        let writable = args
+            .windows(3)
+            .position(|items| items[0] == "--bind" && items[1] == config.working_dir)
+            .unwrap();
+        let git = work.join(".git").to_string_lossy().into_owned();
+        let protected = args
+            .windows(3)
+            .position(|items| items[0] == "--ro-bind" && items[1] == git)
+            .unwrap();
+        assert!(protected > writable);
     }
 }

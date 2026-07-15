@@ -97,9 +97,8 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         # Phase 2: wait for the assistant response to appear BEYOND the
         # submitted baseline and then stay quiet for settle_secs (heuristic
         # completion — see the docstring caveat).
-        cap = await tui_tools.tui_capture(
-            scrollback=True, wait_stable=True, baseline=baseline_frame,
-            stable_secs=settle_secs, timeout=timeout, require_prompt=True,
+        cap = await tui_tools.tui_wait_turn_done(
+            baseline=started.get("turn_done_count", 0), timeout=timeout
         )
     finally:
         await tui_tools.tui_stop()
@@ -117,7 +116,7 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         verdict = "fail"
     if isinstance(daemon_analyze, dict) and daemon_analyze.get("healthy") is False:
         verdict = "fail"
-    if cap.get("stable") is False:
+    if cap.get("turn_done") is not True or cap.get("stable") is False:
         verdict = "fail"
 
     assertions = []

@@ -314,8 +314,11 @@ impl ToolRunnerWithGuard {
             }
         }
 
-        // 3. Execute tool (with optional sandbox for L1+)
-        let result = if tool.permission_level() >= PermissionLevel::L1 {
+        // 3. Shell commands execute through the command sandbox. Structured
+        // tools have no command string to sandbox; running an empty command
+        // made their first execution fail validation and then performed the
+        // real side effect as an unsandboxed validation retry.
+        let result = if tool_name == "bash_exec" {
             let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
             let trusted_working_dir = ctx.working_dir.to_string_lossy().to_string();
@@ -353,21 +356,26 @@ impl ToolRunnerWithGuard {
                 },
             }
         } else {
-            // Direct execution for L0 tools with timeout
-            const L0_TIMEOUT_SECS: u64 = 60;
+            // Structured tools execute through their implementation with a
+            // bounded timeout. Path-mutating tools enforce canonical workspace
+            // confinement in their own implementation.
+            const TOOL_TIMEOUT_SECS: u64 = 60;
             match aletheon_kernel::chronos::SystemTimer
                 .timeout(
-                    Duration::from_secs(L0_TIMEOUT_SECS),
+                    Duration::from_secs(TOOL_TIMEOUT_SECS),
                     tool.execute(input.clone(), ctx),
                 )
                 .await
             {
                 Ok(result) => result,
                 Err(_) => ToolResult {
-                    content: format!("Tool '{}' timed out after {}s", tool_name, L0_TIMEOUT_SECS),
+                    content: format!(
+                        "Tool '{}' timed out after {}s",
+                        tool_name, TOOL_TIMEOUT_SECS
+                    ),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: L0_TIMEOUT_SECS * 1000,
+                        execution_time_ms: TOOL_TIMEOUT_SECS * 1000,
                         truncated: false,
                     },
                 },
@@ -478,10 +486,44 @@ mod tests {
         ToolResultMeta,
     };
     use fabric::{PermissionContext, PermissionMode};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A dummy L2 tool used to exercise the approval gate path.
     /// Named "bash_exec" so the policy engine's `rm -rf *` rule triggers RequireApproval.
     struct DummyL2Tool;
+
+    struct StructuredL1Tool {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Tool for StructuredL1Tool {
+        fn name(&self) -> &str {
+            "file_write"
+        }
+        fn description(&self) -> &str {
+            "structured side effect"
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::L1
+        }
+        async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            ToolResult {
+                content: "wrote artifact".into(),
+                is_error: false,
+                metadata: ToolResultMeta::default(),
+            }
+        }
+        fn boxed_clone(&self) -> Box<dyn Tool> {
+            Box::new(Self {
+                calls: Arc::clone(&self.calls),
+            })
+        }
+    }
 
     #[async_trait]
     impl Tool for DummyL2Tool {
@@ -539,6 +581,28 @@ mod tests {
             session_id: "test-session".into(),
             clock: test_clock(),
         }
+    }
+
+    #[tokio::test]
+    async fn structured_l1_tool_executes_once_without_empty_sandbox_command() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tool = StructuredL1Tool {
+            calls: Arc::clone(&calls),
+        };
+        let mut runner = make_runner(Arc::new(AutoApproveGate));
+
+        let result = runner
+            .execute_tool(
+                &tool,
+                serde_json::json!({"path": "artifact.txt"}),
+                &make_ctx(),
+                "structured-turn",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.content, "wrote artifact");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

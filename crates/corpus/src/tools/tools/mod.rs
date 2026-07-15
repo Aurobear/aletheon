@@ -15,6 +15,7 @@ pub mod grep;
 pub mod kernel_build;
 pub mod module_build;
 pub mod module_load;
+pub(crate) mod mutation_path;
 pub mod output;
 pub mod process_list;
 pub mod registry;

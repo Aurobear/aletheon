@@ -845,7 +845,12 @@ impl TurnPipeline {
         // -- PR-3: drain the per-turn OperationScope (guarantees no orphan tasks) --
         {
             let mut guard = self.current_scope.lock().await;
-            if let Some(mut scope) = guard.take() {
+            // TurnDone is streamed before post-turn hooks finish. A new client
+            // can therefore begin another turn while this turn is winding
+            // down. Never take and cancel that newer turn's global scope.
+            let owns_current_scope = guard.as_ref().is_some_and(|scope| scope.id == operation_id);
+            let owned_scope = owns_current_scope.then(|| guard.take()).flatten();
+            if let Some(mut scope) = owned_scope {
                 scope
                     .cancel_and_drain(self.clock.as_ref(), Duration::from_secs(5))
                     .await;

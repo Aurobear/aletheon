@@ -30,3 +30,6 @@ secrets/
 restic-password
 restic-repository
 backup-staging/
+
+# Host-verified production scenario artifacts
+.scenario-runs/
