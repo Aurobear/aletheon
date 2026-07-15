@@ -51,8 +51,11 @@ dependencies = [
  "anyhow",
  "async-trait",
  "fabric",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "tokio",
  "uuid",
 ]

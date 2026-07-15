@@ -148,7 +148,7 @@ V02 installed-daemon real scenario and migration gate
 | D03 | `2026-07-16-d03-dasein-ledger-replay-lineage.md` | Complete snapshots, ledger, replay and causal lineage | D02 |
 | A01 | `2026-07-16-a01-agora-transaction-integrity.md` | Bound permits, version recheck and ownership-safe claims | S02 |
 | A02 | `2026-07-16-a02-agora-candidate-selection.md` | Typed bounded candidates and deterministic selection | A01 |
-| A03 | `2026-07-15-a03-agora-broadcast-delivery.md` | Durable epochs, bounded delivery and acknowledgements | A02 |
+| A03 | `2026-07-16-a03-agora-broadcast-delivery.md` | Durable epochs, bounded delivery and acknowledgements | A02 |
 
 ### Cross-domain integration and release
 

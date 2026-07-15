@@ -76,10 +76,11 @@ pub use types::vision;
 pub use types::workspace;
 
 pub use types::workspace::{
-    ActionProposalFrame, BroadcastEpoch, CandidateScore, ContentId, GoalFrame,
-    PredictionErrorFrame, PredictionFrame, SalienceVector, SelectionExplanation, SelectionResult,
-    ToolOutcomeFrame, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
-    WorkspaceObservation, WorkspaceProvenance, WorkspaceReflection, WORKSPACE_SCHEMA_V1,
+    ActionProposalFrame, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, BroadcastEpoch,
+    CandidateScore, ContentId, GoalFrame, PredictionErrorFrame, PredictionFrame, SalienceVector,
+    SelectionExplanation, SelectionResult, ToolOutcomeFrame, VisibilityScope, WorkspaceBroadcast,
+    WorkspaceCandidate, WorkspaceContent, WorkspaceObservation, WorkspaceProvenance,
+    WorkspaceReflection, MAX_BROADCAST_RESPONSES, MAX_BROADCAST_WINNERS, WORKSPACE_SCHEMA_V1,
 };
 
 // Event modules

@@ -18,6 +18,8 @@ const MAX_TEXT_BYTES: usize = 32 * 1024;
 const MAX_EXTENSION_BYTES: usize = 64 * 1024;
 const MAX_REFERENCES: usize = 64;
 const MAX_DEPENDENCIES: usize = 32;
+pub const MAX_BROADCAST_WINNERS: usize = 32;
+pub const MAX_BROADCAST_RESPONSES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -342,7 +344,219 @@ pub struct WorkspaceBroadcast {
     pub space: AgoraSpaceId,
     pub winner_ids: Vec<ContentId>,
     pub contents: Vec<WorkspaceContent>,
+    /// Complete immutable selected records. This preserves visibility and
+    /// provenance across durable replay instead of reconstructing them from
+    /// parallel, lossy arrays.
+    pub selected: Vec<WorkspaceCandidate>,
     pub selected_because: SelectionExplanation,
     pub dasein_version: crate::dasein::SelfVersion,
     pub workspace_version: u64,
+}
+
+impl WorkspaceBroadcast {
+    pub fn from_selection(
+        epoch: BroadcastEpoch,
+        selection: SelectionResult,
+        dasein_version: crate::dasein::SelfVersion,
+        workspace_version: u64,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(epoch.0 > 0, "broadcast epoch must be non-zero");
+        anyhow::ensure!(workspace_version > 0, "workspace version must be non-zero");
+        anyhow::ensure!(
+            !selection.selected.is_empty() && selection.selected.len() <= MAX_BROADCAST_WINNERS,
+            "broadcast selection is empty or excessive"
+        );
+        let space = selection.selected[0].space.clone();
+        let value = Self {
+            schema_version: WORKSPACE_SCHEMA_V1,
+            epoch,
+            space,
+            winner_ids: selection.selected.iter().map(|value| value.id).collect(),
+            contents: selection
+                .selected
+                .iter()
+                .map(|value| value.content.clone())
+                .collect(),
+            selected: selection.selected,
+            selected_because: selection.explanation,
+            dasein_version,
+            workspace_version,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema_version == WORKSPACE_SCHEMA_V1,
+            "unsupported workspace broadcast schema"
+        );
+        anyhow::ensure!(self.epoch.0 > 0, "broadcast epoch must be non-zero");
+        anyhow::ensure!(
+            self.workspace_version > 0,
+            "workspace version must be non-zero"
+        );
+        anyhow::ensure!(
+            !self.selected.is_empty() && self.selected.len() <= MAX_BROADCAST_WINNERS,
+            "broadcast selection is empty or excessive"
+        );
+        for candidate in &self.selected {
+            candidate.validate()?;
+            anyhow::ensure!(candidate.space == self.space, "broadcast crosses spaces");
+        }
+        let ids: Vec<_> = self.selected.iter().map(|value| value.id).collect();
+        let mut unique_ids = ids.clone();
+        unique_ids.sort();
+        unique_ids.dedup();
+        anyhow::ensure!(
+            unique_ids.len() == ids.len(),
+            "broadcast winner IDs are duplicated"
+        );
+        anyhow::ensure!(
+            self.winner_ids == ids,
+            "broadcast winner IDs are inconsistent"
+        );
+        anyhow::ensure!(
+            self.selected_because.selected_ids == ids,
+            "broadcast explanation is inconsistent"
+        );
+        let selected_contents = serde_json::to_vec(
+            &self
+                .selected
+                .iter()
+                .map(|value| &value.content)
+                .collect::<Vec<_>>(),
+        )?;
+        anyhow::ensure!(
+            serde_json::to_vec(&self.contents)? == selected_contents,
+            "broadcast contents are inconsistent"
+        );
+        Ok(())
+    }
+
+    pub fn checksum(&self) -> anyhow::Result<String> {
+        self.validate()?;
+        let digest = Sha256::digest(serde_json::to_vec(self)?);
+        Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BroadcastAckStatus {
+    Responded,
+    Delivered,
+    Failed,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BroadcastAck {
+    pub schema_version: u16,
+    pub space: AgoraSpaceId,
+    pub epoch: BroadcastEpoch,
+    pub processor: ProcessId,
+    pub response_ids: Vec<ContentId>,
+    pub status: BroadcastAckStatus,
+    pub observed_at: WallTime,
+    pub detail: Option<String>,
+}
+
+impl BroadcastAck {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema_version == WORKSPACE_SCHEMA_V1,
+            "unsupported broadcast acknowledgement schema"
+        );
+        anyhow::ensure!(self.epoch.0 > 0, "acknowledgement epoch must be non-zero");
+        anyhow::ensure!(
+            self.response_ids.len() <= MAX_BROADCAST_RESPONSES,
+            "broadcast response count exceeds limit"
+        );
+        let mut unique = self.response_ids.clone();
+        unique.sort();
+        unique.dedup();
+        anyhow::ensure!(
+            unique.len() == self.response_ids.len(),
+            "broadcast response IDs contain duplicates"
+        );
+        match self.status {
+            BroadcastAckStatus::Responded => anyhow::ensure!(
+                !self.response_ids.is_empty(),
+                "responded acknowledgement has no responses"
+            ),
+            BroadcastAckStatus::Delivered => anyhow::ensure!(
+                self.response_ids.is_empty(),
+                "delivered acknowledgement contains responses"
+            ),
+            BroadcastAckStatus::Failed | BroadcastAckStatus::TimedOut => {
+                anyhow::ensure!(
+                    self.response_ids.is_empty()
+                        && self.detail.as_deref().is_some_and(|v| !v.trim().is_empty()),
+                    "failed acknowledgement is missing terminal detail"
+                )
+            }
+        }
+        anyhow::ensure!(
+            self.detail
+                .as_ref()
+                .is_none_or(|value| !value.trim().is_empty() && value.len() <= 1024),
+            "broadcast acknowledgement detail is invalid"
+        );
+        Ok(())
+    }
+
+    pub fn checksum(&self) -> anyhow::Result<String> {
+        self.validate()?;
+        let digest = Sha256::digest(serde_json::to_vec(self)?);
+        Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BroadcastDelivery {
+    pub schema_version: u16,
+    pub epoch: BroadcastEpoch,
+    pub space: AgoraSpaceId,
+    pub recipient: ProcessId,
+    pub recipient_agent_root: ProcessId,
+    pub broadcast_checksum: String,
+    pub dasein_version: crate::dasein::SelfVersion,
+    pub workspace_version: u64,
+    /// Visibility-filtered immutable subset of the durable broadcast.
+    pub selected: Vec<WorkspaceCandidate>,
+}
+
+impl BroadcastDelivery {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema_version == WORKSPACE_SCHEMA_V1,
+            "unsupported broadcast delivery schema"
+        );
+        anyhow::ensure!(self.epoch.0 > 0, "broadcast delivery epoch is zero");
+        anyhow::ensure!(
+            self.workspace_version > 0,
+            "delivery workspace version is zero"
+        );
+        anyhow::ensure!(
+            self.broadcast_checksum.len() == 64
+                && self
+                    .broadcast_checksum
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()),
+            "delivery broadcast checksum is invalid"
+        );
+        anyhow::ensure!(!self.selected.is_empty(), "broadcast delivery is empty");
+        for candidate in &self.selected {
+            candidate.validate()?;
+            anyhow::ensure!(candidate.space == self.space, "delivery crosses spaces");
+            let visible = match candidate.visibility {
+                VisibilityScope::Session => true,
+                VisibilityScope::PrivateProcess { process } => process == self.recipient,
+                VisibilityScope::AgentTree { root } => root == self.recipient_agent_root,
+            };
+            anyhow::ensure!(visible, "delivery leaks a visibility-scoped candidate");
+        }
+        Ok(())
+    }
 }

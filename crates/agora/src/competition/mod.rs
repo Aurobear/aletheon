@@ -341,30 +341,8 @@ impl CandidatePool {
     }
 
     pub fn finalize_selection(&mut self, result: &SelectionResult) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            !result.selected.is_empty(),
-            "cannot finalize an empty selection"
-        );
-        anyhow::ensure!(
-            result.explanation.selected_ids
-                == result
-                    .selected
-                    .iter()
-                    .map(|candidate| candidate.id)
-                    .collect::<Vec<_>>(),
-            "selection result IDs do not match candidates"
-        );
+        self.validate_selection(result)?;
         let primary_source = result.selected[0].source;
-        for candidate in &result.selected {
-            let stored = self
-                .candidates
-                .get(&candidate.id)
-                .ok_or_else(|| anyhow::anyhow!("selected candidate is no longer pending"))?;
-            anyhow::ensure!(
-                stored.content_fingerprint()? == candidate.content_fingerprint()?,
-                "selected candidate changed"
-            );
-        }
         for candidate in &result.selected {
             let fingerprint = candidate.content_fingerprint()?;
             *self
@@ -397,6 +375,33 @@ impl CandidatePool {
         self.recent_sources.push_back(primary_source);
         while self.recent_sources.len() > self.config.policy.max_consecutive_source_wins {
             self.recent_sources.pop_front();
+        }
+        Ok(())
+    }
+
+    pub fn validate_selection(&self, result: &SelectionResult) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !result.selected.is_empty(),
+            "cannot finalize an empty selection"
+        );
+        anyhow::ensure!(
+            result.explanation.selected_ids
+                == result
+                    .selected
+                    .iter()
+                    .map(|candidate| candidate.id)
+                    .collect::<Vec<_>>(),
+            "selection result IDs do not match candidates"
+        );
+        for candidate in &result.selected {
+            let stored = self
+                .candidates
+                .get(&candidate.id)
+                .ok_or_else(|| anyhow::anyhow!("selected candidate is no longer pending"))?;
+            anyhow::ensure!(
+                stored.content_fingerprint()? == candidate.content_fingerprint()?,
+                "selected candidate changed"
+            );
         }
         Ok(())
     }
