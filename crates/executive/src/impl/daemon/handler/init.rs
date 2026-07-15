@@ -1059,6 +1059,18 @@ impl RequestHandler {
         let context_assembler = Arc::new(crate::service::context_assembler::ContextAssembler::new(
             context_source,
         ));
+        let legacy_sessions: Arc<
+            dyn crate::service::legacy_session_service::LegacySessionUseCases,
+        > = Arc::new(
+            crate::service::legacy_session_service::LegacySessionService::new(
+                sessions.clone(),
+                default_session_id.clone(),
+                session_created_at.clone(),
+                data_dir.clone(),
+                context_window,
+                clock.clone(),
+            ),
+        );
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
             kernel,
             domains,
@@ -1529,6 +1541,7 @@ impl RequestHandler {
             goal_use_cases,
             approval_use_cases,
             admin_use_cases,
+            legacy_sessions,
         ));
         let mut handler = Self {
             ports: handler_ports,

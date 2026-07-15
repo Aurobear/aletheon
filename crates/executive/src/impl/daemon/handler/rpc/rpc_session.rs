@@ -9,9 +9,7 @@ use serde_json::json;
 use tracing::info;
 
 use fabric::hook::{HookContext, HookPoint};
-use fabric::types::time::wall_to_datetime;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::session::store::SessionStore;
@@ -470,40 +468,13 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let new_id = uuid::Uuid::new_v4().to_string();
-        match SessionManager::new(
-            &self.subsystems.session.data_dir,
-            new_id.clone(),
-            self.subsystems.session.context_window,
-            self.subsystems.kernel.clock(),
-        )
-        .await
-        {
-            Ok(new_sm) => {
-                let created_at =
-                    wall_to_datetime(self.subsystems.kernel.clock().wall_now()).to_rfc3339();
-                let sm = Arc::new(tokio::sync::Mutex::new(new_sm));
-                self.sessions.lock().await.insert(new_id.clone(), sm);
-                self.subsystems
-                    .session
-                    .session_created_at
-                    .lock()
-                    .await
-                    .insert(new_id.clone(), self.subsystems.kernel.clock().mono_now());
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "session_id": new_id,
-                        "created_at": created_at
-                    }
-                })
+        match self.ports.sessions.create().await {
+            Ok(session) => {
+                json!({"jsonrpc":"2.0", "id":id, "result":{"session_id":session.session_id,"created_at":session.created_at}})
             }
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32030, "message": format!("Failed to create session: {}", e) }
-            }),
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32030,"message":format!("Failed to create session: {error}")}})
+            }
         }
     }
 
@@ -512,36 +483,12 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let sessions = self.sessions.lock().await;
-        let created_at_map = self.subsystems.session.session_created_at.lock().await;
-        let mut list = Vec::new();
-        for (sid, sm_arc) in sessions.iter() {
-            let msg_count = sm_arc.lock().await.message_count();
-            let created_at = created_at_map
-                .get(sid)
-                .map(|t| {
-                    let elapsed_ms = self
-                        .subsystems
-                        .kernel
-                        .clock()
-                        .mono_now()
-                        .0
-                        .saturating_sub(t.0);
-                    let secs = elapsed_ms / 1000;
-                    format!("{}s ago", secs)
-                })
-                .unwrap_or_else(|| "unknown".to_string());
-            list.push(json!({
-                "session_id": sid,
-                "message_count": msg_count,
-                "created_at": created_at,
-            }));
+        match self.ports.sessions.list().await {
+            Ok(sessions) => json!({"jsonrpc":"2.0", "id":id, "result":sessions}),
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32020,"message":error.to_string()}})
+            }
         }
-        json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": list
-        })
     }
 
     pub(super) async fn handle_session_switch(
@@ -549,35 +496,20 @@ impl RequestHandler {
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let target_id = request["params"]["session_id"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        if target_id.is_empty() {
-            return json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32602, "message": "Missing session_id parameter" }
-            });
+        let target = request["params"]["session_id"].as_str().unwrap_or("");
+        if target.is_empty() {
+            return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602,"message":"Missing session_id parameter"}});
         }
-        // Validate the session exists
-        let exists = self.sessions.lock().await.contains_key(&target_id);
-        if !exists {
-            return json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32021, "message": format!("Session not found: {}", target_id) }
-            });
-        }
-        *self.subsystems.session.default_session_id.lock().await = target_id.clone();
-        info!(session_id = %target_id, "Session switched");
-        json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "session_id": target_id,
-                "status": "switched"
+        match self.ports.sessions.switch(target.to_string()).await {
+            Ok(session_id) => {
+                json!({"jsonrpc":"2.0", "id":id, "result":{"session_id":session_id,"status":"switched"}})
             }
-        })
+            Err(crate::service::legacy_session_service::LegacySessionError::NotFound(_)) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32021,"message":format!("Session not found: {target}")}})
+            }
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32020,"message":error.to_string()}})
+            }
+        }
     }
 }
