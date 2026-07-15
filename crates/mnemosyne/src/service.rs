@@ -16,14 +16,121 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use fabric::{self, wall_to_datetime, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use crate::{CoreMemory, EpisodicMemory, FactStore, RecallMemory};
 
+/// Classification used to prevent unsafe memory projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySensitivity {
+    Public,
+    Internal,
+    Confidential,
+    Restricted,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryProvenance {
+    pub source: String,
+    pub source_id: String,
+    pub principal: Option<String>,
+    pub source_commit: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryMetadata {
+    pub record_id: String,
+    pub provenance: MemoryProvenance,
+    pub source_time: Option<DateTime<Utc>>,
+    pub observed_time: DateTime<Utc>,
+    pub valid_from: Option<DateTime<Utc>>,
+    pub valid_until: Option<DateTime<Utc>>,
+    pub supersedes: Option<String>,
+    pub superseded_by: Option<String>,
+    pub confidence: f64,
+    pub sensitivity: MemorySensitivity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalState {
+    Current,
+    Superseded,
+    Expired,
+    Unknown,
+}
+
+impl MemoryMetadata {
+    pub fn local(
+        record_id: impl Into<String>,
+        source_id: impl Into<String>,
+        observed_time: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            record_id: record_id.into(),
+            provenance: MemoryProvenance {
+                source: "aletheon".into(),
+                source_id: source_id.into(),
+                principal: None,
+                source_commit: None,
+            },
+            source_time: Some(observed_time),
+            observed_time,
+            valid_from: Some(observed_time),
+            valid_until: None,
+            supersedes: None,
+            superseded_by: None,
+            confidence: 1.0,
+            sensitivity: MemorySensitivity::Internal,
+        }
+    }
+
+    pub fn temporal_state(&self, current_at: Option<DateTime<Utc>>) -> TemporalState {
+        if self.superseded_by.is_some() {
+            return TemporalState::Superseded;
+        }
+        let Some(now) = current_at else {
+            return TemporalState::Unknown;
+        };
+        if self.valid_until.is_some_and(|until| until <= now) {
+            return TemporalState::Expired;
+        }
+        if self.valid_from.is_some_and(|from| from > now) {
+            return TemporalState::Unknown;
+        }
+        TemporalState::Current
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.record_id.trim().is_empty(),
+            "memory record ID is required"
+        );
+        anyhow::ensure!(
+            !self.provenance.source.trim().is_empty(),
+            "memory source is required"
+        );
+        anyhow::ensure!(
+            !self.provenance.source_id.trim().is_empty(),
+            "memory source ID is required"
+        );
+        anyhow::ensure!(
+            self.confidence.is_finite() && (0.0..=1.0).contains(&self.confidence),
+            "memory confidence must be between 0 and 1"
+        );
+        if let (Some(from), Some(until)) = (self.valid_from, self.valid_until) {
+            anyhow::ensure!(from < until, "memory valid-from must precede valid-until");
+        }
+        Ok(())
+    }
+}
+
 /// A unit of experience to be recorded into memory.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExperienceEvent {
     /// A conversational turn (user or assistant message).
     Message {
@@ -32,22 +139,99 @@ pub enum ExperienceEvent {
         /// "user" | "assistant" | other role label.
         role: String,
         content: String,
+        metadata: MemoryMetadata,
     },
     /// A reflection summary (e.g. produced after a task).
-    Reflection { content: String },
+    Reflection {
+        content: String,
+        metadata: MemoryMetadata,
+    },
+    ArchitectureDecision {
+        title: String,
+        content: String,
+        metadata: MemoryMetadata,
+    },
+    GoalOutcome {
+        goal_id: String,
+        outcome: String,
+        content: String,
+        metadata: MemoryMetadata,
+    },
 }
 
 /// A recall query.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecallRequest {
     pub session: String,
     pub query: String,
+    pub max_items: usize,
+    pub max_content_bytes: usize,
+    pub current_at: Option<DateTime<Utc>>,
+    pub include_historical: bool,
+}
+
+impl RecallRequest {
+    pub const MAX_QUERY_BYTES: usize = 4 * 1024;
+    pub const MAX_ITEMS: usize = 100;
+    pub const MAX_CONTENT_BYTES: usize = 256 * 1024;
+
+    pub fn bounded(session: impl Into<String>, query: impl Into<String>) -> Self {
+        Self {
+            session: session.into(),
+            query: query.into(),
+            max_items: 20,
+            max_content_bytes: 64 * 1024,
+            current_at: None,
+            include_historical: false,
+        }
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.query.trim().is_empty(),
+            "memory recall query is required"
+        );
+        anyhow::ensure!(
+            self.query.len() <= Self::MAX_QUERY_BYTES,
+            "memory recall query exceeds byte limit"
+        );
+        anyhow::ensure!(
+            (1..=Self::MAX_ITEMS).contains(&self.max_items),
+            "memory recall item limit is invalid"
+        );
+        anyhow::ensure!(
+            (1..=Self::MAX_CONTENT_BYTES).contains(&self.max_content_bytes),
+            "memory recall content limit is invalid"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecallItem {
+    pub content: String,
+    pub metadata: MemoryMetadata,
+    pub temporal_state: TemporalState,
 }
 
 /// Result of a recall query.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RecallSet {
-    pub facts: Vec<String>,
+    pub items: Vec<RecallItem>,
+}
+
+impl RecallSet {
+    /// Compatibility view for consumers that have not migrated to provenance.
+    pub fn texts(&self) -> Vec<&str> {
+        self.items
+            .iter()
+            .map(|item| item.content.as_str())
+            .collect()
+    }
+
+    pub fn into_texts(self) -> Vec<String> {
+        self.items.into_iter().map(|item| item.content).collect()
+    }
 }
 
 /// Facade-local consolidation/forget scope. See module docs for why this is
@@ -110,7 +294,9 @@ impl MemoryService for DefaultMemoryService {
                 session,
                 role,
                 content,
+                metadata,
             } => {
+                metadata.validate()?;
                 let entry_type = match role.as_str() {
                     "user" => "user_message",
                     "assistant" => "assistant_message",
@@ -120,9 +306,16 @@ impl MemoryService for DefaultMemoryService {
                 rm.store(&session, entry_type, &content, None)?;
                 Ok(())
             }
-            ExperienceEvent::Reflection { content } => {
+            ExperienceEvent::Reflection { content, metadata }
+            | ExperienceEvent::ArchitectureDecision {
+                content, metadata, ..
+            }
+            | ExperienceEvent::GoalOutcome {
+                content, metadata, ..
+            } => {
+                metadata.validate()?;
                 let entry = ReflectionEntry {
-                    id: Uuid::new_v4().to_string(),
+                    id: metadata.record_id,
                     timestamp: wall_to_datetime(self.clock.wall_now()),
                     trigger: ReflectionTrigger::Manual,
                     task_summary: content.clone(),
@@ -141,12 +334,69 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet> {
+        req.validate()?;
         let _ = req.session; // facts are not session-scoped today.
         let fact_store = self.fact_store.lock().await;
-        let rows = fact_store.search_facts(&req.query, None, 0.0, 20)?;
-        Ok(RecallSet {
-            facts: rows.into_iter().map(|row| row.content).collect(),
-        })
+        let rows = fact_store.search_facts(&req.query, None, 0.0, req.max_items)?;
+        let mut used_bytes = 0usize;
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            if used_bytes.saturating_add(row.content.len()) > req.max_content_bytes {
+                break;
+            }
+            let source_time = DateTime::parse_from_rfc3339(&row.created_at)
+                .ok()
+                .map(|value| value.with_timezone(&Utc));
+            let observed_time = DateTime::parse_from_rfc3339(&row.updated_at)
+                .ok()
+                .map(|value| value.with_timezone(&Utc))
+                .or(source_time)
+                .unwrap_or_else(|| wall_to_datetime(self.clock.wall_now()));
+            let valid_until = source_time.and_then(|created| {
+                (row.ttl_days > 0).then(|| created + chrono::Duration::days(row.ttl_days))
+            });
+            let metadata = MemoryMetadata {
+                record_id: format!("mnemosyne:fact:{}", row.fact_id),
+                provenance: MemoryProvenance {
+                    source: if row.source.is_empty() {
+                        "mnemosyne.fact_store".into()
+                    } else {
+                        row.source
+                    },
+                    source_id: row.fact_id.to_string(),
+                    principal: (!row.subject.is_empty()).then_some(row.subject),
+                    source_commit: None,
+                },
+                source_time,
+                observed_time,
+                valid_from: source_time,
+                valid_until,
+                supersedes: None,
+                superseded_by: None,
+                confidence: row.trust_score.clamp(0.0, 1.0),
+                sensitivity: MemorySensitivity::Internal,
+            };
+            let temporal_state = if row.status == "superseded" {
+                TemporalState::Superseded
+            } else {
+                metadata.temporal_state(req.current_at)
+            };
+            if !req.include_historical
+                && matches!(
+                    temporal_state,
+                    TemporalState::Superseded | TemporalState::Expired
+                )
+            {
+                continue;
+            }
+            used_bytes += row.content.len();
+            items.push(RecallItem {
+                content: row.content,
+                metadata,
+                temporal_state,
+            });
+        }
+        Ok(RecallSet { items })
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
@@ -177,6 +427,10 @@ mod tests {
         Arc::new(aletheon_kernel::chronos::TestClock::default())
     }
 
+    fn metadata(id: &str) -> MemoryMetadata {
+        MemoryMetadata::local(id, id, DateTime::<Utc>::UNIX_EPOCH)
+    }
+
     async fn build_service(dir: &Path) -> DefaultMemoryService {
         let clock = test_clock();
         let recall_memory = Arc::new(Mutex::new(
@@ -204,6 +458,7 @@ mod tests {
             session: "s1".into(),
             role: "user".into(),
             content: "hello world".into(),
+            metadata: metadata("message-1"),
         })
         .await
         .unwrap();
@@ -219,6 +474,7 @@ mod tests {
         let svc = build_service(dir.path()).await;
         svc.record(ExperienceEvent::Reflection {
             content: "learned something".into(),
+            metadata: metadata("reflection-1"),
         })
         .await
         .unwrap();
@@ -239,13 +495,66 @@ mod tests {
         }
 
         let result = svc
-            .recall(RecallRequest {
-                session: "s1".into(),
-                query: "rust".into(),
-            })
+            .recall(RecallRequest::bounded("s1", "rust"))
             .await
             .unwrap();
-        assert_eq!(result.facts, vec!["rust is great".to_string()]);
+        assert_eq!(result.texts(), vec!["rust is great"]);
+        let item = &result.items[0];
+        assert_eq!(item.metadata.record_id, "mnemosyne:fact:1");
+        assert_eq!(item.metadata.provenance.source_id, "1");
+        assert_eq!(item.metadata.confidence, 0.5);
+        assert_eq!(item.metadata.sensitivity, MemorySensitivity::Internal);
+        assert_eq!(item.temporal_state, TemporalState::Unknown);
+    }
+
+    #[test]
+    fn temporal_state_uses_explicit_validity_and_supersession() {
+        let now = DateTime::<Utc>::UNIX_EPOCH;
+        let mut value = metadata("decision-1");
+        assert_eq!(value.temporal_state(Some(now)), TemporalState::Current);
+        value.valid_until = Some(now);
+        assert_eq!(value.temporal_state(Some(now)), TemporalState::Expired);
+        value.superseded_by = Some("decision-2".into());
+        assert_eq!(value.temporal_state(Some(now)), TemporalState::Superseded);
+        value.superseded_by = None;
+        value.valid_until = None;
+        assert_eq!(value.temporal_state(None), TemporalState::Unknown);
+    }
+
+    #[test]
+    fn metadata_round_trip_preserves_contract_fields() {
+        let now = DateTime::<Utc>::UNIX_EPOCH;
+        let value = MemoryMetadata {
+            record_id: "goal:g1:outcome".into(),
+            provenance: MemoryProvenance {
+                source: "goal_store".into(),
+                source_id: "g1".into(),
+                principal: Some("owner".into()),
+                source_commit: Some("abc123".into()),
+            },
+            source_time: Some(now),
+            observed_time: now,
+            valid_from: Some(now),
+            valid_until: Some(now + chrono::Duration::days(1)),
+            supersedes: Some("goal:g0:outcome".into()),
+            superseded_by: None,
+            confidence: 0.9,
+            sensitivity: MemorySensitivity::Confidential,
+        };
+        let encoded = serde_json::to_string(&value).unwrap();
+        assert_eq!(
+            serde_json::from_str::<MemoryMetadata>(&encoded).unwrap(),
+            value
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_rejects_unbounded_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = build_service(dir.path()).await;
+        let mut req = RecallRequest::bounded("s1", "rust");
+        req.max_items = RecallRequest::MAX_ITEMS + 1;
+        assert!(svc.recall(req).await.is_err());
     }
 
     #[tokio::test]

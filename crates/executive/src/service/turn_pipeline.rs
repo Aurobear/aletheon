@@ -298,6 +298,8 @@ impl TurnPipeline {
         // Persist user message to recall memory
         {
             let (sess_id, sm_arc) = self.get_or_create_session(None).await?;
+            let turn_count = sm_arc.lock().await.turn_count();
+            let observed_at = fabric::wall_to_datetime(self.clock.wall_now());
             let _ = self
                 .subsystems
                 .memory
@@ -306,10 +308,14 @@ impl TurnPipeline {
                     session: sess_id.clone(),
                     role: "user".into(),
                     content: message.clone(),
+                    metadata: mnemosyne::MemoryMetadata::local(
+                        format!("message:{sess_id}:user:{turn_count}"),
+                        format!("{sess_id}:user:{turn_count}"),
+                        observed_at,
+                    ),
                 })
                 .await;
             let hr = self.subsystems.corpus.hook_registry.lock().await;
-            let turn_count = sm_arc.lock().await.turn_count();
             let ctx = HookContext {
                 point: HookPoint::OnMemoryStore,
                 session_id: sess_id.clone(),
@@ -786,6 +792,7 @@ impl TurnPipeline {
 
         if turn_succeeded {
             let sess_id = self.get_or_create_session(None).await?.0;
+            let observed_at = fabric::wall_to_datetime(self.clock.wall_now());
             let _ = self
                 .subsystems
                 .memory
@@ -794,6 +801,11 @@ impl TurnPipeline {
                     session: sess_id.clone(),
                     role: "assistant".into(),
                     content: text.clone(),
+                    metadata: mnemosyne::MemoryMetadata::local(
+                        format!("message:{sess_id}:assistant:{turn}"),
+                        format!("{sess_id}:assistant:{turn}"),
+                        observed_at,
+                    ),
                 })
                 .await;
             let hr = self.subsystems.corpus.hook_registry.lock().await;

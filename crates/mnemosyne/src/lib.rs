@@ -15,7 +15,8 @@ pub mod service;
 // multi-agent `MemoryScope` re-exported below (`r#impl::core_memory::scope`).
 // Reach the facade's scope type via `mnemosyne::service::MemoryScope`.
 pub use service::{
-    DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryService, RecallRequest, RecallSet,
+    DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryMetadata, MemoryProvenance,
+    MemorySensitivity, MemoryService, RecallItem, RecallRequest, RecallSet, TemporalState,
 };
 
 // Always-available exports
