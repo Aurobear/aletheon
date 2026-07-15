@@ -11,11 +11,11 @@ use crate::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
 use fabric::ipc::envelope_v2::Target;
 use fabric::ipc::mailbox::{InProcessMailboxService, Mailbox, MailboxService};
 use fabric::{
-    AdmissionController, AdmissionError, BudgetRequest, BudgetReservationReceipt, BudgetScopeId,
-    BudgetScopeKind, CancelReason, Clock, ContextBinding, ContextSpace, ExitReason, ExitStatus,
-    OperationHandle, OperationId, OperationManager, OperationRecord, OperationRequest,
-    OperationResult, PermitId, ProcessHandle, ProcessId, ProcessManager, ProcessSignal,
-    ProcessSnapshot, SpaceId, SpawnSpec,
+    AdmissionController, AdmissionError, AgentId, BudgetRequest, BudgetReservationReceipt,
+    BudgetScopeId, BudgetScopeKind, CancelReason, Clock, ContextBinding, ContextSpace, ExitReason,
+    ExitStatus, OperationHandle, OperationId, OperationManager, OperationRecord, OperationRequest,
+    OperationResult, OsProcessId, PermitId, ProcessHandle, ProcessId, ProcessIdentity,
+    ProcessManager, ProcessSignal, ProcessSnapshot, SpaceId, SpawnSpec,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,6 +42,7 @@ pub struct KernelRuntime {
     terminal_outcomes: Mutex<HashMap<ProcessId, TerminalOutcome>>,
     terminal_progress: Mutex<HashMap<ProcessId, TerminalProgress>>,
     lifecycle: Mutex<()>,
+    identities: Mutex<IdentityRegistry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +68,13 @@ enum TerminalPhase {
     MarkTerminal,
     Supervise,
     Restart,
+}
+
+#[derive(Default)]
+struct IdentityRegistry {
+    by_agent: HashMap<AgentId, ProcessIdentity>,
+    by_process: HashMap<ProcessId, ProcessIdentity>,
+    generations: HashMap<AgentId, u64>,
 }
 
 #[derive(Default)]
@@ -146,6 +154,7 @@ impl KernelRuntime {
             terminal_outcomes: Mutex::new(HashMap::new()),
             terminal_progress: Mutex::new(HashMap::new()),
             lifecycle: Mutex::new(()),
+            identities: Mutex::new(IdentityRegistry::default()),
         }
     }
 
@@ -278,6 +287,29 @@ impl KernelRuntime {
 
     pub async fn spawn_process(&self, spec: SpawnSpec) -> anyhow::Result<ProcessHandle> {
         let retained_spec = spec.clone();
+        let agent_id = spec.agent_id;
+        let existing = self
+            .identities
+            .lock()
+            .await
+            .by_agent
+            .get(&agent_id)
+            .copied();
+        if let Some(existing) = existing {
+            if !self
+                .processes
+                .inspect(existing.process_id)
+                .await?
+                .state
+                .is_terminal()
+            {
+                anyhow::bail!(
+                    "agent {:?} already owns live process {:?}",
+                    agent_id,
+                    existing.process_id
+                );
+            }
+        }
         let parent = spec.parent;
         let namespace = spec.namespace.0.clone();
         let process = self.processes.spawn(spec).await?;
@@ -328,7 +360,61 @@ impl KernelRuntime {
             .lock()
             .await
             .insert(process.id, retained_spec);
+        let mut identities = self.identities.lock().await;
+        let generation = identities
+            .generations
+            .get(&agent_id)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1);
+        identities.generations.insert(agent_id, generation);
+        let identity = ProcessIdentity {
+            agent_id,
+            process_id: process.id,
+            generation,
+            os_pid: None,
+        };
+        identities.by_agent.insert(agent_id, identity);
+        identities.by_process.insert(process.id, identity);
         Ok(process)
+    }
+
+    pub async fn bind_os_process_id(
+        &self,
+        process: ProcessId,
+        os_pid: OsProcessId,
+    ) -> anyhow::Result<ProcessIdentity> {
+        let mut identities = self.identities.lock().await;
+        let mut identity = *identities
+            .by_process
+            .get(&process)
+            .ok_or_else(|| anyhow::anyhow!("unknown process identity: {process:?}"))?;
+        let current = identities
+            .by_agent
+            .get(&identity.agent_id)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("agent identity is unbound"))?;
+        anyhow::ensure!(
+            current.process_id == process,
+            "cannot bind OS PID to stale process generation"
+        );
+        identity.os_pid = Some(os_pid);
+        identities.by_process.insert(process, identity);
+        identities.by_agent.insert(identity.agent_id, identity);
+        Ok(identity)
+    }
+
+    pub async fn identity_for_agent(&self, agent: AgentId) -> Option<ProcessIdentity> {
+        self.identities.lock().await.by_agent.get(&agent).copied()
+    }
+
+    pub async fn identity_for_process(&self, process: ProcessId) -> Option<ProcessIdentity> {
+        self.identities
+            .lock()
+            .await
+            .by_process
+            .get(&process)
+            .copied()
     }
 
     pub async fn signal_process(&self, id: ProcessId, signal: ProcessSignal) -> anyhow::Result<()> {

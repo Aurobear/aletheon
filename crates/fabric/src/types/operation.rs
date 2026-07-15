@@ -44,7 +44,7 @@ pub enum OperationKind {
     CapabilityCall,
     MemoryConsolidation,
     SubAgent,
-    Other(String),
+    ApprovedApply,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

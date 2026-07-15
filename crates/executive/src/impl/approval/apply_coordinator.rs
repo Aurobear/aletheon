@@ -189,7 +189,7 @@ impl ApplyCoordinator {
         let request = OperationRequest {
             owner: owner_process,
             parent: None,
-            kind: OperationKind::Other("approved_apply".into()),
+            kind: OperationKind::ApprovedApply,
             deadline: None,
         };
         if self

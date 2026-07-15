@@ -39,6 +39,9 @@ fn production_lifecycle_mutation_has_no_table_escape_hatch() {
             "aletheon_kernel::operation::OperationTable",
             "aletheon_kernel::space::InMemorySpaceManager",
             "ServicePorts",
+            "fabric::agent::Pid",
+            "OperationKind::Other",
+            "struct AgentProcess",
         ] {
             assert!(
                 !source.contains(forbidden),

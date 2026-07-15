@@ -104,10 +104,10 @@
 - Test: `crates/kernel/tests/lifecycle_identity.rs`
 - Test: `crates/executive/tests/kernel_runtime_production_paths.rs`
 
-- [ ] Inventory every production conversion among `ProcessId`, `AgentId`, provider/session identifiers and OS PIDs. Add a failing architecture test for untyped string/UUID conversions outside the owning adapter.
-- [ ] Define typed, versioned identity bindings owned by KernelRuntime: a logical Agent binds to one live Process generation, while an optional OS PID is metadata rather than lifecycle authority.
-- [ ] Replace ad-hoc Operation kind strings with the canonical `OperationKind` enum and reject unknown persisted discriminants explicitly instead of silently mapping them.
-- [ ] Test stable serialization, process-generation replacement, stale Agent/Process bindings, optional PID reuse, and all production Operation kinds.
+- [x] Inventory every production conversion among `ProcessId`, `AgentId` and OS PIDs. Delete the Executive `Pid`/`AgentProcess` lifecycle registry and add an architecture test rejecting its return.
+- [x] Define typed identity bindings owned by KernelRuntime: a logical Agent binds to one live Process generation, while an optional `OsProcessId` is metadata rather than lifecycle authority.
+- [x] Replace ad-hoc Operation kind strings with the closed canonical `OperationKind` enum and reject unknown persisted discriminants explicitly instead of silently mapping them.
+- [x] Test stable serialization, process-generation replacement, stale Agent/Process bindings, optional PID reuse, and all production Operation kinds.
 
 ### Task 7: Canonical capability lifecycle and injected clocks
 

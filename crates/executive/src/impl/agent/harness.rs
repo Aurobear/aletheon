@@ -34,8 +34,9 @@ pub struct AttemptParams {
     pub system_prompt: String,
     /// Conversation history so far.
     pub messages: Vec<fabric::Message>,
-    /// Token budget allocated for this attempt.
-    pub budget: super::budget::TokenBudget,
+    /// Local non-monetary output guard. Monetary/token accounting authority
+    /// remains in KernelRuntime's hierarchical reservation.
+    pub max_output_tokens: u64,
     /// Runtime plan governing turn limits and compaction.
     pub runtime_plan: RuntimePlan,
 }

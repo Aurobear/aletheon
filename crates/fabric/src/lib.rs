@@ -213,8 +213,9 @@ pub use types::permission::{
     ModeConfig, PermissionBehavior, PermissionContext, PermissionMode, PermissionRule,
 };
 pub use types::process::{
-    AgentId, AgentProfileId, ExitReason, ExitStatus, MailboxId, NamespaceId, ProcessRecord,
-    ProcessSignal, ProcessSnapshot, ProcessState, SpaceId, SpawnSpec,
+    AgentId, AgentProfileId, ExitReason, ExitStatus, MailboxId, NamespaceId, OsProcessId,
+    ProcessIdentity, ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState, SpaceId,
+    SpawnSpec,
 };
 pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
