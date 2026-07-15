@@ -11,20 +11,30 @@ mod attempt_coordinator;
 mod budget;
 pub mod coordinator;
 mod frame;
-mod migrations;
+pub(crate) mod migrations;
 mod retry;
 pub(crate) mod store;
+mod summary;
 mod transition;
 mod verification;
+mod worker;
 pub use self::coordinator::{GoalCoordinator, GoalTickOutcome};
 pub use attempt::GoalAttempt;
 pub use attempt_coordinator::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
-    AttemptRequest, RegistryAttemptExecutor,
+    AttemptRequest, CodingVerifier, RegistryAttemptExecutor,
 };
 pub use frame::{GoalAttemptSummary, GoalFrame, GoalRemainingBudget};
 pub use retry::{RetryDecision, RetryPolicy};
-pub use verification::{PersistedCodingJob, PersistedVerificationReport};
+pub use summary::{
+    GoalApplyOutcomeSummary, GoalApprovalOutcomeSummary, GoalAttemptOutcomeSummary,
+    GoalCheckOutcomeSummary, GoalCompletionSummary,
+};
+pub use verification::{
+    CodingJobRecoveryRecord, GoalProjectionEvidence, PersistedCodingJob,
+    PersistedVerificationReport,
+};
+pub use worker::GoalWorker;
 
 use anyhow::{Context, Result};
 use fabric::goal::{GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason};

@@ -5,6 +5,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::client::McpConnectionManager;
+use super::client::McpTool;
 use super::config::McpConfig;
 use crate::tools::Tool;
 
@@ -55,6 +56,11 @@ impl McpManager {
 
     pub fn server_has_tools(&self, server_name: &str, required: &[&str]) -> bool {
         self.inner.server_has_tools(server_name, required)
+    }
+
+    /// Return the advertised tool descriptors for contract validation.
+    pub fn server_tools(&self, server_name: &str) -> Option<Vec<McpTool>> {
+        self.inner.server_tools(server_name)
     }
 }
 

@@ -14,10 +14,56 @@ use fabric::channel::{
 use tokio_util::sync::CancellationToken;
 
 use super::router::{ChannelTransport, ProviderEnvelope};
-use types::{GetUpdatesResponse, SendMessageRequest, SendMessageResponse};
+use types::{
+    GetUpdatesResponse, InlineKeyboardButton, InlineKeyboardMarkup, SendMessageRequest,
+    SendMessageResponse,
+};
 
 /// Default Telegram Bot API base URL.
 pub const DEFAULT_BASE_URL: &str = "https://api.telegram.org";
+
+/// Detect the bounded read-only Google intents that need an explicit account
+/// selection before entering the normal ReAct pipeline.
+pub(crate) fn is_google_read_query(text: &str) -> bool {
+    let normalized = text.to_ascii_lowercase();
+    [
+        "today's events",
+        "today’s events",
+        "today events",
+        "important unread",
+        "unread mail",
+        "unread email",
+        "今天的日程",
+        "今日事件",
+        "重要未读",
+        "未读邮件",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+pub(crate) fn account_choice_prompt(labels: &[String]) -> String {
+    let choices = labels
+        .iter()
+        .take(10)
+        .enumerate()
+        .map(|(index, label)| format!("{}. {}", index + 1, truncate_label(label)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("Please choose a Google account before I run this read-only query:\n{choices}")
+}
+
+pub(crate) fn selected_account_context(label: &str, query: &str) -> String {
+    format!(
+        "<trusted-google-account>{}</trusted-google-account>\n{}",
+        truncate_label(label),
+        query
+    )
+}
+
+fn truncate_label(label: &str) -> String {
+    label.chars().take(128).collect()
+}
 
 /// HTTP long-poll transport for the Telegram Bot API.
 ///
@@ -90,6 +136,21 @@ impl TelegramTransport {
     /// [`InboundMessage`].  Returns `None` for updates that carry no text
     /// message (e.g. edited_message, callback_query).
     fn convert_update(update: &types::Update) -> Option<InboundMessage> {
+        if let Some(callback) = &update.callback_query {
+            let msg = callback.message.as_ref()?;
+            return Some(InboundMessage {
+                channel_id: ChannelId("telegram".into()),
+                message_id: MessageId(format!("callback:{}", callback.id)),
+                conversation_id: ConversationId(msg.chat.id.to_string()),
+                sender_id: ExternalSenderId(format!("telegram:{}", callback.from.id)),
+                content: MessageContent::Text {
+                    text: String::new(),
+                },
+                timestamp_ms: msg.date * 1000,
+                reply_to_action: callback.data.clone(),
+                correlation_id: format!("telegram:{}", update.update_id),
+            });
+        }
         let msg = update.message.as_ref()?;
         let text = msg.text.as_deref().unwrap_or("");
 
@@ -158,7 +219,10 @@ impl ChannelTransport for TelegramTransport {
             .query(&[
                 ("offset", offset.to_string()),
                 ("timeout", self.poll_timeout_secs.to_string()),
-                ("allowed_updates", r#"["message"]"#.to_string()),
+                (
+                    "allowed_updates",
+                    r#"["message","callback_query"]"#.to_string(),
+                ),
             ])
             .send()
             .await
@@ -217,7 +281,23 @@ impl ChannelTransport for TelegramTransport {
             }
         };
 
-        let body = SendMessageRequest { chat_id, text };
+        let reply_markup = (!outbound.actions.is_empty()).then(|| InlineKeyboardMarkup {
+            inline_keyboard: outbound
+                .actions
+                .iter()
+                .map(|action| {
+                    vec![InlineKeyboardButton {
+                        text: action.label.clone(),
+                        callback_data: action.action_id.clone(),
+                    }]
+                })
+                .collect(),
+        });
+        let body = SendMessageRequest {
+            chat_id,
+            text,
+            reply_markup,
+        };
 
         let resp = self
             .client
@@ -420,6 +500,23 @@ mod tests {
         }"#;
         let resp: GetUpdatesResponse = serde_json::from_str(json).unwrap();
         assert!(TelegramTransport::convert_update(&resp.result[0]).is_none());
+    }
+
+    #[test]
+    fn convert_callback_keeps_only_action_data_and_bound_identity() {
+        let response: GetUpdatesResponse = serde_json::from_str(
+            r#"{"ok":true,"result":[{"update_id":9,"callback_query":{"id":"cb",
+            "from":{"id":7},"message":{"message_id":3,"date":100,"chat":{"id":42}},
+            "data":"00000000-0000-0000-0000-000000000001:apply"}}]}"#,
+        )
+        .unwrap();
+        let message = TelegramTransport::convert_update(&response.result[0]).unwrap();
+        assert_eq!(message.sender_id.0, "telegram:7");
+        assert_eq!(message.conversation_id.0, "42");
+        assert_eq!(
+            message.reply_to_action.as_deref(),
+            Some("00000000-0000-0000-0000-000000000001:apply")
+        );
     }
 
     #[test]

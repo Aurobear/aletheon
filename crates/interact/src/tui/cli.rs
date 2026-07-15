@@ -394,21 +394,28 @@ async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<
 
             if detach {
                 // Start daemon in background
-                let mut cmd = std::process::Command::new(exe);
+                let mut cmd = tokio::process::Command::new(exe);
                 cmd.arg("--socket").arg(DEFAULT_SOCKET);
                 cmd.stdout(std::process::Stdio::null());
                 cmd.stderr(std::process::Stdio::null());
                 cmd.stdin(std::process::Stdio::null());
                 let child = cmd.spawn()?;
-                println!("Daemon started in background (PID: {})", child.id());
+                println!(
+                    "Daemon started in background (PID: {})",
+                    child
+                        .id()
+                        .map(|pid| pid.to_string())
+                        .unwrap_or_else(|| "unknown".into())
+                );
                 println!("Socket: {}", DEFAULT_SOCKET);
             } else {
                 // Start daemon in foreground
                 println!("Starting daemon (Ctrl+C to stop)...");
-                let status = std::process::Command::new(exe)
+                let status = tokio::process::Command::new(exe)
                     .arg("--socket")
                     .arg(DEFAULT_SOCKET)
-                    .status()?;
+                    .status()
+                    .await?;
                 std::process::exit(status.code().unwrap_or(1));
             }
         }
@@ -473,20 +480,14 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
             "status" | "st" => serde_json::json!({
                 "jsonrpc": "2.0", "id": 1, "method": "status"
             }),
-            _ => serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "chat",
-                "params": { "message": msg }
-            }),
+            "cwd" => {
+                println!("{}", super::client_working_dir().display());
+                return Ok(());
+            }
+            _ => super::chat_request(msg),
         }
     } else {
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "chat",
-            "params": { "message": msg }
-        })
+        super::chat_request(msg)
     };
     let req_str = serde_json::to_string(&request)?;
     writer.write_all(req_str.as_bytes()).await?;

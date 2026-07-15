@@ -4,7 +4,9 @@
 //! Each sub-module is responsible for a single logical group of methods.
 
 mod rpc_admin;
+mod rpc_approval;
 mod rpc_goal;
+mod rpc_google;
 mod rpc_health;
 mod rpc_memory;
 mod rpc_reflection;
@@ -44,11 +46,25 @@ impl RequestHandler {
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,
             "reload_skills" => self.handle_reload_skills(&id, &request).await,
             "approval_response" => self.handle_approval_response(&id, &request).await,
+            "approval.list" => self.handle_approval_list(&id, &request).await,
+            "approval.show" => self.handle_approval_show(&id, &request).await,
+            "approval.approve" => self.handle_approval_approve(&id, &request).await,
+            "approval.reject" => self.handle_approval_reject(&id, &request).await,
             "interrupt" => self.handle_interrupt(&id, &request).await,
             "mode_switch" => self.handle_mode_switch(&id, &request).await,
             "model_list" => self.handle_model_list(&id, &request).await,
             "model_switch" => self.handle_model_switch(&id, &request).await,
             "tools/list" => self.handle_tools_list(&id, &request).await,
+            "google.authorization.start" => {
+                self.handle_google_authorization_start(&id, &request).await
+            }
+            "google.authorization.callback" => {
+                self.handle_google_authorization_callback(&id, &request)
+                    .await
+            }
+            "google.accounts.list" => self.handle_google_accounts_list(&id, &request).await,
+            "google.accounts.revoke" => self.handle_google_account_revoke(&id, &request).await,
+            "google.token.refresh" => self.handle_google_token_refresh(&id, &request).await,
             "hooks_list" => self.handle_hooks_list(&id, &request).await,
             "sub_agents" => self.handle_sub_agents(&id, &request).await,
 

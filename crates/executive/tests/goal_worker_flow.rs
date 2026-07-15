@@ -54,7 +54,12 @@ struct NoopTurn;
 
 #[async_trait]
 impl ChannelTurnExecutor for NoopTurn {
-    async fn execute(&self, _message: &str, _correlation_id: &str) -> anyhow::Result<String> {
+    async fn execute(
+        &self,
+        _principal: &str,
+        _message: &str,
+        _correlation_id: &str,
+    ) -> anyhow::Result<String> {
         unreachable!("Goal progress does not execute a chat turn")
     }
 }

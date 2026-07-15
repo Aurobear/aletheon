@@ -6,10 +6,14 @@
 
 use std::sync::Arc;
 
-use crate::r#impl::channel::router::{ChannelGoalExecutor, ChannelTurnExecutor};
+use crate::r#impl::approval::ApplyCoordinator;
+use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
+use crate::r#impl::channel::router::{
+    ChannelApprovalExecutor, ChannelGoalExecutor, ChannelTurnExecutor, GmailDraftApprovalExecutor,
+};
 use crate::r#impl::goal::ObjectiveStore;
 use crate::service::DaemonTurnOrchestrator;
-use fabric::{GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId};
+use fabric::{ApprovalId, GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId};
 use tokio::sync::Mutex;
 
 /// Wraps a `DaemonTurnOrchestrator` so the channel router can invoke
@@ -20,6 +24,91 @@ pub struct DaemonChannelTurnExecutor {
 
 pub struct DaemonChannelGoalExecutor {
     store: Arc<Mutex<ObjectiveStore>>,
+}
+
+pub struct DaemonChannelApprovalExecutor {
+    coordinator: Arc<ApplyCoordinator>,
+    owner_process: ProcessId,
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+pub struct DaemonGmailDraftApprovalExecutor {
+    coordinator: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>,
+}
+
+impl DaemonGmailDraftApprovalExecutor {
+    pub fn new(coordinator: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>) -> Self {
+        Self { coordinator }
+    }
+}
+
+#[async_trait::async_trait]
+impl GmailDraftApprovalExecutor for DaemonGmailDraftApprovalExecutor {
+    async fn execute_draft_resolution(
+        &self,
+        approval: &fabric::ApprovalSnapshot,
+        action: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<()> {
+        let coordinator = self.coordinator.lock().unwrap();
+        match action {
+            "confirm" => {
+                coordinator.confirm(approval, now_ms)?;
+            }
+            "edit" => {
+                coordinator.reject_or_edit(approval, true, now_ms)?;
+            }
+            "reject" => {
+                coordinator.reject_or_edit(approval, false, now_ms)?;
+            }
+            _ => anyhow::bail!("unsupported Gmail draft approval action"),
+        }
+        Ok(())
+    }
+
+    async fn revise_draft(
+        &self,
+        owner: &str,
+        goal_id: GoalId,
+        intent: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<fabric::ApprovalSnapshot> {
+        self.coordinator
+            .lock()
+            .unwrap()
+            .revise(
+                goal_id,
+                &PrincipalId(owner.to_owned()),
+                intent,
+                now_ms,
+                now_ms.saturating_add(24 * 60 * 60 * 1_000),
+            )
+            .map(|draft| draft.approval)
+    }
+}
+
+impl DaemonChannelApprovalExecutor {
+    pub fn new(
+        coordinator: Arc<ApplyCoordinator>,
+        owner_process: ProcessId,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Self {
+        Self {
+            coordinator,
+            owner_process,
+            cancel,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ChannelApprovalExecutor for DaemonChannelApprovalExecutor {
+    async fn execute_resolved(&self, approval_id: ApprovalId) -> anyhow::Result<()> {
+        self.coordinator
+            .coordinate(approval_id, self.owner_process, self.cancel.child_token())
+            .await?;
+        Ok(())
+    }
 }
 
 impl DaemonChannelGoalExecutor {
@@ -137,12 +226,18 @@ impl DaemonChannelTurnExecutor {
 
 #[async_trait::async_trait]
 impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
-    async fn execute(&self, message: &str, correlation_id: &str) -> anyhow::Result<String> {
+    async fn execute(
+        &self,
+        principal: &str,
+        message: &str,
+        correlation_id: &str,
+    ) -> anyhow::Result<String> {
         let resp = self
             .orchestrator
-            .execute_turn(
+            .execute_authenticated_turn(
                 serde_json::Value::String(correlation_id.to_string()),
                 message,
+                PrincipalId(principal.to_owned()),
             )
             .await;
 

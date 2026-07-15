@@ -2,14 +2,18 @@
 
 pub mod admission;
 pub mod agent;
+pub mod approval;
 pub mod attempt;
 pub mod capability;
 pub mod channel;
 pub mod coding_job;
 pub mod context;
 pub mod evidence;
+pub mod external_event;
+pub mod external_identity;
 pub mod genome;
 pub mod goal;
+pub mod google;
 pub mod grounding;
 pub mod hook;
 pub mod hook_ext;

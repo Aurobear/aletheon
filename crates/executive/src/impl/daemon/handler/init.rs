@@ -28,6 +28,11 @@ use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
+use corpus::tools::google::{
+    CalendarSyncConfig, CalendarSynchronizer, DriveSyncConfig, DriveSynchronizer,
+    GmailHistorySyncConfig, GmailHistorySynchronizer, GoogleApiClient, GoogleApiEndpoints,
+    GoogleCalendarAdapter, GoogleDriveAdapter, GoogleGmailAdapter,
+};
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
 use fabric::hook::{HookContext, HookPoint};
@@ -49,14 +54,24 @@ use tracing::{info, warn};
 
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::r#impl::channel::daemon_adapter::{
-    DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
+    DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
+    DaemonGmailDraftApprovalExecutor,
+};
+use crate::r#impl::channel::gmail::{
+    load_gmail_ingress_policies, GmailGoalDraftCoordinator, GmailGoalEventIngress,
 };
 use crate::r#impl::channel::router::{
-    ChannelGoalExecutor, ChannelRouter, ChannelTransport, ChannelTurnExecutor,
+    ChannelApprovalExecutor, ChannelGoalExecutor, ChannelRouter, ChannelTransport,
+    ChannelTurnExecutor, GmailDraftApprovalExecutor, GoalProgress,
 };
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
+use crate::r#impl::external::{
+    ExecutiveGoogleAccountResolver, ExecutiveGoogleCredentialSource, ExternalIdentityRepository,
+    GoogleIntegration,
+};
 use crate::r#impl::goal::ObjectiveStore;
+use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
 use crate::r#impl::runtime::{register_pi_runtime, ProviderWorkerRuntime};
 use aletheon_kernel::supervision::RestartPolicy;
 use corpus::hook::builtin::audit_hook;
@@ -138,6 +153,274 @@ pub(crate) fn register_goal_runtimes(
         registered.push(runtime_id);
     }
     Ok(registered)
+}
+
+fn deployment_storage_quota(
+    deployment: &cognit::config::DeploymentConfig,
+) -> anyhow::Result<crate::r#impl::storage_quota::StorageQuota> {
+    use crate::r#impl::storage_quota::{StorageClass, StorageLimit, StorageQuota, StorageRoot};
+
+    let quotas = &deployment.quotas;
+    let paths = &deployment.paths;
+    let roots = HashMap::from([
+        (
+            StorageClass::Total,
+            StorageRoot {
+                path: paths.state_root.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.total_data_soft_bytes,
+                    hard_bytes: quotas.total_data_bytes,
+                    hard_items: quotas.total_data_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Artifacts,
+            StorageRoot {
+                path: paths.artifacts.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.artifacts_soft_bytes,
+                    hard_bytes: quotas.artifacts_bytes,
+                    hard_items: quotas.artifacts_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Worktrees,
+            StorageRoot {
+                path: paths.worktrees.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.worktrees_soft_bytes,
+                    hard_bytes: quotas.worktrees_bytes,
+                    hard_items: quotas.worktrees_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Audit,
+            StorageRoot {
+                path: paths.audit.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.audit_soft_bytes,
+                    hard_bytes: quotas.audit_bytes,
+                    hard_items: quotas.audit_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Sessions,
+            StorageRoot {
+                path: paths.sessions.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.sessions_soft_bytes,
+                    hard_bytes: quotas.sessions_bytes,
+                    hard_items: quotas.sessions_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Google,
+            StorageRoot {
+                path: paths.state.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.google_soft_bytes,
+                    hard_bytes: quotas.google_bytes,
+                    hard_items: quotas.google_items,
+                },
+            },
+        ),
+        (
+            StorageClass::GbrainSpool,
+            StorageRoot {
+                path: paths.mnemosyne.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.gbrain_spool_soft_bytes,
+                    hard_bytes: quotas.gbrain_spool_bytes,
+                    hard_items: quotas.gbrain_spool_items,
+                },
+            },
+        ),
+    ]);
+    StorageQuota::new(roots).map_err(Into::into)
+}
+
+type ConfiguredGoogleReadTools = (
+    Arc<GoogleIntegration>,
+    crate::r#impl::google::GoogleSyncHandle,
+    Arc<std::sync::Mutex<crate::r#impl::google::GoogleSyncStore>>,
+    Option<Arc<GmailGoalEventIngress>>,
+);
+
+fn register_configured_google_read_tools(
+    tools: &mut ToolRegistry,
+    objective_db_path: &std::path::Path,
+    clock: Arc<dyn Clock>,
+    cancel: &CancellationToken,
+    artifact_root: &std::path::Path,
+    storage_quota: Option<crate::r#impl::storage_quota::StorageQuota>,
+) -> anyhow::Result<Option<ConfiguredGoogleReadTools>> {
+    let client_id = match std::env::var("ALETHEON_GOOGLE_CLIENT_ID") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => return Ok(None),
+    };
+    let redirect_uri = std::env::var("ALETHEON_GOOGLE_REDIRECT_URI")
+        .context("ALETHEON_GOOGLE_REDIRECT_URI is required when Google is configured")?;
+    let client_secret = std::env::var("ALETHEON_GOOGLE_CLIENT_SECRET")
+        .ok()
+        .filter(|value| !value.is_empty());
+
+    let repository = ExternalIdentityRepository::open(objective_db_path)
+        .context("opening external identity repository")?;
+    let active_bindings = repository.list_active()?;
+    let gmail_enabled = repository.has_active_scope(fabric::ExternalScope::GmailReadonly)?;
+    let calendar_enabled = repository.has_active_scope(fabric::ExternalScope::CalendarReadonly)?;
+    let mut scopes = vec![
+        fabric::ExternalScope::OpenId,
+        fabric::ExternalScope::UserInfoEmail,
+        fabric::ExternalScope::GmailReadonly,
+        fabric::ExternalScope::CalendarReadonly,
+    ];
+    if std::env::var("ALETHEON_GOOGLE_DRIVE_SYNC_ENABLED")
+        .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+    {
+        scopes.push(fabric::ExternalScope::DriveReadonly);
+    }
+    let tokens = corpus::tools::mcp::token_store::TokenStore::open_default()
+        .context("opening encrypted Google credential vault")?;
+    let oauth = corpus::tools::google::oauth::GoogleOAuthProvider::new(
+        client_id,
+        client_secret,
+        redirect_uri,
+        scopes,
+        tokens,
+        clock.clone(),
+    )?;
+    let repository = Arc::new(std::sync::Mutex::new(repository));
+    let oauth = Arc::new(Mutex::new(oauth));
+    let integration = Arc::new(GoogleIntegration::new(repository.clone(), oauth.clone()));
+    let credentials = Arc::new(ExecutiveGoogleCredentialSource::new(
+        repository.clone(),
+        oauth,
+    ));
+    let accounts = Arc::new(ExecutiveGoogleAccountResolver::new(repository));
+    let client = GoogleApiClient::new(credentials, GoogleApiEndpoints::default())?;
+    let gmail_adapter = gmail_enabled.then(|| Arc::new(GoogleGmailAdapter::new(client.clone())));
+    let gmail = gmail_adapter
+        .clone()
+        .map(|adapter| adapter as Arc<dyn corpus::tools::google::GmailCapability>);
+    let calendar = calendar_enabled.then(|| {
+        Arc::new(GoogleCalendarAdapter::new(client.clone()))
+            as Arc<dyn corpus::tools::google::CalendarCapability>
+    });
+    tools.register_google_read_tools(gmail, calendar, accounts)?;
+
+    let gmail_ingress = match (
+        gmail_adapter,
+        std::env::var_os("ALETHEON_GMAIL_INGRESS_POLICY_FILE"),
+    ) {
+        (Some(adapter), Some(path)) => {
+            let owners = active_bindings
+                .iter()
+                .map(|(identity, _)| (identity.id, identity.principal_id.clone()))
+                .collect::<std::collections::HashMap<_, _>>();
+            let policies = load_gmail_ingress_policies(std::path::Path::new(&path), &owners)
+                .context("loading Gmail ingress policies")?;
+            let ingress =
+                GmailGoalEventIngress::new(adapter, objective_db_path, artifact_root, policies)?;
+            Some(Arc::new(match storage_quota.clone() {
+                Some(quota) => ingress.with_storage_quota(quota),
+                None => ingress,
+            }))
+        }
+        _ => None,
+    };
+
+    let store = Arc::new(std::sync::Mutex::new(
+        crate::r#impl::google::GoogleSyncStore::open(objective_db_path)?,
+    ));
+    let mut manager = crate::r#impl::google::GoogleSyncManager::new(
+        store.clone(),
+        format!("daemon-{}", uuid::Uuid::new_v4()),
+        clock.clone(),
+        crate::r#impl::google::GoogleSyncManagerConfig::default(),
+    )?;
+    let drive_enabled = std::env::var("ALETHEON_GOOGLE_DRIVE_SYNC_ENABLED")
+        .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"));
+    let selected_drive_files = std::env::var("ALETHEON_GOOGLE_DRIVE_FILE_IDS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<std::collections::HashSet<_>>();
+    let now_ms = clock.wall_now().0.max(0);
+    for (identity, grant) in active_bindings {
+        if grant.scopes.contains(&fabric::ExternalScope::GmailReadonly) {
+            manager.register(crate::r#impl::google::GoogleSyncRegistration {
+                principal: identity.principal_id.clone(),
+                account_id: identity.id,
+                stream: crate::r#impl::google::SyncStream::GmailHistory,
+                initial_cursor: None,
+                cursor_generation: 1,
+                poller: Arc::new(crate::r#impl::google::GmailHistoryPoller(
+                    GmailHistorySynchronizer::new(
+                        GoogleGmailAdapter::new(client.clone()),
+                        GmailHistorySyncConfig::default(),
+                    )?,
+                )),
+            })?;
+        }
+        if grant
+            .scopes
+            .contains(&fabric::ExternalScope::CalendarReadonly)
+        {
+            manager.register(crate::r#impl::google::GoogleSyncRegistration {
+                principal: identity.principal_id.clone(),
+                account_id: identity.id,
+                stream: crate::r#impl::google::SyncStream::Calendar,
+                initial_cursor: None,
+                cursor_generation: 1,
+                poller: Arc::new(crate::r#impl::google::CalendarDeltaPoller(
+                    CalendarSynchronizer::new(
+                        GoogleCalendarAdapter::new(client.clone()),
+                        CalendarSyncConfig {
+                            window_start_ms: now_ms.saturating_sub(30 * 86_400_000),
+                            window_end_ms: now_ms.saturating_add(365 * 86_400_000),
+                            timezone: "UTC".into(),
+                            max_pages: 20,
+                            page_size: 250,
+                        },
+                    )?,
+                )),
+            })?;
+        }
+
+        if drive_enabled && grant.scopes.contains(&fabric::ExternalScope::DriveReadonly) {
+            manager.register(crate::r#impl::google::GoogleSyncRegistration {
+                principal: identity.principal_id,
+                account_id: identity.id,
+                stream: crate::r#impl::google::SyncStream::DriveChanges,
+                initial_cursor: None,
+                cursor_generation: 1,
+                poller: Arc::new(crate::r#impl::google::DriveChangesPoller(
+                    DriveSynchronizer::new(
+                        GoogleDriveAdapter::new(client.clone()),
+                        DriveSyncConfig {
+                            selected_file_ids: selected_drive_files.clone(),
+                            content_mime_allowlist: std::collections::HashSet::new(),
+                            download_content: false,
+                            max_content_bytes: 8 * 1_048_576,
+                            max_pages: 20,
+                            max_changes: 2_000,
+                            page_size: 100,
+                        },
+                    )?,
+                )),
+            })?;
+        }
+    }
+    let sync = manager.start(cancel);
+    Ok(Some((integration, sync, store, gmail_ingress)))
 }
 
 impl RequestHandler {
@@ -226,14 +509,42 @@ impl RequestHandler {
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".aletheon");
         std::fs::create_dir_all(&aletheon_dir)?;
+        let production = config.deployment.mode == cognit::config::DeploymentMode::Production;
+        let fact_root = if production {
+            config.deployment.paths.mnemosyne.clone()
+        } else {
+            aletheon_dir.clone()
+        };
+        std::fs::create_dir_all(&fact_root)?;
         let fact_store =
-            FactStore::open(&aletheon_dir.join("fact_store.db")).context("opening fact store")?;
+            FactStore::open(&fact_root.join("fact_store.db")).context("opening fact store")?;
         let fact_store = Arc::new(Mutex::new(fact_store));
 
         // ObjectiveStore
-        let objective_store = ObjectiveStore::open(&aletheon_dir.join("objectives.db"))
-            .context("opening objective store")?;
+        let objective_root = if production {
+            config.deployment.paths.goals.clone()
+        } else {
+            aletheon_dir.clone()
+        };
+        std::fs::create_dir_all(&objective_root)?;
+        let objective_db_path = objective_root.join("objectives.db");
+        let storage_quota = production
+            .then(|| deployment_storage_quota(&config.deployment))
+            .transpose()?;
+        let objective_store =
+            ObjectiveStore::open(&objective_db_path).context("opening objective store")?;
         let objective_store = Arc::new(Mutex::new(objective_store));
+        let apply_objective_store = Arc::new(std::sync::Mutex::new(
+            ObjectiveStore::open(&objective_db_path).context("opening apply objective store")?,
+        ));
+        let approval_repository =
+            crate::r#impl::approval::ApprovalRepository::open(&objective_db_path)
+                .context("opening approval repository")?;
+        let approval_repository = Arc::new(std::sync::Mutex::new(approval_repository));
+        let gmail_goal_drafts = Arc::new(std::sync::Mutex::new(
+            GmailGoalDraftCoordinator::open(&objective_db_path)
+                .context("opening Gmail Goal draft coordinator")?,
+        ));
 
         // M3: terminalize stale runtime calls before making their Goals ready.
         // Recovery records cancellation evidence and never invokes a runtime.
@@ -305,6 +616,45 @@ impl RequestHandler {
         // all subsystems (including SessionManager) can route through it.
         let clock = Arc::new(SystemClock::new());
 
+        // Reconcile retained coding worktrees before the Pi runtime can be
+        // registered. Any unsafe cleanup or exhausted budget fails closed for
+        // new coding work while leaving the rest of the daemon available.
+        let pi_work_allowed = if pi_runtime.enabled {
+            let recovery = objective_store
+                .lock()
+                .await
+                .coding_job_recovery_records()
+                .context("loading coding job recovery metadata")
+                .and_then(|records| {
+                    WorktreeRecoveryService::new(
+                        WorktreeRecoveryConfig::production(pi_runtime.worktree_base.clone()),
+                        records,
+                        clock.clone(),
+                    )
+                })
+                .and_then(|service| service.recover());
+            match recovery {
+                Ok(outcome) => {
+                    if !outcome.quarantined.is_empty() {
+                        warn!(
+                            count = outcome.quarantined.len(),
+                            "Unknown coding worktrees quarantined for manual review"
+                        );
+                    }
+                    if let Some(reason) = &outcome.blocked_reason {
+                        warn!(reason = %reason, "Pi coding work blocked by worktree recovery");
+                    }
+                    outcome.allow_new_pi_work
+                }
+                Err(error) => {
+                    warn!(error = %error, "Pi coding work blocked: worktree recovery failed");
+                    false
+                }
+            }
+        } else {
+            true
+        };
+
         // Multi-session setup
         let context_window = llm.max_context_length();
         let initial_session =
@@ -343,6 +693,77 @@ impl RequestHandler {
             fact_store: Some(fact_store.clone()),
             clock: clock.clone(),
         }));
+        let external_artifact_root = if production {
+            config.deployment.paths.artifacts.clone()
+        } else {
+            data_dir.join("external-artifacts")
+        };
+        let (google, mut google_sync, google_sync_store, gmail_ingress) =
+            match register_configured_google_read_tools(
+                &mut tools,
+                &objective_db_path,
+                clock.clone(),
+                &cancel_token,
+                &external_artifact_root,
+                storage_quota.clone(),
+            ) {
+                Ok(Some((integration, sync, store, gmail_ingress))) => {
+                    (Some(integration), Some(sync), Some(store), gmail_ingress)
+                }
+                Ok(None) => (None, None, None, None),
+                Err(error) => {
+                    warn!(error = %error, "Google read integration disabled");
+                    (None, None, None, None)
+                }
+            };
+        if let (Some(handle), Some(store)) = (google_sync.as_mut(), google_sync_store) {
+            let goal_store = Arc::new(std::sync::Mutex::new(
+                ObjectiveStore::open(&objective_db_path)
+                    .context("opening Google event Goal store")?,
+            ));
+            let mut goals = crate::r#impl::goal::GoalCoordinator::new(goal_store);
+            if let Some(quota) = storage_quota.clone() {
+                goals = goals.with_storage_quota(quota, 16 * 1024 * 1024);
+            }
+            let goals = Arc::new(goals);
+            let notifications = Arc::new(
+                crate::r#impl::google::DurableGoogleNotificationSink::open(
+                    &data_dir.join("channels.db"),
+                )
+                .context("opening Google notification outbox")?,
+            );
+            let mut event_router = crate::r#impl::google::GoogleEventRouter::new_with_notifications(
+                store.clone(),
+                goals,
+                notifications,
+            );
+            if let Some(ingress) = gmail_ingress {
+                event_router = event_router.with_mail_ingress(ingress);
+            }
+            let sink = Arc::new(event_router);
+            let dispatcher = crate::r#impl::google::GoogleEventDispatcher::new(
+                store,
+                sink,
+                format!("daemon-dispatch-{}", uuid::Uuid::new_v4()),
+                30_000,
+            )?;
+            let dispatch_clock = clock.clone();
+            handle.spawn_supervised(move |cancel| async move {
+                loop {
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    let now_ms = dispatch_clock.wall_now().0.max(0);
+                    if let Err(error) = dispatcher.dispatch_due(now_ms, 100, &cancel).await {
+                        warn!(error = %error, "Google event dispatch failed");
+                    }
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+                    }
+                }
+            });
+        }
 
         // MCP servers. Keep the manager alive: gbrain recall/capture calls the
         // same authenticated connections after startup tool registration.
@@ -369,18 +790,15 @@ impl RequestHandler {
                 }
             }
             if config.gbrain_memory.enabled {
-                let required = if config.gbrain_memory.capture_enabled {
-                    &["query", "get_page", "put_page"][..]
-                } else {
-                    &["query", "get_page"][..]
-                };
-                if mcp.server_has_tools(&config.gbrain_memory.server_name, required) {
+                if mcp
+                    .server_tools(&config.gbrain_memory.server_name)
+                    .is_some()
+                {
                     retained_mcp = Some(Arc::new(mcp));
                 } else {
                     tracing::warn!(
                         server = %config.gbrain_memory.server_name,
-                        ?required,
-                        "gbrain disabled: server disconnected or required tools missing"
+                        "GBrain server unavailable; local memory remains active"
                     );
                 }
             }
@@ -577,6 +995,23 @@ impl RequestHandler {
             clock.clone(),
         ));
 
+        let local_memory: Arc<dyn mnemosyne::MemoryService> =
+            Arc::new(mnemosyne::DefaultMemoryService::new(
+                recall_memory.clone(),
+                fact_store.clone(),
+                core_memory.clone(),
+                episodic_memory.clone(),
+                clock.clone(),
+            ));
+        let gbrain_runtime = crate::r#impl::gbrain::build_gbrain_memory_runtime(
+            local_memory,
+            retained_mcp,
+            &config.gbrain_memory,
+            clock.clone(),
+            &cancel_token,
+        );
+        let gbrain_worker_task = gbrain_runtime.worker_task;
+
         let ports = aletheon_kernel::service::ServicePorts::new()
             .with_agora(Arc::new(agora::AgoraRegistry::new()));
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
@@ -585,21 +1020,15 @@ impl RequestHandler {
             self_field,
             reflector,
             memory: crate::core::MemoryGroup {
-                gbrain: retained_mcp,
-                gbrain_config: config.gbrain_memory.clone(),
-                memory_service: Arc::new(mnemosyne::DefaultMemoryService::new(
-                    recall_memory.clone(),
-                    fact_store.clone(),
-                    core_memory.clone(),
-                    episodic_memory.clone(),
-                    clock.clone(),
-                )),
+                memory_service: gbrain_runtime.memory_service,
+                supplemental_memory_health: gbrain_runtime.health,
                 episodic_memory,
                 recall_memory,
                 core_memory,
                 fact_store,
                 auto_memory,
                 objective_store,
+                approval_repository,
             },
             security: crate::core::SecurityGroup {
                 tool_runner,
@@ -684,15 +1113,26 @@ impl RequestHandler {
                 .await
                 .map(|backend| Arc::new(backend) as Arc<dyn fabric::sandbox::SandboxBackend>);
             let mut runtime = subsystems.runtime.lock().await;
-            if register_pi_runtime(
-                runtime.sub_agent_spawner_mut(),
-                &pi_runtime,
-                sandbox,
-                clock.clone(),
-            )? {
+            if pi_work_allowed
+                && register_pi_runtime(
+                    runtime.sub_agent_spawner_mut(),
+                    &pi_runtime,
+                    sandbox,
+                    clock.clone(),
+                )?
+            {
                 info!(runtime_id = "pi-coder", "Pi coding runtime registered");
             }
         }
+
+        let goal_runtime_registry = if goal_runtime.enabled {
+            let runtime = subsystems.runtime.lock().await;
+            Some(Arc::new(
+                runtime.sub_agent_spawner().runtime_registry().clone(),
+            ))
+        } else {
+            None
+        };
 
         // Repoint the sub-agent spawner at the shared kernel tables so
         // sub-agents register in the same ProcessTable/OperationTable as the
@@ -740,7 +1180,7 @@ impl RequestHandler {
                 let exec_for_agents = subsystems.runtime.clone();
                 let main_slot = subsystems.main_agent_process_id.clone();
 
-                let _clock_for_agents = clock.clone();
+                let clock_for_agents = clock.clone();
                 let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
                     Arc::new(move |system_prompt, user_prompt, allowed_tools| {
                         let llm = llm_for_agents.clone();
@@ -750,7 +1190,7 @@ impl RequestHandler {
                         let sp = system_prompt;
                         let up = user_prompt;
                         let at = allowed_tools;
-                        let clock = clock.clone();
+                        let clock = clock_for_agents.clone();
                         Box::pin(async move {
                             // 1. Register tracked sub-agent with SubAgentSpawner.
                             let agent_id = {
@@ -922,10 +1362,63 @@ impl RequestHandler {
             Some(cancel_token.clone()),
         ));
 
+        let approved_apply = if pi_runtime.enabled && pi_work_allowed {
+            Some(Arc::new(
+                crate::r#impl::approval::ApplyCoordinator::new(
+                    apply_objective_store,
+                    subsystems.memory.approval_repository.clone(),
+                    subsystems.ports.operation_table.clone(),
+                    clock.clone(),
+                    crate::r#impl::approval::ApplyCoordinatorConfig {
+                        worktree_base: pi_runtime.worktree_base.clone(),
+                        timeout: std::time::Duration::from_secs(60),
+                    },
+                    Arc::new(crate::r#impl::approval::GitManagedWorktreeCleaner),
+                )?
+                .with_memory_projection(
+                    crate::r#impl::memory_projection::MemoryProjection::new(
+                        subsystems.memory.memory_service.clone(),
+                    ),
+                ),
+            ))
+        } else {
+            None
+        };
+
         // Clone these before they are moved into the handler struct
         // so they are available for Telegram channel initialization.
         let _turn_orch_for_telegram = turn_orchestrator.clone();
         let _cancel_for_telegram = cancel_token.clone();
+        let (goal_progress_tx, goal_progress_rx) = mpsc::channel(64);
+        let goal_worker_task = if let Some(runtime_registry) = goal_runtime_registry {
+            let worker_route = goal_runtime
+                .worker
+                .as_ref()
+                .context("missing Goal worker route")?;
+            let reviewer_route = goal_runtime
+                .reviewer
+                .as_ref()
+                .context("missing Goal reviewer route")?;
+            let worker = crate::r#impl::goal::GoalWorker::new(
+                Arc::new(std::sync::Mutex::new(ObjectiveStore::open(
+                    &objective_db_path,
+                )?)),
+                runtime_registry,
+                fabric::RuntimeId(worker_route.runtime_id.clone()),
+                fabric::RuntimeId(reviewer_route.runtime_id.clone()),
+                goal_progress_tx,
+            );
+            let worker = match storage_quota.clone() {
+                Some(quota) => worker.with_storage_quota(quota, 16 * 1024 * 1024),
+                None => worker,
+            };
+            let worker_cancel = cancel_token.clone();
+            Some(tokio::spawn(worker.run(worker_cancel)))
+        } else {
+            drop(goal_progress_tx);
+            None
+        };
+        let goal_worker_enabled = goal_worker_task.is_some();
 
         let mut handler = Self {
             subsystems,
@@ -940,6 +1433,12 @@ impl RequestHandler {
             daemon_cancel_token: Some(cancel_token),
             turn_orchestrator,
             telegram_task: None,
+            goal_worker_task: goal_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
+            google_sync: google_sync.map(|handle| Arc::new(Mutex::new(Some(handle)))),
+            gbrain_worker_task: gbrain_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
+            approved_apply: approved_apply.clone(),
+            google,
+            health: Arc::new(crate::r#impl::health::HealthRegistry::production_ready()),
         };
 
         // Register initial params
@@ -1028,7 +1527,12 @@ impl RequestHandler {
                 data_dir_for_telegram,
                 _turn_orch_for_telegram,
                 handler.subsystems.memory.objective_store.clone(),
+                handler.subsystems.memory.approval_repository.clone(),
+                gmail_goal_drafts,
+                approved_apply,
+                handler.google.clone(),
                 _cancel_for_telegram,
+                goal_worker_enabled.then_some(goal_progress_rx),
             );
             handler.telegram_task = Some(Arc::new(jh));
         } else {
@@ -1045,7 +1549,12 @@ impl RequestHandler {
         data_dir: PathBuf,
         orchestrator: Arc<crate::service::DaemonTurnOrchestrator>,
         objective_store: Arc<Mutex<ObjectiveStore>>,
+        approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+        gmail_goal_drafts: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>,
+        approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
+        google: Option<Arc<GoogleIntegration>>,
         cancel: CancellationToken,
+        goal_progress_rx: Option<mpsc::Receiver<GoalProgress>>,
     ) -> tokio::task::JoinHandle<()> {
         let store_path = data_dir.join("channels.db");
         let store = ChannelStore::open(&store_path).expect("opening channel store for Telegram");
@@ -1081,10 +1590,40 @@ impl RequestHandler {
 
         let goal_executor: Arc<dyn ChannelGoalExecutor> =
             Arc::new(DaemonChannelGoalExecutor::new(objective_store));
-        let router = ChannelRouter::new(store, turn_executor).with_goal_executor(goal_executor);
+        let approval_repository_for_poll = approval_repository.clone();
+        let approval_conversation = cfg
+            .owner_user_id
+            .map(|id| fabric::channel::ConversationId(id.to_string()));
+        let mut router = ChannelRouter::new(store, turn_executor)
+            .with_goal_executor(goal_executor)
+            .with_approval_repository(approval_repository);
+        let gmail_executor: Arc<dyn GmailDraftApprovalExecutor> =
+            Arc::new(DaemonGmailDraftApprovalExecutor::new(gmail_goal_drafts));
+        router = router.with_gmail_draft_executor(gmail_executor);
+        if let Some(google) = google {
+            router = router.with_google_accounts(google);
+        }
+        if let Some(coordinator) = approved_apply {
+            let executor: Arc<dyn ChannelApprovalExecutor> =
+                Arc::new(DaemonChannelApprovalExecutor::new(
+                    coordinator,
+                    fabric::ProcessId::new(),
+                    cancel.clone(),
+                ));
+            router = router.with_approval_executor(executor);
+        }
 
         tokio::spawn(async move {
-            Self::telegram_poll_loop(router, transport, cursor, cancel).await;
+            Self::telegram_poll_loop(
+                router,
+                transport,
+                cursor,
+                approval_repository_for_poll,
+                approval_conversation,
+                cancel,
+                goal_progress_rx,
+            )
+            .await;
         })
     }
 
@@ -1093,7 +1632,10 @@ impl RequestHandler {
         mut router: ChannelRouter,
         transport: TelegramTransport,
         mut cursor: Option<String>,
+        approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+        approval_conversation: Option<fabric::channel::ConversationId>,
         cancel: CancellationToken,
+        mut goal_progress_rx: Option<mpsc::Receiver<GoalProgress>>,
     ) {
         let mut backoff_ms: u64 = 1_000;
         let max_backoff_ms: u64 = 60_000;
@@ -1104,12 +1646,61 @@ impl RequestHandler {
                 break;
             }
 
+            if let Some(conversation) = &approval_conversation {
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let pending = approval_repository
+                    .lock()
+                    .unwrap()
+                    .list_pending(&fabric::PrincipalId("owner".into()), now_ms);
+                match pending {
+                    Ok(pending) => {
+                        for approval in pending {
+                            if let Err(error) = router
+                                .notify_approval(
+                                    &transport,
+                                    conversation.clone(),
+                                    &approval,
+                                    now_ms,
+                                )
+                                .await
+                            {
+                                warn!(approval_id = %approval.id, error = %error, "Telegram approval notification failed");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "Loading pending Telegram approvals failed")
+                    }
+                }
+            }
+
+            if let Err(error) = router.flush_pending_outbox(&transport, 100).await {
+                warn!(error = %error, "Flushing durable Telegram outbox failed");
+            }
+
             let result = tokio::select! {
                 _ = cancel.cancelled() => {
                     info!("Telegram poll loop cancelled during receive wait");
                     break;
                 }
                 r = transport.receive(cursor.clone()) => r,
+                progress = async {
+                    match &mut goal_progress_rx {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let (Some(progress), Some(conversation)) = (progress, &approval_conversation) {
+                        if let Err(error) = router.queue_goal_progress(
+                            transport.channel_id(),
+                            conversation.clone(),
+                            &progress,
+                        ) {
+                            warn!(goal_id = %progress.goal_id, error = %error, "Telegram Goal progress notification failed");
+                        }
+                    }
+                    continue;
+                }
             };
 
             match result {

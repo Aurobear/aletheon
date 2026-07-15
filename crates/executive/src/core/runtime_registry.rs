@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Configured sub-agent runtimes indexed by stable runtime ID.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct RuntimeRegistry {
     runtimes: HashMap<RuntimeId, Arc<dyn SubAgentRuntime>>,
 }

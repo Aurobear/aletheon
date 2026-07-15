@@ -318,9 +318,14 @@ impl ToolRunnerWithGuard {
         let result = if tool.permission_level() >= PermissionLevel::L1 {
             let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
+            let trusted_working_dir = ctx.working_dir.to_string_lossy().to_string();
             let sandbox_config = SandboxConfig {
                 working_dir: ctx.working_dir.to_string_lossy().to_string(),
-                env_vars: std::collections::HashMap::new(),
+                env_vars: std::collections::HashMap::from([
+                    ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
+                    ("GIT_CONFIG_KEY_0".to_string(), "safe.directory".to_string()),
+                    ("GIT_CONFIG_VALUE_0".to_string(), trusted_working_dir),
+                ]),
             };
 
             match self

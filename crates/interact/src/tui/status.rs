@@ -257,21 +257,14 @@ impl<'a> Widget for StatusBarWidget<'a> {
         // ── Assemble spans: left (spinner+model) | elapsed | right (tok+ctx+turn) ──
         let mut spans = Vec::new();
 
-        // Left: spinner (yellow when waiting) + model name (dim)
+        // Left: activity spinner only. Model routing is daemon-owned and may
+        // vary per turn, so the client must not display a guessed model name.
         if self.status.waiting {
             spans.push(Span::styled(
                 format!(" {} ", self.status.spinner_char()),
                 Style::default().fg(Color::Yellow),
             ));
         }
-        spans.push(Span::styled(
-            if self.status.waiting {
-                self.status.model_name.clone()
-            } else {
-                format!(" {}", self.status.model_name)
-            },
-            Style::default().fg(Color::DarkGray),
-        ));
 
         // Center: elapsed time with separator
         if !center.is_empty() {

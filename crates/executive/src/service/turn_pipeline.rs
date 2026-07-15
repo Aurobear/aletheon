@@ -120,6 +120,7 @@ impl TurnPipeline {
         operation_id: OperationId,
         main_pid: ProcessId,
         scope_token: CancellationToken,
+        principal: PrincipalId,
     ) -> anyhow::Result<serde_json::Value> {
         // -- SelfField review --
         let intent = Intent {
@@ -135,10 +136,8 @@ impl TurnPipeline {
                 format!("User chat message: {}", &message[..end])
             },
         };
-        let sf_ctx = fabric::Context::new(
-            &turn_request.session_id,
-            std::env::current_dir().unwrap_or_default(),
-        );
+        let sf_ctx =
+            fabric::Context::new(&turn_request.session_id, turn_request.working_dir.clone());
         let verdict = self.sf_review(&intent, &sf_ctx).await;
 
         // Sandbox requirement from SelfField verdict — passed to tool admission.
@@ -167,10 +166,14 @@ impl TurnPipeline {
         }
 
         // -- Memory composition --
-        let system_prompt = {
+        let mut system_prompt = {
             let prefix = self.subsystems.session.cached_prefix.lock().await;
             prefix.clone()
         };
+        system_prompt.push_str(&format!(
+            "\n\nCurrent working directory: {}\nTreat this as the user's current project. Do not scan unrelated host directories to guess a project.",
+            turn_request.working_dir.display()
+        ));
         let memory_block = self.compose_memory_block().await;
         {
             let mut sb = self.subsystems.security.storm_breaker.lock().await;
@@ -183,11 +186,9 @@ impl TurnPipeline {
         }
         self.inject_keyword_skills(&message, &mut effective_message)
             .await;
-        self.inject_fact_recall(&message, &mut effective_message)
+        self.inject_composite_recall(&message, &turn_request.session_id, &mut effective_message)
             .await;
         self.inject_core_memory(&mut effective_message).await;
-        self.inject_gbrain_recall(&message, &mut effective_message)
-            .await;
         self.inject_skill_suggestion(&message, &mut effective_message)
             .await;
         self.decay_stale_facts().await;
@@ -297,6 +298,8 @@ impl TurnPipeline {
         // Persist user message to recall memory
         {
             let (sess_id, sm_arc) = self.get_or_create_session(None).await?;
+            let turn_count = sm_arc.lock().await.turn_count();
+            let observed_at = fabric::wall_to_datetime(self.clock.wall_now());
             let _ = self
                 .subsystems
                 .memory
@@ -305,10 +308,14 @@ impl TurnPipeline {
                     session: sess_id.clone(),
                     role: "user".into(),
                     content: message.clone(),
+                    metadata: mnemosyne::MemoryMetadata::local(
+                        format!("message:{sess_id}:user:{turn_count}"),
+                        format!("{sess_id}:user:{turn_count}"),
+                        observed_at,
+                    ),
                 })
                 .await;
             let hr = self.subsystems.corpus.hook_registry.lock().await;
-            let turn_count = sm_arc.lock().await.turn_count();
             let ctx = HookContext {
                 point: HookPoint::OnMemoryStore,
                 session_id: sess_id.clone(),
@@ -327,7 +334,7 @@ impl TurnPipeline {
             let tools = self.subsystems.corpus.tools.lock().await;
             tools.definitions()
         };
-        let working_dir = std::env::current_dir().unwrap_or_default();
+        let working_dir = turn_request.working_dir.clone();
         let (sess_id, sm_arc) = self.get_or_create_session(None).await?;
         let turn_count = sm_arc.lock().await.turn_count();
         drop(sm_arc);
@@ -375,6 +382,7 @@ impl TurnPipeline {
         let tool_executor = Arc::new(TurnToolExecutor::new(
             &self.subsystems,
             sess_id.clone(),
+            principal,
             turn_count,
             working_dir,
             operation_id,
@@ -784,6 +792,7 @@ impl TurnPipeline {
 
         if turn_succeeded {
             let sess_id = self.get_or_create_session(None).await?.0;
+            let observed_at = fabric::wall_to_datetime(self.clock.wall_now());
             let _ = self
                 .subsystems
                 .memory
@@ -792,6 +801,11 @@ impl TurnPipeline {
                     session: sess_id.clone(),
                     role: "assistant".into(),
                     content: text.clone(),
+                    metadata: mnemosyne::MemoryMetadata::local(
+                        format!("message:{sess_id}:assistant:{turn}"),
+                        format!("{sess_id}:assistant:{turn}"),
+                        observed_at,
+                    ),
                 })
                 .await;
             let hr = self.subsystems.corpus.hook_registry.lock().await;

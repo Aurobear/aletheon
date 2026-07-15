@@ -4,11 +4,18 @@
 //! the channel router from the daemon runtime, plus a pure content-routing
 //! function so the router is testable without constructing the full stack.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use fabric::channel::{ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage};
-use fabric::{AttemptId, GoalId, GoalSnapshot};
+use fabric::channel::{
+    ActionType, ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage,
+    UserAction,
+};
+use fabric::{
+    ApprovalCategory, ApprovalId, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId,
+    GoalSnapshot, PrincipalId,
+};
 
+use crate::r#impl::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
 use crate::r#impl::goal::{AttemptCoordinationOutcome, RetryDecision};
 
 use super::store::{ChannelStore, InsertOutcome};
@@ -57,7 +64,17 @@ pub trait ChannelTurnExecutor: Send + Sync {
     ///
     /// Returns the result text on success or a stable error string on
     /// failure.
-    async fn execute(&self, message: &str, correlation_id: &str) -> anyhow::Result<String>;
+    async fn execute(
+        &self,
+        principal: &str,
+        message: &str,
+        correlation_id: &str,
+    ) -> anyhow::Result<String>;
+}
+
+#[async_trait::async_trait]
+pub trait GoogleChannelAccountDirectory: Send + Sync {
+    async fn active_account_labels(&self, principal: &str) -> anyhow::Result<Vec<String>>;
 }
 
 #[async_trait::async_trait]
@@ -68,6 +85,29 @@ pub trait ChannelGoalExecutor: Send + Sync {
     async fn pause(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
     async fn resume(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
     async fn cancel(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
+}
+
+#[async_trait::async_trait]
+pub trait ChannelApprovalExecutor: Send + Sync {
+    async fn execute_resolved(&self, approval_id: ApprovalId) -> anyhow::Result<()>;
+}
+
+#[async_trait::async_trait]
+pub trait GmailDraftApprovalExecutor: Send + Sync {
+    async fn execute_draft_resolution(
+        &self,
+        approval: &ApprovalSnapshot,
+        action: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<()>;
+
+    async fn revise_draft(
+        &self,
+        owner: &str,
+        goal_id: GoalId,
+        intent: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<ApprovalSnapshot>;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +206,16 @@ impl GoalProgress {
             self.kind.as_str()
         )
     }
+
+    fn outbound(&self, conversation_id: ConversationId) -> OutboundMessage {
+        OutboundMessage {
+            conversation_id,
+            content: MessageContent::Text { text: self.text() },
+            actions: vec![],
+            reply_to: None,
+            correlation_id: self.correlation_id(),
+        }
+    }
 }
 
 /// Classify a [`MessageContent`] into a [`RoutedInput`].
@@ -176,7 +226,7 @@ pub fn route_content(content: &MessageContent) -> RoutedInput {
         MessageContent::Command { command, args } => match command.as_str() {
             "/start" => RoutedInput::Greeting,
             "/chat" => RoutedInput::Chat(args.clone()),
-            "/goal" | "/goals" | "/status" | "/pause" | "/resume" | "/cancel" => {
+            "/goal" | "/goals" | "/status" | "/pause" | "/resume" | "/cancel" | "/edit" => {
                 RoutedInput::GoalCommand {
                     command: command.clone(),
                     args: args.clone(),
@@ -208,6 +258,10 @@ pub struct ChannelRouter {
     store: ChannelStore,
     turn_executor: Arc<dyn ChannelTurnExecutor>,
     goal_executor: Option<Arc<dyn ChannelGoalExecutor>>,
+    approval_repository: Option<Arc<Mutex<ApprovalRepository>>>,
+    approval_executor: Option<Arc<dyn ChannelApprovalExecutor>>,
+    gmail_draft_executor: Option<Arc<dyn GmailDraftApprovalExecutor>>,
+    google_accounts: Option<Arc<dyn GoogleChannelAccountDirectory>>,
 }
 
 impl ChannelRouter {
@@ -218,6 +272,123 @@ impl ChannelRouter {
             store,
             turn_executor,
             goal_executor: None,
+            approval_repository: None,
+            approval_executor: None,
+            gmail_draft_executor: None,
+            google_accounts: None,
+        }
+    }
+
+    pub fn with_google_accounts(
+        mut self,
+        accounts: Arc<dyn GoogleChannelAccountDirectory>,
+    ) -> Self {
+        self.google_accounts = Some(accounts);
+        self
+    }
+
+    /// Persist a normalized Google notification before Telegram delivery.
+    /// The event ID is the cross-restart idempotency key.
+    pub fn enqueue_google_notification(
+        &self,
+        conversation_id: ConversationId,
+        event: &fabric::ExternalEventEnvelope,
+    ) -> anyhow::Result<bool> {
+        let summary = match &event.event {
+            fabric::GoogleEvent::MailReceived(change)
+            | fabric::GoogleEvent::MailUpdated(change) => format!(
+                "Important mail from {}: {}",
+                change.message.from, change.message.subject
+            ),
+            fabric::GoogleEvent::CalendarEventCreated(calendar)
+            | fabric::GoogleEvent::CalendarEventUpdated(calendar) => {
+                format!("Calendar changed: {}", calendar.summary)
+            }
+            fabric::GoogleEvent::CalendarEventDeleted(_) => "Calendar event cancelled".into(),
+            _ => return Ok(false),
+        };
+        let text: String = summary.chars().take(2_000).collect();
+        self.store.enqueue_outbound(
+            "telegram",
+            &OutboundMessage {
+                conversation_id,
+                content: MessageContent::Text { text },
+                actions: Vec::new(),
+                reply_to: None,
+                correlation_id: event.id.to_string(),
+            },
+        )
+    }
+
+    pub fn with_approval_repository(mut self, repository: Arc<Mutex<ApprovalRepository>>) -> Self {
+        self.approval_repository = Some(repository);
+        self
+    }
+
+    pub fn with_approval_executor(mut self, executor: Arc<dyn ChannelApprovalExecutor>) -> Self {
+        self.approval_executor = Some(executor);
+        self
+    }
+
+    pub fn with_gmail_draft_executor(
+        mut self,
+        executor: Arc<dyn GmailDraftApprovalExecutor>,
+    ) -> Self {
+        self.gmail_draft_executor = Some(executor);
+        self
+    }
+
+    /// Persist an approval notification before network delivery. Message text
+    /// contains only bounded summaries and trusted artifact references.
+    pub async fn notify_approval(
+        &mut self,
+        transport: &dyn ChannelTransport,
+        conversation_id: ConversationId,
+        approval: &ApprovalSnapshot,
+        now_ms: i64,
+    ) -> anyhow::Result<bool> {
+        if approval.status != ApprovalStatus::Pending {
+            anyhow::bail!("only pending approvals can be delivered");
+        }
+        let repository = self
+            .approval_repository
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("approval repository is not configured"))?;
+        let outbound = render_approval_notification(conversation_id, approval);
+        let enqueued = self
+            .store
+            .enqueue_outbound(transport.channel_id(), &outbound)?;
+        repository.lock().unwrap().record_delivery_pending(
+            approval.id,
+            transport.channel_id(),
+            &outbound.conversation_id.0,
+            &outbound.correlation_id,
+            now_ms,
+        )?;
+        if !enqueued {
+            return Ok(false);
+        }
+        match transport.send(&outbound).await {
+            Ok(provider_id) => {
+                self.store
+                    .mark_outbound_sent(&outbound.correlation_id, &provider_id)?;
+                repository.lock().unwrap().record_delivery_sent(
+                    &outbound.correlation_id,
+                    &provider_id,
+                    now_ms,
+                )?;
+                Ok(true)
+            }
+            Err(error) => {
+                self.store
+                    .mark_outbound_failed(&outbound.correlation_id, &error.to_string())?;
+                repository.lock().unwrap().record_delivery_failed(
+                    &outbound.correlation_id,
+                    &error.to_string(),
+                    now_ms,
+                )?;
+                Ok(false)
+            }
         }
     }
 
@@ -235,15 +406,7 @@ impl ChannelRouter {
         conversation_id: ConversationId,
         progress: &GoalProgress,
     ) -> anyhow::Result<bool> {
-        let outbound = OutboundMessage {
-            conversation_id,
-            content: MessageContent::Text {
-                text: progress.text(),
-            },
-            actions: vec![],
-            reply_to: None,
-            correlation_id: progress.correlation_id(),
-        };
+        let outbound = progress.outbound(conversation_id);
         if !self
             .store
             .enqueue_outbound(transport.channel_id(), &outbound)?
@@ -264,12 +427,48 @@ impl ChannelRouter {
         }
     }
 
+    /// Persist a progress notification for the poll loop to deliver.
+    pub fn queue_goal_progress(
+        &mut self,
+        channel_id: &str,
+        conversation_id: ConversationId,
+        progress: &GoalProgress,
+    ) -> anyhow::Result<bool> {
+        self.store
+            .enqueue_outbound(channel_id, &progress.outbound(conversation_id))
+    }
+
     async fn execute_goal_command(
         &mut self,
         owner: &str,
         command: &str,
         args: &str,
+        now_ms: i64,
     ) -> anyhow::Result<String> {
+        if command == "/edit" {
+            let (id, intent) = args
+                .trim()
+                .split_once(char::is_whitespace)
+                .ok_or_else(|| anyhow::anyhow!("usage: /edit <goal-id> <revised-intent>"))?;
+            let id = id
+                .parse::<i64>()
+                .map(GoalId)
+                .map_err(|_| anyhow::anyhow!("usage: /edit <goal-id> <revised-intent>"))?;
+            if intent.trim().is_empty() {
+                anyhow::bail!("usage: /edit <goal-id> <revised-intent>");
+            }
+            let executor = self
+                .gmail_draft_executor
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Gmail draft executor is not configured"))?;
+            let approval = executor
+                .revise_draft(owner, id, intent.trim(), now_ms)
+                .await?;
+            return Ok(format!(
+                "Goal {} revised; fresh confirmation {} is pending.",
+                id.0, approval.id
+            ));
+        }
         let executor = self
             .goal_executor
             .as_ref()
@@ -308,6 +507,87 @@ impl ChannelRouter {
             _ => anyhow::bail!("unsupported goal command"),
         };
         Ok(format!("Goal {}: {}", goal.id.0, goal.state))
+    }
+
+    async fn execute_approval_action(
+        &mut self,
+        principal: &str,
+        action_data: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<String> {
+        let repository = self
+            .approval_repository
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("durable approvals are not configured"))?;
+        let (id, action) = action_data
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("invalid approval action"))?;
+        let id = ApprovalId(uuid::Uuid::parse_str(id)?);
+        let context = ApprovalResolutionContext {
+            principal_id: PrincipalId(principal.to_owned()),
+            channel: "telegram".into(),
+        };
+        let result = match action {
+            "view_diff" => {
+                let repository = repository.lock().unwrap();
+                let approval = repository
+                    .get(id)?
+                    .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
+                let artifact = approval
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.kind == "diff")
+                    .ok_or_else(|| anyhow::anyhow!("approval diff artifact is unavailable"))?;
+                return Ok(format!(
+                    "Verified diff reference: {} (sha256 {}).",
+                    artifact.relative_path.display(),
+                    artifact.sha256
+                ));
+            }
+            "apply" | "confirm" => {
+                let repository = repository.lock().unwrap();
+                let current = repository
+                    .get(id)?
+                    .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
+                let resolved = repository.resolve(
+                    id,
+                    current.version,
+                    &context,
+                    ApprovalDecision::Approve,
+                    now_ms,
+                )?;
+                (resolved, "approved")
+            }
+            "revision" | "edit" | "reject" => {
+                let repository = repository.lock().unwrap();
+                let current = repository
+                    .get(id)?
+                    .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
+                let reason = matches!(action, "revision" | "edit")
+                    .then(|| "owner requested revision".to_string());
+                let resolved = repository.resolve(
+                    id,
+                    current.version,
+                    &context,
+                    ApprovalDecision::Reject { reason },
+                    now_ms,
+                )?;
+                (resolved, "rejected")
+            }
+            _ => anyhow::bail!("unknown approval action"),
+        };
+        if result.0.category == ApprovalCategory::ActivateGoal {
+            let executor = self
+                .gmail_draft_executor
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Gmail draft executor is not configured"))?;
+            executor
+                .execute_draft_resolution(&result.0, action, now_ms)
+                .await?;
+        } else if let Some(executor) = &self.approval_executor {
+            executor.execute_resolved(result.0.id).await?;
+        }
+        Ok(format!("Approval {}: {}", result.0.id, result.1))
     }
 
     /// Process a single provider message envelope.
@@ -350,33 +630,85 @@ impl ChannelRouter {
             return Ok(());
         }
 
-        // 4. Normalize the message content through command routing.
+        // 4. Resolve approval callbacks from authoritative repository state;
+        // callback payload contains no subject details.
+        let approval_reply = if let Some(action) = message.reply_to_action.as_deref() {
+            Some(
+                self.execute_approval_action(
+                    principal.as_deref().expect("principal checked above"),
+                    action,
+                    message.timestamp_ms,
+                )
+                .await,
+            )
+        } else {
+            None
+        };
+
+        // 5. Normalize ordinary message content through command routing.
         let routed = route_content(&message.content);
 
-        // 5. Execute AI turn only for chat messages.
-        let mut ai_reply: Option<String> = None;
-        if let RoutedInput::Chat(text) = &routed {
-            match self
-                .turn_executor
-                .execute(text, &message.correlation_id)
-                .await
-            {
-                Ok(reply) => ai_reply = Some(reply),
-                Err(e) => {
-                    // Executor failure: mark inbox failed so it stays
-                    // retryable, do NOT advance the cursor.
-                    self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
-                    return Err(e);
+        // 6. Execute AI turn only for non-callback chat messages.
+        let mut ai_reply: Option<String> = approval_reply.map(|result| match result {
+            Ok(reply) => reply,
+            Err(error) => error.to_string(),
+        });
+        if message.reply_to_action.is_none() {
+            if let RoutedInput::Chat(text) = &routed {
+                let principal = principal.as_deref().expect("principal checked above");
+                let mut selected_query = None;
+                if channel == "telegram"
+                    && super::telegram::is_google_read_query(text)
+                    && self.google_accounts.is_some()
+                {
+                    let labels = self
+                        .google_accounts
+                        .as_ref()
+                        .expect("checked above")
+                        .active_account_labels(principal)
+                        .await?;
+                    if labels.len() > 1 {
+                        ai_reply = Some(super::telegram::account_choice_prompt(&labels));
+                    } else if let Some(label) = labels.first() {
+                        selected_query =
+                            Some(super::telegram::selected_account_context(label, text));
+                    }
+                }
+                if ai_reply.is_some() {
+                    // Account selection is the only preflight response. The
+                    // actual provider query always continues through ReAct.
+                } else {
+                    let query = selected_query.as_deref().unwrap_or(text);
+                    match self
+                        .turn_executor
+                        .execute(principal, query, &message.correlation_id)
+                        .await
+                    {
+                        Ok(reply) => ai_reply = Some(reply),
+                        Err(e) => {
+                            // Executor failure: mark inbox failed so it stays
+                            // retryable, do NOT advance the cursor.
+                            self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
+                            return Err(e);
+                        }
+                    }
                 }
             }
         }
-        if let RoutedInput::GoalCommand { command, args } = &routed {
-            match self
-                .execute_goal_command(principal.as_deref().unwrap(), command, args)
-                .await
-            {
-                Ok(reply) => ai_reply = Some(reply),
-                Err(error) => ai_reply = Some(error.to_string()),
+        if message.reply_to_action.is_none() {
+            if let RoutedInput::GoalCommand { command, args } = &routed {
+                match self
+                    .execute_goal_command(
+                        principal.as_deref().unwrap(),
+                        command,
+                        args,
+                        message.timestamp_ms,
+                    )
+                    .await
+                {
+                    Ok(reply) => ai_reply = Some(reply),
+                    Err(error) => ai_reply = Some(error.to_string()),
+                }
             }
         }
 
@@ -488,17 +820,50 @@ impl ChannelRouter {
             let routed = route_content(&msg.content);
             let mut ai_reply: Option<String> = None;
             if let RoutedInput::Chat(text) = &routed {
-                match self.turn_executor.execute(text, &msg.correlation_id).await {
-                    Ok(reply) => ai_reply = Some(reply),
-                    Err(e) => {
-                        self.fail_inbound(channel_str, &msg.message_id.0, &e.to_string())?;
-                        return Err(e);
+                let principal = principal.as_deref().expect("principal checked above");
+                let mut selected_query = None;
+                if channel_str == "telegram"
+                    && super::telegram::is_google_read_query(text)
+                    && self.google_accounts.is_some()
+                {
+                    let labels = self
+                        .google_accounts
+                        .as_ref()
+                        .expect("checked above")
+                        .active_account_labels(principal)
+                        .await?;
+                    if labels.len() > 1 {
+                        ai_reply = Some(super::telegram::account_choice_prompt(&labels));
+                    } else if let Some(label) = labels.first() {
+                        selected_query =
+                            Some(super::telegram::selected_account_context(label, text));
+                    }
+                }
+                if ai_reply.is_some() {
+                    // Persist the same bounded account prompt used by the live path.
+                } else {
+                    let query = selected_query.as_deref().unwrap_or(text);
+                    match self
+                        .turn_executor
+                        .execute(principal, query, &msg.correlation_id)
+                        .await
+                    {
+                        Ok(reply) => ai_reply = Some(reply),
+                        Err(e) => {
+                            self.fail_inbound(channel_str, &msg.message_id.0, &e.to_string())?;
+                            return Err(e);
+                        }
                     }
                 }
             }
             if let RoutedInput::GoalCommand { command, args } = &routed {
                 match self
-                    .execute_goal_command(principal.as_deref().unwrap(), command, args)
+                    .execute_goal_command(
+                        principal.as_deref().unwrap(),
+                        command,
+                        args,
+                        msg.timestamp_ms,
+                    )
                     .await
                 {
                     Ok(reply) => ai_reply = Some(reply),
@@ -549,7 +914,7 @@ impl ChannelRouter {
     /// re-executed because inbox completion and outbox insertion happen
     /// atomically before the send.
     pub async fn flush_pending_outbox(
-        &self,
+        &mut self,
         transport: &dyn ChannelTransport,
         limit: usize,
     ) -> anyhow::Result<usize> {
@@ -558,12 +923,21 @@ impl ChannelRouter {
         let mut count = 0usize;
         for outbound in &pending {
             match transport.send(outbound).await {
-                Ok(_) => {
+                Ok(provider_id) => {
                     self.store.db.execute(
                         "UPDATE channel_outbox SET status = 'sent', updated_at = datetime('now')
                          WHERE correlation_id = ?1",
                         rusqlite::params![outbound.correlation_id],
                     )?;
+                    if outbound.correlation_id.starts_with("approval:") {
+                        if let Some(repository) = &self.approval_repository {
+                            repository.lock().unwrap().record_delivery_sent(
+                                &outbound.correlation_id,
+                                &provider_id,
+                                chrono::Utc::now().timestamp_millis(),
+                            )?;
+                        }
+                    }
                 }
                 Err(e) => {
                     self.store.db.execute(
@@ -571,6 +945,15 @@ impl ChannelRouter {
                          WHERE correlation_id = ?2",
                         rusqlite::params![e.to_string(), outbound.correlation_id],
                     )?;
+                    if outbound.correlation_id.starts_with("approval:") {
+                        if let Some(repository) = &self.approval_repository {
+                            repository.lock().unwrap().record_delivery_failed(
+                                &outbound.correlation_id,
+                                &e.to_string(),
+                                chrono::Utc::now().timestamp_millis(),
+                            )?;
+                        }
+                    }
                 }
             }
             count += 1;
@@ -583,6 +966,72 @@ impl ChannelRouter {
     #[allow(dead_code)]
     pub fn store(&self) -> &ChannelStore {
         &self.store
+    }
+}
+
+fn render_approval_notification(
+    conversation_id: ConversationId,
+    approval: &ApprovalSnapshot,
+) -> OutboundMessage {
+    if approval.category == ApprovalCategory::ActivateGoal {
+        let text = format!(
+            "Goal {} requires owner confirmation.\nRisk: {:?}\nExpires: {} ms\n{}",
+            approval.goal_id.0, approval.risk, approval.expires_at_ms, approval.summary
+        );
+        let action = |suffix: &str, label: &str, action_type| UserAction {
+            action_id: format!("{}:{suffix}", approval.id),
+            label: label.into(),
+            action_type,
+        };
+        return OutboundMessage {
+            conversation_id,
+            content: MessageContent::Text { text },
+            actions: vec![
+                action("confirm", "Confirm", ActionType::Approve),
+                action("edit", "Edit", ActionType::Callback),
+                action("reject", "Reject", ActionType::Reject),
+            ],
+            reply_to: None,
+            correlation_id: format!("approval:{}", approval.id),
+        };
+    }
+    let changed_files = approval
+        .subject
+        .attributes
+        .get("changed_file_count")
+        .map(String::as_str)
+        .unwrap_or("unknown");
+    let verification = approval
+        .subject
+        .attributes
+        .get("verification_summary")
+        .map(String::as_str)
+        .unwrap_or("required checks passed");
+    let text = format!(
+        "Goal {} requires approval.\nChanged files: {}\nVerification: {}\nRisk: {:?}\nExpires: {} ms\n{}",
+        approval.goal_id.0,
+        changed_files,
+        verification,
+        approval.risk,
+        approval.expires_at_ms,
+        approval.summary
+    );
+    let action = |suffix: &str, label: &str, action_type| UserAction {
+        action_id: format!("{}:{suffix}", approval.id),
+        label: label.into(),
+        action_type,
+    };
+    OutboundMessage {
+        conversation_id,
+        content: MessageContent::Text { text },
+        actions: vec![
+            action("apply", "Apply", ActionType::Approve),
+            action("view_diff", "View Diff", ActionType::Callback),
+            action("revision", "Request Revision", ActionType::Callback),
+            action("reject", "Reject", ActionType::Reject),
+        ],
+        reply_to: None,
+        correlation_id: format!("approval:{}", approval.id),
     }
 }
 
@@ -607,7 +1056,7 @@ fn build_outbound(
                 .to_string(),
         },
         RoutedInput::Unsupported(_) => MessageContent::Text {
-            text: "I don't recognize your identity. Please contact an administrator.".into(),
+            text: ai_reply.unwrap_or("Unsupported channel input.").to_string(),
         },
     };
 
@@ -682,7 +1131,9 @@ mod tests {
 
     #[test]
     fn m2_commands_are_goal_commands() {
-        for cmd in &["/goal", "/goals", "/status", "/pause", "/resume", "/cancel"] {
+        for cmd in &[
+            "/goal", "/goals", "/status", "/pause", "/resume", "/cancel", "/edit",
+        ] {
             let content = MessageContent::Command {
                 command: (*cmd).into(),
                 args: String::new(),

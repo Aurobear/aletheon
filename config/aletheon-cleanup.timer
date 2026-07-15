@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Aletheon managed-storage cleanup
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=aletheon-cleanup.service
+
+[Install]
+WantedBy=timers.target

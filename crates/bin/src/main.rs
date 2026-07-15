@@ -7,7 +7,6 @@
 //!   -m `msg`      Send single message to daemon
 //!   version      Print version + git commit
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -84,6 +83,8 @@ enum Commands {
     },
     /// Print version
     Version,
+    /// Restore terminal modes after an interrupted TUI session
+    RestoreTerminal,
 }
 
 #[tokio::main]
@@ -103,9 +104,14 @@ async fn main() -> Result<()> {
             }),
             _,
         ) => {
-            init_tracing(
-                "aletheon::daemon",
-                Some(Path::new("/var/lib/aletheon/aletheon.log")),
+            init_tracing("aletheon::daemon");
+            info!(
+                component = "daemon",
+                event_category = "lifecycle",
+                outcome = "starting",
+                error_code = "none",
+                duration_ms = 0_u64,
+                "daemon startup"
             );
             let socket_path = socket.clone().unwrap_or(cli.socket);
             let daemon_mode = detect_daemon_mode(container);
@@ -158,7 +164,7 @@ async fn main() -> Result<()> {
             }),
             _,
         ) => {
-            init_tracing("aletheon::exec", None);
+            init_tracing("aletheon::exec");
             run_exec(
                 prompt,
                 model,
@@ -172,6 +178,11 @@ async fn main() -> Result<()> {
         }
         (Some(Commands::Version), _) => {
             println!("aletheon {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        (Some(Commands::RestoreTerminal), _) => {
+            interact::tui::restore_terminal();
+            println!("Terminal restored to normal state.");
             Ok(())
         }
         // -m flag: single message to daemon
@@ -208,8 +219,7 @@ fn detect_daemon_mode(container_override: &Option<String>) -> DaemonMode {
 
 // ── Tracing ─────────────────────────────────────────────────────────────────
 
-fn init_tracing(target: &str, log_file: Option<&Path>) {
-    use std::fs;
+fn init_tracing(target: &str) {
     let env_filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
     } else {
@@ -220,57 +230,17 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
         ))
     };
 
-    let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .flatten_event(true)
+        .with_current_span(false)
+        .with_span_list(false)
+        .with_writer(std::io::stderr);
 
-    let subscriber = tracing_subscriber::registry()
+    tracing_subscriber::registry()
         .with(env_filter)
-        .with(stderr_layer);
-
-    if let Some(path) = log_file {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let log_path = path.to_path_buf();
-        // Test that the file is writable before adding the layer
-        match fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-        {
-            Ok(_) => {
-                let file_layer = tracing_subscriber::fmt::layer()
-                    .with_ansi(false)
-                    .with_writer(move || -> Box<dyn Write> {
-                        match fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&log_path)
-                        {
-                            Ok(f) => Box::new(f),
-                            Err(e) => {
-                                eprintln!(
-                                    "Warning: log file '{}' became unwritable after init: {}. Disabling file logging.",
-                                    log_path.display(),
-                                    e
-                                );
-                                Box::new(std::io::sink())
-                            }
-                        }
-                    });
-                subscriber.with(file_layer).init();
-                return;
-            }
-            Err(e) => {
-                eprintln!(
-                    "Warning: could not open log file {}: {}",
-                    log_path.display(),
-                    e
-                );
-            }
-        }
-    }
-
-    subscriber.init();
+        .with(stderr_layer)
+        .init();
 }
 
 // ── Exec ────────────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 4;
+const CURRENT_VERSION: u32 = 15;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -144,6 +144,350 @@ BEGIN
 END;
 ";
 
+/// Migration 5 — restart-safe protected-operation approvals and audit events.
+const MIGRATION_5: &str = "
+CREATE TABLE IF NOT EXISTS approval_requests (
+    approval_id TEXT PRIMARY KEY,
+    objective_id INTEGER NOT NULL REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    attempt_id TEXT REFERENCES goal_attempts(attempt_id) ON DELETE CASCADE,
+    job_id TEXT REFERENCES goal_coding_jobs(job_id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    subject_json TEXT NOT NULL,
+    subject_hash TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    artifacts_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    expires_at_ms INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected','expired','consumed')),
+    version INTEGER NOT NULL DEFAULT 0,
+    resolution_principal TEXT,
+    resolution_channel TEXT,
+    resolution_time_ms INTEGER,
+    resolution_reason TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_active_subject
+    ON approval_requests(category, subject_hash)
+    WHERE status IN ('pending','approved');
+CREATE INDEX IF NOT EXISTS idx_approval_pending_owner
+    ON approval_requests(owner_id, status, expires_at_ms);
+
+CREATE TABLE IF NOT EXISTS approval_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    approval_id TEXT NOT NULL REFERENCES approval_requests(approval_id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    UNIQUE(approval_id, version)
+);
+
+CREATE TRIGGER IF NOT EXISTS approval_requests_immutable_subject
+BEFORE UPDATE OF approval_id, objective_id, attempt_id, job_id, owner_id, category,
+                 risk, subject_json, subject_hash, summary, artifacts_json,
+                 created_at_ms, expires_at_ms
+ON approval_requests
+BEGIN
+    SELECT RAISE(ABORT, 'approval subject is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS approval_events_append_only_update
+BEFORE UPDATE ON approval_events BEGIN
+    SELECT RAISE(ABORT, 'approval events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS approval_events_append_only_delete
+BEFORE DELETE ON approval_events BEGIN
+    SELECT RAISE(ABORT, 'approval events are append-only');
+END;
+";
+
+/// Migration 6 — delivery correlation for durable approval notifications.
+const MIGRATION_6: &str = "
+CREATE TABLE IF NOT EXISTS approval_deliveries (
+    approval_id TEXT NOT NULL REFERENCES approval_requests(approval_id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    correlation_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('pending','sent','failed')),
+    provider_message_id TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(approval_id, channel)
+);
+";
+
+/// Migration 7 — one durable apply claim and receipt per approved request.
+const MIGRATION_7: &str = "
+CREATE TABLE IF NOT EXISTS approval_apply_operations (
+    approval_id TEXT PRIMARY KEY REFERENCES approval_requests(approval_id) ON DELETE CASCADE,
+    operation_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed','cancelled')),
+    started_at_ms INTEGER NOT NULL,
+    finished_at_ms INTEGER,
+    error TEXT
+);
+CREATE TABLE IF NOT EXISTS approval_apply_receipts (
+    approval_id TEXT PRIMARY KEY REFERENCES approval_requests(approval_id) ON DELETE CASCADE,
+    operation_id TEXT NOT NULL UNIQUE REFERENCES approval_apply_operations(operation_id),
+    receipt_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
+";
+
+/// Migration 8 — bounded Goal outcome summaries for notification and memory.
+const MIGRATION_8: &str = "
+CREATE TABLE IF NOT EXISTS goal_completion_summaries (
+    approval_id TEXT PRIMARY KEY REFERENCES approval_requests(approval_id) ON DELETE CASCADE,
+    objective_id INTEGER NOT NULL REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    summary_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_goal_completion_summaries_goal
+    ON goal_completion_summaries(objective_id, created_at_ms);
+";
+
+/// Migration 9 — provider account metadata and capability grants (never credentials).
+const MIGRATION_9: &str = "
+CREATE TABLE IF NOT EXISTS external_identities (
+    identity_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    provider_subject TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    alias TEXT,
+    state TEXT NOT NULL CHECK(state IN ('active','revoked')),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(provider, provider_subject, principal_id)
+);
+CREATE INDEX IF NOT EXISTS idx_external_identities_principal
+    ON external_identities(principal_id, provider, state);
+
+CREATE TABLE IF NOT EXISTS capability_grants (
+    identity_id TEXT PRIMARY KEY REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    scopes_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('active','revoked')),
+    granted_at_ms INTEGER NOT NULL,
+    revoked_at_ms INTEGER,
+    version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS external_identity_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    identity_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_external_identity_events_identity
+    ON external_identity_events(identity_id, event_id);
+CREATE TRIGGER IF NOT EXISTS external_identity_events_append_only_update
+BEFORE UPDATE ON external_identity_events BEGIN
+    SELECT RAISE(ABORT, 'external identity events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS external_identity_events_append_only_delete
+BEFORE DELETE ON external_identity_events BEGIN
+    SELECT RAISE(ABORT, 'external identity events are append-only');
+END;
+";
+
+/// Migration 10 — durable Google cursors, normalized projections, subscriptions, and outbox.
+const MIGRATION_10: &str = "
+CREATE TABLE IF NOT EXISTS google_sync_cursors (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL CHECK(stream IN ('gmail_history','calendar','drive_changes')),
+    cursor_token TEXT,
+    generation INTEGER NOT NULL DEFAULT 0,
+    last_success_ms INTEGER,
+    last_error_ms INTEGER,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    retry_after_ms INTEGER,
+    health_state TEXT NOT NULL DEFAULT 'healthy'
+        CHECK(health_state IN ('healthy','retrying','circuit_open','auth_required','revoked')),
+    version INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(account_id, stream)
+);
+
+CREATE TABLE IF NOT EXISTS google_events (
+    event_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL,
+    dedup_key TEXT NOT NULL,
+    event_kind TEXT NOT NULL,
+    object_id TEXT NOT NULL,
+    object_version TEXT NOT NULL,
+    source_timestamp_ms INTEGER NOT NULL,
+    observed_at_ms INTEGER NOT NULL,
+    payload_hash TEXT NOT NULL,
+    envelope_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    UNIQUE(account_id, stream, dedup_key)
+);
+CREATE INDEX IF NOT EXISTS idx_google_events_object
+    ON google_events(account_id, stream, object_id, source_timestamp_ms);
+
+CREATE TABLE IF NOT EXISTS google_objects (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL,
+    object_id TEXT NOT NULL,
+    object_version TEXT NOT NULL,
+    latest_event_id TEXT NOT NULL REFERENCES google_events(event_id),
+    source_timestamp_ms INTEGER NOT NULL,
+    projection_json TEXT NOT NULL,
+    tombstone INTEGER NOT NULL DEFAULT 0 CHECK(tombstone IN (0,1)),
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(account_id, stream, object_id)
+);
+
+CREATE TABLE IF NOT EXISTS google_subscriptions (
+    subscription_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL,
+    event_kinds_json TEXT NOT NULL,
+    query_json TEXT NOT NULL,
+    cursor_generation INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('active','paused','revoked')),
+    version INTEGER NOT NULL DEFAULT 0,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_google_subscriptions_account
+    ON google_subscriptions(account_id, stream, state);
+
+CREATE TABLE IF NOT EXISTS google_event_outbox (
+    outbox_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL UNIQUE REFERENCES google_events(event_id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK(status IN ('pending','claimed','delivered','failed')),
+    claim_owner TEXT,
+    claim_expires_at_ms INTEGER,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error_code TEXT,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    delivered_at_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_google_event_outbox_pending
+    ON google_event_outbox(status, created_at_ms);
+";
+
+const MIGRATION_11: &str = "
+CREATE TABLE IF NOT EXISTS google_sync_leases (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    stream TEXT NOT NULL CHECK(stream IN ('gmail_history','calendar','drive_changes')),
+    lease_owner TEXT NOT NULL,
+    lease_expires_at_ms INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(account_id, stream)
+);
+CREATE INDEX IF NOT EXISTS idx_google_sync_leases_expiry
+    ON google_sync_leases(lease_expires_at_ms);
+";
+
+const MIGRATION_12: &str = "
+CREATE TABLE IF NOT EXISTS gmail_channel_inbox (
+    account_id TEXT NOT NULL REFERENCES external_identities(identity_id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    verified_principal_id TEXT,
+    sender_address TEXT,
+    sender_policy_version INTEGER,
+    classification TEXT NOT NULL
+        CHECK(classification IN ('ask','goal','memory','doc','notification','quarantine')),
+    evidence_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','accepted','quarantined','completed')),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(account_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_gmail_channel_inbox_status
+    ON gmail_channel_inbox(status, created_at_ms);
+";
+
+const MIGRATION_13: &str = "
+CREATE TABLE IF NOT EXISTS external_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    sha256 TEXT NOT NULL UNIQUE,
+    size_bytes INTEGER NOT NULL,
+    mime_type TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    provider_message_id TEXT NOT NULL,
+    provider_part_id TEXT NOT NULL,
+    source_timestamp_ms INTEGER NOT NULL,
+    scan_status TEXT NOT NULL CHECK(scan_status IN ('unscanned','clean','quarantined','rejected')),
+    relative_path TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS external_artifact_sources (
+    artifact_id TEXT NOT NULL REFERENCES external_artifacts(artifact_id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    provider_message_id TEXT NOT NULL,
+    provider_part_id TEXT NOT NULL,
+    source_timestamp_ms INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(artifact_id, provider, account_id, provider_message_id, provider_part_id)
+);
+";
+
+/// Migration 14 — authenticated Gmail Goal drafts and immutable intent revisions.
+const MIGRATION_14: &str = "
+CREATE TABLE IF NOT EXISTS gmail_goal_drafts (
+    account_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    source_event_id TEXT NOT NULL,
+    objective_id INTEGER NOT NULL UNIQUE REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    principal_id TEXT NOT NULL,
+    sender_address TEXT NOT NULL,
+    sender_policy_version INTEGER NOT NULL,
+    current_revision INTEGER NOT NULL DEFAULT 1,
+    current_approval_id TEXT REFERENCES approval_requests(approval_id),
+    status TEXT NOT NULL CHECK(status IN ('pending','awaiting_edit','confirmed','rejected')),
+    artifact_summary_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(account_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_gmail_goal_drafts_objective
+    ON gmail_goal_drafts(objective_id);
+CREATE TABLE IF NOT EXISTS gmail_goal_draft_revisions (
+    objective_id INTEGER NOT NULL REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    intent TEXT NOT NULL,
+    intent_sha256 TEXT NOT NULL,
+    approval_id TEXT REFERENCES approval_requests(approval_id),
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(objective_id, revision)
+);
+";
+
+/// Migration 15 — immutable, approval-bound Gmail report delivery outbox.
+const MIGRATION_15: &str = "
+CREATE TABLE IF NOT EXISTS gmail_report_outbox (
+    approval_id TEXT NOT NULL REFERENCES approval_requests(approval_id),
+    report_sha256 TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    subject_sha256 TEXT NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('pending','ambiguous','sent','failed')),
+    provider_message_id TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    reconciled_at_ms INTEGER,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(approval_id, report_sha256)
+);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -182,6 +526,105 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
             .context("begin migration 4 transaction")?;
         tx.execute_batch(MIGRATION_4)?;
         tx.pragma_update(None, "user_version", 4)?;
+        tx.commit()?;
+    }
+
+    if version < 5 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 5 transaction")?;
+        tx.execute_batch(MIGRATION_5)?;
+        tx.pragma_update(None, "user_version", 5)?;
+        tx.commit()?;
+    }
+
+    if version < 6 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 6 transaction")?;
+        tx.execute_batch(MIGRATION_6)?;
+        tx.pragma_update(None, "user_version", 6)?;
+        tx.commit()?;
+    }
+
+    if version < 7 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 7 transaction")?;
+        tx.execute_batch(MIGRATION_7)?;
+        tx.pragma_update(None, "user_version", 7)?;
+        tx.commit()?;
+    }
+
+    if version < 8 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 8 transaction")?;
+        tx.execute_batch(MIGRATION_8)?;
+        tx.pragma_update(None, "user_version", 8)?;
+        tx.commit()?;
+    }
+
+    if version < 9 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 9 transaction")?;
+        tx.execute_batch(MIGRATION_9)?;
+        tx.pragma_update(None, "user_version", 9)?;
+        tx.commit()?;
+    }
+
+    if version < 10 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 10 transaction")?;
+        tx.execute_batch(MIGRATION_10)?;
+        tx.pragma_update(None, "user_version", 10)?;
+        tx.commit()?;
+    }
+
+    if version < 11 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 11 transaction")?;
+        tx.execute_batch(MIGRATION_11)?;
+        tx.pragma_update(None, "user_version", 11)?;
+        tx.commit()?;
+    }
+
+    if version < 12 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 12 transaction")?;
+        tx.execute_batch(MIGRATION_12)?;
+        tx.pragma_update(None, "user_version", 12)?;
+        tx.commit()?;
+    }
+
+    if version < 13 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 13 transaction")?;
+        tx.execute_batch(MIGRATION_13)?;
+        tx.pragma_update(None, "user_version", 13)?;
+        tx.commit()?;
+    }
+
+    if version < 14 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 14 transaction")?;
+        tx.execute_batch(MIGRATION_14)?;
+        tx.pragma_update(None, "user_version", 14)?;
+        tx.commit()?;
+    }
+
+    if version < 15 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 15 transaction")?;
+        tx.execute_batch(MIGRATION_15)?;
+        tx.pragma_update(None, "user_version", 15)?;
         tx.commit()?;
     }
 
@@ -251,14 +694,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 4);
+        assert_eq!(v1, 15);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 4);
+        assert_eq!(v2, 15);
     }
 
     #[test]
@@ -277,6 +720,18 @@ mod tests {
         assert!(tables.iter().any(|n| n == "goal_attempts"));
         assert!(tables.iter().any(|n| n == "goal_coding_jobs"));
         assert!(tables.iter().any(|n| n == "goal_verification_reports"));
+        assert!(tables.iter().any(|n| n == "external_identities"));
+        assert!(tables.iter().any(|n| n == "capability_grants"));
+        assert!(tables.iter().any(|n| n == "external_identity_events"));
+        assert!(tables.iter().any(|n| n == "approval_requests"));
+        assert!(tables.iter().any(|n| n == "approval_events"));
+        assert!(tables.iter().any(|n| n == "approval_deliveries"));
+        assert!(tables.iter().any(|n| n == "approval_apply_operations"));
+        assert!(tables.iter().any(|n| n == "approval_apply_receipts"));
+        assert!(tables.iter().any(|n| n == "goal_completion_summaries"));
+        assert!(tables.iter().any(|n| n == "gmail_goal_drafts"));
+        assert!(tables.iter().any(|n| n == "gmail_goal_draft_revisions"));
+        assert!(tables.iter().any(|n| n == "gmail_report_outbox"));
     }
 
     #[test]

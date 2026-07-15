@@ -2,6 +2,7 @@
 import asyncio
 import os
 import time
+import re
 
 from .. import frame as frame_mod
 from .. import tui_checks
@@ -33,17 +34,20 @@ async def _wait_ready(ready_timeout: float = 10.0, poll: float = 0.3) -> str:
     return frame
 
 
-async def tui_start(task: str = "", cols: int = 100, rows: int = 40) -> dict:
+async def tui_start(task: str = "", cols: int = 100, rows: int = 40,
+                    working_dir: str | None = None) -> dict:
     """Launch the TUI in tmux, wait until it is ready, optionally send a task.
     Returns the frame after the (optional) task echo."""
-    started = await ts.start(_tui_cmd(), cols=cols, rows=rows)
+    started = await ts.start(_tui_cmd(), cols=cols, rows=rows,
+                             working_dir=working_dir)
     if not started.get("ok"):
         return started
     frame = await _wait_ready()
     if task:
         await ts.send(task, submit=True)
         frame = frame_mod.normalize(await ts.capture())
-    return {"ok": True, "session": started["session"], "frame": frame}
+    return {"ok": True, "session": started["session"], "frame": frame,
+            "working_dir": started.get("working_dir")}
 
 
 async def tui_send(text: str, submit: bool = True) -> dict:
@@ -54,7 +58,8 @@ async def tui_send(text: str, submit: bool = True) -> dict:
 async def tui_capture(scrollback: bool = True, wait_stable: bool = True,
                       poll: float = 0.5, stable_secs: float = 1.5,
                       timeout: float = 90.0, require_change: bool = True,
-                      baseline: str | None = None) -> dict:
+                      baseline: str | None = None,
+                      require_prompt: bool = False) -> dict:
     """Capture the TUI frame. With wait_stable, poll until the screen settles
     (no change for `stable_secs`) or `timeout` elapses.
 
@@ -82,9 +87,12 @@ async def tui_capture(scrollback: bool = True, wait_stable: bool = True,
         # and the bare input echo are both static and must not count as "done".
         ref = baseline if baseline is not None else frames[0]
         activity_seen = (not require_change) or (frames[-1] != ref)
-        if activity_seen and frame_mod.is_stable(frames, window=window):
+        prompt_visible = bool(re.search(r"(?m)^\s*❯", frames[-1]))
+        if (activity_seen and frame_mod.is_stable(frames, window=window)
+                and (prompt_visible or not require_prompt)):
             norm = frames[-1]
             return {"stable": True, "frame": norm,
+                    "prompt_visible": prompt_visible,
                     "checks": tui_checks.run_checks(norm)}
         await asyncio.sleep(poll)
 

@@ -177,6 +177,84 @@ impl Hook for RecallInjector {
     }
 }
 
+/// Recall through the unified memory boundary with an independent latency
+/// budget. Errors and timeouts intentionally collapse to an empty context.
+pub async fn recall_composite_context(
+    memory: &dyn mnemosyne::MemoryService,
+    request: mnemosyne::RecallRequest,
+    timeout: std::time::Duration,
+    max_items: usize,
+    max_bytes: usize,
+) -> String {
+    let include_historical = request.include_historical;
+    match tokio::time::timeout(timeout, memory.recall(request)).await {
+        Ok(Ok(recall)) => {
+            prepare_composite_recall(recall, include_historical, max_items, max_bytes)
+        }
+        Ok(Err(_)) | Err(_) => String::new(),
+    }
+}
+
+/// Filter and deterministically rank composite recall before it reaches Agora.
+/// Memory text remains explicitly untrusted and is never interpreted as a
+/// remote tool envelope or identity mutation.
+pub fn prepare_composite_recall(
+    mut recall: mnemosyne::RecallSet,
+    include_historical: bool,
+    max_items: usize,
+    max_bytes: usize,
+) -> String {
+    recall.items.retain(|item| {
+        let allowed_time =
+            include_historical || matches!(item.temporal_state, mnemosyne::TemporalState::Current);
+        allowed_time
+            && !matches!(
+                item.metadata.sensitivity,
+                mnemosyne::MemorySensitivity::Confidential
+                    | mnemosyne::MemorySensitivity::Restricted
+            )
+            && !contains_forbidden_memory(&item.content)
+    });
+    recall.items.sort_by(|left, right| {
+        right
+            .metadata
+            .confidence
+            .total_cmp(&left.metadata.confidence)
+            .then_with(|| {
+                right
+                    .metadata
+                    .observed_time
+                    .cmp(&left.metadata.observed_time)
+            })
+            .then_with(|| left.metadata.record_id.cmp(&right.metadata.record_id))
+    });
+    recall.items.truncate(max_items);
+    if recall.items.is_empty() {
+        String::new()
+    } else {
+        crate::service::daemon_turn::gbrain::render_recall_set(&recall, max_bytes)
+    }
+}
+
+fn contains_forbidden_memory(content: &str) -> bool {
+    let normalized = content.to_ascii_lowercase();
+    [
+        "authorization:",
+        "bearer ",
+        "access_token",
+        "refresh_token",
+        "password=",
+        "<dasein_mutation",
+        "<identity_instruction",
+        "<tool_use",
+        "<tool_call",
+        "\"jsonrpc\"",
+        "\"method\":\"tools/",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+}
+
 /// Extract significant keywords from a prompt for FTS search.
 fn extract_keywords(prompt: &str) -> Vec<String> {
     let stop_words: &[&str] = &[

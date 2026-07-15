@@ -5,7 +5,7 @@
 
 use super::orchestrator::DaemonTurnOrchestrator;
 
-use fabric::{OperationKind, OperationManager, OperationRequest, TurnRequest};
+use fabric::{OperationKind, OperationManager, OperationRequest, PrincipalId, TurnRequest};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -15,7 +15,40 @@ impl DaemonTurnOrchestrator {
     ///
     /// Returns the JSON-RPC response value. This replaces the body of
     /// `RequestHandler::handle_chat`.
-    pub async fn execute_turn(&self, id: serde_json::Value, message: &str) -> serde_json::Value {
+    pub async fn execute_turn(
+        &self,
+        id: serde_json::Value,
+        message: &str,
+        working_dir: std::path::PathBuf,
+    ) -> serde_json::Value {
+        self.execute_turn_for_principal(id, message, None, working_dir)
+            .await
+    }
+
+    /// Execute a channel turn under an identity established by the channel
+    /// binding. The principal never comes from model-visible input.
+    pub async fn execute_authenticated_turn(
+        &self,
+        id: serde_json::Value,
+        message: &str,
+        principal: PrincipalId,
+    ) -> serde_json::Value {
+        self.execute_turn_for_principal(
+            id,
+            message,
+            Some(principal),
+            std::path::PathBuf::from("/var/lib/aletheon"),
+        )
+        .await
+    }
+
+    async fn execute_turn_for_principal(
+        &self,
+        id: serde_json::Value,
+        message: &str,
+        principal: Option<PrincipalId>,
+        working_dir: std::path::PathBuf,
+    ) -> serde_json::Value {
         // -- Kernel: register main agent --
         let main_pid = match self.ensure_main_agent().await {
             Ok(pid) => pid,
@@ -53,6 +86,7 @@ impl DaemonTurnOrchestrator {
             .lock()
             .await
             .clone();
+        let principal = principal.unwrap_or_else(|| PrincipalId(session_id.clone()));
 
         // Build TurnRequest with kernel ids
         let turn_request = TurnRequest {
@@ -60,7 +94,7 @@ impl DaemonTurnOrchestrator {
             process_id: main_pid,
             session_id: session_id.clone(),
             input: message.to_string(),
-            working_dir: std::env::current_dir().unwrap_or_default(),
+            working_dir,
             model_policy: None,
             deadline: None,
         };
@@ -92,6 +126,7 @@ impl DaemonTurnOrchestrator {
                 operation.id,
                 main_pid,
                 scope_token,
+                principal,
             )
             .await
             .unwrap_or_else(|e| {

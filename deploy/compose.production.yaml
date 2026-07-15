@@ -1,0 +1,11 @@
+# Apply after deploy/gbrain/compose.yaml:
+# docker compose -f deploy/gbrain/compose.yaml -f deploy/compose.production.yaml ...
+services:
+  gbrain:
+    pull_policy: never
+    ports:
+      - "127.0.0.1:${GBRAIN_PORT:-9020}:9020"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: ${GBRAIN_PIDS_LIMIT:-256}

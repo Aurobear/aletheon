@@ -132,7 +132,7 @@ impl RuntimeFailure {
 }
 
 impl AttemptEvidence {
-    fn bounded_for_persistence(&self, max_bytes: usize) -> Self {
+    pub fn bounded_for_persistence(&self, max_bytes: usize) -> Self {
         Self {
             kind: redact_and_bound(&self.kind, max_bytes),
             summary: redact_and_bound(&self.summary, max_bytes),
@@ -142,42 +142,7 @@ impl AttemptEvidence {
 }
 
 fn redact_and_bound(value: &str, max_bytes: usize) -> String {
-    let mut words = value.split_whitespace().peekable();
-    let mut redacted = String::with_capacity(value.len().min(max_bytes));
-    while let Some(word) = words.next() {
-        if !redacted.is_empty() {
-            redacted.push(' ');
-        }
-        if word.eq_ignore_ascii_case("bearer") {
-            redacted.push_str("[REDACTED]");
-            let _ = words.next();
-        } else if word.to_ascii_lowercase().starts_with("sk-")
-            || credential_assignment(word).is_some()
-        {
-            redacted.push_str("[REDACTED]");
-        } else {
-            redacted.push_str(word);
-        }
-    }
-
-    if redacted.len() <= max_bytes {
-        return redacted;
-    }
-    let mut end = max_bytes;
-    while !redacted.is_char_boundary(end) {
-        end -= 1;
-    }
-    redacted.truncate(end);
-    redacted
-}
-
-fn credential_assignment(word: &str) -> Option<(&str, &str)> {
-    let (key, value) = word.split_once('=')?;
-    matches!(
-        key.to_ascii_lowercase().as_str(),
-        "token" | "password" | "secret"
-    )
-    .then_some((key, value))
+    crate::security::audit::redact_sensitive_text(value, max_bytes)
 }
 
 #[cfg(test)]

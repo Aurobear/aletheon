@@ -11,10 +11,15 @@ use super::test_infra::EventRecorder;
 use super::App;
 
 /// Variant of `try_read_socket` that records events via `EventRecorder`.
-pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<EventRecorder>) {
+pub fn try_read_socket_with_recorder(
+    app: &mut App,
+    event_recorder: &mut Option<EventRecorder>,
+) -> bool {
+    let mut changed = false;
     loop {
         match app.stream.try_read(&mut app.read_buf) {
             Ok(0) => {
+                changed = true;
                 app.streaming = false;
                 app.status.waiting = false;
                 app.app_state.streaming = false;
@@ -22,6 +27,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
                 break;
             }
             Ok(n) => {
+                changed = true;
                 let chunk = String::from_utf8_lossy(&app.read_buf[..n]);
                 app.response_buf.push_str(&chunk);
 
@@ -57,6 +63,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
             Err(_) => {
+                changed = true;
                 app.streaming = false;
                 app.status.waiting = false;
                 app.app_state.streaming = false;
@@ -64,6 +71,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
             }
         }
     }
+    changed
 }
 
 pub fn handle_event(app: &mut App, params: &serde_json::Value) {
@@ -100,6 +108,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             tool,
             args,
         } => {
+            app.chat.discard_trailing_assistant_draft();
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             app.chat.add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;
@@ -234,9 +243,11 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             // compaction is internal, just note it
         }
         ClientEvent::Reflection { summary } => {
-            // `summary` already begins with "Reflection: " (see reflection.rs);
-            // don't prepend it again (bug T2: "Reflection: Reflection: ...").
-            app.chat.add_text(ChatRole::System, summary);
+            // Routine reflection is internal control flow, not conversation.
+            // Surface only a reflection that changes strategy or stops work.
+            if !(summary.contains("Spec: on track") && summary.ends_with("Continuing...")) {
+                app.chat.add_text(ChatRole::System, summary);
+            }
         }
         ClientEvent::GoalSet {
             goal: _,
@@ -344,26 +355,13 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
 /// Deduplicate consecutive identical text blocks.
 /// Some models repeat thinking/reasoning text twice.
 pub fn deduplicate_consecutive_text(text: &str) -> String {
-    let len = text.len();
-
-    // Try to find the longest repeated prefix
-    for split_pos in (1..=len / 2).rev() {
-        // Ensure we split at a valid UTF-8 boundary
-        if !text.is_char_boundary(split_pos) {
-            continue;
-        }
-
-        let prefix = &text[..split_pos];
-        let suffix = &text[split_pos..];
-
-        // Check if the suffix starts with the same prefix
-        if suffix.starts_with(prefix) {
-            // Found a repeated block - return just the prefix
-            return prefix.to_string();
+    let midpoint = text.len() / 2;
+    if text.len() % 2 == 0 && text.is_char_boundary(midpoint) {
+        let (first, second) = text.split_at(midpoint);
+        if first == second {
+            return first.to_string();
         }
     }
-
-    // No repeated block found, return original text
     text.to_string()
 }
 
@@ -659,4 +657,24 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
         lines.push(format!("  {} [{}] — {}", id, status, task));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deduplicate_consecutive_text;
+
+    #[test]
+    fn deduplicates_only_an_exact_repeated_response() {
+        assert_eq!(deduplicate_consecutive_text("完整回答完整回答"), "完整回答");
+        assert_eq!(
+            deduplicate_consecutive_text("abcabc trailing"),
+            "abcabc trailing"
+        );
+    }
+
+    #[test]
+    fn preserves_markdown_that_starts_with_repeated_rule_characters() {
+        let response = "----------------------------------------\n邮件分析结果\n- 重点一\n- 重点二";
+        assert_eq!(deduplicate_consecutive_text(response), response);
+    }
 }

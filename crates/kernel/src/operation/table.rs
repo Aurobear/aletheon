@@ -35,6 +35,44 @@ impl OperationTable {
         }
     }
 
+    /// Submit a durable operation using its persisted identifier.
+    ///
+    /// Restart recovery uses this instead of allocating a second operation.
+    pub async fn submit_with_id(
+        &self,
+        id: OperationId,
+        req: OperationRequest,
+    ) -> anyhow::Result<OperationHandle> {
+        let record = OperationRecord {
+            id,
+            owner: req.owner,
+            parent: req.parent,
+            kind: req.kind,
+            state: OperationState::Submitted,
+            submitted_at: self.clock.mono_now(),
+            deadline: req.deadline,
+            exit: None,
+        };
+        {
+            let mut records = self.records.lock().await;
+            if records.contains_key(&id) {
+                anyhow::bail!("operation {:?} is already registered", id);
+            }
+            records.insert(
+                id,
+                OperationRuntime {
+                    record,
+                    notify: Arc::new(Notify::new()),
+                },
+            );
+        }
+        if let Some(parent) = req.parent {
+            let mut children = self.children.lock().await;
+            children.entry(parent).or_default().push(id);
+        }
+        Ok(OperationHandle { id })
+    }
+
     pub async fn start(&self, id: OperationId) -> anyhow::Result<()> {
         self.set_running_state(id, OperationState::Running, None)
             .await
@@ -151,32 +189,7 @@ impl OperationTable {
 #[async_trait]
 impl OperationManager for OperationTable {
     async fn submit(&self, req: OperationRequest) -> anyhow::Result<OperationHandle> {
-        let id = OperationId::new();
-        let record = OperationRecord {
-            id,
-            owner: req.owner,
-            parent: req.parent,
-            kind: req.kind,
-            state: OperationState::Submitted,
-            submitted_at: self.clock.mono_now(),
-            deadline: req.deadline,
-            exit: None,
-        };
-        {
-            let mut records = self.records.lock().await;
-            records.insert(
-                id,
-                OperationRuntime {
-                    record,
-                    notify: Arc::new(Notify::new()),
-                },
-            );
-        }
-        if let Some(parent) = req.parent {
-            let mut children = self.children.lock().await;
-            children.entry(parent).or_default().push(id);
-        }
-        Ok(OperationHandle { id })
+        self.submit_with_id(OperationId::new(), req).await
     }
 
     async fn cancel(&self, id: OperationId, reason: CancelReason) -> anyhow::Result<()> {

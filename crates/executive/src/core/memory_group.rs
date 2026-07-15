@@ -9,6 +9,7 @@ use mnemosyne::AutoMemory;
 use mnemosyne::FactStore;
 use mnemosyne::MemoryService;
 
+use crate::r#impl::approval::ApprovalRepository;
 use crate::r#impl::goal::ObjectiveStore;
 use mnemosyne::CoreMemory;
 use mnemosyne::RecallMemory;
@@ -20,13 +21,12 @@ pub struct MemoryGroup {
     pub fact_store: Arc<Mutex<FactStore>>,
     pub auto_memory: Arc<Mutex<AutoMemory>>,
     pub objective_store: Arc<Mutex<ObjectiveStore>>,
+    /// Durable protected-operation approvals stored beside Goal state.
+    pub approval_repository: Arc<std::sync::Mutex<ApprovalRepository>>,
     /// Unified facade over the 6 memory objects above (docs/arch §11).
     /// Built from the same `Arc<Mutex<_>>` handles; additive, does not
     /// replace direct field access elsewhere.
     pub memory_service: Arc<dyn MemoryService>,
-    /// Optional gbrain MCP manager handle for shared memory recall.
-    /// `None` when gbrain is disabled or connection failed at startup.
-    pub gbrain: Option<Arc<corpus::tools::mcp::manager::McpManager>>,
-    /// gbrain runtime configuration (available even when handle is None).
-    pub gbrain_config: cognit::config::GbrainMemoryConfig,
+    /// Sanitized state of the optional supplemental-memory path.
+    pub supplemental_memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
 }

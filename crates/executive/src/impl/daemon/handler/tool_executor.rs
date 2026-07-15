@@ -28,7 +28,7 @@ use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::kernel::debug_bus::PerfCounter;
 use fabric::types::admission::ExecutionPermit;
 use fabric::types::operation::{OperationId, ProcessId};
-use fabric::{Context as AbiContext, Intent, IntentSource, SelfFieldOps, Verdict};
+use fabric::{Context as AbiContext, Intent, IntentSource, PrincipalId, SelfFieldOps, Verdict};
 
 use crate::core::core_systems::CoreSystems;
 
@@ -47,7 +47,10 @@ pub(crate) struct TurnToolExecutor {
     self_field: Arc<Mutex<SelfField>>,
     working_dir: PathBuf,
     session_id: String,
+    principal: PrincipalId,
     turn_count: usize,
+    /// Stable unique key used by the loop detector for this turn only.
+    turn_id: String,
     /// Kernel operation id for this turn (used by admission controller).
     operation_id: OperationId,
     /// Kernel process id for the main agent (used by admission controller).
@@ -59,6 +62,7 @@ impl TurnToolExecutor {
     pub(crate) fn new(
         subsystems: &CoreSystems,
         session_id: String,
+        principal: PrincipalId,
         turn_count: usize,
         working_dir: PathBuf,
         operation_id: OperationId,
@@ -75,7 +79,9 @@ impl TurnToolExecutor {
             self_field: subsystems.self_field.clone(),
             working_dir,
             session_id,
+            principal,
             turn_count,
+            turn_id: operation_id.0.to_string(),
             operation_id,
             process_id,
         }
@@ -130,7 +136,9 @@ impl TurnToolExecutor {
         let input = input.clone();
         let working_dir = self.working_dir.clone();
         let session_id = self.session_id.clone();
+        let principal = self.principal.clone();
         let turn_count = self.turn_count;
+        let turn_id = self.turn_id.clone();
 
         // --- PreTool hook ---
         {
@@ -210,15 +218,13 @@ impl TurnToolExecutor {
         };
         let exec_ctx = fabric::tool::ToolContext {
             working_dir,
-            session_id: session_id.clone(),
+            session_id: principal.0,
             clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
         };
         let (content, is_error) = match tool {
             Some(t) => {
                 let mut r = runner.lock().await;
-                let res = r
-                    .run(t.as_ref(), input.clone(), &exec_ctx, "chat-turn")
-                    .await;
+                let res = r.run(t.as_ref(), input.clone(), &exec_ctx, &turn_id).await;
                 (res.content, res.is_error)
             }
             None => (format!("Unknown tool: {}", name), true),

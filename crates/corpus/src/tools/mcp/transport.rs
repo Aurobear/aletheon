@@ -8,6 +8,8 @@ use tokio::sync::mpsc;
 
 use super::auth::BearerTokenAuth;
 
+const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
+
 // ---------------------------------------------------------------------------
 // Transport enum
 // ---------------------------------------------------------------------------
@@ -455,7 +457,7 @@ impl McpTransport {
 
         if content_type.contains("text/event-stream") {
             // Parse SSE response: read data lines from the body.
-            let body_text = response.text().await?;
+            let body_text = Self::read_bounded_http_body(response).await?;
             for line in body_text.lines() {
                 if let Some(data) = line.strip_prefix("data:") {
                     let data = data.trim();
@@ -466,9 +468,28 @@ impl McpTransport {
             }
             anyhow::bail!("No data event found in SSE response");
         } else {
-            let body_text = response.text().await?;
+            let body_text = Self::read_bounded_http_body(response).await?;
             Self::parse_response(&body_text)
         }
+    }
+
+    async fn read_bounded_http_body(response: reqwest::Response) -> Result<String> {
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_HTTP_RESPONSE_BYTES as u64)
+        {
+            anyhow::bail!("MCP HTTP response exceeds byte limit");
+        }
+        let mut stream = response.bytes_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            if bytes.len().saturating_add(chunk.len()) > MAX_HTTP_RESPONSE_BYTES {
+                anyhow::bail!("MCP HTTP response exceeds byte limit");
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        String::from_utf8(bytes).context("MCP HTTP response is not UTF-8")
     }
 
     async fn http_post_no_response(

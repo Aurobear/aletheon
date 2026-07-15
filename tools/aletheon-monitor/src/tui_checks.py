@@ -84,12 +84,30 @@ def check_permission_denied(frame: str) -> list[dict]:
     return []
 
 
+def check_known_tool_failures(frame: str) -> list[dict]:
+    """Known infrastructure failures must never be accepted as an answer."""
+    needles = (
+        "google_unauthorized_account",
+        "Can't mount proc",
+        "Aletheon authorization failed",
+    )
+    for needle in needles:
+        if needle in frame:
+            return [{
+                "kind": "known_tool_failure",
+                "severity": "high",
+                "evidence": needle,
+            }]
+    return []
+
+
 _CHECKS = [
     check_dup_render,
     check_raw_markdown,
     check_double_reflection,
     check_unknown_skill_path,
     check_permission_denied,
+    check_known_tool_failures,
 ]
 
 

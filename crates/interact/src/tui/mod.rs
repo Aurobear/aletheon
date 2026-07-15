@@ -35,6 +35,41 @@ pub mod workflow;
 // Re-export the main entry point
 pub use cli::run;
 
+/// Canonical directory represented by this client process.
+pub fn client_working_dir() -> std::path::PathBuf {
+    std::env::current_dir()
+        .and_then(std::fs::canonicalize)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+/// Build the local chat envelope. Keeping this in one place prevents the TUI,
+/// line mode, and `-m` mode from silently diverging.
+pub fn chat_request(message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "chat",
+        "id": 1,
+        "params": {
+            "message": message,
+            "working_dir": client_working_dir(),
+        }
+    })
+}
+
+#[cfg(test)]
+mod working_dir_tests {
+    #[test]
+    fn chat_request_includes_canonical_client_working_directory() {
+        let request = super::chat_request("inspect this project");
+        assert_eq!(request["params"]["message"], "inspect this project");
+        assert_eq!(
+            request["params"]["working_dir"],
+            super::client_working_dir().to_string_lossy().as_ref()
+        );
+        assert!(super::client_working_dir().is_absolute());
+    }
+}
+
 /// Restore terminal to normal state.
 /// Useful when the terminal is stuck in raw mode or mouse capture mode.
 pub fn restore_terminal() {
@@ -106,7 +141,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
 
     let model = std::env::var("OS_AGENT_MODEL").unwrap_or_default();
     let model_name = if model.is_empty() {
-        "mimo-v2.5-pro".to_string()
+        "default".to_string()
     } else {
         model
     };

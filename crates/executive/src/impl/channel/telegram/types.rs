@@ -25,6 +25,18 @@ pub struct Update {
     pub update_id: i64,
     #[serde(default)]
     pub message: Option<Message>,
+    #[serde(default)]
+    pub callback_query: Option<CallbackQuery>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct CallbackQuery {
+    pub id: String,
+    pub from: User,
+    #[serde(default)]
+    pub message: Option<Message>,
+    #[serde(default)]
+    pub data: Option<String>,
 }
 
 /// A Telegram message.
@@ -72,6 +84,19 @@ pub struct SendMessageResponse {
 pub struct SendMessageRequest {
     pub chat_id: i64,
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_markup: Option<InlineKeyboardMarkup>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InlineKeyboardMarkup {
+    pub inline_keyboard: Vec<Vec<InlineKeyboardButton>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InlineKeyboardButton {
+    pub text: String,
+    pub callback_data: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +172,34 @@ mod tests {
         let resp: GetUpdatesResponse = serde_json::from_str(json).unwrap();
         // The update has no `message` field — it should be None.
         assert!(resp.result[0].message.is_none());
+    }
+
+    #[test]
+    fn deserialize_callback_query() {
+        let json = r#"{
+            "ok": true,
+            "result": [{
+                "update_id": 301,
+                "callback_query": {
+                    "id": "callback-1",
+                    "from": { "id": 7 },
+                    "message": {
+                        "message_id": 30,
+                        "chat": { "id": 3001 },
+                        "date": 1720000200,
+                        "text": "approval"
+                    },
+                    "data": "00000000-0000-0000-0000-000000000001:apply"
+                }
+            }]
+        }"#;
+        let response: GetUpdatesResponse = serde_json::from_str(json).unwrap();
+        let callback = response.result[0].callback_query.as_ref().unwrap();
+        assert_eq!(callback.from.id, 7);
+        assert_eq!(
+            callback.data.as_deref(),
+            Some("00000000-0000-0000-0000-000000000001:apply")
+        );
     }
 
     #[test]

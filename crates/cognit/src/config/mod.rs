@@ -54,6 +54,304 @@ pub struct AppConfig {
     pub goal_runtime: Option<GoalRuntimeConfig>,
     #[serde(default)]
     pub pi_runtime: PiRuntimeConfig,
+    #[serde(default)]
+    pub deployment: DeploymentConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentMode {
+    Development,
+    #[default]
+    User,
+    Production,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentPathsConfig {
+    pub state_root: PathBuf,
+    pub config_root: PathBuf,
+    pub runtime_root: PathBuf,
+    pub cache_root: PathBuf,
+    pub state: PathBuf,
+    pub goals: PathBuf,
+    pub sessions: PathBuf,
+    pub mnemosyne: PathBuf,
+    pub artifacts: PathBuf,
+    pub worktrees: PathBuf,
+    pub audit: PathBuf,
+    pub secret_root: PathBuf,
+}
+
+impl Default for DeploymentPathsConfig {
+    fn default() -> Self {
+        Self {
+            state_root: "~/.aletheon".into(),
+            config_root: "~/.aletheon".into(),
+            runtime_root: "/run/aletheon".into(),
+            cache_root: "~/.cache/aletheon".into(),
+            state: "~/.aletheon/state".into(),
+            goals: "~/.aletheon/goals".into(),
+            sessions: "~/.aletheon/sessions".into(),
+            mnemosyne: "~/.aletheon/memory".into(),
+            artifacts: "~/.aletheon/artifacts".into(),
+            worktrees: "~/.aletheon/worktrees".into(),
+            audit: "~/.aletheon/audit".into(),
+            secret_root: "~/.config/aletheon".into(),
+        }
+    }
+}
+
+impl From<fabric::paths::ProductionPaths> for DeploymentPathsConfig {
+    fn from(value: fabric::paths::ProductionPaths) -> Self {
+        Self {
+            state_root: value.state_root,
+            config_root: value.config_root,
+            runtime_root: value.runtime_root,
+            cache_root: value.cache_root,
+            state: value.state,
+            goals: value.goals,
+            sessions: value.sessions,
+            mnemosyne: value.mnemosyne,
+            artifacts: value.artifacts,
+            worktrees: value.worktrees,
+            audit: value.audit,
+            secret_root: value.secret_root,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentQuotaConfig {
+    pub total_data_bytes: u64,
+    pub total_data_soft_bytes: u64,
+    pub total_data_items: u64,
+    pub minimum_free_bytes: u64,
+    pub artifacts_bytes: u64,
+    pub artifacts_soft_bytes: u64,
+    pub artifacts_items: u64,
+    pub worktrees_bytes: u64,
+    pub worktrees_soft_bytes: u64,
+    pub worktrees_items: u64,
+    pub audit_bytes: u64,
+    pub audit_soft_bytes: u64,
+    pub audit_items: u64,
+    pub sessions_bytes: u64,
+    pub sessions_soft_bytes: u64,
+    pub sessions_items: u64,
+    pub google_bytes: u64,
+    pub google_soft_bytes: u64,
+    pub google_items: u64,
+    pub gbrain_spool_bytes: u64,
+    pub gbrain_spool_soft_bytes: u64,
+    pub gbrain_spool_items: u64,
+}
+
+impl Default for DeploymentQuotaConfig {
+    fn default() -> Self {
+        Self {
+            total_data_bytes: 100 * 1024 * 1024 * 1024,
+            total_data_soft_bytes: 85 * 1024 * 1024 * 1024,
+            total_data_items: 2_000_000,
+            minimum_free_bytes: 5 * 1024 * 1024 * 1024,
+            artifacts_bytes: 20 * 1024 * 1024 * 1024,
+            artifacts_soft_bytes: 16 * 1024 * 1024 * 1024,
+            artifacts_items: 100_000,
+            worktrees_bytes: 40 * 1024 * 1024 * 1024,
+            worktrees_soft_bytes: 32 * 1024 * 1024 * 1024,
+            worktrees_items: 10_000,
+            audit_bytes: 5 * 1024 * 1024 * 1024,
+            audit_soft_bytes: 4 * 1024 * 1024 * 1024,
+            audit_items: 400_000,
+            sessions_bytes: 10 * 1024 * 1024 * 1024,
+            sessions_soft_bytes: 8 * 1024 * 1024 * 1024,
+            sessions_items: 500_000,
+            google_bytes: 5 * 1024 * 1024 * 1024,
+            google_soft_bytes: 4 * 1024 * 1024 * 1024,
+            google_items: 500_000,
+            gbrain_spool_bytes: 256 * 1024 * 1024,
+            gbrain_spool_soft_bytes: 192 * 1024 * 1024,
+            gbrain_spool_items: 10_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentIntegrationsConfig {
+    pub telegram: bool,
+    pub google: bool,
+    pub gbrain: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentSecretFilesConfig {
+    pub provider: Option<PathBuf>,
+    pub telegram: Option<PathBuf>,
+    pub google_vault_key: Option<PathBuf>,
+    pub gbrain: Option<PathBuf>,
+    pub backup_password: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupMode {
+    #[default]
+    Disabled,
+    Local,
+    EncryptedRemote,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentBackupConfig {
+    pub mode: BackupMode,
+    pub repository_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentHealthConfig {
+    pub minimum_free_bytes: u64,
+    pub maximum_backup_age_secs: u64,
+    pub maximum_sync_lag_secs: u64,
+}
+
+impl Default for DeploymentHealthConfig {
+    fn default() -> Self {
+        Self {
+            minimum_free_bytes: 5 * 1024 * 1024 * 1024,
+            maximum_backup_age_secs: 36 * 60 * 60,
+            maximum_sync_lag_secs: 60 * 60,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentConfig {
+    pub mode: DeploymentMode,
+    pub paths: DeploymentPathsConfig,
+    pub quotas: DeploymentQuotaConfig,
+    pub integrations: DeploymentIntegrationsConfig,
+    pub secrets: DeploymentSecretFilesConfig,
+    pub backup: DeploymentBackupConfig,
+    pub health: DeploymentHealthConfig,
+}
+
+impl Default for DeploymentConfig {
+    fn default() -> Self {
+        Self {
+            mode: DeploymentMode::User,
+            paths: DeploymentPathsConfig::default(),
+            quotas: DeploymentQuotaConfig::default(),
+            integrations: DeploymentIntegrationsConfig::default(),
+            secrets: DeploymentSecretFilesConfig::default(),
+            backup: DeploymentBackupConfig::default(),
+            health: DeploymentHealthConfig::default(),
+        }
+    }
+}
+
+impl DeploymentConfig {
+    pub fn production() -> Self {
+        Self {
+            mode: DeploymentMode::Production,
+            paths: fabric::paths::ProductionPaths::default().into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn validate(&self, require_existing: bool) -> Result<(), String> {
+        if self.mode != DeploymentMode::Production {
+            return Ok(());
+        }
+        let paths = fabric::paths::ProductionPaths {
+            state_root: self.paths.state_root.clone(),
+            config_root: self.paths.config_root.clone(),
+            runtime_root: self.paths.runtime_root.clone(),
+            cache_root: self.paths.cache_root.clone(),
+            state: self.paths.state.clone(),
+            goals: self.paths.goals.clone(),
+            sessions: self.paths.sessions.clone(),
+            mnemosyne: self.paths.mnemosyne.clone(),
+            artifacts: self.paths.artifacts.clone(),
+            worktrees: self.paths.worktrees.clone(),
+            audit: self.paths.audit.clone(),
+            secret_root: self.paths.secret_root.clone(),
+        };
+        paths
+            .validate(require_existing)
+            .map_err(|error| error.to_string())?;
+        for path in [
+            self.secrets.provider.as_ref(),
+            self.secrets.telegram.as_ref(),
+            self.secrets.google_vault_key.as_ref(),
+            self.secrets.gbrain.as_ref(),
+            self.secrets.backup_password.as_ref(),
+            self.backup.repository_file.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !path.is_absolute()
+                || path.to_string_lossy().contains('~')
+                || !path.starts_with(&self.paths.config_root)
+            {
+                return Err("production secret/reference path is outside /etc/aletheon".into());
+            }
+        }
+        if self.quotas.minimum_free_bytes > self.quotas.total_data_bytes
+            || self.health.minimum_free_bytes > self.quotas.total_data_bytes
+        {
+            return Err("deployment free-space thresholds exceed total quota".into());
+        }
+        for (soft, hard, items) in [
+            (
+                self.quotas.total_data_soft_bytes,
+                self.quotas.total_data_bytes,
+                self.quotas.total_data_items,
+            ),
+            (
+                self.quotas.artifacts_soft_bytes,
+                self.quotas.artifacts_bytes,
+                self.quotas.artifacts_items,
+            ),
+            (
+                self.quotas.worktrees_soft_bytes,
+                self.quotas.worktrees_bytes,
+                self.quotas.worktrees_items,
+            ),
+            (
+                self.quotas.audit_soft_bytes,
+                self.quotas.audit_bytes,
+                self.quotas.audit_items,
+            ),
+            (
+                self.quotas.sessions_soft_bytes,
+                self.quotas.sessions_bytes,
+                self.quotas.sessions_items,
+            ),
+            (
+                self.quotas.google_soft_bytes,
+                self.quotas.google_bytes,
+                self.quotas.google_items,
+            ),
+            (
+                self.quotas.gbrain_spool_soft_bytes,
+                self.quotas.gbrain_spool_bytes,
+                self.quotas.gbrain_spool_items,
+            ),
+        ] {
+            if soft > hard || hard == 0 || items == 0 {
+                return Err("deployment storage quota is invalid".into());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Fail-closed configuration for the isolated Pi coding runtime.
@@ -360,52 +658,63 @@ impl Default for MemoryConfig {
         }
     }
 }
-/// gbrain shared memory integration configuration.
-///
-/// Disabled by default. When enabled, the daemon connects to a gbrain
-/// MCP server at startup and injects recalled content into dynamic turns.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Optional GBrain supplemental memory over the configured HTTP MCP server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GbrainMemoryConfig {
-    /// Master switch. When false (default), gbrain is not connected.
     #[serde(default)]
     pub enabled: bool,
-    /// MCP server name this gbrain instance is registered under.
     #[serde(default = "default_gbrain_server_name")]
     pub server_name: String,
-    /// Primary source identifier for this project.
-    #[serde(default = "default_gbrain_source")]
-    pub source: String,
-    /// Secondary (general) source identifier.
-    #[serde(default = "default_general_source")]
-    pub general_source: String,
-    /// Recall timeout in milliseconds.
-    #[serde(default = "default_gbrain_timeout_ms")]
-    pub timeout_ms: u64,
-    /// Maximum number of recalled results.
-    #[serde(default = "default_gbrain_max_results")]
-    pub max_results: usize,
-    /// Maximum characters in rendered recall block.
-    #[serde(default = "default_gbrain_max_chars")]
-    pub max_chars: usize,
-    /// Enable durable outbox capture (disabled by default).
-    #[serde(default)]
-    pub capture_enabled: bool,
-    /// Directory for durable outbox entries.
-    #[serde(default = "default_gbrain_outbox_dir")]
-    pub outbox_dir: String,
+    #[serde(default = "default_gbrain_read_sources")]
+    pub read_sources: Vec<String>,
+    #[serde(default = "default_gbrain_source", alias = "source")]
+    pub write_source: String,
+    #[serde(default = "default_gbrain_timeout_ms", alias = "timeout_ms")]
+    pub request_timeout_ms: u64,
+    #[serde(default = "default_gbrain_batch_size")]
+    pub delivery_batch_size: usize,
+    #[serde(default = "default_gbrain_max_results", alias = "max_results")]
+    pub recall_limit: usize,
+    #[serde(default = "default_gbrain_max_chars", alias = "max_chars")]
+    pub max_content_bytes: usize,
+    #[serde(default, alias = "capture_enabled")]
+    pub projection_enabled: bool,
+    #[serde(default = "default_gbrain_spool_path")]
+    pub spool_path: String,
+    #[serde(default = "default_gbrain_spool_items")]
+    pub spool_max_items: usize,
+    #[serde(default = "default_gbrain_spool_bytes")]
+    pub spool_max_bytes: u64,
+    #[serde(default = "default_gbrain_retry_initial_ms")]
+    pub retry_initial_ms: u64,
+    #[serde(default = "default_gbrain_retry_max_ms")]
+    pub retry_max_ms: u64,
+    #[serde(default = "default_gbrain_retry_attempts")]
+    pub retry_max_attempts: u32,
+    #[serde(default = "default_gbrain_retry_age_secs")]
+    pub retry_max_age_secs: u64,
+    #[serde(default = "default_gbrain_schema_fixture")]
+    pub schema_fixture: String,
+    #[serde(default = "default_gbrain_schema_version")]
+    pub schema_version: String,
+    #[serde(default = "default_gbrain_outbox_dir", alias = "outbox_dir")]
+    pub legacy_outbox_dir: String,
 }
 
 fn default_gbrain_server_name() -> String {
-    "gbrain".to_string()
+    "gbrain".into()
 }
 fn default_gbrain_source() -> String {
-    "aletheon".to_string()
+    "aletheon".into()
 }
-fn default_general_source() -> String {
-    "general".to_string()
+fn default_gbrain_read_sources() -> Vec<String> {
+    vec!["aletheon".into(), "general".into()]
 }
 fn default_gbrain_timeout_ms() -> u64 {
     1200
+}
+fn default_gbrain_batch_size() -> usize {
+    20
 }
 fn default_gbrain_max_results() -> usize {
     4
@@ -413,8 +722,35 @@ fn default_gbrain_max_results() -> usize {
 fn default_gbrain_max_chars() -> usize {
     6000
 }
+fn default_gbrain_spool_path() -> String {
+    "~/.aletheon/memory/gbrain-spool.db".into()
+}
+fn default_gbrain_spool_items() -> usize {
+    10_000
+}
+fn default_gbrain_spool_bytes() -> u64 {
+    256 * 1024 * 1024
+}
+fn default_gbrain_retry_initial_ms() -> u64 {
+    1_000
+}
+fn default_gbrain_retry_max_ms() -> u64 {
+    60_000
+}
+fn default_gbrain_retry_attempts() -> u32 {
+    12
+}
+fn default_gbrain_retry_age_secs() -> u64 {
+    86_400
+}
+fn default_gbrain_schema_fixture() -> String {
+    "config/gbrain/tools-schema.json".into()
+}
+fn default_gbrain_schema_version() -> String {
+    "v0.42.59.0".into()
+}
 fn default_gbrain_outbox_dir() -> String {
-    "~/.aletheon/gbrain-outbox".to_string()
+    "~/.aletheon/gbrain-outbox".into()
 }
 
 impl Default for GbrainMemoryConfig {
@@ -422,13 +758,23 @@ impl Default for GbrainMemoryConfig {
         Self {
             enabled: false,
             server_name: default_gbrain_server_name(),
-            source: default_gbrain_source(),
-            general_source: default_general_source(),
-            timeout_ms: default_gbrain_timeout_ms(),
-            max_results: default_gbrain_max_results(),
-            max_chars: default_gbrain_max_chars(),
-            capture_enabled: false,
-            outbox_dir: default_gbrain_outbox_dir(),
+            read_sources: default_gbrain_read_sources(),
+            write_source: default_gbrain_source(),
+            request_timeout_ms: default_gbrain_timeout_ms(),
+            delivery_batch_size: default_gbrain_batch_size(),
+            recall_limit: default_gbrain_max_results(),
+            max_content_bytes: default_gbrain_max_chars(),
+            projection_enabled: false,
+            spool_path: default_gbrain_spool_path(),
+            spool_max_items: default_gbrain_spool_items(),
+            spool_max_bytes: default_gbrain_spool_bytes(),
+            retry_initial_ms: default_gbrain_retry_initial_ms(),
+            retry_max_ms: default_gbrain_retry_max_ms(),
+            retry_max_attempts: default_gbrain_retry_attempts(),
+            retry_max_age_secs: default_gbrain_retry_age_secs(),
+            schema_fixture: default_gbrain_schema_fixture(),
+            schema_version: default_gbrain_schema_version(),
+            legacy_outbox_dir: default_gbrain_outbox_dir(),
         }
     }
 }
@@ -675,6 +1021,9 @@ impl AppConfig {
         if other.pi_runtime != PiRuntimeConfig::default() {
             self.pi_runtime = other.pi_runtime;
         }
+        if other.deployment != DeploymentConfig::default() {
+            self.deployment = other.deployment;
+        }
 
         // Sandbox: override if non-default
         if other.sandbox.preference != default_sandbox_preference() {
@@ -697,33 +1046,65 @@ impl AppConfig {
         if other.memory.data_dir != default_memory_data_dir() {
             self.memory.data_dir = other.memory.data_dir;
         }
-        // gbrain: merge if enabled or non-default
-        if other.memory.gbrain.enabled {
+        // GBrain: merge non-default supplemental-memory settings.
+        let defaults = GbrainMemoryConfig::default();
+        let incoming = other.memory.gbrain;
+        if incoming.enabled {
             self.memory.gbrain.enabled = true;
         }
-        if other.memory.gbrain.server_name != default_gbrain_server_name() {
-            self.memory.gbrain.server_name = other.memory.gbrain.server_name;
+        if incoming.server_name != defaults.server_name {
+            self.memory.gbrain.server_name = incoming.server_name;
         }
-        if other.memory.gbrain.source != default_gbrain_source() {
-            self.memory.gbrain.source = other.memory.gbrain.source;
+        if incoming.read_sources != defaults.read_sources {
+            self.memory.gbrain.read_sources = incoming.read_sources;
         }
-        if other.memory.gbrain.general_source != default_general_source() {
-            self.memory.gbrain.general_source = other.memory.gbrain.general_source;
+        if incoming.write_source != defaults.write_source {
+            self.memory.gbrain.write_source = incoming.write_source;
         }
-        if other.memory.gbrain.timeout_ms != default_gbrain_timeout_ms() {
-            self.memory.gbrain.timeout_ms = other.memory.gbrain.timeout_ms;
+        if incoming.request_timeout_ms != defaults.request_timeout_ms {
+            self.memory.gbrain.request_timeout_ms = incoming.request_timeout_ms;
         }
-        if other.memory.gbrain.max_results != default_gbrain_max_results() {
-            self.memory.gbrain.max_results = other.memory.gbrain.max_results;
+        if incoming.delivery_batch_size != defaults.delivery_batch_size {
+            self.memory.gbrain.delivery_batch_size = incoming.delivery_batch_size;
         }
-        if other.memory.gbrain.max_chars != default_gbrain_max_chars() {
-            self.memory.gbrain.max_chars = other.memory.gbrain.max_chars;
+        if incoming.recall_limit != defaults.recall_limit {
+            self.memory.gbrain.recall_limit = incoming.recall_limit;
         }
-        if other.memory.gbrain.capture_enabled {
-            self.memory.gbrain.capture_enabled = true;
+        if incoming.max_content_bytes != defaults.max_content_bytes {
+            self.memory.gbrain.max_content_bytes = incoming.max_content_bytes;
         }
-        if other.memory.gbrain.outbox_dir != default_gbrain_outbox_dir() {
-            self.memory.gbrain.outbox_dir = other.memory.gbrain.outbox_dir;
+        if incoming.projection_enabled {
+            self.memory.gbrain.projection_enabled = true;
+        }
+        if incoming.spool_path != defaults.spool_path {
+            self.memory.gbrain.spool_path = incoming.spool_path;
+        }
+        if incoming.spool_max_items != defaults.spool_max_items {
+            self.memory.gbrain.spool_max_items = incoming.spool_max_items;
+        }
+        if incoming.spool_max_bytes != defaults.spool_max_bytes {
+            self.memory.gbrain.spool_max_bytes = incoming.spool_max_bytes;
+        }
+        if incoming.retry_initial_ms != defaults.retry_initial_ms {
+            self.memory.gbrain.retry_initial_ms = incoming.retry_initial_ms;
+        }
+        if incoming.retry_max_ms != defaults.retry_max_ms {
+            self.memory.gbrain.retry_max_ms = incoming.retry_max_ms;
+        }
+        if incoming.retry_max_attempts != defaults.retry_max_attempts {
+            self.memory.gbrain.retry_max_attempts = incoming.retry_max_attempts;
+        }
+        if incoming.retry_max_age_secs != defaults.retry_max_age_secs {
+            self.memory.gbrain.retry_max_age_secs = incoming.retry_max_age_secs;
+        }
+        if incoming.schema_fixture != defaults.schema_fixture {
+            self.memory.gbrain.schema_fixture = incoming.schema_fixture;
+        }
+        if incoming.schema_version != defaults.schema_version {
+            self.memory.gbrain.schema_version = incoming.schema_version;
+        }
+        if incoming.legacy_outbox_dir != defaults.legacy_outbox_dir {
+            self.memory.gbrain.legacy_outbox_dir = incoming.legacy_outbox_dir;
         }
 
         // Daemon: override if non-default
@@ -1101,32 +1482,45 @@ base_url = "http://localhost"
         let config = AppConfig::default();
         assert!(!config.memory.gbrain.enabled);
         assert_eq!(config.memory.gbrain.server_name, "gbrain");
-        assert_eq!(config.memory.gbrain.source, "aletheon");
-        assert_eq!(config.memory.gbrain.timeout_ms, 1200);
-        assert_eq!(config.memory.gbrain.max_results, 4);
-        assert_eq!(config.memory.gbrain.max_chars, 6000);
-        assert!(!config.memory.gbrain.capture_enabled);
+        assert_eq!(config.memory.gbrain.write_source, "aletheon");
+        assert_eq!(config.memory.gbrain.request_timeout_ms, 1200);
+        assert_eq!(config.memory.gbrain.recall_limit, 4);
+        assert_eq!(config.memory.gbrain.max_content_bytes, 6000);
+        assert!(!config.memory.gbrain.projection_enabled);
     }
 
     #[test]
     fn gbrain_parses_from_toml() {
         let toml = r#"
 enabled = true
-server_name = "gbrain"
-source = "aletheon"
-general_source = "general"
-timeout_ms = 1200
-max_results = 4
-max_chars = 6000
-capture_enabled = false
-outbox_dir = "~/.aletheon/gbrain-outbox"
+server_name = "gbrain-primary"
+read_sources = ["project", "general"]
+write_source = "project"
+request_timeout_ms = 2500
+delivery_batch_size = 12
+recall_limit = 6
+max_content_bytes = 8192
+projection_enabled = true
+spool_path = "/tmp/gbrain.db"
+spool_max_items = 500
+spool_max_bytes = 1048576
+retry_initial_ms = 250
+retry_max_ms = 10000
+retry_max_attempts = 8
+retry_max_age_secs = 3600
+schema_fixture = "config/gbrain/tools-schema.json"
+schema_version = "v0.42.59.0"
+legacy_outbox_dir = "/tmp/legacy"
 "#;
         let cfg: GbrainMemoryConfig = toml::from_str(toml).unwrap();
         assert!(cfg.enabled);
-        assert_eq!(cfg.server_name, "gbrain");
-        assert_eq!(cfg.source, "aletheon");
-        assert_eq!(cfg.timeout_ms, 1200);
-        assert!(!cfg.capture_enabled);
+        assert_eq!(cfg.server_name, "gbrain-primary");
+        assert_eq!(cfg.read_sources, ["project", "general"]);
+        assert_eq!(cfg.write_source, "project");
+        assert_eq!(cfg.request_timeout_ms, 2500);
+        assert_eq!(cfg.delivery_batch_size, 12);
+        assert_eq!(cfg.spool_max_bytes, 1_048_576);
+        assert!(cfg.projection_enabled);
     }
 
     #[test]
@@ -1143,8 +1537,8 @@ max_results = 6
 "#;
         let mem: MemoryConfig = toml::from_str(toml).unwrap();
         assert!(mem.gbrain.enabled);
-        assert_eq!(mem.gbrain.source, "aletheon");
-        assert_eq!(mem.gbrain.timeout_ms, 2500);
+        assert_eq!(mem.gbrain.write_source, "aletheon");
+        assert_eq!(mem.gbrain.request_timeout_ms, 2500);
         assert_eq!(mem.gbrain.server_name, "gbrain");
     }
 
@@ -1153,13 +1547,70 @@ max_results = 6
         let mut base = AppConfig::default();
         let mut other = AppConfig::default();
         other.memory.gbrain.enabled = true;
-        other.memory.gbrain.source = "custom".into();
-        other.memory.gbrain.timeout_ms = 5000;
+        other.memory.gbrain.write_source = "custom".into();
+        other.memory.gbrain.request_timeout_ms = 5000;
 
         base.merge(other);
 
         assert!(base.memory.gbrain.enabled);
-        assert_eq!(base.memory.gbrain.source, "custom");
-        assert_eq!(base.memory.gbrain.timeout_ms, 5000);
+        assert_eq!(base.memory.gbrain.write_source, "custom");
+        assert_eq!(base.memory.gbrain.request_timeout_ms, 5000);
+    }
+
+    #[test]
+    fn production_deployment_paths_parse_validate_and_merge() {
+        let parsed: AppConfig = toml::from_str(
+            r#"
+            [deployment]
+            mode = "production"
+            [deployment.paths]
+            state_root = "/var/lib/aletheon"
+            config_root = "/etc/aletheon"
+            runtime_root = "/run/aletheon"
+            cache_root = "/var/cache/aletheon"
+            state = "/var/lib/aletheon/state"
+            goals = "/var/lib/aletheon/goals"
+            sessions = "/var/lib/aletheon/sessions"
+            mnemosyne = "/var/lib/aletheon/mnemosyne"
+            artifacts = "/var/lib/aletheon/artifacts"
+            worktrees = "/var/lib/aletheon/worktrees"
+            audit = "/var/lib/aletheon/audit"
+            secret_root = "/etc/aletheon/credentials"
+            [deployment.secrets]
+            provider = "/etc/aletheon/credentials/provider.env"
+            "#,
+        )
+        .unwrap();
+        assert!(parsed.deployment.validate(false).is_ok());
+        let mut base = AppConfig::default();
+        base.merge(parsed);
+        assert_eq!(base.deployment.mode, DeploymentMode::Production);
+    }
+
+    #[test]
+    fn production_deployment_rejects_tilde_outside_and_invalid_quota() {
+        let mut deployment = DeploymentConfig::production();
+        deployment.paths.goals = "~/.aletheon/goals".into();
+        assert!(deployment.validate(false).is_err());
+
+        let mut deployment = DeploymentConfig::production();
+        deployment.secrets.provider = Some("/tmp/provider.env".into());
+        assert!(deployment.validate(false).is_err());
+
+        let mut deployment = DeploymentConfig::production();
+        deployment.quotas.minimum_free_bytes = deployment.quotas.total_data_bytes + 1;
+        assert!(deployment.validate(false).is_err());
+    }
+
+    #[test]
+    fn development_and_user_modes_retain_compatible_paths() {
+        let user = DeploymentConfig::default();
+        assert_eq!(user.mode, DeploymentMode::User);
+        assert!(user.paths.state_root.to_string_lossy().starts_with('~'));
+        assert!(user.validate(false).is_ok());
+        let mut development = user;
+        development.mode = DeploymentMode::Development;
+        development.paths.state_root = "./target/aletheon".into();
+        assert!(development.validate(false).is_ok());
     }
 }

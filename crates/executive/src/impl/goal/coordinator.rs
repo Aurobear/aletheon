@@ -4,15 +4,26 @@
 //! one turn request. The caller (M3 worker) is responsible for scheduling
 //! subsequent ticks.
 
+use crate::r#impl::approval::ApprovalRepository;
+use crate::r#impl::approval::{ApplyCoordinator, ApplyCoordinatorConfig, ManagedWorktreeCleaner};
 use crate::r#impl::goal::budget::GoalBudgetRequest;
 use crate::r#impl::goal::transition::GoalTransitionError;
 use crate::r#impl::goal::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
-    AttemptRequest, ObjectiveStore, RetryPolicy,
+    AttemptRequest, CodingVerifier, ObjectiveStore, RetryPolicy,
 };
-use fabric::goal::{GoalId, GoalSnapshot, GoalState};
+use crate::r#impl::memory_projection::{
+    ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
+};
+use crate::r#impl::storage_quota::{StorageClass, StorageQuota, StorageReservation};
+use aletheon_kernel::operation::OperationTable;
+use fabric::goal::{GoalId, GoalSnapshot, GoalState, GoalWaitReason};
 use fabric::Clock;
 use fabric::ProcessId;
+use fabric::{ApprovalId, ExternalEventEnvelope, ExternalEventId, ExternalIdentityId, PrincipalId};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -28,17 +39,117 @@ pub enum GoalTickOutcome {
     BudgetBlocked { reason: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoogleEventWaitCondition {
+    pub account_id: ExternalIdentityId,
+    pub event_id: Option<ExternalEventId>,
+    pub object_id: Option<String>,
+    pub source_after_ms: Option<i64>,
+    pub source_before_ms: Option<i64>,
+}
+
+impl GoogleEventWaitCondition {
+    pub fn key(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    fn matches(&self, event: &ExternalEventEnvelope) -> bool {
+        self.account_id == event.account_id
+            && self.event_id.is_none_or(|id| id == event.id)
+            && self
+                .object_id
+                .as_deref()
+                .is_none_or(|id| id == event.object.object_id)
+            && self
+                .source_after_ms
+                .is_none_or(|after| event.source_timestamp_ms >= after)
+            && self
+                .source_before_ms
+                .is_none_or(|before| event.source_timestamp_ms <= before)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GoalCoordinator
 // ---------------------------------------------------------------------------
 
 pub struct GoalCoordinator {
     store: Arc<Mutex<ObjectiveStore>>,
+    memory_projection: Option<MemoryProjection>,
+    storage_quota: Option<(StorageQuota, u64)>,
+    storage_reservations: Mutex<HashMap<GoalId, StorageReservation>>,
 }
 
 impl GoalCoordinator {
     pub fn new(store: Arc<Mutex<ObjectiveStore>>) -> Self {
-        Self { store }
+        Self {
+            store,
+            memory_projection: None,
+            storage_quota: None,
+            storage_reservations: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Reserve deployment storage for a Goal attempt before scheduling it.
+    pub fn with_storage_quota(mut self, quota: StorageQuota, expected_attempt_bytes: u64) -> Self {
+        self.storage_quota = Some((quota, expected_attempt_bytes));
+        self
+    }
+
+    pub fn with_memory_projection(mut self, projection: MemoryProjection) -> Self {
+        self.memory_projection = Some(projection);
+        self
+    }
+
+    /// Reserve production storage before a daemon scheduler starts an attempt.
+    pub fn admit_attempt_storage(&self, goal_id: GoalId) -> Result<(), String> {
+        let Some((quota, expected_bytes)) = &self.storage_quota else {
+            return Ok(());
+        };
+        let mut reservations = self.storage_reservations.lock().unwrap();
+        if let std::collections::hash_map::Entry::Vacant(entry) = reservations.entry(goal_id) {
+            let reservation = quota
+                .reserve(StorageClass::Total, *expected_bytes, 1)
+                .map_err(|error| error.to_string())?;
+            entry.insert(reservation);
+        }
+        Ok(())
+    }
+
+    pub fn release_attempt_storage(&self, goal_id: GoalId) {
+        self.storage_reservations.lock().unwrap().remove(&goal_id);
+    }
+
+    /// Project only an immutable summary that can be read back from durable
+    /// storage. Failure is health evidence and never rewrites the Goal result.
+    pub async fn project_persisted_goal_summary(
+        &self,
+        approval_id: ApprovalId,
+        sensitivity: mnemosyne::MemorySensitivity,
+    ) -> Option<ProjectionStatus> {
+        let projection = self.memory_projection.as_ref()?;
+        let loaded = {
+            let store = self.store.lock().unwrap();
+            let summary = store
+                .load_goal_completion_summary(approval_id)
+                .ok()
+                .flatten()?;
+            let evidence = store.goal_projection_evidence(summary.goal_id).ok()?;
+            (summary, evidence)
+        };
+        Some(
+            projection
+                .project_goal_summary(&loaded.0, &loaded.1, sensitivity)
+                .await,
+        )
+    }
+
+    pub async fn project_approved_architecture_decision(
+        &self,
+        decision: &ApprovedArchitectureDecision,
+    ) -> Option<ProjectionStatus> {
+        let projection = self.memory_projection.as_ref()?;
+        Some(projection.project_architecture_decision(decision).await)
     }
 
     /// Build the M3 one-shot attempt coordinator over this Goal store.
@@ -51,6 +162,54 @@ impl GoalCoordinator {
         retry_policy: RetryPolicy,
     ) -> AttemptCoordinator {
         AttemptCoordinator::new(self.store.clone(), executor, clock, retry_policy)
+    }
+
+    /// Build a one-shot coordinator with the mandatory Pi verification gate.
+    pub fn coding_attempt_coordinator(
+        &self,
+        executor: Arc<dyn AttemptExecutor>,
+        clock: Arc<dyn Clock>,
+        retry_policy: RetryPolicy,
+        verifier: Arc<dyn CodingVerifier>,
+        worktree_base: impl AsRef<Path>,
+    ) -> Result<AttemptCoordinator, AttemptCoordinatorError> {
+        AttemptCoordinator::new(self.store.clone(), executor, clock, retry_policy)
+            .with_coding_verification(verifier, worktree_base)
+    }
+
+    pub fn approval_coding_attempt_coordinator(
+        &self,
+        executor: Arc<dyn AttemptExecutor>,
+        clock: Arc<dyn Clock>,
+        retry_policy: RetryPolicy,
+        verifier: Arc<dyn CodingVerifier>,
+        worktree_base: impl AsRef<Path>,
+        approvals: Arc<Mutex<ApprovalRepository>>,
+    ) -> Result<AttemptCoordinator, AttemptCoordinatorError> {
+        self.coding_attempt_coordinator(executor, clock, retry_policy, verifier, worktree_base)?
+            .with_approval_repository(approvals)
+    }
+
+    pub fn approved_apply_coordinator(
+        &self,
+        approvals: Arc<Mutex<ApprovalRepository>>,
+        operations: Arc<OperationTable>,
+        clock: Arc<dyn Clock>,
+        config: ApplyCoordinatorConfig,
+        cleaner: Arc<dyn ManagedWorktreeCleaner>,
+    ) -> Result<ApplyCoordinator, crate::r#impl::approval::ApplyCoordinationError> {
+        let coordinator = ApplyCoordinator::new(
+            self.store.clone(),
+            approvals,
+            operations,
+            clock,
+            config,
+            cleaner,
+        )?;
+        Ok(match &self.memory_projection {
+            Some(projection) => coordinator.with_memory_projection(projection.clone()),
+            None => coordinator,
+        })
     }
 
     /// Schedule exactly one durable runtime attempt for a Running Goal.
@@ -88,6 +247,7 @@ impl GoalCoordinator {
 
         match current.state {
             GoalState::Completed | GoalState::Failed | GoalState::Cancelled => {
+                self.storage_reservations.lock().unwrap().remove(&goal_id);
                 Ok(GoalTickOutcome::Noop {
                     state: current.state,
                 })
@@ -119,6 +279,9 @@ impl GoalCoordinator {
                 })
             }
             GoalState::Running => {
+                if let Err(reason) = self.admit_attempt_storage(goal_id) {
+                    return Ok(GoalTickOutcome::BudgetBlocked { reason });
+                }
                 let budget_res = store.reserve_goal_budget(
                     goal_id,
                     GoalBudgetRequest {
@@ -142,6 +305,51 @@ impl GoalCoordinator {
                 }
             }
         }
+    }
+
+    /// Wake only goals with an explicit persisted external-event condition.
+    pub fn wake_for_google_event(
+        &self,
+        principal: &PrincipalId,
+        event: &ExternalEventEnvelope,
+    ) -> Result<Vec<GoalId>, GoalTransitionError> {
+        let store = self.store.lock().unwrap();
+        let goals = store.list_goals(
+            &[
+                GoalState::AwaitingHuman,
+                GoalState::Suspended,
+                GoalState::Blocked,
+            ],
+            100,
+        )?;
+        let mut woken = Vec::new();
+        for goal in goals {
+            if &goal.owner != principal || goal.state.is_terminal() {
+                continue;
+            }
+            let Some(GoalWaitReason::ExternalEvent { key }) = &goal.wait_reason else {
+                continue;
+            };
+            let Ok(condition) = serde_json::from_str::<GoogleEventWaitCondition>(key) else {
+                continue;
+            };
+            if !condition.matches(event) {
+                continue;
+            }
+            store.transition_goal(
+                goal.id,
+                goal.version,
+                GoalState::Ready,
+                None,
+                &serde_json::json!({
+                    "action":"google_external_event_wake",
+                    "event_id":event.id.to_string(),
+                    "object_id":event.object.object_id,
+                }),
+            )?;
+            woken.push(goal.id);
+        }
+        Ok(woken)
     }
 
     /// Set the process link for a goal (atomic versioned event).
