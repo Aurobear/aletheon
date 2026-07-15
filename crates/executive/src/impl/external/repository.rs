@@ -167,6 +167,24 @@ impl ExternalIdentityRepository {
         principal_id: &PrincipalId,
         account_reference: &str,
     ) -> Result<Option<ExternalIdentityId>, ExternalRepositoryError> {
+        if account_reference.eq_ignore_ascii_case("me") {
+            let mut statement = self.db.prepare(
+                "SELECT identity_id FROM external_identities
+                 WHERE principal_id=?1 AND state='active'
+                 ORDER BY identity_id LIMIT 2",
+            )?;
+            let ids = statement
+                .query_map(params![principal_id.0], |row| {
+                    let value: String = row.get(0)?;
+                    parse_uuid(&value, 0).map(ExternalIdentityId)
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            return match ids.as_slice() {
+                [] => Ok(None),
+                [id] => Ok(Some(*id)),
+                _ => Err(ExternalRepositoryError::AmbiguousAccount),
+            };
+        }
         if let Ok(uuid) = uuid::Uuid::parse_str(account_reference) {
             let id = ExternalIdentityId(uuid);
             return Ok(self.get(principal_id, id)?.map(|_| id));
@@ -556,6 +574,22 @@ mod tests {
         assert!(matches!(
             rejected,
             Err(ExternalRepositoryError::Contract(_))
+        ));
+    }
+
+    #[test]
+    fn me_resolves_only_a_single_active_account() {
+        let f = Fixture::new();
+        let (first, _) = f.bind("subject-1", "one@example.com");
+        assert_eq!(
+            f.repo.resolve_account(&f.owner, "me").unwrap(),
+            Some(first.id)
+        );
+
+        f.bind("subject-2", "two@example.com");
+        assert!(matches!(
+            f.repo.resolve_account(&f.owner, "me"),
+            Err(ExternalRepositoryError::AmbiguousAccount)
         ));
     }
 
