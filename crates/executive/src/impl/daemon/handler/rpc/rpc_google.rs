@@ -254,19 +254,6 @@ impl RequestHandler {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_google_principal_is_stable_across_sessions() {
-        let first = PrincipalId(LOCAL_OWNER_PRINCIPAL.into());
-        let second = PrincipalId(LOCAL_OWNER_PRINCIPAL.into());
-        assert_eq!(first, second);
-        assert_eq!(first.0, "local-owner");
-    }
-}
-
 fn safe_account(identity: &fabric::ExternalIdentity, grant: &fabric::CapabilityGrant) -> Value {
     json!({
         "id":identity.id,
@@ -288,4 +275,17 @@ fn bounded_string<'a>(params: &'a Value, field: &str, max: usize) -> Option<&'a 
 
 fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_google_principal_is_stable_across_sessions() {
+        let first = PrincipalId(LOCAL_OWNER_PRINCIPAL.into());
+        let second = PrincipalId(LOCAL_OWNER_PRINCIPAL.into());
+        assert_eq!(first, second);
+        assert_eq!(first.0, "local-owner");
+    }
 }

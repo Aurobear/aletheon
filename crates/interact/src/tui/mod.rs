@@ -56,20 +56,6 @@ pub fn chat_request(message: &str) -> serde_json::Value {
     })
 }
 
-#[cfg(test)]
-mod working_dir_tests {
-    #[test]
-    fn chat_request_includes_canonical_client_working_directory() {
-        let request = super::chat_request("inspect this project");
-        assert_eq!(request["params"]["message"], "inspect this project");
-        assert_eq!(
-            request["params"]["working_dir"],
-            super::client_working_dir().to_string_lossy().as_ref()
-        );
-        assert!(super::client_working_dir().is_absolute());
-    }
-}
-
 /// Restore terminal to normal state.
 /// Useful when the terminal is stuck in raw mode or mouse capture mode.
 pub fn restore_terminal() {
@@ -370,5 +356,19 @@ impl App {
                 || (0x3040..=0x309F).contains(&cp)  // Hiragana
                 || (0x30A0..=0x30FF).contains(&cp) // Katakana
         });
+    }
+}
+
+#[cfg(test)]
+mod working_dir_tests {
+    #[test]
+    fn chat_request_includes_canonical_client_working_directory() {
+        let request = super::chat_request("inspect this project");
+        assert_eq!(request["params"]["message"], "inspect this project");
+        assert_eq!(
+            request["params"]["working_dir"],
+            super::client_working_dir().to_string_lossy().as_ref()
+        );
+        assert!(super::client_working_dir().is_absolute());
     }
 }
