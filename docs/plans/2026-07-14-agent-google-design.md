@@ -286,9 +286,9 @@ Google starts with OAuth plus manual read-only Gmail/Calendar queries. Backgroun
 
 ## 11. GBrain integration
 
-GBrain lives under `crates/mnemosyne/src/backends/gbrain/` and implements the existing `MemoryService` contract, either directly or through a composing service selected at bootstrap.
+GBrain is an optional supplemental service behind the existing `MemoryService` contract. Local `DefaultMemoryService` remains authoritative; Mnemosyne owns normalized memory/page semantics and the SQLite ingestion spool, while Executive adapts those operations to the verified GBrain HTTP MCP boundary.
 
-The backend contains a REST client, configuration, health state, DTO mapping, and a SQLite-backed ingestion spool. When GBrain is unavailable:
+The transport reuses the retained Corpus MCP manager and the pinned `query`, `search`, `get_page`, and `put_page` schemas. It does not invent REST endpoints or write GBrain's internal database. The integration also contains configuration, health state, page mapping, and a SQLite-backed ingestion spool. When GBrain is unavailable or its required schema drifts:
 
 - recall degrades to the existing local memory service or an empty supplemental result;
 - ingestion remains durably queued locally;
