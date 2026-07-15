@@ -84,9 +84,11 @@ C01 Recurrent workspace coordinator
  |
 M05 leased extraction and consolidation
  |
-M06 GBrain reconciliation and retention
+M06 GBrain reconciliation
  |
-G07 admission, scoped memory and restart recovery
+M07 retention and forgetting
+ |
+G07 live mailbox -> G08 admission/budgets -> G09 scoped memory -> G10 recovery
  |
 C02 Metacog/Corpus/SubAgent processor integration
  |
@@ -95,7 +97,7 @@ V01 deterministic cross-domain acceptance suite
 V02 installed-daemon real scenario and migration gate
 ```
 
-`D01-D03` can progress beside `M01-M03` and `G01-G04` after `S02`. `A01` must land before candidate/broadcast production wiring. `C01` requires `D03`, `A03`, and `S02`.
+`D01-D03`, `K01-K02`, `X01-X02`, `R01-R02`, and `Q01-Q02` can progress beside `M01-M03` and `G01-G04` after `S02`. `A01` must land before candidate/broadcast production wiring. `C01` requires `D03`, `A03`, `K02`, `X02`, and `S02`. The complete source-to-plan trace is maintained in `2026-07-16-original-plan-coverage-matrix.md`.
 
 ## 5. Plan inventory
 
@@ -113,12 +115,14 @@ V02 installed-daemon real scenario and migration gate
 
 | ID | Plan artifact | Deliverable | Prerequisites |
 |---|---|---|---|
-| M01 | `2026-07-15-m01-memory-contract-baseline.md` | Record/reopen/recall/outage contract tests | S02 |
+| M01 | `2026-07-16-m01-memory-contract-baseline.md` | Record/reopen/recall/outage contract tests | S02 |
 | M02 | `2026-07-15-m02-canonical-memory-records-scopes.md` | Canonical records, scopes, validation and adapters | M01 |
 | M03 | `2026-07-15-m03-unified-local-recall.md` | Scoped local recall across existing stores | M02 |
 | M04 | `2026-07-15-m04-bounded-memory-workspace-projection.md` | One bounded projection entering Agora as candidates | M03, C01 |
 | M05 | `2026-07-15-m05-leased-memory-consolidation.md` | Restart-safe extraction and consolidation workers | M04 |
-| M06 | `2026-07-15-m06-gbrain-retention-reconciliation.md` | Supplemental reconciliation, tombstones and forgetting | M05 |
+| M06 | `2026-07-15-m06-gbrain-reconciliation.md` | Supplemental reconciliation and durable remote receipts | M05 |
+| M07 | `2026-07-15-m07-retention-forgetting.md` | Scoped tombstones, retention and auditable compaction | M06 |
+| M08 | `2026-07-15-m08-subagent-memory-isolation.md` | Child scopes and reviewed promotion boundary | M04, G09 |
 
 ### SubAgent runtime
 
@@ -128,9 +132,12 @@ V02 installed-daemon real scenario and migration gate
 | G02 | `2026-07-15-g02-agent-control-contracts.md` | Shared bounded Agent control types and port | G01 |
 | G03 | `2026-07-15-g03-agent-control-service.md` | Transactional lifecycle and durable run repository | G02 |
 | G04 | `2026-07-15-g04-native-cognit-runtime.md` | Child Agents use Cognit Harness; inline loop removed | G03, E03 |
-| G05 | `2026-07-15-g05-agent-tools-mailbox.md` | Thin spawn/wait/send/cancel/list clients and live mailbox | G04 |
+| G05 | `2026-07-15-g05-agent-tools.md` | Thin spawn/wait/send/cancel/list clients | G04 |
 | G06 | `2026-07-15-g06-subagent-context-agora-projection.md` | Bounded context fork and typed child candidates | G05, C01 |
-| G07 | `2026-07-15-g07-agent-budgets-memory-recovery.md` | Root budgets, scoped memory, durable recovery/cleanup | G06, M04 |
+| G07 | `2026-07-15-g07-agent-mailbox.md` | Live bounded mailbox and terminal-state semantics | G06 |
+| G08 | `2026-07-15-g08-agent-admission-budgets.md` | Root admission, depth, concurrency and hierarchical budgets | G07, K02 |
+| G09 | `2026-07-15-g09-agent-memory-promotion.md` | Scoped child memory and reviewed result promotion | G08, M04 |
+| G10 | `2026-07-15-g10-agent-recovery-cleanup.md` | Durable restart recovery, lease reclamation and cleanup | G09 |
 
 ### Dasein and Agora
 
@@ -148,11 +155,25 @@ V02 installed-daemon real scenario and migration gate
 | ID | Plan artifact | Deliverable | Prerequisites |
 |---|---|---|---|
 | C01 | `2026-07-15-c01-recurrent-workspace-coordinator.md` | Dasein salience ↔ Agora broadcast recurrence | D03, A03, S02 |
-| C02 | `2026-07-15-c02-conscious-processors-integration.md` | Memory, Metacog, Corpus and SubAgent processors | M05, G07, C01 |
-| V01 | `2026-07-15-v01-cross-domain-acceptance-suite.md` | Deterministic lifecycle, isolation and replay suite | C02, M06 |
+| C02 | `2026-07-15-c02-conscious-processors-integration.md` | Memory, Metacog, Corpus and SubAgent processors | M05, G10, C01, F01 |
+| V01 | `2026-07-15-v01-cross-domain-acceptance-suite.md` | Deterministic lifecycle, isolation and replay suite | C02, M07, M08, R02, Q02 |
 | V02 | `2026-07-15-v02-production-migration-scenarios.md` | Installed-daemon scenarios, rollback and release gates | V01 |
 
-The result is 26 implementation plans. The count is intentionally larger than the initial estimate because memory lifecycle, SubAgent recovery and Agora durability cannot remain reviewable if combined.
+### Remaining architecture migration
+
+| ID | Plan artifact | Deliverable | Prerequisites |
+|---|---|---|---|
+| K01 | `2026-07-15-k01-kernel-runtime-contracts.md` | Opaque lifecycle ports and exact transition validation | S02 |
+| K02 | `2026-07-15-k02-kernel-authority-cleanup.md` | Hierarchical budgets, deterministic cleanup and removal of Executive-local kernel | K01 |
+| X01 | `2026-07-15-x01-executive-use-case-ports.md` | Narrow handler ports and extracted context/session/projection services | S02 |
+| X02 | `2026-07-15-x02-private-composition-root.md` | Private composition root and split lifecycle bootstrap | X01, K01 |
+| F01 | `2026-07-15-f01-domain-facade-authority.md` | Metacog, Cognit and remaining Corpus production paths use authoritative facades | X02, E03 |
+| R01 | `2026-07-15-r01-canonical-event-spine.md` | EnvelopeV2, ordered tree sequence and raw observation separation | S02 |
+| R02 | `2026-07-15-r02-deterministic-event-projections.md` | Replayable public/debug/memory/Agent/metrics reducers | R01 |
+| Q01 | `2026-07-15-q01-layered-config-extension-catalog.md` | Provenanced config schema and policy-scoped extension catalog | X02, E03 |
+| Q02 | `2026-07-15-q02-typed-interact-thin-bin.md` | Typed reducer-driven Interact and host-only Bin | Q01, R02 |
+
+The result is 42 implementation plans. The count is intentionally larger than the initial estimate because the original Kernel, composition-root, event-spine and Interact migrations, plus memory lifecycle and SubAgent recovery, cannot remain verifiable when silently combined.
 
 ## 6. Per-plan document contract
 
@@ -195,9 +216,9 @@ Generating all plans in one unreviewed pass would recreate the same context and 
 
 ```text
 Batch P0: E01-E03, S01-S02
-Batch P1: M01-M03, G01-G04, D01-D03, A01
-Batch P2: A02-A03, C01, M04-M06, G05-G07
-Batch P3: C02, V01-V02
+Batch P1: M01-M03, G01-G04, D01-D03, A01, K01, X01, R01
+Batch P2: K02, X02, R02, A02-A03, C01, M04-M07, G05-G08, Q01
+Batch P3: M08, G09-G10, F01, Q02, C02, V01-V02
 ```
 
 After each batch:
@@ -212,7 +233,7 @@ After each batch:
 
 The decomposition is complete only when:
 
-- all 26 plan files exist;
+- all 42 plan files exist;
 - every source phase maps to at least one plan and task;
 - every plan uses verified current paths and symbols;
 - no placeholder such as `TBD`, `TODO`, “implement later” or “similar to” remains;
