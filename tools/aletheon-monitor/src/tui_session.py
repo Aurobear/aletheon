@@ -4,6 +4,7 @@ Thin async wrappers over tmux primitives. State (the tmux session) lives in
 the OS, so these functions are stateless apart from the session name.
 """
 import asyncio
+import os
 
 DEFAULT_SESSION = "aletheon-tui-debug"
 
@@ -24,16 +25,18 @@ async def _tmux(*args: str, timeout: float = 5.0) -> tuple[int, str, str]:
 
 
 async def start(cmd: str, session: str = DEFAULT_SESSION,
-                cols: int = 100, rows: int = 40) -> dict:
+                cols: int = 100, rows: int = 40,
+                working_dir: str | None = None) -> dict:
     """Start `cmd` in a fresh detached tmux session (idempotent)."""
     await kill(session)  # clean slate
-    rc, _, err = await _tmux(
-        "new-session", "-d", "-s", session,
-        "-x", str(cols), "-y", str(rows), cmd,
-    )
+    cwd = os.path.realpath(working_dir or os.getcwd())
+    args = ["new-session", "-d", "-s", session,
+            "-x", str(cols), "-y", str(rows), "-c", cwd, cmd]
+    rc, _, err = await _tmux(*args)
     if rc != 0:
         return {"ok": False, "error": f"tmux new-session failed: {err.strip()}"}
-    return {"ok": True, "session": session, "cols": cols, "rows": rows}
+    return {"ok": True, "session": session, "cols": cols, "rows": rows,
+            "working_dir": cwd}
 
 
 async def send(text: str, session: str = DEFAULT_SESSION,

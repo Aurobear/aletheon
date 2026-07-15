@@ -55,19 +55,24 @@ Environment=ALETHEON_MAXIMUM_BACKUP_AGE_SECS=129600
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=yes
+ProtectHome=read-only
 ReadWritePaths=/var/lib/aletheon /var/cache/aletheon /run/aletheon
 ReadOnlyPaths=/etc/aletheon
+ReadOnlyPaths=/home/aurobear/Bear-ws
 RestrictSUIDSGID=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
 LockPersonality=yes
 ProtectClock=yes
 ProtectControlGroups=yes
-ProtectKernelLogs=yes
+# These systemd namespace protections prevent an unprivileged
+# bubblewrap child from mounting its private /proc. The daemon already runs
+# without capabilities and with NoNewPrivileges, while bubblewrap supplies the
+# per-command namespace boundary.
+ProtectKernelLogs=no
 ProtectKernelModules=yes
-ProtectKernelTunables=yes
-ProtectHostname=yes
+ProtectKernelTunables=no
+ProtectHostname=no
 RestrictRealtime=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 SystemCallArchitectures=native

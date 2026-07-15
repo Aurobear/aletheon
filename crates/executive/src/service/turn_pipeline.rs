@@ -136,10 +136,8 @@ impl TurnPipeline {
                 format!("User chat message: {}", &message[..end])
             },
         };
-        let sf_ctx = fabric::Context::new(
-            &turn_request.session_id,
-            std::env::current_dir().unwrap_or_default(),
-        );
+        let sf_ctx =
+            fabric::Context::new(&turn_request.session_id, turn_request.working_dir.clone());
         let verdict = self.sf_review(&intent, &sf_ctx).await;
 
         // Sandbox requirement from SelfField verdict — passed to tool admission.
@@ -168,10 +166,14 @@ impl TurnPipeline {
         }
 
         // -- Memory composition --
-        let system_prompt = {
+        let mut system_prompt = {
             let prefix = self.subsystems.session.cached_prefix.lock().await;
             prefix.clone()
         };
+        system_prompt.push_str(&format!(
+            "\n\nCurrent working directory: {}\nTreat this as the user's current project. Do not scan unrelated host directories to guess a project.",
+            turn_request.working_dir.display()
+        ));
         let memory_block = self.compose_memory_block().await;
         {
             let mut sb = self.subsystems.security.storm_breaker.lock().await;
@@ -332,7 +334,7 @@ impl TurnPipeline {
             let tools = self.subsystems.corpus.tools.lock().await;
             tools.definitions()
         };
-        let working_dir = std::env::current_dir().unwrap_or_default();
+        let working_dir = turn_request.working_dir.clone();
         let (sess_id, sm_arc) = self.get_or_create_session(None).await?;
         let turn_count = sm_arc.lock().await.turn_count();
         drop(sm_arc);

@@ -1,4 +1,11 @@
-from src.tui_checks import check_dup_render
+from src.tui_checks import check_dup_render, run_checks
+
+
+def test_known_tool_failures_are_high_severity():
+    findings = run_checks(
+        "bwrap: Can't mount proc on /newroot/proc: Operation not permitted"
+    )
+    assert any(item["kind"] == "known_tool_failure" for item in findings)
 
 
 def test_dup_render_detects_repeated_block():

@@ -28,6 +28,8 @@ use fabric::LlmProvider;
 use fabric::{Context as AbiContext, Intent, SelfFieldOps, Verdict};
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 
@@ -329,7 +331,118 @@ impl RequestHandler {
         request: serde_json::Value,
     ) -> serde_json::Value {
         let message = request["params"]["message"].as_str().unwrap_or("");
+        let working_dir =
+            match validate_local_working_dir(request["params"]["working_dir"].as_str()) {
+                Ok(path) => path,
+                Err(error) => {
+                    return serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": error }
+                    });
+                }
+            };
+        if let Err(error) = self.select_workspace_session(&working_dir).await {
+            return serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32603, "message": error.to_string() }
+            });
+        }
         tracing::info!(message = %message, "Chat request received");
-        self.turn_orchestrator.execute_turn(id, message).await
+        self.turn_orchestrator
+            .execute_turn(id, message, working_dir)
+            .await
+    }
+
+    /// Keep local conversation history scoped to its canonical workspace.
+    /// Without this, a TUI launched in one checkout inherits tool paths from
+    /// the last TUI that happened to use the daemon's global default session.
+    async fn select_workspace_session(&self, working_dir: &Path) -> anyhow::Result<()> {
+        static WORKSPACE_SESSIONS: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
+        let routing = WORKSPACE_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut routing = routing.lock().await;
+
+        if let Some(session_id) = routing.get(working_dir).cloned() {
+            *self.subsystems.session.default_session_id.lock().await = session_id;
+            return Ok(());
+        }
+
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let manager = SessionManager::new(
+            &self.subsystems.session.data_dir,
+            session_id.clone(),
+            self.subsystems.session.context_window,
+            self.subsystems.ports.clock.clone(),
+        )
+        .await?;
+        self.register_default_session(session_id.clone(), manager)
+            .await;
+        routing.insert(working_dir.to_path_buf(), session_id.clone());
+        tracing::info!(%session_id, cwd = %working_dir.display(), "Selected new workspace session");
+        Ok(())
+    }
+}
+
+const LOCAL_WORKSPACE_ROOT: &str = "/home/aurobear/Bear-ws";
+const LEGACY_WORKING_DIR: &str = "/var/lib/aletheon";
+
+fn validate_local_working_dir(value: Option<&str>) -> Result<std::path::PathBuf, String> {
+    validate_working_dir_against_roots(
+        value.unwrap_or(LEGACY_WORKING_DIR),
+        std::path::Path::new(LOCAL_WORKSPACE_ROOT),
+        std::path::Path::new(LEGACY_WORKING_DIR),
+    )
+}
+
+fn validate_working_dir_against_roots(
+    requested: &str,
+    workspace_root: &std::path::Path,
+    legacy_root: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let canonical = std::fs::canonicalize(requested)
+        .map_err(|error| format!("invalid working_dir '{requested}': {error}"))?;
+    let workspace_root =
+        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
+    if canonical.starts_with(&workspace_root) || canonical.starts_with(legacy_root) {
+        Ok(canonical)
+    } else {
+        Err(format!(
+            "working_dir '{}' is outside allowed roots '{}' and '{}'",
+            canonical.display(),
+            workspace_root.display(),
+            legacy_root.display()
+        ))
+    }
+}
+
+#[cfg(test)]
+mod working_dir_tests {
+    #[test]
+    fn rejects_root_as_local_working_directory() {
+        assert!(super::validate_local_working_dir(Some("/")).is_err());
+    }
+
+    #[test]
+    fn rejects_missing_local_working_directory() {
+        assert!(
+            super::validate_local_working_dir(Some("/home/aurobear/Bear-ws/does-not-exist"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn accepts_a_canonical_bear_workspace_directory() {
+        let root = std::env::temp_dir().join(format!("aletheon-cwd-test-{}", std::process::id()));
+        let project = root.join("aletheon");
+        std::fs::create_dir_all(&project).unwrap();
+        let path = super::validate_working_dir_against_roots(
+            project.to_str().unwrap(),
+            &root,
+            std::path::Path::new("/var/lib/aletheon"),
+        )
+        .unwrap();
+        assert!(path.starts_with(std::fs::canonicalize(&root).unwrap()));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

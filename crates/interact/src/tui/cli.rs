@@ -480,20 +480,14 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
             "status" | "st" => serde_json::json!({
                 "jsonrpc": "2.0", "id": 1, "method": "status"
             }),
-            _ => serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "chat",
-                "params": { "message": msg }
-            }),
+            "cwd" => {
+                println!("{}", super::client_working_dir().display());
+                return Ok(());
+            }
+            _ => super::chat_request(msg),
         }
     } else {
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "chat",
-            "params": { "message": msg }
-        })
+        super::chat_request(msg)
     };
     let req_str = serde_json::to_string(&request)?;
     writer.write_all(req_str.as_bytes()).await?;

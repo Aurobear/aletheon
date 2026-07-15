@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use fabric::tool::{
     ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
 };
-use fabric::{CalendarTimeRange, ExternalIdentityId, GmailQuery, PrincipalId};
+use fabric::{
+    CalendarTimeRange, ExternalIdentityId, GmailQuery, PrincipalId, LOCAL_OWNER_PRINCIPAL,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -271,10 +273,12 @@ impl Tool for GoogleCalendarListTool {
     }
 }
 
-fn trusted_principal(ctx: &ToolContext) -> PrincipalId {
-    // Session identity is injected by Executive. No tool schema accepts a
-    // principal field, so model input cannot select authority.
-    PrincipalId(ctx.session_id.clone())
+fn trusted_principal(_ctx: &ToolContext) -> PrincipalId {
+    // The native daemon's local socket is the credential-checked authority.
+    // Session UUIDs rotate on restart and therefore cannot own durable Google
+    // bindings. No tool schema accepts a principal field, so model input still
+    // cannot select authority.
+    PrincipalId(LOCAL_OWNER_PRINCIPAL.into())
 }
 
 fn default_page_size() -> u16 {

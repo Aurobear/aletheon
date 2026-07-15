@@ -14,11 +14,9 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
 ) -> anyhow::Result<()> {
     let chat_ref = &app.chat;
     let caps_ref = &app.caps;
-    let model_name = &app.model_name;
     let input_buf = &app.input_buf;
     let cursor = app.cursor;
     let has_cjk = app.has_cjk;
-    let first_render = app.first_render;
     let status_ref = &app.status;
     let pending_approval_ref = &app.pending_approval;
     let completion_ref = &app.completion;
@@ -40,23 +38,16 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
         }
 
         // Build composable layout: header | chat (flex) | input | status
-        let header_rows: u16 = if first_render { 3 } else { 1 };
+        let header_rows: u16 = 1;
         let mut layout = LayoutHelper::new();
-        layout.push_fixed(
-            header_rows,
-            HeaderRenderable {
-                caps: caps_ref,
-                model_name,
-                first_render,
-            },
-        );
+        layout.push_fixed(header_rows, HeaderRenderable { caps: caps_ref });
         layout.push_flex(ChatRenderable {
             chat: chat_ref,
             frame_counter,
             caps: caps_ref,
         });
         layout.push_fixed(
-            3,
+            2,
             InputRenderable {
                 buf: input_buf,
                 cursor,
