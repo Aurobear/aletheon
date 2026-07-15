@@ -28,6 +28,8 @@ use fabric::LlmProvider;
 use fabric::{Context as AbiContext, Intent, SelfFieldOps, Verdict};
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 
@@ -340,10 +342,45 @@ impl RequestHandler {
                     });
                 }
             };
+        if let Err(error) = self.select_workspace_session(&working_dir).await {
+            return serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32603, "message": error.to_string() }
+            });
+        }
         tracing::info!(message = %message, "Chat request received");
         self.turn_orchestrator
             .execute_turn(id, message, working_dir)
             .await
+    }
+
+    /// Keep local conversation history scoped to its canonical workspace.
+    /// Without this, a TUI launched in one checkout inherits tool paths from
+    /// the last TUI that happened to use the daemon's global default session.
+    async fn select_workspace_session(&self, working_dir: &Path) -> anyhow::Result<()> {
+        static WORKSPACE_SESSIONS: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
+        let routing = WORKSPACE_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut routing = routing.lock().await;
+
+        if let Some(session_id) = routing.get(working_dir).cloned() {
+            *self.subsystems.session.default_session_id.lock().await = session_id;
+            return Ok(());
+        }
+
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let manager = SessionManager::new(
+            &self.subsystems.session.data_dir,
+            session_id.clone(),
+            self.subsystems.session.context_window,
+            self.subsystems.ports.clock.clone(),
+        )
+        .await?;
+        self.register_default_session(session_id.clone(), manager)
+            .await;
+        routing.insert(working_dir.to_path_buf(), session_id.clone());
+        tracing::info!(%session_id, cwd = %working_dir.display(), "Selected new workspace session");
+        Ok(())
     }
 }
 
