@@ -4,6 +4,7 @@ use super::{
     ApprovalApplyClaim, ApprovalApplyReceipt, ApprovalRepository, ApprovalRepositoryError,
 };
 use crate::r#impl::goal::ObjectiveStore;
+use crate::r#impl::memory_projection::MemoryProjection;
 use async_trait::async_trait;
 use corpus::tools::subagent::{
     ApplyAuthorization, ApplyAuthorizer, ApplyError, ApplySpec, ControlledApply,
@@ -100,6 +101,7 @@ pub struct ApplyCoordinator {
     clock: Arc<dyn Clock>,
     config: ApplyCoordinatorConfig,
     cleaner: Arc<dyn ManagedWorktreeCleaner>,
+    memory_projection: Option<MemoryProjection>,
 }
 
 impl ApplyCoordinator {
@@ -123,7 +125,13 @@ impl ApplyCoordinator {
             clock,
             config,
             cleaner,
+            memory_projection: None,
         })
+    }
+
+    pub fn with_memory_projection(mut self, projection: MemoryProjection) -> Self {
+        self.memory_projection = Some(projection);
+        self
     }
 
     pub async fn coordinate(
@@ -148,14 +156,14 @@ impl ApplyCoordinator {
         };
         if let Some(receipt) = existing_receipt {
             self.reconcile_receipt(&approval, &receipt).await?;
-            self.record_summary(approval_id)?;
+            self.record_summary(approval_id).await?;
             return Ok(ApplyCoordinationOutcome::Recovered(receipt));
         }
         match approval.status {
             ApprovalStatus::Pending => return Ok(ApplyCoordinationOutcome::AwaitingDecision),
             ApprovalStatus::Rejected | ApprovalStatus::Expired => {
                 let outcome = self.transition_rejected(&approval)?;
-                self.record_summary(approval_id)?;
+                self.record_summary(approval_id).await?;
                 return Ok(outcome);
             }
             ApprovalStatus::Consumed => {
@@ -243,7 +251,7 @@ impl ApplyCoordinator {
                 .await
                 .map_err(|error| ApplyCoordinationError::Operation(error.to_string()))?;
             self.transition_terminal(receipt.goal_id, GoalState::Completed, &receipt)?;
-            self.record_summary(approval_id)?;
+            self.record_summary(approval_id).await?;
             let (job_id, repository_root, worktree) = self.worktree_for(&approval)?;
             self.cleaner
                 .cleanup(job_id, &repository_root, &worktree)
@@ -256,7 +264,7 @@ impl ApplyCoordinator {
                 .await
                 .map_err(|error| ApplyCoordinationError::Operation(error.to_string()))?;
             self.transition_terminal(receipt.goal_id, GoalState::Blocked, &receipt)?;
-            self.record_summary(approval_id)?;
+            self.record_summary(approval_id).await?;
             Ok(ApplyCoordinationOutcome::Failed(receipt))
         }
     }
@@ -520,7 +528,7 @@ impl ApplyCoordinator {
         Ok((job_id, repository_root, path))
     }
 
-    fn record_summary(&self, approval_id: ApprovalId) -> Result<(), ApplyCoordinationError> {
+    async fn record_summary(&self, approval_id: ApprovalId) -> Result<(), ApplyCoordinationError> {
         let (approval, receipt) = {
             let approvals = self.approvals.lock().unwrap();
             let approval = approvals
@@ -532,17 +540,32 @@ impl ApplyCoordinator {
                 .map_err(approval_error)?;
             (approval, receipt)
         };
-        let store = self.store.lock().unwrap();
-        let summary = crate::r#impl::goal::GoalCompletionSummary::build(
-            &store,
-            &approval,
-            receipt.as_ref(),
-            self.clock.wall_now().0,
-        )
-        .map_err(|error| ApplyCoordinationError::Evidence(error.to_string()))?;
-        store
-            .persist_goal_completion_summary(&summary)
+        let (persisted, evidence) = {
+            let store = self.store.lock().unwrap();
+            let summary = crate::r#impl::goal::GoalCompletionSummary::build(
+                &store,
+                &approval,
+                receipt.as_ref(),
+                self.clock.wall_now().0,
+            )
             .map_err(|error| ApplyCoordinationError::Evidence(error.to_string()))?;
+            let persisted = store
+                .persist_goal_completion_summary(&summary)
+                .map_err(|error| ApplyCoordinationError::Evidence(error.to_string()))?;
+            let evidence = store
+                .goal_projection_evidence(persisted.goal_id)
+                .map_err(|error| ApplyCoordinationError::Evidence(error.to_string()))?;
+            (persisted, evidence)
+        };
+        if let Some(projection) = &self.memory_projection {
+            let _ = projection
+                .project_goal_summary(
+                    &persisted,
+                    &evidence,
+                    mnemosyne::MemorySensitivity::Internal,
+                )
+                .await;
+        }
         Ok(())
     }
 }

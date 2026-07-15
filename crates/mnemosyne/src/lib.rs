@@ -6,16 +6,22 @@
 //! off-by-default `cognitive-memory` feature (M-H Option A).
 
 pub mod backends;
+pub mod composite_service;
 pub mod r#impl;
 pub mod ops;
 pub mod service;
+
+pub use composite_service::{
+    CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
+};
 
 // MemoryService facade (docs/arch §11). NOTE: `MemoryScope` from `service` is
 // intentionally not re-exported here — it would collide with the existing
 // multi-agent `MemoryScope` re-exported below (`r#impl::core_memory::scope`).
 // Reach the facade's scope type via `mnemosyne::service::MemoryScope`.
 pub use service::{
-    DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryService, RecallRequest, RecallSet,
+    DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryMetadata, MemoryProvenance,
+    MemorySensitivity, MemoryService, RecallItem, RecallRequest, RecallSet, TemporalState,
 };
 
 // Always-available exports

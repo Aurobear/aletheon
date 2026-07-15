@@ -32,6 +32,14 @@ pub struct PersistedVerificationReport {
     pub created_at_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GoalProjectionEvidence {
+    pub attempt_ids: Vec<String>,
+    pub artifact_ids: Vec<String>,
+    pub source_commit: Option<String>,
+    pub verification: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodingJobRecoveryRecord {
     pub job_id: CodingJobId,
@@ -302,6 +310,42 @@ impl ObjectiveStore {
                 })
             })
             .transpose()
+    }
+
+    /// Read bounded, already-persisted evidence for memory projection.
+    pub fn goal_projection_evidence(&self, goal_id: GoalId) -> Result<GoalProjectionEvidence> {
+        let attempts = self.attempts_for_goal(goal_id, 20)?;
+        let attempt_ids = attempts
+            .iter()
+            .map(|attempt| attempt.id.0.to_string())
+            .collect();
+        let mut statement = self.db.prepare(
+            "SELECT job_id, base_commit FROM goal_coding_jobs WHERE objective_id=?1 ORDER BY created_at_ms, job_id LIMIT 20",
+        )?;
+        let jobs = statement.query_map(params![goal_id.0], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let jobs: Vec<_> = jobs.collect::<rusqlite::Result<_>>()?;
+        let artifact_ids = jobs.iter().map(|(job, _)| job.clone()).collect();
+        let source_commit = jobs.last().map(|(_, commit)| commit.clone());
+        let mut verification = Vec::new();
+        for (job, _) in &jobs {
+            if let Ok(id) = uuid::Uuid::parse_str(job) {
+                if let Some(report) = self.load_verification_report(CodingJobId(id))? {
+                    verification.extend(
+                        report.report.checks.into_iter().take(128).map(|check| {
+                            format!("{}:{}:{}", check.name, check.passed, check.summary)
+                        }),
+                    );
+                }
+            }
+        }
+        Ok(GoalProjectionEvidence {
+            attempt_ids,
+            artifact_ids,
+            source_commit,
+            verification,
+        })
     }
 
     fn artifact_path(&self, relative: &Path) -> Result<PathBuf> {

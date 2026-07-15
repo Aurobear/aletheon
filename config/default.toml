@@ -26,6 +26,36 @@ directories = []
 backend = "sqlite"
 data_dir = "~/.aletheon/memory"
 
+# Optional supplemental memory. Authentication and transport are configured in
+# the matching [[mcp_servers]] entry; no credential is stored here.
+[memory.gbrain]
+enabled = false
+server_name = "gbrain"
+read_sources = ["aletheon", "general"]
+write_source = "aletheon"
+request_timeout_ms = 1200
+delivery_batch_size = 20
+recall_limit = 4
+max_content_bytes = 6000
+projection_enabled = false
+spool_path = "~/.aletheon/memory/gbrain-spool.db"
+spool_max_items = 10000
+spool_max_bytes = 268435456
+retry_initial_ms = 1000
+retry_max_ms = 60000
+retry_max_attempts = 12
+retry_max_age_secs = 86400
+schema_fixture = "config/gbrain/tools-schema.json"
+schema_version = "v0.42.59.0"
+legacy_outbox_dir = "~/.aletheon/gbrain-outbox"
+# Register the transport only in a local secret-bearing override. See
+# deploy/gbrain/README.md. Keep bearer_token_env out of checked-in values:
+# [[mcp_servers]]
+# name = "gbrain"
+# transport = "http"
+# url = "http://127.0.0.1:9020/mcp"
+# bearer_token_env = "GBRAIN_TOKEN"
+
 [daemon]
 # Canonical socket dir is base::paths::SOCKET_DIR = /var/run/aletheon
 socket_path = "/var/run/aletheon/aletheon.sock"

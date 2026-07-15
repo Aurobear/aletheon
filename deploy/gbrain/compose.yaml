@@ -1,0 +1,60 @@
+name: aletheon-gbrain
+
+services:
+  gbrain:
+    # Build this immutable local tag from the pinned commit documented in README.
+    image: ${GBRAIN_IMAGE:?set GBRAIN_IMAGE to the pinned local image tag}
+    command: ["bun", "run", "src/cli.ts", "serve", "--http", "--port", "9020"]
+    init: true
+    restart: unless-stopped
+    environment:
+      HOME: /var/lib/gbrain
+      GBRAIN_READ_TOKEN_FILE: /run/secrets/gbrain_read_token
+      GBRAIN_WRITE_TOKEN_FILE: /run/secrets/gbrain_write_token
+    ports:
+      - "${GBRAIN_BIND_ADDRESS:-127.0.0.1}:${GBRAIN_PORT:-9020}:9020"
+    volumes:
+      - gbrain_brain:/var/lib/gbrain/brain
+      - gbrain_database:/var/lib/gbrain/database
+    secrets:
+      - gbrain_read_token
+      - gbrain_write_token
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - >-
+          const r=await fetch('http://127.0.0.1:9020/mcp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{}}})});if(!r.ok)process.exit(1)
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "${GBRAIN_CPU_LIMIT:-2.0}"
+          memory: ${GBRAIN_MEMORY_LIMIT:-2G}
+        reservations:
+          memory: ${GBRAIN_MEMORY_RESERVATION:-256M}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - memory
+
+networks:
+  memory:
+    internal: true
+
+volumes:
+  gbrain_brain:
+  gbrain_database:
+
+secrets:
+  gbrain_read_token:
+    file: ${GBRAIN_READ_TOKEN_FILE:-./secrets/read-token}
+  gbrain_write_token:
+    file: ${GBRAIN_WRITE_TOKEN_FILE:-./secrets/write-token}

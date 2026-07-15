@@ -16,6 +16,7 @@ mnemosyne = { path = "../mnemosyne" }
 dasein = { path = "../dasein" }
 metacog = { path = "../metacog" }
 anyhow = "1"
+thiserror = "2"
 serde_yaml = "0.9"
 async-trait = "0.1"
 base64 = "0.22"
