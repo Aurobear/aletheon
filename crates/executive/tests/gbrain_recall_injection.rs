@@ -268,11 +268,11 @@ async fn timeout_error_empty_supplemental_and_local_fallback_are_non_blocking() 
 #[test]
 fn turn_pipeline_has_only_the_unified_memory_recall_path() {
     let pipeline = include_str!("../src/service/turn_pipeline.rs");
-    let injection = include_str!("../src/service/daemon_turn/injection.rs");
-    assert!(pipeline.contains("inject_composite_recall"));
+    let context = include_str!("../src/service/context_assembler.rs");
+    assert!(pipeline.contains("context_assembler"));
     assert!(!pipeline.contains("inject_gbrain_recall"));
-    let turn_impl = injection.split("impl TurnPipeline").nth(1).unwrap();
-    assert!(turn_impl.contains("memory.memory_service"));
-    assert!(!turn_impl.contains("GbrainMcpAdapter"));
-    assert!(!turn_impl.contains("call_tool"));
+    assert!(context.contains("recall_composite_context"));
+    assert!(context.contains("recall_service.as_ref()"));
+    assert!(!context.contains("GbrainMcpAdapter"));
+    assert!(!context.contains("call_tool"));
 }

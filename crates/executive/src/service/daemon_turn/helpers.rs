@@ -7,10 +7,6 @@ use fabric::{ContentBlock, Message};
 
 // ── Size constants ──────────────────────────────────────────────────────────
 
-pub(crate) const MAX_ACTIVATED_SKILL_CHARS: usize = 12 * 1024;
-pub(crate) const MAX_ACTIVATED_SKILLS_TOTAL_CHARS: usize = 24 * 1024;
-pub(crate) const MAX_RECALLED_FACT_CHARS: usize = 2 * 1024;
-pub(crate) const MAX_RECALL_TOTAL_CHARS: usize = 8 * 1024;
 pub(crate) const MAX_HISTORY_MESSAGE_CHARS: usize = 16 * 1024;
 pub(crate) const MAX_HISTORY_TOTAL_CHARS: usize = 64 * 1024;
 pub(crate) const MAX_HISTORY_MESSAGES: usize = 6;
@@ -26,20 +22,6 @@ pub(crate) fn truncate_chars(value: &str, max_chars: usize) -> String {
     }
     let truncated: String = value.chars().take(max_chars - 1).collect();
     format!("{truncated}…")
-}
-
-pub(crate) fn append_bounded_text(
-    target: &mut String,
-    value: &str,
-    per_item: usize,
-    remaining: &mut usize,
-) {
-    if *remaining == 0 {
-        return;
-    }
-    let bounded = truncate_chars(value, per_item.min(*remaining));
-    *remaining = (*remaining).saturating_sub(bounded.chars().count());
-    target.push_str(&bounded);
 }
 
 pub(crate) fn bounded_text_history(history: &[Message]) -> Vec<Message> {
@@ -123,18 +105,6 @@ mod tests {
 
         assert_eq!(bounded.len(), 1);
         assert!(text_of(&bounded[0]).chars().count() <= MAX_HISTORY_MESSAGE_CHARS);
-    }
-
-    #[test]
-    fn bounded_text_is_utf8_safe_and_respects_budget() {
-        let mut output = String::new();
-        let mut remaining = 8;
-
-        append_bounded_text(&mut output, "机器人上下文非常长", 6, &mut remaining);
-
-        assert!(output.is_char_boundary(output.len()));
-        assert!(output.chars().count() <= 6);
-        assert!(remaining <= 2);
     }
 
     #[test]

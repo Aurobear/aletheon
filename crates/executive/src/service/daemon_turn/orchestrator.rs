@@ -69,6 +69,7 @@ impl DaemonTurnOrchestrator {
         active_connections: Arc<AtomicUsize>,
         started_at: fabric::MonoTime,
         daemon_cancel_token: Option<CancellationToken>,
+        context_assembler: Arc<crate::service::context_assembler::ContextAssembler>,
     ) -> Self {
         // Clone the one opaque Kernel runtime; cognitive domains stay separate.
         let clock = subsystems.kernel.clock();
@@ -84,6 +85,7 @@ impl DaemonTurnOrchestrator {
             model_router.clone(),
             notify_tx.clone(),
             daemon_cancel_token.clone(),
+            context_assembler,
         ));
         let session_db = default_session_db_path();
         if let Some(parent) = session_db.parent() {

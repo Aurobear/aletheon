@@ -9,7 +9,7 @@ use crate::r#impl::daemon::handler::tool_executor::TurnToolExecutor;
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
-use crate::service::daemon_turn::helpers::{bounded_text_history, build_request_messages};
+use crate::service::daemon_turn::helpers::bounded_text_history;
 use crate::service::governed_capability::{CapabilityRuntimeFactory, RegistryAuthorityProvider};
 use aletheon_kernel::chronos::SystemTimer;
 use aletheon_kernel::operation::OperationScope;
@@ -56,6 +56,7 @@ pub struct TurnPipeline {
     pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
+    pub(crate) context_assembler: Arc<crate::service::context_assembler::ContextAssembler>,
 }
 
 impl TurnPipeline {
@@ -68,6 +69,7 @@ impl TurnPipeline {
         model_router: Arc<ModelRouter>,
         notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
         daemon_cancel_token: Option<CancellationToken>,
+        context_assembler: Arc<crate::service::context_assembler::ContextAssembler>,
     ) -> Self {
         let clock = subsystems.kernel.clock();
         let kernel = subsystems.kernel.clone();
@@ -87,6 +89,7 @@ impl TurnPipeline {
             kernel,
             current_scope: Arc::new(Mutex::new(None)),
             daemon_cancel_token,
+            context_assembler,
         }
     }
 
@@ -149,33 +152,12 @@ impl TurnPipeline {
             _ => {}
         }
 
-        // -- Memory composition --
-        let mut system_prompt = {
-            let prefix = self.subsystems.session.cached_prefix.lock().await;
-            prefix.clone()
-        };
-        system_prompt.push_str(&format!(
-            "\n\nCurrent working directory: {}\nTreat this as the user's current project. Do not scan unrelated host directories to guess a project.",
-            turn_request.working_dir.display()
-        ));
-        let memory_block = self.compose_memory_block().await;
+        // -- Context source preparation --
         {
             let mut sb = self.subsystems.security.storm_breaker.lock().await;
             sb.reset();
         }
         let mut effective_message = String::new();
-        if !memory_block.is_empty() {
-            effective_message.push_str(&memory_block);
-            effective_message.push_str("\n\n");
-        }
-        self.inject_keyword_skills(&message, &mut effective_message)
-            .await;
-        self.inject_composite_recall(&message, &turn_request.session_id, &mut effective_message)
-            .await;
-        self.inject_core_memory(&mut effective_message).await;
-        self.inject_skill_suggestion(&message, &mut effective_message)
-            .await;
-        self.decay_stale_facts().await;
 
         // -- Configured pre_turn hook scripts --
         if !self.subsystems.corpus.hooks_config.pre_turn.is_empty() {
@@ -433,16 +415,6 @@ impl TurnPipeline {
             }
         });
 
-        // Dasein injection
-        let effective_message = {
-            let sf = self.subsystems.self_field.lock().await;
-            if let Some(ctx) = sf.dasein_prompt_injection() {
-                format!("{}\n\n---\n\n{}", ctx, effective_message)
-            } else {
-                effective_message
-            }
-        };
-
         let config = self.subsystems.runtime.lock().await.config().clone();
         let goal_message = message.to_string();
         let goal_message_for_gw = goal_message.clone();
@@ -464,8 +436,13 @@ impl TurnPipeline {
             bounded_text_history(&full_history)
         };
 
-        let request_messages =
-            build_request_messages(system_prompt, &existing_messages, effective_message);
+        let mut context_request = turn_request.clone();
+        context_request.input = effective_message;
+        let request_messages = self
+            .context_assembler
+            .assemble(&context_request, &existing_messages)
+            .await?
+            .messages;
 
         // Spawn ReAct loop
         let mut react_task = tokio::spawn(submit_streaming_daemon_turn(

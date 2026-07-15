@@ -1043,6 +1043,22 @@ impl RequestHandler {
         let admin_pending_approvals = pending_approvals.clone();
         let session_approvals = Arc::new(Mutex::new(HashMap::new()));
         let admin_session_approvals = session_approvals.clone();
+        let memory_queue = Arc::new(Mutex::new(Vec::new()));
+        let context_source = Arc::new(crate::service::context_assembler::ProductionContextSource {
+            cached_prefix: cached_prefix.clone(),
+            memory_queue: memory_queue.clone(),
+            recall_service: gbrain_runtime.memory_service.clone(),
+            facts: fact_use_cases.clone(),
+            core_memory: core_memory.clone(),
+            skill_loader: skill_loader.clone(),
+            skill_router: skill_router.clone(),
+            self_field: self_field.clone(),
+            agora: domains.agora(),
+            clock: clock.clone(),
+        });
+        let context_assembler = Arc::new(crate::service::context_assembler::ContextAssembler::new(
+            context_source,
+        ));
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
             kernel,
             domains,
@@ -1078,7 +1094,7 @@ impl RequestHandler {
                 default_session_id,
                 session_created_at,
                 cached_prefix,
-                memory_queue: Arc::new(Mutex::new(Vec::new())),
+                memory_queue,
                 context_window,
                 config_prompt: config.system_prompt.clone(),
                 data_dir,
@@ -1398,6 +1414,7 @@ impl RequestHandler {
             active_connections.clone(),
             clock_2.mono_now(),
             Some(cancel_token.clone()),
+            context_assembler,
         ));
 
         let approved_apply = if pi_runtime.enabled && pi_work_allowed {

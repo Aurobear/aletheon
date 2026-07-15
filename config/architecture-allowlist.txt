@@ -26,9 +26,6 @@ core_systems_field|crates/executive/src/impl/daemon/handler/turn_handler.rs| let
 core_systems_field|crates/executive/src/impl/memory_projection.rs| match self.memory.record(event).await {
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.runtime.clone(),
-core_systems_field|crates/executive/src/service/daemon_turn/injection.rs| let cm = self.subsystems.memory.core_memory.lock().await;
-core_systems_field|crates/executive/src/service/daemon_turn/injection.rs| let fs = self.subsystems.memory.fact_store.lock().await;
-core_systems_field|crates/executive/src/service/daemon_turn/injection.rs| self.subsystems.memory.memory_service.as_ref(),
 core_systems_field|crates/executive/src/service/daemon_turn/post_phases.rs| let mem = self.subsystems.memory.episodic_memory.lock().await;
 core_systems_field|crates/executive/src/service/daemon_turn/post_phases.rs| let mut am = self.subsystems.memory.auto_memory.lock().await;
 core_systems_field|crates/executive/src/service/daemon_turn/post_phases.rs| let rm = self.subsystems.memory.recall_memory.lock().await;
@@ -47,7 +44,6 @@ executive_store_import|crates/executive/src/impl/engine/modules/body_module.rs|u
 executive_store_import|crates/executive/src/impl/hook_lifecycle/recall_inject.rs|use mnemosyne::FactStore;
 executive_store_import|crates/executive/src/impl/hook_lifecycle/session_distiller.rs|use mnemosyne::FactStore;
 executive_store_import|crates/executive/src/impl/runtime/provider_worker.rs|use corpus::tools::tools::ToolRegistry;
-executive_store_import|crates/executive/src/service/daemon_turn/injection.rs|use mnemosyne::FactStore;
 executive_store_import|crates/executive/src/service/exec_session.rs|use corpus::security::runner::ToolRunnerWithGuard;
 executive_store_import|crates/executive/src/service/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {
 executive_store_import|crates/executive/src/service/verification/command.rs|use corpus::tools::subagent::{CommandOutput, CommandRequest, CommandRunner};

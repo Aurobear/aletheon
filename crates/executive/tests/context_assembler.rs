@@ -68,7 +68,7 @@ async fn fragments_have_one_deterministic_order_before_raw_input() {
 
 #[tokio::test]
 async fn fragments_and_history_are_bounded_and_utf8_safe() {
-    let huge = "界".repeat(100_000);
+    let huge = "界".repeat(200_000);
     let assembler = ContextAssembler::new(Arc::new(FixedSource(ContextFragments {
         system_prefix: huge.clone(),
         recall: huge.clone(),
@@ -83,9 +83,30 @@ async fn fragments_and_history_are_bounded_and_utf8_safe() {
         .await
         .unwrap();
     assert!(assembled.effective_user_message.chars().count() < 50_000);
-    assert!(text(&assembled.messages[0]).chars().count() <= 16 * 1024);
+    assert!(text(&assembled.messages[0]).chars().count() <= 128 * 1024);
     assert!(text(&assembled.messages[1]).chars().count() <= 32 * 1024);
     assert!(assembled
         .effective_user_message
         .is_char_boundary(assembled.effective_user_message.len()));
+}
+
+#[test]
+fn turn_pipeline_has_one_context_assembly_route() {
+    let pipeline = include_str!("../src/service/turn_pipeline.rs");
+    assert!(pipeline.contains(".context_assembler"));
+    assert!(pipeline.contains(".assemble(&context_request, &existing_messages)"));
+    for removed in [
+        "inject_keyword_skills",
+        "inject_composite_recall",
+        "inject_core_memory",
+        "inject_skill_suggestion",
+        "build_request_messages(system_prompt",
+    ] {
+        assert!(
+            !pipeline.contains(removed),
+            "duplicate context route: {removed}"
+        );
+    }
+    let daemon_modules = include_str!("../src/service/daemon_turn/mod.rs");
+    assert!(!daemon_modules.contains("mod injection"));
 }

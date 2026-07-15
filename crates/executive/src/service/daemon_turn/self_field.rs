@@ -37,17 +37,6 @@ impl DaemonTurnOrchestrator {
             }
         }
     }
-
-    pub(crate) async fn compose_memory_block(&self) -> String {
-        let mut queue = self.subsystems.session.memory_queue.lock().await;
-        if queue.is_empty() {
-            return String::new();
-        }
-        let updates: Vec<String> = queue.drain(..).collect();
-        drop(queue);
-        let items: Vec<String> = updates.iter().map(|m| format!("- {}", m)).collect();
-        format!("<memory-update>\n{}\n</memory-update>", items.join("\n"))
-    }
 }
 
 impl TurnPipeline {
@@ -80,16 +69,5 @@ impl TurnPipeline {
                 Err(error) => tracing::warn!(turn, %error, "Dasein outcome transition rejected"),
             }
         }
-    }
-
-    pub(crate) async fn compose_memory_block(&self) -> String {
-        let mut queue = self.subsystems.session.memory_queue.lock().await;
-        if queue.is_empty() {
-            return String::new();
-        }
-        let updates: Vec<String> = queue.drain(..).collect();
-        drop(queue);
-        let items: Vec<String> = updates.iter().map(|m| format!("- {}", m)).collect();
-        format!("<memory-update>\n{}\n</memory-update>", items.join("\n"))
     }
 }
