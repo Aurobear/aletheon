@@ -6,27 +6,23 @@ use tokio::sync::Mutex;
 
 use mnemosyne::episodic::EpisodicMemory;
 use mnemosyne::AutoMemory;
-use mnemosyne::FactStore;
 use mnemosyne::MemoryService;
 
 use crate::r#impl::approval::ApprovalRepository;
 use crate::r#impl::goal::ObjectiveStore;
-use mnemosyne::CoreMemory;
 use mnemosyne::RecallMemory;
 
-pub struct MemoryGroup {
-    pub episodic_memory: Arc<Mutex<EpisodicMemory>>,
-    pub recall_memory: Arc<Mutex<RecallMemory>>,
-    pub core_memory: Arc<Mutex<CoreMemory>>,
-    pub fact_store: Arc<Mutex<FactStore>>,
-    pub auto_memory: Arc<Mutex<AutoMemory>>,
-    pub objective_store: Arc<Mutex<ObjectiveStore>>,
+pub(crate) struct MemoryGroup {
+    pub(crate) episodic_memory: Arc<Mutex<EpisodicMemory>>,
+    pub(crate) recall_memory: Arc<Mutex<RecallMemory>>,
+    pub(crate) auto_memory: Arc<Mutex<AutoMemory>>,
+    pub(crate) objective_store: Arc<Mutex<ObjectiveStore>>,
     /// Durable protected-operation approvals stored beside Goal state.
-    pub approval_repository: Arc<std::sync::Mutex<ApprovalRepository>>,
+    pub(crate) approval_repository: Arc<std::sync::Mutex<ApprovalRepository>>,
     /// Unified facade over the 6 memory objects above (docs/arch §11).
     /// Built from the same `Arc<Mutex<_>>` handles; additive, does not
     /// replace direct field access elsewhere.
-    pub memory_service: Arc<dyn MemoryService>,
+    pub(crate) memory_service: Arc<dyn MemoryService>,
     /// Sanitized state of the optional supplemental-memory path.
-    pub supplemental_memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
+    pub(crate) supplemental_memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
 }

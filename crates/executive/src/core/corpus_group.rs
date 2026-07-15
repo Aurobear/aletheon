@@ -6,18 +6,14 @@ use tokio::sync::Mutex;
 
 use corpus::tools::tools::ToolRegistry;
 use corpus::HookRegistry;
-use corpus::SkillLoader;
-use corpus::SkillRouter;
 
 use crate::core::config::HooksConfig;
 
-pub type ToolRegistryHandle = Arc<Mutex<ToolRegistry>>;
-pub type HookRegistryHandle = Arc<Mutex<HookRegistry>>;
+pub(crate) type ToolRegistryHandle = Arc<Mutex<ToolRegistry>>;
+pub(crate) type HookRegistryHandle = Arc<Mutex<HookRegistry>>;
 
-pub struct CorpusGroup {
-    pub tools: ToolRegistryHandle,
-    pub skill_loader: Arc<Mutex<SkillLoader>>,
-    pub skill_router: Arc<Mutex<SkillRouter>>,
-    pub hook_registry: HookRegistryHandle,
-    pub hooks_config: HooksConfig,
+pub(crate) struct CorpusGroup {
+    pub(crate) tools: ToolRegistryHandle,
+    pub(crate) hook_registry: HookRegistryHandle,
+    pub(crate) hooks_config: HooksConfig,
 }

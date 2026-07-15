@@ -42,7 +42,7 @@ pub trait SubsystemQuery: Send + Sync {
 ///
 /// The Session Gateway looks up subsystems by ID at dispatch time.
 pub struct SubsystemRegistry {
-    subsystems: HashMap<&'static str, Box<dyn SubsystemQuery>>,
+    queries: HashMap<&'static str, Box<dyn SubsystemQuery>>,
 }
 
 impl Default for SubsystemRegistry {
@@ -54,19 +54,19 @@ impl Default for SubsystemRegistry {
 impl SubsystemRegistry {
     pub fn new() -> Self {
         Self {
-            subsystems: HashMap::new(),
+            queries: HashMap::new(),
         }
     }
 
     /// Register a subsystem for querying.
     pub fn register(&mut self, subsystem: Box<dyn SubsystemQuery>) {
         let id = subsystem.subsystem_id();
-        self.subsystems.insert(id, subsystem);
+        self.queries.insert(id, subsystem);
     }
 
     /// Query a subsystem by its identifier.
     pub fn query(&self, id: &str, params: &Value) -> Result<String, QueryError> {
-        match self.subsystems.get(id) {
+        match self.queries.get(id) {
             Some(s) => s.query(params),
             None => Err(QueryError::not_found(id)),
         }
@@ -74,7 +74,7 @@ impl SubsystemRegistry {
 
     /// List all registered subsystem IDs.
     pub fn list_ids(&self) -> Vec<&'static str> {
-        self.subsystems.keys().copied().collect()
+        self.queries.keys().copied().collect()
     }
 }
 

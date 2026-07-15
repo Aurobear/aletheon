@@ -10,12 +10,12 @@ use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::socket_approval::PendingApproval;
 use corpus::security::storm_breaker::StormBreaker;
 
-pub type ToolRunnerHandle = Arc<Mutex<ToolRunnerWithGuard>>;
+pub(crate) type ToolRunnerHandle = Arc<Mutex<ToolRunnerWithGuard>>;
 
-pub struct SecurityGroup {
-    pub tool_runner: ToolRunnerHandle,
-    pub storm_breaker: Arc<Mutex<StormBreaker>>,
-    pub approval_rx: Arc<Mutex<mpsc::Receiver<PendingApproval>>>,
-    pub pending_approvals: Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>,
-    pub session_approvals: Arc<Mutex<HashMap<String, bool>>>,
+pub(crate) struct SecurityGroup {
+    pub(crate) tool_runner: ToolRunnerHandle,
+    pub(crate) storm_breaker: Arc<Mutex<StormBreaker>>,
+    pub(crate) approval_rx: Arc<Mutex<mpsc::Receiver<PendingApproval>>>,
+    pub(crate) pending_approvals: Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>,
+    pub(crate) session_approvals: Arc<Mutex<HashMap<String, bool>>>,
 }

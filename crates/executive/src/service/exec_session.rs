@@ -3,7 +3,7 @@
 //! # Turn-path convergence (Stage 3)
 //!
 //! The exec path intentionally does NOT share `TurnPipeline` with the daemon
-//! because it lacks the daemon's infrastructure (CoreSystems, SelfField,
+//! because it lacks the daemon's production infrastructure (SelfField,
 //! SessionGateway, memory service, hook registry, Agora). Instead, convergence
 //! is achieved at the ReActLoop level:
 //!

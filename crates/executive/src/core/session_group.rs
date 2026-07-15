@@ -7,12 +7,10 @@ use std::sync::Arc;
 use fabric::MonoTime;
 use tokio::sync::Mutex;
 
-pub struct SessionGroup {
-    pub default_session_id: Arc<tokio::sync::Mutex<String>>,
-    pub session_created_at: Arc<Mutex<HashMap<String, MonoTime>>>,
-    pub cached_prefix: Arc<Mutex<String>>,
-    pub memory_queue: Arc<Mutex<Vec<String>>>,
-    pub context_window: usize,
-    pub config_prompt: String,
-    pub data_dir: PathBuf,
+pub(crate) struct SessionGroup {
+    pub(crate) default_session_id: Arc<tokio::sync::Mutex<String>>,
+    pub(crate) session_created_at: Arc<Mutex<HashMap<String, MonoTime>>>,
+    pub(crate) memory_queue: Arc<Mutex<Vec<String>>>,
+    pub(crate) context_window: usize,
+    pub(crate) data_dir: PathBuf,
 }

@@ -17,13 +17,16 @@ fn kernel_and_domain_composition_are_separate() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let kernel_lib = fs::read_to_string(root.join("kernel/src/lib.rs")).unwrap();
     let kernel_runtime = fs::read_to_string(root.join("kernel/src/runtime.rs")).unwrap();
-    let core_systems = fs::read_to_string(root.join("executive/src/core/core_systems.rs")).unwrap();
+    let bootstrap =
+        fs::read_to_string(root.join("executive/src/impl/daemon/handler/init.rs")).unwrap();
     let domain_ports = fs::read_to_string(root.join("executive/src/core/domain_ports.rs")).unwrap();
 
     assert!(!kernel_lib.contains("pub mod service"));
     assert!(!kernel_runtime.contains("Agora"));
-    assert!(core_systems.contains("pub kernel: Arc<KernelRuntime>"));
-    assert!(core_systems.contains("pub domains: crate::core::DomainPorts"));
+    assert!(!root.join("executive/src/core/core_systems.rs").exists());
+    assert!(bootstrap.contains("let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock"));
+    assert!(bootstrap.contains("let domains ="));
+    assert!(bootstrap.contains("crate::core::DomainPorts::new"));
     assert!(domain_ports.contains("agora: Arc<dyn AgoraOps>"));
 }
 

@@ -1057,62 +1057,46 @@ impl RequestHandler {
         let context_assembler = Arc::new(crate::service::context_assembler::ContextAssembler::new(
             context_source,
         ));
-        let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
-            kernel,
-            domains,
-            runtime,
-            self_field,
-            reflector,
-            memory: crate::core::MemoryGroup {
-                memory_service: gbrain_runtime.memory_service,
-                supplemental_memory_health: gbrain_runtime.health,
-                episodic_memory,
-                recall_memory,
-                core_memory,
-                fact_store,
-                auto_memory,
-                objective_store,
-                approval_repository,
-            },
-            security: crate::core::SecurityGroup {
-                tool_runner,
-                storm_breaker,
-                approval_rx: Arc::new(Mutex::new(approval_rx)),
-                pending_approvals,
-                session_approvals,
-            },
-            corpus: crate::core::CorpusGroup {
-                tools,
-                skill_loader,
-                skill_router,
-                hook_registry,
-                hooks_config,
-            },
-            session: crate::core::SessionGroup {
-                default_session_id: default_session_id.clone(),
-                session_created_at: session_created_at.clone(),
-                cached_prefix,
-                memory_queue,
-                context_window,
-                config_prompt: config.system_prompt.clone(),
-                data_dir: data_dir.clone(),
-            },
-            pipeline,
-            debug_handler,
-            debug_perf,
-            cancel_token: Arc::new(Mutex::new(None)),
-            main_agent_process_id: Arc::new(Mutex::new(None)),
-        });
+        let memory_group = crate::core::MemoryGroup {
+            memory_service: gbrain_runtime.memory_service,
+            supplemental_memory_health: gbrain_runtime.health,
+            episodic_memory,
+            recall_memory,
+            auto_memory,
+            objective_store,
+            approval_repository,
+        };
+        let security_group = crate::core::SecurityGroup {
+            tool_runner,
+            storm_breaker,
+            approval_rx: Arc::new(Mutex::new(approval_rx)),
+            pending_approvals,
+            session_approvals,
+        };
+        let corpus_group = crate::core::CorpusGroup {
+            tools,
+            hook_registry,
+            hooks_config,
+        };
+        let session_group = crate::core::SessionGroup {
+            default_session_id: default_session_id.clone(),
+            session_created_at: session_created_at.clone(),
+            memory_queue,
+            context_window,
+            data_dir: data_dir.clone(),
+        };
+        let turn_token = Arc::new(Mutex::new(None));
+        let main_agent_process_id = Arc::new(Mutex::new(None));
         let capability_resources = super::tool_executor::CapabilityResources {
-            kernel: subsystems.kernel.clone(),
-            tools: subsystems.corpus.tools.clone(),
-            runner: subsystems.security.tool_runner.clone(),
-            hooks: subsystems.corpus.hook_registry.clone(),
-            storm: subsystems.security.storm_breaker.clone(),
-            memory_queue: subsystems.session.memory_queue.clone(),
-            approvals: subsystems.security.session_approvals.clone(),
-            perf: subsystems.debug_perf.clone(),
-            self_field: subsystems.self_field.clone(),
+            kernel: kernel.clone(),
+            tools: corpus_group.tools.clone(),
+            runner: security_group.tool_runner.clone(),
+            hooks: corpus_group.hook_registry.clone(),
+            storm: security_group.storm_breaker.clone(),
+            memory_queue: session_group.memory_queue.clone(),
+            approvals: security_group.session_approvals.clone(),
+            perf: debug_perf.clone(),
+            self_field: self_field.clone(),
         };
         let capability_service: Arc<dyn CapabilityService> = Arc::new(
             super::tool_executor::ProductionCapabilityService::new(capability_resources.clone()),
@@ -1121,8 +1105,7 @@ impl RequestHandler {
         // Wire sub-agent execution runtime so spawned sub-agents run real
         // LLM + tool reasoning instead of the cancellation-wait stub.
         {
-            let allowed_tools = subsystems
-                .corpus
+            let allowed_tools = corpus_group
                 .tools
                 .lock()
                 .await
@@ -1134,15 +1117,14 @@ impl RequestHandler {
                 fabric::RuntimeId("default".into()),
                 fabric::CognitiveRole::Worker,
                 llm.clone(),
-                subsystems.corpus.tools.clone(),
+                corpus_group.tools.clone(),
                 capability_service.clone(),
                 clock.clone(),
                 8,
                 16 * 1024,
                 allowed_tools,
             ));
-            subsystems
-                .runtime
+            runtime
                 .lock()
                 .await
                 .sub_agent_spawner_mut()
@@ -1152,12 +1134,12 @@ impl RequestHandler {
         // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
         // Missing routes fail startup only when Goal execution is enabled.
         {
-            let mut runtime = subsystems.runtime.lock().await;
+            let mut runtime = runtime.lock().await;
             let registered = register_goal_runtimes(
                 runtime.sub_agent_spawner_mut(),
                 &goal_runtime,
                 registry,
-                subsystems.corpus.tools.clone(),
+                corpus_group.tools.clone(),
                 capability_service.clone(),
                 clock.clone(),
             )?;
@@ -1172,7 +1154,7 @@ impl RequestHandler {
             let sandbox = corpus::security::sandbox::BubblewrapBackend::probe_async(clock.clone())
                 .await
                 .map(|backend| Arc::new(backend) as Arc<dyn fabric::sandbox::SandboxBackend>);
-            let mut runtime = subsystems.runtime.lock().await;
+            let mut runtime = runtime.lock().await;
             if pi_work_allowed
                 && register_pi_runtime(
                     runtime.sub_agent_spawner_mut(),
@@ -1186,7 +1168,7 @@ impl RequestHandler {
         }
 
         let goal_runtime_registry = if goal_runtime.enabled {
-            let runtime = subsystems.runtime.lock().await;
+            let runtime = runtime.lock().await;
             Some(Arc::new(
                 runtime.sub_agent_spawner().runtime_registry().clone(),
             ))
@@ -1197,12 +1179,11 @@ impl RequestHandler {
         // Repoint the sub-agent spawner at the shared opaque runtime so all
         // agents use the same authoritative lifecycle state.
         {
-            subsystems
-                .runtime
+            runtime
                 .lock()
                 .await
                 .sub_agent_spawner_mut()
-                .set_kernel(subsystems.kernel.clone());
+                .set_kernel(kernel.clone());
         }
 
         // Clone clock for later daemon services.
@@ -1233,9 +1214,9 @@ impl RequestHandler {
             }
             if !agent_defs.is_empty() {
                 let llm_for_agents: Arc<dyn LlmProvider> = llm.clone();
-                let tools_for_agents = subsystems.corpus.tools.clone();
-                let exec_for_agents = subsystems.runtime.clone();
-                let main_slot = subsystems.main_agent_process_id.clone();
+                let tools_for_agents = corpus_group.tools.clone();
+                let exec_for_agents = runtime.clone();
+                let main_slot = main_agent_process_id.clone();
                 let capability_for_agents = capability_service.clone();
                 let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
                     Arc::new(move |system_prompt, user_prompt, allowed_tools| {
@@ -1389,8 +1370,7 @@ impl RequestHandler {
                     agent_defs.clone(),
                     execute_fn,
                 );
-                if let Err(e) = subsystems
-                    .corpus
+                if let Err(e) = corpus_group
                     .tools
                     .lock()
                     .await
@@ -1418,24 +1398,8 @@ impl RequestHandler {
                     crate::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
                         .expect("in-memory canonical session store")
                 });
-        let crate::core::core_systems::CoreSystems {
-            kernel: turn_kernel,
-            domains: turn_domains,
-            runtime: turn_executive,
-            self_field: turn_self_field,
-            reflector: turn_reflector,
-            memory: turn_memory,
-            security: turn_security,
-            corpus: turn_corpus,
-            session: turn_session,
-            pipeline: turn_evolution,
-            debug_perf: turn_performance,
-            cancel_token: turn_token,
-            main_agent_process_id,
-            ..
-        } = subsystems.as_ref();
         let coordinator = Arc::new(crate::service::turn_coordinator::TurnCoordinator::new(
-            turn_kernel.clone(),
+            kernel.clone(),
             Arc::new(canonical_store),
         ));
         let session_service = Arc::new(crate::service::session_service::SessionService::new(
@@ -1446,41 +1410,41 @@ impl RequestHandler {
             Arc::new(
                 crate::service::post_turn_projection::ProductionPostTurnProjection::new(
                     crate::service::post_turn_projection::PostTurnProjectionResources {
-                        hooks: turn_corpus.hook_registry.clone(),
-                        memory: turn_memory.memory_service.clone(),
-                        auto_memory: turn_memory.auto_memory.clone(),
-                        reflector: turn_reflector.clone(),
-                        episodic: turn_memory.episodic_memory.clone(),
+                        hooks: corpus_group.hook_registry.clone(),
+                        memory: memory_group.memory_service.clone(),
+                        auto_memory: memory_group.auto_memory.clone(),
+                        reflector: reflector.clone(),
+                        episodic: memory_group.episodic_memory.clone(),
                         clock: clock.clone(),
-                        executive: turn_executive.clone(),
-                        evolution: turn_evolution.clone(),
-                        agora: turn_domains.agora(),
-                        recall: turn_memory.recall_memory.clone(),
+                        executive: runtime.clone(),
+                        evolution: pipeline.clone(),
+                        agora: domains.agora(),
+                        recall: memory_group.recall_memory.clone(),
                     },
                 ),
             );
         let runtime_ports = Arc::new(
             crate::service::turn_runtime_ports::TurnRuntimePorts::production(
                 crate::service::turn_runtime_ports::TurnRuntimeResources {
-                    hooks: turn_corpus.hook_registry.clone(),
-                    pre_turn_scripts: turn_corpus.hooks_config.pre_turn.clone(),
-                    storm: turn_security.storm_breaker.clone(),
+                    hooks: corpus_group.hook_registry.clone(),
+                    pre_turn_scripts: corpus_group.hooks_config.pre_turn.clone(),
+                    storm: security_group.storm_breaker.clone(),
                     model_router: model_router.clone(),
                     default_llm: llm.clone(),
-                    self_field: turn_self_field.clone(),
-                    approval_rx: turn_security.approval_rx.clone(),
-                    pending_approvals: turn_security.pending_approvals.clone(),
+                    self_field: self_field.clone(),
+                    approval_rx: security_group.approval_rx.clone(),
+                    pending_approvals: security_group.pending_approvals.clone(),
                     capabilities: capability_resources,
-                    admission: turn_kernel.admission(),
+                    admission: kernel.admission(),
                     sessions: sessions.clone(),
-                    default_session_id: turn_session.default_session_id.clone(),
-                    session_created_at: turn_session.session_created_at.clone(),
-                    data_dir: turn_session.data_dir.clone(),
-                    context_window: turn_session.context_window,
+                    default_session_id: session_group.default_session_id.clone(),
+                    session_created_at: session_group.session_created_at.clone(),
+                    data_dir: session_group.data_dir.clone(),
+                    context_window: session_group.context_window,
                     clock: clock.clone(),
-                    memory: turn_memory.memory_service.clone(),
-                    executive: turn_executive.clone(),
-                    performance: turn_performance.clone(),
+                    memory: memory_group.memory_service.clone(),
+                    executive: runtime.clone(),
+                    performance: debug_perf.clone(),
                 },
             ),
         );
@@ -1489,8 +1453,8 @@ impl RequestHandler {
                 session_gateway: session_gateway.clone(),
                 notify: shared_notify_tx.clone(),
                 clock: clock.clone(),
-                agora: Some(turn_domains.agora()),
-                kernel: turn_kernel.clone(),
+                agora: Some(domains.agora()),
+                kernel: kernel.clone(),
                 current_scope: Arc::new(Mutex::new(None)),
                 daemon_cancel: Some(cancel_token.clone()),
                 context: context_assembler,
@@ -1501,9 +1465,9 @@ impl RequestHandler {
         ));
         let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(
             crate::service::daemon_turn::DaemonTurnResources {
-                kernel: turn_kernel.clone(),
+                kernel: kernel.clone(),
                 notify: shared_notify_tx.clone(),
-                default_session_id: turn_session.default_session_id.clone(),
+                default_session_id: session_group.default_session_id.clone(),
                 main_agent_process_id: main_agent_process_id.clone(),
                 turn_token: turn_token.clone(),
                 pipeline,
@@ -1516,8 +1480,8 @@ impl RequestHandler {
             Some(Arc::new(
                 crate::r#impl::approval::ApplyCoordinator::new(
                     apply_objective_store,
-                    subsystems.memory.approval_repository.clone(),
-                    subsystems.kernel.clone(),
+                    memory_group.approval_repository.clone(),
+                    kernel.clone(),
                     clock.clone(),
                     crate::r#impl::approval::ApplyCoordinatorConfig {
                         worktree_base: pi_runtime.worktree_base.clone(),
@@ -1527,7 +1491,7 @@ impl RequestHandler {
                 )?
                 .with_memory_projection(
                     crate::r#impl::memory_projection::MemoryProjection::new(
-                        subsystems.memory.memory_service.clone(),
+                        memory_group.memory_service.clone(),
                     ),
                 ),
             ))
@@ -1575,10 +1539,10 @@ impl RequestHandler {
 
         let approval_use_cases: Arc<dyn crate::service::ApprovalUseCases> =
             Arc::new(crate::service::ApprovalService::new(
-                subsystems.memory.approval_repository.clone(),
+                memory_group.approval_repository.clone(),
                 approved_apply.clone(),
                 clock.clone(),
-                subsystems.main_agent_process_id.clone(),
+                main_agent_process_id.clone(),
             ));
         let admin_use_cases: Arc<dyn crate::service::AdminUseCases> = Arc::new(
             crate::service::AdminService::new(crate::service::admin_service::AdminResources {
@@ -1638,33 +1602,23 @@ impl RequestHandler {
         let started_at = clock_2.mono_now();
         let health_registry = Arc::new(crate::r#impl::health::HealthRegistry::production_ready());
         let telegram_task = Arc::new(Mutex::new(None));
-        let crate::core::core_systems::CoreSystems {
-            runtime: request_executive,
-            self_field: request_self_field,
-            memory: request_memory,
-            security: request_security,
-            corpus: request_corpus,
-            debug_handler: request_debug,
-            cancel_token: request_cancel_token,
-            ..
-        } = subsystems.as_ref();
         let session_lifecycle: Arc<
             dyn crate::service::request_use_cases::SessionLifecycleUseCases,
         > = Arc::new(
             crate::service::request_use_cases::ProductionSessionLifecycle::new(
-                request_corpus.hook_registry.clone(),
-                request_corpus.hooks_config.clone(),
-                request_security.session_approvals.clone(),
-                request_cancel_token.clone(),
+                corpus_group.hook_registry.clone(),
+                corpus_group.hooks_config.clone(),
+                security_group.session_approvals.clone(),
+                turn_token.clone(),
             ),
         );
         let health_use_cases: Arc<dyn crate::service::request_use_cases::HealthUseCases> = Arc::new(
             crate::service::request_use_cases::ProductionHealthUseCases::new(
                 crate::service::request_use_cases::ProductionHealthResources {
-                    executive: request_executive.clone(),
-                    episodic: request_memory.episodic_memory.clone(),
-                    self_field: request_self_field.clone(),
-                    supplemental: request_memory.supplemental_memory_health.clone(),
+                    executive: runtime.clone(),
+                    episodic: memory_group.episodic_memory.clone(),
+                    self_field: self_field.clone(),
+                    supplemental: memory_group.supplemental_memory_health.clone(),
                     data_root: data_dir.clone(),
                     registry: health_registry,
                     clock: clock.clone(),
@@ -1680,16 +1634,16 @@ impl RequestHandler {
         let reflection_use_cases: Arc<dyn crate::service::request_use_cases::ReflectionUseCases> =
             Arc::new(
                 crate::service::request_use_cases::ProductionReflectionUseCases::new(
-                    request_executive.clone(),
-                    request_memory.episodic_memory.clone(),
-                    request_self_field.clone(),
-                    subsystems.reflector.clone(),
+                    runtime.clone(),
+                    memory_group.episodic_memory.clone(),
+                    self_field.clone(),
+                    reflector.clone(),
                 ),
             );
         let google_use_cases: Arc<dyn crate::service::request_use_cases::GoogleUseCases> = Arc::new(
             crate::service::request_use_cases::ProductionGoogleUseCases::new(
                 google.clone(),
-                request_corpus.tools.clone(),
+                corpus_group.tools.clone(),
                 clock.clone(),
             ),
         );
@@ -1702,16 +1656,16 @@ impl RequestHandler {
         let turn_use_cases: Arc<dyn crate::service::request_use_cases::TurnUseCases> = Arc::new(
             crate::service::request_use_cases::ProductionTurnUseCases::new(
                 turn_orchestrator.clone(),
-                request_executive.clone(),
-                request_cancel_token.clone(),
+                runtime.clone(),
+                turn_token.clone(),
                 turn_orchestrator.session_service.clone(),
             ),
         );
         let debug_use_cases: Arc<dyn crate::service::request_use_cases::DebugUseCases> = Arc::new(
-            crate::service::request_use_cases::ProductionDebugUseCases(request_debug.clone()),
+            crate::service::request_use_cases::ProductionDebugUseCases(debug_handler.clone()),
         );
         let transport_ports = Arc::new(super::ports::TransportPorts {
-            tools: request_corpus.tools.clone(),
+            tools: corpus_group.tools.clone(),
             capabilities: capability_service,
             clock: clock.clone(),
         });
@@ -1813,8 +1767,8 @@ impl RequestHandler {
                 telegram_cfg,
                 data_dir_for_telegram,
                 _turn_orch_for_telegram,
-                request_memory.objective_store.clone(),
-                request_memory.approval_repository.clone(),
+                memory_group.objective_store.clone(),
+                memory_group.approval_repository.clone(),
                 gmail_goal_drafts,
                 approved_apply,
                 google.clone(),

@@ -93,9 +93,8 @@ if rg -n '^pub (mod manager|use manager::InMemorySpaceManager)' crates/kernel/sr
   exit 1
 fi
 
-# K02 composition gate: Kernel remains domain-neutral. DomainPorts belongs to
-# Executive, where CoreSystems is the sole structure that pairs it with the
-# KernelRuntime handle.
+# K02/X02 composition gate: Kernel remains domain-neutral. DomainPorts belongs
+# to Executive, and the retired CoreSystems service locator must stay deleted.
 if rg -n '^\s*(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)\s*=' \
   crates/kernel/Cargo.toml || \
   rg -n '\b(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)::' \
@@ -110,18 +109,11 @@ if [[ -n "$domain_port_outside_executive" ]]; then
   echo "$domain_port_outside_executive" >&2
   exit 1
 fi
-python3 - <<'PY'
-from pathlib import Path
-
-core = Path("crates/executive/src/core/core_systems.rs").read_text()
-required = ("pub kernel: Arc<KernelRuntime>", "pub domains: crate::core::DomainPorts")
-missing = [needle for needle in required if needle not in core]
-if missing:
-    raise SystemExit(
-        "architecture-check: Executive CoreSystems no longer owns canonical composition: "
-        + ", ".join(missing)
-    )
-PY
+if [[ -e crates/executive/src/core/core_systems.rs ]] || \
+   rg -n '\bCoreSystems\b|\.subsystems\b' crates/executive/src crates/bin/src -g '*.rs'; then
+  echo "architecture-check: retired god container escaped into production" >&2
+  exit 1
+fi
 
 if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
   cargo metadata --no-deps --format-version 1 | python3 -c '
