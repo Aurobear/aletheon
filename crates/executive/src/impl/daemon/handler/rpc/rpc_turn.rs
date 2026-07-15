@@ -36,7 +36,7 @@ impl RequestHandler {
             }
         };
 
-        match self.turn_orchestrator.wait_turn(operation_id).await {
+        match self.ports.turn.wait(operation_id).await {
             Ok(result) => {
                 info!(?operation_id, state = ?result.state, "turn.wait completed");
                 json!({
@@ -91,7 +91,7 @@ impl RequestHandler {
             }
         };
 
-        match self.turn_orchestrator.cancel_turn(operation_id).await {
+        match self.ports.turn.cancel(operation_id).await {
             Ok(()) => {
                 info!(?operation_id, "turn.cancel succeeded");
                 json!({
@@ -143,7 +143,7 @@ impl RequestHandler {
             }
         };
 
-        match self.turn_orchestrator.exit_process(process_id).await {
+        match self.ports.turn.exit(process_id).await {
             Ok(()) => {
                 info!(?process_id, "turn.exit succeeded");
                 json!({

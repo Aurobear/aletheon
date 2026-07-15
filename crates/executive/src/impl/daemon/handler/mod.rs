@@ -9,288 +9,59 @@ mod rpc;
 pub(crate) mod tool_executor;
 mod turn_handler;
 
+use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use std::time::Duration;
+use tokio::sync::mpsc;
 
-use aletheon_kernel::chronos::SystemTimer;
-use fabric::Timer;
-use tokio_util::sync::CancellationToken;
-
-use super::model_router::ModelRouter;
-use crate::core::core_systems::CoreSystems;
-use crate::service::DaemonTurnOrchestrator;
-use fabric::envelope::Payload;
-use fabric::envelope::*;
-use fabric::CommunicationBus;
-use fabric::LlmProvider;
-use fabric::{Context as AbiContext, Intent, SelfFieldOps, Verdict};
-
-use std::path::Path;
-use tokio::sync::{mpsc, Mutex};
-use tracing::warn;
-
-use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
-
-use crate::core::session_gateway::SessionGateway;
+pub(crate) async fn run_hook_scripts(scripts: &[String], input_json: &str) {
+    for script_path in scripts {
+        let path = format::expand_tilde(script_path);
+        if !std::path::Path::new(&path).exists() {
+            tracing::warn!(path = %path, "Hook script not found, skipping");
+            continue;
+        }
+        let spawn_result = tokio::process::Command::new(&path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let mut child = match spawn_result {
+            Ok(child) => child,
+            Err(error) => {
+                tracing::warn!(path = %path, %error, "Failed to spawn hook script");
+                continue;
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(input_json.as_bytes()).await;
+        }
+        match tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await {
+            Ok(Ok(status)) if status.success() => {}
+            Ok(Ok(status)) => {
+                tracing::warn!(path = %path, code = status.code(), "Hook script failed")
+            }
+            Ok(Err(error)) => tracing::warn!(path = %path, %error, "Hook script I/O error"),
+            Err(_) => {
+                tracing::warn!(path = %path, "Hook script timed out");
+                let _ = child.kill().await;
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct RequestHandler {
     /// Narrow application use cases available to protocol handlers.
     pub(crate) ports: Arc<ports::HandlerPorts>,
-    /// All subsystem types — becomes `Arc<dyn TraitOps>` in Group B.
-    pub(crate) subsystems: Arc<CoreSystems>,
-    /// Session gateway for external agent debug access.
-    pub(crate) session_gateway: Arc<SessionGateway>,
-    /// Communication bus (always available after init).
-    /// Only used by the currently-dead `sf_review`/`sf_narrate` bus fallback paths;
-    /// will become live when those methods are re-plumbed.
-    #[allow(dead_code)]
-    pub(crate) bus: Arc<CommunicationBus>,
-    /// Default LLM provider.
-    pub(crate) llm: Arc<dyn LlmProvider>,
-    /// Model router for per-task-type model selection.
-    /// Stored for future handler-level routing; the live path passes a clone
-    /// directly to the orchestrator at construction time (`init.rs`).
-    #[allow(dead_code)]
-    pub(crate) model_router: Arc<ModelRouter>,
     /// Per-connection notification channel for JSON-RPC push.
     pub(crate) notify_tx: Option<mpsc::Sender<String>>,
     /// Active connection count.
     pub(crate) active_connections: Arc<AtomicUsize>,
-    /// Daemon start time.
-    pub(crate) started_at: fabric::MonoTime,
-    /// Daemon-level cancellation token for graceful shutdown.
-    pub(crate) daemon_cancel_token: Option<CancellationToken>,
-    /// Macro-kernel turn orchestrator — handles the full pre/core/post turn pipeline.
-    pub(crate) turn_orchestrator: Arc<DaemonTurnOrchestrator>,
-    /// Telegram poll-loop task handle — stored so daemon shutdown can await
-    /// graceful termination. `None` when Telegram is disabled or not yet started.
-    pub(crate) telegram_task: Option<Arc<tokio::task::JoinHandle<()>>>,
-    /// Durable Goal scheduler, awaited with a bound during shutdown.
-    pub(crate) goal_worker_task: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
-    /// Google poll-loop supervisor handle, retained for graceful shutdown.
-    pub(crate) google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
-    /// Configured Google control plane. Credentials remain behind its vault-owning boundary.
-    pub(crate) google: Option<Arc<crate::r#impl::external::GoogleIntegration>>,
-    /// Sanitized readiness state; payload data and error bodies never enter it.
-    pub(crate) health: Arc<crate::r#impl::health::HealthRegistry>,
 }
 
 impl RequestHandler {
-    /// Review an intent through SelfField via CommunicationBus.
-    /// Falls back to direct lock if bus is not configured.
-    /// Reserved for future bus-based SelfField integration; not yet called.
-    #[allow(dead_code)]
-    pub(crate) async fn sf_review(
-        &self,
-        intent: &Intent,
-        ctx: &AbiContext,
-    ) -> anyhow::Result<Verdict> {
-        let req = SelfFieldRequest::Review {
-            intent: intent.clone(),
-            ctx: serde_json::to_value(ctx).unwrap_or_default(),
-        };
-        let envelope = Envelope::request(
-            Endpoint::Module(ModuleId::Executive),
-            Target::Module(ModuleId::Dasein),
-            Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
-            Duration::from_secs(5),
-        );
-        match self.bus.request(envelope).await {
-            Ok(resp_envelope) => {
-                if let Payload::Json(val) = &resp_envelope.payload {
-                    match serde_json::from_value::<SelfFieldResponse>(val.clone()) {
-                        Ok(SelfFieldResponse::Verdict { verdict }) => return Ok(verdict),
-                        Ok(SelfFieldResponse::Error { message }) => {
-                            return Err(anyhow::anyhow!("SelfField review error: {}", message));
-                        }
-                        Ok(other) => {
-                            return Err(anyhow::anyhow!(
-                                "Unexpected SelfField response: {:?}",
-                                other
-                            ));
-                        }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!(
-                                "Failed to deserialize SelfFieldResponse: {}",
-                                e
-                            ));
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, "Bus request for SelfField review failed, falling back to direct");
-            }
-        }
-        // Fallback: direct lock
-        let sf = self.subsystems.self_field.lock().await;
-        sf.review(intent, ctx).await
-    }
-
-    /// Record a narrative entry in SelfField via CommunicationBus.
-    /// Falls back to direct lock if bus is not configured.
-    /// Reserved for future bus-based SelfField integration; not yet called.
-    #[allow(dead_code)]
-    pub(crate) async fn sf_narrate(&self, event: &str, reason: &str) {
-        let req = SelfFieldRequest::Narrate {
-            event: event.to_string(),
-            reason: reason.to_string(),
-        };
-        let envelope = Envelope::request(
-            Endpoint::Module(ModuleId::Executive),
-            Target::Module(ModuleId::Dasein),
-            Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
-            Duration::from_secs(5),
-        );
-        match self.bus.request(envelope).await {
-            Ok(resp_envelope) => {
-                if let Payload::Json(val) = &resp_envelope.payload {
-                    match serde_json::from_value::<SelfFieldResponse>(val.clone()) {
-                        Ok(SelfFieldResponse::Narrated) => return,
-                        Ok(SelfFieldResponse::Error { message }) => {
-                            warn!(error = %message, "SelfField narrate error via bus");
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, "Bus request for SelfField narrate failed, falling back to direct");
-            }
-        }
-        // Fallback: direct lock
-        let sf = self.subsystems.self_field.lock().await;
-        let _ = sf.narrate(event, reason).await;
-    }
-
-    /// Post-turn coordination: update Dasein mood from turn output.
-    /// Reserved for future Dasein mood-feedback integration; not yet called.
-    #[allow(dead_code)]
-    pub(crate) async fn coordinate(
-        &self,
-        turn: &usize,
-        turn_text: &str,
-        status: fabric::dasein::OutcomeStatus,
-    ) {
-        let sf = self.subsystems.self_field.lock().await;
-        if let Some(dasein) = sf.dasein() {
-            match dasein
-                .record_outcome(turn_text, status, "legacy-daemon-handler")
-                .await
-            {
-                Ok(receipt) => tracing::info!(
-                    turn,
-                    version = receipt.current_version.0,
-                    "Dasein outcome transition accepted"
-                ),
-                Err(error) => tracing::warn!(turn, %error, "Dasein outcome transition rejected"),
-            }
-        }
-    }
-
-    /// Compose the user message with mid-session injections from the memory queue.
-    ///
-    /// Drains all pending memory updates and prepends them as a `<memory-update>`
-    /// XML block before the raw user input.  This is the same pattern as
-    /// `ReActLoop::compose_user_message()` and `Controller::compose_user_message()`
-    /// — changes ride the user message tail so the system prompt prefix stays
-    /// byte-stable for provider cache hits.
-    ///
-    /// Returns empty string if the queue is empty (no injections needed).
-    /// Reserved for future handler-based memory injection; the live path uses
-    /// `TurnPipeline::compose_memory_block` instead.
-    #[allow(dead_code)]
-    pub(crate) async fn compose_memory_block(&self) -> String {
-        let mut queue = self.subsystems.session.memory_queue.lock().await;
-        if queue.is_empty() {
-            return String::new();
-        }
-        let updates: Vec<String> = queue.drain(..).collect();
-        drop(queue);
-
-        let items: Vec<String> = updates.iter().map(|m| format!("- {}", m)).collect();
-        format!("<memory-update>\n{}\n</memory-update>", items.join("\n"))
-    }
-
-    /// Execute configured hook scripts at a lifecycle point.
-    ///
-    /// Each script is spawned as a subprocess with `input_json` piped to stdin.
-    /// Stdout from successful scripts is collected and returned.
-    /// Each script has a 30-second timeout.
-    pub(crate) async fn run_hook_scripts(
-        &self,
-        scripts: &[String],
-        input_json: &str,
-    ) -> Vec<String> {
-        let mut outputs = Vec::new();
-        for script_path in scripts {
-            let path = format::expand_tilde(script_path);
-            if !std::path::Path::new(&path).exists() {
-                tracing::warn!(path = %path, "Hook script not found, skipping");
-                continue;
-            }
-            let spawn_result = tokio::process::Command::new(&path)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-
-            match spawn_result {
-                Ok(mut child) => {
-                    // Write input to stdin
-                    if let Some(stdin) = child.stdin.take() {
-                        let input = input_json.to_string();
-                        tokio::spawn(async move {
-                            use tokio::io::AsyncWriteExt;
-                            let mut stdin = stdin;
-                            let _ = stdin.write_all(input.as_bytes()).await;
-                        });
-                    }
-                    // Capture stdout before waiting
-                    let mut stdout_pipe = child.stdout.take();
-                    // Wait with 30-second timeout
-                    match SystemTimer
-                        .timeout(Duration::from_secs(30), child.wait())
-                        .await
-                    {
-                        Ok(Ok(status)) if status.success() => {
-                            // Read captured stdout
-                            if let Some(ref mut stdout) = stdout_pipe {
-                                use tokio::io::AsyncReadExt;
-                                let mut buf = String::new();
-                                if stdout.read_to_string(&mut buf).await.is_ok() && !buf.is_empty()
-                                {
-                                    outputs.push(buf);
-                                }
-                            }
-                        }
-                        Ok(Ok(status)) => {
-                            tracing::warn!(
-                                path = %path,
-                                code = status.code(),
-                                "Hook script exited with non-zero status"
-                            );
-                        }
-                        Ok(Err(e)) => {
-                            tracing::warn!(path = %path, error = %e, "Hook script I/O error");
-                        }
-                        Err(_) => {
-                            tracing::warn!(path = %path, "Hook script timed out (30s)");
-                            child.kill().await.ok();
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(path = %path, error = %e, "Failed to spawn hook script");
-                }
-            }
-        }
-        outputs
-    }
-
     pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value {
         let method = request["method"].as_str().unwrap_or("").to_string();
         let id = request
@@ -306,7 +77,6 @@ impl RequestHandler {
             method.as_str(),
             "session.resume" | "session.fork" | "session.interrupt" | "session.replay"
         ) {
-            let service = &self.turn_orchestrator.session_service;
             let session_id = fabric::SessionId(
                 params
                     .get("session_id")
@@ -315,18 +85,18 @@ impl RequestHandler {
                     .to_string(),
             );
             let result: anyhow::Result<serde_json::Value> = match method.as_str() {
-                "session.resume" => service.resume(&session_id).await.map(|resume| serde_json::json!({
+                "session.resume" => self.ports.turn.session_resume(session_id.clone()).await.map(|resume| serde_json::json!({
                     "session": resume.session, "next_sequence": resume.next_sequence, "messages": resume.messages,
                 })),
-                "session.fork" => service.fork(
-                    &session_id,
+                "session.fork" => self.ports.turn.session_fork(
+                    session_id.clone(),
                     params.get("through_sequence").and_then(|v| v.as_u64()).unwrap_or(0),
                 ).await.and_then(|record| serde_json::to_value(record).map_err(Into::into)),
-                "session.interrupt" => service.interrupt(&session_id).await.map(|outcome| serde_json::json!({
+                "session.interrupt" => self.ports.turn.session_interrupt(session_id.clone()).await.map(|outcome| serde_json::json!({
                     "outcome": format!("{outcome:?}").to_lowercase(),
                 })),
-                "session.replay" => service.replay(
-                    &session_id,
+                "session.replay" => self.ports.turn.session_replay(
+                    session_id,
                     params.get("after_sequence").and_then(|v| v.as_u64()),
                 ).await.map(|messages| serde_json::json!({"messages": messages})),
                 _ => unreachable!(),
@@ -342,6 +112,7 @@ impl RequestHandler {
         // Route session.* methods to the Session Gateway (new unified facade).
         if method.starts_with("session.") {
             if let Some(response) = self
+                .ports
                 .session_gateway
                 .handle_method(&method, &id, &params)
                 .await
@@ -353,8 +124,9 @@ impl RequestHandler {
         // Route debug.* methods to the debug handler (backward compat).
         if method.starts_with("debug.") {
             if let Some(response) = self
-                .subsystems
-                .debug_handler
+                .ports
+                .debug
+                .handler()
                 .handle_method(&method, &id, &params)
                 .await
             {
@@ -394,8 +166,9 @@ impl RequestHandler {
             });
         }
         tracing::info!(message = %message, "Chat request received");
-        self.turn_orchestrator
-            .execute_turn(id, message, working_dir)
+        self.ports
+            .turn
+            .execute(id, message.to_owned(), working_dir)
             .await
     }
 

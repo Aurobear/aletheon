@@ -135,11 +135,13 @@
 - Modify: `crates/executive/src/impl/daemon/handler/rpc/rpc_workflow.rs`
 - Test: `crates/executive/tests/request_use_case_boundaries.rs`
 
-- [ ] Define private `HandlerPorts` fields for facts, goals, approvals, admin, sessions, health, reflection, Google, workflow, and turn control. Every field is `Arc<dyn ...UseCases>` or an already-narrow service; no concrete group/store appears.
-- [ ] In bootstrap, construct concrete adapters from existing handles once, then build `HandlerPorts`; do not let individual handlers construct adapters.
-- [ ] Replace `RequestHandler.subsystems` with `ports`; keep connection-local fields (`sessions`, notify channel, connection count, lifecycle task handles) only where they are protocol state rather than domain state.
-- [ ] Migrate remaining RPC files and dead fallback helpers, deleting unused direct-bus/domain-lock paths rather than retaining a second route.
-- [ ] Run the request-boundary test; expected PASS with zero forbidden hits.
+- [x] Define private `HandlerPorts` fields for facts, goals, approvals, admin, sessions, health, reflection, Google, workflow, and turn control. Every field is `Arc<dyn ...UseCases>` or an already-narrow service; no concrete group/store appears.
+- [x] In bootstrap, construct concrete adapters from existing handles once, then build `HandlerPorts`; do not let individual handlers construct adapters.
+- [x] Replace `RequestHandler.subsystems` with `ports`; keep connection-local fields (`sessions`, notify channel, connection count, lifecycle task handles) only where they are protocol state rather than domain state.
+- [x] Migrate remaining RPC files and dead fallback helpers, deleting unused direct-bus/domain-lock paths rather than retaining a second route.
+- [x] Run the request-boundary test; expected PASS with zero forbidden hits.
+
+**Task 7 evidence:** the complete private request surface is assembled from trait ports and narrow facades at `crates/executive/src/impl/daemon/handler/ports.rs:20-69`; `RequestHandler` now retains only the port bundle and connection protocol state at `crates/executive/src/impl/daemon/handler/mod.rs:54-62`. Production health, reflection, session lifecycle, turn, Google, and workflow implementations own concrete handles behind their use-case contracts at `crates/executive/src/service/request_use_cases.rs:38-691`, and bootstrap constructs them once before creating the handler at `crates/executive/src/impl/daemon/handler/init.rs:1538-1644`. The static deletion gate at `crates/executive/tests/request_use_case_boundaries.rs:17-93` proves the handler has no `CoreSystems` field, all required RPC families have ports, and RPC adapters contain zero forbidden store, registry, mutex, or god-container hits. Executive Clippy and the complete Executive test suite pass; architecture fitness falls from 94 to 86 findings with no additions.
 
 ### Task 8: Validation and X02 handoff
 

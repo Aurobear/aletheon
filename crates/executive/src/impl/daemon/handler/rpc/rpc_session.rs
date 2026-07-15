@@ -5,14 +5,10 @@
 
 use super::RequestHandler;
 
-use fabric::hook::{HookContext, HookPoint};
 use serde_json::json;
-use std::collections::HashMap;
 use tracing::info;
 
-use crate::service::legacy_session_service::{
-    LegacySessionError, LegacySessionSnapshot, LegacySessionTransition,
-};
+use crate::service::legacy_session_service::{LegacySessionError, LegacySessionSnapshot};
 
 impl RequestHandler {
     pub(super) async fn handle_clear(
@@ -26,7 +22,7 @@ impl RequestHandler {
         };
         self.finish_outgoing_session(&transition.previous).await;
         self.distill_session_facts(&transition.previous).await;
-        *self.subsystems.cancel_token.lock().await = None;
+        self.ports.session_lifecycle.reset_turn_token().await;
         json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -102,13 +98,10 @@ impl RequestHandler {
             Err(error) => return session_error(id, -32030, error),
         };
         self.finish_outgoing_session(&transition.previous).await;
-        self.subsystems
-            .security
-            .session_approvals
-            .lock()
-            .await
-            .clear();
-        self.fire_session_start(&transition).await;
+        self.ports
+            .session_lifecycle
+            .start(transition.current.session_id.clone(), true)
+            .await;
         info!(session_id = %transition.current.session_id, "New session created");
         json!({"jsonrpc":"2.0", "id":id, "result":{"session_id":transition.current.session_id}})
     }
@@ -135,60 +128,9 @@ impl RequestHandler {
     }
 
     async fn finish_outgoing_session(&self, snapshot: &LegacySessionSnapshot) {
-        let context = HookContext {
-            point: HookPoint::OnSessionEnd,
-            session_id: snapshot.session_id.clone(),
-            turn_count: snapshot.turn_count,
-            tool_name: None,
-            tool_input: None,
-            tool_result: None,
-            message: None,
-            metadata: HashMap::new(),
-        };
-        self.subsystems
-            .corpus
-            .hook_registry
-            .lock()
-            .await
-            .execute(&context)
-            .await;
-        if !self
-            .subsystems
-            .corpus
-            .hooks_config
-            .on_session_end
-            .is_empty()
-        {
-            let input = json!({
-                "session_id": snapshot.session_id,
-                "cwd": std::env::current_dir().unwrap_or_default(),
-            });
-            let _ = self
-                .run_hook_scripts(
-                    &self.subsystems.corpus.hooks_config.on_session_end,
-                    &input.to_string(),
-                )
-                .await;
-        }
-    }
-
-    async fn fire_session_start(&self, transition: &LegacySessionTransition) {
-        let context = HookContext {
-            point: HookPoint::OnSessionStart,
-            session_id: transition.current.session_id.clone(),
-            turn_count: 0,
-            tool_name: None,
-            tool_input: None,
-            tool_result: None,
-            message: None,
-            metadata: HashMap::new(),
-        };
-        self.subsystems
-            .corpus
-            .hook_registry
-            .lock()
-            .await
-            .execute(&context)
+        self.ports
+            .session_lifecycle
+            .finish(snapshot.session_id.clone(), snapshot.turn_count)
             .await;
     }
 

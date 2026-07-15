@@ -35,7 +35,6 @@ use corpus::tools::google::{
 };
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
-use fabric::hook::{HookContext, HookPoint};
 use fabric::CommunicationBus;
 use fabric::LlmProvider;
 use fabric::Registry;
@@ -428,29 +427,28 @@ fn register_configured_google_read_tools(
 
 impl RequestHandler {
     /// Get a reference to the debug handler (for subscriber rx access).
-    pub fn debug_handler(&self) -> &Arc<DebugHandler> {
-        &self.subsystems.debug_handler
+    pub fn debug_handler(&self) -> Arc<DebugHandler> {
+        self.ports.debug.handler()
     }
 
     /// Get a reference to the tool registry (for MCP server).
     pub fn tools(&self) -> Arc<Mutex<ToolRegistry>> {
-        self.subsystems.corpus.tools.clone()
+        self.ports.transport.tools.clone()
     }
 
     /// Governed capability service for MCP and other external transports.
     pub fn capability_service(&self) -> Arc<dyn CapabilityService> {
-        Arc::new(super::tool_executor::CoreCapabilityService::new(
-            &self.subsystems,
-        ))
+        self.ports.transport.capabilities.clone()
+    }
+
+    pub fn clock(&self) -> Arc<dyn fabric::Clock> {
+        self.ports.transport.clock.clone()
     }
 
     /// Set the notification channel for out-of-band messages to the client.
     pub fn set_notify_channel(&mut self, tx: mpsc::Sender<String>) {
         self.notify_tx = Some(tx.clone());
-        // Propagate to the shared orchestrator handle
-        if let Ok(mut guard) = self.turn_orchestrator.notify_tx().try_lock() {
-            *guard = Some(tx);
-        }
+        self.ports.turn.set_notify(tx);
     }
 
     /// Create a notification channel and wire it to the handler.
@@ -1532,7 +1530,7 @@ impl RequestHandler {
                     registry: sessions.clone(),
                     default_id: default_session_id,
                     created_at: session_created_at,
-                    data_dir,
+                    data_dir: data_dir.clone(),
                     context_window,
                     clock: clock.clone(),
                     llm: llm.clone(),
@@ -1540,35 +1538,113 @@ impl RequestHandler {
                 },
             ),
         );
+        let started_at = clock_2.mono_now();
+        let health_registry = Arc::new(crate::r#impl::health::HealthRegistry::production_ready());
+        let telegram_task = Arc::new(Mutex::new(None));
+        let crate::core::core_systems::CoreSystems {
+            runtime: request_executive,
+            self_field: request_self_field,
+            memory: request_memory,
+            security: request_security,
+            corpus: request_corpus,
+            debug_handler: request_debug,
+            cancel_token: request_cancel_token,
+            ..
+        } = subsystems.as_ref();
+        let session_lifecycle: Arc<
+            dyn crate::service::request_use_cases::SessionLifecycleUseCases,
+        > = Arc::new(
+            crate::service::request_use_cases::ProductionSessionLifecycle::new(
+                request_corpus.hook_registry.clone(),
+                request_corpus.hooks_config.clone(),
+                request_security.session_approvals.clone(),
+                request_cancel_token.clone(),
+            ),
+        );
+        let health_use_cases: Arc<dyn crate::service::request_use_cases::HealthUseCases> = Arc::new(
+            crate::service::request_use_cases::ProductionHealthUseCases::new(
+                crate::service::request_use_cases::ProductionHealthResources {
+                    executive: request_executive.clone(),
+                    episodic: request_memory.episodic_memory.clone(),
+                    self_field: request_self_field.clone(),
+                    supplemental: request_memory.supplemental_memory_health.clone(),
+                    data_root: data_dir.clone(),
+                    registry: health_registry,
+                    clock: clock.clone(),
+                    started_at,
+                    active_connections: active_connections.clone(),
+                    daemon_cancel: cancel_token.clone(),
+                    telegram_task: telegram_task.clone(),
+                    google_sync: google_sync.clone(),
+                    goal_worker: goal_worker_task.clone(),
+                },
+            ),
+        );
+        let reflection_use_cases: Arc<dyn crate::service::request_use_cases::ReflectionUseCases> =
+            Arc::new(
+                crate::service::request_use_cases::ProductionReflectionUseCases::new(
+                    request_executive.clone(),
+                    request_memory.episodic_memory.clone(),
+                    request_self_field.clone(),
+                    subsystems.reflector.clone(),
+                ),
+            );
+        let google_use_cases: Arc<dyn crate::service::request_use_cases::GoogleUseCases> = Arc::new(
+            crate::service::request_use_cases::ProductionGoogleUseCases::new(
+                google.clone(),
+                request_corpus.tools.clone(),
+                clock.clone(),
+            ),
+        );
+        let workflow_use_cases: Arc<dyn crate::service::request_use_cases::WorkflowUseCases> =
+            Arc::new(
+                crate::service::request_use_cases::ProductionWorkflowUseCases::new(
+                    crate::r#impl::orchestration::store::WorkflowStore::default_dir(),
+                ),
+            );
+        let turn_use_cases: Arc<dyn crate::service::request_use_cases::TurnUseCases> = Arc::new(
+            crate::service::request_use_cases::ProductionTurnUseCases::new(
+                turn_orchestrator.clone(),
+                request_executive.clone(),
+                request_cancel_token.clone(),
+                turn_orchestrator.session_service.clone(),
+            ),
+        );
+        let debug_use_cases: Arc<dyn crate::service::request_use_cases::DebugUseCases> = Arc::new(
+            crate::service::request_use_cases::ProductionDebugUseCases(request_debug.clone()),
+        );
+        let transport_ports = Arc::new(super::ports::TransportPorts {
+            tools: request_corpus.tools.clone(),
+            capabilities: Arc::new(super::tool_executor::CoreCapabilityService::new(
+                &subsystems,
+            )),
+            clock: clock.clone(),
+        });
         let handler_ports = Arc::new(super::ports::HandlerPorts::new(
             fact_use_cases,
             goal_use_cases,
             approval_use_cases,
             admin_use_cases,
             legacy_sessions,
-        ));
-        let mut handler = Self {
-            ports: handler_ports,
-            subsystems,
+            session_lifecycle,
+            health_use_cases,
+            reflection_use_cases,
+            google_use_cases,
+            workflow_use_cases,
+            turn_use_cases,
+            debug_use_cases,
             session_gateway,
-            bus,
-            llm,
-            model_router,
+            transport_ports,
+        ));
+        let handler = Self {
+            ports: handler_ports,
             notify_tx: None,
             active_connections,
-            started_at: clock_2.mono_now(),
-            daemon_cancel_token: Some(cancel_token),
-            turn_orchestrator,
-            telegram_task: None,
-            goal_worker_task,
-            google_sync,
-            google,
-            health: Arc::new(crate::r#impl::health::HealthRegistry::production_ready()),
         };
 
         // Register initial params
         {
-            let data_dir_clone = handler.subsystems.session.data_dir.clone();
+            let data_dir_clone = data_dir.clone();
             let started_at = clock_2.mono_now();
             param_registry
                 .declare(
@@ -1595,7 +1671,7 @@ impl RequestHandler {
                     json!(model)
                 })
                 .await;
-            let provider_name = handler.llm.name().to_string();
+            let provider_name = llm.name().to_string();
             param_registry
                 .declare(
                     "llm.provider",
@@ -1628,20 +1704,11 @@ impl RequestHandler {
         }
 
         // Fire OnSessionStart hook
-        {
-            let hr = handler.subsystems.corpus.hook_registry.lock().await;
-            let ctx = HookContext {
-                point: HookPoint::OnSessionStart,
-                session_id: session_id.clone(),
-                turn_count: 0,
-                tool_name: None,
-                tool_input: None,
-                tool_result: None,
-                message: None,
-                metadata: HashMap::new(),
-            };
-            hr.execute(&ctx).await;
-        }
+        handler
+            .ports
+            .session_lifecycle
+            .start(session_id.clone(), false)
+            .await;
 
         // -- Telegram channel initialization (M1) -------------------------------
         let telegram_cfg = &config.telegram;
@@ -1651,15 +1718,15 @@ impl RequestHandler {
                 telegram_cfg,
                 data_dir_for_telegram,
                 _turn_orch_for_telegram,
-                handler.subsystems.memory.objective_store.clone(),
-                handler.subsystems.memory.approval_repository.clone(),
+                request_memory.objective_store.clone(),
+                request_memory.approval_repository.clone(),
                 gmail_goal_drafts,
                 approved_apply,
-                handler.google.clone(),
+                google.clone(),
                 _cancel_for_telegram,
                 goal_worker_enabled.then_some(goal_progress_rx),
             );
-            handler.telegram_task = Some(Arc::new(jh));
+            *telegram_task.lock().await = Some(Arc::new(jh));
         } else {
             info!("Telegram channel disabled");
         }

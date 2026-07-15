@@ -97,8 +97,6 @@ impl crate::host::RuntimeHost for ContainerHost {
         let data_dir = core.daemon_config.data_dir.clone();
         let cancel_token = core.cancel_token.clone();
         let pulse_handle = core.pulse_handle;
-        let _clock = core.request_handler.subsystems.kernel.clock();
-
         // ── Build container run command ─────────────────────────────
         // Mount the data directory so the agent inside the container
         // can persist state to the host filesystem.

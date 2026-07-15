@@ -12,16 +12,11 @@ core_systems_field|crates/executive/src/core/config/mod.rs| if other.memory.data
 core_systems_field|crates/executive/src/core/config/mod.rs| self.memory.backend = other.memory.backend;
 core_systems_field|crates/executive/src/core/config/mod.rs| self.memory.data_dir = other.memory.data_dir;
 core_systems_field|crates/executive/src/core/runtime_core.rs| gbrain_memory: app_config.memory.gbrain.clone(),
-core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| handler.subsystems.memory.approval_repository.clone(),
-core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| handler.subsystems.memory.objective_store.clone(),
 core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| let exec_for_agents = subsystems.runtime.clone();
 core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| let mut runtime = subsystems.runtime.lock().await;
 core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| let runtime = subsystems.runtime.lock().await;
 core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| subsystems.memory.approval_repository.clone(),
 core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| subsystems.memory.memory_service.clone(),
-core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_health.rs| let iteration = self.subsystems.runtime.lock().await.iteration();
-core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_reflection.rs| let iteration = self.subsystems.runtime.lock().await.iteration();
-core_systems_field|crates/executive/src/impl/daemon/handler/turn_handler.rs| let rt = self.subsystems.runtime.lock().await;
 core_systems_field|crates/executive/src/impl/memory_projection.rs| match self.memory.record(event).await {
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.runtime.clone(),
@@ -42,9 +37,6 @@ executive_store_import|crates/executive/src/impl/runtime/provider_worker.rs|use 
 executive_store_import|crates/executive/src/service/exec_session.rs|use corpus::security::runner::ToolRunnerWithGuard;
 executive_store_import|crates/executive/src/service/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {
 executive_store_import|crates/executive/src/service/verification/command.rs|use corpus::tools::subagent::{CommandOutput, CommandRequest, CommandRunner};
-legacy_event|crates/executive/src/impl/daemon/handler/mod.rs| let envelope = Envelope::request(
-legacy_event|crates/executive/src/impl/daemon/handler/mod.rs|use fabric::envelope::*;
-legacy_event|crates/executive/src/impl/daemon/handler/mod.rs|use fabric::envelope::Payload;
 legacy_event|crates/executive/src/impl/engine/modules/body_module.rs| let resp_envelope = Envelope::response(&envelope, serialize_response(&response));
 legacy_event|crates/executive/src/impl/engine/modules/body_module.rs|use fabric::envelope::*;
 legacy_event|crates/executive/src/impl/engine/modules/body_module.rs|use fabric::envelope::Payload;

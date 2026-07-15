@@ -154,7 +154,7 @@ impl RuntimeHost for DaemonHost {
         let socket = self.socket;
         let pulse_handle = core.pulse_handle;
         let pid_file = self.pid_file;
-        let clock = request_handler.subsystems.kernel.clock();
+        let clock = request_handler.clock();
 
         // ── MCP embedded server ─────────────────────────────────────
         let mcp_socket = socket

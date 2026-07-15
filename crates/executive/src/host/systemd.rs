@@ -114,7 +114,6 @@ impl crate::host::RuntimeHost for SystemdHost {
         // ── Watchdog task ───────────────────────────────────────────
         if let Some(interval_usec) = watchdog_interval_usec() {
             let interval = Duration::from_micros(interval_usec);
-            let _clock = core.request_handler.subsystems.kernel.clock();
             tracing::info!(
                 interval_us = interval_usec,
                 "Systemd watchdog enabled, pinging every {} us",
@@ -144,8 +143,6 @@ impl crate::host::RuntimeHost for SystemdHost {
         let cancel_token = core.cancel_token;
         let socket = self.socket;
         let pulse_handle = core.pulse_handle;
-        let _clock = request_handler.subsystems.kernel.clock();
-
         // ── MCP embedded server ─────────────────────────────────────
         let mcp_socket = socket
             .parent()
