@@ -94,13 +94,44 @@ impl TurnPipeline {
                 },
             ),
         );
+        let corpus = &subsystems.corpus;
+        let security = &subsystems.security;
+        let session = &subsystems.session;
+        let capability_resources =
+            crate::r#impl::daemon::handler::tool_executor::CapabilityResources {
+                kernel: kernel.clone(),
+                tools: corpus.tools.clone(),
+                runner: security.tool_runner.clone(),
+                hooks: corpus.hook_registry.clone(),
+                storm: security.storm_breaker.clone(),
+                memory_queue: session.memory_queue.clone(),
+                approvals: security.session_approvals.clone(),
+                perf: subsystems.debug_perf.clone(),
+                self_field: subsystems.self_field.clone(),
+            };
         let runtime_ports = Arc::new(
             crate::service::turn_runtime_ports::TurnRuntimePorts::production(
-                subsystems.clone(),
-                model_router,
-                llm.clone(),
-                admission,
-                sessions.clone(),
+                crate::service::turn_runtime_ports::TurnRuntimeResources {
+                    hooks: corpus.hook_registry.clone(),
+                    pre_turn_scripts: corpus.hooks_config.pre_turn.clone(),
+                    storm: security.storm_breaker.clone(),
+                    model_router,
+                    default_llm: llm.clone(),
+                    self_field: subsystems.self_field.clone(),
+                    approval_rx: security.approval_rx.clone(),
+                    pending_approvals: security.pending_approvals.clone(),
+                    capabilities: capability_resources,
+                    admission,
+                    sessions: sessions.clone(),
+                    default_session_id: session.default_session_id.clone(),
+                    session_created_at: session.session_created_at.clone(),
+                    data_dir: session.data_dir.clone(),
+                    context_window: session.context_window,
+                    clock: clock.clone(),
+                    memory: memory.memory_service.clone(),
+                    executive: executive.clone(),
+                    performance: subsystems.debug_perf.clone(),
+                },
             ),
         );
         Self {

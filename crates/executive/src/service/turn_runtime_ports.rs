@@ -10,7 +10,6 @@ use fabric::{
 };
 use tokio::sync::{mpsc, Mutex};
 
-use crate::core::core_systems::CoreSystems;
 use crate::r#impl::daemon::handler::tool_executor::TurnToolExecutor;
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::service::governed_capability::{
@@ -103,77 +102,85 @@ pub struct TurnRuntimePorts {
     pub observability: Arc<dyn TurnObservabilityPort>,
 }
 
-impl TurnRuntimePorts {
-    pub fn production(
-        subsystems: Arc<CoreSystems>,
-        model_router: Arc<ModelRouter>,
-        default_llm: Arc<dyn LlmProvider>,
-        admission: Arc<dyn AdmissionController>,
-        sessions: Arc<
-            Mutex<
-                HashMap<String, Arc<Mutex<crate::r#impl::daemon::session_manager::SessionManager>>>,
+pub(crate) struct TurnRuntimeResources {
+    pub(crate) hooks: crate::core::corpus_group::HookRegistryHandle,
+    pub(crate) pre_turn_scripts: Vec<String>,
+    pub(crate) storm: Arc<Mutex<corpus::security::storm_breaker::StormBreaker>>,
+    pub(crate) model_router: Arc<ModelRouter>,
+    pub(crate) default_llm: Arc<dyn LlmProvider>,
+    pub(crate) self_field: Arc<Mutex<dasein::SelfField>>,
+    pub(crate) approval_rx:
+        Arc<Mutex<mpsc::Receiver<corpus::security::socket_approval::PendingApproval>>>,
+    pub(crate) pending_approvals: Arc<
+        Mutex<
+            HashMap<
+                String,
+                tokio::sync::oneshot::Sender<corpus::security::approval::ApprovalDecision>,
             >,
         >,
-    ) -> Self {
-        let hook_registry = subsystems.corpus.hook_registry.clone();
+    >,
+    pub(crate) capabilities: crate::r#impl::daemon::handler::tool_executor::CapabilityResources,
+    pub(crate) admission: Arc<dyn AdmissionController>,
+    pub(crate) sessions: Arc<
+        Mutex<HashMap<String, Arc<Mutex<crate::r#impl::daemon::session_manager::SessionManager>>>>,
+    >,
+    pub(crate) default_session_id: Arc<Mutex<String>>,
+    pub(crate) session_created_at: Arc<Mutex<HashMap<String, fabric::MonoTime>>>,
+    pub(crate) data_dir: std::path::PathBuf,
+    pub(crate) context_window: usize,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) memory: Arc<dyn mnemosyne::MemoryService>,
+    pub(crate) executive: Arc<Mutex<crate::core::orchestrator::AletheonExecutive>>,
+    pub(crate) performance: Arc<fabric::kernel::debug_bus::PerfCounter>,
+}
+
+impl TurnRuntimePorts {
+    pub(crate) fn production(resources: TurnRuntimeResources) -> Self {
+        let hook_registry = resources.hooks;
         let execute_hook: Arc<HookExecutionFn> = Arc::new(move |context| {
             let hook_registry = hook_registry.clone();
             Box::pin(async move { hook_registry.lock().await.execute(&context).await })
         });
         let hooks: Arc<dyn TurnHookPort> = Arc::new(ProductionTurnHooks {
             execute_hook,
-            pre_turn_scripts: subsystems.corpus.hooks_config.pre_turn.clone(),
+            pre_turn_scripts: resources.pre_turn_scripts,
         });
-        let memory = &subsystems.memory;
-        let session = &subsystems.session;
-        let capability_resources =
-            crate::r#impl::daemon::handler::tool_executor::CapabilityResources {
-                kernel: subsystems.kernel.clone(),
-                tools: subsystems.corpus.tools.clone(),
-                runner: subsystems.security.tool_runner.clone(),
-                hooks: subsystems.corpus.hook_registry.clone(),
-                storm: subsystems.security.storm_breaker.clone(),
-                memory_queue: subsystems.session.memory_queue.clone(),
-                approvals: subsystems.security.session_approvals.clone(),
-                perf: subsystems.debug_perf.clone(),
-                self_field: subsystems.self_field.clone(),
-            };
         Self {
             hooks: hooks.clone(),
             storm: Arc::new(ProductionStormState {
-                state: subsystems.security.storm_breaker.clone(),
+                state: resources.storm,
             }),
             models: Arc::new(ProductionModelSelection {
-                router: model_router,
-                default_llm: default_llm.clone(),
+                router: resources.model_router,
+                default_llm: resources.default_llm.clone(),
             }),
             self_policy: Arc::new(ProductionSelfPolicy {
-                field: subsystems.self_field.clone(),
+                field: resources.self_field,
             }),
             approvals: Arc::new(ProductionTurnApprovals {
-                receiver: subsystems.security.approval_rx.clone(),
-                pending: subsystems.security.pending_approvals.clone(),
+                receiver: resources.approval_rx,
+                pending: resources.pending_approvals,
             }),
             capabilities: Arc::new(ProductionGovernedCapabilities {
-                resources: capability_resources,
-                admission,
+                resources: resources.capabilities,
+                admission: resources.admission,
             }),
             sessions: Arc::new(ProductionTurnSessions {
-                registry: sessions,
-                default_id: session.default_session_id.clone(),
-                created_at: session.session_created_at.clone(),
-                data_dir: session.data_dir.clone(),
-                context_window: session.context_window,
-                clock: subsystems.kernel.clock(),
-                llm: default_llm,
-                memory_service: memory.memory_service.clone(),
+                registry: resources.sessions,
+                default_id: resources.default_session_id,
+                created_at: resources.session_created_at,
+                data_dir: resources.data_dir,
+                context_window: resources.context_window,
+                clock: resources.clock,
+                llm: resources.default_llm,
+                memory_service: resources.memory,
                 hooks,
             }),
             config: Arc::new(ProductionTurnConfig {
-                config_source: Arc::clone(&subsystems.runtime),
+                config_source: resources.executive,
             }),
             observability: Arc::new(ProductionTurnObservability {
-                performance: subsystems.debug_perf.clone(),
+                performance: resources.performance,
             }),
         }
     }
