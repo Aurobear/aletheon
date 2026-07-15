@@ -151,7 +151,11 @@ impl crate::host::RuntimeHost for SystemdHost {
             .parent()
             .unwrap_or(&PathBuf::from("/tmp/aletheon"))
             .join("aletheon-mcp.sock");
-        let mcp_server = McpEmbedded::new(request_handler.tools(), mcp_socket.clone());
+        let mcp_server = McpEmbedded::new(
+            request_handler.tools(),
+            request_handler.capability_service(),
+            mcp_socket.clone(),
+        );
         tokio::spawn(async move {
             if let Err(e) = mcp_server.serve().await {
                 tracing::error!("MCP embedded server error: {}", e);

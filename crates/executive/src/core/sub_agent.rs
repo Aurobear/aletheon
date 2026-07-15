@@ -78,6 +78,26 @@ pub trait SubAgentRuntime: Send + Sync {
                 evidence: vec![],
             })
     }
+
+    /// Execute within lifecycle authority allocated by the spawning Kernel.
+    /// Legacy runtimes ignore the context; capability-aware runtimes override
+    /// this method so every tool call is bound to the owning Process/Operation.
+    async fn run_in_context(
+        &self,
+        task: &str,
+        cancel: CancellationToken,
+        _context: SubAgentExecutionContext,
+    ) -> Result<String, String> {
+        self.run(task, cancel).await
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SubAgentExecutionContext {
+    pub process_id: ProcessId,
+    pub operation_id: fabric::OperationId,
+    pub session_id: String,
+    pub working_dir: std::path::PathBuf,
 }
 
 /// Owned, boxed future for spawn() compatibility.
@@ -310,9 +330,18 @@ impl SubAgentSpawner {
         if let Some(rt) = runtime {
             let task_clone = task.clone();
             let cancel = token.clone();
+            let execution_context = SubAgentExecutionContext {
+                process_id: process.id,
+                operation_id: operation.id,
+                session_id: parent_turn_id.clone(),
+                working_dir: std::env::current_dir().unwrap_or_default(),
+            };
             scope.spawn("sub-agent-execution", async move {
                 info!(task = %task_clone, "Sub-agent execution started");
-                match rt.run(&task_clone, cancel).await {
+                match rt
+                    .run_in_context(&task_clone, cancel, execution_context)
+                    .await
+                {
                     Ok(_output) => {
                         info!(output_len = _output.len(), "Sub-agent completed");
                         OperationExitReason::Completed
@@ -615,8 +644,17 @@ impl SubAgentSpawner {
         let token = scope.token();
         if let Some(runtime) = runtime {
             let task_clone = task.clone();
+            let execution_context = SubAgentExecutionContext {
+                process_id: process.id,
+                operation_id: operation.id,
+                session_id: parent_turn_id.clone(),
+                working_dir: std::env::current_dir().unwrap_or_default(),
+            };
             scope.spawn("sub-agent-restart", async move {
-                match runtime.run(&task_clone, token).await {
+                match runtime
+                    .run_in_context(&task_clone, token, execution_context)
+                    .await
+                {
                     Ok(_) => OperationExitReason::Completed,
                     Err(error) => OperationExitReason::Failed(error),
                 }

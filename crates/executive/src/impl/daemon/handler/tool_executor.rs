@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use tokio::sync::Mutex;
 use tracing::info;
@@ -29,11 +29,16 @@ use fabric::kernel::debug_bus::PerfCounter;
 use fabric::types::admission::{ExecutionPermit, UsageReport};
 use fabric::types::operation::{OperationId, ProcessId};
 use fabric::{
-    AuditEventId, CapabilityRequest, CapabilityResult, Context as AbiContext, Intent, IntentSource,
-    SelfFieldOps, Verdict,
+    AgentProfileId, AuditEventId, CapabilityCall, CapabilityRequest, CapabilityResult,
+    Context as AbiContext, ExitReason, Intent, IntentSource, NamespaceId, OperationKind,
+    OperationRequest, ProcessSignal, SelfFieldOps, SpawnSpec, Verdict,
 };
 
 use crate::core::core_systems::CoreSystems;
+use crate::service::{
+    CapabilityExecutionContext, CapabilityRuntimeFactory, CapabilityService,
+    RegistryAuthorityProvider,
+};
 
 /// Executes a single tool through the full guarded/hooked pipeline for one turn.
 ///
@@ -287,5 +292,151 @@ impl ToolExecutor for TurnToolExecutor {
         permit: &ExecutionPermit,
     ) -> CapabilityResult {
         self.execute(request, permit).await
+    }
+}
+
+/// Executive composition adapter for every non-turn capability caller.
+/// It deliberately retains only a weak subsystem reference so installing it in
+/// a ProviderWorkerRuntime owned by CoreSystems cannot create an Arc cycle.
+pub(crate) struct CoreCapabilityService {
+    subsystems: Weak<CoreSystems>,
+}
+
+impl CoreCapabilityService {
+    pub(crate) fn new(subsystems: &Arc<CoreSystems>) -> Self {
+        Self {
+            subsystems: Arc::downgrade(subsystems),
+        }
+    }
+
+    async fn invoke_existing(
+        subsystems: &Arc<CoreSystems>,
+        context: CapabilityExecutionContext,
+        call: CapabilityCall,
+    ) -> CapabilityResult {
+        let executor = Arc::new(TurnToolExecutor::new(
+            subsystems,
+            context.session_id.clone(),
+            context.turn_count,
+            context.working_dir.clone(),
+            context.operation_id,
+            context.process_id,
+        ));
+        let authority = Arc::new(RegistryAuthorityProvider::new(
+            corpus::tool_risk_levels(&subsystems.corpus.tools).await,
+            context.principal,
+            context.session_id,
+            context.working_dir,
+            context.sandbox,
+            context.cancel,
+        ));
+        CapabilityRuntimeFactory::build(subsystems.kernel.admission(), executor, authority)
+            .invoke(call)
+            .await
+    }
+
+    fn unavailable(call: &CapabilityCall, message: impl Into<String>) -> CapabilityResult {
+        CapabilityResult {
+            call_id: call.call_id.clone(),
+            output: message.into(),
+            is_error: true,
+            usage: UsageReport::default(),
+            audit_id: None,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl CapabilityService for CoreCapabilityService {
+    async fn invoke(
+        &self,
+        context: Option<CapabilityExecutionContext>,
+        mut call: CapabilityCall,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> CapabilityResult {
+        let Some(subsystems) = self.subsystems.upgrade() else {
+            return Self::unavailable(&call, "capability runtime is shutting down");
+        };
+        if let Some(mut context) = context {
+            context.cancel = cancel;
+            call.process_id = context.process_id;
+            call.operation_id = context.operation_id;
+            return Self::invoke_existing(&subsystems, context, call).await;
+        }
+
+        // External/provider callers without a parent lifecycle receive a
+        // bounded transient lifecycle owned and settled entirely here.
+        let kernel = &subsystems.kernel;
+        let process = match kernel
+            .spawn_process(SpawnSpec {
+                profile: AgentProfileId("capability-client".into()),
+                namespace: NamespaceId("external-capability".into()),
+                initial_operation: None,
+                ..SpawnSpec::default()
+            })
+            .await
+        {
+            Ok(process) => process,
+            Err(error) => return Self::unavailable(&call, format!("kernel spawn failed: {error}")),
+        };
+        if let Err(error) = kernel
+            .signal_process(process.id, ProcessSignal::Start)
+            .await
+        {
+            let _ = kernel
+                .terminate_process(process.id, ExitReason::Failed(error.to_string()))
+                .await;
+            return Self::unavailable(&call, format!("kernel start failed: {error}"));
+        }
+        let operation = match kernel
+            .submit_operation(OperationRequest {
+                owner: process.id,
+                parent: None,
+                kind: OperationKind::CapabilityCall,
+                deadline: None,
+            })
+            .await
+        {
+            Ok(operation) => operation,
+            Err(error) => {
+                let _ = kernel
+                    .terminate_process(process.id, ExitReason::Failed(error.to_string()))
+                    .await;
+                return Self::unavailable(&call, format!("operation submit failed: {error}"));
+            }
+        };
+        if let Err(error) = kernel.start_operation(operation.id).await {
+            let _ = kernel
+                .terminate_process(process.id, ExitReason::Failed(error.to_string()))
+                .await;
+            return Self::unavailable(&call, format!("operation start failed: {error}"));
+        }
+        call.process_id = process.id;
+        call.operation_id = operation.id;
+        let context = CapabilityExecutionContext {
+            process_id: process.id,
+            operation_id: operation.id,
+            principal: fabric::PrincipalId("external-capability".into()),
+            session_id: "external-capability".into(),
+            working_dir: std::env::current_dir().unwrap_or_default(),
+            sandbox: fabric::SandboxRequirement::NotRequired,
+            cancel,
+            turn_count: 0,
+        };
+        let result = Self::invoke_existing(&subsystems, context, call).await;
+        if result.is_error {
+            let _ = kernel
+                .fail_operation(operation.id, result.output.clone())
+                .await;
+        } else {
+            let _ = kernel.succeed_operation(operation.id).await;
+        }
+        let exit = if result.is_error {
+            ExitReason::Failed("capability failed".into())
+        } else {
+            ExitReason::Completed
+        };
+        let _ = kernel.terminate_process(process.id, exit).await;
+        result
     }
 }

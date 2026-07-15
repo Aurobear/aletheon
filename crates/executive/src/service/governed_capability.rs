@@ -16,6 +16,34 @@ use fabric::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// Trusted execution context attached by Executive, never by model input.
+#[derive(Clone)]
+pub struct CapabilityExecutionContext {
+    pub process_id: fabric::ProcessId,
+    pub operation_id: fabric::OperationId,
+    pub principal: PrincipalId,
+    pub session_id: String,
+    pub working_dir: PathBuf,
+    pub sandbox: SandboxRequirement,
+    pub cancel: CancellationToken,
+    pub turn_count: usize,
+}
+
+/// Canonical application capability entry point used outside the turn pipeline.
+///
+/// An existing lifecycle context is supplied by native sub-agents. Callers such
+/// as MCP and durable goal workers pass `None`; the Executive implementation
+/// creates and cleans up a transient Kernel Process/Operation around the call.
+#[async_trait]
+pub trait CapabilityService: Send + Sync {
+    async fn invoke(
+        &self,
+        context: Option<CapabilityExecutionContext>,
+        call: CapabilityCall,
+        cancel: CancellationToken,
+    ) -> CapabilityResult;
+}
+
 /// Trusted application result of authorizing a model-originated call.
 pub struct AuthorizedInvocation {
     pub authority: CapabilityAuthority,

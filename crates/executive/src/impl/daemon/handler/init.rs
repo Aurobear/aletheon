@@ -73,6 +73,7 @@ use crate::r#impl::external::{
 use crate::r#impl::goal::ObjectiveStore;
 use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
 use crate::r#impl::runtime::{register_pi_runtime, ProviderWorkerRuntime};
+use crate::service::CapabilityService;
 use aletheon_kernel::supervision::RestartPolicy;
 use corpus::hook::builtin::audit_hook;
 use corpus::security::storm_breaker::StormBreaker;
@@ -93,6 +94,7 @@ pub(crate) fn register_goal_runtimes(
     config: &cognit::config::GoalRuntimeConfig,
     providers: &ProviderRegistry,
     tools: Arc<Mutex<ToolRegistry>>,
+    capability: Arc<dyn CapabilityService>,
     clock: Arc<dyn Clock>,
 ) -> anyhow::Result<Vec<fabric::RuntimeId>> {
     if !config.enabled {
@@ -137,6 +139,7 @@ pub(crate) fn register_goal_runtimes(
             role,
             provider,
             tools.clone(),
+            capability.clone(),
             clock.clone(),
             route.max_steps,
             route.max_persisted_bytes,
@@ -432,6 +435,13 @@ impl RequestHandler {
     /// Get a reference to the tool registry (for MCP server).
     pub fn tools(&self) -> Arc<Mutex<ToolRegistry>> {
         self.subsystems.corpus.tools.clone()
+    }
+
+    /// Governed capability service for MCP and other external transports.
+    pub fn capability_service(&self) -> Arc<dyn CapabilityService> {
+        Arc::new(super::tool_executor::CoreCapabilityService::new(
+            &self.subsystems,
+        ))
     }
 
     /// Set the notification channel for out-of-band messages to the client.
@@ -1064,6 +1074,9 @@ impl RequestHandler {
         // Wire sub-agent execution runtime so spawned sub-agents run real
         // LLM + tool reasoning instead of the cancellation-wait stub.
         {
+            let capability: Arc<dyn CapabilityService> = Arc::new(
+                super::tool_executor::CoreCapabilityService::new(&subsystems),
+            );
             let allowed_tools = subsystems
                 .corpus
                 .tools
@@ -1078,6 +1091,7 @@ impl RequestHandler {
                 fabric::CognitiveRole::Worker,
                 llm.clone(),
                 subsystems.corpus.tools.clone(),
+                capability,
                 clock.clone(),
                 8,
                 16 * 1024,
@@ -1094,12 +1108,16 @@ impl RequestHandler {
         // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
         // Missing routes fail startup only when Goal execution is enabled.
         {
+            let capability: Arc<dyn CapabilityService> = Arc::new(
+                super::tool_executor::CoreCapabilityService::new(&subsystems),
+            );
             let mut runtime = subsystems.runtime.lock().await;
             let registered = register_goal_runtimes(
                 runtime.sub_agent_spawner_mut(),
                 &goal_runtime,
                 registry,
                 subsystems.corpus.tools.clone(),
+                capability,
                 clock.clone(),
             )?;
             if !registered.is_empty() {
@@ -1146,7 +1164,7 @@ impl RequestHandler {
                 .set_kernel(subsystems.kernel.clone());
         }
 
-        // Clone clock before the agent-tool closure consumes the original binding.
+        // Clone clock for later daemon services.
         let clock_2 = clock.clone();
 
         // AgentTool — delegates to SubAgentSpawner for process tracking,
@@ -1177,8 +1195,9 @@ impl RequestHandler {
                 let tools_for_agents = subsystems.corpus.tools.clone();
                 let exec_for_agents = subsystems.runtime.clone();
                 let main_slot = subsystems.main_agent_process_id.clone();
-
-                let clock_for_agents = clock.clone();
+                let capability_for_agents: Arc<dyn CapabilityService> = Arc::new(
+                    super::tool_executor::CoreCapabilityService::new(&subsystems),
+                );
                 let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
                     Arc::new(move |system_prompt, user_prompt, allowed_tools| {
                         let llm = llm_for_agents.clone();
@@ -1188,7 +1207,7 @@ impl RequestHandler {
                         let sp = system_prompt;
                         let up = user_prompt;
                         let at = allowed_tools;
-                        let clock = clock_for_agents.clone();
+                        let capability = capability_for_agents.clone();
                         Box::pin(async move {
                             // 1. Register tracked sub-agent with SubAgentSpawner.
                             let agent_id = {
@@ -1267,29 +1286,31 @@ impl RequestHandler {
                                                 content: response.content.clone(),
                                             });
                                             for (cid, name, input) in tool_calls {
-                                                let reg = tools.lock().await;
-                                                let result = if let Some(tool) = reg.get(&name) {
-                                                    let ctx = fabric::tool::ToolContext {
-                                                        working_dir: std::env::current_dir()
-                                                            .unwrap_or_default(),
-                                                        session_id: "sub-agent".into(),
-                                                        clock: clock.clone(),
-                                                    };
-                                                    tool.execute(input, &ctx).await
+                                                let known = tools.lock().await.get(&name).is_some();
+                                                let (content, is_error) = if known {
+                                                    let result = capability
+                                                        .invoke(
+                                                            None,
+                                                            fabric::CapabilityCall {
+                                                                operation_id:
+                                                                    fabric::OperationId::default(),
+                                                                process_id:
+                                                                    fabric::ProcessId::default(),
+                                                                name: name.clone(),
+                                                                input,
+                                                                call_id: cid.clone(),
+                                                                deadline: None,
+                                                            },
+                                                            CancellationToken::new(),
+                                                        )
+                                                        .await;
+                                                    (result.output, result.is_error)
                                                 } else {
-                                                    fabric::tool::ToolResult {
-                                                        content: format!("Unknown tool: {}", name),
-                                                        is_error: true,
-                                                        metadata:
-                                                            fabric::tool::ToolResultMeta::default(),
-                                                    }
+                                                    (format!("Unknown tool: {}", name), true)
                                                 };
-                                                drop(reg);
                                                 current_messages.push(
                                                     fabric::message::Message::tool_result(
-                                                        &cid,
-                                                        &result.content,
-                                                        result.is_error,
+                                                        &cid, &content, is_error,
                                                     ),
                                                 );
                                             }
@@ -1748,6 +1769,26 @@ mod goal_runtime_tests {
         AppConfig, GoalRuntimeConfig, ProviderConfig, RoleRuntimeConfig, Transport,
     };
 
+    struct NoopCapability;
+
+    #[async_trait::async_trait]
+    impl CapabilityService for NoopCapability {
+        async fn invoke(
+            &self,
+            _context: Option<crate::service::CapabilityExecutionContext>,
+            call: fabric::CapabilityCall,
+            _cancel: CancellationToken,
+        ) -> fabric::CapabilityResult {
+            fabric::CapabilityResult {
+                call_id: call.call_id,
+                output: "unused".into(),
+                is_error: true,
+                usage: fabric::UsageReport::default(),
+                audit_id: None,
+            }
+        }
+    }
+
     fn provider(name: &str) -> ProviderConfig {
         ProviderConfig {
             name: name.into(),
@@ -1781,6 +1822,7 @@ mod goal_runtime_tests {
             &config,
             &providers,
             Arc::new(Mutex::new(ToolRegistry::new())),
+            Arc::new(NoopCapability),
             Arc::new(SystemClock::new()),
         )?;
         Ok((spawner, ids))

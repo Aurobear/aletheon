@@ -15,6 +15,10 @@ pub mod verification;
 
 pub use daemon_turn::DaemonTurnOrchestrator;
 pub use exec_session::ExecSessionBuilder;
+pub use governed_capability::{
+    CapabilityExecutionContext, CapabilityRuntimeFactory, CapabilityService,
+    RegistryAuthorityProvider,
+};
 pub use post_turn::PostTurnPipeline;
 pub use pre_turn::PreTurnPipeline;
 pub use turn_pipeline::TurnPipeline;

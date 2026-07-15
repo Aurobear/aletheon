@@ -1,11 +1,13 @@
 //! Provider-backed sub-agent runtime with bounded structured attempt results.
 
-use crate::core::sub_agent::SubAgentRuntime;
+use crate::core::sub_agent::{SubAgentExecutionContext, SubAgentRuntime};
+use crate::service::{CapabilityExecutionContext, CapabilityService};
 use async_trait::async_trait;
 use corpus::tools::tools::ToolRegistry;
 use fabric::{
     AttemptEvidence, AttemptUsage, Clock, CognitiveRole, ContentBlock, FailureClass, LlmProvider,
-    Message, Role, RuntimeFailure, RuntimeId, RuntimeResult, ToolDefinition,
+    Message, PrincipalId, Role, RuntimeFailure, RuntimeId, RuntimeResult, SandboxRequirement,
+    ToolDefinition,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -18,6 +20,7 @@ pub struct ProviderWorkerRuntime {
     role: CognitiveRole,
     llm: Arc<dyn LlmProvider>,
     tools: Arc<Mutex<ToolRegistry>>,
+    capability: Arc<dyn CapabilityService>,
     clock: Arc<dyn Clock>,
     max_steps: usize,
     max_persisted_bytes: usize,
@@ -31,6 +34,7 @@ impl ProviderWorkerRuntime {
         role: CognitiveRole,
         llm: Arc<dyn LlmProvider>,
         tools: Arc<Mutex<ToolRegistry>>,
+        capability: Arc<dyn CapabilityService>,
         clock: Arc<dyn Clock>,
         max_steps: usize,
         max_persisted_bytes: usize,
@@ -41,6 +45,7 @@ impl ProviderWorkerRuntime {
             role,
             llm,
             tools,
+            capability,
             clock,
             max_steps: max_steps.max(1),
             max_persisted_bytes,
@@ -92,6 +97,24 @@ impl ProviderWorkerRuntime {
         }
         .bounded_for_persistence(self.max_persisted_bytes)
     }
+
+    async fn run_attempt_with_context(
+        &self,
+        task: &str,
+        cancel: CancellationToken,
+        execution: Option<SubAgentExecutionContext>,
+    ) -> Result<RuntimeResult, RuntimeFailure> {
+        self.run_loop(task, cancel, execution).await
+    }
+
+    async fn run_loop(
+        &self,
+        task: &str,
+        cancel: CancellationToken,
+        execution: Option<SubAgentExecutionContext>,
+    ) -> Result<RuntimeResult, RuntimeFailure> {
+        self.run_loop_inner(task, cancel, execution).await
+    }
 }
 
 #[async_trait]
@@ -107,6 +130,29 @@ impl SubAgentRuntime for ProviderWorkerRuntime {
         &self,
         task: &str,
         cancel: CancellationToken,
+    ) -> Result<RuntimeResult, RuntimeFailure> {
+        self.run_loop_inner(task, cancel, None).await
+    }
+
+    async fn run_in_context(
+        &self,
+        task: &str,
+        cancel: CancellationToken,
+        context: SubAgentExecutionContext,
+    ) -> Result<String, String> {
+        self.run_attempt_with_context(task, cancel, Some(context))
+            .await
+            .map(|result| result.output)
+            .map_err(|failure| failure.message)
+    }
+}
+
+impl ProviderWorkerRuntime {
+    async fn run_loop_inner(
+        &self,
+        task: &str,
+        cancel: CancellationToken,
+        execution: Option<SubAgentExecutionContext>,
     ) -> Result<RuntimeResult, RuntimeFailure> {
         let started_ms = self.clock.mono_now().0;
         let mut input_tokens = 0_u64;
@@ -192,40 +238,49 @@ impl SubAgentRuntime for ProviderWorkerRuntime {
                     ));
                 }
 
-                let result = if !self.allowed_tools.contains(&name) {
-                    fabric::tool::ToolResult {
-                        content: format!("Tool not allowed: {name}"),
-                        is_error: true,
-                        metadata: fabric::tool::ToolResultMeta::default(),
-                    }
+                let (content, is_error) = if !self.allowed_tools.contains(&name) {
+                    (format!("Tool not allowed: {name}"), true)
                 } else {
-                    let registry = self.tools.lock().await;
-                    match registry.get(&name) {
-                        Some(tool) => {
-                            let context = fabric::tool::ToolContext {
-                                working_dir: std::env::current_dir().unwrap_or_default(),
-                                session_id: format!("sub-agent:{}", self.runtime_id.0),
-                                clock: self.clock.clone(),
-                            };
-                            tool.execute(input, &context).await
-                        }
-                        None => fabric::tool::ToolResult {
-                            content: format!("Unknown tool: {name}"),
-                            is_error: true,
-                            metadata: fabric::tool::ToolResultMeta::default(),
-                        },
-                    }
+                    let capability_context =
+                        execution.clone().map(|context| CapabilityExecutionContext {
+                            process_id: context.process_id,
+                            operation_id: context.operation_id,
+                            principal: PrincipalId(format!("sub-agent:{}", self.runtime_id.0)),
+                            session_id: context.session_id,
+                            working_dir: context.working_dir,
+                            sandbox: SandboxRequirement::NotRequired,
+                            cancel: cancel.clone(),
+                            turn_count: 0,
+                        });
+                    let result = self
+                        .capability
+                        .invoke(
+                            capability_context,
+                            fabric::CapabilityCall {
+                                operation_id: execution
+                                    .as_ref()
+                                    .map(|context| context.operation_id)
+                                    .unwrap_or_default(),
+                                process_id: execution
+                                    .as_ref()
+                                    .map(|context| context.process_id)
+                                    .unwrap_or_default(),
+                                name: name.clone(),
+                                input,
+                                call_id: call_id.clone(),
+                                deadline: None,
+                            },
+                            cancel.clone(),
+                        )
+                        .await;
+                    (result.output, result.is_error)
                 };
                 evidence.push(AttemptEvidence {
                     kind: "tool_result".into(),
-                    summary: format!("{}: {}", name, if result.is_error { "error" } else { "ok" }),
-                    content: result.content.clone(),
+                    summary: format!("{}: {}", name, if is_error { "error" } else { "ok" }),
+                    content: content.clone(),
                 });
-                messages.push(Message::tool_result(
-                    &call_id,
-                    &result.content,
-                    result.is_error,
-                ));
+                messages.push(Message::tool_result(&call_id, &content, is_error));
             }
         }
 
@@ -248,6 +303,31 @@ mod tests {
     use fabric::{LlmResponse, LlmStream, Registry, StopReason, Usage};
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct TestCapabilityService(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl CapabilityService for TestCapabilityService {
+        async fn invoke(
+            &self,
+            _context: Option<CapabilityExecutionContext>,
+            call: fabric::CapabilityCall,
+            _cancel: CancellationToken,
+        ) -> fabric::CapabilityResult {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            fabric::CapabilityResult {
+                call_id: call.call_id,
+                output: "counted".into(),
+                is_error: false,
+                usage: fabric::UsageReport::default(),
+                audit_id: Some(fabric::AuditEventId::new()),
+            }
+        }
+    }
+
+    fn test_capability(counter: Arc<AtomicUsize>) -> Arc<dyn CapabilityService> {
+        Arc::new(TestCapabilityService(counter))
+    }
 
     struct ScriptedProvider {
         responses: Mutex<VecDeque<anyhow::Result<LlmResponse>>>,
@@ -353,7 +433,9 @@ mod tests {
             advance_clock: None,
         });
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(CountingTool(counter))).unwrap();
+        registry
+            .register(Arc::new(CountingTool(counter.clone())))
+            .unwrap();
         let clock = Arc::new(TestClock::new(0, 0));
         (
             ProviderWorkerRuntime::new(
@@ -361,6 +443,7 @@ mod tests {
                 CognitiveRole::Worker,
                 provider.clone(),
                 Arc::new(Mutex::new(registry)),
+                test_capability(counter),
                 clock,
                 max_steps,
                 1024,
@@ -415,6 +498,7 @@ mod tests {
             CognitiveRole::Worker,
             provider,
             Arc::new(Mutex::new(ToolRegistry::new())),
+            test_capability(Arc::new(AtomicUsize::new(0))),
             clock,
             1,
             1024,
@@ -449,6 +533,7 @@ mod tests {
             CognitiveRole::Worker,
             provider,
             Arc::new(Mutex::new(ToolRegistry::new())),
+            test_capability(Arc::new(AtomicUsize::new(0))),
             Arc::new(TestClock::default()),
             1,
             4,

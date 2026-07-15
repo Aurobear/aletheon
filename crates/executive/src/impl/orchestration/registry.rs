@@ -93,6 +93,7 @@ impl AgentRegistry {
         agents_dir: &Path,
         all_tools: &[Box<dyn Tool>],
         llm_factory: &dyn Fn() -> anyhow::Result<Box<dyn LlmProvider>>,
+        capability: Arc<dyn crate::service::CapabilityService>,
     ) -> Self {
         let registry = Self::new();
 
@@ -119,7 +120,7 @@ impl AgentRegistry {
                         continue;
                     }
                 };
-                match ConfigAgent::load(&path, all_tools, llm) {
+                match ConfigAgent::load(&path, all_tools, llm, capability.clone()) {
                     Ok(agent) => {
                         let id = agent.id().to_string();
                         info!(agent_id = %id, path = %path.display(), "Loaded agent from config");
