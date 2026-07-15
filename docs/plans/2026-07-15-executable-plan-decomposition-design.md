@@ -128,7 +128,7 @@ V02 installed-daemon real scenario and migration gate
 
 | ID | Plan artifact | Deliverable | Prerequisites |
 |---|---|---|---|
-| G01 | `2026-07-15-g01-subagent-production-baseline.md` | Current vertical-slice and known-gap tests | S02 |
+| G01 | `2026-07-16-g01-subagent-production-baseline.md` | Current vertical-slice and known-gap tests | S02 |
 | G02 | `2026-07-15-g02-agent-control-contracts.md` | Shared bounded Agent control types and port | G01 |
 | G03 | `2026-07-15-g03-agent-control-service.md` | Transactional lifecycle and durable run repository | G02 |
 | G04 | `2026-07-15-g04-native-cognit-runtime.md` | Child Agents use Cognit Harness; inline loop removed | G03, E03 |

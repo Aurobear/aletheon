@@ -67,7 +67,7 @@ The former seven-row decomposition combined mailbox, budgets, memory promotion a
 
 | Original phase | Source anchor | Executable owner | Status |
 |---|---|---|---|
-| A1 production baseline | `subagent-unified-harness-plan.md:402-426` | G01 | mapped |
+| A1 production baseline | `subagent-unified-harness-plan.md:402-426` | G01 | done |
 | A2 shared control contracts | `subagent-unified-harness-plan.md:428-451` | G02 | mapped |
 | A3 transactional control service | `subagent-unified-harness-plan.md:453-506` | G03 | mapped |
 | A4 Native Cognit runtime | `subagent-unified-harness-plan.md:508-549` | G04 | mapped |
