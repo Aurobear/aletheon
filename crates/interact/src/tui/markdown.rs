@@ -263,43 +263,79 @@ fn render_markdown_with_theme(
                             }
                         }
                         let vbar = caps.vline();
-                        for (ridx, row) in table_rows.iter().enumerate() {
-                            let mut spans: Vec<Span<'static>> = Vec::new();
-                            spans
-                                .push(Span::styled(format!("{} ", vbar), Style::default().fg(dim)));
-                            for (c, &col_width) in col_w.iter().enumerate() {
-                                let cell = row.get(c);
-                                let w: usize = cell
-                                    .map(|cs| cs.iter().map(|s| s.width()).sum())
-                                    .unwrap_or(0);
-                                if let Some(cell) = cell {
+                        let table_width = 1 + col_w.iter().map(|width| width + 3).sum::<usize>();
+                        if table_width > wrap_width {
+                            let headers = table_rows.first().cloned().unwrap_or_default();
+                            for row in table_rows.iter().skip(table_header_count) {
+                                for (column, cell) in row.iter().enumerate() {
+                                    let label = headers
+                                        .get(column)
+                                        .map(|spans| {
+                                            spans
+                                                .iter()
+                                                .map(|span| span.content.as_ref())
+                                                .collect::<String>()
+                                        })
+                                        .filter(|label| !label.trim().is_empty())
+                                        .unwrap_or_else(|| format!("Column {}", column + 1));
+                                    let mut spans = vec![
+                                        Span::styled(
+                                            if column == 0 { "• " } else { "  " }.to_string(),
+                                            Style::default().fg(accent),
+                                        ),
+                                        Span::styled(
+                                            format!("{}: ", label.trim()),
+                                            Style::default().fg(dim).add_modifier(Modifier::BOLD),
+                                        ),
+                                    ];
                                     spans.extend(cell.clone());
+                                    lines.push(Line::from(spans));
                                 }
-                                if w < col_width {
-                                    spans.push(Span::raw(" ".repeat(col_width - w)));
-                                }
+                                lines.push(Line::from(""));
+                            }
+                        } else {
+                            for (ridx, row) in table_rows.iter().enumerate() {
+                                let mut spans: Vec<Span<'static>> = Vec::new();
                                 spans.push(Span::styled(
-                                    format!(" {} ", vbar),
+                                    format!("{} ", vbar),
                                     Style::default().fg(dim),
                                 ));
-                            }
-                            lines.push(Line::from(spans));
-                            // Emit the header/body separator right after the
-                            // last header row.
-                            if ridx + 1 == table_header_count {
-                                let mut sep: Vec<Span<'static>> =
-                                    vec![Span::styled(vbar.to_string(), Style::default().fg(dim))];
-                                for &col_width in &col_w {
-                                    sep.push(Span::styled(
-                                        "─".repeat(col_width + 2),
-                                        Style::default().fg(dim),
-                                    ));
-                                    sep.push(Span::styled(
-                                        vbar.to_string(),
+                                for (c, &col_width) in col_w.iter().enumerate() {
+                                    let cell = row.get(c);
+                                    let w: usize = cell
+                                        .map(|cs| cs.iter().map(|s| s.width()).sum())
+                                        .unwrap_or(0);
+                                    if let Some(cell) = cell {
+                                        spans.extend(cell.clone());
+                                    }
+                                    if w < col_width {
+                                        spans.push(Span::raw(" ".repeat(col_width - w)));
+                                    }
+                                    spans.push(Span::styled(
+                                        format!(" {} ", vbar),
                                         Style::default().fg(dim),
                                     ));
                                 }
-                                lines.push(Line::from(sep));
+                                lines.push(Line::from(spans));
+                                // Emit the header/body separator right after the
+                                // last header row.
+                                if ridx + 1 == table_header_count {
+                                    let mut sep: Vec<Span<'static>> = vec![Span::styled(
+                                        vbar.to_string(),
+                                        Style::default().fg(dim),
+                                    )];
+                                    for &col_width in &col_w {
+                                        sep.push(Span::styled(
+                                            "─".repeat(col_width + 2),
+                                            Style::default().fg(dim),
+                                        ));
+                                        sep.push(Span::styled(
+                                            vbar.to_string(),
+                                            Style::default().fg(dim),
+                                        ));
+                                    }
+                                    lines.push(Line::from(sep));
+                                }
                             }
                         }
                         table_rows.clear();
@@ -490,6 +526,28 @@ mod tests {
             "raw markdown leaked: {:?}",
             tbl
         );
+    }
+
+    #[test]
+    fn test_wide_table_falls_back_to_stacked_rows() {
+        let caps = test_caps();
+        let input = "| Sender | Subject | Summary |\n|---|---|---|\n| Anthropic | Your account has been suspended | A very long explanation that cannot fit in a narrow terminal |";
+        let lines = render_markdown(input, 40, &caps);
+        let text = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert!(text.iter().any(|line| line.contains("Sender: Anthropic")));
+        assert!(text
+            .iter()
+            .any(|line| line.contains("Subject: Your account")));
+        assert!(!text.iter().any(|line| line.contains('│')));
     }
 
     #[test]
