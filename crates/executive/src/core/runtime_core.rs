@@ -72,8 +72,18 @@ impl RuntimeCore {
             api_url: default_provider_config.base_url.clone(),
             model: default_model.clone(),
             working_dir: std::env::var("AGENT_WORKING_DIR").unwrap_or_else(|_| "/tmp".to_string()),
-            data_dir: std::env::var("AGENT_DATA_DIR")
-                .unwrap_or_else(|_| fabric::paths::xdg_data_dir().to_string_lossy().to_string()),
+            data_dir: std::env::var("AGENT_DATA_DIR").unwrap_or_else(|_| {
+                if app_config.deployment.mode == cognit::config::DeploymentMode::Production {
+                    app_config
+                        .deployment
+                        .paths
+                        .state
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    fabric::paths::xdg_data_dir().to_string_lossy().to_string()
+                }
+            }),
             system_prompt: std::env::var("AGENT_SYSTEM_PROMPT")
                 .unwrap_or_else(|_| app_config.agent.system_prompt.clone()),
             sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
@@ -117,6 +127,7 @@ impl RuntimeCore {
             },
             telegram: app_config.telegram.clone(),
             gbrain_memory: app_config.memory.gbrain.clone(),
+            deployment: app_config.deployment.clone(),
         };
 
         // ── Event bus ───────────────────────────────────────────────

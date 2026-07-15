@@ -99,6 +99,7 @@ pub struct GmailGoalEventIngress {
     artifact_root: PathBuf,
     policies: HashMap<ExternalIdentityId, GmailSenderPolicy>,
     review_ttl_ms: i64,
+    storage_quota: Option<crate::r#impl::storage_quota::StorageQuota>,
 }
 
 impl GmailGoalEventIngress {
@@ -123,7 +124,13 @@ impl GmailGoalEventIngress {
             artifact_root: artifact_root.to_path_buf(),
             policies: by_account,
             review_ttl_ms: REVIEW_TTL_MS,
+            storage_quota: None,
         })
+    }
+
+    pub fn with_storage_quota(mut self, quota: crate::r#impl::storage_quota::StorageQuota) -> Self {
+        self.storage_quota = Some(quota);
+        self
     }
 
     pub async fn ingest(
@@ -188,6 +195,10 @@ impl GmailGoalEventIngress {
             raw.message_id,
         );
         let artifacts = ArtifactStore::open(&self.objective_db_path, &self.artifact_root)
+            .map(|store| match &self.storage_quota {
+                Some(quota) => store.with_quota(quota.clone()),
+                None => store,
+            })
             .map_err(|_| "gmail_ingress_artifact_store_unavailable".to_owned())?;
         let ingested = GmailMessageIngester::new(GmailIngestConfig::default())
             .map_err(|_| "gmail_ingress_policy_invalid".to_owned())?

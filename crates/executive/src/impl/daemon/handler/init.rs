@@ -155,6 +155,95 @@ pub(crate) fn register_goal_runtimes(
     Ok(registered)
 }
 
+fn deployment_storage_quota(
+    deployment: &cognit::config::DeploymentConfig,
+) -> anyhow::Result<crate::r#impl::storage_quota::StorageQuota> {
+    use crate::r#impl::storage_quota::{StorageClass, StorageLimit, StorageQuota, StorageRoot};
+
+    let quotas = &deployment.quotas;
+    let paths = &deployment.paths;
+    let roots = HashMap::from([
+        (
+            StorageClass::Total,
+            StorageRoot {
+                path: paths.state_root.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.total_data_soft_bytes,
+                    hard_bytes: quotas.total_data_bytes,
+                    hard_items: quotas.total_data_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Artifacts,
+            StorageRoot {
+                path: paths.artifacts.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.artifacts_soft_bytes,
+                    hard_bytes: quotas.artifacts_bytes,
+                    hard_items: quotas.artifacts_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Worktrees,
+            StorageRoot {
+                path: paths.worktrees.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.worktrees_soft_bytes,
+                    hard_bytes: quotas.worktrees_bytes,
+                    hard_items: quotas.worktrees_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Audit,
+            StorageRoot {
+                path: paths.audit.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.audit_soft_bytes,
+                    hard_bytes: quotas.audit_bytes,
+                    hard_items: quotas.audit_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Sessions,
+            StorageRoot {
+                path: paths.sessions.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.sessions_soft_bytes,
+                    hard_bytes: quotas.sessions_bytes,
+                    hard_items: quotas.sessions_items,
+                },
+            },
+        ),
+        (
+            StorageClass::Google,
+            StorageRoot {
+                path: paths.state.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.google_soft_bytes,
+                    hard_bytes: quotas.google_bytes,
+                    hard_items: quotas.google_items,
+                },
+            },
+        ),
+        (
+            StorageClass::GbrainSpool,
+            StorageRoot {
+                path: paths.mnemosyne.clone(),
+                limit: StorageLimit {
+                    soft_bytes: quotas.gbrain_spool_soft_bytes,
+                    hard_bytes: quotas.gbrain_spool_bytes,
+                    hard_items: quotas.gbrain_spool_items,
+                },
+            },
+        ),
+    ]);
+    StorageQuota::new(roots).map_err(Into::into)
+}
+
 type ConfiguredGoogleReadTools = (
     Arc<GoogleIntegration>,
     crate::r#impl::google::GoogleSyncHandle,
@@ -167,6 +256,8 @@ fn register_configured_google_read_tools(
     objective_db_path: &std::path::Path,
     clock: Arc<dyn Clock>,
     cancel: &CancellationToken,
+    artifact_root: &std::path::Path,
+    storage_quota: Option<crate::r#impl::storage_quota::StorageQuota>,
 ) -> anyhow::Result<Option<ConfiguredGoogleReadTools>> {
     let client_id = match std::env::var("ALETHEON_GOOGLE_CLIENT_ID") {
         Ok(value) if !value.trim().is_empty() => value,
@@ -234,16 +325,12 @@ fn register_configured_google_read_tools(
                 .collect::<std::collections::HashMap<_, _>>();
             let policies = load_gmail_ingress_policies(std::path::Path::new(&path), &owners)
                 .context("loading Gmail ingress policies")?;
-            let artifact_root = objective_db_path
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .join("external-artifacts");
-            Some(Arc::new(GmailGoalEventIngress::new(
-                adapter,
-                objective_db_path,
-                &artifact_root,
-                policies,
-            )?))
+            let ingress =
+                GmailGoalEventIngress::new(adapter, objective_db_path, artifact_root, policies)?;
+            Some(Arc::new(match storage_quota.clone() {
+                Some(quota) => ingress.with_storage_quota(quota),
+                None => ingress,
+            }))
         }
         _ => None,
     };
@@ -421,12 +508,28 @@ impl RequestHandler {
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".aletheon");
         std::fs::create_dir_all(&aletheon_dir)?;
+        let production = config.deployment.mode == cognit::config::DeploymentMode::Production;
+        let fact_root = if production {
+            config.deployment.paths.mnemosyne.clone()
+        } else {
+            aletheon_dir.clone()
+        };
+        std::fs::create_dir_all(&fact_root)?;
         let fact_store =
-            FactStore::open(&aletheon_dir.join("fact_store.db")).context("opening fact store")?;
+            FactStore::open(&fact_root.join("fact_store.db")).context("opening fact store")?;
         let fact_store = Arc::new(Mutex::new(fact_store));
 
         // ObjectiveStore
-        let objective_db_path = aletheon_dir.join("objectives.db");
+        let objective_root = if production {
+            config.deployment.paths.goals.clone()
+        } else {
+            aletheon_dir.clone()
+        };
+        std::fs::create_dir_all(&objective_root)?;
+        let objective_db_path = objective_root.join("objectives.db");
+        let storage_quota = production
+            .then(|| deployment_storage_quota(&config.deployment))
+            .transpose()?;
         let objective_store =
             ObjectiveStore::open(&objective_db_path).context("opening objective store")?;
         let objective_store = Arc::new(Mutex::new(objective_store));
@@ -589,12 +692,19 @@ impl RequestHandler {
             fact_store: Some(fact_store.clone()),
             clock: clock.clone(),
         }));
+        let external_artifact_root = if production {
+            config.deployment.paths.artifacts.clone()
+        } else {
+            data_dir.join("external-artifacts")
+        };
         let (google, mut google_sync, google_sync_store, gmail_ingress) =
             match register_configured_google_read_tools(
                 &mut tools,
                 &objective_db_path,
                 clock.clone(),
                 &cancel_token,
+                &external_artifact_root,
+                storage_quota.clone(),
             ) {
                 Ok(Some((integration, sync, store, gmail_ingress))) => {
                     (Some(integration), Some(sync), Some(store), gmail_ingress)
@@ -610,7 +720,11 @@ impl RequestHandler {
                 ObjectiveStore::open(&objective_db_path)
                     .context("opening Google event Goal store")?,
             ));
-            let goals = Arc::new(crate::r#impl::goal::GoalCoordinator::new(goal_store));
+            let mut goals = crate::r#impl::goal::GoalCoordinator::new(goal_store);
+            if let Some(quota) = storage_quota.clone() {
+                goals = goals.with_storage_quota(quota, 16 * 1024 * 1024);
+            }
+            let goals = Arc::new(goals);
             let notifications = Arc::new(
                 crate::r#impl::google::DurableGoogleNotificationSink::open(
                     &data_dir.join("channels.db"),
