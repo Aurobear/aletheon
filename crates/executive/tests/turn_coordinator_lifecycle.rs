@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use aletheon_kernel::service::ServicePorts;
+use async_trait::async_trait;
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
+use executive::service::harness_factory::CognitiveSessionFactory;
 use executive::service::turn_coordinator::{TurnCoordinator, TurnExecution};
 use executive::service::turn_policy::*;
+use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
     ItemPayload, OperationState, SessionAppendStore, SessionId, TurnMetrics, TurnRequest,
     TurnResult, TurnStop,
@@ -119,4 +122,97 @@ async fn failure_is_terminal_and_remains_replayable() {
     assert_eq!(items.len(), 2);
     assert!(matches!(items[0].payload, ItemPayload::UserMessage { .. }));
     assert!(matches!(items[1].payload, ItemPayload::SystemNotice { .. }));
+}
+
+struct SeedCapturingFactory(Arc<tokio::sync::Mutex<Vec<usize>>>);
+
+#[async_trait]
+impl CognitiveSessionFactory for SeedCapturingFactory {
+    async fn create(
+        &self,
+        _session: &fabric::SessionRecord,
+        _policy: &TurnPolicy,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        Ok(Box::new(SeedCapturingSession(self.0.clone())))
+    }
+}
+
+struct SeedCapturingSession(Arc<tokio::sync::Mutex<Vec<usize>>>);
+
+#[async_trait]
+impl cognit::harness::CognitiveSession for SeedCapturingSession {
+    async fn run_turn(
+        &mut self,
+        request: TurnRequest,
+        services: &dyn fabric::TurnServices,
+        _events: &dyn fabric::TurnEventSink,
+    ) -> anyhow::Result<TurnResult> {
+        self.0
+            .lock()
+            .await
+            .push(services.seed_messages(&request).len());
+        Ok(TurnResult {
+            output: format!("answer: {}", request.input),
+            stop: TurnStop::Completed,
+            metrics: TurnMetrics {
+                completed_normally: true,
+                ..Default::default()
+            },
+        })
+    }
+}
+
+struct EmptyServices;
+
+#[async_trait]
+impl fabric::TurnServices for EmptyServices {
+    async fn recall(&self, _request: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+        Ok(Default::default())
+    }
+    async fn dasein_view(&self, _process: fabric::ProcessId) -> anyhow::Result<fabric::DaseinView> {
+        Ok(Default::default())
+    }
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+        Ok(Default::default())
+    }
+    async fn invoke(&self, call: fabric::CapabilityCall) -> fabric::CapabilityResult {
+        fabric::CapabilityResult {
+            call_id: call.call_id,
+            output: "unused".into(),
+            is_error: true,
+            usage: Default::default(),
+            audit_id: None,
+        }
+    }
+}
+
+#[tokio::test]
+async fn daemon_then_exec_restart_projects_prior_canonical_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("sessions.db");
+    let captures = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    for policy in [TurnPolicy::daemon(), TurnPolicy::exec()] {
+        let ports = Arc::new(ServicePorts::new());
+        let store: Arc<dyn SessionAppendStore> =
+            Arc::new(CanonicalSessionStore::open(&db).unwrap());
+        let coordinator = Arc::new(TurnCoordinator::new(ports.as_ref(), store));
+        TurnService::new(
+            Arc::new(EmptyServices),
+            PreTurnPipeline,
+            PostTurnPipeline,
+            ports,
+        )
+        .with_coordinator(coordinator)
+        .with_policy(policy)
+        .with_session_factory(Arc::new(SeedCapturingFactory(captures.clone())))
+        .submit(request("restart"), &fabric::NoopTurnEventSink)
+        .await
+        .unwrap();
+    }
+    let captures = captures.lock().await.clone();
+    assert_eq!(captures[0], 0);
+    assert_eq!(
+        captures[1], 2,
+        "second mode must receive prior user+assistant context"
+    );
 }
