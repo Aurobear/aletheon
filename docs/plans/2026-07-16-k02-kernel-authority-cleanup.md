@@ -149,10 +149,12 @@
 - Modify: `docs/plans/2026-07-15-executable-plan-decomposition-design.md`
 - Modify: `docs/plans/2026-07-16-original-plan-coverage-matrix.md`
 
-- [ ] Prove `rg -n 'ServicePorts|ProcessTable|OperationTable|InMemorySpaceManager|executive::.*kernel' crates/executive/src crates/bin/src` has no production lifecycle authority hits.
-- [ ] Prove Kernel has no Agora/domain dependency and only Executive composes `DomainPorts` with `KernelRuntime`.
-- [ ] Run format, clippy, focused tests, `cargo test --workspace`, and all architecture checks.
-- [ ] Run the real lifecycle scenario suite in addition to focused unit/integration tests.
-- [ ] Mark K02 done only when every direct compatibility surface and Executive-local kernel file is deleted, identity/kind mappings are canonical, the capability path and clock boundaries are singular, and terminal resource cleanup is deterministic.
+- [x] Prove `rg -n 'ServicePorts|ProcessTable|OperationTable|InMemorySpaceManager|executive::.*kernel' crates/executive/src crates/bin/src` has no production lifecycle authority hits.
+- [x] Prove Kernel has no Agora/domain dependency and only Executive composes `DomainPorts` with `KernelRuntime`.
+- [x] Run format, clippy, focused tests, `cargo test --workspace`, and all architecture checks.
+- [x] Run the real lifecycle scenario suite in addition to focused unit/integration tests.
+- [x] Mark K02 done only when every direct compatibility surface and Executive-local kernel file is deleted, identity/kind mappings are canonical, the capability path and clock boundaries are singular, and terminal resource cleanup is deterministic.
+
+**Completion evidence (2026-07-16):** lifecycle tables and the concrete space manager are crate-private at `crates/kernel/src/process/mod.rs:4-6`, `crates/kernel/src/operation/mod.rs:3-6`, and `crates/kernel/src/space/mod.rs:3-4`; Executive composes the opaque runtime and domain ports separately at `crates/executive/src/core/core_systems.rs:31-36`; permanent deletion, composition, clock, and raw-capability gates live at `scripts/architecture-check.sh:30-124`. `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `scripts/architecture-check.sh`, the four-scenario `kernel_lifecycle_scenarios` suite, and focused terminal-cleanup/budget/identity/integrity suites all pass.
 
 **Deletion gate:** K02 is not complete while `ServicePorts`, a public lifecycle table mutation API, `executive/src/impl/kernel/`, caller-side restart decision replay, principal-only monetary accounting, Kernel-owned Agora wiring, ad-hoc lifecycle identity/kind conversion, a second production capability path, or domain-owned concrete clock construction remains.

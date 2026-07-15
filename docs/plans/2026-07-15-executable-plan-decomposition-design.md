@@ -31,6 +31,12 @@ The first plans must address verified current boundaries:
 - Agora claims do not validate ownership on claim/release: `crates/agora/src/workspace/mod.rs:227-233`.
 - Local SQLite is the default memory authority and GBrain is supplemental/disabled: `config/default.toml:25-40`.
 
+### 2.1 Implemented boundary update
+
+- K02 is complete: `KernelRuntime` is the sole cross-table lifecycle handle (`crates/kernel/src/runtime.rs:24-47`), lifecycle tables are crate-private (`crates/kernel/src/process/mod.rs:4-6`, `crates/kernel/src/operation/mod.rs:3-6`), and Executive alone pairs it with `DomainPorts` (`crates/executive/src/core/core_systems.rs:31-36`).
+- The invariant is permanent rather than documentary: `scripts/architecture-check.sh:30-124` rejects raw production tool execution, domain concrete clocks, lifecycle table escape hatches, the deleted Executive-local kernel, Kernel domain dependencies, and non-Executive `DomainPorts` composition.
+- Deterministic success, failure, cancellation, reconstruction, supervision, hierarchy, and terminal cleanup are covered by `crates/executive/tests/kernel_lifecycle_scenarios.rs:145-260`, `crates/kernel/tests/terminal_cleanup.rs`, and `crates/kernel/tests/hierarchical_budget.rs`; the complete workspace suite passes.
+
 ## 3. Decomposition rules
 
 Every generated implementation plan must satisfy all of these rules:
@@ -164,7 +170,7 @@ V02 installed-daemon real scenario and migration gate
 | ID | Plan artifact | Deliverable | Prerequisites |
 |---|---|---|---|
 | K01 | `2026-07-16-k01-kernel-runtime-contracts.md` | Opaque lifecycle ports and exact transition validation | S02 |
-| K02 | `2026-07-15-k02-kernel-authority-cleanup.md` | Hierarchical budgets, deterministic cleanup and removal of Executive-local kernel | K01 |
+| K02 | `2026-07-16-k02-kernel-authority-cleanup.md` | **Done:** hierarchical budgets, deterministic cleanup and removal of Executive-local kernel | K01 |
 | X01 | `2026-07-15-x01-executive-use-case-ports.md` | Narrow handler ports and extracted context/session/projection services | S02 |
 | X02 | `2026-07-15-x02-private-composition-root.md` | Private composition root and split lifecycle bootstrap | X01, K01 |
 | F01 | `2026-07-15-f01-domain-facade-authority.md` | Metacog, Cognit and remaining Corpus production paths use authoritative facades | X02, E03 |
