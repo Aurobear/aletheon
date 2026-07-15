@@ -387,4 +387,10 @@ impl McpConnectionManager {
                 .all(|name| client.tools.iter().any(|tool| tool.name == *name))
         })
     }
+
+    /// Snapshot advertised tool descriptors without exposing the live client.
+    pub fn server_tools(&self, server_name: &str) -> Option<Vec<McpTool>> {
+        let client = self.clients.get(server_name)?.try_lock().ok()?;
+        Some(client.tools.clone())
+    }
 }

@@ -8,6 +8,7 @@ pub mod channel;
 pub mod daemon;
 pub mod engine;
 pub mod external;
+pub mod gbrain;
 pub mod goal;
 pub mod google;
 pub mod hook_lifecycle;
