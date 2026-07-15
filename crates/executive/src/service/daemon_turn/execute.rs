@@ -15,8 +15,14 @@ impl DaemonTurnOrchestrator {
     ///
     /// Returns the JSON-RPC response value. This replaces the body of
     /// `RequestHandler::handle_chat`.
-    pub async fn execute_turn(&self, id: serde_json::Value, message: &str) -> serde_json::Value {
-        self.execute_turn_for_principal(id, message, None).await
+    pub async fn execute_turn(
+        &self,
+        id: serde_json::Value,
+        message: &str,
+        working_dir: std::path::PathBuf,
+    ) -> serde_json::Value {
+        self.execute_turn_for_principal(id, message, None, working_dir)
+            .await
     }
 
     /// Execute a channel turn under an identity established by the channel
@@ -27,8 +33,13 @@ impl DaemonTurnOrchestrator {
         message: &str,
         principal: PrincipalId,
     ) -> serde_json::Value {
-        self.execute_turn_for_principal(id, message, Some(principal))
-            .await
+        self.execute_turn_for_principal(
+            id,
+            message,
+            Some(principal),
+            std::path::PathBuf::from("/var/lib/aletheon"),
+        )
+        .await
     }
 
     async fn execute_turn_for_principal(
@@ -36,6 +47,7 @@ impl DaemonTurnOrchestrator {
         id: serde_json::Value,
         message: &str,
         principal: Option<PrincipalId>,
+        working_dir: std::path::PathBuf,
     ) -> serde_json::Value {
         // -- Kernel: register main agent --
         let main_pid = match self.ensure_main_agent().await {
@@ -82,7 +94,7 @@ impl DaemonTurnOrchestrator {
             process_id: main_pid,
             session_id: session_id.clone(),
             input: message.to_string(),
-            working_dir: std::env::current_dir().unwrap_or_default(),
+            working_dir,
             model_policy: None,
             deadline: None,
         };

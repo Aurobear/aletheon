@@ -251,16 +251,14 @@ pub async fn simple_line_mode(
                 "model" | "m" => serde_json::json!({
                     "jsonrpc": "2.0", "method": "model_list", "id": 1
                 }),
-                _ => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "chat", "id": 1,
-                    "params": { "message": trimmed }
-                }),
+                "cwd" => {
+                    println!("{}", crate::tui::client_working_dir().display());
+                    continue;
+                }
+                _ => crate::tui::chat_request(trimmed),
             }
         } else {
-            serde_json::json!({
-                "jsonrpc": "2.0", "method": "chat", "id": 1,
-                "params": { "message": trimmed }
-            })
+            crate::tui::chat_request(trimmed)
         };
         let payload = serde_json::to_string(&msg)?;
         stream

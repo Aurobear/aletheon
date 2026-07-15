@@ -329,7 +329,65 @@ impl RequestHandler {
         request: serde_json::Value,
     ) -> serde_json::Value {
         let message = request["params"]["message"].as_str().unwrap_or("");
+        let working_dir =
+            match validate_local_working_dir(request["params"]["working_dir"].as_str()) {
+                Ok(path) => path,
+                Err(error) => {
+                    return serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": error }
+                    });
+                }
+            };
         tracing::info!(message = %message, "Chat request received");
-        self.turn_orchestrator.execute_turn(id, message).await
+        self.turn_orchestrator
+            .execute_turn(id, message, working_dir)
+            .await
+    }
+}
+
+const LOCAL_WORKSPACE_ROOT: &str = "/home/aurobear/Bear-ws";
+const LEGACY_WORKING_DIR: &str = "/var/lib/aletheon";
+
+fn validate_local_working_dir(value: Option<&str>) -> Result<std::path::PathBuf, String> {
+    let requested = value.unwrap_or(LEGACY_WORKING_DIR);
+    let canonical = std::fs::canonicalize(requested)
+        .map_err(|error| format!("invalid working_dir '{requested}': {error}"))?;
+    let workspace_root = std::fs::canonicalize(LOCAL_WORKSPACE_ROOT)
+        .unwrap_or_else(|_| std::path::PathBuf::from(LOCAL_WORKSPACE_ROOT));
+    let legacy_root = std::path::Path::new(LEGACY_WORKING_DIR);
+    if canonical.starts_with(&workspace_root) || canonical.starts_with(legacy_root) {
+        Ok(canonical)
+    } else {
+        Err(format!(
+            "working_dir '{}' is outside allowed roots '{}' and '{}'",
+            canonical.display(),
+            workspace_root.display(),
+            legacy_root.display()
+        ))
+    }
+}
+
+#[cfg(test)]
+mod working_dir_tests {
+    #[test]
+    fn rejects_root_as_local_working_directory() {
+        assert!(super::validate_local_working_dir(Some("/")).is_err());
+    }
+
+    #[test]
+    fn rejects_missing_local_working_directory() {
+        assert!(
+            super::validate_local_working_dir(Some("/home/aurobear/Bear-ws/does-not-exist"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn accepts_a_canonical_bear_workspace_directory() {
+        let path =
+            super::validate_local_working_dir(Some("/home/aurobear/Bear-ws/aletheon")).unwrap();
+        assert!(path.starts_with("/home/aurobear/Bear-ws"));
     }
 }

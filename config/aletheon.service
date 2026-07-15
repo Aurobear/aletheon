@@ -55,9 +55,10 @@ Environment=ALETHEON_MAXIMUM_BACKUP_AGE_SECS=129600
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=yes
+ProtectHome=read-only
 ReadWritePaths=/var/lib/aletheon /var/cache/aletheon /run/aletheon
 ReadOnlyPaths=/etc/aletheon
+ReadOnlyPaths=/home/aurobear/Bear-ws
 RestrictSUIDSGID=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
