@@ -15,12 +15,14 @@ use crate::r#impl::goal::{
 use crate::r#impl::memory_projection::{
     ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
 };
+use crate::r#impl::storage_quota::{StorageClass, StorageQuota, StorageReservation};
 use aletheon_kernel::operation::OperationTable;
 use fabric::goal::{GoalId, GoalSnapshot, GoalState, GoalWaitReason};
 use fabric::Clock;
 use fabric::ProcessId;
 use fabric::{ApprovalId, ExternalEventEnvelope, ExternalEventId, ExternalIdentityId, PrincipalId};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -74,6 +76,8 @@ impl GoogleEventWaitCondition {
 pub struct GoalCoordinator {
     store: Arc<Mutex<ObjectiveStore>>,
     memory_projection: Option<MemoryProjection>,
+    storage_quota: Option<(StorageQuota, u64)>,
+    storage_reservations: Mutex<HashMap<GoalId, StorageReservation>>,
 }
 
 impl GoalCoordinator {
@@ -81,7 +85,15 @@ impl GoalCoordinator {
         Self {
             store,
             memory_projection: None,
+            storage_quota: None,
+            storage_reservations: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Reserve deployment storage for a Goal attempt before scheduling it.
+    pub fn with_storage_quota(mut self, quota: StorageQuota, expected_attempt_bytes: u64) -> Self {
+        self.storage_quota = Some((quota, expected_attempt_bytes));
+        self
     }
 
     pub fn with_memory_projection(mut self, projection: MemoryProjection) -> Self {
@@ -216,6 +228,7 @@ impl GoalCoordinator {
 
         match current.state {
             GoalState::Completed | GoalState::Failed | GoalState::Cancelled => {
+                self.storage_reservations.lock().unwrap().remove(&goal_id);
                 Ok(GoalTickOutcome::Noop {
                     state: current.state,
                 })
@@ -247,6 +260,23 @@ impl GoalCoordinator {
                 })
             }
             GoalState::Running => {
+                if let Some((quota, expected_bytes)) = &self.storage_quota {
+                    let mut reservations = self.storage_reservations.lock().unwrap();
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        reservations.entry(goal_id)
+                    {
+                        match quota.reserve(StorageClass::Total, *expected_bytes, 1) {
+                            Ok(reservation) => {
+                                entry.insert(reservation);
+                            }
+                            Err(error) => {
+                                return Ok(GoalTickOutcome::BudgetBlocked {
+                                    reason: error.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
                 let budget_res = store.reserve_goal_budget(
                     goal_id,
                     GoalBudgetRequest {

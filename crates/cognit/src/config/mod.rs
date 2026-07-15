@@ -126,26 +126,54 @@ impl From<fabric::paths::ProductionPaths> for DeploymentPathsConfig {
 #[serde(default)]
 pub struct DeploymentQuotaConfig {
     pub total_data_bytes: u64,
+    pub total_data_soft_bytes: u64,
+    pub total_data_items: u64,
     pub minimum_free_bytes: u64,
     pub artifacts_bytes: u64,
+    pub artifacts_soft_bytes: u64,
+    pub artifacts_items: u64,
     pub worktrees_bytes: u64,
+    pub worktrees_soft_bytes: u64,
+    pub worktrees_items: u64,
     pub audit_bytes: u64,
+    pub audit_soft_bytes: u64,
+    pub audit_items: u64,
     pub sessions_bytes: u64,
+    pub sessions_soft_bytes: u64,
+    pub sessions_items: u64,
     pub google_bytes: u64,
+    pub google_soft_bytes: u64,
+    pub google_items: u64,
     pub gbrain_spool_bytes: u64,
+    pub gbrain_spool_soft_bytes: u64,
+    pub gbrain_spool_items: u64,
 }
 
 impl Default for DeploymentQuotaConfig {
     fn default() -> Self {
         Self {
             total_data_bytes: 100 * 1024 * 1024 * 1024,
+            total_data_soft_bytes: 85 * 1024 * 1024 * 1024,
+            total_data_items: 2_000_000,
             minimum_free_bytes: 5 * 1024 * 1024 * 1024,
             artifacts_bytes: 20 * 1024 * 1024 * 1024,
+            artifacts_soft_bytes: 16 * 1024 * 1024 * 1024,
+            artifacts_items: 100_000,
             worktrees_bytes: 40 * 1024 * 1024 * 1024,
+            worktrees_soft_bytes: 32 * 1024 * 1024 * 1024,
+            worktrees_items: 10_000,
             audit_bytes: 5 * 1024 * 1024 * 1024,
+            audit_soft_bytes: 4 * 1024 * 1024 * 1024,
+            audit_items: 400_000,
             sessions_bytes: 10 * 1024 * 1024 * 1024,
+            sessions_soft_bytes: 8 * 1024 * 1024 * 1024,
+            sessions_items: 500_000,
             google_bytes: 5 * 1024 * 1024 * 1024,
+            google_soft_bytes: 4 * 1024 * 1024 * 1024,
+            google_items: 500_000,
             gbrain_spool_bytes: 256 * 1024 * 1024,
+            gbrain_spool_soft_bytes: 192 * 1024 * 1024,
+            gbrain_spool_items: 10_000,
         }
     }
 }
@@ -280,6 +308,47 @@ impl DeploymentConfig {
             || self.health.minimum_free_bytes > self.quotas.total_data_bytes
         {
             return Err("deployment free-space thresholds exceed total quota".into());
+        }
+        for (soft, hard, items) in [
+            (
+                self.quotas.total_data_soft_bytes,
+                self.quotas.total_data_bytes,
+                self.quotas.total_data_items,
+            ),
+            (
+                self.quotas.artifacts_soft_bytes,
+                self.quotas.artifacts_bytes,
+                self.quotas.artifacts_items,
+            ),
+            (
+                self.quotas.worktrees_soft_bytes,
+                self.quotas.worktrees_bytes,
+                self.quotas.worktrees_items,
+            ),
+            (
+                self.quotas.audit_soft_bytes,
+                self.quotas.audit_bytes,
+                self.quotas.audit_items,
+            ),
+            (
+                self.quotas.sessions_soft_bytes,
+                self.quotas.sessions_bytes,
+                self.quotas.sessions_items,
+            ),
+            (
+                self.quotas.google_soft_bytes,
+                self.quotas.google_bytes,
+                self.quotas.google_items,
+            ),
+            (
+                self.quotas.gbrain_spool_soft_bytes,
+                self.quotas.gbrain_spool_bytes,
+                self.quotas.gbrain_spool_items,
+            ),
+        ] {
+            if soft > hard || hard == 0 || items == 0 {
+                return Err("deployment storage quota is invalid".into());
+            }
         }
         Ok(())
     }

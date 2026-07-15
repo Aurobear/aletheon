@@ -1,0 +1,17 @@
+[Unit]
+Description=Policy-expired Aletheon managed-storage cleanup
+Documentation=file:/usr/share/doc/aletheon/storage-policy.md
+After=aletheon-backup.service
+
+[Service]
+Type=oneshot
+User=aletheon
+Group=aletheon
+UMask=0027
+ExecStart=/usr/libexec/aletheon/cleanup-aletheon.sh
+ReadWritePaths=/var/lib/aletheon /var/cache/aletheon
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+LimitCORE=0

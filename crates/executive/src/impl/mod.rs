@@ -19,3 +19,4 @@ pub mod orchestration;
 pub mod plugin;
 pub mod runtime;
 pub mod session;
+pub mod storage_quota;

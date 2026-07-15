@@ -38,13 +38,27 @@ secret_root = "/etc/aletheon/credentials"
 
 [deployment.quotas]
 total_data_bytes = 107374182400
+total_data_soft_bytes = 91268055040
+total_data_items = 2000000
 minimum_free_bytes = 5368709120
 artifacts_bytes = 21474836480
+artifacts_soft_bytes = 17179869184
+artifacts_items = 100000
 worktrees_bytes = 42949672960
+worktrees_soft_bytes = 34359738368
+worktrees_items = 10000
 audit_bytes = 5368709120
+audit_soft_bytes = 4294967296
+audit_items = 400000
 sessions_bytes = 10737418240
+sessions_soft_bytes = 8589934592
+sessions_items = 500000
 google_bytes = 5368709120
+google_soft_bytes = 4294967296
+google_items = 500000
 gbrain_spool_bytes = 268435456
+gbrain_spool_soft_bytes = 201326592
+gbrain_spool_items = 10000
 
 [deployment.integrations]
 telegram = false
