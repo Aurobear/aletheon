@@ -234,12 +234,12 @@ fn require_secure_file(path: &Path, require_root: bool) -> Result<()> {
             .is_some_and(|directory| path.starts_with(PathBuf::from(directory)));
     if credential_copy {
         anyhow::ensure!(
-            matches!(mode, 0o400 | 0o600),
-            "systemd credential copy mode must be 0400 or 0600"
+            matches!(mode, 0o400 | 0o440 | 0o600),
+            "systemd credential copy mode must be 0400, 0440, or 0600"
         );
         anyhow::ensure!(
-            metadata.uid() == unsafe { libc::geteuid() },
-            "systemd credential copy is not owned by the service user"
+            matches!(metadata.uid(), 0) || metadata.uid() == unsafe { libc::geteuid() },
+            "systemd credential copy is not owned by root or the service user"
         );
     } else {
         anyhow::ensure!(mode == 0o600, "credential file mode must be 0600");

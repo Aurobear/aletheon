@@ -8,12 +8,15 @@ const GOOGLE_UNAVAILABLE: i64 = -32070;
 const GOOGLE_INVALID_PARAMS: i64 = -32602;
 const GOOGLE_FORBIDDEN: i64 = -32073;
 const GOOGLE_PROVIDER: i64 = -32074;
+const LOCAL_GOOGLE_PRINCIPAL: &str = "local-owner";
 
 impl RequestHandler {
     async fn authenticated_google_principal(&self) -> anyhow::Result<PrincipalId> {
-        // The local session gateway selects the principal. Request parameters
-        // are deliberately ignored as an authority source.
-        Ok(PrincipalId(self.get_or_create_session(None).await?.0))
+        // The native daemon has one credential-checked local owner. A session
+        // UUID is intentionally not used here because sessions rotate whenever
+        // the daemon restarts, while account bindings must remain durable.
+        // Request parameters remain ignored as an authority source.
+        Ok(PrincipalId(LOCAL_GOOGLE_PRINCIPAL.into()))
     }
 
     pub(super) async fn handle_google_authorization_start(
@@ -71,7 +74,10 @@ impl RequestHandler {
                     "account":safe_account(&identity, &grant)
                 }})
             }
-            Err(_) => rpc_error(id, GOOGLE_PROVIDER, "google_authorization_callback_failed"),
+            Err(error) => {
+                tracing::warn!(error = ?error, "Google authorization callback failed");
+                rpc_error(id, GOOGLE_PROVIDER, "google_authorization_callback_failed")
+            }
         }
     }
 
@@ -245,6 +251,19 @@ impl RequestHandler {
             ))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_google_principal_is_stable_across_sessions() {
+        let first = PrincipalId(LOCAL_GOOGLE_PRINCIPAL.into());
+        let second = PrincipalId(LOCAL_GOOGLE_PRINCIPAL.into());
+        assert_eq!(first, second);
+        assert_eq!(first.0, "local-owner");
     }
 }
 
