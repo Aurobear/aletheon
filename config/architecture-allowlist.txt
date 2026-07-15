@@ -18,10 +18,6 @@ core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.ru
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::HookRegistry;
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/core/security_group.rs|use corpus::security::runner::ToolRunnerWithGuard;
-executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use corpus::HookRegistry;
-executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use corpus::security::runner::ToolRunnerWithGuard;
-executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use corpus::tools::tools::ToolRegistry;
-executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use mnemosyne::FactStore;
 executive_store_import|crates/executive/src/impl/daemon/handler/tool_executor.rs|use corpus::HookRegistry;
 executive_store_import|crates/executive/src/impl/daemon/mcp_embedded.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/impl/engine/modules/body_module.rs|use corpus::tools::tools::ToolRegistry;
@@ -43,9 +39,6 @@ legacy_event|crates/executive/src/impl/engine/modules/perception_module.rs|use f
 legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs| let resp_envelope = Envelope::response(&envelope, serialize_response(&response));
 legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs|use fabric::envelope::*;
 legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs|use fabric::envelope::Payload;
-legacy_event|crates/executive/tests/module_handlers.rs| Envelope::request(
-legacy_event|crates/executive/tests/module_handlers.rs|use fabric::envelope::*;
-legacy_event|crates/executive/tests/module_handlers.rs|use fabric::envelope::Payload;
 legacy_event|crates/fabric/src/ipc/bus/communication_bus.rs| let legacy = Envelope::new(
 legacy_event|crates/fabric/src/ipc/bus/kernel_bus.rs| let envelope = crate::ipc::envelope::Envelope::new_at(
 legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::new(source, target, pattern, Payload::Json(json)).with_priority(priority)
@@ -57,13 +50,6 @@ legacy_event|crates/fabric/src/ipc/transport/unix_socket_transport.rs| let envel
 legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::new(
 legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::new(source, self.target, Pattern::FireAndForget, self.payload)
 legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::request(source, self.target, self.payload, self.timeout)
-legacy_event|crates/fabric/tests/protocol_e2e.rs| let envelope = Envelope::fire_and_forget(
-legacy_event|crates/fabric/tests/protocol_e2e.rs| let envelope = Envelope::publish(
-legacy_event|crates/fabric/tests/protocol_e2e.rs| let fresh = Envelope::new(
-legacy_event|crates/fabric/tests/protocol_e2e.rs| let mut envelope = Envelope::new(
-legacy_event|crates/fabric/tests/protocol_e2e.rs| let request = Envelope::request(
-legacy_event|crates/fabric/tests/protocol_e2e.rs| let response = Envelope::response(
-legacy_event|crates/fabric/tests/protocol_e2e.rs|use fabric::envelope::*;
 raw_process|crates/dasein/src/impl/hook/dispatcher.rs|use tokio::process::Command;
 raw_process|crates/dasein/src/impl/perception/sources/journald_source.rs| let mut child = match tokio::process::Command::new("journalctl")
 raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let _ = tokio::process::Command::new("systemctl")

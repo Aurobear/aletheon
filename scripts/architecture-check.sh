@@ -24,7 +24,7 @@ normalize_rg() {
 
 scan() {
   local rule=$1 pattern=$2; shift 2
-  rg -n --no-heading "$pattern" "$@" -g '*.rs' 2>/dev/null | normalize_rg "$rule" >> "$actual" || true
+  rg -n --no-heading "$pattern" -g '*.rs' "$@" 2>/dev/null | normalize_rg "$rule" >> "$actual" || true
 }
 
 # Approved direct Tool::execute calls live in Corpus runtime. Integration tests
@@ -54,7 +54,8 @@ scan concrete_clock 'SystemClock::new\(' crates/dasein crates/agora crates/cogni
 scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/bin/src
 scan duplicate_kernel 'executive::impl::kernel|crate::impl::kernel' crates
 scan raw_process 'tokio::process::Command' crates/dasein/src crates/executive/src
-scan executive_store_import 'mnemosyne::.*(Store|Database)|corpus::.*(Registry|Runner)' crates/executive/src
+# Concrete stores and registries are permitted only in the private composition root.
+scan executive_store_import 'mnemosyne::.*(Store|Database)|corpus::.*(Registry|Runner)' crates/executive/src -g '!**/impl/daemon/bootstrap/**'
 sort -u "$actual" -o "$actual"
 
 # K02 deletion gate: cognitive domains receive Clock from Executive. Unit-test
@@ -112,6 +113,17 @@ fi
 if [[ -e crates/executive/src/core/core_systems.rs ]] || \
    rg -n '\bCoreSystems\b|\.subsystems\b' crates/executive/src crates/bin/src -g '*.rs'; then
   echo "architecture-check: retired god container escaped into production" >&2
+  exit 1
+fi
+composition_outside_bootstrap=$(rg -l '\bDaemonComposition\b' crates/executive/src -g '*.rs' \
+  | grep -v '^crates/executive/src/impl/daemon/bootstrap/' || true)
+if [[ -n "$composition_outside_bootstrap" ]]; then
+  echo "architecture-check: private daemon composition escaped bootstrap:" >&2
+  echo "$composition_outside_bootstrap" >&2
+  exit 1
+fi
+if (( $(wc -l < crates/executive/src/impl/daemon/handler/init.rs) > 250 )); then
+  echo "architecture-check: handler/init.rs is no longer a thin compatibility layer" >&2
   exit 1
 fi
 

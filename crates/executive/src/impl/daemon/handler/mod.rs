@@ -4,7 +4,7 @@
 mod connection;
 pub(crate) mod format;
 mod init;
-mod ports;
+pub(crate) mod ports;
 mod rpc;
 pub(crate) mod tool_executor;
 mod turn_handler;

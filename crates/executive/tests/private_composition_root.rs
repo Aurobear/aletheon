@@ -46,3 +46,51 @@ fn concrete_groups_are_crate_private() {
         assert!(core.contains(&format!("pub(crate) mod {module};")));
     }
 }
+
+#[test]
+fn composition_is_private_and_bootstrap_confined() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let bootstrap = root.join("src/impl/daemon/bootstrap");
+    let expected = [
+        "mod.rs",
+        "storage.rs",
+        "google.rs",
+        "runtime.rs",
+        "channels.rs",
+        "request.rs",
+    ];
+    for file in expected {
+        assert!(
+            bootstrap.join(file).is_file(),
+            "missing bootstrap stage: {file}"
+        );
+    }
+
+    let mut locations = Vec::new();
+    for path in rust_files(&root.join("src")) {
+        let source = fs::read_to_string(&path).expect("source file");
+        if source.contains("DaemonComposition") {
+            locations.push(path);
+        }
+    }
+    assert!(!locations.is_empty(), "private composition root is missing");
+    assert!(
+        locations.iter().all(|path| path.starts_with(&bootstrap)),
+        "DaemonComposition escaped bootstrap: {locations:?}"
+    );
+
+    let init = fs::read_to_string(root.join("src/impl/daemon/handler/init.rs")).unwrap();
+    assert!(
+        init.lines().count() <= 250,
+        "handler init is no longer thin"
+    );
+    let module = fs::read_to_string(bootstrap.join("mod.rs")).unwrap();
+    assert!(
+        module.lines().count() <= 700,
+        "bootstrap root module is too large"
+    );
+    assert!(
+        !module.contains("derive(Clone)"),
+        "composition root must not be Clone"
+    );
+}
