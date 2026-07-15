@@ -139,6 +139,17 @@ impl RequestHandler {
                 None => ComponentHealth::disabled(),
             },
         );
+        self.health.set(
+            "goal_worker",
+            match &self.goal_worker_task {
+                Some(worker) => match worker.lock().await.as_ref() {
+                    Some(task) if task.is_finished() => ComponentHealth::unready("worker_stopped"),
+                    Some(_) => ComponentHealth::ready(),
+                    None => ComponentHealth::unready("worker_stopped"),
+                },
+                None => ComponentHealth::disabled(),
+            },
+        );
         let supplemental = self
             .subsystems
             .memory
