@@ -1,0 +1,13 @@
+/var/lib/aletheon/audit/*.jsonl /var/lib/aletheon/.aletheon-audit.jsonl {
+    daily
+    rotate 365
+    maxsize 100M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    su aletheon aletheon
+    create 0600 aletheon aletheon
+    copytruncate
+}

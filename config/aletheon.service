@@ -28,6 +28,11 @@ Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
 LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aletheon
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=1000
 
 # Credentials are read-only files below $CREDENTIALS_DIRECTORY. The unit never
 # embeds secret values or loads a plaintext EnvironmentFile.

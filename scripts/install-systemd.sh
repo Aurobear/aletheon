@@ -46,6 +46,8 @@ for unit in aletheon-backup.service aletheon-backup.timer \
   aletheon-cleanup.service aletheon-cleanup.timer; do
   install -o root -g root -m 0644 "$repo_root/config/$unit" "/etc/systemd/system/$unit"
 done
+install -o root -g root -m 0644 "$repo_root/config/aletheon.logrotate" \
+  /etc/logrotate.d/aletheon
 if [[ ! -e /etc/aletheon/config.toml ]]; then
   install -o root -g aletheon -m 0640 "$config_source" /etc/aletheon/config.toml
 fi
