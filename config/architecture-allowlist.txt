@@ -21,7 +21,6 @@ core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| subsystems.
 core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| subsystems.memory.memory_service.clone(),
 core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_admin.rs| let cm = self.subsystems.memory.core_memory.lock().await;
 core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_admin.rs| let mut rt = self.subsystems.runtime.lock().await;
-core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_approval.rs| let repository = self.subsystems.memory.approval_repository.lock().unwrap();
 core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_health.rs| let iteration = self.subsystems.runtime.lock().await.iteration();
 core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_reflection.rs| let iteration = self.subsystems.runtime.lock().await.iteration();
 core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_session.rs| let fs = self.subsystems.memory.fact_store.lock().await;

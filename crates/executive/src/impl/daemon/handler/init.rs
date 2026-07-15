@@ -1445,9 +1445,17 @@ impl RequestHandler {
         };
         let goal_worker_enabled = goal_worker_task.is_some();
 
+        let approval_use_cases: Arc<dyn crate::service::ApprovalUseCases> =
+            Arc::new(crate::service::ApprovalService::new(
+                subsystems.memory.approval_repository.clone(),
+                approved_apply.clone(),
+                clock.clone(),
+                subsystems.main_agent_process_id.clone(),
+            ));
         let handler_ports = Arc::new(super::ports::HandlerPorts::new(
             fact_use_cases,
             goal_use_cases,
+            approval_use_cases,
         ));
         let mut handler = Self {
             ports: handler_ports,
@@ -1466,7 +1474,6 @@ impl RequestHandler {
             goal_worker_task: goal_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
             google_sync: google_sync.map(|handle| Arc::new(Mutex::new(Some(handle)))),
             gbrain_worker_task: gbrain_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
-            approved_apply: approved_apply.clone(),
             google,
             health: Arc::new(crate::r#impl::health::HealthRegistry::production_ready()),
         };
