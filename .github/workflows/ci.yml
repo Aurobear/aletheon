@@ -10,6 +10,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  architecture:
+    name: architecture fitness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - run: bash tests/architecture_check.sh
+      - run: bash tests/architecture_path_inventory.sh
+      - name: Reject architecture drift
+        env:
+          ARCH_BASE_REF: origin/${{ github.base_ref || 'dev' }}
+        run: bash scripts/architecture-check.sh
+
   msrv:
     name: Rust 1.88 MSRV
     runs-on: ubuntu-latest

@@ -1,0 +1,152 @@
+concrete_clock|crates/agora/src/ops/mod.rs| Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+concrete_clock|crates/cognit/src/core/evolution_trigger.rs| Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+concrete_clock|crates/cognit/src/core/mod.rs| clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+concrete_clock|crates/cognit/src/core/skill_extractor.rs| Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+concrete_clock|crates/cognit/src/harness/linear/goal_tracker.rs| Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+concrete_clock|crates/cognit/src/harness/linear/mod.rs| let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+concrete_clock|crates/cognit/src/impl/llm/scheduler.rs| clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+concrete_clock|crates/dasein/src/bridge/hook.rs| Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+concrete_clock|crates/dasein/src/core/mod.rs| .unwrap_or_else(|| Arc::new(aletheon_kernel::chronos::SystemClock::new()));
+concrete_clock|crates/dasein/src/dasein/mod.rs| Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new())).0
+concrete_clock|crates/dasein/src/impl/perception/aggregator.rs| aletheon_kernel::chronos::SystemClock::new(),
+concrete_clock|crates/dasein/src/impl/perception/fuse/provider.rs| Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+concrete_clock|crates/dasein/src/impl/perception/sources/bottleneck_detector.rs| Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+concrete_clock|crates/dasein/src/impl/perception/sources/ebpf_source.rs| Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+concrete_clock|crates/dasein/src/impl/perception/sources/proc_source.rs| Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+concrete_clock|crates/dasein/src/impl/resilience/watchdog.rs| Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+concrete_clock|crates/interact/src/acix/experience.rs| aletheon_kernel::chronos::SystemClock::new().wall_now(),
+concrete_clock|crates/interact/src/acix/task.rs| let clock = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+concrete_clock|crates/interact/src/acix/tools.rs| Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+concrete_clock|crates/interact/src/tui/computer.rs| aletheon_kernel::chronos::SystemClock::new(),
+concrete_clock|crates/interact/src/tui/debug.rs| let clock = std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new());
+concrete_clock|crates/interact/src/tui/mod.rs| let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+concrete_clock|crates/interact/src/tui/streaming.rs| Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+concrete_clock|crates/interact/src/tui/test_infra.rs| SystemClock::new().wall_now().0 as u64
+core_systems_field|crates/executive/src/core/config/mod.rs| assert_eq!(config.memory.backend, "sqlite");
+core_systems_field|crates/executive/src/core/config/mod.rs| if other.memory.backend != MemoryConfig::default().backend {
+core_systems_field|crates/executive/src/core/config/mod.rs| if other.memory.data_dir != MemoryConfig::default().data_dir {
+core_systems_field|crates/executive/src/core/config/mod.rs| self.memory.backend = other.memory.backend;
+core_systems_field|crates/executive/src/core/config/mod.rs| self.memory.data_dir = other.memory.data_dir;
+core_systems_field|crates/executive/src/core/runtime_core.rs| gbrain_memory: app_config.memory.gbrain.clone(),
+core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| handler.subsystems.memory.approval_repository.clone(),
+core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| handler.subsystems.memory.objective_store.clone(),
+core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| let exec_for_agents = subsystems.runtime.clone();
+core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| let mut runtime = subsystems.runtime.lock().await;
+core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| let runtime = subsystems.runtime.lock().await;
+core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| subsystems.memory.approval_repository.clone(),
+core_systems_field|crates/executive/src/impl/daemon/handler/init.rs| subsystems.memory.memory_service.clone(),
+core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_admin.rs| let cm = self.subsystems.memory.core_memory.lock().await;
+core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_admin.rs| let mut rt = self.subsystems.runtime.lock().await;
+core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_approval.rs| let repository = self.subsystems.memory.approval_repository.lock().unwrap();
+core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_goal.rs| let store = self.subsystems.memory.objective_store.lock().await;
+core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_health.rs| let iteration = self.subsystems.runtime.lock().await.iteration();
+core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_memory.rs| let fs = self.subsystems.memory.fact_store.lock().await;
+core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_reflection.rs| let iteration = self.subsystems.runtime.lock().await.iteration();
+core_systems_field|crates/executive/src/impl/daemon/handler/rpc/rpc_session.rs| let fs = self.subsystems.memory.fact_store.lock().await;
+core_systems_field|crates/executive/src/impl/daemon/handler/turn_handler.rs| let rt = self.subsystems.runtime.lock().await;
+core_systems_field|crates/executive/src/impl/memory_projection.rs| match self.memory.record(event).await {
+core_systems_field|crates/executive/src/impl/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
+core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.runtime.clone(),
+core_systems_field|crates/executive/src/service/daemon_turn/injection.rs| let cm = self.subsystems.memory.core_memory.lock().await;
+core_systems_field|crates/executive/src/service/daemon_turn/injection.rs| let fs = self.subsystems.memory.fact_store.lock().await;
+core_systems_field|crates/executive/src/service/daemon_turn/injection.rs| self.subsystems.memory.memory_service.as_ref(),
+core_systems_field|crates/executive/src/service/daemon_turn/post_phases.rs| let mem = self.subsystems.memory.episodic_memory.lock().await;
+core_systems_field|crates/executive/src/service/daemon_turn/post_phases.rs| let mut am = self.subsystems.memory.auto_memory.lock().await;
+core_systems_field|crates/executive/src/service/daemon_turn/post_phases.rs| let rm = self.subsystems.memory.recall_memory.lock().await;
+core_systems_field|crates/executive/src/service/turn_pipeline.rs| let config = self.subsystems.runtime.lock().await.config().clone();
+direct_tool|crates/corpus/src/tools/tools/apply_patch.rs| let result = tool.execute(input, &ctx).await;
+direct_tool|crates/corpus/src/tools/tools/kernel_build.rs| let result = tool.execute(json!({"action": "invalid"}), &ctx).await;
+direct_tool|crates/corpus/src/tools/tools/script_tool.rs| let result = tool.execute(json!({}), &ctx).await;
+direct_tool|crates/corpus/src/tools/tools/task_tools.rs| let result = tool.execute(json!({"description": "desc"}), &ctx()).await;
+direct_tool|crates/corpus/src/tools/tools/task_tools.rs| let result = tool.execute(json!({"id": "nonexistent"}), &ctx()).await;
+direct_tool|crates/corpus/src/tools/tools/task_tools.rs| let result = tool.execute(json!({"id": id}), &ctx()).await;
+direct_tool|crates/corpus/src/tools/tools/task_tools.rs| let result = tool.execute(json!({}), &ctx()).await;
+direct_tool|crates/executive/src/impl/daemon/handler/init.rs| tool.execute(input, &ctx).await
+direct_tool|crates/executive/src/impl/daemon/mcp_embedded.rs| let result = tool.execute(arguments, &ctx).await;
+direct_tool|crates/executive/src/impl/orchestration/config_agent.rs| let result = tool.execute((*input).clone(), &ctx).await;
+direct_tool|crates/executive/src/impl/orchestration/delegate.rs| let result = tool.execute(input, &ctx).await;
+direct_tool|crates/executive/src/impl/runtime/provider_worker.rs| tool.execute(input, &context).await
+direct_tool|crates/executive/src/service/turn_pipeline.rs| let (content, is_error) = exec.execute(&permit, &tid, &n, &inp).await;
+direct_tool|crates/executive/src/tools/self_observe.rs| let result = tool.execute(json!({"query": "bogus"}), &ctx).await;
+direct_tool|crates/executive/src/tools/self_observe.rs| let result = tool.execute(json!({"query": "full"}), &ctx).await;
+direct_tool|crates/executive/src/tools/self_observe.rs| let result = tool.execute(json!({"query": "mood"}), &ctx).await;
+direct_tool|crates/executive/src/tools/self_observe.rs| let result = tool.execute(json!({}), &ctx).await;
+executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::HookRegistry;
+executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::tools::tools::ToolRegistry;
+executive_store_import|crates/executive/src/core/memory_group.rs|use mnemosyne::FactStore;
+executive_store_import|crates/executive/src/core/security_group.rs|use corpus::security::runner::ToolRunnerWithGuard;
+executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use corpus::HookRegistry;
+executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use corpus::security::runner::ToolRunnerWithGuard;
+executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use corpus::tools::tools::ToolRegistry;
+executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use mnemosyne::FactStore;
+executive_store_import|crates/executive/src/impl/daemon/handler/tool_executor.rs|use corpus::HookRegistry;
+executive_store_import|crates/executive/src/impl/daemon/handler/tool_executor.rs|use corpus::security::runner::ToolRunnerWithGuard;
+executive_store_import|crates/executive/src/impl/daemon/handler/tool_executor.rs|use corpus::tools::tools::ToolRegistry;
+executive_store_import|crates/executive/src/impl/daemon/mcp_embedded.rs|use corpus::tools::tools::ToolRegistry;
+executive_store_import|crates/executive/src/impl/engine/modules/body_module.rs|use corpus::tools::tools::ToolRegistry;
+executive_store_import|crates/executive/src/impl/hook_lifecycle/recall_inject.rs|use mnemosyne::FactStore;
+executive_store_import|crates/executive/src/impl/hook_lifecycle/session_distiller.rs|use mnemosyne::FactStore;
+executive_store_import|crates/executive/src/impl/runtime/provider_worker.rs|use corpus::tools::tools::ToolRegistry;
+executive_store_import|crates/executive/src/service/daemon_turn/injection.rs|use mnemosyne::FactStore;
+executive_store_import|crates/executive/src/service/exec_session.rs|use corpus::security::runner::ToolRunnerWithGuard;
+executive_store_import|crates/executive/src/service/exec_session.rs|use corpus::tools::tools::{ToolContext, ToolRegistry};
+executive_store_import|crates/executive/src/service/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {
+executive_store_import|crates/executive/src/service/verification/command.rs|use corpus::tools::subagent::{CommandOutput, CommandRequest, CommandRunner};
+legacy_event|crates/executive/src/impl/agent/fork.rs| let envelope = Envelope::new(
+legacy_event|crates/executive/src/impl/agent/fork.rs|use fabric::envelope::{Endpoint, Envelope, Pattern, Payload, Target};
+legacy_event|crates/executive/src/impl/agent/process.rs|use fabric::envelope::Envelope;
+legacy_event|crates/executive/src/impl/daemon/handler/mod.rs| let envelope = Envelope::request(
+legacy_event|crates/executive/src/impl/daemon/handler/mod.rs|use fabric::envelope::*;
+legacy_event|crates/executive/src/impl/daemon/handler/mod.rs|use fabric::envelope::Payload;
+legacy_event|crates/executive/src/impl/engine/modules/body_module.rs| let resp_envelope = Envelope::response(&envelope, serialize_response(&response));
+legacy_event|crates/executive/src/impl/engine/modules/body_module.rs|use fabric::envelope::*;
+legacy_event|crates/executive/src/impl/engine/modules/body_module.rs|use fabric::envelope::Payload;
+legacy_event|crates/executive/src/impl/engine/modules/memory_module.rs| let resp_envelope = Envelope::response(&envelope, serialize_response(&response));
+legacy_event|crates/executive/src/impl/engine/modules/memory_module.rs|use fabric::envelope::*;
+legacy_event|crates/executive/src/impl/engine/modules/memory_module.rs|use fabric::envelope::Payload;
+legacy_event|crates/executive/src/impl/engine/modules/perception_module.rs| let envelope = Envelope::publish(
+legacy_event|crates/executive/src/impl/engine/modules/perception_module.rs|use fabric::envelope::*;
+legacy_event|crates/executive/src/impl/engine/modules/perception_module.rs|use fabric::envelope::Payload;
+legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs| let resp_envelope = Envelope::response(&envelope, serialize_response(&response));
+legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs|use fabric::envelope::*;
+legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs|use fabric::envelope::Payload;
+legacy_event|crates/executive/src/impl/kernel/kernel.rs| Envelope::fire_and_forget(
+legacy_event|crates/executive/src/impl/kernel/kernel.rs| use fabric::envelope::{Endpoint, Payload, Target};
+legacy_event|crates/executive/src/impl/kernel/kernel.rs|use fabric::envelope::Envelope;
+legacy_event|crates/executive/tests/kernel_test.rs| fabric::envelope::Envelope::fire_and_forget(
+legacy_event|crates/executive/tests/kernel_test.rs|use fabric::envelope::{Endpoint, Payload, Target};
+legacy_event|crates/executive/tests/module_handlers.rs| Envelope::request(
+legacy_event|crates/executive/tests/module_handlers.rs|use fabric::envelope::*;
+legacy_event|crates/executive/tests/module_handlers.rs|use fabric::envelope::Payload;
+legacy_event|crates/fabric/src/ipc/bus/communication_bus.rs| let legacy = Envelope::new(
+legacy_event|crates/fabric/src/ipc/bus/kernel_bus.rs| let envelope = crate::ipc::envelope::Envelope::new_at(
+legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::new(source, target, pattern, Payload::Json(json)).with_priority(priority)
+legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::new_at(source, target, pattern, Payload::Json(json), timestamp)
+legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::publish(source, topic, Payload::Json(value))
+legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::request(source, target, Payload::Json(value), timeout)
+legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::response(request, Payload::Json(value))
+legacy_event|crates/fabric/src/ipc/transport/unix_socket_transport.rs| let envelope = Envelope::fire_and_forget(
+legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::new(
+legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::new(source, self.target, Pattern::FireAndForget, self.payload)
+legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::request(source, self.target, self.payload, self.timeout)
+legacy_event|crates/fabric/tests/protocol_e2e.rs| let envelope = Envelope::fire_and_forget(
+legacy_event|crates/fabric/tests/protocol_e2e.rs| let envelope = Envelope::publish(
+legacy_event|crates/fabric/tests/protocol_e2e.rs| let fresh = Envelope::new(
+legacy_event|crates/fabric/tests/protocol_e2e.rs| let mut envelope = Envelope::new(
+legacy_event|crates/fabric/tests/protocol_e2e.rs| let request = Envelope::request(
+legacy_event|crates/fabric/tests/protocol_e2e.rs| let response = Envelope::response(
+legacy_event|crates/fabric/tests/protocol_e2e.rs|use fabric::envelope::*;
+raw_process|crates/dasein/src/impl/hook/dispatcher.rs|use tokio::process::Command;
+raw_process|crates/dasein/src/impl/perception/sources/journald_source.rs| let mut child = match tokio::process::Command::new("journalctl")
+raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let _ = tokio::process::Command::new("systemctl")
+raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let output = tokio::process::Command::new("btrfs")
+raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let output = tokio::process::Command::new("cp")
+raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let output = tokio::process::Command::new("systemctl")
+raw_process|crates/executive/src/host/container.rs| let _ = tokio::process::Command::new(&self.runtime_cmd)
+raw_process|crates/executive/src/host/container.rs| let mut cmd = tokio::process::Command::new(&self.runtime_cmd);
+raw_process|crates/executive/src/host/container.rs| let output = tokio::process::Command::new(cmd)
+raw_process|crates/executive/src/impl/approval/apply_coordinator.rs| let status = tokio::process::Command::new("git")
+raw_process|crates/executive/src/impl/automation/script.rs| let mut cmd = tokio::process::Command::new("sh");
+raw_process|crates/executive/src/impl/daemon/handler/mod.rs| let spawn_result = tokio::process::Command::new(&path)
+raw_process|crates/executive/src/impl/plugin/runtime.rs| let mut cmd = tokio::process::Command::new(program);
+raw_process|crates/executive/src/service/turn_pipeline.rs| let spawn_result = tokio::process::Command::new(&path)

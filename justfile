@@ -46,6 +46,12 @@ doc:
 check: fmt test lint doc
     @echo "=== ALL CHECKS PASSED ==="
 
+# 架构依赖、遗留路径和绕过调用只能减少，不能新增
+architecture-check:
+    bash tests/architecture_check.sh
+    bash tests/architecture_path_inventory.sh
+    bash scripts/architecture-check.sh
+
 # ── 部署 ───────────────────────────────────────────────────────────────
 
 # 编译 release + 部署到系统

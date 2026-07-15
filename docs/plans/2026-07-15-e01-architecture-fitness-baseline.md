@@ -136,7 +136,7 @@ Add this guarded branch before comparison:
 if [[ ${ARCH_UPDATE:-0} == 1 ]]; then sort -u "$actual" > "$ALLOW"; exit 0; fi
 ```
 
-Expected: allowlist entries use `rule|path:line|source`; every entry is a verified legacy site.
+Expected: allowlist entries use `rule|path|source` (diagnostics retain current line numbers); every entry is a verified legacy site.
 
 - [ ] **Step 4: Prove shrink-only behavior**
 
@@ -177,7 +177,7 @@ Expected: dependency baseline and bypass baseline both match.
 
 - [ ] **Step 1: Add the migration inventory test**
 
-Create `tests/architecture_path_inventory.sh` with exact `rg` assertions for `TurnService`, `TurnPipeline`, `ExecTurnServices::invoke`, daemon closure admission, `DefaultCapabilityInvoker`, and every `impl CapabilityInvoker`. It writes sorted `kind|path:line|symbol` output and compares it with `config/architecture-path-inventory.txt`. A new path fails; E02/E03/S02 delete resolved entries as they converge.
+Create `tests/architecture_path_inventory.sh` with exact `rg` assertions for `TurnService`, `TurnPipeline`, `ExecTurnServices::invoke`, daemon closure admission, `DefaultCapabilityInvoker`, and every `impl CapabilityInvoker`. It writes sorted `kind|path|symbol` output and compares it with `config/architecture-path-inventory.txt`. A new path fails; E02/E03/S02 delete resolved entries as they converge.
 
 - [ ] **Step 2: Reject allowlist additions relative to the target branch**
 
