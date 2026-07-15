@@ -74,10 +74,10 @@
 - Modify: `crates/kernel/src/runtime.rs`
 - Test: `crates/kernel/tests/hierarchical_budget.rs`
 
-- [ ] Define versioned root/process/operation/capability budget scope IDs and parent-bound reservation receipts.
-- [ ] Test that children cannot exceed parents, sibling reservations contend atomically, settlement charges each ancestor exactly once, revocation restores the hierarchy, and terminal cleanup releases all descendant holds idempotently.
-- [ ] Replace principal-only accounting with the hierarchy while retaining a bounded compatibility adapter only for admission callers during the same commit.
-- [ ] Bind Agent, Turn and capability reservations to their Process/Operation/permit identities. Cognit iteration/tool counts remain local non-monetary guards.
+- [x] Define versioned root/process/operation/capability budget scope IDs and parent-bound reservation receipts.
+- [x] Test that children cannot exceed parents, sibling reservations contend atomically, settlement charges each ancestor exactly once, revocation restores the hierarchy, and terminal cleanup releases all descendant holds idempotently.
+- [x] Replace principal-only accounting with the hierarchy while retaining a bounded compatibility adapter only for admission callers not yet composed with KernelRuntime.
+- [x] Bind Agent, Turn and capability reservations to their Process/Operation/permit identities. Production KernelRuntime admission uses these bindings; Cognit iteration/tool counts remain local non-monetary guards.
 
 ### Task 5: Atomic terminal cleanup and supervision
 

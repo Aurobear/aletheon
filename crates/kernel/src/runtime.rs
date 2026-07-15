@@ -10,11 +10,13 @@ use crate::space::InMemorySpaceManager;
 use crate::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::{
-    AdmissionController, CancelReason, Clock, ContextBinding, ContextSpace, ExitReason, ExitStatus,
+    AdmissionController, AdmissionError, BudgetRequest, BudgetReservationReceipt, BudgetScopeId,
+    BudgetScopeKind, CancelReason, Clock, ContextBinding, ContextSpace, ExitReason, ExitStatus,
     OperationHandle, OperationId, OperationManager, OperationRecord, OperationRequest,
-    OperationResult, ProcessHandle, ProcessId, ProcessManager, ProcessSignal, ProcessSnapshot,
-    SpaceId, SpawnSpec,
+    OperationResult, PermitId, ProcessHandle, ProcessId, ProcessManager, ProcessSignal,
+    ProcessSnapshot, SpaceId, SpawnSpec,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -32,6 +34,16 @@ pub struct KernelRuntime {
     admission: Arc<dyn AdmissionController>,
     budget: Arc<InMemoryBudgetController>,
     leases: Arc<InMemoryResourceLeaseManager>,
+    budget_ownership: Mutex<BudgetOwnership>,
+}
+
+#[derive(Default)]
+struct BudgetOwnership {
+    rollouts: HashMap<String, BudgetScopeId>,
+    process_rollouts: HashMap<ProcessId, BudgetScopeId>,
+    processes: HashMap<ProcessId, BudgetScopeId>,
+    operations: HashMap<OperationId, BudgetScopeId>,
+    capabilities: HashMap<PermitId, BudgetScopeId>,
 }
 
 impl KernelRuntime {
@@ -91,6 +103,7 @@ impl KernelRuntime {
             admission,
             budget,
             leases,
+            budget_ownership: Mutex::new(BudgetOwnership::default()),
         }
     }
 
@@ -114,6 +127,97 @@ impl KernelRuntime {
         self.leases.clone()
     }
 
+    pub async fn create_rollout_budget(
+        &self,
+        rollout: impl Into<String>,
+        limit: BudgetRequest,
+    ) -> BudgetScopeId {
+        let rollout = rollout.into();
+        let scope = self.budget.create_root(rollout.clone(), limit).await;
+        self.budget_ownership
+            .lock()
+            .await
+            .rollouts
+            .insert(rollout, scope);
+        scope
+    }
+
+    pub async fn reserve_process_budget(
+        &self,
+        rollout_scope: BudgetScopeId,
+        process: ProcessId,
+        request: BudgetRequest,
+    ) -> Result<BudgetReservationReceipt, AdmissionError> {
+        self.inspect_process(process)
+            .await
+            .map_err(|_| AdmissionError::BudgetExceeded)?;
+        let receipt = self
+            .budget
+            .reserve_child(
+                rollout_scope,
+                BudgetScopeKind::Process,
+                format!("process:{}", process.0),
+                request,
+            )
+            .await?;
+        let mut ownership = self.budget_ownership.lock().await;
+        ownership.process_rollouts.insert(process, rollout_scope);
+        ownership.processes.insert(process, receipt.scope_id);
+        Ok(receipt)
+    }
+
+    pub async fn reserve_operation_budget(
+        &self,
+        process_scope: BudgetScopeId,
+        operation: OperationId,
+        request: BudgetRequest,
+    ) -> Result<BudgetReservationReceipt, AdmissionError> {
+        self.inspect_operation(operation)
+            .await
+            .map_err(|_| AdmissionError::BudgetExceeded)?;
+        let receipt = self
+            .budget
+            .reserve_child(
+                process_scope,
+                BudgetScopeKind::Operation,
+                format!("operation:{}", operation.0),
+                request,
+            )
+            .await?;
+        self.budget
+            .bind_operation_scope(operation, receipt.scope_id)
+            .await;
+        self.budget_ownership
+            .lock()
+            .await
+            .operations
+            .insert(operation, receipt.scope_id);
+        Ok(receipt)
+    }
+
+    pub async fn reserve_capability_budget(
+        &self,
+        operation_scope: BudgetScopeId,
+        permit: PermitId,
+        request: BudgetRequest,
+    ) -> Result<BudgetReservationReceipt, AdmissionError> {
+        let receipt = self
+            .budget
+            .reserve_child(
+                operation_scope,
+                BudgetScopeKind::Capability,
+                format!("permit:{}", permit.0),
+                request,
+            )
+            .await?;
+        self.budget_ownership
+            .lock()
+            .await
+            .capabilities
+            .insert(permit, receipt.scope_id);
+        Ok(receipt)
+    }
+
     pub async fn supervise(&self, process: ProcessId, policy: RestartPolicy) {
         self.supervisor.lock().await.supervise(process, policy);
     }
@@ -127,7 +231,52 @@ impl KernelRuntime {
     }
 
     pub async fn spawn_process(&self, spec: SpawnSpec) -> anyhow::Result<ProcessHandle> {
-        self.processes.spawn(spec).await
+        let parent = spec.parent;
+        let namespace = spec.namespace.0.clone();
+        let process = self.processes.spawn(spec).await?;
+        let inherited_root = if let Some(parent) = parent {
+            self.budget_ownership
+                .lock()
+                .await
+                .process_rollouts
+                .get(&parent)
+                .copied()
+        } else {
+            None
+        };
+        let root = match inherited_root {
+            Some(root) => root,
+            None => {
+                self.budget
+                    .create_root(
+                        format!("rollout:{namespace}"),
+                        BudgetRequest {
+                            max_tokens: None,
+                            max_cost_micro: None,
+                        },
+                    )
+                    .await
+            }
+        };
+        let process_budget = self
+            .budget
+            .reserve_child(
+                root,
+                BudgetScopeKind::Process,
+                format!("process:{}", process.id.0),
+                BudgetRequest {
+                    max_tokens: None,
+                    max_cost_micro: None,
+                },
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("process budget allocation failed: {error}"))?;
+        let mut ownership = self.budget_ownership.lock().await;
+        ownership.process_rollouts.insert(process.id, root);
+        ownership
+            .processes
+            .insert(process.id, process_budget.scope_id);
+        Ok(process)
     }
 
     pub async fn signal_process(&self, id: ProcessId, signal: ProcessSignal) -> anyhow::Result<()> {
@@ -166,7 +315,11 @@ impl KernelRuntime {
     ) -> anyhow::Result<OperationHandle> {
         let owner = self.processes.inspect(request.owner).await?;
         anyhow::ensure!(!owner.state.is_terminal(), "operation owner is terminal");
-        self.operations.submit(request).await
+        let owner_id = request.owner;
+        let operation = self.operations.submit(request).await?;
+        self.bind_default_operation_budget(owner_id, operation.id)
+            .await?;
+        Ok(operation)
     }
 
     pub async fn submit_operation_with_id(
@@ -176,7 +329,48 @@ impl KernelRuntime {
     ) -> anyhow::Result<OperationHandle> {
         let owner = self.processes.inspect(request.owner).await?;
         anyhow::ensure!(!owner.state.is_terminal(), "operation owner is terminal");
-        self.operations.submit_with_id(id, request).await
+        let owner_id = request.owner;
+        let operation = self.operations.submit_with_id(id, request).await?;
+        self.bind_default_operation_budget(owner_id, operation.id)
+            .await?;
+        Ok(operation)
+    }
+
+    async fn bind_default_operation_budget(
+        &self,
+        owner: ProcessId,
+        operation: OperationId,
+    ) -> anyhow::Result<()> {
+        let process_scope = self
+            .budget_ownership
+            .lock()
+            .await
+            .processes
+            .get(&owner)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("process budget scope missing"))?;
+        let receipt = self
+            .budget
+            .reserve_child(
+                process_scope,
+                BudgetScopeKind::Operation,
+                format!("operation:{}", operation.0),
+                BudgetRequest {
+                    max_tokens: None,
+                    max_cost_micro: None,
+                },
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("operation budget allocation failed: {error}"))?;
+        self.budget
+            .bind_operation_scope(operation, receipt.scope_id)
+            .await;
+        self.budget_ownership
+            .lock()
+            .await
+            .operations
+            .insert(operation, receipt.scope_id);
+        Ok(())
     }
 
     pub async fn start_operation(&self, id: OperationId) -> anyhow::Result<()> {

@@ -151,8 +151,9 @@ pub use include::turn::{
 // Shared types (from types/)
 pub use types::admission::{
     AdmissionError, AdmissionRequest, AuditEventId, BudgetRequest, BudgetReservationId,
-    CapabilityId, CapabilityScope, ExecutionPermit, LeaseRequest, PermitId, PrincipalId,
-    ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
+    BudgetReservationReceipt, BudgetScope, BudgetScopeId, BudgetScopeKind, CapabilityId,
+    CapabilityScope, ExecutionPermit, LeaseRequest, PermitId, PrincipalId, ResourceLeaseId,
+    RevokeReason, SandboxDecision, SandboxRequirement, UsageReport, BUDGET_SCOPE_SCHEMA_VERSION,
 };
 pub use types::agent::Pid;
 pub use types::agent_control::{

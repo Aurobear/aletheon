@@ -125,11 +125,25 @@ impl AdmissionController for ProductionAdmissionController {
     async fn admit(&self, request: AdmissionRequest) -> Result<ExecutionPermit, AdmissionError> {
         let now = self.clock.mono_now();
         let principal = request.principal.0.clone();
+        let permit_id = PermitId::new();
 
         // --- Budget reservation ---
         let budget_reservation = if let Some(ref budget_ctrl) = self.budget {
             if let Some(ref budget_req) = request.budget {
-                let id = budget_ctrl.reserve(&principal, budget_req).await?;
+                let id = if budget_ctrl.has_operation_scope(request.operation_id).await {
+                    budget_ctrl
+                        .reserve_capability_for_operation(
+                            request.operation_id,
+                            permit_id,
+                            budget_req.clone(),
+                        )
+                        .await?
+                        .reservation_id
+                } else {
+                    // Bounded compatibility for callers not yet composed with
+                    // KernelRuntime; the adapter still creates all four levels.
+                    budget_ctrl.reserve(&principal, budget_req).await?
+                };
                 Some(id)
             } else {
                 None
@@ -173,7 +187,7 @@ impl AdmissionController for ProductionAdmissionController {
         };
 
         let permit = ExecutionPermit {
-            id: PermitId::new(),
+            id: permit_id,
             operation_id: request.operation_id,
             process_id: request.process_id,
             capability: request.capability,
