@@ -49,6 +49,8 @@ pub(crate) struct TurnToolExecutor {
     session_id: String,
     principal: PrincipalId,
     turn_count: usize,
+    /// Stable unique key used by the loop detector for this turn only.
+    turn_id: String,
     /// Kernel operation id for this turn (used by admission controller).
     operation_id: OperationId,
     /// Kernel process id for the main agent (used by admission controller).
@@ -79,6 +81,7 @@ impl TurnToolExecutor {
             session_id,
             principal,
             turn_count,
+            turn_id: operation_id.0.to_string(),
             operation_id,
             process_id,
         }
@@ -135,6 +138,7 @@ impl TurnToolExecutor {
         let session_id = self.session_id.clone();
         let principal = self.principal.clone();
         let turn_count = self.turn_count;
+        let turn_id = self.turn_id.clone();
 
         // --- PreTool hook ---
         {
@@ -220,9 +224,7 @@ impl TurnToolExecutor {
         let (content, is_error) = match tool {
             Some(t) => {
                 let mut r = runner.lock().await;
-                let res = r
-                    .run(t.as_ref(), input.clone(), &exec_ctx, "chat-turn")
-                    .await;
+                let res = r.run(t.as_ref(), input.clone(), &exec_ctx, &turn_id).await;
                 (res.content, res.is_error)
             }
             None => (format!("Unknown tool: {}", name), true),
