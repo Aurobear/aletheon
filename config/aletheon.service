@@ -48,6 +48,7 @@ EnvironmentFile=-%d/gbrain.env
 Environment=ALETHEON_CREDENTIAL_VAULT_PATH=/var/lib/aletheon/state/credentials.vault
 Environment=ALETHEON_CREDENTIAL_MASTER_KEY_PATH=%d/google-vault.key
 Environment=ALETHEON_BACKUP_REQUIRED=1
+Environment=ALETHEON_DATA_ROOT=/var/lib/aletheon
 Environment=ALETHEON_MINIMUM_FREE_BYTES=5368709120
 Environment=ALETHEON_MAXIMUM_BACKUP_AGE_SECS=129600
 

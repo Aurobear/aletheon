@@ -113,8 +113,11 @@ impl RequestHandler {
             .unwrap_or(36 * 60 * 60);
         let backup_required = std::env::var("ALETHEON_BACKUP_REQUIRED")
             .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
+        let health_data_root = std::env::var_os("ALETHEON_DATA_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.subsystems.session.data_dir.clone());
         self.health.refresh_storage(
-            &self.subsystems.session.data_dir,
+            &health_data_root,
             minimum_free_bytes,
             backup_required,
             maximum_backup_age_secs,
