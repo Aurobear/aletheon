@@ -295,6 +295,47 @@ impl RequestHandler {
             .cloned()
             .unwrap_or(serde_json::Value::Null);
 
+        if matches!(
+            method.as_str(),
+            "session.resume" | "session.fork" | "session.interrupt" | "session.replay"
+        ) {
+            let service = crate::service::session_service::SessionService::new(
+                self.turn_orchestrator.coordinator.store(),
+                self.turn_orchestrator.operation_table.clone(),
+                self.turn_orchestrator.coordinator.active_index(),
+            );
+            let session_id = fabric::SessionId(
+                params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+            let result: anyhow::Result<serde_json::Value> = match method.as_str() {
+                "session.resume" => service.resume(&session_id).await.map(|resume| serde_json::json!({
+                    "session": resume.session, "next_sequence": resume.next_sequence, "messages": resume.messages,
+                })),
+                "session.fork" => service.fork(
+                    &session_id,
+                    params.get("through_sequence").and_then(|v| v.as_u64()).unwrap_or(0),
+                ).await.and_then(|record| serde_json::to_value(record).map_err(Into::into)),
+                "session.interrupt" => service.interrupt(&session_id).await.map(|outcome| serde_json::json!({
+                    "outcome": format!("{outcome:?}").to_lowercase(),
+                })),
+                "session.replay" => service.replay(
+                    &session_id,
+                    params.get("after_sequence").and_then(|v| v.as_u64()),
+                ).await.map(|messages| serde_json::json!({"messages": messages})),
+                _ => unreachable!(),
+            };
+            return match result {
+                Ok(result) => serde_json::json!({"jsonrpc":"2.0","id":id,"result":result}),
+                Err(error) => {
+                    serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32020,"message":error.to_string()}})
+                }
+            };
+        }
+
         // Route session.* methods to the Session Gateway (new unified facade).
         if method.starts_with("session.") {
             if let Some(response) = self

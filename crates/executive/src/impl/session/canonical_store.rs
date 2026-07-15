@@ -14,6 +14,10 @@ pub struct CanonicalSessionStore {
     connection: Mutex<Connection>,
 }
 
+pub fn default_session_db_path() -> std::path::PathBuf {
+    fabric::paths::xdg_data_dir().join("sessions-v1.db")
+}
+
 impl CanonicalSessionStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path)?;

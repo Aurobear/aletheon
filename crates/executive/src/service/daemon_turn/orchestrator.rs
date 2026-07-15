@@ -8,6 +8,8 @@ use crate::core::core_systems::CoreSystems;
 use crate::core::session_gateway::SessionGateway;
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::r#impl::daemon::session_manager::SessionManager;
+use crate::r#impl::session::canonical_store::{default_session_db_path, CanonicalSessionStore};
+use crate::service::turn_coordinator::TurnCoordinator;
 use crate::service::TurnPipeline;
 use aletheon_kernel::operation::{OperationScope, OperationTable};
 use aletheon_kernel::process::ProcessTable;
@@ -58,6 +60,7 @@ pub struct DaemonTurnOrchestrator {
 
     // --- Shared turn pipeline ---
     pub(crate) pipeline: Arc<TurnPipeline>,
+    pub(crate) coordinator: Arc<TurnCoordinator>,
 }
 
 impl DaemonTurnOrchestrator {
@@ -92,6 +95,18 @@ impl DaemonTurnOrchestrator {
             notify_tx.clone(),
             daemon_cancel_token.clone(),
         ));
+        let session_db = default_session_db_path();
+        if let Some(parent) = session_db.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let canonical_store = CanonicalSessionStore::open(&session_db).unwrap_or_else(|error| {
+            tracing::warn!(%error, path = %session_db.display(), "canonical session store unavailable; using process-local fallback");
+            CanonicalSessionStore::open(":memory:").expect("in-memory canonical session store")
+        });
+        let coordinator = Arc::new(TurnCoordinator::new(
+            &subsystems.ports,
+            Arc::new(canonical_store),
+        ));
 
         Self {
             process_table,
@@ -112,6 +127,7 @@ impl DaemonTurnOrchestrator {
             daemon_cancel_token,
             current_scope: Mutex::new(None),
             pipeline,
+            coordinator,
         }
     }
 

@@ -1,9 +1,44 @@
+use async_trait::async_trait;
 use cognit::harness::build_harness;
 use cognit::harness::config::HarnessConfig;
 use cognit::harness::linear::ReActLoop;
+use fabric::SessionRecord;
 use mnemosyne::AdvancedCompressor;
 
 use crate::core::config::ExecutiveConfig;
+use crate::service::turn_policy::TurnPolicy;
+
+#[async_trait]
+pub trait CognitiveSessionFactory: Send + Sync {
+    async fn create(
+        &self,
+        session: &SessionRecord,
+        policy: &TurnPolicy,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>>;
+}
+
+pub struct LinearCognitiveSessionFactory {
+    config: HarnessConfig,
+}
+
+impl LinearCognitiveSessionFactory {
+    pub fn new(config: HarnessConfig) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
+    async fn create(
+        &self,
+        _session: &SessionRecord,
+        _policy: &TurnPolicy,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        Ok(Box::new(cognit::harness::LinearCognitiveSession::new(
+            self.config.clone(),
+        )))
+    }
+}
 
 pub fn harness_config_from_executive(config: &ExecutiveConfig) -> HarnessConfig {
     HarnessConfig {

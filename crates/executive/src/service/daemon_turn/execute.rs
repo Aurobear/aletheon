@@ -5,9 +5,10 @@
 
 use super::orchestrator::DaemonTurnOrchestrator;
 
-use fabric::{OperationKind, OperationManager, OperationRequest, PrincipalId, TurnRequest};
+use crate::service::turn_coordinator::TurnExecution;
+use crate::service::turn_policy::TurnPolicy;
+use fabric::{PrincipalId, TurnRequest, TurnResult, TurnStop};
 use serde_json::json;
-use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 impl DaemonTurnOrchestrator {
@@ -58,27 +59,6 @@ impl DaemonTurnOrchestrator {
             }
         };
 
-        // -- Kernel: create per-turn operation --
-        let operation = match self
-            .operation_table
-            .submit(OperationRequest {
-                owner: main_pid,
-                parent: None,
-                kind: OperationKind::SubAgent,
-                deadline: None,
-            })
-            .await
-        {
-            Ok(op) => {
-                let _ = self.operation_table.start(op.id).await;
-                op
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to create turn operation");
-                return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": format!("Operation error: {e}")}});
-            }
-        };
-
         let session_id = self
             .subsystems
             .session
@@ -88,9 +68,9 @@ impl DaemonTurnOrchestrator {
             .clone();
         let principal = principal.unwrap_or_else(|| PrincipalId(session_id.clone()));
 
-        // Build TurnRequest with kernel ids
+        // The coordinator replaces this placeholder with the authoritative Turn id.
         let turn_request = TurnRequest {
-            operation_id: operation.id,
+            operation_id: fabric::OperationId::default(),
             process_id: main_pid,
             session_id: session_id.clone(),
             input: message.to_string(),
@@ -99,38 +79,73 @@ impl DaemonTurnOrchestrator {
             deadline: None,
         };
 
-        // Per-turn cancel token
         let _turn_token = self.begin_turn_token().await;
-
-        // PR-3: OperationScope for structured cancellation of the react task.
-        {
-            let mut guard = self.pipeline.current_scope.lock().await;
-            *guard = Some(aletheon_kernel::operation::OperationScope::new(
-                operation.id,
-            ));
-        }
-        let scope_token = {
-            let guard = self.pipeline.current_scope.lock().await;
-            guard
-                .as_ref()
-                .map(|s| s.token())
-                .unwrap_or_else(CancellationToken::new)
-        };
-
-        // Delegate to shared TurnPipeline
-        self.pipeline
-            .run(
-                id.clone(),
-                message.to_string(),
-                turn_request,
-                operation.id,
-                main_pid,
-                scope_token,
-                principal,
-            )
-            .await
-            .unwrap_or_else(|e| {
-                json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": e.to_string()}})
+        let pipeline = self.pipeline.clone();
+        let rpc_id = id.clone();
+        let policy = TurnPolicy::daemon();
+        let coordinated = self
+            .coordinator
+            .submit_with(turn_request, &policy, move |request, cancel| async move {
+                {
+                    let mut guard = pipeline.current_scope.lock().await;
+                    *guard = Some(aletheon_kernel::operation::OperationScope::new(
+                        request.operation_id,
+                    ));
+                }
+                let response = pipeline
+                    .run(
+                        rpc_id,
+                        request.input.clone(),
+                        request.clone(),
+                        request.operation_id,
+                        request.process_id,
+                        cancel,
+                        principal,
+                    )
+                    .await?;
+                if let Some(error) = response.get("error") {
+                    anyhow::bail!(
+                        "{}",
+                        error
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("daemon turn failed")
+                    );
+                }
+                let result = &response["result"];
+                let output = result["response"].as_str().unwrap_or_default().to_string();
+                let items =
+                    serde_json::from_value(result["canonical_items"].clone()).unwrap_or_default();
+                let succeeded = result["succeeded"].as_bool().unwrap_or(false);
+                let metric = &result["metrics"];
+                let metrics = fabric::TurnMetrics {
+                    tool_calls_made: metric["tool_calls_made"].as_u64().unwrap_or(0) as usize,
+                    tool_errors: metric["tool_errors"].as_u64().unwrap_or(0) as usize,
+                    elapsed_ms: metric["elapsed_ms"].as_u64().unwrap_or(0),
+                    iterations: metric["iterations"].as_u64().unwrap_or(0) as usize,
+                    completed_normally: metric["completed_normally"].as_bool().unwrap_or(false),
+                };
+                Ok(TurnExecution {
+                    result: TurnResult {
+                        output,
+                        stop: if succeeded {
+                            TurnStop::Completed
+                        } else {
+                            TurnStop::Failed
+                        },
+                        metrics,
+                    },
+                    items,
+                })
             })
+            .await;
+        match coordinated {
+            Ok(result) => {
+                json!({"jsonrpc": "2.0", "id": id, "result": {"response": result.output}})
+            }
+            Err(error) => {
+                json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}})
+            }
+        }
     }
 }

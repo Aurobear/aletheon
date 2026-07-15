@@ -22,7 +22,7 @@ impl DaemonTurnOrchestrator {
             .spawn(SpawnSpec {
                 agent_id: AgentId::new(),
                 namespace: NamespaceId("daemon".into()),
-                initial_operation: Some(OperationKind::SubAgent),
+                initial_operation: Some(OperationKind::Turn),
                 ..SpawnSpec::default()
             })
             .await?;

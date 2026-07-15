@@ -4,7 +4,6 @@ use crate::core::mode_router::ModeRouter;
 use crate::core::sub_agent::SubAgentSpawner;
 use anyhow::Result;
 use cognit::harness::interrupt::InterruptFlag;
-use cognit::harness::linear::ReActLoop;
 use fabric::body::{Action, ActionResult};
 use fabric::context::Context;
 use fabric::runtime::StepResult;
@@ -23,7 +22,9 @@ use std::sync::Arc;
 /// - Runtime: orchestration (this struct)
 pub struct AletheonExecutive {
     config: ExecutiveConfig,
-    react_loop: ReActLoop,
+    iteration: usize,
+    awareness_signals: Vec<cognit::core::awareness_signal::AwarenessSignal>,
+    seeded_goal: Option<(String, Vec<String>)>,
     evolution: Option<EvolutionCoordinator>,
     genome_config: GenomeConfig,
     mode_router: ModeRouter,
@@ -33,10 +34,11 @@ pub struct AletheonExecutive {
 
 impl AletheonExecutive {
     pub fn new(config: ExecutiveConfig) -> Self {
-        let react_loop = crate::service::harness_factory::build_configured_react_loop(&config);
         Self {
             config,
-            react_loop,
+            iteration: 0,
+            awareness_signals: Vec::new(),
+            seeded_goal: None,
             evolution: None,
             genome_config: GenomeConfig::default(),
             mode_router: ModeRouter::new(),
@@ -88,8 +90,7 @@ impl AletheonExecutive {
         iterations: usize,
         meta: &metacog::MorphogenesisPipeline<M>,
     ) -> Result<Option<EvolutionSummary>> {
-        // Drain awareness signals from the react loop before passing to evolution
-        let signals = self.react_loop.take_signals();
+        let signals = std::mem::take(&mut self.awareness_signals);
         match &self.evolution {
             Some(coord) => {
                 let summary = coord
@@ -131,7 +132,7 @@ impl AletheonExecutive {
         F: Fn(&Intent, &Context) -> Result<Verdict>,
         H: Fn(&Action, &Context) -> Result<ActionResult>,
     {
-        if !self.react_loop.should_continue() {
+        if self.iteration >= self.config.max_iterations {
             return Ok(StepResult {
                 completed: true,
                 output: Some("Max iterations reached".to_string()),
@@ -140,7 +141,7 @@ impl AletheonExecutive {
             });
         }
 
-        self.react_loop.advance();
+        self.iteration += 1;
 
         Ok(StepResult {
             completed: false,
@@ -152,13 +153,13 @@ impl AletheonExecutive {
 
     /// Get current iteration count
     pub fn iteration(&self) -> usize {
-        self.react_loop.iteration()
+        self.iteration
     }
 
     /// Seed the goal tracker from persisted state (resume-on-start).
     /// Must be called before the first turn.
     pub fn seed_goal(&mut self, description: &str, sub_goals: &[String]) {
-        self.react_loop.seed_goal(description, sub_goals);
+        self.seeded_goal = Some((description.to_string(), sub_goals.to_vec()));
     }
 
     /// Get config
@@ -174,7 +175,7 @@ impl AletheonExecutive {
     pub fn take_awareness_signals(
         &mut self,
     ) -> Vec<cognit::core::awareness_signal::AwarenessSignal> {
-        self.react_loop.take_signals()
+        std::mem::take(&mut self.awareness_signals)
     }
 
     /// Reference to the mode router.

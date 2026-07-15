@@ -503,6 +503,7 @@ impl TurnPipeline {
 
         let mut tool_calls_for_session: Vec<(String, String, serde_json::Value)> = Vec::new();
         let mut tool_results_for_session: Vec<(String, String, bool)> = Vec::new();
+        let mut canonical_items: Vec<fabric::ItemPayload> = Vec::new();
         let mut acc_tokens_in: u64 = 0;
         let mut acc_tokens_out: u64 = 0;
 
@@ -526,10 +527,17 @@ impl TurnPipeline {
                         TurnEventV1::ToolCallComplete { call_id, name: _, args } => {
                             if let Some(tc) = tool_calls_for_session.iter_mut().find(|(id, _, _)| id == call_id) {
                                 tc.2 = args.clone();
+                                canonical_items.push(fabric::ItemPayload::ToolCall {
+                                    call_id: call_id.clone(), name: tc.1.clone(), input: args.clone(),
+                                });
                             }
                         }
                         TurnEventV1::ToolResult { name, call_id, content, is_error, .. } => {
                             tool_results_for_session.push((call_id.clone(), content.clone(), *is_error));
+                            canonical_items.push(fabric::ItemPayload::ToolResult {
+                                call_id: call_id.clone(), content: content.clone(), is_error: *is_error,
+                                permit_id: None, audit_id: None,
+                            });
                             let evidence = fabric::Evidence::from_tool_result(
                                 call_id.clone(), name.clone(), content.clone(), *is_error,
                             );
@@ -804,9 +812,6 @@ impl TurnPipeline {
         self.commit_agora_snapshot(&session_id_for_agora, agora_start_version)
             .await;
 
-        // -- Kernel: mark turn operation completed --
-        let _ = self.operation_table.succeed(operation_id).await;
-
         // -- PR-3: drain the per-turn OperationScope (guarantees no orphan tasks) --
         {
             let mut guard = self.current_scope.lock().await;
@@ -822,7 +827,17 @@ impl TurnPipeline {
             }
         }
 
-        Ok(json!({"jsonrpc": "2.0", "id": id, "result": {"response": text, "turn": turn}}))
+        Ok(json!({"jsonrpc": "2.0", "id": id, "result": {
+            "response": text, "turn": turn, "succeeded": turn_succeeded,
+                "metrics": {
+                    "tool_calls_made": metrics.tool_calls_made,
+                    "tool_errors": metrics.tool_errors,
+                    "elapsed_ms": metrics.elapsed_ms,
+                    "iterations": metrics.iterations,
+                    "completed_normally": metrics.completed_normally
+                },
+                "canonical_items": canonical_items
+        }}))
     }
 }
 

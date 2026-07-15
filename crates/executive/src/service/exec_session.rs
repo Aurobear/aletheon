@@ -47,9 +47,11 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::host::load_dotenv;
+use crate::r#impl::session::canonical_store::{default_session_db_path, CanonicalSessionStore};
 use crate::service::governed_capability::{
     CapabilityRuntimeFactory, RegistryAuthorityProvider, TurnCapabilityInvoker,
 };
+use crate::service::turn_coordinator::TurnCoordinator;
 use crate::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 
 /// Builder for a CLI `exec` session (non-daemon, single-turn).
@@ -170,6 +172,15 @@ impl ExecSessionBuilder {
         let capability =
             CapabilityRuntimeFactory::build(ports.admission.clone(), executor, authority);
 
+        let session_db = default_session_db_path();
+        if let Some(parent) = session_db.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let coordinator = Arc::new(TurnCoordinator::new(
+            ports.as_ref(),
+            Arc::new(CanonicalSessionStore::open(session_db)?),
+        ));
+
         let services = Arc::new(ExecTurnServices {
             llm: llm.clone(),
             tool_definitions,
@@ -183,6 +194,7 @@ impl ExecSessionBuilder {
             ..Default::default()
         };
         let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, ports)
+            .with_coordinator(coordinator)
             .with_harness_config(harness_config);
 
         Ok((turn_service, llm, RiskLevel::ReadOnly))
