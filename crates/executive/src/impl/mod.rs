@@ -13,7 +13,6 @@ pub mod goal;
 pub mod google;
 pub mod health;
 pub mod hook_lifecycle;
-pub mod kernel;
 pub mod memory_projection;
 pub mod orchestration;
 pub mod plugin;
