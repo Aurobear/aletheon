@@ -97,7 +97,7 @@ async fn configured_retention_depth_is_honored() {
 }
 
 #[tokio::test]
-async fn injected_timer_drives_idle_loop() {
+async fn injected_timer_drives_scheduled_reflection() {
     let timer = Arc::new(ManualTimer::default());
     let (module, _tx) =
         DaseinModule::with_runtime(test_clock(), timer.clone(), DaseinRuntimeConfig::default())

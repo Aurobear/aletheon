@@ -144,7 +144,7 @@ V02 installed-daemon real scenario and migration gate
 | ID | Plan artifact | Deliverable | Prerequisites |
 |---|---|---|---|
 | D01 | `2026-07-16-d01-dasein-config-timer-lifecycle.md` | Configured temporality and restartable injected timing | S02 |
-| D02 | `2026-07-15-d02-dasein-self-reducer.md` | Versioned self transition contracts and reducer | D01 |
+| D02 | `2026-07-16-d02-dasein-self-reducer.md` | Versioned self transition contracts and reducer | D01 |
 | D03 | `2026-07-15-d03-dasein-self-ledger-replay.md` | Complete snapshots, ledger, replay and causal lineage | D02 |
 | A01 | `2026-07-15-a01-agora-transaction-integrity.md` | Bound permits, version recheck and ownership-safe claims | S02 |
 | A02 | `2026-07-15-a02-agora-candidate-selection.md` | Typed bounded candidates and deterministic selection | A01 |

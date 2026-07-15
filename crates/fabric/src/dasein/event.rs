@@ -17,16 +17,6 @@ pub enum DaseinEvent {
     },
     TimerTick,
 
-    // Thinking/observation events
-    ThinkingObserved {
-        text: String,
-        turn: usize,
-    },
-    ReasoningObserved {
-        text: String,
-        turn: usize,
-        has_tool_calls: bool,
-    },
     KnowledgeAsserted {
         assertions: Vec<String>,
         confidence: f64,
@@ -53,7 +43,7 @@ pub enum DaseinEvent {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum TemporalEventKind {
     RetentionFaded,
     ProtentionRealized,

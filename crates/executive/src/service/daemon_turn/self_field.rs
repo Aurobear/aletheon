@@ -2,6 +2,7 @@
 
 use super::orchestrator::DaemonTurnOrchestrator;
 use crate::service::turn_pipeline::TurnPipeline;
+use fabric::dasein::OutcomeStatus;
 use fabric::{Context as AbiContext, Intent, SelfFieldOps, Verdict};
 
 #[allow(dead_code)]
@@ -20,11 +21,20 @@ impl DaemonTurnOrchestrator {
         let _ = sf.narrate(event, reason).await;
     }
 
-    pub(crate) async fn coordinate(&self, turn: &usize, turn_text: &str) {
+    pub(crate) async fn coordinate(&self, turn: &usize, turn_text: &str, status: OutcomeStatus) {
         let sf = self.subsystems.self_field.lock().await;
         if let Some(dasein) = sf.dasein() {
-            let _mood = dasein.quick_mood_update(turn_text);
-            tracing::info!(turn = turn, "Dasein mood updated via coordinator");
+            match dasein
+                .record_outcome(turn_text, status, "daemon-turn-orchestrator")
+                .await
+            {
+                Ok(receipt) => tracing::info!(
+                    turn,
+                    version = receipt.current_version.0,
+                    "Dasein outcome transition accepted"
+                ),
+                Err(error) => tracing::warn!(turn, %error, "Dasein outcome transition rejected"),
+            }
         }
     }
 
@@ -55,11 +65,20 @@ impl TurnPipeline {
         let _ = sf.narrate(event, reason).await;
     }
 
-    pub(crate) async fn coordinate(&self, turn: &usize, turn_text: &str) {
+    pub(crate) async fn coordinate(&self, turn: &usize, turn_text: &str, status: OutcomeStatus) {
         let sf = self.subsystems.self_field.lock().await;
         if let Some(dasein) = sf.dasein() {
-            let _mood = dasein.quick_mood_update(turn_text);
-            tracing::info!(turn = turn, "Dasein mood updated via coordinator");
+            match dasein
+                .record_outcome(turn_text, status, "turn-pipeline")
+                .await
+            {
+                Ok(receipt) => tracing::info!(
+                    turn,
+                    version = receipt.current_version.0,
+                    "Dasein outcome transition accepted"
+                ),
+                Err(error) => tracing::warn!(turn, %error, "Dasein outcome transition rejected"),
+            }
         }
     }
 

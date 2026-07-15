@@ -3,6 +3,7 @@ use crate::dasein::context::{
     TemporalStreamSnapshot,
 };
 use crate::dasein::event::DaseinEvent;
+use crate::dasein::transition::{SelfTransitionReceipt, SelfTransitionRequest, SelfVersion};
 use crate::dasein::types::Stimmung;
 
 // ═══ DaseinOps Trait ═══
@@ -28,8 +29,17 @@ pub trait DaseinOps: Send + Sync {
     /// Generate complete context for LLM prompt injection
     fn to_context_injection(&self) -> DaseinContext;
 
-    /// Feed an event into the Dasein module
-    async fn handle_event(&self, event: DaseinEvent) -> anyhow::Result<()>;
+    /// Apply one canonical interpreted experience transition.
+    async fn transition(
+        &self,
+        request: SelfTransitionRequest,
+    ) -> anyhow::Result<SelfTransitionReceipt>;
+
+    /// Current reducer version.
+    async fn self_version(&self) -> SelfVersion;
+
+    /// Feed a legacy event into the canonical reducer.
+    async fn handle_event(&self, event: DaseinEvent) -> anyhow::Result<SelfTransitionReceipt>;
 
     /// Start the sorge loop (background task)
     async fn start_sorge_loop(&self) -> anyhow::Result<()>;

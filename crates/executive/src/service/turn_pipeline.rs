@@ -694,9 +694,12 @@ impl TurnPipeline {
                 .await;
         }
 
-        if turn_succeeded {
-            self.coordinate(&turn_count, &text).await;
-        }
+        let outcome_status = if turn_succeeded {
+            fabric::dasein::OutcomeStatus::Succeeded
+        } else {
+            fabric::dasein::OutcomeStatus::Failed
+        };
+        self.coordinate(&turn_count, &text, outcome_status).await;
 
         self.subsystems
             .debug_perf

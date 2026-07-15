@@ -54,7 +54,7 @@ Expected: configured retention evicts at the requested depth and invalid values 
 - [x] Replace polling/blocking sleeps with an event-or-scheduled-reflection select.
 - [x] Use a deterministic test timer that records/wakes sleepers.
 
-Run: `cargo test -p dasein --test dasein_runtime_lifecycle injected_timer_drives_idle_loop`
+Run: `cargo test -p dasein --test dasein_runtime_lifecycle injected_timer_drives_scheduled_reflection`
 
 Expected: the loop makes no wall-clock dependency and advances when the test timer wakes it.
 

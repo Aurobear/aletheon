@@ -39,7 +39,7 @@
 | Original requirement | Source anchor | Executable owner | Status |
 |---|---|---|---|
 | Configured temporality and event-driven restartable Sorge lifecycle | `dasein-agora-conscious-core-plan.md:789-794`, `:803-804` | D01 | done |
-| Versioned Dasein reducer and complete structured event handling | `dasein-agora-conscious-core-plan.md:786-791`, `:799-803` | D02 | mapped |
+| Versioned Dasein reducer and complete structured event handling | `dasein-agora-conscious-core-plan.md:786-791`, `:799-803` | D02 | done |
 | Self ledger, checksums, replay and causal lineage | `dasein-agora-conscious-core-plan.md:786-804` | D03 | mapped |
 | Typed Agora transactions and durable integrity | `dasein-agora-conscious-core-plan.md:806-825` | A01 | mapped |
 | Bounded competition, ignition, epochs and delivery | `dasein-agora-conscious-core-plan.md:827-845` | A02, A03 | mapped |

@@ -11,6 +11,7 @@ pub mod context_injection;
 pub mod event_bridge;
 pub mod negativity;
 pub mod persistence;
+pub mod reducer;
 pub mod self_model;
 pub mod sorge;
 pub mod temporality;
@@ -26,7 +27,7 @@ use bewandtnis::Bewandtnisganzheit;
 use care_structure::CareStructure;
 use context_injection::format_dasein_context;
 pub use event_bridge::DaseinEventBridge;
-use negativity::NegativityEngine;
+use reducer::DaseinStateEngine;
 use self_model::MutableSelfModel;
 use sorge::{SorgeLoop, SorgeTimer, SystemSorgeTimer};
 use temporality::TemporalStream;
@@ -45,7 +46,7 @@ pub struct DaseinModule {
     world: Arc<Bewandtnisganzheit>,
     self_model: Arc<MutableSelfModel>,
     care: Arc<CareStructure>,
-    negativity: Arc<NegativityEngine>,
+    engine: Arc<DaseinStateEngine>,
 
     // Runtime
     sorge: SorgeLoop,
@@ -112,15 +113,23 @@ impl DaseinModule {
         let world = Arc::new(Bewandtnisganzheit::new());
         let self_model = Arc::new(MutableSelfModel::new());
         let care = Arc::new(CareStructure::new());
-        let negativity = Arc::new(NegativityEngine::default());
+        let mood = Arc::new(RwLock::new(Stimmung::Gelassenheit));
+        let engine = Arc::new(DaseinStateEngine::new(
+            temporality.clone(),
+            world.clone(),
+            self_model.clone(),
+            care.clone(),
+            mood.clone(),
+            clock.clone(),
+        ));
 
         let module = Self {
-            mood: Arc::new(RwLock::new(Stimmung::Gelassenheit)),
+            mood,
             temporality,
             world,
             self_model,
             care,
-            negativity,
+            engine,
             sorge,
             event_tx,
             clock,
@@ -131,14 +140,7 @@ impl DaseinModule {
 
     /// Start the sorge loop.
     pub fn start_sorge_loop(&self) -> bool {
-        self.sorge.start(
-            self.temporality.clone(),
-            self.world.clone(),
-            self.self_model.clone(),
-            self.care.clone(),
-            self.negativity.clone(),
-            self.mood.clone(),
-        )
+        self.sorge.start(self.engine.clone())
     }
 
     /// Stop the sorge loop.
@@ -166,6 +168,39 @@ impl DaseinModule {
         self.event_tx.clone()
     }
 
+    pub async fn transition(
+        &self,
+        request: SelfTransitionRequest,
+    ) -> anyhow::Result<SelfTransitionReceipt> {
+        self.engine.transition(request).await
+    }
+
+    pub async fn self_version(&self) -> SelfVersion {
+        self.engine.version().await
+    }
+
+    pub async fn narrative_reference_count(&self) -> usize {
+        self.engine.narrative_len().await
+    }
+
+    pub async fn record_outcome(
+        &self,
+        summary: impl Into<String>,
+        status: OutcomeStatus,
+        producer: &str,
+    ) -> anyhow::Result<SelfTransitionReceipt> {
+        self.engine
+            .transition_current(
+                ExperienceSource::Runtime,
+                producer,
+                InterpretedExperience::Outcome {
+                    summary: summary.into(),
+                    status,
+                },
+            )
+            .await
+    }
+
     /// Generate context injection for LLM.
     pub fn to_context_injection(&self) -> DaseinContext {
         DaseinContext {
@@ -183,10 +218,11 @@ impl DaseinModule {
         format_dasein_context(&ctx)
     }
 
-    /// Fast-path mood update based on turn text content.
-    /// Uses keyword matching for quick transitions without deep analysis.
+    /// Legacy keyword adapter. It never mutates state directly; when Sorge is
+    /// running, the inferred observation is queued through the reducer.
+    #[deprecated(note = "use record_outcome with an explicit OutcomeStatus")]
     pub fn quick_mood_update(&self, turn_text: &str) -> Stimmung {
-        let mut mood = self.mood.write();
+        let mood = self.mood.read().clone();
         let new_mood = if turn_text.contains("error") || turn_text.contains("failed") {
             Stimmung::Geknickt {
                 because: "turn had errors".to_string(),
@@ -198,14 +234,12 @@ impl DaseinModule {
         } else {
             mood.clone()
         };
-        let changed = std::mem::discriminant(&*mood) != std::mem::discriminant(&new_mood);
+        let changed = std::mem::discriminant(&mood) != std::mem::discriminant(&new_mood);
         if changed {
-            let old = mood.clone();
-            *mood = new_mood.clone();
             let _ = self.event_tx.try_send(DaseinEvent::MoodShift {
-                from: old,
+                from: mood,
                 to: new_mood.clone(),
-                reason: "quick_update_after_turn".to_string(),
+                reason: "legacy keyword compatibility adapter".to_string(),
             });
         }
         new_mood
@@ -261,11 +295,21 @@ impl DaseinOps for DaseinModule {
         self.to_context_injection()
     }
 
-    async fn handle_event(&self, event: DaseinEvent) -> anyhow::Result<()> {
-        self.event_tx
-            .send(event)
+    async fn transition(
+        &self,
+        request: SelfTransitionRequest,
+    ) -> anyhow::Result<SelfTransitionReceipt> {
+        DaseinModule::transition(self, request).await
+    }
+
+    async fn self_version(&self) -> SelfVersion {
+        DaseinModule::self_version(self).await
+    }
+
+    async fn handle_event(&self, event: DaseinEvent) -> anyhow::Result<SelfTransitionReceipt> {
+        self.engine
+            .apply_compat_event(event, "dasein-ops-compatibility")
             .await
-            .map_err(|e| anyhow::anyhow!("failed to send event: {}", e))
     }
 
     async fn start_sorge_loop(&self) -> anyhow::Result<()> {

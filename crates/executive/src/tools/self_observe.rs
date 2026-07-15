@@ -178,8 +178,30 @@ mod tests {
                 care: self.care_snapshot(),
             }
         }
-        async fn handle_event(&self, _event: DaseinEvent) -> anyhow::Result<()> {
-            Ok(())
+        async fn transition(
+            &self,
+            request: SelfTransitionRequest,
+        ) -> anyhow::Result<SelfTransitionReceipt> {
+            Ok(SelfTransitionReceipt {
+                event_id: request.event_id,
+                previous_version: request.expected_version,
+                current_version: SelfVersion(request.expected_version.0 + 1),
+                narrative_entry_id: NarrativeEntryId::for_event(request.event_id),
+                emitted: Vec::new(),
+            })
+        }
+        async fn self_version(&self) -> SelfVersion {
+            SelfVersion(0)
+        }
+        async fn handle_event(&self, _event: DaseinEvent) -> anyhow::Result<SelfTransitionReceipt> {
+            let event_id = SelfEventId::new();
+            Ok(SelfTransitionReceipt {
+                event_id,
+                previous_version: SelfVersion(0),
+                current_version: SelfVersion(1),
+                narrative_entry_id: NarrativeEntryId::for_event(event_id),
+                emitted: Vec::new(),
+            })
         }
         async fn start_sorge_loop(&self) -> anyhow::Result<()> {
             Ok(())

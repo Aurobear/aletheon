@@ -176,11 +176,25 @@ impl RequestHandler {
     /// Post-turn coordination: update Dasein mood from turn output.
     /// Reserved for future Dasein mood-feedback integration; not yet called.
     #[allow(dead_code)]
-    pub(crate) async fn coordinate(&self, turn: &usize, turn_text: &str) {
+    pub(crate) async fn coordinate(
+        &self,
+        turn: &usize,
+        turn_text: &str,
+        status: fabric::dasein::OutcomeStatus,
+    ) {
         let sf = self.subsystems.self_field.lock().await;
         if let Some(dasein) = sf.dasein() {
-            let _mood = dasein.quick_mood_update(turn_text);
-            tracing::info!(turn = turn, "Dasein mood updated via coordinator");
+            match dasein
+                .record_outcome(turn_text, status, "legacy-daemon-handler")
+                .await
+            {
+                Ok(receipt) => tracing::info!(
+                    turn,
+                    version = receipt.current_version.0,
+                    "Dasein outcome transition accepted"
+                ),
+                Err(error) => tracing::warn!(turn, %error, "Dasein outcome transition rejected"),
+            }
         }
     }
 
