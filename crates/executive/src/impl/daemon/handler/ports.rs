@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use mnemosyne::FactUseCases;
 
-use crate::service::{ApprovalUseCases, GoalUseCases};
+use crate::service::{AdminUseCases, ApprovalUseCases, GoalUseCases};
 
 pub(crate) struct HandlerPorts {
     pub(crate) facts: Arc<dyn FactUseCases>,
     pub(crate) goals: Arc<dyn GoalUseCases>,
     pub(crate) approvals: Arc<dyn ApprovalUseCases>,
+    pub(crate) admin: Arc<dyn AdminUseCases>,
 }
 
 impl HandlerPorts {
@@ -17,11 +18,13 @@ impl HandlerPorts {
         facts: Arc<dyn FactUseCases>,
         goals: Arc<dyn GoalUseCases>,
         approvals: Arc<dyn ApprovalUseCases>,
+        admin: Arc<dyn AdminUseCases>,
     ) -> Self {
         Self {
             facts,
             goals,
             approvals,
+            admin,
         }
     }
 }

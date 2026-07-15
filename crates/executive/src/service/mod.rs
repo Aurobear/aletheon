@@ -1,3 +1,4 @@
+pub mod admin_service;
 pub mod approval_service;
 pub mod daemon_react;
 pub mod daemon_turn;
@@ -15,6 +16,7 @@ pub mod turn_service;
 pub mod turn_services;
 pub mod verification;
 
+pub use admin_service::{AdminService, AdminUseCases};
 pub use approval_service::{ApprovalService, ApprovalUseCases};
 pub use daemon_turn::DaemonTurnOrchestrator;
 pub use exec_session::ExecSessionBuilder;

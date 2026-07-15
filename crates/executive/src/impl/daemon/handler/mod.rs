@@ -77,8 +77,6 @@ pub struct RequestHandler {
     pub(crate) goal_worker_task: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     /// Google poll-loop supervisor handle, retained for graceful shutdown.
     pub(crate) google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
-    /// Optional GBrain spool worker, awaited with a bound during shutdown.
-    pub(crate) gbrain_worker_task: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     /// Configured Google control plane. Credentials remain behind its vault-owning boundary.
     pub(crate) google: Option<Arc<crate::r#impl::external::GoogleIntegration>>,
     /// Sanitized readiness state; payload data and error bodies never enter it.

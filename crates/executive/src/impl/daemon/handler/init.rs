@@ -1030,10 +1030,23 @@ impl RequestHandler {
             Arc::new(mnemosyne::DefaultFactUseCases::new(fact_store.clone()));
         let goal_use_cases: Arc<dyn crate::service::GoalUseCases> =
             Arc::new(crate::service::GoalService::new(objective_store.clone()));
+        let runtime = Arc::new(Mutex::new(runtime));
+        let admin_runtime = runtime.clone();
+        let admin_core_memory = core_memory.clone();
+        let admin_tools = tools.clone();
+        let skill_loader = Arc::new(Mutex::new(skill_loader));
+        let admin_skill_loader = skill_loader.clone();
+        let admin_hooks = hook_registry.clone();
+        let cached_prefix = Arc::new(Mutex::new(cached_prefix));
+        let admin_cached_prefix = cached_prefix.clone();
+        let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
+        let admin_pending_approvals = pending_approvals.clone();
+        let session_approvals = Arc::new(Mutex::new(HashMap::new()));
+        let admin_session_approvals = session_approvals.clone();
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
             kernel,
             domains,
-            runtime: Arc::new(Mutex::new(runtime)),
+            runtime,
             self_field,
             reflector,
             memory: crate::core::MemoryGroup {
@@ -1051,12 +1064,12 @@ impl RequestHandler {
                 tool_runner,
                 storm_breaker,
                 approval_rx: Arc::new(Mutex::new(approval_rx)),
-                pending_approvals: Arc::new(Mutex::new(HashMap::new())),
-                session_approvals: Arc::new(Mutex::new(HashMap::new())),
+                pending_approvals,
+                session_approvals,
             },
             corpus: crate::core::CorpusGroup {
                 tools,
-                skill_loader: Arc::new(Mutex::new(skill_loader)),
+                skill_loader,
                 skill_router,
                 hook_registry,
                 hooks_config,
@@ -1064,7 +1077,7 @@ impl RequestHandler {
             session: crate::core::SessionGroup {
                 default_session_id,
                 session_created_at,
-                cached_prefix: Arc::new(Mutex::new(cached_prefix)),
+                cached_prefix,
                 memory_queue: Arc::new(Mutex::new(Vec::new())),
                 context_window,
                 config_prompt: config.system_prompt.clone(),
@@ -1444,6 +1457,9 @@ impl RequestHandler {
             None
         };
         let goal_worker_enabled = goal_worker_task.is_some();
+        let goal_worker_task = goal_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
+        let google_sync = google_sync.map(|handle| Arc::new(Mutex::new(Some(handle))));
+        let gbrain_worker_task = gbrain_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
 
         let approval_use_cases: Arc<dyn crate::service::ApprovalUseCases> =
             Arc::new(crate::service::ApprovalService::new(
@@ -1452,10 +1468,50 @@ impl RequestHandler {
                 clock.clone(),
                 subsystems.main_agent_process_id.clone(),
             ));
+        let admin_use_cases: Arc<dyn crate::service::AdminUseCases> = Arc::new(
+            crate::service::AdminService::new(crate::service::admin_service::AdminResources {
+                orchestrator: admin_runtime,
+                skills: Arc::new(crate::service::admin_service::DefaultSkillAdmin::new(
+                    admin_skill_loader,
+                    admin_core_memory,
+                    admin_cached_prefix,
+                    config.system_prompt.clone(),
+                )),
+                tool_catalog: Arc::new(move || {
+                    let tools = admin_tools.clone();
+                    Box::pin(async move { tools.lock().await.definitions() })
+                }),
+                hook_catalog: Arc::new(move || {
+                    let hooks = admin_hooks.clone();
+                    Box::pin(async move {
+                        hooks
+                            .lock()
+                            .await
+                            .list()
+                            .into_iter()
+                            .map(|hook| crate::service::admin_service::HookDescriptor {
+                                name: hook.name.clone(),
+                                source: hook.source.clone(),
+                                point: format!("{:?}", hook.point),
+                                priority: hook.priority,
+                                script_path: hook.script_path.clone(),
+                            })
+                            .collect()
+                    })
+                }),
+                pending_approvals: admin_pending_approvals,
+                session_approvals: admin_session_approvals,
+                daemon_cancel: cancel_token.clone(),
+                google_sync: google_sync.clone(),
+                gbrain_worker: gbrain_worker_task.clone(),
+                goal_worker: goal_worker_task.clone(),
+            }),
+        );
         let handler_ports = Arc::new(super::ports::HandlerPorts::new(
             fact_use_cases,
             goal_use_cases,
             approval_use_cases,
+            admin_use_cases,
         ));
         let mut handler = Self {
             ports: handler_ports,
@@ -1471,9 +1527,8 @@ impl RequestHandler {
             daemon_cancel_token: Some(cancel_token),
             turn_orchestrator,
             telegram_task: None,
-            goal_worker_task: goal_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
-            google_sync: google_sync.map(|handle| Arc::new(Mutex::new(Some(handle)))),
-            gbrain_worker_task: gbrain_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
+            goal_worker_task,
+            google_sync,
             google,
             health: Arc::new(crate::r#impl::health::HealthRegistry::production_ready()),
         };

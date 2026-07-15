@@ -77,10 +77,12 @@
 - Modify: `crates/executive/src/impl/daemon/handler/rpc/rpc_admin.rs`
 - Test: `crates/executive/tests/handler_use_case_ports.rs`
 
-- [ ] Define approval list/show/approve/reject requests and results that carry approval IDs, bounded summaries, states, and version/hash evidence but never repository handles.
-- [ ] Implement `ApprovalService` over `ApprovalRepository`, the optional `ApplyCoordinator`, and injected `Clock`; preserve owner/hash/expiry/replay checks.
-- [ ] Define narrow admin operations for skill reload/status, mode/model selection, tool descriptors, hooks, and sub-agent summaries; implementations own the concrete loader/registry/runtime locks.
-- [ ] Migrate approval/admin RPC code to the traits and test forged/replayed approval, missing optional apply coordinator, reload failure, and bounded list results.
+- [x] Define approval list/show/approve/reject requests and results that carry approval IDs, bounded summaries, states, and version/hash evidence but never repository handles.
+- [x] Implement `ApprovalService` over `ApprovalRepository`, the optional `ApplyCoordinator`, and injected `Clock`; preserve owner/hash/expiry/replay checks.
+- [x] Define narrow admin operations for skill reload/status, mode/model selection, tool descriptors, hooks, and sub-agent summaries; implementations own the concrete loader/registry/runtime locks.
+- [x] Migrate approval/admin RPC code to the traits and test forged/replayed approval, missing optional apply coordinator, reload failure, and bounded list results.
+
+**Task 4 evidence:** typed approval context/resolution/error contracts and the repository/apply/clock adapter are at `crates/executive/src/service/approval_service.rs:17-171`; the pending list is capped at 100 while `ApprovalSnapshot` retains state, version, and subject-hash evidence. Narrow admin operations, fallible skill port, type-erased tool/hook catalogs, lifecycle control, and 200-item caps are at `crates/executive/src/service/admin_service.rs:20-287`. Forged owner, idempotent replay, stale version, expiry, missing apply runtime, and bounded approval coverage is at `crates/executive/tests/approval_service.rs:95-215`; reload success/failure, mode/model, transient approval, shutdown, and request-boundary coverage is at `crates/executive/tests/admin_service.rs:51-169`. Focused tests (19 approval/apply/channel tests and 5 admin tests), focused Clippy, and architecture fitness pass; all three former approval/admin handler service-locator exceptions were deleted.
 
 ### Task 5: Extract session/context use cases
 
