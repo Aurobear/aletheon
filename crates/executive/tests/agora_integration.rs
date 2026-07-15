@@ -45,6 +45,7 @@ async fn commit_then_recover() {
         .await
         .unwrap();
     reg1.commit("s1", prop2.id).await.unwrap();
+    let original = reg1.snapshot("s1").await.unwrap();
 
     let reg2 = AgoraRegistry::new_with_persistence(log.clone() as Arc<dyn AgoraPersistence>);
     let replayed = reg2.recover_session("s1").await.unwrap();
@@ -54,6 +55,7 @@ async fn commit_then_recover() {
     assert_eq!(snap["version"], json!(2));
     assert_eq!(snap["blackboard"]["alpha"], json!(10));
     assert_eq!(snap["blackboard"]["beta"], json!(20));
+    assert_eq!(snap, original, "recovery must reproduce the full snapshot");
 
     let changes = reg2.changes_since("s1", 0).await;
     assert_eq!(changes.len(), 2);

@@ -8,23 +8,47 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-use fabric::include::agora::{AgoraView, AgoraViewRequest, CommitPermit, CommitReceipt};
+use fabric::include::agora::{AgoraView, AgoraViewRequest, CommitReceipt, WorkspaceCommitPermit};
 use fabric::{AgoraOps, ProcessId};
 
 use crate::persistence::AgoraPersistence;
 use crate::workspace::{AgoraCommit, AgoraOperation, AgoraProposal, Workspace};
 
 /// Owns one `Workspace` per session id. Cheap to clone via `Arc`.
-#[derive(Default)]
 pub struct AgoraRegistry {
-    sessions: Mutex<HashMap<String, Workspace>>,
+    sessions: Mutex<HashMap<String, Arc<SpaceSlot>>>,
+    proposal_index: Mutex<HashMap<uuid::Uuid, String>>,
     persistence: Option<Arc<dyn AgoraPersistence>>,
+}
+
+struct SpaceSlot {
+    workspace: Mutex<Workspace>,
+    commit_gate: Mutex<()>,
+}
+
+impl SpaceSlot {
+    fn new(session: &str) -> Self {
+        Self {
+            workspace: Mutex::new(Workspace::new(
+                session,
+                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            )),
+            commit_gate: Mutex::new(()),
+        }
+    }
+}
+
+impl Default for AgoraRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AgoraRegistry {
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            proposal_index: Mutex::new(HashMap::new()),
             persistence: None,
         }
     }
@@ -37,8 +61,53 @@ impl AgoraRegistry {
     pub fn new_with_persistence(persistence: Arc<dyn AgoraPersistence>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            proposal_index: Mutex::new(HashMap::new()),
             persistence: Some(persistence),
         }
+    }
+
+    async fn space(&self, session: &str) -> Arc<SpaceSlot> {
+        let mut sessions = self.sessions.lock().await;
+        sessions
+            .entry(session.to_string())
+            .or_insert_with(|| Arc::new(SpaceSlot::new(session)))
+            .clone()
+    }
+
+    async fn existing_space(&self, session: &str) -> Option<Arc<SpaceSlot>> {
+        self.sessions.lock().await.get(session).cloned()
+    }
+
+    async fn commit_transaction(
+        &self,
+        session: &str,
+        proposal_id: uuid::Uuid,
+        permit: Option<&WorkspaceCommitPermit>,
+    ) -> Result<AgoraCommit, String> {
+        let slot = self.space(session).await;
+        let _gate = slot.commit_gate.lock().await;
+        let prepared = {
+            let workspace = slot.workspace.lock().await;
+            workspace
+                .prepare_commit(proposal_id, permit)
+                .map_err(|error| error.to_string())?
+        };
+
+        if let Some(persistence) = &self.persistence {
+            persistence
+                .append_commit(session, &prepared)
+                .await
+                .map_err(|error| format!("persistence write failed: {error}"))?;
+        }
+
+        {
+            let mut workspace = slot.workspace.lock().await;
+            workspace
+                .apply_prepared_commit(prepared.clone())
+                .map_err(|error| error.to_string())?;
+        }
+        self.proposal_index.lock().await.remove(&proposal_id);
+        Ok(prepared)
     }
 
     /// Replay persisted commits for `session` into the workspace.
@@ -57,20 +126,17 @@ impl AgoraRegistry {
             return Ok(0);
         }
 
-        let mut map = self.sessions.lock().await;
-        let ws = map.entry(session.to_string()).or_insert_with(|| {
-            Workspace::new(
-                session,
-                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            )
-        });
-
+        let slot = self.space(session).await;
+        let _gate = slot.commit_gate.lock().await;
+        let mut workspace = slot.workspace.lock().await;
+        let mut recovered = workspace.clone();
         let mut replayed = 0;
         for commit in commits {
-            if ws.apply_commit(commit) {
+            if recovered.apply_commit(commit)? {
                 replayed += 1;
             }
         }
+        *workspace = recovered;
 
         Ok(replayed)
     }
@@ -78,13 +144,8 @@ impl AgoraRegistry {
     /// Write a value onto a session's blackboard.
     #[deprecated(note = "Use AgoraService propose/commit; publish is backend compatibility only")]
     pub async fn publish(&self, session: &str, key: &str, value: Value) -> Result<()> {
-        let mut map = self.sessions.lock().await;
-        let ws = map.entry(session.to_string()).or_insert_with(|| {
-            Workspace::new(
-                session,
-                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            )
-        });
+        let slot = self.space(session).await;
+        let mut ws = slot.workspace.lock().await;
         ws.blackboard.set(key, value);
         Ok(())
     }
@@ -92,13 +153,8 @@ impl AgoraRegistry {
     /// Merge a JSON patch into the session workspace.
     #[deprecated(note = "Use AgoraService propose/commit; update is backend compatibility only")]
     pub async fn update(&self, session: &str, patch: Value) -> Result<()> {
-        let mut map = self.sessions.lock().await;
-        let ws = map.entry(session.to_string()).or_insert_with(|| {
-            Workspace::new(
-                session,
-                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            )
-        });
+        let slot = self.space(session).await;
+        let mut ws = slot.workspace.lock().await;
         ws.blackboard.merge(patch);
         Ok(())
     }
@@ -107,42 +163,46 @@ impl AgoraRegistry {
 #[async_trait]
 impl AgoraOps for AgoraRegistry {
     async fn recall(&self, session: &str, key: &str) -> Result<Option<Value>> {
-        let map = self.sessions.lock().await;
-        Ok(map
-            .get(session)
-            .and_then(|ws| ws.blackboard.get(key).cloned()))
+        let Some(slot) = self.existing_space(session).await else {
+            return Ok(None);
+        };
+        let workspace = slot.workspace.lock().await;
+        Ok(workspace.blackboard.get(key).cloned())
     }
 
     async fn snapshot(&self, session: &str) -> Result<Value> {
-        let map = self.sessions.lock().await;
-        Ok(map
-            .get(session)
-            .map(|ws| ws.snapshot())
-            .unwrap_or(Value::Null))
+        let Some(slot) = self.existing_space(session).await else {
+            return Ok(Value::Null);
+        };
+        let snapshot = slot.workspace.lock().await.snapshot();
+        Ok(snapshot)
     }
 
     async fn version(&self, session: &str) -> Result<u64> {
-        let map = self.sessions.lock().await;
-        Ok(map.get(session).map(|ws| ws.version).unwrap_or(0))
+        let Some(slot) = self.existing_space(session).await else {
+            return Ok(0);
+        };
+        let version = slot.workspace.lock().await.version;
+        Ok(version)
     }
 
     async fn clear(&self, session: &str) -> Result<()> {
-        let mut map = self.sessions.lock().await;
-        if let Some(ws) = map.get_mut(session) {
-            ws.clear();
+        if let Some(slot) = self.existing_space(session).await {
+            let _gate = slot.commit_gate.lock().await;
+            let mut workspace = slot.workspace.lock().await;
+            let ids: Vec<_> = workspace.proposals.keys().copied().collect();
+            workspace.clear();
+            let mut index = self.proposal_index.lock().await;
+            for id in ids {
+                index.remove(&id);
+            }
         }
         Ok(())
     }
 
     async fn trace(&self, session: &str, kind: &str, content: Value) -> Result<()> {
-        let mut map = self.sessions.lock().await;
-        let ws = map.entry(session.to_string()).or_insert_with(|| {
-            Workspace::new(
-                session,
-                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            )
-        });
-        ws.trace.push(kind, content);
+        let slot = self.space(session).await;
+        slot.workspace.lock().await.trace.push(kind, content);
         Ok(())
     }
 
@@ -153,41 +213,40 @@ impl AgoraOps for AgoraRegistry {
         operation: AgoraOperation,
         author: ProcessId,
     ) -> Result<AgoraProposal, String> {
-        let mut map = self.sessions.lock().await;
-        let ws = map.entry(session.to_string()).or_insert_with(|| {
-            Workspace::new(
-                session,
-                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            )
-        });
-        ws.propose(base_version, operation, author).map_err(|c| {
-            format!(
-                "version conflict: expected {}, actual {}",
-                c.expected, c.actual
-            )
-        })
+        let slot = self.space(session).await;
+        let proposal = slot
+            .workspace
+            .lock()
+            .await
+            .propose(base_version, operation, author)
+            .map_err(|c| {
+                format!(
+                    "version conflict: expected {}, actual {}",
+                    c.expected, c.actual
+                )
+            })?;
+        self.proposal_index
+            .lock()
+            .await
+            .insert(proposal.id, session.to_string());
+        Ok(proposal)
     }
 
     async fn commit(&self, session: &str, proposal_id: uuid::Uuid) -> Result<AgoraCommit, String> {
-        let mut map = self.sessions.lock().await;
-        let ws = map.entry(session.to_string()).or_insert_with(|| {
-            Workspace::new(
-                session,
-                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            )
-        });
-        let commit = ws
-            .commit(proposal_id)
-            .ok_or_else(|| format!("proposal {} not found in session {}", proposal_id, session))?;
+        self.commit_transaction(session, proposal_id, None).await
+    }
 
-        // Persist the commit if a persistence adapter is configured.
-        if let Some(ref p) = self.persistence {
-            p.append_commit(session, &commit)
-                .await
-                .map_err(|e| format!("persistence write failed: {e}"))?;
+    async fn commit_with_permit(
+        &self,
+        session: &str,
+        proposal_id: uuid::Uuid,
+        permit: WorkspaceCommitPermit,
+    ) -> Result<AgoraCommit, String> {
+        if permit.space.0 != session || permit.proposal_id != proposal_id {
+            return Err("commit permit does not address requested transaction".into());
         }
-
-        Ok(commit)
+        self.commit_transaction(session, proposal_id, Some(&permit))
+            .await
     }
 
     async fn reject(
@@ -196,23 +255,23 @@ impl AgoraOps for AgoraRegistry {
         proposal_id: uuid::Uuid,
         reason: fabric::RejectReason,
     ) -> Result<(), String> {
-        let mut map = self.sessions.lock().await;
-        let ws = map.entry(session.to_string()).or_insert_with(|| {
-            Workspace::new(
-                session,
-                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            )
-        });
-        ws.reject(proposal_id, reason)
-            .ok_or_else(|| format!("proposal {} not found in session {}", proposal_id, session))
+        let slot = self.space(session).await;
+        let _gate = slot.commit_gate.lock().await;
+        slot.workspace
+            .lock()
+            .await
+            .reject(proposal_id, reason)
+            .ok_or_else(|| format!("proposal {} not found in session {}", proposal_id, session))?;
+        self.proposal_index.lock().await.remove(&proposal_id);
+        Ok(())
     }
 
     async fn changes_since(&self, session: &str, since_version: u64) -> Vec<AgoraCommit> {
-        let map = self.sessions.lock().await;
-        match map.get(session) {
-            Some(ws) => ws.changes_since(since_version),
-            None => Vec::new(),
-        }
+        let Some(slot) = self.existing_space(session).await else {
+            return Vec::new();
+        };
+        let changes = slot.workspace.lock().await.changes_since(since_version);
+        changes
     }
 }
 
@@ -231,56 +290,40 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
 
     async fn propose(&self, proposal: AgoraProposal) -> Result<uuid::Uuid> {
         let session = proposal.space.0.clone();
-        let mut map = self.sessions.lock().await;
-        let ws = map.entry(session.clone()).or_insert_with(|| {
-            Workspace::new(
-                session,
-                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            )
-        });
+        let slot = self.space(&session).await;
         let id = proposal.id;
-        ws.propose_full(proposal).map_err(|c| {
-            anyhow::anyhow!(
-                "version conflict: expected {}, actual {}",
-                c.expected,
-                c.actual
-            )
-        })?;
+        slot.workspace.lock().await.propose_full(proposal)?;
+        self.proposal_index.lock().await.insert(id, session);
         Ok(id)
     }
 
-    async fn commit(&self, id: uuid::Uuid, permit: CommitPermit) -> Result<CommitReceipt> {
-        if !permit.authorized {
-            anyhow::bail!("commit rejected: unauthorized");
-        }
-        let mut map = self.sessions.lock().await;
-        let Some((session, ws)) = map
-            .iter_mut()
-            .find(|(_, ws)| ws.proposals.contains_key(&id))
-        else {
-            anyhow::bail!("proposal {id} not found");
-        };
-        let mut commit = ws
-            .commit(id)
-            .ok_or_else(|| anyhow::anyhow!("proposal {id} expired or not found"))?;
-        // Stamp the commit with the real process identity from the permit.
-        commit.author = permit.process;
-        if let Some(ref p) = self.persistence {
-            p.append_commit(session, &commit).await?;
-        }
+    async fn commit(&self, id: uuid::Uuid, permit: WorkspaceCommitPermit) -> Result<CommitReceipt> {
+        anyhow::ensure!(permit.proposal_id == id, "commit permit proposal mismatch");
+        let session = self
+            .proposal_index
+            .lock()
+            .await
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("proposal {id} not found"))?;
+        let commit = self
+            .commit_transaction(&session, id, Some(&permit))
+            .await
+            .map_err(anyhow::Error::msg)?;
         Ok(CommitReceipt { commit })
     }
 
     async fn reject(&self, id: uuid::Uuid, reason: fabric::RejectReason) -> Result<()> {
-        let mut map = self.sessions.lock().await;
-        let Some((_session, ws)) = map
-            .iter_mut()
-            .find(|(_, ws)| ws.proposals.contains_key(&id))
-        else {
-            anyhow::bail!("proposal {id} not found");
-        };
-        ws.reject(id, reason)
-            .ok_or_else(|| anyhow::anyhow!("proposal {id} not found"))
+        let session = self
+            .proposal_index
+            .lock()
+            .await
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("proposal {id} not found"))?;
+        <Self as AgoraOps>::reject(self, &session, id, reason)
+            .await
+            .map_err(anyhow::Error::msg)
     }
 
     async fn changes_since(
@@ -707,7 +750,7 @@ mod tests {
 #[cfg(test)]
 mod phase3_service_tests {
     use super::*;
-    use fabric::include::agora::{AgoraService, AgoraViewRequest, CommitPermit};
+    use fabric::include::agora::{AgoraService, AgoraViewRequest, WorkspaceCommitPermit};
     use fabric::{AgoraSpaceId, Evidence};
     use serde_json::json;
 
@@ -729,7 +772,7 @@ mod phase3_service_tests {
     }
 
     #[tokio::test]
-    async fn unauthorized_commit_is_rejected() {
+    async fn mismatched_permit_is_rejected() {
         let reg = AgoraRegistry::new();
         let p = proposal(
             "s1",
@@ -739,18 +782,11 @@ mod phase3_service_tests {
                 value: json!(1),
             },
         );
+        let mut permit = WorkspaceCommitPermit::issue_for(&p, i64::MAX).unwrap();
+        permit.process = ProcessId(uuid::Uuid::from_u128(99));
         let id = AgoraService::propose(&reg, p).await.unwrap();
-        let err = AgoraService::commit(
-            &reg,
-            id,
-            CommitPermit {
-                process: test_author(),
-                authorized: false,
-            },
-        )
-        .await
-        .unwrap_err();
-        assert!(err.to_string().contains("unauthorized"));
+        let err = AgoraService::commit(&reg, id, permit).await.unwrap_err();
+        assert!(err.to_string().contains("process mismatch"));
     }
 
     #[tokio::test]
@@ -765,17 +801,9 @@ mod phase3_service_tests {
             },
         );
         p.expires_at_ms = Some(0);
+        let permit = WorkspaceCommitPermit::issue_for(&p, i64::MAX).unwrap();
         let id = AgoraService::propose(&reg, p).await.unwrap();
-        let err = AgoraService::commit(
-            &reg,
-            id,
-            CommitPermit {
-                process: test_author(),
-                authorized: true,
-            },
-        )
-        .await
-        .unwrap_err();
+        let err = AgoraService::commit(&reg, id, permit).await.unwrap_err();
         assert!(err.to_string().contains("expired") || err.to_string().contains("not found"));
     }
 
@@ -803,17 +831,9 @@ mod phase3_service_tests {
         let reg = AgoraRegistry::new();
         let evidence = Evidence::from_tool_result("c1", "bash", "ok", false);
         let p = proposal("s1", 0, AgoraOperation::AcceptEvidence { evidence });
+        let permit = WorkspaceCommitPermit::issue_for(&p, i64::MAX).unwrap();
         let id = AgoraService::propose(&reg, p).await.unwrap();
-        AgoraService::commit(
-            &reg,
-            id,
-            CommitPermit {
-                process: test_author(),
-                authorized: true,
-            },
-        )
-        .await
-        .unwrap();
+        AgoraService::commit(&reg, id, permit).await.unwrap();
 
         let view = AgoraService::view(
             &reg,

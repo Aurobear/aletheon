@@ -146,7 +146,7 @@ V02 installed-daemon real scenario and migration gate
 | D01 | `2026-07-16-d01-dasein-config-timer-lifecycle.md` | Configured temporality and restartable injected timing | S02 |
 | D02 | `2026-07-16-d02-dasein-self-reducer.md` | Versioned self transition contracts and reducer | D01 |
 | D03 | `2026-07-16-d03-dasein-ledger-replay-lineage.md` | Complete snapshots, ledger, replay and causal lineage | D02 |
-| A01 | `2026-07-15-a01-agora-transaction-integrity.md` | Bound permits, version recheck and ownership-safe claims | S02 |
+| A01 | `2026-07-16-a01-agora-transaction-integrity.md` | Bound permits, version recheck and ownership-safe claims | S02 |
 | A02 | `2026-07-15-a02-agora-candidate-selection.md` | Typed bounded candidates and deterministic selection | A01 |
 | A03 | `2026-07-15-a03-agora-broadcast-delivery.md` | Durable epochs, bounded delivery and acknowledgements | A02 |
 
@@ -154,7 +154,7 @@ V02 installed-daemon real scenario and migration gate
 
 | ID | Plan artifact | Deliverable | Prerequisites |
 |---|---|---|---|
-| C01 | `2026-07-15-c01-recurrent-workspace-coordinator.md` | Dasein salience ↔ Agora broadcast recurrence | D03, A03, S02 |
+| C01 | `2026-07-15-c01-recurrent-workspace-coordinator.md` | Dasein salience ↔ Agora broadcast recurrence | D03, A03, K02, X02, S02 |
 | C02 | `2026-07-15-c02-conscious-processors-integration.md` | Memory, Metacog, Corpus and SubAgent processors | M05, G10, C01, F01 |
 | V01 | `2026-07-15-v01-cross-domain-acceptance-suite.md` | Deterministic lifecycle, isolation and replay suite | C02, M07, M08, R02, Q02 |
 | V02 | `2026-07-15-v02-production-migration-scenarios.md` | Installed-daemon scenarios, rollback and release gates | V01 |

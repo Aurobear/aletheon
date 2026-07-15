@@ -104,7 +104,7 @@ pub use policy::verifier;
 pub use include::admission::AdmissionController;
 pub use include::agora::{
     AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, AgoraService, AgoraViewRequest,
-    CommitPermit, CommitReceipt, RejectReason, VersionConflict,
+    CommitReceipt, RejectReason, VersionConflict, WorkspaceCommitPermit,
 };
 pub use include::body::{Action, ActionResult, BodyRuntime};
 pub use include::capability_invoker::CapabilityInvoker;

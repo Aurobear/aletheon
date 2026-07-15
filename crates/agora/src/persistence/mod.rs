@@ -17,7 +17,8 @@ use crate::workspace::AgoraCommit;
 /// or a file — the trait only requires append + recover-by-session.
 #[async_trait]
 pub trait AgoraPersistence: Send + Sync {
-    /// Persist a committed operation, keyed by session id.
+    /// Persist a committed operation, keyed by session id. Implementations must
+    /// be idempotent by `(session, commit.id)` and reject conflicting payloads.
     async fn append_commit(&self, session: &str, commit: &AgoraCommit) -> Result<()>;
 
     /// Recover all commits for a session, in commit order.
@@ -46,6 +47,16 @@ impl InMemoryCommitLog {
 impl AgoraPersistence for InMemoryCommitLog {
     async fn append_commit(&self, session: &str, commit: &AgoraCommit) -> Result<()> {
         let mut entries = self.entries.lock().await;
+        if let Some((_, existing)) = entries
+            .iter()
+            .find(|(candidate, existing)| candidate == session && existing.id == commit.id)
+        {
+            anyhow::ensure!(
+                serde_json::to_vec(existing)? == serde_json::to_vec(commit)?,
+                "workspace commit id collision"
+            );
+            return Ok(());
+        }
         entries.push((session.to_string(), commit.clone()));
         Ok(())
     }
@@ -68,19 +79,20 @@ mod tests {
     use uuid::Uuid;
 
     fn commit(id: Uuid, version: u64, key: &str, value: serde_json::Value, at: i64) -> AgoraCommit {
-        AgoraCommit {
+        let proposal = fabric::AgoraProposal {
             id,
             space: fabric::AgoraSpaceId("s".into()),
             author: fabric::ProcessId(uuid::Uuid::from_u128(3)),
-            version,
+            base_version: version - 1,
             operation: AgoraOperation::PublishFact {
                 key: key.into(),
                 value,
             },
             evidence: Vec::new(),
             confidence: 1.0,
-            committed_at: at,
-        }
+            expires_at_ms: None,
+        };
+        AgoraCommit::from_proposal(&proposal, version, at, None).unwrap()
     }
 
     #[tokio::test]

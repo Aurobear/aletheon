@@ -20,7 +20,7 @@ use cognit::harness::event_sink::{ChannelEventSink, Event};
 use cognit::harness::linear::TurnMetrics;
 use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
-use fabric::include::agora::AgoraOperation;
+use fabric::include::agora::{AgoraOperation, WorkspaceCommitPermit};
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
 use fabric::{
@@ -377,6 +377,7 @@ impl TurnPipeline {
         let self_field_arc_for_react = self.subsystems.self_field.clone();
         let session_id_for_agora = sess_id.clone();
         let agora_for_events = agora.clone();
+        let clock_for_agora = self.clock.clone();
 
         let tool_executor = Arc::new(TurnToolExecutor::new(
             &self.subsystems,
@@ -549,7 +550,19 @@ impl TurnPipeline {
                                     main_pid,
                                 ).await {
                                     Ok(prop) => {
-                                        if let Err(e) = agora.commit(&session_id_for_agora, prop.id).await {
+                                        let permit = WorkspaceCommitPermit::issue_for(
+                                            &prop,
+                                            clock_for_agora.wall_now().0.saturating_add(30_000),
+                                        );
+                                        let result = match permit {
+                                            Ok(permit) => agora.commit_with_permit(
+                                                &session_id_for_agora,
+                                                prop.id,
+                                                permit,
+                                            ).await,
+                                            Err(error) => Err(error.to_string()),
+                                        };
+                                        if let Err(e) = result {
                                             tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed");
                                         } else {
                                             agora_version += 1;
