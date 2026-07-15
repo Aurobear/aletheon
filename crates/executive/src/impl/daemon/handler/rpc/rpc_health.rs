@@ -103,6 +103,22 @@ impl RequestHandler {
             .active_connections
             .load(std::sync::atomic::Ordering::Relaxed);
         let session_count = self.sessions.lock().await.len();
+        let minimum_free_bytes = std::env::var("ALETHEON_MINIMUM_FREE_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(5 * 1024 * 1024 * 1024);
+        let maximum_backup_age_secs = std::env::var("ALETHEON_MAXIMUM_BACKUP_AGE_SECS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(36 * 60 * 60);
+        let backup_required = std::env::var("ALETHEON_BACKUP_REQUIRED")
+            .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
+        self.health.refresh_storage(
+            &self.subsystems.session.data_dir,
+            minimum_free_bytes,
+            backup_required,
+            maximum_backup_age_secs,
+        );
 
         self.health.set(
             "telegram",

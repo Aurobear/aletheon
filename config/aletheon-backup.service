@@ -16,7 +16,7 @@ LoadCredential=restic-repository:/etc/aletheon/credentials/restic-repository
 Environment=RESTIC_PASSWORD_FILE=%d/restic-password
 Environment=RESTIC_REPOSITORY_FILE=%d/restic-repository
 ReadOnlyPaths=/var/lib/aletheon /etc/aletheon
-ReadWritePaths=/var/cache/aletheon/backup
+ReadWritePaths=/var/cache/aletheon/backup /var/lib/aletheon/state
 PrivateTmp=yes
 NoNewPrivileges=yes
 ProtectSystem=strict

@@ -85,3 +85,24 @@ fn unix_server_retains_peer_credential_gate() {
     assert!(script.contains("AF_UNIX"));
     assert!(script.contains("'ready': 0, 'degraded': 1, 'unready': 2"));
 }
+
+#[test]
+fn live_storage_probe_reports_free_bytes_and_backup_marker_age() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("state")).unwrap();
+    let health = HealthRegistry::production_ready();
+    health.refresh_storage(directory.path(), 1, true, 60);
+    let snapshot = health.snapshot();
+    assert_eq!(snapshot.components["disk_quota"].class, HealthClass::Ready);
+    assert!(snapshot.components["disk_quota"].count.unwrap() > 0);
+    assert_eq!(
+        snapshot.components["backup"].error_category,
+        Some("backup_missing")
+    );
+
+    std::fs::write(directory.path().join("state/backup-marker.json"), "{}").unwrap();
+    health.refresh_storage(directory.path(), 1, true, 60);
+    let snapshot = health.snapshot();
+    assert_eq!(snapshot.components["backup"].class, HealthClass::Ready);
+    assert!(snapshot.components["backup"].age_seconds.is_some());
+}

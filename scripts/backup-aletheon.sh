@@ -75,4 +75,11 @@ mv -T -- "$tmp_manifest" "$stage/manifest.json"
 receipt=$(restic --repository-file "$repository_file" backup --json --tag aletheon-manifest "$stage/manifest.json" \
   | jq -r 'select(.message_type=="summary") | .snapshot_id' | tail -n1)
 restic --repository-file "$repository_file" check --read-data-subset=1/20 >/dev/null
+marker="$data_root/state/backup-marker.json"
+install -d -m 0750 "$(dirname -- "$marker")"
+jq -n --arg completed_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg snapshot "$snapshot" --arg receipt "$receipt" \
+  '{completed_utc:$completed_utc,snapshot_id:$snapshot,receipt_snapshot_id:$receipt}' >"$marker.tmp"
+chmod 0640 "$marker.tmp"
+mv -T -- "$marker.tmp" "$marker"
 echo "backup complete: snapshot=$snapshot receipt=$receipt files=$(jq '.files|length' "$stage/manifest.json") databases=$db_count" >&2
