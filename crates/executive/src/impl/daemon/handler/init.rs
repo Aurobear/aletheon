@@ -1239,17 +1239,24 @@ impl RequestHandler {
         ));
 
         let approved_apply = if pi_runtime.enabled && pi_work_allowed {
-            Some(Arc::new(crate::r#impl::approval::ApplyCoordinator::new(
-                apply_objective_store,
-                subsystems.memory.approval_repository.clone(),
-                subsystems.ports.operation_table.clone(),
-                clock.clone(),
-                crate::r#impl::approval::ApplyCoordinatorConfig {
-                    worktree_base: pi_runtime.worktree_base.clone(),
-                    timeout: std::time::Duration::from_secs(60),
-                },
-                Arc::new(crate::r#impl::approval::GitManagedWorktreeCleaner),
-            )?))
+            Some(Arc::new(
+                crate::r#impl::approval::ApplyCoordinator::new(
+                    apply_objective_store,
+                    subsystems.memory.approval_repository.clone(),
+                    subsystems.ports.operation_table.clone(),
+                    clock.clone(),
+                    crate::r#impl::approval::ApplyCoordinatorConfig {
+                        worktree_base: pi_runtime.worktree_base.clone(),
+                        timeout: std::time::Duration::from_secs(60),
+                    },
+                    Arc::new(crate::r#impl::approval::GitManagedWorktreeCleaner),
+                )?
+                .with_memory_projection(
+                    crate::r#impl::memory_projection::MemoryProjection::new(
+                        subsystems.memory.memory_service.clone(),
+                    ),
+                ),
+            ))
         } else {
             None
         };

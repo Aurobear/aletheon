@@ -12,11 +12,14 @@ use crate::r#impl::goal::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
     AttemptRequest, CodingVerifier, ObjectiveStore, RetryPolicy,
 };
+use crate::r#impl::memory_projection::{
+    ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
+};
 use aletheon_kernel::operation::OperationTable;
 use fabric::goal::{GoalId, GoalSnapshot, GoalState, GoalWaitReason};
 use fabric::Clock;
 use fabric::ProcessId;
-use fabric::{ExternalEventEnvelope, ExternalEventId, ExternalIdentityId, PrincipalId};
+use fabric::{ApprovalId, ExternalEventEnvelope, ExternalEventId, ExternalIdentityId, PrincipalId};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -70,11 +73,52 @@ impl GoogleEventWaitCondition {
 
 pub struct GoalCoordinator {
     store: Arc<Mutex<ObjectiveStore>>,
+    memory_projection: Option<MemoryProjection>,
 }
 
 impl GoalCoordinator {
     pub fn new(store: Arc<Mutex<ObjectiveStore>>) -> Self {
-        Self { store }
+        Self {
+            store,
+            memory_projection: None,
+        }
+    }
+
+    pub fn with_memory_projection(mut self, projection: MemoryProjection) -> Self {
+        self.memory_projection = Some(projection);
+        self
+    }
+
+    /// Project only an immutable summary that can be read back from durable
+    /// storage. Failure is health evidence and never rewrites the Goal result.
+    pub async fn project_persisted_goal_summary(
+        &self,
+        approval_id: ApprovalId,
+        sensitivity: mnemosyne::MemorySensitivity,
+    ) -> Option<ProjectionStatus> {
+        let projection = self.memory_projection.as_ref()?;
+        let loaded = {
+            let store = self.store.lock().unwrap();
+            let summary = store
+                .load_goal_completion_summary(approval_id)
+                .ok()
+                .flatten()?;
+            let evidence = store.goal_projection_evidence(summary.goal_id).ok()?;
+            (summary, evidence)
+        };
+        Some(
+            projection
+                .project_goal_summary(&loaded.0, &loaded.1, sensitivity)
+                .await,
+        )
+    }
+
+    pub async fn project_approved_architecture_decision(
+        &self,
+        decision: &ApprovedArchitectureDecision,
+    ) -> Option<ProjectionStatus> {
+        let projection = self.memory_projection.as_ref()?;
+        Some(projection.project_architecture_decision(decision).await)
     }
 
     /// Build the M3 one-shot attempt coordinator over this Goal store.
@@ -123,14 +167,18 @@ impl GoalCoordinator {
         config: ApplyCoordinatorConfig,
         cleaner: Arc<dyn ManagedWorktreeCleaner>,
     ) -> Result<ApplyCoordinator, crate::r#impl::approval::ApplyCoordinationError> {
-        ApplyCoordinator::new(
+        let coordinator = ApplyCoordinator::new(
             self.store.clone(),
             approvals,
             operations,
             clock,
             config,
             cleaner,
-        )
+        )?;
+        Ok(match &self.memory_projection {
+            Some(projection) => coordinator.with_memory_projection(projection.clone()),
+            None => coordinator,
+        })
     }
 
     /// Schedule exactly one durable runtime attempt for a Running Goal.

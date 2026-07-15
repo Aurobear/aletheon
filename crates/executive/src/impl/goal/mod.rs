@@ -29,7 +29,10 @@ pub use summary::{
     GoalApplyOutcomeSummary, GoalApprovalOutcomeSummary, GoalAttemptOutcomeSummary,
     GoalCheckOutcomeSummary, GoalCompletionSummary,
 };
-pub use verification::{CodingJobRecoveryRecord, PersistedCodingJob, PersistedVerificationReport};
+pub use verification::{
+    CodingJobRecoveryRecord, GoalProjectionEvidence, PersistedCodingJob,
+    PersistedVerificationReport,
+};
 
 use anyhow::{Context, Result};
 use fabric::goal::{GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason};
