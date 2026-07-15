@@ -7,6 +7,7 @@
 
 pub mod attention;
 pub mod blackboard;
+pub mod competition;
 pub mod ops;
 pub mod persistence;
 pub mod scratchpad;
@@ -16,6 +17,10 @@ pub mod workspace;
 
 pub use attention::Attention;
 pub use blackboard::Blackboard;
+pub use competition::{
+    AdmissionMetrics, AdmissionOutcome, CandidatePool, CandidatePoolConfig, SelectionMetrics,
+    SelectionPolicy,
+};
 pub use ops::AgoraRegistry;
 pub use persistence::{AgoraPersistence, InMemoryCommitLog};
 pub use scratchpad::{RetentionPolicy, Scratchpad, ScratchpadEntry};

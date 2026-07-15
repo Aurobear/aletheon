@@ -42,8 +42,10 @@
 | Versioned Dasein reducer and complete structured event handling | `dasein-agora-conscious-core-plan.md:786-791`, `:799-803` | D02 | done |
 | Self ledger, checksums, replay and causal lineage | `dasein-agora-conscious-core-plan.md:786-804` | D03 | done |
 | Agora transaction and durability integrity | `dasein-agora-conscious-core-plan.md:811-814`, `:819-824` | A01 | done |
-| Typed workspace contents, scoped Scratchpad and direct-mutation cleanup | `dasein-agora-conscious-core-plan.md:810`, `:815-817`, `:824-825` | A02, F01 | mapped |
-| Bounded competition, ignition, epochs and delivery | `dasein-agora-conscious-core-plan.md:827-845` | A02, A03 | mapped |
+| Typed workspace contents with provenance, visibility and lifecycle | `dasein-agora-conscious-core-plan.md:810`, `:824-825` | A02 | done |
+| Scoped Scratchpad integration and direct-mutation cleanup | `dasein-agora-conscious-core-plan.md:815-817` | F01 | mapped |
+| Bounded typed competition, deterministic selection and ignition | `dasein-agora-conscious-core-plan.md:827-833`, `:836-843` | A02 | done |
+| Durable broadcast epochs, delivery and acknowledgements | `dasein-agora-conscious-core-plan.md:834-835`, `:844-845` | A03 | mapped |
 | Dasein–Agora recurrent loop | `dasein-agora-conscious-core-plan.md:847-865` | C01 | mapped |
 | Memory, Metacog, Corpus and child processors | `dasein-agora-conscious-core-plan.md:867-884` | C02 | mapped |
 | Functional indicators and ablations | `dasein-agora-conscious-core-plan.md:703-747` | V01 | mapped |

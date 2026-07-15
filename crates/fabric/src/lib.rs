@@ -73,6 +73,14 @@ pub use types::sandbox;
 pub use types::session;
 pub use types::tool;
 pub use types::vision;
+pub use types::workspace;
+
+pub use types::workspace::{
+    ActionProposalFrame, BroadcastEpoch, CandidateScore, ContentId, GoalFrame,
+    PredictionErrorFrame, PredictionFrame, SalienceVector, SelectionExplanation, SelectionResult,
+    ToolOutcomeFrame, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
+    WorkspaceObservation, WorkspaceProvenance, WorkspaceReflection, WORKSPACE_SCHEMA_V1,
+};
 
 // Event modules
 pub use events::evolution;
