@@ -3,6 +3,7 @@ use serde_json::json;
 use tokio::fs;
 use tokio::process::Command;
 
+use super::mutation_path::validate_mutation_path;
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct ApplyPatchTool;
@@ -59,7 +60,7 @@ impl Tool for ApplyPatchTool {
             };
         }
 
-        let base_path = match base_dir {
+        let requested_base = match base_dir {
             Some(d) => {
                 let p = std::path::Path::new(d);
                 if p.is_absolute() {
@@ -70,6 +71,20 @@ impl Tool for ApplyPatchTool {
             }
             None => ctx.working_dir.clone(),
         };
+        let base_path = match validate_mutation_path(&ctx.working_dir, &requested_base) {
+            Ok(path) => path,
+            Err(error) => return tool_error(format!("Refused patch base: {error}"), start, ctx),
+        };
+        for filename in extract_filenames(patch) {
+            if let Err(error) = validate_mutation_path(&ctx.working_dir, &base_path.join(&filename))
+            {
+                return tool_error(
+                    format!("Refused patch target '{filename}': {error}"),
+                    start,
+                    ctx,
+                );
+            }
+        }
 
         // Try system `patch` command first for robustness
         match apply_via_patch_command(patch, &base_path).await {
@@ -109,6 +124,17 @@ impl Tool for ApplyPatchTool {
                 }
             }
         }
+    }
+}
+
+fn tool_error(message: String, start: fabric::MonoTime, ctx: &ToolContext) -> ToolResult {
+    ToolResult {
+        content: message,
+        is_error: true,
+        metadata: ToolResultMeta {
+            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+            truncated: false,
+        },
     }
 }
 

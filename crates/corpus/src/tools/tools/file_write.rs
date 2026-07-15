@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use tokio::fs;
 
+use super::mutation_path::validate_mutation_path;
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct FileWriteTool;
@@ -44,14 +45,21 @@ impl Tool for FileWriteTool {
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let path = input["path"].as_str().unwrap_or("");
         let content = input["content"].as_str().unwrap_or("");
-
-        let full_path = if std::path::Path::new(path).is_absolute() {
-            std::path::PathBuf::from(path)
-        } else {
-            ctx.working_dir.join(path)
-        };
-
         let start = ctx.clock.mono_now();
+
+        let full_path = match validate_mutation_path(&ctx.working_dir, std::path::Path::new(path)) {
+            Ok(path) => path,
+            Err(error) => {
+                return ToolResult {
+                    content: format!("Refused to write {path}: {error}"),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                        truncated: false,
+                    },
+                };
+            }
+        };
 
         // Create parent directories if needed
         if let Some(parent) = full_path.parent() {
