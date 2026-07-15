@@ -74,9 +74,24 @@ impl TurnPipeline {
         let admission = kernel.admission();
         let agora = Some(subsystems.domains.agora());
 
+        let memory = &subsystems.memory;
+        let crate::core::core_systems::CoreSystems {
+            runtime: executive, ..
+        } = subsystems.as_ref();
         let post_turn_projection = Arc::new(
             crate::service::post_turn_projection::ProductionPostTurnProjection::new(
-                subsystems.clone(),
+                crate::service::post_turn_projection::PostTurnProjectionResources {
+                    hooks: subsystems.corpus.hook_registry.clone(),
+                    memory: memory.memory_service.clone(),
+                    auto_memory: memory.auto_memory.clone(),
+                    reflector: subsystems.reflector.clone(),
+                    episodic: memory.episodic_memory.clone(),
+                    clock: clock.clone(),
+                    executive: executive.clone(),
+                    evolution: subsystems.pipeline.clone(),
+                    agora: subsystems.domains.agora(),
+                    recall: memory.recall_memory.clone(),
+                },
             ),
         );
         let runtime_ports = Arc::new(

@@ -10,8 +10,6 @@ use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
 use mnemosyne::{AutoMemory, MemoryService, RecallMemory};
 use tracing::info;
 
-use crate::core::core_systems::CoreSystems;
-
 #[derive(Clone, Debug)]
 pub struct PostTurnOutcome {
     pub session_id: String,
@@ -53,10 +51,22 @@ pub struct ProductionPostTurnProjection {
 type HookProjectionFn =
     dyn Fn(HookContext) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
 
+pub struct PostTurnProjectionResources {
+    pub hooks: crate::core::corpus_group::HookRegistryHandle,
+    pub memory: Arc<dyn MemoryService>,
+    pub auto_memory: Arc<tokio::sync::Mutex<AutoMemory>>,
+    pub reflector: Reflector,
+    pub episodic: Arc<tokio::sync::Mutex<mnemosyne::episodic::EpisodicMemory>>,
+    pub clock: Arc<dyn Clock>,
+    pub executive: Arc<tokio::sync::Mutex<crate::core::orchestrator::AletheonExecutive>>,
+    pub evolution: Arc<MorphogenesisPipeline<DefaultMetaRuntime>>,
+    pub agora: Arc<dyn AgoraOps>,
+    pub recall: Arc<tokio::sync::Mutex<RecallMemory>>,
+}
+
 impl ProductionPostTurnProjection {
-    pub fn new(subsystems: Arc<CoreSystems>) -> Self {
-        let memory = &subsystems.memory;
-        let hook_registry = subsystems.corpus.hook_registry.clone();
+    pub fn new(resources: PostTurnProjectionResources) -> Self {
+        let hook_registry = resources.hooks;
         let run_hook: Arc<HookProjectionFn> = Arc::new(move |context| {
             let hook_registry = hook_registry.clone();
             Box::pin(async move {
@@ -65,15 +75,15 @@ impl ProductionPostTurnProjection {
         });
         Self {
             run_hook,
-            memory_service: memory.memory_service.clone(),
-            auto_memory: memory.auto_memory.clone(),
-            reflector: subsystems.reflector.clone(),
-            episodic_memory: memory.episodic_memory.clone(),
-            clock: subsystems.kernel.clock(),
-            runtime: Arc::clone(&subsystems.runtime),
-            evolution_pipeline: subsystems.pipeline.clone(),
-            agora: subsystems.domains.agora(),
-            recall_memory: memory.recall_memory.clone(),
+            memory_service: resources.memory,
+            auto_memory: resources.auto_memory,
+            reflector: resources.reflector,
+            episodic_memory: resources.episodic,
+            clock: resources.clock,
+            runtime: resources.executive,
+            evolution_pipeline: resources.evolution,
+            agora: resources.agora,
+            recall_memory: resources.recall,
         }
     }
 }
