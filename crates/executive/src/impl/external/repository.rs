@@ -167,7 +167,10 @@ impl ExternalIdentityRepository {
         principal_id: &PrincipalId,
         account_reference: &str,
     ) -> Result<Option<ExternalIdentityId>, ExternalRepositoryError> {
-        if account_reference.eq_ignore_ascii_case("me") {
+        if matches!(
+            account_reference.to_ascii_lowercase().as_str(),
+            "me" | "default"
+        ) {
             let mut statement = self.db.prepare(
                 "SELECT identity_id FROM external_identities
                  WHERE principal_id=?1 AND state='active'
@@ -578,11 +581,15 @@ mod tests {
     }
 
     #[test]
-    fn me_resolves_only_a_single_active_account() {
+    fn conventional_defaults_resolve_only_a_single_active_account() {
         let f = Fixture::new();
         let (first, _) = f.bind("subject-1", "one@example.com");
         assert_eq!(
             f.repo.resolve_account(&f.owner, "me").unwrap(),
+            Some(first.id)
+        );
+        assert_eq!(
+            f.repo.resolve_account(&f.owner, "default").unwrap(),
             Some(first.id)
         );
 
