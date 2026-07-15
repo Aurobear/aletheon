@@ -29,6 +29,7 @@ impl InMemorySpaceManager {
     }
 
     /// Return a clone of the bindings stored for a space (for testing).
+    #[cfg(test)]
     pub fn get_bindings(&self, space: SpaceId) -> Option<Vec<ContextBinding>> {
         self.get_space(space).map(|s| s.bindings)
     }

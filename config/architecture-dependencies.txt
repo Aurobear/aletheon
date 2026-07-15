@@ -28,6 +28,7 @@ dependency|metacog|aletheon-kernel
 dependency|metacog|fabric
 dependency|mnemosyne|aletheon-kernel
 dependency|mnemosyne|fabric
+dependency|self-evolution-loop-example|aletheon-kernel
 dependency|self-evolution-loop-example|cognit
 dependency|self-evolution-loop-example|corpus
 dependency|self-evolution-loop-example|dasein

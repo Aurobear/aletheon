@@ -22,8 +22,8 @@
 //!
 //! # Kernel primitives wired
 //!
-//! - **ProcessTable**: main agent process is registered and tracked.
-//! - **OperationTable**: each turn creates an operation for cancellation tracking.
+//! - **KernelRuntime process API**: main agent process is registered and tracked.
+//! - **KernelRuntime operation API**: each turn creates an operation for cancellation tracking.
 //! - **SupervisorTree**: agent process has a restart policy.
 //! - **AdmissionController**: tool execution gates through admission (production).
 //! - **MailboxService**: registered per agent process for future inter-process comms.

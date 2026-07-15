@@ -127,7 +127,7 @@ impl DaemonTurnOrchestrator {
 
     /// Wait for an operation to reach a terminal state.
     ///
-    /// Delegates to `OperationTable::wait()` which blocks until the operation
+    /// Delegates to the kernel runtime, which blocks until the operation
     /// transitions to Succeeded, Failed, or Cancelled.
     pub async fn wait_turn(
         &self,
@@ -141,7 +141,7 @@ impl DaemonTurnOrchestrator {
     /// 1. Cancels the per-turn `OperationScope`'s `CancellationToken` so the
     ///    react task can cooperatively exit before its next tool call.
     /// 2. Propagates cancellation through the operation tree in the kernel
-    ///    `OperationTable` (parent → children).
+    ///    operation tree (parent → children).
     pub async fn cancel_turn(&self, operation_id: OperationId) -> anyhow::Result<()> {
         if self.coordinator.cancel_operation(operation_id).await {
             Ok(())
@@ -152,7 +152,7 @@ impl DaemonTurnOrchestrator {
 
     /// Signal a process to exit (Terminate).
     ///
-    /// Delegates to the kernel `ProcessTable`. The process transitions through
+    /// Delegates to the kernel runtime. The process transitions through
     /// Stopping → Exited/Failed, and any in-flight operations are cancelled via
     /// the operation tree's parent-cancel propagation.
     pub async fn exit_process(&self, process_id: ProcessId) -> anyhow::Result<()> {

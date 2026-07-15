@@ -2,7 +2,7 @@
 //!
 //! Sub-agents are spawned by the LLM via the `agent` tool call. The UI still
 //! sees `SubAgentHandle`, but the authoritative lifecycle now lives in the
-//! kernel `ProcessTable` and the cancellation token comes from an Operation
+//! opaque [`KernelRuntime`] and the cancellation token comes from an Operation
 //! task group.
 //!
 //! Supervision: when a sub-agent transitions to `Failed`, the spawner consults
@@ -401,7 +401,7 @@ impl SubAgentSpawner {
     }
 
     /// Register a tracked sub-agent entry with an explicit process parent, so
-    /// the kernel `ProcessTable` can fork the child's context space from the
+    /// the kernel runtime can fork the child's context space from the
     /// parent's (Phase 2b fork-on-spawn). See [`spawn_tracked`](Self::spawn_tracked)
     /// for the parentless variant.
     pub async fn spawn_tracked_with_parent(

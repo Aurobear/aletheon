@@ -24,14 +24,13 @@
 //! | `deadline_exceeded_sets_operation_to_cancelled` | Hanging LLM triggers tokio timeout → Cancelled |
 
 use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::operation::{OperationScope, OperationTable};
-use aletheon_kernel::process::ProcessTable;
+use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::KernelRuntime;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
     CancelReason, MonoDeadlineMillis, NoopTurnEventSink, OperationExitReason, OperationId,
-    OperationKind, OperationManager, OperationRequest, OperationState, ProcessId, ProcessManager,
-    ProcessSignal, ProcessState, SpawnSpec, TurnRequest, TurnServices, TurnStop,
+    OperationKind, OperationRequest, OperationState, ProcessId, ProcessSignal, ProcessState,
+    SpawnSpec, TurnRequest, TurnServices, TurnStop,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -94,19 +93,18 @@ fn stub_services() -> Arc<dyn TurnServices> {
 
 #[tokio::test]
 async fn main_agent_exists_in_process_table() {
-    let clock = Arc::new(TestClock::default());
-    let table = ProcessTable::new(clock);
+    let kernel = test_kernel();
 
-    let handle = table
-        .spawn(SpawnSpec {
+    let handle = kernel
+        .spawn_process(SpawnSpec {
             namespace: fabric::NamespaceId("gate-1".into()),
             ..SpawnSpec::default()
         })
         .await
         .expect("spawn should succeed");
 
-    let snapshot = table
-        .inspect(handle.id)
+    let snapshot = kernel
+        .inspect_process(handle.id)
         .await
         .expect("process should exist in table");
     assert_eq!(snapshot.state, ProcessState::Created);
@@ -122,21 +120,21 @@ async fn sub_agent_created_in_process_table() {
     use aletheon_kernel::supervision::RestartPolicy;
     use executive::core::SubAgentSpawner;
 
-    let clock = Arc::new(TestClock::default());
-    let table = Arc::new(ProcessTable::new(clock));
-    let mut spawner = SubAgentSpawner::new();
+    let kernel = test_kernel();
+    let clock = kernel.clock();
+    let mut spawner = SubAgentSpawner::with_kernel(kernel.clone(), clock);
 
     // Spawn a main agent via the process table.
-    let main = table
-        .spawn(SpawnSpec {
+    let main = kernel
+        .spawn_process(SpawnSpec {
             namespace: fabric::NamespaceId("main-ns".into()),
             ..SpawnSpec::default()
         })
         .await
         .expect("main agent spawn");
 
-    table
-        .signal(main.id, ProcessSignal::Start)
+    kernel
+        .signal_process(main.id, ProcessSignal::Start)
         .await
         .expect("main agent start");
 
@@ -155,7 +153,10 @@ async fn sub_agent_created_in_process_table() {
     assert_eq!(spawner.state(&sub.id), Some(fabric::SubAgentState::Created));
 
     // The main agent is still in the process table.
-    let main_snapshot = table.inspect(main.id).await.expect("main should exist");
+    let main_snapshot = kernel
+        .inspect_process(main.id)
+        .await
+        .expect("main should exist");
     assert_eq!(main_snapshot.state, ProcessState::Running);
 }
 
@@ -222,28 +223,27 @@ async fn every_turn_has_operation_id() {
 
 #[tokio::test]
 async fn wait_on_operation_resolves_after_completion() {
-    let clock = Arc::new(TestClock::default());
-    let table = Arc::new(OperationTable::new(clock));
-    let owner = ProcessId::new();
+    let kernel = test_kernel();
+    let process = kernel.spawn_process(SpawnSpec::default()).await.unwrap();
 
-    let op = table
-        .submit(OperationRequest {
-            owner,
+    let op = kernel
+        .submit_operation(OperationRequest {
+            owner: process.id,
             parent: None,
             kind: OperationKind::Turn,
             deadline: None,
         })
         .await
         .unwrap();
-    table.start(op.id).await.unwrap();
+    kernel.start_operation(op.id).await.unwrap();
 
     // Spawn a waiter that will block until terminal.
-    let t = table.clone();
+    let t = kernel.clone();
     let op_id = op.id;
-    let waiter = tokio::spawn(async move { t.wait(op_id).await });
+    let waiter = tokio::spawn(async move { t.wait_operation(op_id).await });
 
     // Succeed the operation — waiter should unblock.
-    table.succeed(op.id).await.unwrap();
+    kernel.succeed_operation(op.id).await.unwrap();
     let result = waiter.await.unwrap().unwrap();
 
     assert_eq!(result.state, OperationState::Succeeded);
@@ -257,37 +257,39 @@ async fn wait_on_operation_resolves_after_completion() {
 
 #[tokio::test]
 async fn cancel_propagates_to_operation_and_task_exits() {
-    let clock = Arc::new(TestClock::default());
-    let table = Arc::new(OperationTable::new(clock));
-    let owner = ProcessId::new();
+    let kernel = test_kernel();
+    let process = kernel.spawn_process(SpawnSpec::default()).await.unwrap();
 
-    let parent = table
-        .submit(OperationRequest {
-            owner,
+    let parent = kernel
+        .submit_operation(OperationRequest {
+            owner: process.id,
             parent: None,
             kind: OperationKind::Turn,
             deadline: None,
         })
         .await
         .unwrap();
-    table.start(parent.id).await.unwrap();
+    kernel.start_operation(parent.id).await.unwrap();
 
-    let child = table
-        .submit(OperationRequest {
-            owner,
+    let child = kernel
+        .submit_operation(OperationRequest {
+            owner: process.id,
             parent: Some(parent.id),
             kind: OperationKind::CapabilityCall,
             deadline: None,
         })
         .await
         .unwrap();
-    table.start(child.id).await.unwrap();
+    kernel.start_operation(child.id).await.unwrap();
 
     // Cancel the parent — child must also be cancelled.
-    table.cancel(parent.id, CancelReason::User).await.unwrap();
+    kernel
+        .cancel_operation(parent.id, CancelReason::User)
+        .await
+        .unwrap();
 
-    let parent_result = table.wait(parent.id).await.unwrap();
-    let child_result = table.wait(child.id).await.unwrap();
+    let parent_result = kernel.wait_operation(parent.id).await.unwrap();
+    let child_result = kernel.wait_operation(child.id).await.unwrap();
 
     assert_eq!(parent_result.state, OperationState::Cancelled);
     assert_eq!(child_result.state, OperationState::Cancelled);
@@ -303,11 +305,10 @@ async fn cancel_propagates_to_operation_and_task_exits() {
 
 #[tokio::test]
 async fn process_exit_transitions_state_and_operation_is_terminal() {
-    let clock = Arc::new(TestClock::default());
-    let process_table = ProcessTable::new(clock);
+    let kernel = test_kernel();
 
-    let handle = process_table
-        .spawn(SpawnSpec {
+    let handle = kernel
+        .spawn_process(SpawnSpec {
             namespace: fabric::NamespaceId("exit-test".into()),
             ..SpawnSpec::default()
         })
@@ -315,28 +316,28 @@ async fn process_exit_transitions_state_and_operation_is_terminal() {
         .unwrap();
 
     // Start the process.
-    process_table
-        .signal(handle.id, ProcessSignal::Start)
+    kernel
+        .signal_process(handle.id, ProcessSignal::Start)
         .await
         .unwrap();
     assert_eq!(
-        process_table.inspect(handle.id).await.unwrap().state,
+        kernel.inspect_process(handle.id).await.unwrap().state,
         ProcessState::Running
     );
 
     // Terminate — transitions through Stopping → Exited.
-    process_table
-        .signal(handle.id, ProcessSignal::Terminate)
+    kernel
+        .signal_process(handle.id, ProcessSignal::Terminate)
         .await
         .unwrap();
 
-    let exit = process_table.wait(handle.id).await.unwrap();
+    let exit = kernel.wait_process(handle.id).await.unwrap();
     assert_eq!(
         exit.reason,
         fabric::ExitReason::Cancelled("terminated".into())
     );
     assert_eq!(
-        process_table.inspect(handle.id).await.unwrap().state,
+        kernel.inspect_process(handle.id).await.unwrap().state,
         ProcessState::Exited
     );
 }

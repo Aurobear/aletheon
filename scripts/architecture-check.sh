@@ -27,11 +27,28 @@ scan() {
   rg -n --no-heading "$pattern" "$@" -g '*.rs' 2>/dev/null | normalize_rg "$rule" >> "$actual" || true
 }
 
-# Approved direct Tool::execute implementations live in Corpus runtime. Tests are
-# deliberately excluded because they are allowed to exercise raw contracts.
-rg -n --no-heading '\b(tool|exec)\.execute\(' crates/corpus crates/executive crates/bin -g '*.rs' -g '!**/tests/**' 2>/dev/null \
-  | grep -vE '^crates/corpus/src/(security/runner|tools/tools/executor)\.rs:' \
-  | normalize_rg direct_tool >> "$actual" || true
+# Approved direct Tool::execute calls live in Corpus runtime. Integration tests
+# and #[cfg(test)] unit-test modules may exercise raw contracts, so scan only the
+# production prefix of source files.
+python3 - <<'PY' >> "$actual"
+from pathlib import Path
+import re
+
+approved = {
+    Path("crates/corpus/src/security/runner.rs"),
+    Path("crates/corpus/src/tools/tools/executor.rs"),
+}
+pattern = re.compile(r"\b(?:tool|exec)\.execute\(")
+for root in (Path("crates/corpus"), Path("crates/executive"), Path("crates/bin")):
+    for path in root.rglob("*.rs"):
+        if "tests" in path.parts or path in approved:
+            continue
+        production = path.read_text().split("#[cfg(test)]", 1)[0]
+        for line in production.splitlines():
+            if pattern.search(line):
+                normalized = " ".join(line.split())
+                print(f"direct_tool|{path}|{normalized}")
+PY
 scan legacy_event 'use fabric::(envelope|primitives::comm)|\bEnvelope::' crates -g '!**/tests/**'
 scan concrete_clock 'SystemClock::new\(' crates/dasein crates/agora crates/cognit crates/mnemosyne crates/metacog crates/interact -g '!**/tests/**'
 scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/bin/src
@@ -52,6 +69,58 @@ for domain in ("cognit", "dasein", "agora"):
             violations.append(str(path))
 if violations:
     raise SystemExit("architecture-check: domain concrete clock bypass:\n" + "\n".join(violations))
+PY
+
+# K02 deletion gate: lifecycle tables and the retired service locator are
+# private Kernel details. Executive and binaries may depend only on the opaque
+# runtime API, and the old Executive-local kernel implementation must stay gone.
+if rg -n 'ServicePorts|ProcessTable|OperationTable|InMemorySpaceManager|executive::.*kernel' \
+  crates/executive/src crates/bin/src; then
+  echo "architecture-check: production lifecycle authority escaped KernelRuntime" >&2
+  exit 1
+fi
+if [[ -d crates/executive/src/impl/kernel ]]; then
+  echo "architecture-check: retired Executive-local kernel directory exists" >&2
+  exit 1
+fi
+if rg -n '^pub (mod table|use table::(ProcessTable|OperationTable))' \
+  crates/kernel/src/process/mod.rs crates/kernel/src/operation/mod.rs; then
+  echo "architecture-check: lifecycle table mutation API is public" >&2
+  exit 1
+fi
+if rg -n '^pub (mod manager|use manager::InMemorySpaceManager)' crates/kernel/src/space/mod.rs; then
+  echo "architecture-check: concrete space manager API is public" >&2
+  exit 1
+fi
+
+# K02 composition gate: Kernel remains domain-neutral. DomainPorts belongs to
+# Executive, where CoreSystems is the sole structure that pairs it with the
+# KernelRuntime handle.
+if rg -n '^\s*(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)\s*=' \
+  crates/kernel/Cargo.toml || \
+  rg -n '\b(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)::' \
+    crates/kernel/src -g '*.rs'; then
+  echo "architecture-check: Kernel references an application domain" >&2
+  exit 1
+fi
+domain_port_outside_executive=$(rg -l '\bDomainPorts\b' crates -g '*.rs' -g '!**/tests/**' \
+  | grep -v '^crates/executive/' || true)
+if [[ -n "$domain_port_outside_executive" ]]; then
+  echo "architecture-check: DomainPorts is composed outside Executive:" >&2
+  echo "$domain_port_outside_executive" >&2
+  exit 1
+fi
+python3 - <<'PY'
+from pathlib import Path
+
+core = Path("crates/executive/src/core/core_systems.rs").read_text()
+required = ("pub kernel: Arc<KernelRuntime>", "pub domains: crate::core::DomainPorts")
+missing = [needle for needle in required if needle not in core]
+if missing:
+    raise SystemExit(
+        "architecture-check: Executive CoreSystems no longer owns canonical composition: "
+        + ", ".join(missing)
+    )
 PY
 
 if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then

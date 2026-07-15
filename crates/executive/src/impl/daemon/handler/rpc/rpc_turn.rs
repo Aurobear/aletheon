@@ -116,7 +116,7 @@ impl RequestHandler {
     /// JSON-RPC params:
     ///   process_id: string (UUID) — the process to terminate.
     ///
-    /// Delegates to the kernel ProcessTable. The process transitions through
+    /// Delegates to the kernel runtime. The process transitions through
     /// Stopping → Exited/Failed, and in-flight operations are cancelled via
     /// parent-cancel propagation in the operation tree.
     pub(super) async fn handle_turn_exit(
