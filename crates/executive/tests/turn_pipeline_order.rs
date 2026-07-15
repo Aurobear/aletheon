@@ -18,10 +18,10 @@ fn test_kernel() -> Arc<KernelRuntime> {
     Arc::new(KernelRuntime::with_admission(clock, admission))
 }
 
-fn request() -> TurnRequest {
+fn request(process_id: ProcessId) -> TurnRequest {
     TurnRequest {
         operation_id: OperationId::new(),
-        process_id: ProcessId::new(),
+        process_id,
         session_id: "pipeline".into(),
         input: "use tool".into(),
         working_dir: PathBuf::from("."),
@@ -155,10 +155,15 @@ impl TurnServices for PipelineServices {
 async fn turn_pipeline_runs_pre_cognit_capability_in_order() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let services = Arc::new(PipelineServices::new(events.clone(), false));
-    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_kernel());
+    let kernel = test_kernel();
+    let process = kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
+    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel);
 
     let result = turn_service
-        .submit(request(), &NoopTurnEventSink)
+        .submit(request(process.id), &NoopTurnEventSink)
         .await
         .expect("turn should complete");
 
@@ -173,10 +178,15 @@ async fn turn_pipeline_runs_pre_cognit_capability_in_order() {
 async fn pre_turn_error_blocks_model_call() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let services = Arc::new(PipelineServices::new(events.clone(), true));
-    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_kernel());
+    let kernel = test_kernel();
+    let process = kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
+    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel);
 
     let err = turn_service
-        .submit(request(), &NoopTurnEventSink)
+        .submit(request(process.id), &NoopTurnEventSink)
         .await
         .expect_err("pre-turn error should abort submit");
 

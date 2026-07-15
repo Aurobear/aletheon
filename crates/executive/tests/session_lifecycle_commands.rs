@@ -7,10 +7,10 @@ use executive::service::turn_coordinator::{cancelled_result, TurnCoordinator, Tu
 use executive::service::turn_policy::TurnPolicy;
 use fabric::{SessionAppendStore, SessionId, TurnRequest};
 
-fn request(session: &str) -> TurnRequest {
+fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
     TurnRequest {
         operation_id: fabric::OperationId::default(),
-        process_id: fabric::ProcessId::new(),
+        process_id,
         session_id: session.into(),
         input: "hello".into(),
         working_dir: std::env::temp_dir(),
@@ -22,12 +22,16 @@ fn request(session: &str) -> TurnRequest {
 #[tokio::test]
 async fn resume_fork_replay_and_interrupt_share_canonical_state() {
     let kernel = Arc::new(KernelRuntime::new());
+    let process = kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = Arc::new(TurnCoordinator::new(kernel, store.clone()));
     coordinator
         .submit_with(
-            request("base"),
+            request("base", process.id),
             &TurnPolicy::daemon(),
             |_request, _| async {
                 Ok(TurnExecution {
@@ -72,7 +76,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
     let task = tokio::spawn(async move {
         running
             .submit_with(
-                request("active"),
+                request("active", process.id),
                 &TurnPolicy::daemon(),
                 |_request, cancel| async move {
                     cancel.cancelled().await;

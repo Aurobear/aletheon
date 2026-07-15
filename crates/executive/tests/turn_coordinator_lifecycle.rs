@@ -12,10 +12,10 @@ use fabric::{
     TurnResult, TurnStop,
 };
 
-fn request(session: &str) -> TurnRequest {
+fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
     TurnRequest {
         operation_id: fabric::OperationId::default(),
-        process_id: fabric::ProcessId::new(),
+        process_id,
         session_id: session.into(),
         input: "hello".into(),
         working_dir: std::env::temp_dir(),
@@ -43,11 +43,15 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = TurnCoordinator::new(kernel.clone(), store.clone());
+    let process = kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
     let captured = Arc::new(tokio::sync::Mutex::new(None));
     let capture = captured.clone();
     let result = coordinator
         .submit_with(
-            request("success"),
+            request("success", process.id),
             &TurnPolicy::daemon(),
             move |request, _| async move {
                 *capture.lock().await = Some(request.operation_id);
@@ -106,9 +110,13 @@ async fn failure_is_terminal_and_remains_replayable() {
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = TurnCoordinator::new(kernel.clone(), store.clone());
+    let process = kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
     let result = coordinator
         .submit_with(
-            request("failed"),
+            request("failed", process.id),
             &TurnPolicy::exec(),
             |_request, _| async { anyhow::bail!("model unavailable") },
         )
@@ -195,6 +203,10 @@ async fn daemon_then_exec_restart_projects_prior_canonical_context() {
         let store: Arc<dyn SessionAppendStore> =
             Arc::new(CanonicalSessionStore::open(&db).unwrap());
         let coordinator = Arc::new(TurnCoordinator::new(kernel.clone(), store));
+        let process = kernel
+            .spawn_process(fabric::SpawnSpec::default())
+            .await
+            .unwrap();
         TurnService::new(
             Arc::new(EmptyServices),
             PreTurnPipeline,
@@ -204,7 +216,7 @@ async fn daemon_then_exec_restart_projects_prior_canonical_context() {
         .with_coordinator(coordinator)
         .with_policy(policy)
         .with_session_factory(Arc::new(SeedCapturingFactory(captures.clone())))
-        .submit(request("restart"), &fabric::NoopTurnEventSink)
+        .submit(request("restart", process.id), &fabric::NoopTurnEventSink)
         .await
         .unwrap();
     }
