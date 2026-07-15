@@ -8,7 +8,6 @@ use mnemosyne::backends::gbrain::{
     EnqueueOutcome, GbrainBackendError, SupplementalErrorCategory, SupplementalRecall,
     SupplementalRecallHealth,
 };
-use mnemosyne::service::MemoryScope as FacadeMemoryScope;
 use mnemosyne::{
     CompositeMemoryService, CoreMemory, DefaultMemoryService, EpisodicMemory, ExperienceEvent,
     FactStore, ForgetPolicy, MemoryMetadata, MemoryService, RecallMemory, RecallRequest,
@@ -349,7 +348,7 @@ async fn consolidation_baseline_remains_callable() {
     let fixture = Fixture::open(dir.path()).await;
     fixture
         .service
-        .consolidate(FacadeMemoryScope::Session("session-a".into()))
+        .consolidate(mnemosyne::MemoryScope::Session("session-a".into()))
         .await
         .unwrap();
 }

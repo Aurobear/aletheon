@@ -161,6 +161,7 @@ impl GbrainPage {
             content: body.trim().to_string(),
             metadata,
             temporal_state,
+            authority: crate::model::MemoryAuthority::AletheonExternal,
         })
     }
 }

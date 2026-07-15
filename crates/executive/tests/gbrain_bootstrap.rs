@@ -120,6 +120,7 @@ fn item(record_id: &str, source_id: &str, content: &str, observed: i64) -> Recal
         content: content.into(),
         metadata: metadata(record_id, source_id, observed),
         temporal_state: TemporalState::Current,
+        authority: mnemosyne::MemoryAuthority::AletheonExternal,
     }
 }
 

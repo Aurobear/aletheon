@@ -21,113 +21,12 @@ use fabric::{self, wall_to_datetime, ReflectionEntry, ReflectionOutcome, Reflect
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+pub use crate::model::{
+    MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity,
+    TemporalState,
+};
+use crate::model::{MemoryKind, MemoryRecord, MemoryRecordId, MemoryStatus};
 use crate::{CoreMemory, EpisodicMemory, FactStore, RecallMemory};
-
-/// Classification used to prevent unsafe memory projection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemorySensitivity {
-    Public,
-    Internal,
-    Confidential,
-    Restricted,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MemoryProvenance {
-    pub source: String,
-    pub source_id: String,
-    pub principal: Option<String>,
-    pub source_commit: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MemoryMetadata {
-    pub record_id: String,
-    pub provenance: MemoryProvenance,
-    pub source_time: Option<DateTime<Utc>>,
-    pub observed_time: DateTime<Utc>,
-    pub valid_from: Option<DateTime<Utc>>,
-    pub valid_until: Option<DateTime<Utc>>,
-    pub supersedes: Option<String>,
-    pub superseded_by: Option<String>,
-    pub confidence: f64,
-    pub sensitivity: MemorySensitivity,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TemporalState {
-    Current,
-    Superseded,
-    Expired,
-    Unknown,
-}
-
-impl MemoryMetadata {
-    pub fn local(
-        record_id: impl Into<String>,
-        source_id: impl Into<String>,
-        observed_time: DateTime<Utc>,
-    ) -> Self {
-        Self {
-            record_id: record_id.into(),
-            provenance: MemoryProvenance {
-                source: "aletheon".into(),
-                source_id: source_id.into(),
-                principal: None,
-                source_commit: None,
-            },
-            source_time: Some(observed_time),
-            observed_time,
-            valid_from: Some(observed_time),
-            valid_until: None,
-            supersedes: None,
-            superseded_by: None,
-            confidence: 1.0,
-            sensitivity: MemorySensitivity::Internal,
-        }
-    }
-
-    pub fn temporal_state(&self, current_at: Option<DateTime<Utc>>) -> TemporalState {
-        if self.superseded_by.is_some() {
-            return TemporalState::Superseded;
-        }
-        let Some(now) = current_at else {
-            return TemporalState::Unknown;
-        };
-        if self.valid_until.is_some_and(|until| until <= now) {
-            return TemporalState::Expired;
-        }
-        if self.valid_from.is_some_and(|from| from > now) {
-            return TemporalState::Unknown;
-        }
-        TemporalState::Current
-    }
-
-    pub(crate) fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            !self.record_id.trim().is_empty(),
-            "memory record ID is required"
-        );
-        anyhow::ensure!(
-            !self.provenance.source.trim().is_empty(),
-            "memory source is required"
-        );
-        anyhow::ensure!(
-            !self.provenance.source_id.trim().is_empty(),
-            "memory source ID is required"
-        );
-        anyhow::ensure!(
-            self.confidence.is_finite() && (0.0..=1.0).contains(&self.confidence),
-            "memory confidence must be between 0 and 1"
-        );
-        if let (Some(from), Some(until)) = (self.valid_from, self.valid_until) {
-            anyhow::ensure!(from < until, "memory valid-from must precede valid-until");
-        }
-        Ok(())
-    }
-}
 
 /// A unit of experience to be recorded into memory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -212,6 +111,8 @@ pub struct RecallItem {
     pub content: String,
     pub metadata: MemoryMetadata,
     pub temporal_state: TemporalState,
+    #[serde(default)]
+    pub authority: MemoryAuthority,
 }
 
 /// Result of a recall query.
@@ -234,12 +135,44 @@ impl RecallSet {
     }
 }
 
-/// Facade-local consolidation/forget scope. See module docs for why this is
-/// not re-exported at the crate root.
-#[derive(Debug, Clone)]
-pub enum MemoryScope {
-    All,
-    Session(String),
+impl RecallItem {
+    pub fn into_record(self, kind: MemoryKind, scope: MemoryScope) -> anyhow::Result<MemoryRecord> {
+        let status = match self.temporal_state {
+            TemporalState::Current | TemporalState::Unknown => MemoryStatus::Current,
+            TemporalState::Superseded => MemoryStatus::Superseded,
+            TemporalState::Expired => MemoryStatus::Expired,
+        };
+        let record = MemoryRecord {
+            id: MemoryRecordId(self.metadata.record_id.clone()),
+            kind,
+            scope,
+            content: self.content,
+            metadata: self.metadata,
+            status,
+            authority: self.authority,
+            source_event_ids: Vec::new(),
+            tags: Vec::new(),
+        };
+        record.validate()?;
+        Ok(record)
+    }
+
+    pub fn from_record(record: MemoryRecord) -> anyhow::Result<Self> {
+        record.validate()?;
+        let temporal_state = match record.status {
+            MemoryStatus::Current | MemoryStatus::Candidate | MemoryStatus::Rejected => {
+                record.metadata.temporal_state(None)
+            }
+            MemoryStatus::Superseded | MemoryStatus::Tombstoned => TemporalState::Superseded,
+            MemoryStatus::Expired => TemporalState::Expired,
+        };
+        Ok(Self {
+            content: record.content,
+            metadata: record.metadata,
+            temporal_state,
+            authority: record.authority,
+        })
+    }
 }
 
 /// Conservative forget policy. `session: None` means "no-op" (see `forget`).
@@ -394,13 +327,14 @@ impl MemoryService for DefaultMemoryService {
                 content: row.content,
                 metadata,
                 temporal_state,
+                authority: MemoryAuthority::VerifiedLocalSemantic,
             });
         }
         Ok(RecallSet { items })
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
-        // Facts are not session-scoped, so `Session(_)` and `All` behave the
+        // Facts are not session-scoped, so scoped and Global calls behave the
         // same for now: decay stale facts.
         let _ = scope;
         let fact_store = self.fact_store.lock().await;
@@ -561,7 +495,7 @@ mod tests {
     async fn consolidate_and_forget_are_ok() {
         let dir = tempfile::tempdir().unwrap();
         let svc = build_service(dir.path()).await;
-        svc.consolidate(MemoryScope::All).await.unwrap();
+        svc.consolidate(MemoryScope::Global).await.unwrap();
         svc.consolidate(MemoryScope::Session("s1".into()))
             .await
             .unwrap();

@@ -8,8 +8,8 @@ use executive::r#impl::hook_lifecycle::recall_inject::{
 };
 use mnemosyne::service::MemoryScope;
 use mnemosyne::{
-    ExperienceEvent, ForgetPolicy, MemoryMetadata, MemoryProvenance, MemorySensitivity,
-    MemoryService, RecallItem, RecallRequest, RecallSet, TemporalState,
+    ExperienceEvent, ForgetPolicy, MemoryAuthority, MemoryMetadata, MemoryProvenance,
+    MemorySensitivity, MemoryService, RecallItem, RecallRequest, RecallSet, TemporalState,
 };
 
 struct FixedMemory {
@@ -69,6 +69,7 @@ fn item(
             sensitivity: MemorySensitivity::Internal,
         },
         temporal_state: state,
+        authority: MemoryAuthority::AletheonExternal,
     }
 }
 

@@ -8,6 +8,7 @@
 pub mod backends;
 pub mod composite_service;
 pub mod r#impl;
+pub mod model;
 pub mod ops;
 pub mod service;
 
@@ -19,9 +20,13 @@ pub use composite_service::{
 // intentionally not re-exported here — it would collide with the existing
 // multi-agent `MemoryScope` re-exported below (`r#impl::core_memory::scope`).
 // Reach the facade's scope type via `mnemosyne::service::MemoryScope`.
+pub use model::{
+    MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProvenance, MemoryRecord, MemoryRecordId,
+    MemoryScope, MemorySensitivity, MemoryStatus, ScopeAncestry, TemporalState,
+};
 pub use service::{
-    DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryMetadata, MemoryProvenance,
-    MemorySensitivity, MemoryService, RecallItem, RecallRequest, RecallSet, TemporalState,
+    DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryService, RecallItem, RecallRequest,
+    RecallSet,
 };
 
 // Always-available exports
@@ -59,7 +64,6 @@ pub use ops::router;
 pub use r#impl::auto_memory::AutoMemory;
 pub use r#impl::compaction::CompactionManager;
 pub use r#impl::compressor::AdvancedCompressor;
-pub use r#impl::core_memory::scope::MemoryScope;
 pub use r#impl::core_memory::{CoreMemory, MemoryBlock};
 pub use r#impl::fact_store::FactStore;
 pub use r#impl::pipeline::memory_pipeline::MemoryPipeline;

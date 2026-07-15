@@ -11,22 +11,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{CoreMemory, MemoryBlock};
+pub use crate::model::MemoryScope;
 
 // ---------------------------------------------------------------------------
 // MemoryScope
 // ---------------------------------------------------------------------------
-
-/// Visibility scope for a memory block in a multi-agent hierarchy.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum MemoryScope {
-    /// Shared across all agents. Only the parent (scope owner) may write.
-    Global,
-    /// Visible to parent and all child agents.
-    /// Children write only with explicit approval (pending_write flag).
-    Session,
-    /// Private to a single agent identified by `String` (the agent id).
-    Agent(String),
-}
 
 impl MemoryScope {
     /// Returns `true` if the given `agent_id` may read blocks in this scope.
@@ -36,8 +25,8 @@ impl MemoryScope {
     pub fn can_read(&self, agent_id: &str, _is_parent: bool) -> bool {
         match self {
             MemoryScope::Global => true,
-            MemoryScope::Session => true,
-            MemoryScope::Agent(id) => id == agent_id,
+            MemoryScope::Principal(_) | MemoryScope::Session(_) | MemoryScope::Goal(_) => true,
+            MemoryScope::Agent(id) | MemoryScope::Task(id) => id == agent_id,
         }
     }
 
@@ -46,8 +35,8 @@ impl MemoryScope {
     pub fn can_write(&self, agent_id: &str, is_parent: bool) -> bool {
         match self {
             MemoryScope::Global => is_parent,
-            MemoryScope::Session => is_parent,
-            MemoryScope::Agent(id) => id == agent_id,
+            MemoryScope::Principal(_) | MemoryScope::Session(_) | MemoryScope::Goal(_) => is_parent,
+            MemoryScope::Agent(id) | MemoryScope::Task(id) => id == agent_id,
         }
     }
 
@@ -55,7 +44,9 @@ impl MemoryScope {
     /// requires parent approval (Session scope, child agent).
     pub fn can_request_write(&self, _agent_id: &str, is_parent: bool) -> bool {
         match self {
-            MemoryScope::Session => !is_parent,
+            MemoryScope::Principal(_) | MemoryScope::Session(_) | MemoryScope::Goal(_) => {
+                !is_parent
+            }
             _ => false,
         }
     }
@@ -403,8 +394,11 @@ fn matches_scope_metadata(metadata: &Option<String>, expected: &str) -> bool {
 pub fn scope_metadata(scope: &MemoryScope) -> String {
     let scope_str = match scope {
         MemoryScope::Global => "global".to_string(),
-        MemoryScope::Session => "session".to_string(),
+        MemoryScope::Principal(id) => format!("principal:{}", id),
+        MemoryScope::Session(id) => format!("session:{}", id),
+        MemoryScope::Goal(id) => format!("goal:{}", id),
         MemoryScope::Agent(id) => format!("agent:{}", id),
+        MemoryScope::Task(id) => format!("task:{}", id),
     };
     serde_json::json!({ "scope": scope_str }).to_string()
 }
@@ -434,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_session_scope_permissions() {
-        let scope = MemoryScope::Session;
+        let scope = MemoryScope::Session("session".to_string());
         // Everyone can read
         assert!(scope.can_read("parent", true));
         assert!(scope.can_read("child-1", false));
@@ -469,7 +463,7 @@ mod tests {
         let core = CoreMemory::with_defaults();
         let mut scoped = ScopedCoreMemory::new(core);
         scoped.set_scope("persona", MemoryScope::Global);
-        scoped.set_scope("system_state", MemoryScope::Session);
+        scoped.set_scope("system_state", MemoryScope::Session("session".to_string()));
         scoped.set_scope("user_prefs", MemoryScope::Agent("agent-1".to_string()));
 
         // Global: anyone reads
@@ -512,7 +506,7 @@ mod tests {
         scoped
             .add_block(
                 MemoryBlock::new("session_info", "", 1000),
-                MemoryScope::Session,
+                MemoryScope::Session("session".to_string()),
             )
             .unwrap();
 
@@ -542,7 +536,7 @@ mod tests {
         scoped
             .add_block(
                 MemoryBlock::new("task_info", "", 1000),
-                MemoryScope::Session,
+                MemoryScope::Session("session".to_string()),
             )
             .unwrap();
 
@@ -588,7 +582,7 @@ mod tests {
         scoped
             .add_block(
                 MemoryBlock::new("session_info", "s", 100),
-                MemoryScope::Session,
+                MemoryScope::Session("session".to_string()),
             )
             .unwrap();
         scoped
@@ -651,8 +645,8 @@ mod tests {
             r#"{"scope":"global"}"#
         );
         assert_eq!(
-            scope_metadata(&MemoryScope::Session),
-            r#"{"scope":"session"}"#
+            scope_metadata(&MemoryScope::Session("session".to_string())),
+            r#"{"scope":"session:session"}"#
         );
         assert_eq!(
             scope_metadata(&MemoryScope::Agent("x".into())),
@@ -756,7 +750,7 @@ mod tests {
         scoped
             .add_block(
                 MemoryBlock::new("shared", "alpha beta", 500),
-                MemoryScope::Session,
+                MemoryScope::Session("session".to_string()),
             )
             .unwrap();
 
