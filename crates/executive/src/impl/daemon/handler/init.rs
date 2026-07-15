@@ -1408,6 +1408,10 @@ impl RequestHandler {
                 fabric::RuntimeId(reviewer_route.runtime_id.clone()),
                 goal_progress_tx,
             );
+            let worker = match storage_quota.clone() {
+                Some(quota) => worker.with_storage_quota(quota, 16 * 1024 * 1024),
+                None => worker,
+            };
             let worker_cancel = cancel_token.clone();
             Some(tokio::spawn(worker.run(worker_cancel)))
         } else {

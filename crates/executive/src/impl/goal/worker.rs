@@ -6,6 +6,7 @@ use super::{
 };
 use crate::core::runtime_registry::RuntimeRegistry;
 use crate::r#impl::channel::router::GoalProgress;
+use crate::r#impl::storage_quota::StorageQuota;
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
 use fabric::{AttemptUsage, Clock, CognitiveRole, GoalState, GoalWaitReason, RuntimeId};
@@ -51,6 +52,14 @@ impl GoalWorker {
             clock,
             progress_tx,
         }
+    }
+
+    /// Apply the same production admission boundary used by other Goal entry points.
+    pub fn with_storage_quota(mut self, quota: StorageQuota, expected_attempt_bytes: u64) -> Self {
+        self.coordinator = self
+            .coordinator
+            .with_storage_quota(quota, expected_attempt_bytes);
+        self
     }
 
     /// Advance one Goal and invoke no more than one configured runtime.
@@ -122,6 +131,9 @@ impl GoalWorker {
             .attempts_for_goal(goal.id, 1)?
             .first()
             .map_or(1, |attempt| attempt.sequence.saturating_add(1));
+        self.coordinator
+            .admit_attempt_storage(goal.id)
+            .map_err(anyhow::Error::msg)?;
         let outcome = self
             .attempts
             .execute_one(
@@ -138,7 +150,21 @@ impl GoalWorker {
                 },
                 cancel,
             )
-            .await?;
+            .await;
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.coordinator.release_attempt_storage(goal.id);
+                return Err(error.into());
+            }
+        };
+        let terminal = match &outcome {
+            super::AttemptCoordinationOutcome::Succeeded { goal, .. }
+            | super::AttemptCoordinationOutcome::Failed { goal, .. } => goal.state.is_terminal(),
+        };
+        if terminal {
+            self.coordinator.release_attempt_storage(goal.id);
+        }
         let _ = self
             .progress_tx
             .send(GoalProgress::from_outcome(&outcome))
