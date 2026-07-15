@@ -1,5 +1,6 @@
 import asyncio
 import shutil
+import os
 
 import pytest
 
@@ -15,6 +16,7 @@ def test_start_send_capture_stop():
         s = "aletheon-tui-smoke"
         started = await ts.start("cat", session=s, cols=80, rows=20)
         assert started["ok"], started
+        assert started["working_dir"] == os.path.realpath(os.getcwd())
         await ts.send("hello-tui", session=s, submit=True)
         await asyncio.sleep(0.3)
         frame = await ts.capture(session=s)

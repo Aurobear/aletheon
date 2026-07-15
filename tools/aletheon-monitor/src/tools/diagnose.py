@@ -7,6 +7,7 @@ parsing is required.
 """
 import json
 import os
+import asyncio
 
 from . import analyze as analyze_mod
 from . import logs as logs_mod
@@ -53,7 +54,9 @@ def build_timeline(journal: list[dict], audit_lines: list[str]) -> list[dict]:
 
 async def diagnose(client, task: str, settle_secs: float = 6.0,
                    timeout: float = 120.0, cols: int = 120,
-                   rows: int = 50) -> dict:
+                   rows: int = 50, working_dir: str | None = None,
+                   expected_cwd: str | None = None,
+                   forbidden_strings: list[str] | None = None) -> dict:
     """Drive the TUI with `task`, capture the settled frame, and bundle it
     with daemon-side analysis, logs, audit tail, and a merged timeline.
 
@@ -76,7 +79,9 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     # completion time and a single capture-pane only sees the tail. A taller
     # pane (`rows`) helps short/medium answers fit but does NOT fully solve
     # long ones — that needs scroll-and-stitch or a TUI export mode (follow-up).
-    started = await tui_tools.tui_start(task="", cols=cols, rows=rows)
+    cwd = os.path.realpath(working_dir or os.getcwd())
+    started = await tui_tools.tui_start(task="", cols=cols, rows=rows,
+                                        working_dir=cwd)
     if not started.get("ok"):
         return {"error": "tui_start failed", "detail": started}
 
@@ -94,7 +99,7 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         # completion — see the docstring caveat).
         cap = await tui_tools.tui_capture(
             scrollback=True, wait_stable=True, baseline=baseline_frame,
-            stable_secs=settle_secs, timeout=timeout,
+            stable_secs=settle_secs, timeout=timeout, require_prompt=True,
         )
     finally:
         await tui_tools.tui_stop()
@@ -115,15 +120,53 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     if cap.get("stable") is False:
         verdict = "fail"
 
+    assertions = []
+    frame = cap.get("frame", "")
+    expected = os.path.realpath(expected_cwd) if expected_cwd else None
+    if expected:
+        assertions.append({"name": "expected_cwd", "passed": expected in frame,
+                           "expected": expected})
+    for forbidden in forbidden_strings or []:
+        assertions.append({"name": f"forbidden:{forbidden}",
+                           "passed": forbidden not in frame})
+    assertions.append({"name": "final_answer", "passed": len(frame.strip()) > 20})
+    assertions.append({"name": "prompt_returned",
+                       "passed": cap.get("prompt_visible") is True})
+    if any(not item["passed"] for item in assertions):
+        verdict = "fail"
+
+    async def command(*args: str) -> str:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args, cwd=cwd, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            return out.decode("utf-8", "replace").strip()
+        except (OSError, asyncio.TimeoutError):
+            return ""
+
+    preflight = {
+        "working_dir": cwd,
+        "git_commit": await command("git", "rev-parse", "HEAD"),
+        "git_toplevel": await command("git", "rev-parse", "--show-toplevel"),
+        "binary": await command("aletheon", "version"),
+        "service_active": await command("systemctl", "is-active", "aletheon"),
+        "service_started": await command(
+            "systemctl", "show", "aletheon", "-p", "ActiveEnterTimestamp"),
+    }
+
     return {
         "task": task,
         "rendered_frame": cap.get("frame", ""),
         "stable": cap.get("stable"),
+        "prompt_visible": cap.get("prompt_visible"),
         "completion": f"heuristic (settled {settle_secs}s beyond input echo; "
                       "may be mid-turn if an inter-step gap exceeds that)",
         "tui_checks": cap.get("checks", []),
         "daemon": {"analyze": daemon_analyze, "logs": daemon_logs},
         "audit_tail": audit_tail,
         "timeline": build_timeline(recent_journal, audit_tail),
+        "preflight": preflight,
+        "assertions": assertions,
         "verdict": verdict,
     }
