@@ -1407,18 +1407,109 @@ impl RequestHandler {
         }
 
         let shared_notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>> = Arc::new(Mutex::new(None));
-
+        let session_db = crate::r#impl::session::canonical_store::default_session_db_path();
+        if let Some(parent) = session_db.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let canonical_store =
+            crate::r#impl::session::canonical_store::CanonicalSessionStore::open(&session_db)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, path = %session_db.display(), "canonical session store unavailable; using process-local fallback");
+                    crate::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
+                        .expect("in-memory canonical session store")
+                });
+        let crate::core::core_systems::CoreSystems {
+            kernel: turn_kernel,
+            domains: turn_domains,
+            runtime: turn_executive,
+            self_field: turn_self_field,
+            reflector: turn_reflector,
+            memory: turn_memory,
+            security: turn_security,
+            corpus: turn_corpus,
+            session: turn_session,
+            pipeline: turn_evolution,
+            debug_perf: turn_performance,
+            cancel_token: turn_token,
+            main_agent_process_id,
+            ..
+        } = subsystems.as_ref();
+        let coordinator = Arc::new(crate::service::turn_coordinator::TurnCoordinator::new(
+            turn_kernel.clone(),
+            Arc::new(canonical_store),
+        ));
+        let session_service = Arc::new(crate::service::session_service::SessionService::new(
+            coordinator.store(),
+            coordinator.active_index(),
+        ));
+        let projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection> =
+            Arc::new(
+                crate::service::post_turn_projection::ProductionPostTurnProjection::new(
+                    crate::service::post_turn_projection::PostTurnProjectionResources {
+                        hooks: turn_corpus.hook_registry.clone(),
+                        memory: turn_memory.memory_service.clone(),
+                        auto_memory: turn_memory.auto_memory.clone(),
+                        reflector: turn_reflector.clone(),
+                        episodic: turn_memory.episodic_memory.clone(),
+                        clock: clock.clone(),
+                        executive: turn_executive.clone(),
+                        evolution: turn_evolution.clone(),
+                        agora: turn_domains.agora(),
+                        recall: turn_memory.recall_memory.clone(),
+                    },
+                ),
+            );
+        let runtime_ports = Arc::new(
+            crate::service::turn_runtime_ports::TurnRuntimePorts::production(
+                crate::service::turn_runtime_ports::TurnRuntimeResources {
+                    hooks: turn_corpus.hook_registry.clone(),
+                    pre_turn_scripts: turn_corpus.hooks_config.pre_turn.clone(),
+                    storm: turn_security.storm_breaker.clone(),
+                    model_router: model_router.clone(),
+                    default_llm: llm.clone(),
+                    self_field: turn_self_field.clone(),
+                    approval_rx: turn_security.approval_rx.clone(),
+                    pending_approvals: turn_security.pending_approvals.clone(),
+                    capabilities: capability_resources,
+                    admission: turn_kernel.admission(),
+                    sessions: sessions.clone(),
+                    default_session_id: turn_session.default_session_id.clone(),
+                    session_created_at: turn_session.session_created_at.clone(),
+                    data_dir: turn_session.data_dir.clone(),
+                    context_window: turn_session.context_window,
+                    clock: clock.clone(),
+                    memory: turn_memory.memory_service.clone(),
+                    executive: turn_executive.clone(),
+                    performance: turn_performance.clone(),
+                },
+            ),
+        );
+        let pipeline = Arc::new(crate::service::TurnPipeline::new(
+            crate::service::turn_pipeline::TurnPipelineResources {
+                session_gateway: session_gateway.clone(),
+                notify: shared_notify_tx.clone(),
+                clock: clock.clone(),
+                agora: Some(turn_domains.agora()),
+                kernel: turn_kernel.clone(),
+                current_scope: Arc::new(Mutex::new(None)),
+                daemon_cancel: Some(cancel_token.clone()),
+                context: context_assembler,
+                canonical_sessions: session_service.clone(),
+                projection,
+                runtime: runtime_ports,
+            },
+        ));
         let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(
-            subsystems.clone(),
-            sessions.clone(),
-            session_gateway.clone(),
-            llm.clone(),
-            model_router.clone(),
-            shared_notify_tx.clone(),
-            active_connections.clone(),
-            clock_2.mono_now(),
-            Some(cancel_token.clone()),
-            context_assembler,
+            crate::service::daemon_turn::DaemonTurnResources {
+                kernel: turn_kernel.clone(),
+                notify: shared_notify_tx.clone(),
+                default_session_id: turn_session.default_session_id.clone(),
+                main_agent_process_id: main_agent_process_id.clone(),
+                turn_token: turn_token.clone(),
+                pipeline,
+                coordinator,
+                session_service,
+            },
         ));
 
         let approved_apply = if pi_runtime.enabled && pi_work_allowed {

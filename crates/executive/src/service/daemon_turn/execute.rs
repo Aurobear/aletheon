@@ -59,13 +59,7 @@ impl DaemonTurnOrchestrator {
             }
         };
 
-        let session_id = self
-            .subsystems
-            .session
-            .default_session_id
-            .lock()
-            .await
-            .clone();
+        let session_id = self.default_session_id.lock().await.clone();
         let principal = principal.unwrap_or_else(|| PrincipalId(session_id.clone()));
 
         // The coordinator replaces this placeholder with the authoritative Turn id.

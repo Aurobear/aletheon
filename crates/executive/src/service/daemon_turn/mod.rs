@@ -35,3 +35,4 @@ mod lifecycle;
 mod orchestrator;
 
 pub use orchestrator::DaemonTurnOrchestrator;
+pub(crate) use orchestrator::DaemonTurnResources;

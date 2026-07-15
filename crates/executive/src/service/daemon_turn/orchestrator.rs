@@ -1,194 +1,49 @@
-//! DaemonTurnOrchestrator — struct definition and construction.
-//!
-//! The orchestrator bundles kernel primitives and subsystem handles for
-//! executing daemon chat turns. Methods are split across sibling modules
-//! in this directory via additional `impl DaemonTurnOrchestrator { … }` blocks.
+//! Daemon turn orchestration over narrow lifecycle and pipeline resources.
 
-use crate::core::core_systems::CoreSystems;
-use crate::core::session_gateway::SessionGateway;
-use crate::r#impl::daemon::model_router::ModelRouter;
-use crate::r#impl::daemon::session_manager::SessionManager;
-use crate::r#impl::session::canonical_store::{default_session_db_path, CanonicalSessionStore};
 use crate::service::turn_coordinator::TurnCoordinator;
 use crate::service::TurnPipeline;
 use aletheon_kernel::KernelRuntime;
-use fabric::{
-    AdmissionController, AgoraOps, Clock, LlmProvider, OperationId, ProcessId, ProcessSignal,
-};
-use std::collections::HashMap;
-use std::sync::atomic::AtomicUsize;
+use fabric::{OperationId, ProcessId, ProcessSignal};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-/// Bundled state for executing a daemon chat turn through the kernel pipeline.
-///
-/// Created once per daemon instance (or per `RequestHandler`) and reused across
-/// turns. The process table tracks the main agent across its entire lifecycle;
-/// per-turn operations are created in `execute_turn()`.
-#[allow(dead_code)]
-pub struct DaemonTurnOrchestrator {
-    // --- Kernel primitives ---
-    pub(crate) kernel: Arc<KernelRuntime>,
-    pub(crate) clock: Arc<dyn Clock>,
-    pub(crate) admission: Arc<dyn AdmissionController>,
-    pub(crate) agora: Option<Arc<dyn AgoraOps>>,
+pub struct DaemonTurnResources {
+    pub kernel: Arc<KernelRuntime>,
+    pub notify: Arc<Mutex<Option<mpsc::Sender<String>>>>,
+    pub default_session_id: Arc<Mutex<String>>,
+    pub main_agent_process_id: Arc<Mutex<Option<ProcessId>>>,
+    pub turn_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub pipeline: Arc<TurnPipeline>,
+    pub coordinator: Arc<TurnCoordinator>,
+    pub session_service: Arc<crate::service::session_service::SessionService>,
+}
 
-    // --- Subsystem handles (mirrors RequestHandler fields) ---
-    pub(crate) subsystems: Arc<CoreSystems>,
-    pub(crate) sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
-    pub(crate) session_gateway: Arc<SessionGateway>,
-    pub(crate) llm: Arc<dyn LlmProvider>,
-    pub(crate) model_router: Arc<ModelRouter>,
+pub struct DaemonTurnOrchestrator {
+    pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
-    pub(crate) active_connections: Arc<AtomicUsize>,
-    pub(crate) started_at: fabric::MonoTime,
-    pub(crate) daemon_cancel_token: Option<CancellationToken>,
-    // --- Shared turn pipeline ---
+    pub(crate) default_session_id: Arc<Mutex<String>>,
+    pub(crate) main_agent_process_id: Arc<Mutex<Option<ProcessId>>>,
+    pub(crate) turn_token: Arc<Mutex<Option<CancellationToken>>>,
     pub(crate) pipeline: Arc<TurnPipeline>,
     pub(crate) coordinator: Arc<TurnCoordinator>,
     pub(crate) session_service: Arc<crate::service::session_service::SessionService>,
 }
 
 impl DaemonTurnOrchestrator {
-    /// Create the orchestrator, wiring all kernel primitives.
-    pub fn new(
-        subsystems: Arc<CoreSystems>,
-        sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
-        session_gateway: Arc<SessionGateway>,
-        llm: Arc<dyn LlmProvider>,
-        model_router: Arc<ModelRouter>,
-        notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
-        active_connections: Arc<AtomicUsize>,
-        started_at: fabric::MonoTime,
-        daemon_cancel_token: Option<CancellationToken>,
-        context_assembler: Arc<crate::service::context_assembler::ContextAssembler>,
-    ) -> Self {
-        // Clone the one opaque Kernel runtime; cognitive domains stay separate.
-        let clock = subsystems.kernel.clock();
-        let kernel = subsystems.kernel.clone();
-        let admission = kernel.admission();
-        let agora = Some(subsystems.domains.agora());
-
-        let session_db = default_session_db_path();
-        if let Some(parent) = session_db.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let canonical_store = CanonicalSessionStore::open(&session_db).unwrap_or_else(|error| {
-            tracing::warn!(%error, path = %session_db.display(), "canonical session store unavailable; using process-local fallback");
-            CanonicalSessionStore::open(":memory:").expect("in-memory canonical session store")
-        });
-        let coordinator = Arc::new(TurnCoordinator::new(
-            kernel.clone(),
-            Arc::new(canonical_store),
-        ));
-        let session_service = Arc::new(crate::service::session_service::SessionService::new(
-            coordinator.store(),
-            coordinator.active_index(),
-        ));
-        let crate::core::core_systems::CoreSystems {
-            runtime: executive,
-            self_field,
-            reflector,
-            memory,
-            security,
-            corpus,
-            session,
-            pipeline: evolution,
-            debug_perf,
-            ..
-        } = subsystems.as_ref();
-        let projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection> =
-            Arc::new(
-                crate::service::post_turn_projection::ProductionPostTurnProjection::new(
-                    crate::service::post_turn_projection::PostTurnProjectionResources {
-                        hooks: corpus.hook_registry.clone(),
-                        memory: memory.memory_service.clone(),
-                        auto_memory: memory.auto_memory.clone(),
-                        reflector: reflector.clone(),
-                        episodic: memory.episodic_memory.clone(),
-                        clock: clock.clone(),
-                        executive: executive.clone(),
-                        evolution: evolution.clone(),
-                        agora: subsystems.domains.agora(),
-                        recall: memory.recall_memory.clone(),
-                    },
-                ),
-            );
-        let capability_resources =
-            crate::r#impl::daemon::handler::tool_executor::CapabilityResources {
-                kernel: kernel.clone(),
-                tools: corpus.tools.clone(),
-                runner: security.tool_runner.clone(),
-                hooks: corpus.hook_registry.clone(),
-                storm: security.storm_breaker.clone(),
-                memory_queue: session.memory_queue.clone(),
-                approvals: security.session_approvals.clone(),
-                perf: debug_perf.clone(),
-                self_field: self_field.clone(),
-            };
-        let runtime_ports = Arc::new(
-            crate::service::turn_runtime_ports::TurnRuntimePorts::production(
-                crate::service::turn_runtime_ports::TurnRuntimeResources {
-                    hooks: corpus.hook_registry.clone(),
-                    pre_turn_scripts: corpus.hooks_config.pre_turn.clone(),
-                    storm: security.storm_breaker.clone(),
-                    model_router: model_router.clone(),
-                    default_llm: llm.clone(),
-                    self_field: self_field.clone(),
-                    approval_rx: security.approval_rx.clone(),
-                    pending_approvals: security.pending_approvals.clone(),
-                    capabilities: capability_resources,
-                    admission: admission.clone(),
-                    sessions: sessions.clone(),
-                    default_session_id: session.default_session_id.clone(),
-                    session_created_at: session.session_created_at.clone(),
-                    data_dir: session.data_dir.clone(),
-                    context_window: session.context_window,
-                    clock: clock.clone(),
-                    memory: memory.memory_service.clone(),
-                    executive: executive.clone(),
-                    performance: debug_perf.clone(),
-                },
-            ),
-        );
-        let pipeline = Arc::new(TurnPipeline::new(
-            crate::service::turn_pipeline::TurnPipelineResources {
-                session_gateway: session_gateway.clone(),
-                notify: notify_tx.clone(),
-                clock: clock.clone(),
-                agora: agora.clone(),
-                kernel: kernel.clone(),
-                current_scope: Arc::new(Mutex::new(None)),
-                daemon_cancel: daemon_cancel_token.clone(),
-                context: context_assembler,
-                canonical_sessions: session_service.clone(),
-                projection,
-                runtime: runtime_ports,
-            },
-        ));
-
+    pub fn new(resources: DaemonTurnResources) -> Self {
         Self {
-            kernel,
-            clock,
-            admission,
-            agora,
-            subsystems,
-            sessions,
-            session_gateway,
-            llm,
-            model_router,
-            notify_tx,
-            active_connections,
-            started_at,
-            daemon_cancel_token,
-            pipeline,
-            coordinator,
-            session_service,
+            kernel: resources.kernel,
+            notify_tx: resources.notify,
+            default_session_id: resources.default_session_id,
+            main_agent_process_id: resources.main_agent_process_id,
+            turn_token: resources.turn_token,
+            pipeline: resources.pipeline,
+            coordinator: resources.coordinator,
+            session_service: resources.session_service,
         }
     }
 
-    /// Access the shared notify_tx for external updates (e.g. set_notify_channel).
     pub fn notify_tx(&self) -> &Arc<Mutex<Option<mpsc::Sender<String>>>> {
         &self.notify_tx
     }
