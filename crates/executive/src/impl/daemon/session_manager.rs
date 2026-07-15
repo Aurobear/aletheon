@@ -160,6 +160,22 @@ impl SessionManager {
         self.messages.len()
     }
 
+    /// Clear the active conversation while preserving the session identity.
+    ///
+    /// The checkpoint must be persisted before dropping the in-memory messages;
+    /// otherwise reopening this session would recover the supposedly cleared
+    /// history from the journal.
+    pub async fn clear_history(&mut self) -> Result<()> {
+        let iteration = self.turn_count();
+        self.journal
+            .append(SessionEvent::CheckpointBoundary { iteration })
+            .await?;
+        self.journal.flush().await?;
+        self.messages.clear();
+        info!(iteration, session_id = %self.session_id, "Session history cleared");
+        Ok(())
+    }
+
     /// Get a reference to the event journal for query access.
     pub fn journal(&self) -> &EventJournal {
         &self.journal
@@ -465,6 +481,31 @@ mod compaction_tests {
     }
 
     struct StubLlm;
+
+    #[tokio::test]
+    async fn cleared_history_stays_empty_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_id = "clear-recovery";
+        {
+            let mut sm = SessionManager::new(dir.path(), session_id.into(), 1_000, test_clock())
+                .await
+                .unwrap();
+            sm.push_user("old user context").await;
+            sm.push_assistant("old assistant context").await;
+
+            sm.clear_history().await.unwrap();
+
+            assert_eq!(sm.session_id, session_id);
+            assert!(sm.history().is_empty());
+            assert_eq!(sm.turn_count(), 0);
+        }
+
+        let reopened = SessionManager::new(dir.path(), session_id.into(), 1_000, test_clock())
+            .await
+            .unwrap();
+        assert_eq!(reopened.session_id, session_id);
+        assert!(reopened.history().is_empty());
+    }
 
     #[async_trait]
     impl LlmProvider for StubLlm {

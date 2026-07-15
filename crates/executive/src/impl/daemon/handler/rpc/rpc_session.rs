@@ -96,6 +96,19 @@ impl RequestHandler {
             }
             let _ = fs.decay_stale();
         }
+        // Clear both the live history and its durable recovery tail. Keeping
+        // only the existing hook/distillation behavior here leaked previous
+        // turns into the next TUI invocation for the same workspace.
+        {
+            let mut sm = sm_arc.lock().await;
+            if let Err(e) = sm.clear_history().await {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32022, "message": format!("Session clear error: {e}") }
+                });
+            }
+        }
         // Clear cancel token
         {
             let mut ct = self.subsystems.cancel_token.lock().await;
