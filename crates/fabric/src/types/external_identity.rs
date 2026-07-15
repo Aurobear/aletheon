@@ -13,6 +13,9 @@ const MAX_EMAIL_BYTES: usize = 320;
 const MAX_ALIAS_BYTES: usize = 128;
 const MAX_SCOPES: usize = 32;
 
+/// Stable authority for the credential-checked single-user native daemon.
+pub const LOCAL_OWNER_PRINCIPAL: &str = "local-owner";
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ExternalIdentityId(pub Uuid);

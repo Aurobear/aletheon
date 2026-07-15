@@ -169,7 +169,7 @@ pub use types::external_event::{
 };
 pub use types::external_identity::{
     CapabilityGrant, ExternalIdentity, ExternalIdentityId, ExternalIdentityState, ExternalScope,
-    GrantState, IdentityProvider,
+    GrantState, IdentityProvider, LOCAL_OWNER_PRINCIPAL,
 };
 pub use types::genome::Genome;
 pub use types::goal::{

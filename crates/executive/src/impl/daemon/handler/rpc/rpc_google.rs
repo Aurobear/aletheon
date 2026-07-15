@@ -1,22 +1,22 @@
 //! Authenticated local Google account control-plane RPC.
 
 use super::RequestHandler;
-use fabric::{ExternalIdentityState, ExternalScope, GrantState, PrincipalId};
+use fabric::{
+    ExternalIdentityState, ExternalScope, GrantState, PrincipalId, LOCAL_OWNER_PRINCIPAL,
+};
 use serde_json::{json, Value};
 
 const GOOGLE_UNAVAILABLE: i64 = -32070;
 const GOOGLE_INVALID_PARAMS: i64 = -32602;
 const GOOGLE_FORBIDDEN: i64 = -32073;
 const GOOGLE_PROVIDER: i64 = -32074;
-const LOCAL_GOOGLE_PRINCIPAL: &str = "local-owner";
-
 impl RequestHandler {
     async fn authenticated_google_principal(&self) -> anyhow::Result<PrincipalId> {
         // The native daemon has one credential-checked local owner. A session
         // UUID is intentionally not used here because sessions rotate whenever
         // the daemon restarts, while account bindings must remain durable.
         // Request parameters remain ignored as an authority source.
-        Ok(PrincipalId(LOCAL_GOOGLE_PRINCIPAL.into()))
+        Ok(PrincipalId(LOCAL_OWNER_PRINCIPAL.into()))
     }
 
     pub(super) async fn handle_google_authorization_start(
@@ -260,8 +260,8 @@ mod tests {
 
     #[test]
     fn local_google_principal_is_stable_across_sessions() {
-        let first = PrincipalId(LOCAL_GOOGLE_PRINCIPAL.into());
-        let second = PrincipalId(LOCAL_GOOGLE_PRINCIPAL.into());
+        let first = PrincipalId(LOCAL_OWNER_PRINCIPAL.into());
+        let second = PrincipalId(LOCAL_OWNER_PRINCIPAL.into());
         assert_eq!(first, second);
         assert_eq!(first.0, "local-owner");
     }
