@@ -10,6 +10,7 @@ pub mod composite_service;
 pub mod r#impl;
 pub mod model;
 pub mod ops;
+mod recall;
 pub mod service;
 
 pub use composite_service::{

@@ -54,7 +54,7 @@ The former six-row decomposition compressed two independently testable source ph
 |---|---|---|---|
 | M1 behavior baseline | `mnemosyne-unified-memory-plan.md:302-326` | M01 | done |
 | M2 canonical record and scope | `mnemosyne-unified-memory-plan.md:328-353` | M02 | done |
-| M3 unified local recall | `mnemosyne-unified-memory-plan.md:355-395` | M03 | mapped |
+| M3 unified local recall | `mnemosyne-unified-memory-plan.md:355-395` | M03 | done |
 | M4 bounded conscious-core projection | `mnemosyne-unified-memory-plan.md:397-451` | M04 | mapped |
 | M5 leased extraction and consolidation | `mnemosyne-unified-memory-plan.md:453-502` | M05 | mapped |
 | M6 GBrain reconciliation | `mnemosyne-unified-memory-plan.md:504-529` | M06 | mapped |

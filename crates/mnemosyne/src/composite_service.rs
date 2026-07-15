@@ -1,6 +1,5 @@
 //! Local-first composition of core Mnemosyne with optional supplemental memory.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -12,8 +11,7 @@ use crate::backends::gbrain::{
     SupplementalMemoryTransport, SupplementalRecall,
 };
 use crate::service::{
-    ExperienceEvent, ForgetPolicy, MemoryScope, MemoryService, RecallItem, RecallRequest,
-    RecallSet, TemporalState,
+    ExperienceEvent, ForgetPolicy, MemoryScope, MemoryService, RecallRequest, RecallSet,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +201,7 @@ impl MemoryService for CompositeMemoryService {
             supplemental.health.queue_depth,
         );
         Ok(RecallSet {
-            items: merge_items(local.items, supplemental.items, &request),
+            items: crate::recall::merge_items([local.items, supplemental.items], &request),
         })
     }
 
@@ -217,110 +215,5 @@ impl MemoryService for CompositeMemoryService {
             supplemental.forget(policy)?;
         }
         Ok(())
-    }
-}
-
-fn merge_items(
-    local: Vec<RecallItem>,
-    remote: Vec<RecallItem>,
-    request: &RecallRequest,
-) -> Vec<RecallItem> {
-    let mut superseded = HashSet::new();
-    for item in local.iter().chain(&remote) {
-        if let Some(previous) = &item.metadata.supersedes {
-            superseded.insert(previous.clone());
-        }
-    }
-    let mut by_key: HashMap<(String, String), RecallItem> = HashMap::new();
-    for mut item in local.into_iter().chain(remote) {
-        if superseded.contains(&item.metadata.record_id) {
-            item.temporal_state = TemporalState::Superseded;
-        }
-        let key = (
-            item.metadata.provenance.source.clone(),
-            if request.include_historical {
-                format!(
-                    "{}#{}",
-                    item.metadata.provenance.source_id, item.metadata.record_id
-                )
-            } else {
-                item.metadata.provenance.source_id.clone()
-            },
-        );
-        match by_key.get(&key) {
-            Some(existing) if !prefer(&item, existing) => {}
-            _ => {
-                by_key.insert(key, item);
-            }
-        }
-    }
-    let mut items = by_key
-        .into_values()
-        .filter(|item| {
-            request.include_historical
-                || !matches!(
-                    item.temporal_state,
-                    TemporalState::Superseded | TemporalState::Expired
-                )
-        })
-        .collect::<Vec<_>>();
-    items.sort_by(|left, right| {
-        state_rank(left.temporal_state)
-            .cmp(&state_rank(right.temporal_state))
-            .then_with(|| {
-                right
-                    .metadata
-                    .observed_time
-                    .cmp(&left.metadata.observed_time)
-            })
-            .then_with(|| {
-                right
-                    .metadata
-                    .confidence
-                    .total_cmp(&left.metadata.confidence)
-            })
-            .then_with(|| left.metadata.record_id.cmp(&right.metadata.record_id))
-    });
-    let mut bytes = 0usize;
-    items
-        .into_iter()
-        .take(request.max_items)
-        .take_while(|item| {
-            if bytes.saturating_add(item.content.len()) > request.max_content_bytes {
-                false
-            } else {
-                bytes += item.content.len();
-                true
-            }
-        })
-        .collect()
-}
-
-fn prefer(candidate: &RecallItem, existing: &RecallItem) -> bool {
-    state_rank(candidate.temporal_state) < state_rank(existing.temporal_state)
-        || (state_rank(candidate.temporal_state) == state_rank(existing.temporal_state)
-            && (
-                candidate
-                    .metadata
-                    .valid_from
-                    .unwrap_or(candidate.metadata.observed_time),
-                candidate.metadata.observed_time,
-                candidate.metadata.confidence,
-            ) > (
-                existing
-                    .metadata
-                    .valid_from
-                    .unwrap_or(existing.metadata.observed_time),
-                existing.metadata.observed_time,
-                existing.metadata.confidence,
-            ))
-}
-
-fn state_rank(state: TemporalState) -> u8 {
-    match state {
-        TemporalState::Current => 0,
-        TemporalState::Unknown => 1,
-        TemporalState::Superseded => 2,
-        TemporalState::Expired => 3,
     }
 }

@@ -117,7 +117,7 @@ V02 installed-daemon real scenario and migration gate
 |---|---|---|---|
 | M01 | `2026-07-16-m01-memory-contract-baseline.md` | Record/reopen/recall/outage contract tests | S02 |
 | M02 | `2026-07-16-m02-canonical-memory-records-scopes.md` | Canonical records, scopes, validation and adapters | M01 |
-| M03 | `2026-07-15-m03-unified-local-recall.md` | Scoped local recall across existing stores | M02 |
+| M03 | `2026-07-16-m03-unified-local-recall.md` | Scoped local recall across existing stores | M02 |
 | M04 | `2026-07-15-m04-bounded-memory-workspace-projection.md` | One bounded projection entering Agora as candidates | M03, C01 |
 | M05 | `2026-07-15-m05-leased-memory-consolidation.md` | Restart-safe extraction and consolidation workers | M04 |
 | M06 | `2026-07-15-m06-gbrain-reconciliation.md` | Supplemental reconciliation and durable remote receipts | M05 |

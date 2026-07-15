@@ -10,8 +10,8 @@ use mnemosyne::backends::gbrain::{
 };
 use mnemosyne::{
     CompositeMemoryService, CoreMemory, DefaultMemoryService, EpisodicMemory, ExperienceEvent,
-    FactStore, ForgetPolicy, MemoryMetadata, MemoryService, RecallMemory, RecallRequest,
-    SupplementalMemoryService,
+    FactStore, ForgetPolicy, MemoryBlock, MemoryMetadata, MemoryService, RecallMemory,
+    RecallRequest, SupplementalMemoryService,
 };
 use rusqlite::Connection;
 use serde_json::Value;
@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 struct Fixture {
     root: PathBuf,
+    core: Arc<Mutex<CoreMemory>>,
     service: DefaultMemoryService,
 }
 
@@ -43,6 +44,7 @@ impl Fixture {
             .unwrap();
         Self {
             root: root.to_path_buf(),
+            core: core.clone(),
             service: DefaultMemoryService::new(
                 recall,
                 facts,
@@ -66,6 +68,76 @@ impl Fixture {
             .unwrap();
         store
     }
+}
+
+#[tokio::test]
+async fn message_recall_does_not_leak_across_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = Fixture::open(dir.path()).await;
+    for session in ["session-a", "session-b"] {
+        fixture
+            .service
+            .record(ExperienceEvent::Message {
+                session: session.into(),
+                role: "user".into(),
+                content: format!("isolated recall marker for {session}"),
+                metadata: metadata(&format!("message-{session}")),
+            })
+            .await
+            .unwrap();
+    }
+    let recalled = fixture
+        .service
+        .recall(request("isolated recall marker", 10, 4096))
+        .await
+        .unwrap();
+    assert!(recalled
+        .items
+        .iter()
+        .any(|item| item.content.ends_with("session-a")));
+    assert!(!recalled
+        .items
+        .iter()
+        .any(|item| item.content.ends_with("session-b")));
+}
+
+#[tokio::test]
+async fn approved_core_record_ranks_before_conflicting_local_fact() {
+    let dir = tempfile::tempdir().unwrap();
+    let facts = FactStore::open(&dir.path().join("facts.db")).unwrap();
+    facts
+        .add_fact(
+            "conflict marker says old value",
+            "contract",
+            "authority",
+            "test",
+            1.0,
+            "semantic",
+            0,
+        )
+        .unwrap();
+    drop(facts);
+    let fixture = Fixture::open(dir.path()).await;
+    fixture.core.lock().await.set_block(MemoryBlock::read_only(
+        "authority-test",
+        "conflict marker says approved value",
+        1024,
+    ));
+
+    let recalled = fixture
+        .service
+        .recall(request("conflict marker says", 10, 4096))
+        .await
+        .unwrap();
+    assert_eq!(recalled.items.len(), 2);
+    assert_eq!(
+        recalled.items[0].content,
+        "conflict marker says approved value"
+    );
+    assert_eq!(
+        recalled.items[0].authority,
+        mnemosyne::MemoryAuthority::ApprovedCore
+    );
 }
 
 fn test_clock() -> Arc<dyn Clock> {
@@ -160,7 +232,6 @@ async fn reflection_decision_and_goal_outcome_persist_after_reopen() {
 }
 
 #[tokio::test]
-#[ignore = "known M03 gap: DefaultMemoryService recall only queries FactStore"]
 async fn recorded_message_is_recalled_in_its_session() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = Fixture::open(dir.path()).await;
@@ -186,7 +257,6 @@ async fn recorded_message_is_recalled_in_its_session() {
 }
 
 #[tokio::test]
-#[ignore = "known M03 gap: DefaultMemoryService recall does not query EpisodicMemory"]
 async fn recorded_reflection_is_recalled_for_relevant_query() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = Fixture::open(dir.path()).await;

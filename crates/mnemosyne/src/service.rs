@@ -268,69 +268,61 @@ impl MemoryService for DefaultMemoryService {
 
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet> {
         req.validate()?;
-        let _ = req.session; // facts are not session-scoped today.
-        let fact_store = self.fact_store.lock().await;
-        let rows = fact_store.search_facts(&req.query, None, 0.0, req.max_items)?;
-        let mut used_bytes = 0usize;
-        let mut items = Vec::with_capacity(rows.len());
-        for row in rows {
-            if used_bytes.saturating_add(row.content.len()) > req.max_content_bytes {
-                break;
+        let fetch_limit = req
+            .max_items
+            .saturating_mul(4)
+            .min(RecallRequest::MAX_ITEMS);
+        let now = wall_to_datetime(self.clock.wall_now());
+        let messages = async {
+            self.recall_memory
+                .lock()
+                .await
+                .search_in_session(&req.session, &req.query, fetch_limit)
+                .map(|rows| crate::recall::local::messages(rows, &req))
+        };
+        let facts = async {
+            self.fact_store
+                .lock()
+                .await
+                .search_facts(&req.query, None, 0.0, fetch_limit)
+                .map(|rows| crate::recall::local::facts(rows, &req, now))
+        };
+        let reflections = async {
+            self.episodic
+                .lock()
+                .await
+                .recall_reflections(fetch_limit)
+                .map(|rows| crate::recall::local::reflections(rows, &req))
+        };
+        let core = async {
+            let blocks = self
+                .core_memory
+                .lock()
+                .await
+                .blocks()
+                .iter()
+                .map(|(label, block)| (label.clone(), block.value.clone()))
+                .collect::<Vec<_>>();
+            Ok::<_, anyhow::Error>(crate::recall::local::core(blocks, &req, now))
+        };
+        let (messages, facts, reflections, core) = tokio::join!(messages, facts, reflections, core);
+        let mut sources = Vec::with_capacity(4);
+        for (name, result) in [
+            ("recall_memory", messages),
+            ("fact_store", facts),
+            ("episodic", reflections),
+            ("core", core),
+        ] {
+            match result {
+                Ok(items) => sources.push(items),
+                Err(error) => {
+                    tracing::warn!(source = name, %error, "local memory recall source degraded")
+                }
             }
-            let source_time = DateTime::parse_from_rfc3339(&row.created_at)
-                .ok()
-                .map(|value| value.with_timezone(&Utc));
-            let observed_time = DateTime::parse_from_rfc3339(&row.updated_at)
-                .ok()
-                .map(|value| value.with_timezone(&Utc))
-                .or(source_time)
-                .unwrap_or_else(|| wall_to_datetime(self.clock.wall_now()));
-            let valid_until = source_time.and_then(|created| {
-                (row.ttl_days > 0).then(|| created + chrono::Duration::days(row.ttl_days))
-            });
-            let metadata = MemoryMetadata {
-                record_id: format!("mnemosyne:fact:{}", row.fact_id),
-                provenance: MemoryProvenance {
-                    source: if row.source.is_empty() {
-                        "mnemosyne.fact_store".into()
-                    } else {
-                        row.source
-                    },
-                    source_id: row.fact_id.to_string(),
-                    principal: (!row.subject.is_empty()).then_some(row.subject),
-                    source_commit: None,
-                },
-                source_time,
-                observed_time,
-                valid_from: source_time,
-                valid_until,
-                supersedes: None,
-                superseded_by: None,
-                confidence: row.trust_score.clamp(0.0, 1.0),
-                sensitivity: MemorySensitivity::Internal,
-            };
-            let temporal_state = if row.status == "superseded" {
-                TemporalState::Superseded
-            } else {
-                metadata.temporal_state(req.current_at)
-            };
-            if !req.include_historical
-                && matches!(
-                    temporal_state,
-                    TemporalState::Superseded | TemporalState::Expired
-                )
-            {
-                continue;
-            }
-            used_bytes += row.content.len();
-            items.push(RecallItem {
-                content: row.content,
-                metadata,
-                temporal_state,
-                authority: MemoryAuthority::VerifiedLocalSemantic,
-            });
         }
-        Ok(RecallSet { items })
+        Ok(RecallSet {
+            items: crate::recall::merge_items(sources, &req),
+        })
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
