@@ -2,8 +2,10 @@
 
 Aletheon uses files below `/etc/aletheon/credentials` rather than command-line
 arguments, checked-in configuration values, or a plaintext systemd
-`EnvironmentFile`. The directory is `root:aletheon 0750`; credential files are
-`0600`. `LoadCredential=` gives the service read-only copies. The service has
+`EnvironmentFile` from persistent storage. The directory is `root:aletheon
+0750`; credential files are `0600`. `LoadCredential=` gives the service private
+read-only copies; integration `NAME=value` bundles are parsed only from those
+copies. The service has
 `LimitCORE=0`, so its decrypted process state is not written to a core dump.
 
 ## Inventory

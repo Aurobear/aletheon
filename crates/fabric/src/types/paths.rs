@@ -237,11 +237,19 @@ pub fn mcp_tokens_path() -> PathBuf {
 }
 
 pub fn credential_vault_path() -> PathBuf {
-    xdg_config_dir().join("credentials.vault")
+    std::env::var_os("ALETHEON_CREDENTIAL_VAULT_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| xdg_config_dir().join("credentials.vault"))
 }
 
 pub fn credential_master_key_path() -> PathBuf {
-    PathBuf::from(PRODUCTION_CONFIG_ROOT).join("credential-vault.key")
+    std::env::var_os("ALETHEON_CREDENTIAL_MASTER_KEY_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(PRODUCTION_CONFIG_ROOT)
+                .join("credentials")
+                .join("google-vault.key")
+        })
 }
 
 pub fn config_file() -> PathBuf {
