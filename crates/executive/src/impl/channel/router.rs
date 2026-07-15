@@ -206,6 +206,16 @@ impl GoalProgress {
             self.kind.as_str()
         )
     }
+
+    fn outbound(&self, conversation_id: ConversationId) -> OutboundMessage {
+        OutboundMessage {
+            conversation_id,
+            content: MessageContent::Text { text: self.text() },
+            actions: vec![],
+            reply_to: None,
+            correlation_id: self.correlation_id(),
+        }
+    }
 }
 
 /// Classify a [`MessageContent`] into a [`RoutedInput`].
@@ -396,15 +406,7 @@ impl ChannelRouter {
         conversation_id: ConversationId,
         progress: &GoalProgress,
     ) -> anyhow::Result<bool> {
-        let outbound = OutboundMessage {
-            conversation_id,
-            content: MessageContent::Text {
-                text: progress.text(),
-            },
-            actions: vec![],
-            reply_to: None,
-            correlation_id: progress.correlation_id(),
-        };
+        let outbound = progress.outbound(conversation_id);
         if !self
             .store
             .enqueue_outbound(transport.channel_id(), &outbound)?
@@ -423,6 +425,17 @@ impl ChannelRouter {
                 Ok(false)
             }
         }
+    }
+
+    /// Persist a progress notification for the poll loop to deliver.
+    pub fn queue_goal_progress(
+        &mut self,
+        channel_id: &str,
+        conversation_id: ConversationId,
+        progress: &GoalProgress,
+    ) -> anyhow::Result<bool> {
+        self.store
+            .enqueue_outbound(channel_id, &progress.outbound(conversation_id))
     }
 
     async fn execute_goal_command(

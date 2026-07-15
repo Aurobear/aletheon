@@ -17,6 +17,7 @@ pub(crate) mod store;
 mod summary;
 mod transition;
 mod verification;
+mod worker;
 pub use self::coordinator::{GoalCoordinator, GoalTickOutcome};
 pub use attempt::GoalAttempt;
 pub use attempt_coordinator::{
@@ -33,6 +34,7 @@ pub use verification::{
     CodingJobRecoveryRecord, GoalProjectionEvidence, PersistedCodingJob,
     PersistedVerificationReport,
 };
+pub use worker::GoalWorker;
 
 use anyhow::{Context, Result};
 use fabric::goal::{GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason};

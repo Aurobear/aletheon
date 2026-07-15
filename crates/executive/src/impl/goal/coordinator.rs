@@ -101,6 +101,25 @@ impl GoalCoordinator {
         self
     }
 
+    /// Reserve production storage before a daemon scheduler starts an attempt.
+    pub fn admit_attempt_storage(&self, goal_id: GoalId) -> Result<(), String> {
+        let Some((quota, expected_bytes)) = &self.storage_quota else {
+            return Ok(());
+        };
+        let mut reservations = self.storage_reservations.lock().unwrap();
+        if let std::collections::hash_map::Entry::Vacant(entry) = reservations.entry(goal_id) {
+            let reservation = quota
+                .reserve(StorageClass::Total, *expected_bytes, 1)
+                .map_err(|error| error.to_string())?;
+            entry.insert(reservation);
+        }
+        Ok(())
+    }
+
+    pub fn release_attempt_storage(&self, goal_id: GoalId) {
+        self.storage_reservations.lock().unwrap().remove(&goal_id);
+    }
+
     /// Project only an immutable summary that can be read back from durable
     /// storage. Failure is health evidence and never rewrites the Goal result.
     pub async fn project_persisted_goal_summary(
@@ -260,22 +279,8 @@ impl GoalCoordinator {
                 })
             }
             GoalState::Running => {
-                if let Some((quota, expected_bytes)) = &self.storage_quota {
-                    let mut reservations = self.storage_reservations.lock().unwrap();
-                    if let std::collections::hash_map::Entry::Vacant(entry) =
-                        reservations.entry(goal_id)
-                    {
-                        match quota.reserve(StorageClass::Total, *expected_bytes, 1) {
-                            Ok(reservation) => {
-                                entry.insert(reservation);
-                            }
-                            Err(error) => {
-                                return Ok(GoalTickOutcome::BudgetBlocked {
-                                    reason: error.to_string(),
-                                });
-                            }
-                        }
-                    }
+                if let Err(reason) = self.admit_attempt_storage(goal_id) {
+                    return Ok(GoalTickOutcome::BudgetBlocked { reason });
                 }
                 let budget_res = store.reserve_goal_budget(
                     goal_id,

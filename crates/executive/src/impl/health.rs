@@ -90,7 +90,13 @@ impl HealthRegistry {
         ] {
             registry.set(component, ComponentHealth::ready());
         }
-        for component in ["telegram", "google_sync", "gbrain_spool", "backup"] {
+        for component in [
+            "telegram",
+            "google_sync",
+            "gbrain_spool",
+            "goal_worker",
+            "backup",
+        ] {
             registry.set(component, ComponentHealth::disabled());
         }
         registry

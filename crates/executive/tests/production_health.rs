@@ -69,6 +69,19 @@ fn startup_recovery_and_shutdown_are_explicit() {
 }
 
 #[test]
+fn enabled_goal_worker_failure_is_required_unready() {
+    let health = HealthRegistry::production_ready();
+    health.set("goal_worker", ComponentHealth::unready("worker_stopped"));
+
+    let snapshot = health.snapshot();
+    assert_eq!(snapshot.readiness, "unready");
+    assert_eq!(
+        snapshot.components["goal_worker"].error_category,
+        Some("worker_stopped")
+    );
+}
+
+#[test]
 fn health_contract_never_accepts_arbitrary_error_bodies() {
     // Component health intentionally has no message/address/path/provider-body field.
     let fields = serde_json::to_value(ComponentHealth::degraded("worker_stopped")).unwrap();

@@ -68,6 +68,8 @@ pub struct RequestHandler {
     /// Telegram poll-loop task handle — stored so daemon shutdown can await
     /// graceful termination. `None` when Telegram is disabled or not yet started.
     pub(crate) telegram_task: Option<Arc<tokio::task::JoinHandle<()>>>,
+    /// Durable Goal scheduler, awaited with a bound during shutdown.
+    pub(crate) goal_worker_task: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     /// Google poll-loop supervisor handle, retained for graceful shutdown.
     pub(crate) google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
     /// Optional GBrain spool worker, awaited with a bound during shutdown.
