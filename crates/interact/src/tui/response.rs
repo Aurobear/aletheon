@@ -11,10 +11,15 @@ use super::test_infra::EventRecorder;
 use super::App;
 
 /// Variant of `try_read_socket` that records events via `EventRecorder`.
-pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<EventRecorder>) {
+pub fn try_read_socket_with_recorder(
+    app: &mut App,
+    event_recorder: &mut Option<EventRecorder>,
+) -> bool {
+    let mut changed = false;
     loop {
         match app.stream.try_read(&mut app.read_buf) {
             Ok(0) => {
+                changed = true;
                 app.streaming = false;
                 app.status.waiting = false;
                 app.app_state.streaming = false;
@@ -22,6 +27,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
                 break;
             }
             Ok(n) => {
+                changed = true;
                 let chunk = String::from_utf8_lossy(&app.read_buf[..n]);
                 app.response_buf.push_str(&chunk);
 
@@ -57,6 +63,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
             Err(_) => {
+                changed = true;
                 app.streaming = false;
                 app.status.waiting = false;
                 app.app_state.streaming = false;
@@ -64,6 +71,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
             }
         }
     }
+    changed
 }
 
 pub fn handle_event(app: &mut App, params: &serde_json::Value) {
@@ -234,9 +242,11 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             // compaction is internal, just note it
         }
         ClientEvent::Reflection { summary } => {
-            // `summary` already begins with "Reflection: " (see reflection.rs);
-            // don't prepend it again (bug T2: "Reflection: Reflection: ...").
-            app.chat.add_text(ChatRole::System, summary);
+            // Routine reflection is internal control flow, not conversation.
+            // Surface only a reflection that changes strategy or stops work.
+            if !(summary.contains("Spec: on track") && summary.ends_with("Continuing...")) {
+                app.chat.add_text(ChatRole::System, summary);
+            }
         }
         ClientEvent::GoalSet {
             goal: _,

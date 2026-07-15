@@ -5,6 +5,8 @@
 //! * `ChatEntry::Text` — Standard text messages (user, assistant, system).
 //! * `ChatEntry::Exec` — Tool call + result, rendered inline with spinner animation.
 
+use std::cell::{Cell, RefCell};
+
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -55,10 +57,11 @@ impl ChatMessage {
         caps: &TermCaps,
         theme: &Theme,
     ) -> Vec<Line<'static>> {
-        // Border prefix: "  │ " for user/assistant, "  · " for system
+        // Keep user/system messages visually distinct, but render assistant
+        // prose without a repeated rail (Codex-style text-first hierarchy).
         let (border_char, border_color) = match role {
             Role::User => ("│", theme.user_icon),
-            Role::Assistant => ("│", theme.accent),
+            Role::Assistant => ("", theme.accent),
             Role::System => ("·", theme.system_icon),
         };
         let border_prefix = format!("  {} ", border_char);
@@ -87,21 +90,21 @@ impl ChatMessage {
                 }
             }
             Role::Assistant => {
-                let md_lines = markdown::render_markdown(content, content_width as u16, caps);
+                let md_lines = markdown::render_markdown(content, width, caps);
                 for md_line in md_lines.into_iter() {
-                    let mut spans = vec![Span::styled(
-                        border_prefix.clone(),
-                        Style::default().fg(border_color),
-                    )];
-                    spans.extend(md_line.spans.into_iter().map(|s| {
-                        // Preserve markdown styling, apply theme text color as fallback
-                        let style = if s.style.fg.is_some() {
-                            s.style
-                        } else {
-                            s.style.fg(theme.text)
-                        };
-                        Span::styled(s.content.to_string(), style)
-                    }));
+                    let spans = md_line
+                        .spans
+                        .into_iter()
+                        .map(|s| {
+                            // Preserve markdown styling, apply theme text color as fallback
+                            let style = if s.style.fg.is_some() {
+                                s.style
+                            } else {
+                                s.style.fg(theme.text)
+                            };
+                            Span::styled(s.content.to_string(), style)
+                        })
+                        .collect::<Vec<_>>();
                     result.push(Line::from(spans));
                 }
             }
@@ -185,22 +188,16 @@ impl ExecEntry {
         };
 
         let status = if !self.finished {
-            SPINNER[frame_counter as usize % SPINNER.len()].to_string()
+            format!(" {}", SPINNER[frame_counter as usize % SPINNER.len()])
         } else if self.is_error {
             " ✗".to_string()
         } else {
-            " ✓".to_string()
+            String::new()
         };
 
-        let header = format!(
-            "  ⏺ {}({}){}",
-            self.tool,
-            truncate_args(&self.args, 60),
-            status
-        );
+        let header = format!("{}{}", tool_action(&self.tool, &self.args), status);
         let mut lines = vec![Line::from(vec![
-            Span::styled("  ", Style::default()),
-            Span::styled("● ", Style::default().fg(dot_color)),
+            Span::styled("• ", Style::default().fg(dot_color)),
             Span::raw(header),
         ])];
 
@@ -226,24 +223,11 @@ impl ExecEntry {
                     ),
                 ]));
             }
-        } else if self.finished {
-            let line_count = self.output.lines().count();
-            let char_count = self.output.chars().count();
-            if line_count > 3 || char_count > 240 {
-                lines.push(Line::from(vec![
-                    Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(
-                        format!(
-                            "{} output, Ctrl+B to expand",
-                            compact_output_size(line_count, char_count)
-                        ),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ]));
-            } else if line_count > 0 {
+        } else if self.finished && self.is_error {
+            if !self.output.is_empty() {
                 for line in self.output.lines().take(3) {
                     lines.push(Line::from(vec![
-                        Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                        Span::styled("  └ ", Style::default().fg(Color::Red)),
                         Span::raw(line.to_string()),
                     ]));
                 }
@@ -262,6 +246,30 @@ impl ExecEntry {
             status
         )
     }
+}
+
+fn tool_action(tool: &str, args: &str) -> String {
+    let value = serde_json::from_str::<serde_json::Value>(args).unwrap_or_default();
+    let get = |key: &str| value.get(key).and_then(|item| item.as_str()).unwrap_or("");
+    let lower = tool.to_ascii_lowercase();
+    let (verb, detail) = if lower.contains("bash") || lower.contains("exec") {
+        ("Ran", get("command"))
+    } else if lower.contains("read") {
+        ("Read", get("path"))
+    } else if lower.contains("grep") || lower.contains("search") || lower.contains("glob") {
+        let detail = if !get("pattern").is_empty() {
+            get("pattern")
+        } else {
+            get("query")
+        };
+        ("Searched", detail)
+    } else if lower.contains("write") || lower.contains("edit") || lower.contains("patch") {
+        ("Updated", get("path"))
+    } else {
+        ("Used", tool)
+    };
+    let detail = if detail.is_empty() { tool } else { detail };
+    format!("{verb} {}", truncate_args(detail, 76))
 }
 
 /// Assign a color to a tool based on its name.
@@ -284,14 +292,6 @@ fn truncate_args(args: &str, max: usize) -> String {
         args.to_string()
     } else {
         format!("{}...", args.chars().take(max).collect::<String>())
-    }
-}
-
-fn compact_output_size(line_count: usize, char_count: usize) -> String {
-    if line_count > 3 {
-        format!("{line_count} lines / {char_count} chars")
-    } else {
-        format!("{char_count} chars")
     }
 }
 
@@ -326,6 +326,16 @@ pub struct ChatWidget {
     pub user_scrolled: bool,
     render_width: u16,
     caps: TermCaps,
+    revision: Cell<u64>,
+    layout_cache: RefCell<Option<LayoutCache>>,
+}
+
+#[derive(Clone)]
+struct LayoutCache {
+    revision: u64,
+    width: usize,
+    animation_frame: Option<u64>,
+    lines: Vec<Line<'static>>,
 }
 
 impl ChatWidget {
@@ -336,13 +346,21 @@ impl ChatWidget {
             user_scrolled: false,
             render_width: 80,
             caps,
+            revision: Cell::new(0),
+            layout_cache: RefCell::new(None),
         }
+    }
+
+    fn invalidate_layout(&self) {
+        self.revision.set(self.revision.get().wrapping_add(1));
+        self.layout_cache.borrow_mut().take();
     }
 
     /// Add a text message entry.
     pub fn add_text(&mut self, role: Role, content: String) {
         let msg = ChatMessage::new(role, content, self.render_width, &self.caps);
         self.entries.push(ChatEntry::Text(msg));
+        self.invalidate_layout();
         if !self.user_scrolled {
             self.scroll_offset = 0;
         }
@@ -352,6 +370,7 @@ impl ChatWidget {
     pub fn add_exec(&mut self, call_id: String, tool: String, args: String) {
         let entry = ExecEntry::new(call_id, tool, args);
         self.entries.push(ChatEntry::Exec(entry));
+        self.invalidate_layout();
         if !self.user_scrolled {
             self.scroll_offset = 0;
         }
@@ -377,6 +396,7 @@ impl ChatWidget {
         if let Some(ChatEntry::Text(msg)) = self.entries.last_mut() {
             msg.update_content(content, self.render_width, &self.caps);
         }
+        self.invalidate_layout();
         if !self.user_scrolled {
             self.scroll_offset = 0;
         }
@@ -384,39 +404,54 @@ impl ChatWidget {
 
     /// Update a tool execution entry by call_id (mark as finished with output).
     pub fn update_exec(&mut self, call_id: &str, output: &str, is_error: bool) {
+        let mut changed = false;
         for entry in self.entries.iter_mut() {
             if let ChatEntry::Exec(ref mut ee) = entry {
                 if ee.call_id == call_id {
                     ee.finish(output, is_error);
+                    changed = true;
                     break;
                 }
             }
+        }
+        if changed {
+            self.invalidate_layout();
         }
     }
 
     /// Update a tool execution entry's args by call_id.
     pub fn update_exec_args(&mut self, call_id: &str, args: &str) {
+        let mut changed = false;
         for entry in self.entries.iter_mut() {
             if let ChatEntry::Exec(ref mut ee) = entry {
                 if ee.call_id == call_id {
                     ee.update_args(args);
+                    changed = true;
                     break;
                 }
             }
+        }
+        if changed {
+            self.invalidate_layout();
         }
     }
 
     /// Toggle expand/collapse on a tool execution entry by call_id.
     pub fn toggle_exec(&mut self, call_id: &str) -> bool {
+        let mut changed = false;
         for entry in self.entries.iter_mut() {
             if let ChatEntry::Exec(ref mut ee) = entry {
                 if ee.call_id == call_id {
                     ee.toggle();
-                    return true;
+                    changed = true;
+                    break;
                 }
             }
         }
-        false
+        if changed {
+            self.invalidate_layout();
+        }
+        changed
     }
 
     /// Count unfinished exec entries (still running).
@@ -457,6 +492,7 @@ impl ChatWidget {
                     );
                 }
             }
+            self.invalidate_layout();
         }
     }
 
@@ -471,14 +507,57 @@ impl ChatWidget {
 
     /// Get all rendered lines, word-wrapped to fit the given width.
     pub fn all_lines_wrapped(&self, frame_counter: u64, width: usize) -> Vec<Line<'static>> {
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        for entry in &self.entries {
-            let raw = entry.render_lines(frame_counter, self.render_width, &self.caps);
-            for line in &raw {
-                lines.extend(word_wrap_line(line, width));
+        self.ensure_cache(frame_counter, width);
+        self.layout_cache
+            .borrow()
+            .as_ref()
+            .map(|cache| cache.lines.clone())
+            .unwrap_or_default()
+    }
+
+    fn ensure_cache(&self, frame_counter: u64, width: usize) {
+        let animation_frame = self
+            .active_exec_count()
+            .gt(&0)
+            .then_some(frame_counter % 10);
+        let revision = self.revision.get();
+        if let Some(cache) = self.layout_cache.borrow().as_ref() {
+            if cache.revision == revision
+                && cache.width == width
+                && cache.animation_frame == animation_frame
+            {
+                return;
             }
         }
-        lines
+
+        let mut lines = Vec::new();
+        for entry in &self.entries {
+            for line in entry.render_lines(frame_counter, self.render_width, &self.caps) {
+                lines.extend(word_wrap_line(&line, width));
+            }
+        }
+        *self.layout_cache.borrow_mut() = Some(LayoutCache {
+            revision,
+            width,
+            animation_frame,
+            lines: lines.clone(),
+        });
+    }
+
+    pub fn visible_lines(
+        &self,
+        frame_counter: u64,
+        width: usize,
+        height: u16,
+    ) -> Vec<Line<'static>> {
+        self.ensure_cache(frame_counter, width);
+        let cache = self.layout_cache.borrow();
+        let lines = &cache.as_ref().expect("layout cache initialized").lines;
+        let total = lines.len();
+        let scroll = usize::from(self.scroll_offset).min(total.saturating_sub(height as usize));
+        let end = total.saturating_sub(scroll);
+        let start = end.saturating_sub(height as usize);
+        lines[start..end].to_vec()
     }
 
     /// Render the chat widget.
@@ -497,18 +576,9 @@ pub struct ChatWidgetRenderer<'a> {
 
 impl<'a> Widget for ChatWidgetRenderer<'a> {
     fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        let all_lines = self
+        let visible = self
             .chat
-            .all_lines_wrapped(self.frame_counter, area.width as usize);
-        let total_lines = all_lines.len() as u16;
-        let visible_height = area.height;
-
-        let max_scroll = total_lines.saturating_sub(visible_height);
-        let scroll = self.chat.scroll_offset.min(max_scroll);
-        let end = total_lines.saturating_sub(scroll);
-        let start = end.saturating_sub(visible_height);
-
-        let visible: Vec<Line> = all_lines[start as usize..end as usize].to_vec();
+            .visible_lines(self.frame_counter, area.width as usize, area.height);
 
         Paragraph::new(visible)
             .wrap(Wrap { trim: false })
@@ -918,6 +988,44 @@ mod tests {
     }
 
     #[test]
+    fn test_scrolling_reuses_wrapped_layout() {
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        widget.add_text(Role::Assistant, "one two three four five".repeat(50));
+        let _ = widget.visible_lines(0, 30, 5);
+        let first_ptr = widget
+            .layout_cache
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .lines
+            .as_ptr();
+        widget.scroll_up(3);
+        let _ = widget.visible_lines(99, 30, 5);
+        let second_ptr = widget
+            .layout_cache
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .lines
+            .as_ptr();
+        assert_eq!(first_ptr, second_ptr, "scrolling must reuse cached layout");
+    }
+
+    #[test]
+    fn test_assistant_message_has_no_repeated_vertical_rail() {
+        let caps = TermCaps::detect();
+        let message = ChatMessage::new(Role::Assistant, "first\n\nsecond".into(), 80, &caps);
+        let text = message
+            .rendered
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(!text.contains('│'));
+    }
+
+    #[test]
     fn test_user_scrolled_flag() {
         let caps = TermCaps::detect();
         let mut widget = ChatWidget::new(caps);
@@ -971,11 +1079,7 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect::<Vec<_>>()
             .join("");
-        assert!(
-            header2.contains(" ✓"),
-            "should have checkmark, got: {}",
-            header2
-        );
+        assert_eq!(header2, "• Ran ls");
     }
 
     #[test]
@@ -1009,8 +1113,26 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
 
-        assert!(text.contains("chars output, Ctrl+B to expand"));
+        assert_eq!(text, "• Searched google_gmail_search");
         assert!(!text.contains(&"x".repeat(100)));
+    }
+
+    #[test]
+    fn test_exec_entry_shows_failure_excerpt() {
+        let mut entry = ExecEntry::new(
+            "call_git".to_string(),
+            "bash_exec".to_string(),
+            r#"{"command":"git status"}"#.to_string(),
+        );
+        entry.finish("fatal: repository unavailable\nmore detail", true);
+        let text = entry
+            .render_lines(0, 80)
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(text.contains("• Ran git status ✗"));
+        assert!(text.contains("fatal: repository unavailable"));
     }
 
     #[test]

@@ -50,6 +50,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
     let test_start = app.clock.mono_now();
     let test_timeout = Duration::from_secs(test_config.test_timeout);
+    let mut needs_redraw = true;
 
     // Clear daemon session on startup (avoids stale data from previous runs)
     let clear_msg = serde_json::json!({"jsonrpc": "2.0", "method": "clear", "id": 0});
@@ -86,13 +87,22 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             app.chat.set_width(size.width);
         }
 
-        // Draw (and optionally record frame)
-        super::super::render::draw::draw_with_recorder(terminal, &mut app, &mut frame_recorder)?;
+        // Redraw only when state changed. This keeps idle and scroll handling
+        // cheap instead of rebuilding the complete terminal frame on a timer.
+        if needs_redraw {
+            super::super::render::draw::draw_with_recorder(
+                terminal,
+                &mut app,
+                &mut frame_recorder,
+            )?;
+            needs_redraw = false;
+        }
 
         // Check pending submit (IME delay)
         if let Some(pending_time) = app.pending_submit {
             if (app.clock.mono_now().0 - pending_time.0) > 100 {
                 app.pending_submit = None;
+                needs_redraw = true;
                 let text = app.input_buf.trim().to_string();
                 if !text.is_empty() {
                     app.input_buf.clear();
@@ -116,6 +126,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 match crossterm::event::read()? {
                     Event::Key(key) => {
                         handle_key(&mut app, key).await;
+                        needs_redraw = true;
                     }
                     Event::Paste(text) => {
                         // Paste: insert at cursor
@@ -124,12 +135,15 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                             app.cursor += ch.len_utf8();
                         }
                         app.check_cjk();
+                        needs_redraw = true;
                     }
                     Event::Resize(w, _h) => {
                         app.chat.set_width(w);
+                        needs_redraw = true;
                     }
                     Event::Mouse(mouse) => {
                         handle_mouse(&mut app, mouse).await;
+                        needs_redraw = true;
                     }
                     _ => {}
                 }
@@ -150,7 +164,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         }
 
         // Try reading daemon response (with optional event recording)
-        try_read_socket_with_recorder(&mut app, &mut event_recorder);
+        needs_redraw |= try_read_socket_with_recorder(&mut app, &mut event_recorder);
 
         // Check if a turn just completed and we should auto-submit next line
         if let Some(ref mut reader) = test_input {
@@ -172,6 +186,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
         if app.streaming {
             app.status.tick_spinner();
+            needs_redraw = true;
         }
     }
 

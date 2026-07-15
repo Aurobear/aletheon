@@ -141,16 +141,11 @@ impl Renderable for ChatRenderable<'_> {
         let chat_inner = chat_block.inner(area);
         chat_block.render(area, buf);
 
-        let chat_lines = self
-            .chat
-            .all_lines_wrapped(self.frame_counter, area.width as usize);
-        let total_lines = chat_lines.len() as u16;
-        let visible_height = chat_inner.height;
-        let max_scroll = total_lines.saturating_sub(visible_height);
-        let scroll = self.chat.scroll_offset.min(max_scroll);
-        let end = total_lines.saturating_sub(scroll);
-        let start = end.saturating_sub(visible_height);
-        let visible: Vec<Line> = chat_lines[start as usize..end as usize].to_vec();
+        let visible = self.chat.visible_lines(
+            self.frame_counter,
+            chat_inner.width as usize,
+            chat_inner.height,
+        );
         Paragraph::new(visible)
             .wrap(Wrap { trim: false })
             .render(chat_inner, buf);

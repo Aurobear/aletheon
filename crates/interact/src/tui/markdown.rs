@@ -262,8 +262,7 @@ fn render_markdown_with_theme(
                                 }
                             }
                         }
-                        let vbar = caps.vline();
-                        let table_width = 1 + col_w.iter().map(|width| width + 3).sum::<usize>();
+                        let table_width = 2 + col_w.iter().map(|width| width + 2).sum::<usize>();
                         if table_width > wrap_width {
                             let headers = table_rows.first().cloned().unwrap_or_default();
                             for row in table_rows.iter().skip(table_header_count) {
@@ -295,11 +294,7 @@ fn render_markdown_with_theme(
                             }
                         } else {
                             for (ridx, row) in table_rows.iter().enumerate() {
-                                let mut spans: Vec<Span<'static>> = Vec::new();
-                                spans.push(Span::styled(
-                                    format!("{} ", vbar),
-                                    Style::default().fg(dim),
-                                ));
+                                let mut spans: Vec<Span<'static>> = vec![Span::raw("  ")];
                                 for (c, &col_width) in col_w.iter().enumerate() {
                                     let cell = row.get(c);
                                     let w: usize = cell
@@ -311,28 +306,23 @@ fn render_markdown_with_theme(
                                     if w < col_width {
                                         spans.push(Span::raw(" ".repeat(col_width - w)));
                                     }
-                                    spans.push(Span::styled(
-                                        format!(" {} ", vbar),
-                                        Style::default().fg(dim),
-                                    ));
+                                    if c + 1 < col_w.len() {
+                                        spans.push(Span::raw("  "));
+                                    }
                                 }
                                 lines.push(Line::from(spans));
                                 // Emit the header/body separator right after the
                                 // last header row.
                                 if ridx + 1 == table_header_count {
-                                    let mut sep: Vec<Span<'static>> = vec![Span::styled(
-                                        vbar.to_string(),
-                                        Style::default().fg(dim),
-                                    )];
-                                    for &col_width in &col_w {
+                                    let mut sep: Vec<Span<'static>> = vec![Span::raw("  ")];
+                                    for (c, &col_width) in col_w.iter().enumerate() {
                                         sep.push(Span::styled(
-                                            "─".repeat(col_width + 2),
+                                            "─".repeat(col_width),
                                             Style::default().fg(dim),
                                         ));
-                                        sep.push(Span::styled(
-                                            vbar.to_string(),
-                                            Style::default().fg(dim),
-                                        ));
+                                        if c + 1 < col_w.len() {
+                                            sep.push(Span::raw("  "));
+                                        }
                                     }
                                     lines.push(Line::from(sep));
                                 }
@@ -499,14 +489,10 @@ mod tests {
                 .map(|s| s.content.as_ref())
                 .collect::<String>()
         };
-        // Table rows are the lines containing the vertical border.
-        let tbl: Vec<String> = lines
-            .iter()
-            .map(&text)
-            .filter(|t| t.contains('│'))
-            .collect();
+        let tbl: Vec<String> = lines.iter().map(&text).filter(|t| !t.is_empty()).collect();
         // header + separator + 2 body rows.
         assert_eq!(tbl.len(), 4, "table lines: {:?}", tbl);
+        assert!(!tbl.iter().any(|line| line.contains('│')));
         // All rows align to the same display width (ignoring trailing space).
         let w0 = tbl[0].trim_end().chars().count();
         for t in &tbl {
