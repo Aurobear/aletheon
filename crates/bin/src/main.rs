@@ -83,6 +83,8 @@ enum Commands {
     },
     /// Print version
     Version,
+    /// Restore terminal modes after an interrupted TUI session
+    RestoreTerminal,
 }
 
 #[tokio::main]
@@ -176,6 +178,11 @@ async fn main() -> Result<()> {
         }
         (Some(Commands::Version), _) => {
             println!("aletheon {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        (Some(Commands::RestoreTerminal), _) => {
+            interact::tui::restore_terminal();
+            println!("Terminal restored to normal state.");
             Ok(())
         }
         // -m flag: single message to daemon

@@ -169,7 +169,7 @@ impl ExternalIdentityRepository {
     ) -> Result<Option<ExternalIdentityId>, ExternalRepositoryError> {
         if matches!(
             account_reference.to_ascii_lowercase().as_str(),
-            "me" | "default"
+            "me" | "default" | "gmail"
         ) {
             let mut statement = self.db.prepare(
                 "SELECT identity_id FROM external_identities
@@ -590,6 +590,10 @@ mod tests {
         );
         assert_eq!(
             f.repo.resolve_account(&f.owner, "default").unwrap(),
+            Some(first.id)
+        );
+        assert_eq!(
+            f.repo.resolve_account(&f.owner, "gmail").unwrap(),
             Some(first.id)
         );
 
