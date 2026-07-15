@@ -3,8 +3,9 @@
 ## Recovery model
 
 The daily timer snapshots all managed state under `/var/lib/aletheon`, policy
-and configuration under `/etc/aletheon`, and the encrypted Google credential
-vault. Live SQLite databases are copied with SQLite's online backup API; WAL and
+and non-secret configuration/policy under `/etc/aletheon`, and the encrypted
+Google credential vault under state. `/etc/aletheon/credentials` is excluded and
+its recovery material is protected separately. Live SQLite databases are copied with SQLite's online backup API; WAL and
 SHM files are never copied independently. This covers Goals, attempts,
 approvals, channel/outbox state, Google cursors/projections, Mnemosyne and GBrain
 spool state, artifacts, worktrees, audit data, and local configuration.

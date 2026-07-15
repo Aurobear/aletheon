@@ -25,8 +25,10 @@ install -d -m 0700 "$stage/data" "$stage/config" "$stage/sqlite"
 tar -C "$data_root" --exclude='*.db' --exclude='*.db-wal' --exclude='*.db-shm' \
   --exclude='*.sqlite' --exclude='*.sqlite-wal' --exclude='*.sqlite-shm' \
   --exclude='backup' -cf - . | tar -C "$stage/data" -xf -
-tar -C "$config_root" --exclude='credentials/restic-password' \
-  --exclude='credentials/restic-repository' -cf - . | tar -C "$stage/config" -xf -
+# Credential values and vault recovery keys remain in a separately encrypted
+# recovery system. The primary repository contains policy/config references and
+# the encrypted vault payload, never `/etc/aletheon/credentials` itself.
+tar -C "$config_root" --exclude='credentials' -cf - . | tar -C "$stage/config" -xf -
 
 db_count=0
 while IFS= read -r -d '' db; do
