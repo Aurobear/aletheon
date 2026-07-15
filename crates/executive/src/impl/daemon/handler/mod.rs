@@ -4,6 +4,7 @@
 mod connection;
 pub(crate) mod format;
 mod init;
+mod ports;
 mod rpc;
 mod session_routing;
 pub(crate) mod tool_executor;
@@ -39,6 +40,8 @@ use crate::core::session_gateway::SessionGateway;
 
 #[derive(Clone)]
 pub struct RequestHandler {
+    /// Narrow application use cases available to protocol handlers.
+    pub(crate) ports: Arc<ports::HandlerPorts>,
     /// All subsystem types — becomes `Arc<dyn TraitOps>` in Group B.
     pub(crate) subsystems: Arc<CoreSystems>,
     /// Multi-session registry.

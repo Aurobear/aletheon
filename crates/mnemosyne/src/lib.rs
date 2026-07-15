@@ -7,6 +7,7 @@
 
 pub mod backends;
 pub mod composite_service;
+pub mod fact_service;
 pub mod r#impl;
 pub mod model;
 pub mod ops;
@@ -15,6 +16,10 @@ pub mod service;
 
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
+};
+pub use fact_service::{
+    AddFactRequest, DefaultFactUseCases, FactServiceError, FactUseCases, FactView,
+    ListFactsRequest, SearchFactsRequest,
 };
 
 // MemoryService facade (docs/arch §11). NOTE: `MemoryScope` from `service` is

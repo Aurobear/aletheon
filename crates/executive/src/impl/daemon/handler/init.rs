@@ -1026,6 +1026,8 @@ impl RequestHandler {
         let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(clock.clone()));
         let domains =
             crate::core::DomainPorts::new(Arc::new(agora::AgoraRegistry::new(kernel.clock())));
+        let fact_use_cases: Arc<dyn mnemosyne::FactUseCases> =
+            Arc::new(mnemosyne::DefaultFactUseCases::new(fact_store.clone()));
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
             kernel,
             domains,
@@ -1441,7 +1443,9 @@ impl RequestHandler {
         };
         let goal_worker_enabled = goal_worker_task.is_some();
 
+        let handler_ports = Arc::new(super::ports::HandlerPorts::new(fact_use_cases));
         let mut handler = Self {
+            ports: handler_ports,
             subsystems,
             sessions,
             session_gateway,

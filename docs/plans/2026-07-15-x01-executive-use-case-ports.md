@@ -38,16 +38,18 @@
 ### Task 2: Introduce typed fact-memory use cases
 
 **Files:**
-- Create: `crates/executive/src/service/fact_service.rs`
-- Modify: `crates/executive/src/service/mod.rs`
+- Create: `crates/mnemosyne/src/fact_service.rs`
+- Modify: `crates/mnemosyne/src/lib.rs`
 - Modify: `crates/executive/src/impl/daemon/handler/rpc/rpc_memory.rs`
 - Test: `crates/executive/tests/fact_service.rs`
 
-- [ ] Define `FactUseCases` with async `add`, `list`, `search`, `show`, `forget`, and `set_pinned` methods. Define exact request structs for add/list/search and return `mnemosyne::FactRow`, IDs, booleans, or `FactServiceError::{NotFound, InvalidInput, Store}`.
-- [ ] Implement `FactService` with one private `Arc<tokio::sync::Mutex<mnemosyne::FactStore>>`; preserve the existing governed defaults (`general`, trust `0.7`, semantic tier, search trust `0.15`, list `50`, search `20`).
-- [ ] Test duplicate add, scoped list/search, show-not-found, archive/hard-delete, pin/unpin, and that errors never expose a database handle.
-- [ ] Change memory RPC handlers to parse parameters, call `self.ports.facts`, and preserve existing JSON-RPC result/error shapes.
-- [ ] Run `cargo test -p executive --test fact_service` and focused RPC tests; expected PASS.
+- [x] Define `FactUseCases` with async `add`, `list`, `search`, `show`, `forget`, and `set_pinned` methods. Define exact request structs for add/list/search and return the stable request-facing `FactView`, IDs, booleans, or `FactServiceError::{NotFound, InvalidInput, Store}`.
+- [x] Implement `DefaultFactUseCases` inside Mnemosyne with one private `Arc<tokio::sync::Mutex<FactStore>>`; preserve the existing governed defaults (`general`, trust `0.7`, semantic tier, search trust `0.15`, list `50`, search `20`).
+- [x] Test duplicate add, scoped list/search, show-not-found, archive/hard-delete, pin/unpin, and that errors never expose a database handle.
+- [x] Change memory RPC handlers to parse parameters, call `self.ports.facts`, and preserve existing JSON-RPC result/error shapes.
+- [x] Run `cargo test -p executive --test fact_service`, `cargo check -p executive --all-targets`, and `cargo clippy -p executive --all-targets -- -D warnings`; PASS.
+
+**Task 2 evidence:** authoritative port, stable DTO, and private adapter at `crates/mnemosyne/src/fact_service.rs`; request-only handler calls at `crates/executive/src/impl/daemon/handler/rpc/rpc_memory.rs:26-165`; behavioral and static boundary tests at `crates/executive/tests/fact_service.rs`.
 
 ### Task 3: Introduce typed goal use cases
 
