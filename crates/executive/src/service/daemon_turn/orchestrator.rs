@@ -11,7 +11,6 @@ use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::r#impl::session::canonical_store::{default_session_db_path, CanonicalSessionStore};
 use crate::service::turn_coordinator::TurnCoordinator;
 use crate::service::TurnPipeline;
-use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::KernelRuntime;
 use fabric::{
     AdmissionController, AgoraOps, Clock, LlmProvider, OperationId, ProcessId, ProcessSignal,
@@ -45,13 +44,6 @@ pub struct DaemonTurnOrchestrator {
     pub(crate) active_connections: Arc<AtomicUsize>,
     pub(crate) started_at: fabric::MonoTime,
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
-    /// Per-turn operation scope for structured task cancellation (PR-3).
-    ///
-    /// Wraps the react task's CancellationToken so `cancel_turn()` can signal
-    /// cooperative cancellation. `execute_turn()` drains the scope at turn end
-    /// to guarantee no orphan tasks.
-    pub(crate) current_scope: Mutex<Option<OperationScope>>,
-
     // --- Shared turn pipeline ---
     pub(crate) pipeline: Arc<TurnPipeline>,
     pub(crate) coordinator: Arc<TurnCoordinator>,
@@ -94,16 +86,86 @@ impl DaemonTurnOrchestrator {
             coordinator.store(),
             coordinator.active_index(),
         ));
+        let crate::core::core_systems::CoreSystems {
+            runtime: executive,
+            self_field,
+            reflector,
+            memory,
+            security,
+            corpus,
+            session,
+            pipeline: evolution,
+            debug_perf,
+            ..
+        } = subsystems.as_ref();
+        let projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection> =
+            Arc::new(
+                crate::service::post_turn_projection::ProductionPostTurnProjection::new(
+                    crate::service::post_turn_projection::PostTurnProjectionResources {
+                        hooks: corpus.hook_registry.clone(),
+                        memory: memory.memory_service.clone(),
+                        auto_memory: memory.auto_memory.clone(),
+                        reflector: reflector.clone(),
+                        episodic: memory.episodic_memory.clone(),
+                        clock: clock.clone(),
+                        executive: executive.clone(),
+                        evolution: evolution.clone(),
+                        agora: subsystems.domains.agora(),
+                        recall: memory.recall_memory.clone(),
+                    },
+                ),
+            );
+        let capability_resources =
+            crate::r#impl::daemon::handler::tool_executor::CapabilityResources {
+                kernel: kernel.clone(),
+                tools: corpus.tools.clone(),
+                runner: security.tool_runner.clone(),
+                hooks: corpus.hook_registry.clone(),
+                storm: security.storm_breaker.clone(),
+                memory_queue: session.memory_queue.clone(),
+                approvals: security.session_approvals.clone(),
+                perf: debug_perf.clone(),
+                self_field: self_field.clone(),
+            };
+        let runtime_ports = Arc::new(
+            crate::service::turn_runtime_ports::TurnRuntimePorts::production(
+                crate::service::turn_runtime_ports::TurnRuntimeResources {
+                    hooks: corpus.hook_registry.clone(),
+                    pre_turn_scripts: corpus.hooks_config.pre_turn.clone(),
+                    storm: security.storm_breaker.clone(),
+                    model_router: model_router.clone(),
+                    default_llm: llm.clone(),
+                    self_field: self_field.clone(),
+                    approval_rx: security.approval_rx.clone(),
+                    pending_approvals: security.pending_approvals.clone(),
+                    capabilities: capability_resources,
+                    admission: admission.clone(),
+                    sessions: sessions.clone(),
+                    default_session_id: session.default_session_id.clone(),
+                    session_created_at: session.session_created_at.clone(),
+                    data_dir: session.data_dir.clone(),
+                    context_window: session.context_window,
+                    clock: clock.clone(),
+                    memory: memory.memory_service.clone(),
+                    executive: executive.clone(),
+                    performance: debug_perf.clone(),
+                },
+            ),
+        );
         let pipeline = Arc::new(TurnPipeline::new(
-            subsystems.clone(),
-            sessions.clone(),
-            session_gateway.clone(),
-            llm.clone(),
-            model_router.clone(),
-            notify_tx.clone(),
-            daemon_cancel_token.clone(),
-            context_assembler,
-            session_service.clone(),
+            crate::service::turn_pipeline::TurnPipelineResources {
+                session_gateway: session_gateway.clone(),
+                notify: notify_tx.clone(),
+                clock: clock.clone(),
+                agora: agora.clone(),
+                kernel: kernel.clone(),
+                current_scope: Arc::new(Mutex::new(None)),
+                daemon_cancel: daemon_cancel_token.clone(),
+                context: context_assembler,
+                canonical_sessions: session_service.clone(),
+                projection,
+                runtime: runtime_ports,
+            },
         ));
 
         Self {
@@ -120,7 +182,6 @@ impl DaemonTurnOrchestrator {
             active_connections,
             started_at,
             daemon_cancel_token,
-            current_scope: Mutex::new(None),
             pipeline,
             coordinator,
             session_service,

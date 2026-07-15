@@ -3,10 +3,7 @@
 //! Extracted from DaemonTurnOrchestrator::execute_turn so both the daemon
 //! and CLI exec paths share the same Pre/Cognit/Post turn pipeline.
 
-use crate::core::core_systems::CoreSystems;
 use crate::core::session_gateway::SessionGateway;
-use crate::r#impl::daemon::model_router::ModelRouter;
-use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::service::daemon_turn::helpers::bounded_text_history;
 use crate::service::governed_capability::CapabilityExecutionContext;
@@ -20,8 +17,8 @@ use fabric::include::agora::{AgoraOperation, WorkspaceCommitPermit};
 use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
 use fabric::{
     AgoraOps, AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock, ContextBinding,
-    Intent, IntentSource, LlmProvider, OperationId, PrincipalId, ProcessId, Role,
-    SandboxRequirement, SessionId, SpaceId, TurnRequest,
+    Intent, IntentSource, OperationId, PrincipalId, ProcessId, Role, SandboxRequirement, SessionId,
+    SpaceId, TurnRequest,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -56,96 +53,34 @@ pub struct TurnPipeline {
     pub(crate) runtime_ports: Arc<crate::service::turn_runtime_ports::TurnRuntimePorts>,
 }
 
-impl TurnPipeline {
-    /// Create a new TurnPipeline, cloning all handles from the service ports.
-    pub fn new(
-        subsystems: Arc<CoreSystems>,
-        sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
-        session_gateway: Arc<SessionGateway>,
-        llm: Arc<dyn LlmProvider>,
-        model_router: Arc<ModelRouter>,
-        notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
-        daemon_cancel_token: Option<CancellationToken>,
-        context_assembler: Arc<crate::service::context_assembler::ContextAssembler>,
-        canonical_sessions: Arc<crate::service::session_service::SessionService>,
-    ) -> Self {
-        let clock = subsystems.kernel.clock();
-        let kernel = subsystems.kernel.clone();
-        let admission = kernel.admission();
-        let agora = Some(subsystems.domains.agora());
+pub(crate) struct TurnPipelineResources {
+    pub(crate) session_gateway: Arc<SessionGateway>,
+    pub(crate) notify: Arc<Mutex<Option<mpsc::Sender<String>>>>,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) agora: Option<Arc<dyn AgoraOps>>,
+    pub(crate) kernel: Arc<KernelRuntime>,
+    pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
+    pub(crate) daemon_cancel: Option<CancellationToken>,
+    pub(crate) context: Arc<crate::service::context_assembler::ContextAssembler>,
+    pub(crate) canonical_sessions: Arc<crate::service::session_service::SessionService>,
+    pub(crate) projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection>,
+    pub(crate) runtime: Arc<crate::service::turn_runtime_ports::TurnRuntimePorts>,
+}
 
-        let memory = &subsystems.memory;
-        let crate::core::core_systems::CoreSystems {
-            runtime: executive, ..
-        } = subsystems.as_ref();
-        let post_turn_projection = Arc::new(
-            crate::service::post_turn_projection::ProductionPostTurnProjection::new(
-                crate::service::post_turn_projection::PostTurnProjectionResources {
-                    hooks: subsystems.corpus.hook_registry.clone(),
-                    memory: memory.memory_service.clone(),
-                    auto_memory: memory.auto_memory.clone(),
-                    reflector: subsystems.reflector.clone(),
-                    episodic: memory.episodic_memory.clone(),
-                    clock: clock.clone(),
-                    executive: executive.clone(),
-                    evolution: subsystems.pipeline.clone(),
-                    agora: subsystems.domains.agora(),
-                    recall: memory.recall_memory.clone(),
-                },
-            ),
-        );
-        let corpus = &subsystems.corpus;
-        let security = &subsystems.security;
-        let session = &subsystems.session;
-        let capability_resources =
-            crate::r#impl::daemon::handler::tool_executor::CapabilityResources {
-                kernel: kernel.clone(),
-                tools: corpus.tools.clone(),
-                runner: security.tool_runner.clone(),
-                hooks: corpus.hook_registry.clone(),
-                storm: security.storm_breaker.clone(),
-                memory_queue: session.memory_queue.clone(),
-                approvals: security.session_approvals.clone(),
-                perf: subsystems.debug_perf.clone(),
-                self_field: subsystems.self_field.clone(),
-            };
-        let runtime_ports = Arc::new(
-            crate::service::turn_runtime_ports::TurnRuntimePorts::production(
-                crate::service::turn_runtime_ports::TurnRuntimeResources {
-                    hooks: corpus.hook_registry.clone(),
-                    pre_turn_scripts: corpus.hooks_config.pre_turn.clone(),
-                    storm: security.storm_breaker.clone(),
-                    model_router,
-                    default_llm: llm.clone(),
-                    self_field: subsystems.self_field.clone(),
-                    approval_rx: security.approval_rx.clone(),
-                    pending_approvals: security.pending_approvals.clone(),
-                    capabilities: capability_resources,
-                    admission,
-                    sessions: sessions.clone(),
-                    default_session_id: session.default_session_id.clone(),
-                    session_created_at: session.session_created_at.clone(),
-                    data_dir: session.data_dir.clone(),
-                    context_window: session.context_window,
-                    clock: clock.clone(),
-                    memory: memory.memory_service.clone(),
-                    executive: executive.clone(),
-                    performance: subsystems.debug_perf.clone(),
-                },
-            ),
-        );
+impl TurnPipeline {
+    pub(crate) fn new(resources: TurnPipelineResources) -> Self {
         Self {
-            session_gateway,
-            notify_tx,
-            clock,
-            agora,
-            kernel,
-            current_scope: Arc::new(Mutex::new(None)),
-            daemon_cancel_token,
-            context_assembler,
-            canonical_sessions,
-            post_turn_projection,
-            runtime_ports,
+            session_gateway: resources.session_gateway,
+            notify_tx: resources.notify,
+            clock: resources.clock,
+            agora: resources.agora,
+            kernel: resources.kernel,
+            current_scope: resources.current_scope,
+            daemon_cancel_token: resources.daemon_cancel,
+            context_assembler: resources.context,
+            canonical_sessions: resources.canonical_sessions,
+            post_turn_projection: resources.projection,
+            runtime_ports: resources.runtime,
         }
     }
 
