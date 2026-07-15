@@ -126,6 +126,18 @@ impl TurnRuntimePorts {
         });
         let memory = &subsystems.memory;
         let session = &subsystems.session;
+        let capability_resources =
+            crate::r#impl::daemon::handler::tool_executor::CapabilityResources {
+                kernel: subsystems.kernel.clone(),
+                tools: subsystems.corpus.tools.clone(),
+                runner: subsystems.security.tool_runner.clone(),
+                hooks: subsystems.corpus.hook_registry.clone(),
+                storm: subsystems.security.storm_breaker.clone(),
+                memory_queue: subsystems.session.memory_queue.clone(),
+                approvals: subsystems.security.session_approvals.clone(),
+                perf: subsystems.debug_perf.clone(),
+                self_field: subsystems.self_field.clone(),
+            };
         Self {
             hooks: hooks.clone(),
             storm: Arc::new(ProductionStormState {
@@ -143,7 +155,7 @@ impl TurnRuntimePorts {
                 pending: subsystems.security.pending_approvals.clone(),
             }),
             capabilities: Arc::new(ProductionGovernedCapabilities {
-                subsystems: subsystems.clone(),
+                resources: capability_resources,
                 admission,
             }),
             sessions: Arc::new(ProductionTurnSessions {
@@ -502,7 +514,7 @@ impl TurnApprovalPort for ProductionTurnApprovals {
 }
 
 struct ProductionGovernedCapabilities {
-    subsystems: Arc<CoreSystems>,
+    resources: crate::r#impl::daemon::handler::tool_executor::CapabilityResources,
     admission: Arc<dyn AdmissionController>,
 }
 
@@ -512,9 +524,9 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
         &self,
         context: CapabilityExecutionContext,
     ) -> anyhow::Result<PreparedCapabilities> {
-        let definitions = self.subsystems.corpus.tools.lock().await.definitions();
+        let definitions = self.resources.tools.lock().await.definitions();
         let executor = Arc::new(TurnToolExecutor::new(
-            &self.subsystems,
+            &self.resources,
             context.session_id.clone(),
             context.turn_count,
             context.working_dir.clone(),
@@ -522,7 +534,7 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             context.process_id,
         ));
         let authority = Arc::new(RegistryAuthorityProvider::new(
-            corpus::tool_risk_levels(&self.subsystems.corpus.tools).await,
+            corpus::tool_risk_levels(&self.resources.tools).await,
             context.principal,
             context.session_id,
             context.working_dir,

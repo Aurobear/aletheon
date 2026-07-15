@@ -1103,13 +1103,24 @@ impl RequestHandler {
             cancel_token: Arc::new(Mutex::new(None)),
             main_agent_process_id: Arc::new(Mutex::new(None)),
         });
+        let capability_resources = super::tool_executor::CapabilityResources {
+            kernel: subsystems.kernel.clone(),
+            tools: subsystems.corpus.tools.clone(),
+            runner: subsystems.security.tool_runner.clone(),
+            hooks: subsystems.corpus.hook_registry.clone(),
+            storm: subsystems.security.storm_breaker.clone(),
+            memory_queue: subsystems.session.memory_queue.clone(),
+            approvals: subsystems.security.session_approvals.clone(),
+            perf: subsystems.debug_perf.clone(),
+            self_field: subsystems.self_field.clone(),
+        };
+        let capability_service: Arc<dyn CapabilityService> = Arc::new(
+            super::tool_executor::ProductionCapabilityService::new(capability_resources.clone()),
+        );
 
         // Wire sub-agent execution runtime so spawned sub-agents run real
         // LLM + tool reasoning instead of the cancellation-wait stub.
         {
-            let capability: Arc<dyn CapabilityService> = Arc::new(
-                super::tool_executor::CoreCapabilityService::new(&subsystems),
-            );
             let allowed_tools = subsystems
                 .corpus
                 .tools
@@ -1124,7 +1135,7 @@ impl RequestHandler {
                 fabric::CognitiveRole::Worker,
                 llm.clone(),
                 subsystems.corpus.tools.clone(),
-                capability,
+                capability_service.clone(),
                 clock.clone(),
                 8,
                 16 * 1024,
@@ -1141,16 +1152,13 @@ impl RequestHandler {
         // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
         // Missing routes fail startup only when Goal execution is enabled.
         {
-            let capability: Arc<dyn CapabilityService> = Arc::new(
-                super::tool_executor::CoreCapabilityService::new(&subsystems),
-            );
             let mut runtime = subsystems.runtime.lock().await;
             let registered = register_goal_runtimes(
                 runtime.sub_agent_spawner_mut(),
                 &goal_runtime,
                 registry,
                 subsystems.corpus.tools.clone(),
-                capability,
+                capability_service.clone(),
                 clock.clone(),
             )?;
             if !registered.is_empty() {
@@ -1228,9 +1236,7 @@ impl RequestHandler {
                 let tools_for_agents = subsystems.corpus.tools.clone();
                 let exec_for_agents = subsystems.runtime.clone();
                 let main_slot = subsystems.main_agent_process_id.clone();
-                let capability_for_agents: Arc<dyn CapabilityService> = Arc::new(
-                    super::tool_executor::CoreCapabilityService::new(&subsystems),
-                );
+                let capability_for_agents = capability_service.clone();
                 let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
                     Arc::new(move |system_prompt, user_prompt, allowed_tools| {
                         let llm = llm_for_agents.clone();
@@ -1615,9 +1621,7 @@ impl RequestHandler {
         );
         let transport_ports = Arc::new(super::ports::TransportPorts {
             tools: request_corpus.tools.clone(),
-            capabilities: Arc::new(super::tool_executor::CoreCapabilityService::new(
-                &subsystems,
-            )),
+            capabilities: capability_service,
             clock: clock.clone(),
         });
         let handler_ports = Arc::new(super::ports::HandlerPorts::new(

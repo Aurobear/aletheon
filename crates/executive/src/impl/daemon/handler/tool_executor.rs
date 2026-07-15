@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use tokio::sync::Mutex;
 use tracing::info;
@@ -34,11 +34,23 @@ use fabric::{
     OperationRequest, ProcessSignal, SelfFieldOps, SpawnSpec, Verdict,
 };
 
-use crate::core::core_systems::CoreSystems;
 use crate::service::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, CapabilityService,
     RegistryAuthorityProvider,
 };
+
+#[derive(Clone)]
+pub(crate) struct CapabilityResources {
+    pub(crate) kernel: Arc<aletheon_kernel::KernelRuntime>,
+    pub(crate) tools: crate::core::corpus_group::ToolRegistryHandle,
+    pub(crate) runner: crate::core::security_group::ToolRunnerHandle,
+    pub(crate) hooks: crate::core::corpus_group::HookRegistryHandle,
+    pub(crate) storm: Arc<Mutex<StormBreaker>>,
+    pub(crate) memory_queue: Arc<Mutex<Vec<String>>>,
+    pub(crate) approvals: Arc<Mutex<HashMap<String, bool>>>,
+    pub(crate) perf: Arc<PerfCounter>,
+    pub(crate) self_field: Arc<Mutex<SelfField>>,
+}
 
 /// Executes a single tool through the full guarded/hooked pipeline for one turn.
 ///
@@ -64,7 +76,7 @@ pub(crate) struct TurnToolExecutor {
 impl TurnToolExecutor {
     /// Build an executor for one turn, cloning the needed subsystem handles.
     pub(crate) fn new(
-        subsystems: &CoreSystems,
+        resources: &CapabilityResources,
         session_id: String,
         turn_count: usize,
         working_dir: PathBuf,
@@ -72,18 +84,18 @@ impl TurnToolExecutor {
         process_id: ProcessId,
     ) -> Self {
         let inner = Arc::new(CorpusToolExecutor::new(
-            subsystems.corpus.tools.clone(),
-            subsystems.security.tool_runner.clone(),
-            subsystems.kernel.clock(),
+            resources.tools.clone(),
+            resources.runner.clone(),
+            resources.kernel.clock(),
         ));
         Self {
             inner,
-            hook_registry: subsystems.corpus.hook_registry.clone(),
-            storm_breaker: subsystems.security.storm_breaker.clone(),
-            memory_queue: subsystems.session.memory_queue.clone(),
-            session_approvals: subsystems.security.session_approvals.clone(),
-            debug_perf: subsystems.debug_perf.clone(),
-            self_field: subsystems.self_field.clone(),
+            hook_registry: resources.hooks.clone(),
+            storm_breaker: resources.storm.clone(),
+            memory_queue: resources.memory_queue.clone(),
+            session_approvals: resources.approvals.clone(),
+            debug_perf: resources.perf.clone(),
+            self_field: resources.self_field.clone(),
             working_dir,
             session_id,
             turn_count,
@@ -296,26 +308,22 @@ impl ToolExecutor for TurnToolExecutor {
 }
 
 /// Executive composition adapter for every non-turn capability caller.
-/// It deliberately retains only a weak subsystem reference so installing it in
-/// a ProviderWorkerRuntime owned by CoreSystems cannot create an Arc cycle.
-pub(crate) struct CoreCapabilityService {
-    subsystems: Weak<CoreSystems>,
+pub(crate) struct ProductionCapabilityService {
+    resources: CapabilityResources,
 }
 
-impl CoreCapabilityService {
-    pub(crate) fn new(subsystems: &Arc<CoreSystems>) -> Self {
-        Self {
-            subsystems: Arc::downgrade(subsystems),
-        }
+impl ProductionCapabilityService {
+    pub(crate) fn new(resources: CapabilityResources) -> Self {
+        Self { resources }
     }
 
     async fn invoke_existing(
-        subsystems: &Arc<CoreSystems>,
+        resources: &CapabilityResources,
         context: CapabilityExecutionContext,
         call: CapabilityCall,
     ) -> CapabilityResult {
         let executor = Arc::new(TurnToolExecutor::new(
-            subsystems,
+            resources,
             context.session_id.clone(),
             context.turn_count,
             context.working_dir.clone(),
@@ -323,14 +331,14 @@ impl CoreCapabilityService {
             context.process_id,
         ));
         let authority = Arc::new(RegistryAuthorityProvider::new(
-            corpus::tool_risk_levels(&subsystems.corpus.tools).await,
+            corpus::tool_risk_levels(&resources.tools).await,
             context.principal,
             context.session_id,
             context.working_dir,
             context.sandbox,
             context.cancel,
         ));
-        CapabilityRuntimeFactory::build(subsystems.kernel.admission(), executor, authority)
+        CapabilityRuntimeFactory::build(resources.kernel.admission(), executor, authority)
             .invoke(call)
             .await
     }
@@ -347,26 +355,23 @@ impl CoreCapabilityService {
 }
 
 #[async_trait::async_trait]
-impl CapabilityService for CoreCapabilityService {
+impl CapabilityService for ProductionCapabilityService {
     async fn invoke(
         &self,
         context: Option<CapabilityExecutionContext>,
         mut call: CapabilityCall,
         cancel: tokio_util::sync::CancellationToken,
     ) -> CapabilityResult {
-        let Some(subsystems) = self.subsystems.upgrade() else {
-            return Self::unavailable(&call, "capability runtime is shutting down");
-        };
         if let Some(mut context) = context {
             context.cancel = cancel;
             call.process_id = context.process_id;
             call.operation_id = context.operation_id;
-            return Self::invoke_existing(&subsystems, context, call).await;
+            return Self::invoke_existing(&self.resources, context, call).await;
         }
 
         // External/provider callers without a parent lifecycle receive a
         // bounded transient lifecycle owned and settled entirely here.
-        let kernel = &subsystems.kernel;
+        let kernel = &self.resources.kernel;
         let process = match kernel
             .spawn_process(SpawnSpec {
                 profile: AgentProfileId("capability-client".into()),
@@ -423,7 +428,7 @@ impl CapabilityService for CoreCapabilityService {
             cancel,
             turn_count: 0,
         };
-        let result = Self::invoke_existing(&subsystems, context, call).await;
+        let result = Self::invoke_existing(&self.resources, context, call).await;
         if result.is_error {
             let _ = kernel
                 .fail_operation(operation.id, result.output.clone())
