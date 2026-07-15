@@ -192,6 +192,33 @@ impl ExternalIdentityRepository {
             let id = ExternalIdentityId(uuid);
             return Ok(self.get(principal_id, id)?.map(|_| id));
         }
+        // Models sometimes shorten an account UUID when referring back to a
+        // value returned by a previous tool call. Accept only a meaningful,
+        // UUID-shaped prefix and fail closed when it is not unique.
+        if account_reference.len() >= 8
+            && account_reference.len() < 36
+            && account_reference
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+        {
+            let mut statement = self.db.prepare(
+                "SELECT identity_id FROM external_identities
+                 WHERE principal_id=?1 AND state='active' AND identity_id LIKE ?2
+                 ORDER BY identity_id LIMIT 2",
+            )?;
+            let prefix = format!("{account_reference}%");
+            let ids = statement
+                .query_map(params![principal_id.0, prefix], |row| {
+                    let value: String = row.get(0)?;
+                    parse_uuid(&value, 0).map(ExternalIdentityId)
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            match ids.as_slice() {
+                [id] => return Ok(Some(*id)),
+                [_, _] => return Err(ExternalRepositoryError::AmbiguousAccount),
+                _ => {}
+            }
+        }
         let mut statement = self.db.prepare(
             "SELECT identity_id FROM external_identities
              WHERE principal_id=?1 AND alias=?2 AND state='active'
@@ -600,6 +627,34 @@ mod tests {
         f.bind("subject-2", "two@example.com");
         assert!(matches!(
             f.repo.resolve_account(&f.owner, "me"),
+            Err(ExternalRepositoryError::AmbiguousAccount)
+        ));
+    }
+
+    #[test]
+    fn unique_uuid_prefix_resolves_and_ambiguous_prefix_fails_closed() {
+        let f = Fixture::new();
+        let (first, _) = f.bind("subject-1", "one@example.com");
+        let prefix = first.id.0.to_string()[..8].to_owned();
+        assert_eq!(
+            f.repo.resolve_account(&f.owner, &prefix).unwrap(),
+            Some(first.id)
+        );
+
+        let second = f.bind("subject-2", "two@example.com").0;
+        f.repo.db.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
+        f.repo
+            .db
+            .execute(
+                "UPDATE external_identities SET identity_id=?1 WHERE identity_id=?2",
+                params![
+                    format!("{}-0000-4000-8000-000000000000", prefix),
+                    second.id.0.to_string()
+                ],
+            )
+            .unwrap();
+        assert!(matches!(
+            f.repo.resolve_account(&f.owner, &prefix),
             Err(ExternalRepositoryError::AmbiguousAccount)
         ));
     }
