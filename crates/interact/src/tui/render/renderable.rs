@@ -104,51 +104,23 @@ impl Renderable for LayoutHelper<'_> {
 /// Renders the top header bar (1 or 3 rows depending on first-render state).
 pub struct HeaderRenderable<'a> {
     pub caps: &'a TermCaps,
-    pub model_name: &'a str,
-    pub first_render: bool,
 }
 
 impl Renderable for HeaderRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let bg = self.caps.color(20, 20, 60);
 
-        if self.first_render {
-            let vsep = if self.caps.unicode {
-                "  │  "
-            } else {
-                "  |  "
-            };
-            let line1 = Line::from(Span::styled(
-                "  aletheon v0.1.0",
-                Style::default().fg(Color::White),
-            ));
-            let line2 = Line::from(Span::styled(
-                format!("  model: {}{}{}", self.model_name, vsep, "connected"),
-                Style::default().fg(Color::DarkGray),
-            ));
-            let hints = if self.caps.unicode {
-                "  Shift+Enter 换行 │ Enter 发送 │ Ctrl+C 退出 │ /help"
-            } else {
-                "  Shift+Enter newline | Enter send | Ctrl+C quit | /help"
-            };
-            let line3 = Line::from(Span::styled(hints, Style::default().fg(Color::DarkGray)));
-
-            let header = Paragraph::new(vec![line1, line2, line3]).style(Style::default().bg(bg));
-            header.render(area, buf);
-        } else {
-            let title = format!("  aletheon  │  {}", self.model_name);
-            let line = Line::from(Span::styled(title, Style::default().fg(Color::White)));
-            let header = Paragraph::new(line).style(Style::default().bg(bg));
-            header.render(area, buf);
-        }
+        let line = Line::from(Span::styled(
+            "  aletheon",
+            Style::default().fg(Color::White),
+        ));
+        Paragraph::new(line)
+            .style(Style::default().bg(bg))
+            .render(area, buf);
     }
 
     fn desired_height(&self, _width: u16) -> u16 {
-        if self.first_render {
-            3
-        } else {
-            1
-        }
+        1
     }
 }
 
@@ -257,25 +229,12 @@ impl Renderable for InputRenderable<'_> {
 
         Paragraph::new(Line::from(spans)).render(input_area, buf);
 
-        // Row 2: hint line
-        let hint_area = Rect {
-            y: area.y + 2,
-            height: 1,
-            ..area
-        };
-        let hint = "  \\ + Enter 换行 │ /help 帮助";
-        Paragraph::new(Line::from(Span::styled(
-            hint,
-            Style::default().fg(Color::DarkGray),
-        )))
-        .render(hint_area, buf);
-
         // Render completion popup over the input area (port from completion.rs)
         self.render_completion(area, buf);
     }
 
     fn desired_height(&self, _width: u16) -> u16 {
-        3
+        2
     }
 }
 

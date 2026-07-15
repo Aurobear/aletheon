@@ -11,7 +11,6 @@ use tokio::net::UnixStream;
 use aletheon_kernel::chronos::SystemTimer;
 use fabric::Timer;
 
-use super::super::chat::Role as ChatRole;
 use super::super::response::{
     format_evolution, format_genome, format_models, format_reflections, format_sessions,
     format_status, try_read_socket_with_recorder,
@@ -63,12 +62,6 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     // Read and discard the clear response so it doesn't pollute the socket buffer
     SystemTimer.sleep(Duration::from_millis(50)).await;
     let _ = app.stream.try_read(&mut app.read_buf);
-
-    // Welcome message
-    app.chat.add_text(
-        ChatRole::System,
-        "Welcome to aletheon! Type a message to get started.\nShift+Enter 换行 │ Enter 发送 │ Ctrl+C 清空/退出 │ /copy 复制 │ /help 帮助".to_string(),
-    );
 
     // If test mode with auto_submit, submit the first line immediately
     if let Some(ref mut reader) = test_input {

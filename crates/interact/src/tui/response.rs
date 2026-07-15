@@ -344,26 +344,13 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
 /// Deduplicate consecutive identical text blocks.
 /// Some models repeat thinking/reasoning text twice.
 pub fn deduplicate_consecutive_text(text: &str) -> String {
-    let len = text.len();
-
-    // Try to find the longest repeated prefix
-    for split_pos in (1..=len / 2).rev() {
-        // Ensure we split at a valid UTF-8 boundary
-        if !text.is_char_boundary(split_pos) {
-            continue;
-        }
-
-        let prefix = &text[..split_pos];
-        let suffix = &text[split_pos..];
-
-        // Check if the suffix starts with the same prefix
-        if suffix.starts_with(prefix) {
-            // Found a repeated block - return just the prefix
-            return prefix.to_string();
+    let midpoint = text.len() / 2;
+    if text.len() % 2 == 0 && text.is_char_boundary(midpoint) {
+        let (first, second) = text.split_at(midpoint);
+        if first == second {
+            return first.to_string();
         }
     }
-
-    // No repeated block found, return original text
     text.to_string()
 }
 
@@ -659,4 +646,24 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
         lines.push(format!("  {} [{}] — {}", id, status, task));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deduplicate_consecutive_text;
+
+    #[test]
+    fn deduplicates_only_an_exact_repeated_response() {
+        assert_eq!(deduplicate_consecutive_text("完整回答完整回答"), "完整回答");
+        assert_eq!(
+            deduplicate_consecutive_text("abcabc trailing"),
+            "abcabc trailing"
+        );
+    }
+
+    #[test]
+    fn preserves_markdown_that_starts_with_repeated_rule_characters() {
+        let response = "----------------------------------------\n邮件分析结果\n- 重点一\n- 重点二";
+        assert_eq!(deduplicate_consecutive_text(response), response);
+    }
 }

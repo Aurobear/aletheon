@@ -106,7 +106,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
 
     let model = std::env::var("OS_AGENT_MODEL").unwrap_or_default();
     let model_name = if model.is_empty() {
-        "mimo-v2.5-pro".to_string()
+        "default".to_string()
     } else {
         model
     };
