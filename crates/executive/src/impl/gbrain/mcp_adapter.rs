@@ -427,3 +427,108 @@ fn category_message(category: GbrainErrorCategory) -> &'static str {
         _ => "transport request failed",
     }
 }
+
+fn supplemental_category(
+    category: GbrainErrorCategory,
+) -> mnemosyne::backends::gbrain::SupplementalErrorCategory {
+    use mnemosyne::backends::gbrain::SupplementalErrorCategory as Target;
+    match category {
+        GbrainErrorCategory::Auth => Target::Auth,
+        GbrainErrorCategory::Schema => Target::Schema,
+        GbrainErrorCategory::InvalidPage => Target::InvalidPage,
+        GbrainErrorCategory::RejectedArguments => Target::RejectedArguments,
+        GbrainErrorCategory::Timeout => Target::Timeout,
+        GbrainErrorCategory::Cancelled => Target::Cancelled,
+        GbrainErrorCategory::RateLimited => Target::RateLimited,
+        GbrainErrorCategory::Provider => Target::Provider,
+        GbrainErrorCategory::Transport => Target::Transport,
+        GbrainErrorCategory::MalformedResponse => Target::MalformedResponse,
+        GbrainErrorCategory::OversizedResponse => Target::OversizedResponse,
+    }
+}
+
+fn supplemental_error(
+    error: GbrainAdapterError,
+) -> mnemosyne::backends::gbrain::SupplementalTransportError {
+    mnemosyne::backends::gbrain::SupplementalTransportError::new(
+        supplemental_category(error.category),
+        error.sanitized_message(),
+    )
+}
+
+#[async_trait::async_trait]
+impl mnemosyne::backends::gbrain::SupplementalMemoryTransport for GbrainMcpAdapter {
+    fn set_queue_depth(&self, queue_depth: usize) {
+        GbrainMcpAdapter::set_queue_depth(self, queue_depth);
+    }
+
+    async fn put_page(
+        &self,
+        page: &GbrainPage,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, mnemosyne::backends::gbrain::SupplementalTransportError> {
+        GbrainMcpAdapter::put_page(self, page, cancel)
+            .await
+            .map(|()| None)
+            .map_err(supplemental_error)
+    }
+
+    async fn query(
+        &self,
+        query: &str,
+        source_id: &str,
+        limit: usize,
+        cancel: &CancellationToken,
+    ) -> Result<
+        Vec<mnemosyne::backends::gbrain::SupplementalHit>,
+        mnemosyne::backends::gbrain::SupplementalTransportError,
+    > {
+        GbrainMcpAdapter::query(self, query, source_id, limit, cancel)
+            .await
+            .map(|hits| {
+                hits.into_iter()
+                    .map(|hit| mnemosyne::backends::gbrain::SupplementalHit {
+                        source_id: hit.source_id,
+                        slug: hit.slug,
+                        content: hit.content,
+                        score: hit.score,
+                    })
+                    .collect()
+            })
+            .map_err(supplemental_error)
+    }
+
+    async fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        cancel: &CancellationToken,
+    ) -> Result<
+        Vec<mnemosyne::backends::gbrain::SupplementalHit>,
+        mnemosyne::backends::gbrain::SupplementalTransportError,
+    > {
+        GbrainMcpAdapter::search(self, query, limit, cancel)
+            .await
+            .map(|hits| {
+                hits.into_iter()
+                    .map(|hit| mnemosyne::backends::gbrain::SupplementalHit {
+                        source_id: hit.source_id,
+                        slug: hit.slug,
+                        content: hit.content,
+                        score: hit.score,
+                    })
+                    .collect()
+            })
+            .map_err(supplemental_error)
+    }
+
+    async fn get_page(
+        &self,
+        slug: &str,
+        cancel: &CancellationToken,
+    ) -> Result<String, mnemosyne::backends::gbrain::SupplementalTransportError> {
+        GbrainMcpAdapter::get_page(self, slug, cancel)
+            .await
+            .map_err(supplemental_error)
+    }
+}

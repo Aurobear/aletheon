@@ -186,7 +186,7 @@ impl RecallRequest {
         }
     }
 
-    fn validate(&self) -> anyhow::Result<()> {
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.query.trim().is_empty(),
             "memory recall query is required"

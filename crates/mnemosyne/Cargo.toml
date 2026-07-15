@@ -10,6 +10,7 @@ description = "Aletheon Memory system - episodic, semantic, and procedural memor
 aletheon-kernel = { path = "../kernel" }
 fabric = { path = "../fabric" }
 tokio = { version = "1", features = ["full"] }
+tokio-util = { workspace = true }
 anyhow = "1"
 async-trait = "0.1"
 tracing = "0.1"
