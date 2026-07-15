@@ -171,7 +171,7 @@ V02 installed-daemon real scenario and migration gate
 |---|---|---|---|
 | K01 | `2026-07-16-k01-kernel-runtime-contracts.md` | Opaque lifecycle ports and exact transition validation | S02 |
 | K02 | `2026-07-16-k02-kernel-authority-cleanup.md` | **Done:** hierarchical budgets, deterministic cleanup and removal of Executive-local kernel | K01 |
-| X01 | `2026-07-15-x01-executive-use-case-ports.md` | Narrow handler ports and extracted context/session/projection services | S02 |
+| X01 | `2026-07-15-x01-executive-use-case-ports.md` | **Done:** narrow handler ports and extracted context/session/projection services | S02 |
 | X02 | `2026-07-15-x02-private-composition-root.md` | Private composition root and split lifecycle bootstrap | X01, K01 |
 | F01 | `2026-07-15-f01-domain-facade-authority.md` | Metacog, Cognit and remaining Corpus production paths use authoritative facades | X02, E03 |
 | R01 | `2026-07-15-r01-canonical-event-spine.md` | EnvelopeV2, ordered tree sequence and raw observation separation | S02 |

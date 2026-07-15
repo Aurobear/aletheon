@@ -150,10 +150,12 @@
 - Modify: `docs/plans/2026-07-15-executable-plan-decomposition-design.md`
 - Modify: `docs/plans/2026-07-16-original-plan-coverage-matrix.md`
 
-- [ ] Prove `rg -n 'subsystems|CoreSystems|MemoryGroup|CorpusGroup|SecurityGroup|FactStore|ObjectiveStore|ApprovalRepository|\.lock\(\)' crates/executive/src/impl/daemon/handler/rpc` returns no production hits.
-- [ ] Prove `RequestHandler` has no `CoreSystems` field and every RPC family receives only a use-case port.
-- [ ] Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, all focused X01 tests, `cargo test --workspace`, and `scripts/architecture-check.sh`.
-- [ ] Mark X01 done in the coverage matrix only after JSON-RPC compatibility, daemon/exec equivalence, cancellation, approval, and projection failure tests pass.
-- [ ] Record the only remaining god-container/bootstrap references as X02 input; do not claim X02 complete until `CoreSystems` is private/deleted and `init.rs` is split.
+- [x] Prove `rg -n 'subsystems|CoreSystems|MemoryGroup|CorpusGroup|SecurityGroup|FactStore|ObjectiveStore|ApprovalRepository|\.lock\(\)' crates/executive/src/impl/daemon/handler/rpc` returns no production hits.
+- [x] Prove `RequestHandler` has no `CoreSystems` field and every RPC family receives only a use-case port.
+- [x] Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, all focused X01 tests, `cargo test --workspace`, and `scripts/architecture-check.sh`.
+- [x] Mark X01 done in the coverage matrix only after JSON-RPC compatibility, daemon/exec equivalence, cancellation, approval, and projection failure tests pass.
+- [x] Record the only remaining god-container/bootstrap references as X02 input; do not claim X02 complete until `CoreSystems` is private/deleted and `init.rs` is split.
+
+**Task 8 evidence:** the forbidden request-boundary search is enforced by `crates/executive/tests/request_use_case_boundaries.rs:17-93` and returns zero RPC hits. JSON-RPC session compatibility passes at `crates/executive/tests/session_lifecycle_commands.rs:1-111`; approval safety passes at `crates/executive/tests/approval_service.rs:1-331`; cancellation and lifecycle authority pass at `crates/executive/tests/kernel_lifecycle_scenarios.rs:145-260`; daemon/exec equivalence passes all eight cases at `crates/executive/tests/turn_service_equivalence.rs:1-661`; projection outage ordering passes at `crates/executive/tests/turn_use_case_ports.rs:1-165`. Workspace fmt, all-target Clippy, all workspace tests, and `scripts/architecture-check.sh` pass at 86 findings, 38 dependencies, and 4 migration paths. Remaining container references are enumerated as X02 input in `docs/plans/2026-07-15-x02-private-composition-root.md:17-25`; X02 remains planned, not complete.
 
 **Deletion gate:** X01 is incomplete while any JSON-RPC handler reaches `CoreSystems`, a concrete domain store/registry, or a domain mutex; while `TurnPipeline` assembles context or performs post-turn store writes directly; or while an alternative approval/capability route exists outside the governed services.
