@@ -21,7 +21,7 @@ install -d -o root -g aletheon -m 0750 /etc/aletheon /etc/aletheon/policy /etc/a
 install -d -o aletheon -g aletheon -m 0750 \
   /var/lib/aletheon/{state,goals,sessions,mnemosyne,artifacts,worktrees,audit} \
   /var/cache/aletheon /run/aletheon
-for secret in provider.env telegram.env google-vault.key gbrain.env; do
+for secret in provider.env telegram.env gbrain.env; do
   if [[ ! -e /etc/aletheon/credentials/$secret ]]; then
     install -o aletheon -g aletheon -m 0600 /dev/null "/etc/aletheon/credentials/$secret"
   fi
@@ -30,6 +30,11 @@ done
 install -o root -g root -m 0755 "$binary" /usr/bin/aletheon
 install -D -o root -g root -m 0755 "$repo_root/scripts/verify-systemd.sh" \
   /usr/libexec/aletheon/verify-systemd.sh
+install -D -o root -g root -m 0755 "$repo_root/scripts/aletheon-secret-audit.sh" \
+  /usr/libexec/aletheon/aletheon-secret-audit.sh
+install -D -o root -g root -m 0755 "$repo_root/scripts/aletheon-secret-init.sh" \
+  /usr/libexec/aletheon/aletheon-secret-init.sh
+/usr/libexec/aletheon/aletheon-secret-init.sh init /etc/aletheon/credentials
 install -o root -g root -m 0644 "$repo_root/config/aletheon.service" \
   /etc/systemd/system/aletheon.service
 if [[ ! -e /etc/aletheon/config.toml ]]; then
