@@ -11,7 +11,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+
+#[async_trait::async_trait]
+pub trait SorgeTimer: Send + Sync {
+    async fn sleep(&self, duration: Duration);
+}
+
+#[derive(Debug, Default)]
+pub struct SystemSorgeTimer;
+
+#[async_trait::async_trait]
+impl SorgeTimer for SystemSorgeTimer {
+    async fn sleep(&self, duration: Duration) {
+        SystemTimer.sleep(duration).await;
+    }
+}
 
 /// The sorge loop — the continuous heartbeat of Dasein.
 /// Not an event loop, but an existence loop:
@@ -21,7 +36,10 @@ pub struct SorgeLoop {
     /// Parked roadmap item: internal sender for self-event loop (T3).
     #[allow(dead_code)]
     event_tx: mpsc::Sender<DaseinEvent>,
-    event_rx: Mutex<Option<mpsc::Receiver<DaseinEvent>>>,
+    event_rx: Arc<Mutex<Option<mpsc::Receiver<DaseinEvent>>>>,
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    stop_tx: watch::Sender<u64>,
+    timer: Arc<dyn SorgeTimer>,
     #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
 }
@@ -30,15 +48,20 @@ impl SorgeLoop {
     pub fn new(
         buffer_size: usize,
         clock: Arc<dyn fabric::Clock>,
+        timer: Arc<dyn SorgeTimer>,
     ) -> (Self, mpsc::Sender<DaseinEvent>) {
         let (event_tx, event_rx) = mpsc::channel(buffer_size);
+        let (stop_tx, _) = watch::channel(0);
         let external_tx = event_tx.clone();
 
         (
             Self {
                 running: Arc::new(AtomicBool::new(false)),
                 event_tx,
-                event_rx: Mutex::new(Some(event_rx)),
+                event_rx: Arc::new(Mutex::new(Some(event_rx))),
+                task: Mutex::new(None),
+                stop_tx,
+                timer,
                 clock,
             },
             external_tx,
@@ -55,30 +78,42 @@ impl SorgeLoop {
         care: Arc<CareStructure>,
         negativity: Arc<NegativityEngine>,
         shared_mood: Arc<RwLock<Stimmung>>,
-    ) -> Option<tokio::task::JoinHandle<()>> {
+    ) -> bool {
+        if self.running.swap(true, Ordering::SeqCst) {
+            return false;
+        }
         let mut rx_guard = self.event_rx.lock().unwrap();
-        let event_rx = rx_guard.take()?;
+        let Some(event_rx) = rx_guard.take() else {
+            self.running.store(false, Ordering::SeqCst);
+            return false;
+        };
         drop(rx_guard);
 
-        self.running.store(true, Ordering::Relaxed);
         let running = self.running.clone();
         let shared_mood = shared_mood.clone();
         let mut event_rx = event_rx;
+        let receiver_slot = self.event_rx.clone();
+        let timer = self.timer.clone();
+        let mut stop_rx = self.stop_tx.subscribe();
 
         let handle = tokio::spawn(async move {
             let mut tick_count: u64 = 0;
             let mut mood = Stimmung::Gelassenheit;
 
             while running.load(Ordering::Relaxed) {
-                // 1. Collect events (non-blocking with timeout)
+                // 1. React to an event or a scheduled reflection. Incoming events are
+                // never delayed behind a periodic sleep.
                 let mut events = Vec::new();
+                let reflection_interval = care.rhythm.read().next_interval();
                 tokio::select! {
                     Some(event) = event_rx.recv() => {
                         events.push(event);
                     }
-                    _ = SystemTimer.sleep(Duration::from_millis(100)) => {
-                        // Timeout — just continue
-                    }
+                    _ = timer.sleep(reflection_interval) => {}
+                    result = stop_rx.changed() => {
+                        let _ = result;
+                        break;
+                    },
                 }
 
                 // Drain any remaining events
@@ -157,21 +192,24 @@ impl SorgeLoop {
                 // 6. Adapt care rhythm
                 let urgent_count = care.urgent_concerns(0.7).len();
                 care.rhythm.write().adapt(&mood, urgent_count);
-
-                // 7. Sleep for care rhythm interval
-                let interval = care.rhythm.read().next_interval();
-                SystemTimer.sleep(interval).await;
             }
+            running.store(false, Ordering::SeqCst);
+            *receiver_slot.lock().unwrap() = Some(event_rx);
         });
-
-        Some(handle)
+        *self.task.lock().unwrap() = Some(handle);
+        true
     }
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
 
-    pub fn stop(&self) {
-        self.running.store(false, Ordering::Relaxed);
+    pub async fn stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        self.stop_tx.send_modify(|generation| *generation += 1);
+        let handle = self.task.lock().unwrap().take();
+        if let Some(handle) = handle {
+            let _ = handle.await;
+        }
     }
 }

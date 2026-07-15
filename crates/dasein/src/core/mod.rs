@@ -141,7 +141,17 @@ impl SelfField {
             .and_then(|path| SelfFieldStore::new(path).ok());
 
         let (dasein, dasein_event_tx) = if config.enable_dasein {
-            let (module, tx) = DaseinModule::new(clock.clone());
+            let runtime_config = crate::dasein::DaseinRuntimeConfig {
+                retention_depth: config.dasein_retention_depth,
+                decay_rate: config.dasein_decay_rate,
+                ..Default::default()
+            };
+            let (module, tx) = DaseinModule::with_runtime(
+                clock.clone(),
+                Arc::new(crate::dasein::sorge::SystemSorgeTimer),
+                runtime_config,
+            )
+            .expect("SelfField Dasein configuration must be valid");
             (Some(module), Some(tx))
         } else {
             (None, None)
@@ -355,7 +365,7 @@ impl Subsystem for SelfField {
             }
         }
         if let Some(ref dasein) = self.dasein {
-            dasein.stop_sorge_loop();
+            dasein.stop_sorge_loop().await;
             info!("DaseinModule sorge loop stopped");
         }
         self.narrative

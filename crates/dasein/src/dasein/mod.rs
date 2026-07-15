@@ -28,7 +28,7 @@ use context_injection::format_dasein_context;
 pub use event_bridge::DaseinEventBridge;
 use negativity::NegativityEngine;
 use self_model::MutableSelfModel;
-use sorge::SorgeLoop;
+use sorge::{SorgeLoop, SorgeTimer, SystemSorgeTimer};
 use temporality::TemporalStream;
 
 /// DaseinModule — the existential substrate of SelfField.
@@ -54,12 +54,61 @@ pub struct DaseinModule {
     clock: Arc<dyn fabric::Clock>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DaseinRuntimeConfig {
+    pub retention_depth: usize,
+    pub decay_rate: f64,
+    pub event_buffer: usize,
+}
+
+impl Default for DaseinRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            retention_depth: 50,
+            decay_rate: 0.8,
+            event_buffer: 256,
+        }
+    }
+}
+
+impl DaseinRuntimeConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.retention_depth > 0,
+            "Dasein retention depth must be nonzero"
+        );
+        anyhow::ensure!(
+            self.decay_rate.is_finite() && (0.0..=1.0).contains(&self.decay_rate),
+            "Dasein decay rate must be between 0 and 1"
+        );
+        anyhow::ensure!(self.event_buffer > 0, "Dasein event buffer must be nonzero");
+        Ok(())
+    }
+}
+
 impl DaseinModule {
     pub fn new(clock: Arc<dyn fabric::Clock>) -> (Self, mpsc::Sender<DaseinEvent>) {
-        let (sorge, event_tx) = SorgeLoop::new(256, clock.clone());
+        Self::with_runtime(
+            clock,
+            Arc::new(SystemSorgeTimer),
+            DaseinRuntimeConfig::default(),
+        )
+        .expect("default Dasein runtime config is valid")
+    }
+
+    pub fn with_runtime(
+        clock: Arc<dyn fabric::Clock>,
+        timer: Arc<dyn SorgeTimer>,
+        config: DaseinRuntimeConfig,
+    ) -> anyhow::Result<(Self, mpsc::Sender<DaseinEvent>)> {
+        config.validate()?;
+        let (sorge, event_tx) = SorgeLoop::new(config.event_buffer, clock.clone(), timer);
         let external_tx = event_tx.clone();
 
-        let temporality = Arc::new(TemporalStream::new(50, 0.8));
+        let temporality = Arc::new(TemporalStream::new(
+            config.retention_depth,
+            config.decay_rate,
+        ));
         let world = Arc::new(Bewandtnisganzheit::new());
         let self_model = Arc::new(MutableSelfModel::new());
         let care = Arc::new(CareStructure::new());
@@ -77,11 +126,11 @@ impl DaseinModule {
             clock,
         };
 
-        (module, external_tx)
+        Ok((module, external_tx))
     }
 
     /// Start the sorge loop.
-    pub fn start_sorge_loop(&self) -> Option<tokio::task::JoinHandle<()>> {
+    pub fn start_sorge_loop(&self) -> bool {
         self.sorge.start(
             self.temporality.clone(),
             self.world.clone(),
@@ -93,8 +142,8 @@ impl DaseinModule {
     }
 
     /// Stop the sorge loop.
-    pub fn stop_sorge_loop(&self) {
-        self.sorge.stop();
+    pub async fn stop_sorge_loop(&self) {
+        self.sorge.stop().await;
     }
 
     /// Check if the sorge loop is alive.
@@ -220,12 +269,12 @@ impl DaseinOps for DaseinModule {
     }
 
     async fn start_sorge_loop(&self) -> anyhow::Result<()> {
-        self.start_sorge_loop();
+        DaseinModule::start_sorge_loop(self);
         Ok(())
     }
 
     async fn stop_sorge_loop(&self) -> anyhow::Result<()> {
-        self.stop_sorge_loop();
+        DaseinModule::stop_sorge_loop(self).await;
         Ok(())
     }
 
