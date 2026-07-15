@@ -10,7 +10,7 @@ use corpus::tools::tools::ToolRegistry;
 use fabric::tool::ToolContext;
 use fabric::{
     CalendarEventPage, CalendarTimeRange, ExternalIdentityId, GmailMessage, GmailMessagePage,
-    GmailMessageSummary, GmailQuery, PrincipalId, ProviderRecordRef,
+    GmailMessageSummary, GmailQuery, PrincipalId, ProviderRecordRef, LOCAL_OWNER_PRINCIPAL,
 };
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -142,7 +142,7 @@ fn context(owner: &PrincipalId, clock: Arc<TestClock>) -> ToolContext {
 
 #[tokio::test]
 async fn trusted_principal_and_bound_account_flow_through_guard_and_audit() {
-    let owner = PrincipalId("telegram:user-1".into());
+    let owner = PrincipalId(LOCAL_OWNER_PRINCIPAL.into());
     let account = ExternalIdentityId::new();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let gmail: Arc<dyn GmailCapability> = Arc::new(Gmail {
@@ -178,7 +178,7 @@ async fn trusted_principal_and_bound_account_flow_through_guard_and_audit() {
         )
         .await
         .unwrap();
-    assert!(!result.is_error);
+    assert!(!result.is_error, "{}", result.content);
     assert!(result.content.contains("provider_object_id"));
     assert!(!result.content.contains(TOKEN_SENTINEL));
     assert_eq!(seen.lock().unwrap().as_slice(), &[owner]);
