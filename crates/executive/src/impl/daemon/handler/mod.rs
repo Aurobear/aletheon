@@ -388,12 +388,22 @@ const LOCAL_WORKSPACE_ROOT: &str = "/home/aurobear/Bear-ws";
 const LEGACY_WORKING_DIR: &str = "/var/lib/aletheon";
 
 fn validate_local_working_dir(value: Option<&str>) -> Result<std::path::PathBuf, String> {
-    let requested = value.unwrap_or(LEGACY_WORKING_DIR);
+    validate_working_dir_against_roots(
+        value.unwrap_or(LEGACY_WORKING_DIR),
+        std::path::Path::new(LOCAL_WORKSPACE_ROOT),
+        std::path::Path::new(LEGACY_WORKING_DIR),
+    )
+}
+
+fn validate_working_dir_against_roots(
+    requested: &str,
+    workspace_root: &std::path::Path,
+    legacy_root: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
     let canonical = std::fs::canonicalize(requested)
         .map_err(|error| format!("invalid working_dir '{requested}': {error}"))?;
-    let workspace_root = std::fs::canonicalize(LOCAL_WORKSPACE_ROOT)
-        .unwrap_or_else(|_| std::path::PathBuf::from(LOCAL_WORKSPACE_ROOT));
-    let legacy_root = std::path::Path::new(LEGACY_WORKING_DIR);
+    let workspace_root =
+        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
     if canonical.starts_with(&workspace_root) || canonical.starts_with(legacy_root) {
         Ok(canonical)
     } else {
@@ -423,8 +433,16 @@ mod working_dir_tests {
 
     #[test]
     fn accepts_a_canonical_bear_workspace_directory() {
-        let path =
-            super::validate_local_working_dir(Some("/home/aurobear/Bear-ws/aletheon")).unwrap();
-        assert!(path.starts_with("/home/aurobear/Bear-ws"));
+        let root = std::env::temp_dir().join(format!("aletheon-cwd-test-{}", std::process::id()));
+        let project = root.join("aletheon");
+        std::fs::create_dir_all(&project).unwrap();
+        let path = super::validate_working_dir_against_roots(
+            project.to_str().unwrap(),
+            &root,
+            std::path::Path::new("/var/lib/aletheon"),
+        )
+        .unwrap();
+        assert!(path.starts_with(std::fs::canonicalize(&root).unwrap()));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
