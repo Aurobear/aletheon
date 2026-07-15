@@ -54,6 +54,235 @@ pub struct AppConfig {
     pub goal_runtime: Option<GoalRuntimeConfig>,
     #[serde(default)]
     pub pi_runtime: PiRuntimeConfig,
+    #[serde(default)]
+    pub deployment: DeploymentConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentMode {
+    Development,
+    #[default]
+    User,
+    Production,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentPathsConfig {
+    pub state_root: PathBuf,
+    pub config_root: PathBuf,
+    pub runtime_root: PathBuf,
+    pub cache_root: PathBuf,
+    pub state: PathBuf,
+    pub goals: PathBuf,
+    pub sessions: PathBuf,
+    pub mnemosyne: PathBuf,
+    pub artifacts: PathBuf,
+    pub worktrees: PathBuf,
+    pub audit: PathBuf,
+    pub secret_root: PathBuf,
+}
+
+impl Default for DeploymentPathsConfig {
+    fn default() -> Self {
+        Self {
+            state_root: "~/.aletheon".into(),
+            config_root: "~/.aletheon".into(),
+            runtime_root: "/run/aletheon".into(),
+            cache_root: "~/.cache/aletheon".into(),
+            state: "~/.aletheon/state".into(),
+            goals: "~/.aletheon/goals".into(),
+            sessions: "~/.aletheon/sessions".into(),
+            mnemosyne: "~/.aletheon/memory".into(),
+            artifacts: "~/.aletheon/artifacts".into(),
+            worktrees: "~/.aletheon/worktrees".into(),
+            audit: "~/.aletheon/audit".into(),
+            secret_root: "~/.config/aletheon".into(),
+        }
+    }
+}
+
+impl From<fabric::paths::ProductionPaths> for DeploymentPathsConfig {
+    fn from(value: fabric::paths::ProductionPaths) -> Self {
+        Self {
+            state_root: value.state_root,
+            config_root: value.config_root,
+            runtime_root: value.runtime_root,
+            cache_root: value.cache_root,
+            state: value.state,
+            goals: value.goals,
+            sessions: value.sessions,
+            mnemosyne: value.mnemosyne,
+            artifacts: value.artifacts,
+            worktrees: value.worktrees,
+            audit: value.audit,
+            secret_root: value.secret_root,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentQuotaConfig {
+    pub total_data_bytes: u64,
+    pub minimum_free_bytes: u64,
+    pub artifacts_bytes: u64,
+    pub worktrees_bytes: u64,
+    pub audit_bytes: u64,
+    pub sessions_bytes: u64,
+    pub google_bytes: u64,
+    pub gbrain_spool_bytes: u64,
+}
+
+impl Default for DeploymentQuotaConfig {
+    fn default() -> Self {
+        Self {
+            total_data_bytes: 100 * 1024 * 1024 * 1024,
+            minimum_free_bytes: 5 * 1024 * 1024 * 1024,
+            artifacts_bytes: 20 * 1024 * 1024 * 1024,
+            worktrees_bytes: 40 * 1024 * 1024 * 1024,
+            audit_bytes: 5 * 1024 * 1024 * 1024,
+            sessions_bytes: 10 * 1024 * 1024 * 1024,
+            google_bytes: 5 * 1024 * 1024 * 1024,
+            gbrain_spool_bytes: 256 * 1024 * 1024,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentIntegrationsConfig {
+    pub telegram: bool,
+    pub google: bool,
+    pub gbrain: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentSecretFilesConfig {
+    pub provider: Option<PathBuf>,
+    pub telegram: Option<PathBuf>,
+    pub google_vault_key: Option<PathBuf>,
+    pub gbrain: Option<PathBuf>,
+    pub backup_password: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupMode {
+    #[default]
+    Disabled,
+    Local,
+    EncryptedRemote,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentBackupConfig {
+    pub mode: BackupMode,
+    pub repository_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentHealthConfig {
+    pub minimum_free_bytes: u64,
+    pub maximum_backup_age_secs: u64,
+    pub maximum_sync_lag_secs: u64,
+}
+
+impl Default for DeploymentHealthConfig {
+    fn default() -> Self {
+        Self {
+            minimum_free_bytes: 5 * 1024 * 1024 * 1024,
+            maximum_backup_age_secs: 36 * 60 * 60,
+            maximum_sync_lag_secs: 60 * 60,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeploymentConfig {
+    pub mode: DeploymentMode,
+    pub paths: DeploymentPathsConfig,
+    pub quotas: DeploymentQuotaConfig,
+    pub integrations: DeploymentIntegrationsConfig,
+    pub secrets: DeploymentSecretFilesConfig,
+    pub backup: DeploymentBackupConfig,
+    pub health: DeploymentHealthConfig,
+}
+
+impl Default for DeploymentConfig {
+    fn default() -> Self {
+        Self {
+            mode: DeploymentMode::User,
+            paths: DeploymentPathsConfig::default(),
+            quotas: DeploymentQuotaConfig::default(),
+            integrations: DeploymentIntegrationsConfig::default(),
+            secrets: DeploymentSecretFilesConfig::default(),
+            backup: DeploymentBackupConfig::default(),
+            health: DeploymentHealthConfig::default(),
+        }
+    }
+}
+
+impl DeploymentConfig {
+    pub fn production() -> Self {
+        Self {
+            mode: DeploymentMode::Production,
+            paths: fabric::paths::ProductionPaths::default().into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn validate(&self, require_existing: bool) -> Result<(), String> {
+        if self.mode != DeploymentMode::Production {
+            return Ok(());
+        }
+        let paths = fabric::paths::ProductionPaths {
+            state_root: self.paths.state_root.clone(),
+            config_root: self.paths.config_root.clone(),
+            runtime_root: self.paths.runtime_root.clone(),
+            cache_root: self.paths.cache_root.clone(),
+            state: self.paths.state.clone(),
+            goals: self.paths.goals.clone(),
+            sessions: self.paths.sessions.clone(),
+            mnemosyne: self.paths.mnemosyne.clone(),
+            artifacts: self.paths.artifacts.clone(),
+            worktrees: self.paths.worktrees.clone(),
+            audit: self.paths.audit.clone(),
+            secret_root: self.paths.secret_root.clone(),
+        };
+        paths
+            .validate(require_existing)
+            .map_err(|error| error.to_string())?;
+        for path in [
+            self.secrets.provider.as_ref(),
+            self.secrets.telegram.as_ref(),
+            self.secrets.google_vault_key.as_ref(),
+            self.secrets.gbrain.as_ref(),
+            self.secrets.backup_password.as_ref(),
+            self.backup.repository_file.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !path.is_absolute()
+                || path.to_string_lossy().contains('~')
+                || !path.starts_with(&self.paths.config_root)
+            {
+                return Err("production secret/reference path is outside /etc/aletheon".into());
+            }
+        }
+        if self.quotas.minimum_free_bytes > self.quotas.total_data_bytes
+            || self.health.minimum_free_bytes > self.quotas.total_data_bytes
+        {
+            return Err("deployment free-space thresholds exceed total quota".into());
+        }
+        Ok(())
+    }
 }
 
 /// Fail-closed configuration for the isolated Pi coding runtime.
@@ -723,6 +952,9 @@ impl AppConfig {
         if other.pi_runtime != PiRuntimeConfig::default() {
             self.pi_runtime = other.pi_runtime;
         }
+        if other.deployment != DeploymentConfig::default() {
+            self.deployment = other.deployment;
+        }
 
         // Sandbox: override if non-default
         if other.sandbox.preference != default_sandbox_preference() {
@@ -1254,5 +1486,62 @@ max_results = 6
         assert!(base.memory.gbrain.enabled);
         assert_eq!(base.memory.gbrain.write_source, "custom");
         assert_eq!(base.memory.gbrain.request_timeout_ms, 5000);
+    }
+
+    #[test]
+    fn production_deployment_paths_parse_validate_and_merge() {
+        let parsed: AppConfig = toml::from_str(
+            r#"
+            [deployment]
+            mode = "production"
+            [deployment.paths]
+            state_root = "/var/lib/aletheon"
+            config_root = "/etc/aletheon"
+            runtime_root = "/run/aletheon"
+            cache_root = "/var/cache/aletheon"
+            state = "/var/lib/aletheon/state"
+            goals = "/var/lib/aletheon/goals"
+            sessions = "/var/lib/aletheon/sessions"
+            mnemosyne = "/var/lib/aletheon/mnemosyne"
+            artifacts = "/var/lib/aletheon/artifacts"
+            worktrees = "/var/lib/aletheon/worktrees"
+            audit = "/var/lib/aletheon/audit"
+            secret_root = "/etc/aletheon/credentials"
+            [deployment.secrets]
+            provider = "/etc/aletheon/credentials/provider.env"
+            "#,
+        )
+        .unwrap();
+        assert!(parsed.deployment.validate(false).is_ok());
+        let mut base = AppConfig::default();
+        base.merge(parsed);
+        assert_eq!(base.deployment.mode, DeploymentMode::Production);
+    }
+
+    #[test]
+    fn production_deployment_rejects_tilde_outside_and_invalid_quota() {
+        let mut deployment = DeploymentConfig::production();
+        deployment.paths.goals = "~/.aletheon/goals".into();
+        assert!(deployment.validate(false).is_err());
+
+        let mut deployment = DeploymentConfig::production();
+        deployment.secrets.provider = Some("/tmp/provider.env".into());
+        assert!(deployment.validate(false).is_err());
+
+        let mut deployment = DeploymentConfig::production();
+        deployment.quotas.minimum_free_bytes = deployment.quotas.total_data_bytes + 1;
+        assert!(deployment.validate(false).is_err());
+    }
+
+    #[test]
+    fn development_and_user_modes_retain_compatible_paths() {
+        let user = DeploymentConfig::default();
+        assert_eq!(user.mode, DeploymentMode::User);
+        assert!(user.paths.state_root.to_string_lossy().starts_with('~'));
+        assert!(user.validate(false).is_ok());
+        let mut development = user;
+        development.mode = DeploymentMode::Development;
+        development.paths.state_root = "./target/aletheon".into();
+        assert!(development.validate(false).is_ok());
     }
 }
