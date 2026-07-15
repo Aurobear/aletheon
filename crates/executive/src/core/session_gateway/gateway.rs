@@ -261,7 +261,10 @@ mod tests {
         let recall_memory = Arc::new(Mutex::new(
             RecallMemory::new(&recall_db, recall_clock).unwrap(),
         ));
-        let self_field = Arc::new(Mutex::new(SelfField::new(Default::default())));
+        let self_field = Arc::new(Mutex::new(SelfField::new(dasein::SelfFieldConfig {
+            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
+            ..Default::default()
+        })));
 
         // Mock LLM for session.ask
         let mock_llm = Arc::new(cognit::testing::mock_llm::MockLlmProvider::new("test-mock"));

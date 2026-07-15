@@ -249,11 +249,12 @@ impl PerceptionSource for EbpfSource {
     }
 }
 
+#[cfg(test)]
 impl Default for EbpfSource {
     fn default() -> Self {
         Self::new(
             EbpfConfig::default(),
-            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
         )
     }
 }

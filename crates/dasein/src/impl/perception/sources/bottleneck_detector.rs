@@ -415,11 +415,12 @@ impl PerceptionSource for BottleneckDetector {
     }
 }
 
+#[cfg(test)]
 impl Default for BottleneckDetector {
     fn default() -> Self {
         Self::new(
             BottleneckThreshold::default(),
-            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
         )
     }
 }

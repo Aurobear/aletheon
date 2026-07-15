@@ -55,7 +55,10 @@ fn build_scheduler() -> Result<Arc<LlmScheduler>> {
         ],
     };
 
-    Ok(Arc::new(LlmScheduler::new(&config)?))
+    Ok(Arc::new(LlmScheduler::new(
+        &config,
+        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+    )?))
 }
 
 /// Create a ConcreteEvent carrying a ToolObservationPayload.

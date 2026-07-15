@@ -41,7 +41,10 @@ impl TurnService {
             services,
             pre_turn,
             post_turn,
-            factory: Arc::new(LinearCognitiveSessionFactory::new(HarnessConfig::default())),
+            factory: Arc::new(LinearCognitiveSessionFactory::new(
+                HarnessConfig::default(),
+                kernel.clock(),
+            )),
             clock: kernel.clock(),
             coordinator,
             policy: TurnPolicy::exec(),
@@ -49,7 +52,10 @@ impl TurnService {
     }
 
     pub fn with_harness_config(mut self, harness_config: HarnessConfig) -> Self {
-        self.factory = Arc::new(LinearCognitiveSessionFactory::new(harness_config));
+        self.factory = Arc::new(LinearCognitiveSessionFactory::new(
+            harness_config,
+            self.clock.clone(),
+        ));
         self
     }
 

@@ -195,6 +195,7 @@ async fn test_self_field_module_review() {
 
     let config = SelfFieldConfig {
         agent_name: "test-agent".to_string(),
+        clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
         ..Default::default()
     };
     let self_field = Arc::new(Mutex::new(SelfField::new(config)));
@@ -250,6 +251,7 @@ async fn test_self_field_module_get_identity() {
         agent_name: "test-agent".to_string(),
         agent_description: "A test agent".to_string(),
         agent_version: "0.1.0".to_string(),
+        clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
         ..Default::default()
     };
     let self_field = Arc::new(Mutex::new(SelfField::new(config)));

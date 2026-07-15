@@ -479,6 +479,7 @@ impl TurnPipeline {
                 request_messages,
                 self_field: self_field_arc_for_react,
                 cancel_token: scope_token,
+                clock: self.clock.clone(),
             },
         ));
 

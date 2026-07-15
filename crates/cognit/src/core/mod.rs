@@ -57,13 +57,14 @@ pub struct CognitCoreConfig {
     pub clock: Arc<dyn Clock>,
 }
 
+#[cfg(test)]
 impl Default for CognitCoreConfig {
     fn default() -> Self {
         Self {
             reasoning_strategy: ReasoningStrategy::ChainOfThought,
             max_learned_rules: 200,
             max_world_observations: 500,
-            clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
         }
     }
 }

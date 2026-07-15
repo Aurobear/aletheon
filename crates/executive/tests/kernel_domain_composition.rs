@@ -51,3 +51,21 @@ fn production_lifecycle_mutation_has_no_table_escape_hatch() {
         }
     }
 }
+
+#[test]
+fn domain_production_code_does_not_construct_kernel_clocks() {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    for domain in ["cognit", "dasein", "agora"] {
+        let mut files = Vec::new();
+        rust_files(&crates.join(domain).join("src"), &mut files);
+        for path in files {
+            let source = fs::read_to_string(&path).unwrap();
+            let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+            assert!(
+                !production.contains("SystemClock"),
+                "{} constructs/imports a concrete Kernel clock in production",
+                path.display()
+            );
+        }
+    }
+}

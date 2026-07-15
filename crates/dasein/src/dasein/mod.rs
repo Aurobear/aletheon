@@ -306,9 +306,10 @@ impl DaseinModule {
     }
 }
 
+#[cfg(test)]
 impl Default for DaseinModule {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new())).0
+        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default())).0
     }
 }
 

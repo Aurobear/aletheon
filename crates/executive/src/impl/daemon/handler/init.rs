@@ -473,6 +473,7 @@ impl RequestHandler {
     ) -> anyhow::Result<Self> {
         let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create("")?);
         info!(provider = llm.name(), "LLM provider initialized");
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
 
         // Create session and journal
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -488,6 +489,7 @@ impl RequestHandler {
         // Create SelfField for genome reads and policy engine
         let self_field_config = SelfFieldConfig {
             db_path: Some(data_dir.join("self_field.db")),
+            clock: Some(clock.clone()),
             ..Default::default()
         };
         let self_field = Arc::new(Mutex::new(SelfField::new(self_field_config)));
@@ -624,7 +626,6 @@ impl RequestHandler {
 
         // Clock for monotonic/wall timestamps. Created early so
         // all subsystems (including SessionManager) can route through it.
-        let clock = Arc::new(SystemClock::new());
 
         // Reconcile retained coding worktrees before the Pi runtime can be
         // registered. Any unsafe cleanup or exhausted budget fails closed for
@@ -1022,8 +1023,9 @@ impl RequestHandler {
         );
         let gbrain_worker_task = gbrain_runtime.worker_task;
 
-        let kernel = Arc::new(aletheon_kernel::KernelRuntime::new());
-        let domains = crate::core::DomainPorts::new(Arc::new(agora::AgoraRegistry::new()));
+        let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(clock.clone()));
+        let domains =
+            crate::core::DomainPorts::new(Arc::new(agora::AgoraRegistry::new(kernel.clock())));
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
             kernel,
             domains,

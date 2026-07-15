@@ -10,6 +10,7 @@ use fabric::{
     TurnRequest, TurnResult, TurnServices, TurnStop,
 };
 use std::pin::Pin;
+use std::sync::Arc;
 
 struct NoopCompressor;
 
@@ -46,9 +47,9 @@ pub struct LinearCognitiveSession {
 }
 
 impl LinearCognitiveSession {
-    pub fn new(config: HarnessConfig) -> Self {
+    pub fn new(config: HarnessConfig, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
-            inner: ReActLoop::new(config, Box::new(NoopCompressor)),
+            inner: ReActLoop::new_with_clock(config, Box::new(NoopCompressor), clock),
         }
     }
 

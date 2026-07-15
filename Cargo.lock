@@ -2871,6 +2871,7 @@ dependencies = [
 name = "self-evolution-loop-example"
 version = "0.1.0"
 dependencies = [
+ "aletheon-kernel",
  "anyhow",
  "cognit",
  "corpus",

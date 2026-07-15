@@ -19,6 +19,7 @@ pub struct AgoraRegistry {
     sessions: Mutex<HashMap<String, Arc<SpaceSlot>>>,
     proposal_index: Mutex<HashMap<uuid::Uuid, String>>,
     persistence: Option<Arc<dyn AgoraPersistence>>,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 struct SpaceSlot {
@@ -27,29 +28,21 @@ struct SpaceSlot {
 }
 
 impl SpaceSlot {
-    fn new(session: &str) -> Self {
+    fn new(session: &str, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
-            workspace: Mutex::new(Workspace::new(
-                session,
-                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            )),
+            workspace: Mutex::new(Workspace::new(session, clock)),
             commit_gate: Mutex::new(()),
         }
     }
 }
 
-impl Default for AgoraRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AgoraRegistry {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             proposal_index: Mutex::new(HashMap::new()),
             persistence: None,
+            clock,
         }
     }
 
@@ -58,11 +51,15 @@ impl AgoraRegistry {
     /// Every `commit()` will also persist to the adapter. Call
     /// [`recover_session`](Self::recover_session) to replay persisted commits
     /// into a workspace after a restart.
-    pub fn new_with_persistence(persistence: Arc<dyn AgoraPersistence>) -> Self {
+    pub fn new_with_persistence(
+        persistence: Arc<dyn AgoraPersistence>,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             proposal_index: Mutex::new(HashMap::new()),
             persistence: Some(persistence),
+            clock,
         }
     }
 
@@ -70,7 +67,7 @@ impl AgoraRegistry {
         let mut sessions = self.sessions.lock().await;
         sessions
             .entry(session.to_string())
-            .or_insert_with(|| Arc::new(SpaceSlot::new(session)))
+            .or_insert_with(|| Arc::new(SpaceSlot::new(session, self.clock.clone())))
             .clone()
     }
 
@@ -347,20 +344,20 @@ mod tests {
 
     #[tokio::test]
     async fn publish_then_recall() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         reg.publish("s1", "k", json!("v")).await.unwrap();
         assert_eq!(reg.recall("s1", "k").await.unwrap(), Some(json!("v")));
     }
 
     #[tokio::test]
     async fn recall_missing_session_is_none() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         assert_eq!(reg.recall("nope", "k").await.unwrap(), None);
     }
 
     #[tokio::test]
     async fn update_merges_patch() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         reg.publish("s1", "a", json!(1)).await.unwrap();
         reg.update("s1", json!({"b": 2})).await.unwrap();
         assert_eq!(reg.recall("s1", "b").await.unwrap(), Some(json!(2)));
@@ -368,7 +365,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_and_clear() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         reg.publish("s1", "k", json!(1)).await.unwrap();
         let snap = reg.snapshot("s1").await.unwrap();
         assert_eq!(snap["blackboard"]["k"], json!(1));
@@ -378,7 +375,7 @@ mod tests {
 
     #[tokio::test]
     async fn trace_appends_and_reflects_in_snapshot() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         reg.publish("s1", "k", json!(1)).await.unwrap();
         let before = reg.snapshot("s1").await.unwrap();
         assert_eq!(before["trace_len"], json!(0));
@@ -392,7 +389,7 @@ mod tests {
     #[tokio::test]
     async fn record_evidence_survives_snapshot_as_typed() {
         use fabric::Evidence;
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let ev = Evidence::from_tool_result("c1", "bash", "exit 0", false);
         reg.record_evidence("s1", &ev).await.unwrap();
 
@@ -410,7 +407,7 @@ mod tests {
 
     #[tokio::test]
     async fn propose_commit_changes_since_roundtrip() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let op = AgoraOperation::PublishFact {
             key: "x".into(),
             value: json!(42),
@@ -428,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn propose_conflict_returns_error() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let op1 = AgoraOperation::PublishFact {
             key: "a".into(),
             value: json!(1),
@@ -446,7 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn changes_since_missing_session_returns_empty() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let changes = reg.changes_since("nope", 0).await;
         assert!(changes.is_empty());
     }
@@ -457,7 +454,7 @@ mod tests {
 
     #[tokio::test]
     async fn propose_then_commit_bumps_version() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let op = AgoraOperation::PublishFact {
             key: "z".into(),
             value: json!(99),
@@ -481,7 +478,7 @@ mod tests {
 
     #[tokio::test]
     async fn propose_wrong_base_version_is_conflict() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
 
         // Commit first to bump workspace version to 1.
         let p1 = reg
@@ -519,7 +516,7 @@ mod tests {
 
     #[tokio::test]
     async fn changes_since_returns_only_newer_commits() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
 
         // Commit 3 ops: version goes 0→1→2→3.
         for (i, key) in ["a", "b", "c"].iter().enumerate() {
@@ -559,7 +556,7 @@ mod tests {
 
     #[tokio::test]
     async fn publish_still_works_alongside_new_api() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
 
         // Old publish/recall API still works.
         reg.publish("s1", "old_key", json!("old_val"))
@@ -597,7 +594,7 @@ mod tests {
 
     #[tokio::test]
     async fn claim_then_release() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let oid = "obj-1";
 
         // Propose + commit ClaimSharedObject.
@@ -642,7 +639,7 @@ mod tests {
 
     #[tokio::test]
     async fn reject_removes_pending_proposal() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let prop = reg
             .propose(
                 "s1",
@@ -666,7 +663,7 @@ mod tests {
 
     #[tokio::test]
     async fn reject_unknown_proposal_returns_error() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let err = reg
             .reject("s1", uuid::Uuid::new_v4(), fabric::RejectReason::Timeout)
             .await
@@ -676,7 +673,7 @@ mod tests {
 
     #[tokio::test]
     async fn reject_then_propose_new_works() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         // Propose at v0, then reject.
         let prop1 = reg
             .propose(
@@ -716,7 +713,7 @@ mod tests {
 
     #[tokio::test]
     async fn reject_records_reason_in_trace() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let prop = reg
             .propose(
                 "s1",
@@ -773,7 +770,7 @@ mod phase3_service_tests {
 
     #[tokio::test]
     async fn mismatched_permit_is_rejected() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let p = proposal(
             "s1",
             0,
@@ -791,7 +788,7 @@ mod phase3_service_tests {
 
     #[tokio::test]
     async fn expired_proposal_cannot_commit() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let mut p = proposal(
             "s1",
             0,
@@ -809,7 +806,7 @@ mod phase3_service_tests {
 
     #[tokio::test]
     async fn uncommitted_evidence_is_not_in_shared_view() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let evidence = Evidence::from_tool_result("c1", "bash", "ok", false);
         let p = proposal("s1", 0, AgoraOperation::AcceptEvidence { evidence });
         AgoraService::propose(&reg, p).await.unwrap();
@@ -828,7 +825,7 @@ mod phase3_service_tests {
 
     #[tokio::test]
     async fn committed_evidence_enters_shared_view() {
-        let reg = AgoraRegistry::new();
+        let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let evidence = Evidence::from_tool_result("c1", "bash", "ok", false);
         let p = proposal("s1", 0, AgoraOperation::AcceptEvidence { evidence });
         let permit = WorkspaceCommitPermit::issue_for(&p, i64::MAX).unwrap();

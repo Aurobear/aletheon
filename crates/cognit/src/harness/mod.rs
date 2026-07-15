@@ -48,8 +48,9 @@ pub fn build_harness(
     kind: HarnessKind,
     config: HarnessConfig,
     compressor: Box<dyn CompactorTrait>,
+    clock: std::sync::Arc<dyn fabric::Clock>,
 ) -> ReActLoop {
     match kind {
-        HarnessKind::Linear => ReActLoop::new(config, compressor),
+        HarnessKind::Linear => ReActLoop::new_with_clock(config, compressor, clock),
     }
 }

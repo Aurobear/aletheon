@@ -355,7 +355,12 @@ mod tests {
     use fabric::self_field::AwarenessRiskLevel;
 
     fn make_self_field() -> SelfField {
-        SelfField::new(SelfFieldConfig::default())
+        SelfField::new(SelfFieldConfig {
+            clock: Some(std::sync::Arc::new(
+                aletheon_kernel::chronos::TestClock::default(),
+            )),
+            ..SelfFieldConfig::default()
+        })
     }
 
     fn make_adjustment(

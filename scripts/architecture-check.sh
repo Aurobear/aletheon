@@ -40,6 +40,20 @@ scan raw_process 'tokio::process::Command' crates/dasein/src crates/executive/sr
 scan executive_store_import 'mnemosyne::.*(Store|Database)|corpus::.*(Registry|Runner)' crates/executive/src
 sort -u "$actual" -o "$actual"
 
+# K02 deletion gate: cognitive domains receive Clock from Executive. Unit-test
+# modules may use TestClock, but no production prefix may mention SystemClock.
+python3 - <<'PY'
+from pathlib import Path
+violations = []
+for domain in ("cognit", "dasein", "agora"):
+    for path in (Path("crates") / domain / "src").rglob("*.rs"):
+        production = path.read_text().split("#[cfg(test)]", 1)[0]
+        if "SystemClock" in production:
+            violations.append(str(path))
+if violations:
+    raise SystemExit("architecture-check: domain concrete clock bypass:\n" + "\n".join(violations))
+PY
+
 if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
   cargo metadata --no-deps --format-version 1 | python3 -c '
 import json,sys

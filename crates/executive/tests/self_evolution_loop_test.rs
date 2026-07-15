@@ -33,7 +33,11 @@ fn make_scheduler_with_mock(mock: Arc<MockLlmProvider>) -> Arc<LlmScheduler> {
     routing.insert(LlmPurpose::GenerateMutations, "mock".to_string());
     routing.insert(LlmPurpose::Execute, "mock".to_string());
 
-    Arc::new(LlmScheduler::from_providers(providers, routing))
+    Arc::new(LlmScheduler::from_providers(
+        providers,
+        routing,
+        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+    ))
 }
 
 fn make_failure_obs(turn_id: Uuid) -> ToolObservationPayload {

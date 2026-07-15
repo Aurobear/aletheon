@@ -61,7 +61,7 @@ pub struct SelfFieldConfig {
     pub dasein_retention_depth: usize,
     /// Decay rate for the DaseinModule's retention field (0.0-1.0).
     pub dasein_decay_rate: f64,
-    /// Clock for deterministic time. If None, uses SystemClock.
+    /// Clock supplied by the application composition root.
     pub clock: Option<Arc<dyn fabric::Clock>>,
 }
 
@@ -117,7 +117,7 @@ impl SelfField {
     pub fn new(config: SelfFieldConfig) -> Self {
         let clock: Arc<dyn fabric::Clock> = config
             .clock
-            .unwrap_or_else(|| Arc::new(aletheon_kernel::chronos::SystemClock::new()));
+            .expect("SelfFieldConfig.clock must be injected by the composition root");
 
         let mut boundary = BoundaryLayer::new();
         boundary.set_rules(config.boundary_rules);
@@ -515,7 +515,10 @@ mod tests {
     use std::path::PathBuf;
 
     fn default_config() -> SelfFieldConfig {
-        SelfFieldConfig::default()
+        SelfFieldConfig {
+            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
+            ..SelfFieldConfig::default()
+        }
     }
 
     fn make_intent(action: &str, description: &str) -> Intent {

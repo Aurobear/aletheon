@@ -19,11 +19,12 @@ pub trait CognitiveSessionFactory: Send + Sync {
 
 pub struct LinearCognitiveSessionFactory {
     config: HarnessConfig,
+    clock: std::sync::Arc<dyn fabric::Clock>,
 }
 
 impl LinearCognitiveSessionFactory {
-    pub fn new(config: HarnessConfig) -> Self {
-        Self { config }
+    pub fn new(config: HarnessConfig, clock: std::sync::Arc<dyn fabric::Clock>) -> Self {
+        Self { config, clock }
     }
 }
 
@@ -36,6 +37,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
         Ok(Box::new(cognit::harness::LinearCognitiveSession::new(
             self.config.clone(),
+            self.clock.clone(),
         )))
     }
 }
@@ -56,11 +58,18 @@ pub fn harness_config_from_executive(config: &ExecutiveConfig) -> HarnessConfig 
     }
 }
 
-pub fn build_configured_react_loop(config: &ExecutiveConfig) -> ReActLoop {
-    build_react_loop(config, harness_config_from_executive(config))
+pub fn build_configured_react_loop(
+    config: &ExecutiveConfig,
+    clock: std::sync::Arc<dyn fabric::Clock>,
+) -> ReActLoop {
+    build_react_loop(config, harness_config_from_executive(config), clock)
 }
 
-pub fn build_react_loop(config: &ExecutiveConfig, harness_config: HarnessConfig) -> ReActLoop {
+pub fn build_react_loop(
+    config: &ExecutiveConfig,
+    harness_config: HarnessConfig,
+    clock: std::sync::Arc<dyn fabric::Clock>,
+) -> ReActLoop {
     let effective_tail = if config.tail_token_budget * 4 < config.context_window_tokens {
         config.context_window_tokens / 8
     } else {
@@ -71,5 +80,5 @@ pub fn build_react_loop(config: &ExecutiveConfig, harness_config: HarnessConfig)
         config.target_summary_chars,
         config.context_window_tokens,
     )) as Box<dyn cognit::harness::linear::CompactorTrait>;
-    build_harness(config.harness_kind, harness_config, compressor)
+    build_harness(config.harness_kind, harness_config, compressor, clock)
 }

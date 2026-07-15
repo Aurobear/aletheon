@@ -141,6 +141,7 @@ impl LlmScheduler {
     pub fn from_providers(
         providers: HashMap<String, Arc<dyn LlmProvider>>,
         routing: HashMap<LlmPurpose, String>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         let default_provider = providers.keys().next().cloned().unwrap_or_default();
         // Stable failover order from the HashMap key iteration order.
@@ -152,12 +153,12 @@ impl LlmScheduler {
             retry_policy: RetryPolicy::default(),
             failover_order,
             health: Mutex::new(HashMap::new()),
-            clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            clock,
         }
     }
 
     /// Create a new scheduler from config.
-    pub fn new(config: &SchedulerConfig) -> Result<Self> {
+    pub fn new(config: &SchedulerConfig, clock: Arc<dyn Clock>) -> Result<Self> {
         let mut providers = HashMap::new();
         for pc in &config.providers {
             let provider_config = ProviderConfig {
@@ -197,7 +198,7 @@ impl LlmScheduler {
             retry_policy: RetryPolicy::default(),
             failover_order,
             health: Mutex::new(HashMap::new()),
-            clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            clock,
         })
     }
 
@@ -576,12 +577,16 @@ mod tests {
         providers.insert("a".into(), flaky.clone());
         let mut routing = HashMap::new();
         routing.insert(LlmPurpose::Execute, "a".to_string());
-        let sched =
-            LlmScheduler::from_providers(providers, routing).with_retry_policy(RetryPolicy {
-                max_retries: 3,
-                base_backoff_ms: 0,
-                max_backoff_ms: 0,
-            });
+        let sched = LlmScheduler::from_providers(
+            providers,
+            routing,
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
+        .with_retry_policy(RetryPolicy {
+            max_retries: 3,
+            base_backoff_ms: 0,
+            max_backoff_ms: 0,
+        });
         let resp = sched
             .complete(&LlmPurpose::Execute, &[Message::user("hi")], &[])
             .await
@@ -604,13 +609,17 @@ mod tests {
         );
         let mut routing = HashMap::new();
         routing.insert(LlmPurpose::Execute, "a".to_string());
-        let sched = LlmScheduler::from_providers(providers, routing)
-            .with_failover_order(vec!["a".into(), "b".into()])
-            .with_retry_policy(RetryPolicy {
-                max_retries: 1,
-                base_backoff_ms: 0,
-                max_backoff_ms: 0,
-            });
+        let sched = LlmScheduler::from_providers(
+            providers,
+            routing,
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
+        .with_failover_order(vec!["a".into(), "b".into()])
+        .with_retry_policy(RetryPolicy {
+            max_retries: 1,
+            base_backoff_ms: 0,
+            max_backoff_ms: 0,
+        });
         let resp = sched
             .complete(&LlmPurpose::Execute, &[Message::user("hi")], &[])
             .await
@@ -639,8 +648,12 @@ mod tests {
         );
         let mut routing = HashMap::new();
         routing.insert(LlmPurpose::Execute, "a".to_string());
-        let sched = LlmScheduler::from_providers(providers, routing)
-            .with_failover_order(vec!["a".into(), "b".into()]);
+        let sched = LlmScheduler::from_providers(
+            providers,
+            routing,
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
+        .with_failover_order(vec!["a".into(), "b".into()]);
         sched.mark_unhealthy("a");
         let resp = sched
             .complete(&LlmPurpose::Execute, &[Message::user("hi")], &[])
@@ -661,7 +674,11 @@ mod tests {
             }),
         );
         providers.insert("bad".into(), Arc::new(DeadProvider { name: "bad".into() }));
-        let sched = LlmScheduler::from_providers(providers, HashMap::new());
+        let sched = LlmScheduler::from_providers(
+            providers,
+            HashMap::new(),
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
 
         let good = sched.probe_provider("ok").await;
         assert!(good.available, "reachable provider is available");

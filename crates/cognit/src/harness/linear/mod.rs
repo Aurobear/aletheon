@@ -109,8 +109,11 @@ pub struct ReActLoop {
 }
 
 impl ReActLoop {
-    pub fn new(config: HarnessConfig, compressor: Box<dyn CompactorTrait>) -> Self {
-        let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+    pub fn new_with_clock(
+        config: HarnessConfig,
+        compressor: Box<dyn CompactorTrait>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         let tool_budget = ToolBudget::new(config.max_tool_calls);
         let circuit_breaker = CircuitBreaker::new(
             config.circuit_breaker_max_repeats,
@@ -144,6 +147,15 @@ impl ReActLoop {
             dasein_ctx_provider: None,
             clock,
         }
+    }
+
+    #[cfg(test)]
+    pub fn new(config: HarnessConfig, compressor: Box<dyn CompactorTrait>) -> Self {
+        Self::new_with_clock(
+            config,
+            compressor,
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
     }
 
     /// Number of messages in the conversation buffer.

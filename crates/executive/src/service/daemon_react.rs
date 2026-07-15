@@ -24,6 +24,7 @@ pub struct DaemonStreamingTurnContext<F> {
     /// When cancelled by `cancel_turn()`, subsequent tool invocations return
     /// immediately with an error.
     pub cancel_token: CancellationToken,
+    pub clock: Arc<dyn fabric::Clock>,
 }
 
 /// Submit the daemon's streaming ReAct turn through the service/composition seam.
@@ -47,9 +48,11 @@ where
         request_messages,
         self_field,
         cancel_token,
+        clock,
     } = context;
 
-    let mut react_loop = crate::service::harness_factory::build_configured_react_loop(&config);
+    let mut react_loop =
+        crate::service::harness_factory::build_configured_react_loop(&config, clock);
     react_loop.seed_messages(request_messages);
     react_loop.set_goal(request.input.clone());
     react_loop.set_dasein_context_provider(Box::new(move || {

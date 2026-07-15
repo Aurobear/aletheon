@@ -166,14 +166,15 @@ impl RuntimeCore {
                     .collect(),
             };
 
-            match LlmScheduler::new(&scheduler_config) {
+            let scheduler_clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
+            match LlmScheduler::new(&scheduler_config, scheduler_clock.clone()) {
                 Ok(scheduler) => {
                     let scheduler = Arc::new(scheduler);
                     let pulse = LlmPulse::new(
                         scheduler,
                         bus.clone(),
                         PulseConfig::default(),
-                        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                        scheduler_clock,
                     );
                     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 

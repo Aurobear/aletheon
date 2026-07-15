@@ -22,7 +22,10 @@ fn request(input: &str) -> TurnRequest {
 
 #[tokio::test]
 async fn linear_session_returns_turn_result() {
-    let mut session = LinearCognitiveSession::new(HarnessConfig::default());
+    let mut session = LinearCognitiveSession::new(
+        HarnessConfig::default(),
+        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+    );
 
     let result = session
         .run_turn(request("hello"), &StubTurnServices, &NoopTurnEventSink)
@@ -139,10 +142,13 @@ async fn linear_session_runs_react_with_turn_services() {
         },
         invoked: Mutex::new(Vec::new()),
     };
-    let mut session = LinearCognitiveSession::new(HarnessConfig {
-        max_iterations: 4,
-        ..Default::default()
-    });
+    let mut session = LinearCognitiveSession::new(
+        HarnessConfig {
+            max_iterations: 4,
+            ..Default::default()
+        },
+        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+    );
 
     let result = session
         .run_turn(request("use tool"), &services, &NoopTurnEventSink)
@@ -154,3 +160,4 @@ async fn linear_session_runs_react_with_turn_services() {
     assert_eq!(result.metrics.tool_calls_made, 1);
     assert_eq!(*services.invoked.lock().unwrap(), vec!["echo_tool"]);
 }
+use std::sync::Arc;
