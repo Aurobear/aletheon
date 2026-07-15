@@ -48,6 +48,13 @@ retry_max_age_secs = 86400
 schema_fixture = "config/gbrain/tools-schema.json"
 schema_version = "v0.42.59.0"
 legacy_outbox_dir = "~/.aletheon/gbrain-outbox"
+# Register the transport only in a local secret-bearing override. See
+# deploy/gbrain/README.md. Keep bearer_token_env out of checked-in values:
+# [[mcp_servers]]
+# name = "gbrain"
+# transport = "http"
+# url = "http://127.0.0.1:9020/mcp"
+# bearer_token_env = "GBRAIN_TOKEN"
 
 [daemon]
 # Canonical socket dir is base::paths::SOCKET_DIR = /var/run/aletheon
