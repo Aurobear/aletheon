@@ -108,6 +108,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             tool,
             args,
         } => {
+            app.chat.discard_trailing_assistant_draft();
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             app.chat.add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;

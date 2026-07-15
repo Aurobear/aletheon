@@ -402,6 +402,19 @@ impl ChatWidget {
         }
     }
 
+    /// Remove a transient assistant draft when the same model iteration
+    /// proceeds to a tool call. Only the final, tool-free iteration should be
+    /// retained as the user-facing answer.
+    pub fn discard_trailing_assistant_draft(&mut self) {
+        if matches!(
+            self.entries.last(),
+            Some(ChatEntry::Text(message)) if message.role == Role::Assistant
+        ) {
+            self.entries.pop();
+            self.invalidate_layout();
+        }
+    }
+
     /// Update a tool execution entry by call_id (mark as finished with output).
     pub fn update_exec(&mut self, call_id: &str, output: &str, is_error: bool) {
         let mut changed = false;
@@ -1191,6 +1204,17 @@ mod tests {
             kinds.last(),
             Some(&("assistant", "final answer".to_string()))
         );
+    }
+
+    #[test]
+    fn test_tool_call_discards_transient_assistant_draft() {
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        widget.set_assistant_stream("I will inspect that first".into());
+        widget.discard_trailing_assistant_draft();
+        widget.add_exec("c1".into(), "file_read".into(), "{}".into());
+        assert_eq!(widget.entries.len(), 1);
+        assert!(matches!(widget.entries[0], ChatEntry::Exec(_)));
     }
 
     #[test]
