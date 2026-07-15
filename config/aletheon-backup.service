@@ -1,0 +1,24 @@
+[Unit]
+Description=Encrypted Aletheon state backup
+Documentation=file:/usr/share/doc/aletheon/backup-restore.md
+After=network-online.target aletheon.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aletheon
+Group=aletheon
+UMask=0077
+Environment=ALETHEON_BACKUP_MODE=restic
+ExecStart=/usr/libexec/aletheon/backup-aletheon.sh
+LoadCredential=restic-password:/etc/aletheon/credentials/restic-password
+LoadCredential=restic-repository:/etc/aletheon/credentials/restic-repository
+Environment=RESTIC_PASSWORD_FILE=%d/restic-password
+Environment=RESTIC_REPOSITORY_FILE=%d/restic-repository
+ReadOnlyPaths=/var/lib/aletheon /etc/aletheon
+ReadWritePaths=/var/cache/aletheon/backup
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+LimitCORE=0

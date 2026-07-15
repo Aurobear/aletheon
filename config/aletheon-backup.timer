@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Aletheon backup schedule
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=aletheon-backup.service
+
+[Install]
+WantedBy=timers.target
