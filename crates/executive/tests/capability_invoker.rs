@@ -11,6 +11,7 @@ use fabric::{
     CapabilityInvoker, CapabilityRequest, CapabilityScope, ExecutionPermit, InvocationControl,
     PermitId, PrincipalId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 fn test_clock() -> Arc<TestClock> {
@@ -226,6 +227,94 @@ impl ToolExecutor for ErrorToolExecutor {
             audit_id: Some(fabric::AuditEventId::new()),
         }
     }
+}
+
+struct RecordingAdmission {
+    inner: AllowAllAdmissionController,
+    settles: AtomicUsize,
+    revokes: AtomicUsize,
+    fail_settle: bool,
+}
+
+#[async_trait::async_trait]
+impl AdmissionController for RecordingAdmission {
+    async fn admit(&self, request: AdmissionRequest) -> Result<ExecutionPermit, AdmissionError> {
+        self.inner.admit(request).await
+    }
+
+    async fn settle(&self, permit_id: PermitId, usage: UsageReport) -> Result<(), AdmissionError> {
+        self.settles.fetch_add(1, Ordering::SeqCst);
+        if self.fail_settle {
+            return Err(AdmissionError::AlreadySettled);
+        }
+        self.inner.settle(permit_id, usage).await
+    }
+
+    async fn revoke(
+        &self,
+        permit_id: PermitId,
+        reason: RevokeReason,
+    ) -> Result<(), AdmissionError> {
+        self.revokes.fetch_add(1, Ordering::SeqCst);
+        self.inner.revoke(permit_id, reason).await
+    }
+}
+
+struct BlockingExecutor;
+
+#[async_trait::async_trait]
+impl ToolExecutor for BlockingExecutor {
+    async fn execute_with_permit(
+        &self,
+        _request: &CapabilityRequest,
+        _permit: &ExecutionPermit,
+    ) -> fabric::CapabilityResult {
+        std::future::pending().await
+    }
+}
+
+#[tokio::test]
+async fn cancelled_invocation_revokes_once_and_never_settles() {
+    let admission = Arc::new(RecordingAdmission {
+        inner: AllowAllAdmissionController::new(test_clock()),
+        settles: AtomicUsize::new(0),
+        revokes: AtomicUsize::new(0),
+        fail_settle: false,
+    });
+    let invoker = DefaultCapabilityInvoker::new(admission.clone(), Arc::new(BlockingExecutor));
+    let request = authorized_request("test.block", serde_json::json!({}), "cancelled");
+    request.control.cancel.cancel();
+
+    let result = invoker.invoke(request).await;
+    assert!(result.is_error);
+    assert!(result.output.contains("cancelled"));
+    assert_eq!(admission.revokes.load(Ordering::SeqCst), 1);
+    assert_eq!(admission.settles.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn settlement_failure_is_a_structured_error_with_permit_and_audit() {
+    let admission = Arc::new(RecordingAdmission {
+        inner: AllowAllAdmissionController::new(test_clock()),
+        settles: AtomicUsize::new(0),
+        revokes: AtomicUsize::new(0),
+        fail_settle: true,
+    });
+    let invoker = DefaultCapabilityInvoker::new(admission.clone(), Arc::new(StubToolExecutor));
+
+    let result = invoker
+        .invoke(authorized_request(
+            "test.ping",
+            serde_json::json!({}),
+            "settle-fail",
+        ))
+        .await;
+    assert!(result.is_error);
+    assert!(result.output.contains("settlement failed"));
+    assert_ne!(result.usage.permit_id, PermitId::default());
+    assert!(result.audit_id.is_some());
+    assert_eq!(admission.settles.load(Ordering::SeqCst), 1);
+    assert_eq!(admission.revokes.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

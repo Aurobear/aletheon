@@ -25,7 +25,7 @@ use std::sync::Arc;
 pub struct DefaultCapabilityInvoker<A, E>
 where
     A: AdmissionController + ?Sized,
-    E: ToolExecutor,
+    E: ToolExecutor + ?Sized,
 {
     admission: Arc<A>,
     executor: Arc<E>,
@@ -51,7 +51,7 @@ pub trait ToolExecutor: Send + Sync {
 impl<A, E> DefaultCapabilityInvoker<A, E>
 where
     A: AdmissionController + ?Sized,
-    E: ToolExecutor,
+    E: ToolExecutor + ?Sized,
 {
     pub fn new(admission: Arc<A>, executor: Arc<E>) -> Self {
         Self {
@@ -65,7 +65,7 @@ where
 impl<A, E> CapabilityInvoker for DefaultCapabilityInvoker<A, E>
 where
     A: AdmissionController + ?Sized,
-    E: ToolExecutor,
+    E: ToolExecutor + ?Sized,
 {
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityResult {
         // 1. Build admission request.

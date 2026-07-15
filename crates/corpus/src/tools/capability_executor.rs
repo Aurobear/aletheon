@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use aletheon_kernel::capability::ToolExecutor;
 use async_trait::async_trait;
@@ -9,15 +9,44 @@ use fabric::{
 
 use crate::{ToolRegistry, ToolRunnerWithGuard};
 
+pub fn default_tool_registry() -> Arc<tokio::sync::Mutex<ToolRegistry>> {
+    Arc::new(tokio::sync::Mutex::new(ToolRegistry::default()))
+}
+
+/// Snapshot trusted tool risk metadata without exposing registry access.
+pub async fn tool_risk_levels(
+    registry: &Arc<tokio::sync::Mutex<ToolRegistry>>,
+) -> HashMap<String, fabric::types::admission::RiskLevel> {
+    let registry = registry.lock().await;
+    registry
+        .definitions()
+        .into_iter()
+        .filter_map(|definition| {
+            let tool = registry.get(&definition.name)?;
+            let risk = match tool.permission_level() {
+                fabric::tool::PermissionLevel::L0 => fabric::types::admission::RiskLevel::ReadOnly,
+                fabric::tool::PermissionLevel::L1 => fabric::types::admission::RiskLevel::Sandboxed,
+                fabric::tool::PermissionLevel::L2 => {
+                    fabric::types::admission::RiskLevel::SystemModify
+                }
+                fabric::tool::PermissionLevel::L3 => {
+                    fabric::types::admission::RiskLevel::Destructive
+                }
+            };
+            Some((definition.name, risk))
+        })
+        .collect()
+}
+
 pub struct CorpusToolExecutor {
-    registry: Arc<ToolRegistry>,
+    registry: Arc<tokio::sync::Mutex<ToolRegistry>>,
     runner: Arc<tokio::sync::Mutex<ToolRunnerWithGuard>>,
     clock: Arc<dyn Clock>,
 }
 
 impl CorpusToolExecutor {
     pub fn new(
-        registry: Arc<ToolRegistry>,
+        registry: Arc<tokio::sync::Mutex<ToolRegistry>>,
         runner: Arc<tokio::sync::Mutex<ToolRunnerWithGuard>>,
         clock: Arc<dyn Clock>,
     ) -> Self {
@@ -77,7 +106,11 @@ impl ToolExecutor for CorpusToolExecutor {
             return Self::error_result(request, permit, error.to_string(), AuditEventId::new());
         }
 
-        let Some(tool) = self.registry.get(&request.call.name).cloned() else {
+        let tool = {
+            let registry = self.registry.lock().await;
+            registry.get(&request.call.name).cloned()
+        };
+        let Some(tool) = tool else {
             return Self::error_result(
                 request,
                 permit,

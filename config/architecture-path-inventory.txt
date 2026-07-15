@@ -1,6 +1,4 @@
 capability_path|crates/executive/src/service/exec_session.rs|ExecTurnServices
-capability_path|crates/executive/src/service/exec_session.rs|manual_admission
-capability_path|crates/executive/src/service/turn_pipeline.rs|manual_admission
 capability_path|crates/kernel/src/capability/mod.rs|CapabilityInvoker
 turn_path|crates/executive/src/service/turn_pipeline.rs|TurnPipeline
 turn_path|crates/executive/src/service/turn_service.rs|TurnService

@@ -19,16 +19,19 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
-use corpus::security::runner::ToolRunnerWithGuard;
+use aletheon_kernel::capability::ToolExecutor;
 use corpus::security::storm_breaker::StormBreaker;
-use corpus::tools::tools::ToolRegistry;
+use corpus::CorpusToolExecutor;
 use corpus::HookRegistry;
 use dasein::SelfField;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::kernel::debug_bus::PerfCounter;
-use fabric::types::admission::ExecutionPermit;
+use fabric::types::admission::{ExecutionPermit, UsageReport};
 use fabric::types::operation::{OperationId, ProcessId};
-use fabric::{Context as AbiContext, Intent, IntentSource, PrincipalId, SelfFieldOps, Verdict};
+use fabric::{
+    AuditEventId, CapabilityRequest, CapabilityResult, Context as AbiContext, Intent, IntentSource,
+    SelfFieldOps, Verdict,
+};
 
 use crate::core::core_systems::CoreSystems;
 
@@ -37,8 +40,7 @@ use crate::core::core_systems::CoreSystems;
 /// Holds the same subsystem handles the former `execute_tool` closure captured;
 /// cheap to wrap in `Arc` and clone per tool call.
 pub(crate) struct TurnToolExecutor {
-    tool_runner: Arc<Mutex<ToolRunnerWithGuard>>,
-    tools: Arc<Mutex<ToolRegistry>>,
+    inner: Arc<CorpusToolExecutor>,
     hook_registry: Arc<Mutex<HookRegistry>>,
     storm_breaker: Arc<Mutex<StormBreaker>>,
     memory_queue: Arc<Mutex<Vec<String>>>,
@@ -47,10 +49,7 @@ pub(crate) struct TurnToolExecutor {
     self_field: Arc<Mutex<SelfField>>,
     working_dir: PathBuf,
     session_id: String,
-    principal: PrincipalId,
     turn_count: usize,
-    /// Stable unique key used by the loop detector for this turn only.
-    turn_id: String,
     /// Kernel operation id for this turn (used by admission controller).
     operation_id: OperationId,
     /// Kernel process id for the main agent (used by admission controller).
@@ -62,15 +61,18 @@ impl TurnToolExecutor {
     pub(crate) fn new(
         subsystems: &CoreSystems,
         session_id: String,
-        principal: PrincipalId,
         turn_count: usize,
         working_dir: PathBuf,
         operation_id: OperationId,
         process_id: ProcessId,
     ) -> Self {
+        let inner = Arc::new(CorpusToolExecutor::new(
+            subsystems.corpus.tools.clone(),
+            subsystems.security.tool_runner.clone(),
+            subsystems.ports.clock.clone(),
+        ));
         Self {
-            tool_runner: subsystems.security.tool_runner.clone(),
-            tools: subsystems.corpus.tools.clone(),
+            inner,
             hook_registry: subsystems.corpus.hook_registry.clone(),
             storm_breaker: subsystems.security.storm_breaker.clone(),
             memory_queue: subsystems.session.memory_queue.clone(),
@@ -79,9 +81,7 @@ impl TurnToolExecutor {
             self_field: subsystems.self_field.clone(),
             working_dir,
             session_id,
-            principal,
             turn_count,
-            turn_id: operation_id.0.to_string(),
             operation_id,
             process_id,
         }
@@ -105,20 +105,21 @@ impl TurnToolExecutor {
     ///
     /// No `ExecutionPermit` means no side-effecting tool execution.
     /// Returns `(content, is_error)`.`
-    pub(crate) async fn execute(
+    async fn execute(
         &self,
+        request: &CapabilityRequest,
         permit: &ExecutionPermit,
-        _id: &str,
-        name: &str,
-        input: &serde_json::Value,
-    ) -> (String, bool) {
+    ) -> CapabilityResult {
+        let name = &request.call.name;
+        let input = &request.call.input;
         if permit.operation_id != self.operation_id
             || permit.process_id != self.process_id
-            || permit.capability.0 != name
+            || permit.capability.0 != *name
         {
-            return (
+            return self.error_result(
+                request,
+                permit,
                 format!("admission permit does not match tool '{name}'"),
-                true,
             );
         }
 
@@ -127,8 +128,7 @@ impl TurnToolExecutor {
         let hook_registry_arc = &self.hook_registry;
         let session_approvals_arc = &self.session_approvals;
         let self_field_arc = &self.self_field;
-        let tools_arc = &self.tools;
-        let runner = &self.tool_runner;
+        let inner = &self.inner;
         let debug_perf = &self.debug_perf;
         let storm_breaker_arc = &self.storm_breaker;
         let memory_queue_arc = &self.memory_queue;
@@ -136,9 +136,7 @@ impl TurnToolExecutor {
         let input = input.clone();
         let working_dir = self.working_dir.clone();
         let session_id = self.session_id.clone();
-        let principal = self.principal.clone();
         let turn_count = self.turn_count;
-        let turn_id = self.turn_id.clone();
 
         // --- PreTool hook ---
         {
@@ -154,7 +152,7 @@ impl TurnToolExecutor {
                 metadata: HashMap::new(),
             };
             if let HookResult::Block { reason } = hr.execute(&ctx).await {
-                return (format!("Blocked by hook: {}", reason), true);
+                return self.error_result(request, permit, format!("Blocked by hook: {reason}"));
             }
         }
 
@@ -199,36 +197,26 @@ impl TurnToolExecutor {
                     let _ = sf
                         .narrate("tool_blocked", &format!("{}: {}", name, reason))
                         .await;
-                    return (format!("Tool blocked by SelfField: {}", reason), true);
+                    return self.error_result(
+                        request,
+                        permit,
+                        format!("Tool blocked by SelfField: {reason}"),
+                    );
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        tool = %name,
-                        "SelfField review error, proceeding"
+                    return self.error_result(
+                        request,
+                        permit,
+                        format!("SelfField review failed: {e}"),
                     );
                 }
                 _ => {}
             }
         }
 
-        let tool = {
-            let reg = tools_arc.lock().await;
-            reg.get(&name).cloned()
-        };
-        let exec_ctx = fabric::tool::ToolContext {
-            working_dir,
-            session_id: principal.0,
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-        };
-        let (content, is_error) = match tool {
-            Some(t) => {
-                let mut r = runner.lock().await;
-                let res = r.run(t.as_ref(), input.clone(), &exec_ctx, &turn_id).await;
-                (res.content, res.is_error)
-            }
-            None => (format!("Unknown tool: {}", name), true),
-        };
+        let mut result = inner.execute_with_permit(request, permit).await;
+        let content = result.output.clone();
+        let is_error = result.is_error;
 
         // --- PerfCounter: record tool call and errors ---
         debug_perf.record_tool_call(&name).await;
@@ -266,6 +254,38 @@ impl TurnToolExecutor {
         }
 
         // tool_call_result is emitted via EventSink in ReActLoop (single source of truth).
-        (content, is_error)
+        result.output = content;
+        result.is_error = is_error;
+        result
+    }
+
+    fn error_result(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+        output: String,
+    ) -> CapabilityResult {
+        CapabilityResult {
+            call_id: request.call.call_id.clone(),
+            output,
+            is_error: true,
+            usage: UsageReport {
+                permit_id: permit.id,
+                exit_code: Some(1),
+                ..Default::default()
+            },
+            audit_id: Some(AuditEventId::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolExecutor for TurnToolExecutor {
+    async fn execute_with_permit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+    ) -> CapabilityResult {
+        self.execute(request, permit).await
     }
 }

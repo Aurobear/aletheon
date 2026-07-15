@@ -1,6 +1,7 @@
 pub mod daemon_react;
 pub mod daemon_turn;
 pub mod exec_session;
+pub mod governed_capability;
 pub mod harness_factory;
 pub mod post_turn;
 pub mod pre_turn;

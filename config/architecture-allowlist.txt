@@ -66,7 +66,6 @@ direct_tool|crates/executive/src/impl/daemon/mcp_embedded.rs| let result = tool.
 direct_tool|crates/executive/src/impl/orchestration/config_agent.rs| let result = tool.execute((*input).clone(), &ctx).await;
 direct_tool|crates/executive/src/impl/orchestration/delegate.rs| let result = tool.execute(input, &ctx).await;
 direct_tool|crates/executive/src/impl/runtime/provider_worker.rs| tool.execute(input, &context).await
-direct_tool|crates/executive/src/service/turn_pipeline.rs| let (content, is_error) = exec.execute(&permit, &tid, &n, &inp).await;
 direct_tool|crates/executive/src/tools/self_observe.rs| let result = tool.execute(json!({"query": "bogus"}), &ctx).await;
 direct_tool|crates/executive/src/tools/self_observe.rs| let result = tool.execute(json!({"query": "full"}), &ctx).await;
 direct_tool|crates/executive/src/tools/self_observe.rs| let result = tool.execute(json!({"query": "mood"}), &ctx).await;
@@ -80,8 +79,6 @@ executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use corp
 executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/impl/daemon/handler/init.rs|use mnemosyne::FactStore;
 executive_store_import|crates/executive/src/impl/daemon/handler/tool_executor.rs|use corpus::HookRegistry;
-executive_store_import|crates/executive/src/impl/daemon/handler/tool_executor.rs|use corpus::security::runner::ToolRunnerWithGuard;
-executive_store_import|crates/executive/src/impl/daemon/handler/tool_executor.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/impl/daemon/mcp_embedded.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/impl/engine/modules/body_module.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/impl/hook_lifecycle/recall_inject.rs|use mnemosyne::FactStore;
@@ -89,7 +86,6 @@ executive_store_import|crates/executive/src/impl/hook_lifecycle/session_distille
 executive_store_import|crates/executive/src/impl/runtime/provider_worker.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/service/daemon_turn/injection.rs|use mnemosyne::FactStore;
 executive_store_import|crates/executive/src/service/exec_session.rs|use corpus::security::runner::ToolRunnerWithGuard;
-executive_store_import|crates/executive/src/service/exec_session.rs|use corpus::tools::tools::{ToolContext, ToolRegistry};
 executive_store_import|crates/executive/src/service/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {
 executive_store_import|crates/executive/src/service/verification/command.rs|use corpus::tools::subagent::{CommandOutput, CommandRequest, CommandRunner};
 legacy_event|crates/executive/src/impl/agent/fork.rs| let envelope = Envelope::new(

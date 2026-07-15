@@ -10,6 +10,7 @@ use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::r#impl::daemon::session_manager::SessionManager;
 use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::service::daemon_turn::helpers::{bounded_text_history, build_request_messages};
+use crate::service::governed_capability::{CapabilityRuntimeFactory, RegistryAuthorityProvider};
 use aletheon_kernel::chronos::SystemTimer;
 use aletheon_kernel::operation::{OperationScope, OperationTable};
 use aletheon_kernel::process::ProcessTable;
@@ -22,12 +23,10 @@ use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::include::agora::AgoraOperation;
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
-use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, AdmissionRequest, AgoraOps, AgoraSpaceId, AgoraVersion, CapabilityId,
-    CapabilityScope, Clock, ContentBlock, ContextBinding, Intent, IntentSource, LlmProvider,
-    Message, OperationId, PrincipalId, ProcessId, ProcessManager, Role, SandboxRequirement,
-    SessionId, SpaceId, Timer, TurnRequest, UsageReport,
+    AdmissionController, AgoraOps, AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock,
+    ContextBinding, Intent, IntentSource, LlmProvider, Message, OperationId, PrincipalId,
+    ProcessId, ProcessManager, Role, SandboxRequirement, SessionId, SpaceId, Timer, TurnRequest,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -382,72 +381,38 @@ impl TurnPipeline {
         let tool_executor = Arc::new(TurnToolExecutor::new(
             &self.subsystems,
             sess_id.clone(),
-            principal,
             turn_count,
-            working_dir,
+            working_dir.clone(),
             operation_id,
             main_pid,
         ));
 
-        // Admission controller for tool gating.
-        let admission = self.admission.clone();
-        let adm_op_id = operation_id;
-        let adm_pid = main_pid;
-        let adm_sandbox = sandbox_requirement;
-        // PR-3: cooperative cancellation token from the per-turn OperationScope.
-        let cancel_tok = scope_token.clone();
+        let authority = Arc::new(RegistryAuthorityProvider::new(
+            corpus::tool_risk_levels(&self.subsystems.corpus.tools).await,
+            principal,
+            sess_id.clone(),
+            working_dir,
+            sandbox_requirement,
+            scope_token.clone(),
+        ));
+        let capability =
+            CapabilityRuntimeFactory::build(self.admission.clone(), tool_executor, authority);
 
         let execute_tool = move |tool_id: &str, name: &str, input: &serde_json::Value| {
-            let exec = tool_executor.clone();
-            let adm = admission.clone();
+            let capability = capability.clone();
             let (tid, n, inp) = (tool_id.to_string(), name.to_string(), input.clone());
-            let op_id = adm_op_id;
-            let pid = adm_pid;
-            let sandbox_req = adm_sandbox;
-            let cancel_tok = cancel_tok.clone();
             async move {
-                // PR-3: cooperative cancellation before admission gate.
-                if cancel_tok.is_cancelled() {
-                    return (format!("turn cancelled before tool '{n}'"), true);
-                }
-                // Build admission request for this tool invocation.
-                let adm_req = AdmissionRequest {
-                    operation_id: op_id,
-                    process_id: pid,
-                    principal: PrincipalId("agent".into()),
-                    capability: CapabilityId(n.clone()),
-                    action: n.clone(),
-                    input_summary: format!("{:?}", inp).chars().take(200).collect(),
-                    risk: RiskLevel::ReadOnly,
-                    requested_scope: CapabilityScope::default(),
-                    budget: None,
-                    lease: None,
-                    sandbox: sandbox_req,
-                };
-
-                // Admit — must pass admission gate.
-                let permit = match adm.admit(adm_req).await {
-                    Ok(p) => p,
-                    Err(e) => return (format!("admission denied: {e}"), true),
-                };
-
-                // Execute the tool through the existing pipeline.
-                let (content, is_error) = exec.execute(&permit, &tid, &n, &inp).await;
-
-                // Settle the permit (best-effort audit).
-                let _ = adm
-                    .settle(
-                        permit.id,
-                        UsageReport {
-                            permit_id: permit.id,
-                            output_bytes: content.len() as u64,
-                            exit_code: if is_error { Some(1) } else { Some(0) },
-                            ..Default::default()
-                        },
-                    )
+                let result = capability
+                    .invoke(CapabilityCall {
+                        operation_id,
+                        process_id: main_pid,
+                        name: n,
+                        input: inp,
+                        call_id: tid,
+                        deadline: None,
+                    })
                     .await;
-
-                (content, is_error)
+                (result.output, result.is_error)
             }
         };
 

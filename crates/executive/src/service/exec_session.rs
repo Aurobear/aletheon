@@ -37,15 +37,19 @@ use corpus::security::approval::{ApprovalGate, TerminalApprovalGate};
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::SandboxPreference;
-use corpus::tools::tools::{ToolContext, ToolRegistry};
+use corpus::CorpusToolExecutor;
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, AdmissionRequest, AgoraOps, CapabilityCall, CapabilityId,
-    CapabilityResult, CapabilityScope, LlmProvider, Message, MonoTime, PrincipalId, ProcessId,
-    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
+    AgoraOps, CapabilityCall, CapabilityResult, LlmProvider, Message, PrincipalId, ProcessId,
+    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices,
 };
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::host::load_dotenv;
+use crate::service::governed_capability::{
+    CapabilityRuntimeFactory, RegistryAuthorityProvider, TurnCapabilityInvoker,
+};
 use crate::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 
 /// Builder for a CLI `exec` session (non-daemon, single-turn).
@@ -116,7 +120,7 @@ impl ExecSessionBuilder {
         info!(provider = llm.name(), model = %self.model, "LLM provider initialized");
 
         // Create tool registry with default tools
-        let tool_registry = Arc::new(ToolRegistry::default());
+        let tool_registry = corpus::default_tool_registry();
 
         // Guarded runner with terminal approval for risky (L2+) tools.
         let audit_path = working_dir.join(".aletheon-audit.jsonl");
@@ -127,13 +131,15 @@ impl ExecSessionBuilder {
         let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
             AuditLogger::new(audit_path)?,
             sandbox_preference,
-            clock,
+            clock.clone(),
         )
         .with_approval_gate(approval);
         let turn_id = uuid::Uuid::new_v4().to_string();
         runner.on_new_turn(&turn_id);
 
-        let tool_count = tool_registry.definitions().len();
+        let tool_definitions = tool_registry.lock().await.definitions();
+        let tool_risks = corpus::tool_risk_levels(&tool_registry).await;
+        let tool_count = tool_definitions.len();
         info!(tool_count, "Tools registered");
 
         let system_prompt = format!(
@@ -148,18 +154,27 @@ impl ExecSessionBuilder {
         // Create kernel service ports for process/operation tracking + admission gating.
         let ports = Arc::new(ServicePorts::new());
 
+        let executor = Arc::new(CorpusToolExecutor::new(
+            tool_registry.clone(),
+            Arc::new(Mutex::new(runner)),
+            clock,
+        ));
+        let authority = Arc::new(RegistryAuthorityProvider::new(
+            tool_risks,
+            PrincipalId("exec".into()),
+            session_id,
+            working_dir,
+            SandboxRequirement::NotRequired,
+            CancellationToken::new(),
+        ));
+        let capability =
+            CapabilityRuntimeFactory::build(ports.admission.clone(), executor, authority);
+
         let services = Arc::new(ExecTurnServices {
             llm: llm.clone(),
-            tool_registry,
-            runner: tokio::sync::Mutex::new(runner),
-            tool_ctx: ToolContext {
-                working_dir: working_dir.clone(),
-                session_id: session_id.clone(),
-                clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            },
-            turn_id,
+            tool_definitions,
             system_prompt,
-            admission: ports.admission.clone(),
+            capability,
             agora: None,
         });
 
@@ -178,12 +193,9 @@ impl ExecSessionBuilder {
 
 struct ExecTurnServices {
     llm: Arc<dyn LlmProvider>,
-    tool_registry: Arc<ToolRegistry>,
-    runner: tokio::sync::Mutex<ToolRunnerWithGuard>,
-    tool_ctx: ToolContext,
-    turn_id: String,
+    tool_definitions: Vec<ToolDefinition>,
     system_prompt: String,
-    admission: Arc<dyn AdmissionController>,
+    capability: Arc<dyn TurnCapabilityInvoker>,
     // Optional shared workspace for exec mode.
     // When set (via with_agora), agora_view reflects real state.
     // Default: None (CLI exec is single-user).
@@ -215,104 +227,8 @@ impl TurnServices for ExecTurnServices {
         Ok(fabric::AgoraView::default())
     }
 
-    /// Route tool invocation through the kernel AdmissionController.
-    ///
-    /// # Admission parity with daemon path
-    ///
-    /// This method constructs AdmissionRequest identically to the daemon path
-    /// (`daemon_turn/execute.rs:381`), with three intentional differences:
-    /// - `principal`: "exec" (CLI) vs "agent" (daemon) — audit distinction
-    /// - `sandbox`: NotRequired vs dynamic — CLI runs unsandboxed
-    /// - Approval: `TerminalApprovalGate` (interactive) vs `SelfField` review (automated)
-    ///
-    /// Both paths route through the same `AdmissionController::admit/settle` pipeline.
     async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
-        // Route all tool invocations through admission controller.
-        let adm_req = AdmissionRequest {
-            operation_id: req.operation_id,
-            process_id: req.process_id,
-            principal: PrincipalId("exec".into()),
-            capability: CapabilityId(req.name.clone()),
-            action: req.name.clone(),
-            input_summary: format!("{:?}", req.input).chars().take(200).collect(),
-            risk: RiskLevel::ReadOnly,
-            requested_scope: CapabilityScope::default(),
-            budget: None,
-            lease: None,
-            sandbox: SandboxRequirement::NotRequired,
-        };
-
-        let permit = match self.admission.admit(adm_req).await {
-            Ok(p) => p,
-            Err(e) => {
-                return CapabilityResult {
-                    call_id: req.call_id,
-                    output: format!("admission denied: {e}"),
-                    is_error: true,
-                    usage: UsageReport::default(),
-                    audit_id: None,
-                };
-            }
-        };
-
-        if !permit.is_valid_at(MonoTime(0)) {
-            return CapabilityResult {
-                call_id: req.call_id,
-                output: "admission permit invalid".into(),
-                is_error: true,
-                usage: UsageReport {
-                    permit_id: permit.id,
-                    ..Default::default()
-                },
-                audit_id: Some(fabric::AuditEventId::new()),
-            };
-        }
-
-        let Some(tool) = self.tool_registry.get(&req.name).cloned() else {
-            let _ = self
-                .admission
-                .settle(permit.id, UsageReport::default())
-                .await;
-            return CapabilityResult {
-                call_id: req.call_id,
-                output: format!("Error: Unknown tool '{}'", req.name),
-                is_error: true,
-                usage: UsageReport {
-                    permit_id: permit.id,
-                    ..Default::default()
-                },
-                audit_id: Some(fabric::AuditEventId::new()),
-            };
-        };
-
-        info!(tool = %req.name, "Executing tool (admitted)");
-        let result = self
-            .runner
-            .lock()
-            .await
-            .run(tool.as_ref(), req.input, &self.tool_ctx, &self.turn_id)
-            .await;
-
-        let usage = UsageReport {
-            permit_id: permit.id,
-            output_bytes: result.content.len() as u64,
-            exit_code: if result.is_error { Some(1) } else { Some(0) },
-            ..Default::default()
-        };
-        let _ = self.admission.settle(permit.id, usage.clone()).await;
-
-        if result.is_error {
-            tracing::warn!(tool = %req.name, error = %result.content, "Tool failed/denied");
-        } else {
-            info!(tool = %req.name, "Tool succeeded");
-        }
-        CapabilityResult {
-            call_id: req.call_id,
-            output: result.content,
-            is_error: result.is_error,
-            usage,
-            audit_id: Some(fabric::AuditEventId::new()),
-        }
+        self.capability.invoke(req).await
     }
 
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {
@@ -320,7 +236,7 @@ impl TurnServices for ExecTurnServices {
     }
 
     fn tool_definitions(&self) -> Vec<ToolDefinition> {
-        self.tool_registry.definitions()
+        self.tool_definitions.clone()
     }
 
     fn seed_messages(&self, _request: &TurnRequest) -> Vec<Message> {

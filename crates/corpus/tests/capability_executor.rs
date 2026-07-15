@@ -148,7 +148,7 @@ async fn fixture() -> (
         clock.clone(),
     );
     let executor = CorpusToolExecutor::new(
-        Arc::new(registry),
+        Arc::new(tokio::sync::Mutex::new(registry)),
         Arc::new(tokio::sync::Mutex::new(runner)),
         clock,
     );
