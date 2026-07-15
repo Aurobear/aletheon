@@ -221,7 +221,10 @@ async fn every_cargo_check_reports_failure_timeout_and_output_truncation() {
             let fixture = Fixture::new();
             fixture.set_mode(command_name(kind), mode);
             let service = VerificationService::with_clock(
-                fixture.config(Duration::from_millis(40), 64),
+                // Process startup plus the output-producing shell pipeline can
+                // exceed 40 ms on a busy workspace runner. Keep this far below
+                // the fixture's 30-second hang while avoiding false timeouts.
+                fixture.config(Duration::from_millis(250), 64),
                 Arc::new(SystemClock::new()),
             )
             .unwrap();
