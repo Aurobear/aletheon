@@ -184,60 +184,43 @@ impl TurnPipeline {
         }
     }
 
-    pub(crate) async fn inject_fact_recall(&self, message: &str, effective_message: &mut String) {
-        let fs = self.subsystems.memory.fact_store.lock().await;
-        let keywords: Vec<String> = message
-            .split_whitespace()
-            .filter(|w| w.len() > 3)
-            .map(|w| w.to_lowercase())
-            .collect();
-        let query = keywords.join(" ");
-        if query.len() < 8 {
+    pub(crate) async fn inject_composite_recall(
+        &self,
+        message: &str,
+        session: &str,
+        effective_message: &mut String,
+    ) {
+        const MAX_ITEMS: usize = 8;
+        const MAX_BYTES: usize = 16 * 1024;
+        const RECALL_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
+        if message.trim().len() < 8 || message.trim_start().starts_with('/') {
             return;
         }
-        if let Ok(facts) = fs.search_facts_governed(&query, None, false, 0.15, 4) {
-            if !facts.is_empty() {
-                let mut recall_block = String::from("\n[Recalled memories]\n");
-                let mut remaining = MAX_RECALL_TOTAL_CHARS;
-                for fact in &facts {
-                    if remaining == 0 {
-                        break;
-                    }
-                    recall_block.push_str("- ");
-                    append_bounded_text(
-                        &mut recall_block,
-                        &fact.content,
-                        MAX_RECALLED_FACT_CHARS,
-                        &mut remaining,
-                    );
-                    recall_block.push_str(&format!(" (trust: {:.2})\n", fact.trust_score));
-                    let _ = fs.record_feedback(fact.fact_id, true);
-                }
-                let entities = FactStore::extract_entities(message);
-                for entity in entities.iter().take(3) {
-                    let _ = fs.resolve_entity(entity).map(|eid| {
-                        let _ = fs.get_entity_facts(eid).map(|related| {
-                            for rf in related.iter().take(1) {
-                                if !facts.iter().any(|f| f.fact_id == rf.fact_id) {
-                                    if remaining == 0 {
-                                        break;
-                                    }
-                                    recall_block.push_str("- ");
-                                    append_bounded_text(
-                                        &mut recall_block,
-                                        &rf.content,
-                                        MAX_RECALLED_FACT_CHARS,
-                                        &mut remaining,
-                                    );
-                                    recall_block.push_str(&format!(" (entity: {})\n", entity));
-                                }
-                            }
-                        });
-                    });
-                }
-                info!(count = facts.len(), "Fact recall injected");
-                effective_message.push_str(&recall_block);
-            }
+        let normalized = message.to_ascii_lowercase();
+        let include_historical = ["historical", "history", "superseded", "历史", "旧决策"]
+            .iter()
+            .any(|marker| normalized.contains(marker));
+        let request = mnemosyne::RecallRequest {
+            session: session.to_owned(),
+            query: message.to_owned(),
+            max_items: MAX_ITEMS,
+            max_content_bytes: MAX_BYTES,
+            current_at: Some(fabric::wall_to_datetime(self.clock.wall_now())),
+            include_historical,
+        };
+        let context = crate::r#impl::hook_lifecycle::recall_inject::recall_composite_context(
+            self.subsystems.memory.memory_service.as_ref(),
+            request,
+            RECALL_TIMEOUT,
+            MAX_ITEMS,
+            MAX_BYTES,
+        )
+        .await;
+        if !context.is_empty() {
+            effective_message.push('\n');
+            effective_message.push_str(&context);
+            effective_message.push('\n');
         }
     }
 

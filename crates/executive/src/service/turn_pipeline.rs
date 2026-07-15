@@ -184,7 +184,7 @@ impl TurnPipeline {
         }
         self.inject_keyword_skills(&message, &mut effective_message)
             .await;
-        self.inject_fact_recall(&message, &mut effective_message)
+        self.inject_composite_recall(&message, &turn_request.session_id, &mut effective_message)
             .await;
         self.inject_core_memory(&mut effective_message).await;
         self.inject_skill_suggestion(&message, &mut effective_message)

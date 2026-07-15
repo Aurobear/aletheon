@@ -21,10 +21,24 @@ pub fn render_recall_set(recall: &RecallSet, max_bytes: usize) -> String {
             TemporalState::Expired => "expired",
             TemporalState::Unknown => "unknown",
         };
+        let observed = item.metadata.observed_time.to_rfc3339();
+        let valid_from = item
+            .metadata
+            .valid_from
+            .map(|value| value.to_rfc3339())
+            .unwrap_or_else(|| "unknown".into());
+        let valid_until = item
+            .metadata
+            .valid_until
+            .map(|value| value.to_rfc3339())
+            .unwrap_or_else(|| "open".into());
         let entry = format!(
-            "- source={} source_id={} state={} confidence={:.2}\n  {}\n",
+            "- source={} source_id={} observed={} valid=[{},{}] state={} confidence={:.2}\n  {}\n",
             escape(&item.metadata.provenance.source),
             escape(&item.metadata.provenance.source_id),
+            observed,
+            valid_from,
+            valid_until,
             state,
             item.metadata.confidence,
             escape(&item.content),
