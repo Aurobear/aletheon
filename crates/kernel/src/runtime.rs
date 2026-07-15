@@ -8,7 +8,8 @@ use crate::operation::OperationTable;
 use crate::process::ProcessTable;
 use crate::space::InMemorySpaceManager;
 use crate::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
-use fabric::ipc::mailbox::InProcessMailboxService;
+use fabric::ipc::envelope_v2::Target;
+use fabric::ipc::mailbox::{InProcessMailboxService, Mailbox, MailboxService};
 use fabric::{
     AdmissionController, AdmissionError, BudgetRequest, BudgetReservationReceipt, BudgetScopeId,
     BudgetScopeKind, CancelReason, Clock, ContextBinding, ContextSpace, ExitReason, ExitStatus,
@@ -32,9 +33,40 @@ pub struct KernelRuntime {
     supervisor: Mutex<SupervisorTree>,
     mailboxes: Arc<InProcessMailboxService>,
     admission: Arc<dyn AdmissionController>,
+    production_admission: Option<Arc<ProductionAdmissionController>>,
     budget: Arc<InMemoryBudgetController>,
     leases: Arc<InMemoryResourceLeaseManager>,
     budget_ownership: Mutex<BudgetOwnership>,
+    spawn_specs: Mutex<HashMap<ProcessId, SpawnSpec>>,
+    process_mailboxes: Mutex<HashMap<ProcessId, Target>>,
+    terminal_outcomes: Mutex<HashMap<ProcessId, TerminalOutcome>>,
+    terminal_progress: Mutex<HashMap<ProcessId, TerminalProgress>>,
+    lifecycle: Mutex<()>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalOutcome {
+    pub process: ProcessId,
+    pub reason: ExitReason,
+    pub restart_decision: RestartDecision,
+    pub restarted: Vec<ProcessHandle>,
+}
+
+#[derive(Debug, Clone)]
+struct TerminalProgress {
+    reason: ExitReason,
+    phase: TerminalPhase,
+    decision: Option<RestartDecision>,
+    restart_ids: Vec<ProcessId>,
+    restarted: Vec<ProcessHandle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalPhase {
+    Cleanup,
+    MarkTerminal,
+    Supervise,
+    Restart,
 }
 
 #[derive(Default)]
@@ -51,31 +83,34 @@ impl KernelRuntime {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
         let budget = Arc::new(InMemoryBudgetController::new());
         let leases = Arc::new(InMemoryResourceLeaseManager::new());
-        let admission: Arc<dyn AdmissionController> = Arc::new(
+        let production = Arc::new(
             ProductionAdmissionController::new(clock.clone())
                 .with_budget(budget.clone())
                 .with_leases(leases.clone())
                 .with_sandbox_available(false),
         );
-        Self::with_components(clock, admission, budget, leases)
+        let admission: Arc<dyn AdmissionController> = production.clone();
+        Self::with_components(clock, admission, Some(production), budget, leases)
     }
 
     pub fn with_clock(clock: Arc<dyn Clock>) -> Self {
         let budget = Arc::new(InMemoryBudgetController::new());
         let leases = Arc::new(InMemoryResourceLeaseManager::new());
-        let admission: Arc<dyn AdmissionController> = Arc::new(
+        let production = Arc::new(
             ProductionAdmissionController::new(clock.clone())
                 .with_budget(budget.clone())
                 .with_leases(leases.clone())
                 .with_sandbox_available(false),
         );
-        Self::with_components(clock, admission, budget, leases)
+        let admission: Arc<dyn AdmissionController> = production.clone();
+        Self::with_components(clock, admission, Some(production), budget, leases)
     }
 
     pub fn with_admission(clock: Arc<dyn Clock>, admission: Arc<dyn AdmissionController>) -> Self {
         Self::with_components(
             clock,
             admission,
+            None,
             Arc::new(InMemoryBudgetController::new()),
             Arc::new(InMemoryResourceLeaseManager::new()),
         )
@@ -84,6 +119,7 @@ impl KernelRuntime {
     fn with_components(
         clock: Arc<dyn Clock>,
         admission: Arc<dyn AdmissionController>,
+        production_admission: Option<Arc<ProductionAdmissionController>>,
         budget: Arc<InMemoryBudgetController>,
         leases: Arc<InMemoryResourceLeaseManager>,
     ) -> Self {
@@ -101,9 +137,15 @@ impl KernelRuntime {
             supervisor: Mutex::new(SupervisorTree::new()),
             mailboxes: Arc::new(InProcessMailboxService::new()),
             admission,
+            production_admission,
             budget,
             leases,
             budget_ownership: Mutex::new(BudgetOwnership::default()),
+            spawn_specs: Mutex::new(HashMap::new()),
+            process_mailboxes: Mutex::new(HashMap::new()),
+            terminal_outcomes: Mutex::new(HashMap::new()),
+            terminal_progress: Mutex::new(HashMap::new()),
+            lifecycle: Mutex::new(()),
         }
     }
 
@@ -117,6 +159,18 @@ impl KernelRuntime {
 
     pub fn mailbox_service(&self) -> Arc<InProcessMailboxService> {
         self.mailboxes.clone()
+    }
+
+    pub async fn register_process_mailbox(
+        &self,
+        process: ProcessId,
+        target: Target,
+        mailbox: Arc<dyn Mailbox>,
+    ) -> anyhow::Result<()> {
+        self.inspect_process(process).await?;
+        self.mailboxes.register(target.clone(), mailbox).await?;
+        self.process_mailboxes.lock().await.insert(process, target);
+        Ok(())
     }
 
     pub fn budget_controller(&self) -> Arc<InMemoryBudgetController> {
@@ -222,15 +276,8 @@ impl KernelRuntime {
         self.supervisor.lock().await.supervise(process, policy);
     }
 
-    pub async fn record_supervised_exit(
-        &self,
-        process: ProcessId,
-        reason: &ExitReason,
-    ) -> RestartDecision {
-        self.supervisor.lock().await.record_exit(process, reason)
-    }
-
     pub async fn spawn_process(&self, spec: SpawnSpec) -> anyhow::Result<ProcessHandle> {
+        let retained_spec = spec.clone();
         let parent = spec.parent;
         let namespace = spec.namespace.0.clone();
         let process = self.processes.spawn(spec).await?;
@@ -276,15 +323,211 @@ impl KernelRuntime {
         ownership
             .processes
             .insert(process.id, process_budget.scope_id);
+        drop(ownership);
+        self.spawn_specs
+            .lock()
+            .await
+            .insert(process.id, retained_spec);
         Ok(process)
     }
 
     pub async fn signal_process(&self, id: ProcessId, signal: ProcessSignal) -> anyhow::Result<()> {
-        self.processes.signal(id, signal).await
+        match signal {
+            ProcessSignal::Terminate => {
+                self.terminate_process(id, ExitReason::Cancelled("terminated".into()))
+                    .await?;
+                Ok(())
+            }
+            ProcessSignal::Kill => {
+                self.terminate_process(id, ExitReason::Panic("killed".into()))
+                    .await?;
+                Ok(())
+            }
+            other => self.processes.signal(id, other).await,
+        }
     }
 
     pub async fn exit_process(&self, id: ProcessId, reason: ExitReason) -> anyhow::Result<()> {
-        self.processes.mark_exit(id, reason).await
+        self.terminate_process(id, reason).await.map(|_| ())
+    }
+
+    /// Validate and complete one process terminal transaction. Cleanup is
+    /// serialized, retry-idempotent, and always precedes publishing the
+    /// terminal Process snapshot and applying supervision.
+    pub async fn terminate_process(
+        &self,
+        id: ProcessId,
+        reason: ExitReason,
+    ) -> anyhow::Result<TerminalOutcome> {
+        let _lifecycle = self.lifecycle.lock().await;
+        if let Some(outcome) = self.terminal_outcomes.lock().await.get(&id).cloned() {
+            return Ok(outcome);
+        }
+        self.terminal_progress
+            .lock()
+            .await
+            .entry(id)
+            .or_insert_with(|| TerminalProgress {
+                reason,
+                phase: TerminalPhase::Cleanup,
+                decision: None,
+                restart_ids: Vec::new(),
+                restarted: Vec::new(),
+            });
+
+        loop {
+            let progress = self
+                .terminal_progress
+                .lock()
+                .await
+                .get(&id)
+                .cloned()
+                .expect("terminal progress exists");
+            match progress.phase {
+                TerminalPhase::Cleanup => {
+                    self.cleanup_process_resources(id).await?;
+                    self.terminal_progress
+                        .lock()
+                        .await
+                        .get_mut(&id)
+                        .expect("terminal progress exists")
+                        .phase = TerminalPhase::MarkTerminal;
+                }
+                TerminalPhase::MarkTerminal => {
+                    if !self.processes.inspect(id).await?.state.is_terminal() {
+                        self.processes
+                            .mark_exit(id, progress.reason.clone())
+                            .await?;
+                    }
+                    self.terminal_progress
+                        .lock()
+                        .await
+                        .get_mut(&id)
+                        .expect("terminal progress exists")
+                        .phase = TerminalPhase::Supervise;
+                }
+                TerminalPhase::Supervise => {
+                    // Hold the progress entry while recording the decision so
+                    // cancellation cannot consume a restart attempt without
+                    // durably advancing this in-memory transaction.
+                    let mut progresses = self.terminal_progress.lock().await;
+                    let current = progresses.get_mut(&id).expect("terminal progress exists");
+                    if current.phase != TerminalPhase::Supervise {
+                        continue;
+                    }
+                    let mut supervisor = self.supervisor.lock().await;
+                    let decision = supervisor.record_exit(id, &current.reason);
+                    current.restart_ids = match &decision {
+                        RestartDecision::Restart { .. } => vec![id],
+                        RestartDecision::RestartGroup { siblings, .. } => {
+                            let mut ids = Vec::with_capacity(siblings.len() + 1);
+                            ids.push(id);
+                            ids.extend(siblings.iter().copied());
+                            ids
+                        }
+                        RestartDecision::DoNotRestart | RestartDecision::FailedLimitReached => {
+                            Vec::new()
+                        }
+                    };
+                    current.decision = Some(decision);
+                    current.phase = TerminalPhase::Restart;
+                }
+                TerminalPhase::Restart => break,
+            }
+        }
+
+        let progress = self
+            .terminal_progress
+            .lock()
+            .await
+            .get(&id)
+            .cloned()
+            .expect("terminal progress exists");
+        for restart_id in progress
+            .restart_ids
+            .iter()
+            .copied()
+            .skip(progress.restarted.len())
+        {
+            if restart_id != id
+                && !self
+                    .processes
+                    .inspect(restart_id)
+                    .await?
+                    .state
+                    .is_terminal()
+            {
+                self.cleanup_process_resources(restart_id).await?;
+                self.processes
+                    .mark_exit(
+                        restart_id,
+                        ExitReason::Cancelled("supervisor group restart".into()),
+                    )
+                    .await?;
+            }
+            let Some(spec) = self.spawn_specs.lock().await.get(&restart_id).cloned() else {
+                continue;
+            };
+            let replacement = self.spawn_process(spec).await?;
+            self.supervisor
+                .lock()
+                .await
+                .inherit_restart_lineage(restart_id, replacement.id);
+            self.terminal_progress
+                .lock()
+                .await
+                .get_mut(&id)
+                .expect("terminal progress retained")
+                .restarted
+                .push(replacement);
+        }
+        let progress = self
+            .terminal_progress
+            .lock()
+            .await
+            .remove(&id)
+            .expect("terminal progress retained");
+        let outcome = TerminalOutcome {
+            process: id,
+            reason: progress.reason,
+            restart_decision: progress.decision.expect("supervision phase completed"),
+            restarted: progress.restarted,
+        };
+        self.terminal_outcomes
+            .lock()
+            .await
+            .insert(id, outcome.clone());
+        Ok(outcome)
+    }
+
+    async fn cleanup_process_resources(&self, id: ProcessId) -> anyhow::Result<()> {
+        let snapshot = self.processes.inspect(id).await?;
+        for operation in self.operations.ids_for_owner(id).await {
+            self.operations
+                .cancel(operation, CancelReason::Other("process_exit".into()))
+                .await?;
+        }
+        if let Some(admission) = &self.production_admission {
+            admission.revoke_process_permits(id).await;
+        }
+        let process_scope = self
+            .budget_ownership
+            .lock()
+            .await
+            .processes
+            .get(&id)
+            .copied();
+        if let Some(scope) = process_scope {
+            self.budget
+                .revoke_scope_tree(scope)
+                .await
+                .map_err(|error| anyhow::anyhow!("budget cleanup failed: {error}"))?;
+        }
+        if let Some(target) = self.process_mailboxes.lock().await.remove(&id) {
+            self.mailboxes.unregister(&target).await;
+        }
+        self.spaces.release(snapshot.space);
+        Ok(())
     }
 
     pub async fn inspect_process(&self, id: ProcessId) -> anyhow::Result<ProcessSnapshot> {

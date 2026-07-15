@@ -459,13 +459,18 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
         llm: HangingLlm { hang_ms: 500 },
     });
     let kernel = test_kernel();
-    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel);
+    let process = kernel
+        .spawn_process(SpawnSpec::default())
+        .await
+        .expect("deadline process");
+    let turn_service =
+        TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel.clone());
 
     let result = turn_service
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
+                process_id: process.id,
                 session_id: "deadline-gate1".into(),
                 input: "should timeout".into(),
                 working_dir: PathBuf::from("."),

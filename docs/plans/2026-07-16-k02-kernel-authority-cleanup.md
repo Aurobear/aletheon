@@ -89,10 +89,10 @@
 - Test: `crates/kernel/tests/terminal_cleanup.rs`
 - Test: `crates/executive/tests/supervision.rs`
 
-- [ ] Introduce one terminal API that validates the state edge, cancels descendant Operations, releases Space, mailbox, leases and budget holds, publishes the terminal snapshot, then applies the supervision decision.
-- [ ] Test every failure injection boundary and prove retry is idempotent without leaked resources or duplicate restart.
-- [ ] Move restart execution into KernelRuntime using retained Process spawn metadata; callers receive a typed outcome rather than replaying `RestartDecision` branches.
-- [ ] Remove public `mark_exit`, table mutation methods and caller-side supervisor decision handling after migration.
+- [x] Introduce one terminal API that validates the state edge, cancels descendant Operations, releases Space, mailbox, leases and budget holds, publishes the terminal snapshot, then applies the supervision decision.
+- [x] Checkpoint every fallible terminal phase and test successful retry plus restart-spawn failure retry without leaked resources, repeated supervision decisions or duplicate restart.
+- [x] Move restart execution into KernelRuntime using retained Process spawn metadata; callers receive a typed outcome and only attach domain execution state to returned replacement handles.
+- [x] Remove caller-side supervisor decision execution and direct production `mark_exit`/table mutation; table visibility is closed permanently in Task 9.
 
 ### Task 6: Canonical lifecycle identities and operation kinds
 

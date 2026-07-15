@@ -80,7 +80,7 @@ impl ProcessTable {
     }
 
     pub async fn mark_exit(&self, id: ProcessId, reason: ExitReason) -> anyhow::Result<()> {
-        let (notify, space) = {
+        let notify = {
             let mut records = self.records.lock().await;
             let runtime = records
                 .get_mut(&id)
@@ -109,10 +109,8 @@ impl ProcessTable {
             });
             runtime.record.state = terminal;
             runtime.record.last_heartbeat = self.clock.mono_now();
-            (runtime.notify.clone(), runtime.record.space)
+            runtime.notify.clone()
         };
-        // Kernel-owned lifecycle: free the process's context space on terminal exit.
-        self.space_manager.release(space);
         notify.notify_waiters();
         Ok(())
     }
@@ -316,7 +314,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminate_releases_process_space() {
+    async fn table_terminal_transition_defers_cross_resource_cleanup_to_runtime() {
         use crate::chronos::SystemClock;
         use fabric::types::space::{ContextBinding, SessionId};
         let sm = std::sync::Arc::new(InMemorySpaceManager::new());
@@ -330,6 +328,9 @@ mod tests {
             .signal(h.id, fabric::types::process::ProcessSignal::Terminate)
             .await
             .unwrap();
-        assert!(sm.get_space(space).is_none(), "space released on terminate");
+        assert!(
+            sm.get_space(space).is_some(),
+            "opaque KernelRuntime, not the state table, owns resource cleanup"
+        );
     }
 }

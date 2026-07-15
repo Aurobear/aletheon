@@ -299,8 +299,7 @@ impl SubAgentSpawner {
         let mailbox_target = Self::mailbox_target_for(process.id);
         let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(64));
         self.kernel
-            .mailbox_service()
-            .register(mailbox_target.clone(), mailbox)
+            .register_process_mailbox(process.id, mailbox_target.clone(), mailbox)
             .await?;
 
         let mut scope = OperationScope::new(operation.id);
@@ -409,8 +408,7 @@ impl SubAgentSpawner {
         let mailbox_target = Self::mailbox_target_for(process.id);
         let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(64));
         self.kernel
-            .mailbox_service()
-            .register(mailbox_target.clone(), mailbox)
+            .register_process_mailbox(process.id, mailbox_target.clone(), mailbox)
             .await?;
 
         let mut scope = OperationScope::new(operation.id);
@@ -529,83 +527,25 @@ impl SubAgentSpawner {
                 .await
                 .map_err(|e| TransitionError::Kernel(e.to_string()))?,
             SubAgentState::Failed => {
-                self.kernel
-                    .exit_process(process_id, ExitReason::Failed("sub-agent failed".into()))
+                let outcome = self
+                    .kernel
+                    .terminate_process(process_id, ExitReason::Failed("sub-agent failed".into()))
                     .await
                     .map_err(|e| TransitionError::Kernel(e.to_string()))?;
-
-                // Consult supervisor for restart decision.
-                let snapshot = self
-                    .kernel
-                    .inspect_process(process_id)
-                    .await
-                    .map_err(|e| TransitionError::Kernel(e.to_string()))?;
-                let exit_reason = snapshot
-                    .exit
-                    .as_ref()
-                    .map(|e| e.reason.clone())
-                    .unwrap_or(ExitReason::Failed("unknown".into()));
-                let decision = self
-                    .kernel
-                    .record_supervised_exit(process_id, &exit_reason)
-                    .await;
-
-                match decision {
-                    RestartDecision::Restart { attempt } => {
-                        warn!(
-                            agent_id = %id,
-                            attempt,
-                            reason = ?exit_reason,
-                            "Sub-agent failed; supervisor restarting",
-                        );
-                        self.restart_agent(id).await?;
-                    }
-                    RestartDecision::RestartGroup {
-                        attempt,
-                        ref siblings,
-                    } => {
-                        warn!(
-                            agent_id = %id,
-                            attempt,
-                            sibling_count = siblings.len(),
-                            reason = ?exit_reason,
-                            "Sub-agent failed; supervisor restarting group",
-                        );
-                        self.restart_agent(id).await?;
-                        // Restart siblings: look up their agent-id strings
-                        // from the process table.
-                        let sibling_ids: Vec<String> = siblings
-                            .iter()
-                            .filter_map(|&pid| {
-                                self.agents.iter().find_map(|(aid, entry)| {
-                                    if entry.process_id == pid {
-                                        Some(aid.clone())
-                                    } else {
-                                        None
-                                    }
-                                })
-                            })
-                            .collect();
-                        for sid in &sibling_ids {
-                            if let Err(e) = self.restart_agent(sid).await {
-                                warn!(
-                                    sibling_agent_id = %sid,
-                                    error = %e,
-                                    "Failed to restart sibling agent",
-                                );
-                            }
-                        }
-                    }
-                    RestartDecision::FailedLimitReached => {
-                        warn!(
-                            agent_id = %id,
-                            reason = ?exit_reason,
-                            "Sub-agent restart limit reached; not restarting",
-                        );
-                    }
-                    RestartDecision::DoNotRestart => {
-                        // RestartPolicy::Never or non-failure exit — no action needed.
-                    }
+                let mut source_ids = vec![id.to_string()];
+                if let RestartDecision::RestartGroup { siblings, .. } = &outcome.restart_decision {
+                    source_ids.extend(siblings.iter().filter_map(|process| {
+                        self.agents.iter().find_map(|(agent_id, entry)| {
+                            (entry.process_id == *process).then(|| agent_id.clone())
+                        })
+                    }));
+                }
+                for (source_id, replacement) in source_ids
+                    .into_iter()
+                    .zip(outcome.restarted.iter().copied())
+                {
+                    self.attach_restarted_process(&source_id, replacement)
+                        .await?;
                 }
             }
             SubAgentState::Destroyed => self
@@ -621,12 +561,13 @@ impl SubAgentSpawner {
         Ok(())
     }
 
-    /// Spawn a replacement sub-agent when the supervisor permits restart.
-    ///
-    /// Reads the original `task` / `parent_turn_id` from the failed entry,
-    /// spawns a fresh process with the same restart policy, and inserts the
-    /// new entry under the new agent id.
-    async fn restart_agent(&mut self, failed_id: &str) -> Result<(), TransitionError> {
+    /// Attach Executive execution state to a replacement process that Kernel
+    /// already created from retained spawn metadata.
+    async fn attach_restarted_process(
+        &mut self,
+        failed_id: &str,
+        process: fabric::ProcessHandle,
+    ) -> Result<(), TransitionError> {
         let (task, parent_turn_id, runtime_id) = {
             let entry = self
                 .agents
@@ -638,12 +579,76 @@ impl SubAgentSpawner {
                 entry.runtime_id.clone(),
             )
         };
-        // Spawn replacement; use Never for the replacement to avoid infinite
-        // restart chains — the supervisor already tracks the restart count on
-        // the original ProcessId.
-        self.spawn_selected(task, parent_turn_id, runtime_id, RestartPolicy::Never)
+        let runtime = runtime_id
+            .as_ref()
+            .map(|id| self.runtime_registry.resolve(id))
+            .transpose()
+            .map_err(|e| TransitionError::Kernel(e.to_string()))?;
+        let operation = self
+            .kernel
+            .submit_operation(OperationRequest {
+                owner: process.id,
+                parent: None,
+                kind: OperationKind::SubAgent,
+                deadline: None,
+            })
             .await
             .map_err(|e| TransitionError::Kernel(e.to_string()))?;
+        self.kernel
+            .start_operation(operation.id)
+            .await
+            .map_err(|e| TransitionError::Kernel(e.to_string()))?;
+        self.kernel
+            .set_active_operation(process.id, Some(operation.id))
+            .await
+            .map_err(|e| TransitionError::Kernel(e.to_string()))?;
+        let mailbox_target = Self::mailbox_target_for(process.id);
+        self.kernel
+            .register_process_mailbox(
+                process.id,
+                mailbox_target.clone(),
+                Arc::new(InProcessMailbox::with_capacity(64)),
+            )
+            .await
+            .map_err(|e| TransitionError::Kernel(e.to_string()))?;
+        let mut scope = OperationScope::new(operation.id);
+        let token = scope.token();
+        if let Some(runtime) = runtime {
+            let task_clone = task.clone();
+            scope.spawn("sub-agent-restart", async move {
+                match runtime.run(&task_clone, token).await {
+                    Ok(_) => OperationExitReason::Completed,
+                    Err(error) => OperationExitReason::Failed(error),
+                }
+            });
+        } else {
+            scope.spawn("sub-agent-restart", async move {
+                token.cancelled().await;
+                OperationExitReason::Cancelled(CancelReason::User)
+            });
+        }
+        let snapshot = self
+            .kernel
+            .inspect_process(process.id)
+            .await
+            .map_err(|e| TransitionError::Kernel(e.to_string()))?;
+        let id = process.id.0.to_string();
+        let handle =
+            Self::handle_from_snapshot(id.clone(), task.clone(), parent_turn_id.clone(), &snapshot);
+        self.agents.insert(
+            id,
+            SubAgentEntry {
+                handle,
+                state: SubAgentState::Created,
+                process_id: process.id,
+                mailbox_target,
+                operation_id: operation.id,
+                scope,
+                task,
+                parent_turn_id,
+                runtime_id,
+            },
+        );
         Ok(())
     }
 

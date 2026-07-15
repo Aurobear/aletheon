@@ -240,7 +240,7 @@ async fn spawner_restart_attempt_is_tracked_in_supervisor_tree() {
         .await
         .unwrap();
 
-    // Run then fail twice. After the second failure the limit is reached.
+    // Run and fail each generation. The restart count follows the lineage.
     spawner
         .transition(&original.id, SubAgentState::Running)
         .await
@@ -253,13 +253,6 @@ async fn spawner_restart_attempt_is_tracked_in_supervisor_tree() {
         .unwrap();
     assert_eq!(spawner.list().len(), 2, "first failure spawns replacement");
     assert_eq!(spawner.state(&original.id), Some(SubAgentState::Failed));
-    // The original stays Failed; a second transition to Failed is illegal
-    // (Failed can only go to Destroyed).  The restart count on the
-    // SupervisorTree is internal, but the existing SupervisorTree unit tests
-    // verify the attempt counter exhausts correctly.
-    //
-    // What we CAN verify here: the replacement does NOT itself restart
-    // (it was spawned with RestartPolicy::Never).
     let replacement_id = spawner
         .list()
         .iter()
@@ -276,11 +269,30 @@ async fn spawner_restart_attempt_is_tracked_in_supervisor_tree() {
         .await
         .unwrap();
 
-    // After the replacement fails with Never policy, no third agent appears.
+    // Second generation failure consumes attempt 2 and creates generation 3.
     assert_eq!(
         spawner.list().len(),
-        2,
-        "replacement has Never policy; no third agent spawned"
+        3,
+        "restart policy and counter follow the process lineage"
     );
     assert_eq!(spawner.state(&replacement_id), Some(SubAgentState::Failed));
+    let third_id = spawner
+        .list()
+        .iter()
+        .find(|handle| handle.id != original.id && handle.id != replacement_id)
+        .map(|handle| handle.id.clone())
+        .expect("second replacement should exist");
+    spawner
+        .transition(&third_id, SubAgentState::Running)
+        .await
+        .unwrap();
+    spawner
+        .transition(&third_id, SubAgentState::Failed)
+        .await
+        .unwrap();
+    assert_eq!(
+        spawner.list().len(),
+        3,
+        "attempt 3 exceeds max_restarts=2 and creates no fourth generation"
+    );
 }

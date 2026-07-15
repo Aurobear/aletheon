@@ -81,6 +81,28 @@ impl SupervisorTree {
         self.policies.insert(id, policy);
     }
 
+    pub fn policy(&self, id: ProcessId) -> RestartPolicy {
+        self.policies
+            .get(&id)
+            .copied()
+            .unwrap_or(RestartPolicy::Never)
+    }
+
+    pub fn inherit_restart_lineage(&mut self, previous: ProcessId, replacement: ProcessId) {
+        let policy = self.policy(previous);
+        let attempts = self.restarts.get(&previous).copied().unwrap_or(0);
+        self.policies.insert(replacement, policy);
+        self.restarts.insert(replacement, attempts);
+        if let Some(group_name) = self.process_groups.get(&previous).cloned() {
+            self.process_groups.insert(replacement, group_name.clone());
+            if let Some(group) = self.groups.get_mut(&group_name) {
+                if let Some(position) = group.members.iter().position(|id| *id == previous) {
+                    group.members[position] = replacement;
+                }
+            }
+        }
+    }
+
     /// Create a supervised group.
     ///
     /// Group strategies control how failures propagate across sibling

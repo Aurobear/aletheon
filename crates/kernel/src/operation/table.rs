@@ -166,6 +166,15 @@ impl OperationTable {
         ordered
     }
 
+    pub(crate) async fn ids_for_owner(&self, owner: fabric::ProcessId) -> Vec<OperationId> {
+        self.records
+            .lock()
+            .await
+            .values()
+            .filter_map(|runtime| (runtime.record.owner == owner).then_some(runtime.record.id))
+            .collect()
+    }
+
     async fn cancel_one(&self, id: OperationId, reason: CancelReason) -> anyhow::Result<()> {
         let notify = {
             let mut records = self.records.lock().await;
