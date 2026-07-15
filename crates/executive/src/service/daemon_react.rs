@@ -46,7 +46,7 @@ where
         event_sink,
         request_messages,
         self_field,
-        cancel_token: _cancel_token,
+        cancel_token,
     } = context;
 
     let mut react_loop = crate::service::harness_factory::build_configured_react_loop(&config);
@@ -63,7 +63,9 @@ where
         goal: request.input,
         sub_goals: vec![],
     });
-    react_loop
-        .run_streaming(&DynLlmRef(&*llm), &tool_defs, execute_tool, &event_sink)
-        .await
+    let llm_ref = DynLlmRef(&*llm);
+    tokio::select! {
+        _ = cancel_token.cancelled() => anyhow::bail!("turn cancelled"),
+        result = react_loop.run_streaming(&llm_ref, &tool_defs, execute_tool, &event_sink) => result,
+    }
 }

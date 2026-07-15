@@ -16,8 +16,8 @@ use aletheon_kernel::process::ProcessTable;
 use aletheon_kernel::supervision::SupervisorTree;
 use fabric::ipc::mailbox::InProcessMailboxService;
 use fabric::{
-    AdmissionController, AgoraOps, CancelReason, Clock, LlmProvider, OperationId, OperationManager,
-    ProcessId, ProcessManager, ProcessSignal,
+    AdmissionController, AgoraOps, Clock, LlmProvider, OperationId, OperationManager, ProcessId,
+    ProcessManager, ProcessSignal,
 };
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
@@ -156,14 +156,11 @@ impl DaemonTurnOrchestrator {
     /// 2. Propagates cancellation through the operation tree in the kernel
     ///    `OperationTable` (parent → children).
     pub async fn cancel_turn(&self, operation_id: OperationId) -> anyhow::Result<()> {
-        // Cancel the OperationScope token (cooperative cancellation).
-        if let Some(ref scope) = *self.current_scope.lock().await {
-            scope.cancel.cancel();
+        if self.coordinator.cancel_operation(operation_id).await {
+            Ok(())
+        } else {
+            anyhow::bail!("turn operation is not active")
         }
-        // Propagate through kernel operation tree.
-        self.operation_table
-            .cancel(operation_id, CancelReason::User)
-            .await
     }
 
     /// Signal a process to exit (Terminate).

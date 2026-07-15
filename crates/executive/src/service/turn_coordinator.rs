@@ -49,6 +49,19 @@ impl TurnCoordinator {
         self.active.clone()
     }
 
+    pub async fn cancel_operation(&self, operation_id: fabric::OperationId) -> bool {
+        let active = self.active.lock().await;
+        if let Some(turn) = active
+            .values()
+            .find(|turn| turn.operation_id == operation_id)
+        {
+            turn.cancel.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
     pub async fn submit_with<F, Fut>(
         &self,
         mut request: TurnRequest,

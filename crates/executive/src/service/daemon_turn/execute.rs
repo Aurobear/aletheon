@@ -86,6 +86,7 @@ impl DaemonTurnOrchestrator {
         let coordinated = self
             .coordinator
             .submit_with(turn_request, &policy, move |request, cancel| async move {
+                let turn_cancel = cancel.clone();
                 {
                     let mut guard = pipeline.current_scope.lock().await;
                     *guard = Some(aletheon_kernel::operation::OperationScope::new(
@@ -128,7 +129,9 @@ impl DaemonTurnOrchestrator {
                 Ok(TurnExecution {
                     result: TurnResult {
                         output,
-                        stop: if succeeded {
+                        stop: if turn_cancel.is_cancelled() {
+                            TurnStop::Cancelled
+                        } else if succeeded {
                             TurnStop::Completed
                         } else {
                             TurnStop::Failed
