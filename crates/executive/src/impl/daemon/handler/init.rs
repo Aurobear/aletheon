@@ -1283,6 +1283,7 @@ impl RequestHandler {
             gbrain_worker_task: gbrain_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
             approved_apply: approved_apply.clone(),
             google,
+            health: Arc::new(crate::r#impl::health::HealthRegistry::production_ready()),
         };
 
         // Register initial params

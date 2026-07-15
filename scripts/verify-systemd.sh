@@ -82,7 +82,7 @@ while time.monotonic() < deadline:
             if not chunk: break
             response += chunk
         payload = json.loads(response)
-        if payload.get('result', {}).get('status') == 'ok':
+        if payload.get('result', {}).get('readiness') in ('ready', 'degraded'):
             raise SystemExit(0)
     except (OSError, ValueError, json.JSONDecodeError):
         time.sleep(.25)

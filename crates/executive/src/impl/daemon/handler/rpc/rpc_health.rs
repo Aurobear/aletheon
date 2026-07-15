@@ -95,21 +95,72 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
+        use crate::r#impl::health::ComponentHealth;
+
         let now = self.turn_orchestrator.clock.mono_now();
         let uptime = now.0.saturating_sub(self.started_at.0) / 1000;
         let active = self
             .active_connections
             .load(std::sync::atomic::Ordering::Relaxed);
         let session_count = self.sessions.lock().await.len();
+
+        self.health.set(
+            "telegram",
+            match &self.telegram_task {
+                Some(task) if task.is_finished() => ComponentHealth::degraded("worker_stopped"),
+                Some(_) => ComponentHealth::ready(),
+                None => ComponentHealth::disabled(),
+            },
+        );
+        self.health.set(
+            "google_sync",
+            match &self.google_sync {
+                Some(sync) if sync.lock().await.is_some() => ComponentHealth::ready(),
+                Some(_) => ComponentHealth::degraded("worker_stopped"),
+                None => ComponentHealth::disabled(),
+            },
+        );
+        let supplemental = self
+            .subsystems
+            .memory
+            .supplemental_memory_health
+            .lock()
+            .unwrap()
+            .clone();
+        self.health.set(
+            "gbrain_spool",
+            if !supplemental.supplemental_enabled {
+                ComponentHealth::disabled()
+            } else if supplemental.degraded {
+                let mut health = ComponentHealth::degraded("supplemental_memory");
+                health.count = Some(supplemental.queue_depth as u64);
+                health
+            } else {
+                let mut health = ComponentHealth::ready();
+                health.count = Some(supplemental.queue_depth as u64);
+                health
+            },
+        );
+        if self
+            .daemon_cancel_token
+            .as_ref()
+            .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
+        {
+            self.health.begin_shutdown();
+        }
+        let production = self.health.snapshot();
         json!({
             "jsonrpc": "2.0",
             "id": id,
             "result": {
-                "status": "ok",
+                "status": production.readiness,
+                "liveness": production.liveness,
+                "readiness": production.readiness,
+                "components": production.components,
                 "uptime_seconds": uptime,
                 "active_connections": active,
                 "session_count": session_count,
-                "daemon_version": "0.1.0"
+                "daemon_version": env!("CARGO_PKG_VERSION")
             }
         })
     }
