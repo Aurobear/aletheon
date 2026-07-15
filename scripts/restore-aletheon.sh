@@ -58,6 +58,12 @@ while IFS= read -r -d '' db; do
 done < <(find "$work/sqlite" -type f \( -name '*.db' -o -name '*.sqlite' \) -print0)
 find "$target" -type d -exec chmod go-w {} +
 find "$target" -type f -exec chmod go-w {} +
+if [[ ${EUID:-$(id -u)} -eq 0 ]] && id -u aletheon >/dev/null 2>&1; then
+  chown -R aletheon:aletheon "$target"
+  chown -R root:aletheon "$config_target"
+  find "$config_target" -type d -exec chmod 0750 {} +
+  find "$config_target" -type f -exec chmod 0640 {} +
+fi
 while IFS= read -r -d '' db; do
   [[ $(sqlite3 "$db" 'PRAGMA integrity_check;') == ok ]] || { echo "restored SQLite integrity failed" >&2; exit 1; }
 done < <(find "$target" -type f \( -name '*.db' -o -name '*.sqlite' \) -print0)

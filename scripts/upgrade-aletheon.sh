@@ -55,6 +55,7 @@ else
 fi
 
 [[ -x "$backup_command" ]] || { echo "backup command is unavailable" >&2; exit 1; }
+"$preflight" --preflight --binary "$binary" --config "$config"
 "$backup_command"
 
 current="$prefix/bin/aletheon"

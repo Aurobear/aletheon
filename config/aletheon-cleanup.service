@@ -9,6 +9,8 @@ User=aletheon
 Group=aletheon
 UMask=0027
 ExecStart=/usr/libexec/aletheon/cleanup-aletheon.sh
+Environment=ALETHEON_DATA_ROOT=/var/lib/aletheon
+Environment=ALETHEON_CACHE_ROOT=/var/cache/aletheon
 ReadWritePaths=/var/lib/aletheon /var/cache/aletheon
 ProtectSystem=strict
 ProtectHome=yes
