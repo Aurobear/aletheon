@@ -24,10 +24,14 @@ case "$mode" in
     [[ -f "$unit" && -x "$binary" ]] || usage
     binary=$(realpath "$binary")
     verifier=$(realpath "$0")
+    scripts_dir=$(dirname "$verifier")
     staged=$(mktemp --suffix=.service)
     trap 'rm -f "$staged"' EXIT
     sed -e "s#/usr/bin/aletheon#$binary#g" \
         -e "s#/usr/libexec/aletheon/verify-systemd.sh#$verifier#g" \
+        -e "s#/usr/libexec/aletheon/aletheon-secret-audit.sh#$scripts_dir/aletheon-secret-audit.sh#g" \
+        -e "s#/usr/libexec/aletheon/backup-aletheon.sh#$scripts_dir/backup-aletheon.sh#g" \
+        -e "s#/usr/libexec/aletheon/cleanup-aletheon.sh#$scripts_dir/cleanup-aletheon.sh#g" \
         "$unit" > "$staged"
     systemd-analyze verify "$staged"
     ;;
