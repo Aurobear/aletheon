@@ -40,7 +40,7 @@ use corpus::security::sandbox::executor::SandboxPreference;
 use corpus::tools::tools::{ToolContext, ToolRegistry};
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, AdmissionRequest, AgoraOps, CapabilityId, CapabilityRequest,
+    AdmissionController, AdmissionRequest, AgoraOps, CapabilityCall, CapabilityId,
     CapabilityResult, CapabilityScope, LlmProvider, Message, MonoTime, PrincipalId, ProcessId,
     RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
 };
@@ -226,7 +226,7 @@ impl TurnServices for ExecTurnServices {
     /// - Approval: `TerminalApprovalGate` (interactive) vs `SelfField` review (automated)
     ///
     /// Both paths route through the same `AdmissionController::admit/settle` pipeline.
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
+    async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
         // Route all tool invocations through admission controller.
         let adm_req = AdmissionRequest {
             operation_id: req.operation_id,

@@ -25,6 +25,8 @@ pub enum ToolError {
     InterruptTurn { reason: String },
     MaxRetriesExceeded,
     ExecutionFailed(String),
+    OutputRejected(String),
+    AuditFailed(String),
 }
 
 impl std::fmt::Display for ToolError {
@@ -36,8 +38,15 @@ impl std::fmt::Display for ToolError {
             Self::InterruptTurn { reason } => write!(f, "Turn interrupted: {}", reason),
             Self::MaxRetriesExceeded => write!(f, "Max retries exceeded"),
             Self::ExecutionFailed(msg) => write!(f, "Execution failed: {}", msg),
+            Self::OutputRejected(msg) => write!(f, "Output rejected: {}", msg),
+            Self::AuditFailed(msg) => write!(f, "Audit persistence failed: {}", msg),
         }
     }
+}
+
+pub struct GuardedToolExecution {
+    pub result: std::result::Result<ToolResult, ToolError>,
+    pub audit_id: fabric::AuditEventId,
 }
 
 impl std::error::Error for ToolError {}
@@ -173,6 +182,33 @@ impl ToolRunnerWithGuard {
         ctx: &ToolContext,
         turn_id: &str,
     ) -> std::result::Result<ToolResult, ToolError> {
+        self.execute_tool_report(tool, input, ctx, turn_id)
+            .await
+            .result
+    }
+
+    pub async fn execute_tool_report(
+        &mut self,
+        tool: &dyn Tool,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+        turn_id: &str,
+    ) -> GuardedToolExecution {
+        let audit_id = fabric::AuditEventId::new();
+        let result = self
+            .execute_tool_inner(tool, input, ctx, turn_id, audit_id)
+            .await;
+        GuardedToolExecution { result, audit_id }
+    }
+
+    async fn execute_tool_inner(
+        &mut self,
+        tool: &dyn Tool,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+        turn_id: &str,
+        audit_id: fabric::AuditEventId,
+    ) -> std::result::Result<ToolResult, ToolError> {
         let tool_name = tool.name();
         let start = self.clock.mono_now();
 
@@ -181,6 +217,7 @@ impl ToolRunnerWithGuard {
         match policy_verdict {
             PolicyVerdict::Deny { reason } => {
                 self.log_audit(
+                    audit_id,
                     tool_name,
                     &input,
                     tool.permission_level(),
@@ -189,7 +226,8 @@ impl ToolRunnerWithGuard {
                     &start,
                     "denied",
                 )
-                .await;
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::PolicyDenied { reason });
             }
             PolicyVerdict::RequireApproval { reason } => {
@@ -207,6 +245,7 @@ impl ToolRunnerWithGuard {
                         }
                         PermissionBehavior::Deny => {
                             self.log_audit(
+                                audit_id,
                                 tool_name,
                                 &input,
                                 tool.permission_level(),
@@ -215,7 +254,8 @@ impl ToolRunnerWithGuard {
                                 &start,
                                 "rule_denied",
                             )
-                            .await;
+                            .await
+                            .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                             return Err(ToolError::PolicyDenied {
                                 reason: format!("{}: denied by permission rule/mode", reason),
                             });
@@ -238,6 +278,7 @@ impl ToolRunnerWithGuard {
                                     }
                                     ApprovalDecision::Deny => {
                                         self.log_audit(
+                                            audit_id,
                                             tool_name,
                                             &input,
                                             tool.permission_level(),
@@ -246,7 +287,8 @@ impl ToolRunnerWithGuard {
                                             &start,
                                             "approval_denied",
                                         )
-                                        .await;
+                                        .await
+                                        .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                                         return Err(ToolError::PolicyDenied {
                                             reason: format!("{}: denied by approval gate", reason),
                                         });
@@ -269,6 +311,7 @@ impl ToolRunnerWithGuard {
             }
             LoopVerdict::Block { reason, suggestion } => {
                 self.log_audit(
+                    audit_id,
                     tool_name,
                     &input,
                     tool.permission_level(),
@@ -277,13 +320,15 @@ impl ToolRunnerWithGuard {
                     &start,
                     "loop_blocked",
                 )
-                .await;
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::LoopBlocked {
                     reason: format!("{}. {}", reason, suggestion),
                 });
             }
             LoopVerdict::Escalate { reason } => {
                 self.log_audit(
+                    audit_id,
                     tool_name,
                     &input,
                     tool.permission_level(),
@@ -292,13 +337,15 @@ impl ToolRunnerWithGuard {
                     &start,
                     "escalated",
                 )
-                .await;
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::EscalateToHuman {
                     reason: reason.clone(),
                 });
             }
             LoopVerdict::InterruptTurn { reason, .. } => {
                 self.log_audit(
+                    audit_id,
                     tool_name,
                     &input,
                     tool.permission_level(),
@@ -307,7 +354,8 @@ impl ToolRunnerWithGuard {
                     &start,
                     "interrupted",
                 )
-                .await;
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::InterruptTurn {
                     reason: reason.clone(),
                 });
@@ -382,24 +430,14 @@ impl ToolRunnerWithGuard {
             }
         };
 
-        // 4. Output guardrail validation with retries
-        let mut final_result = result;
-        for retry in 0..self.output_guardrail.max_retries {
-            match self.output_guardrail.validate(&final_result).await {
-                Ok(()) => break,
-                Err(e) => {
-                    warn!(tool = tool_name, retry = retry, error = ?e, "Output validation failed");
-                    if retry < self.output_guardrail.max_retries - 1 {
-                        final_result = tool.execute(input.clone(), ctx).await;
-                    } else {
-                        warn!(
-                            tool = tool_name,
-                            "Max retries exceeded for output validation"
-                        );
-                    }
-                }
-            }
-        }
+        // 4. Validate captured output without re-running a side effect.
+        let final_result = result;
+        let output_rejection = self
+            .output_guardrail
+            .validate(&final_result)
+            .await
+            .err()
+            .map(|error| format!("{error:?}"));
 
         // 5. Loop detector post-check
         self.loop_detector
@@ -408,6 +446,7 @@ impl ToolRunnerWithGuard {
         // 6. Audit log
         let verdict_str = format!("{:?}", loop_verdict);
         self.log_audit(
+            audit_id,
             tool_name,
             &input,
             tool.permission_level(),
@@ -416,7 +455,12 @@ impl ToolRunnerWithGuard {
             &start,
             &verdict_str,
         )
-        .await;
+        .await
+        .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
+
+        if let Some(reason) = output_rejection {
+            return Err(ToolError::OutputRejected(reason));
+        }
 
         Ok(final_result)
     }
@@ -443,6 +487,7 @@ impl ToolRunnerWithGuard {
     #[allow(clippy::too_many_arguments)]
     async fn log_audit(
         &self,
+        audit_id: fabric::AuditEventId,
         tool_name: &str,
         input: &serde_json::Value,
         level: PermissionLevel,
@@ -450,9 +495,10 @@ impl ToolRunnerWithGuard {
         result: Option<&ToolResult>,
         start: &fabric::MonoTime,
         verdict: &str,
-    ) {
+    ) -> anyhow::Result<()> {
         let category = self.risk_classifier.classify(tool_name);
         let record = AuditRecord {
+            audit_id,
             timestamp: self.clock.wall_now(),
             session_id: String::new(), // Will be filled by caller or context
             turn_id: turn_id.to_string(),
@@ -466,7 +512,7 @@ impl ToolRunnerWithGuard {
             sandbox_backend: None,
             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
         };
-        let _ = self.audit_logger.log(record).await;
+        self.audit_logger.log(record).await
     }
 
     pub fn metrics(&self) -> &super::loop_detector::LoopDetectorMetrics {

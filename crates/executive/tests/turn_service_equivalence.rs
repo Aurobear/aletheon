@@ -43,7 +43,7 @@ async fn turn_service_submits_one_turn() {
 
 use async_trait::async_trait;
 use fabric::{
-    CapabilityRequest, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
+    CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
     RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices, Usage,
 };
 use std::sync::Mutex;
@@ -137,7 +137,7 @@ impl TurnServices for EquivalenceServices {
         Ok(fabric::AgoraView::default())
     }
 
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
+    async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
         self.tools.lock().unwrap().push(req.name.clone());
         CapabilityResult {
             call_id: req.call_id,
@@ -275,7 +275,7 @@ impl TurnServices for HangingServices {
         Ok(fabric::AgoraView::default())
     }
 
-    async fn invoke(&self, _req: CapabilityRequest) -> CapabilityResult {
+    async fn invoke(&self, _req: CapabilityCall) -> CapabilityResult {
         CapabilityResult {
             call_id: String::new(),
             output: String::new(),

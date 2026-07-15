@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use cognit::harness::{CognitiveSession, HarnessConfig, LinearCognitiveSession};
 use fabric::{
-    CapabilityRequest, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
+    CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
     NoopTurnEventSink, OperationId, ProcessId, StopReason, StubTurnServices, ToolDefinition,
     TurnRequest, TurnServices, TurnStop, Usage,
 };
@@ -107,7 +107,7 @@ impl TurnServices for ScriptedTurnServices {
         Ok(fabric::AgoraView::default())
     }
 
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
+    async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
         self.invoked.lock().unwrap().push(req.name.clone());
         CapabilityResult {
             call_id: req.call_id,

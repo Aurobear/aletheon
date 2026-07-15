@@ -297,6 +297,7 @@ impl ToolRunnerWithGuard {
     ) {
         let category = self.risk_classifier.classify(tool_name);
         let record = AuditRecord {
+            audit_id: fabric::AuditEventId::new(),
             timestamp: self.clock.wall_now(),
             session_id: String::new(), // Will be filled by caller or context
             turn_id: turn_id.to_string(),

@@ -132,8 +132,9 @@ pub use include::self_field::{
 pub use include::space::SpaceManager;
 pub use include::subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
 pub use include::turn::{
-    AgoraView, CapabilityRequest, CapabilityResult, DaseinView, NoopTurnEventSink, RecallRequest,
-    RecallSet, StubTurnServices, TurnEventSink, TurnServices,
+    AgoraView, CapabilityAuthority, CapabilityCall, CapabilityRequest, CapabilityResult,
+    DaseinView, InvocationControl, NoopTurnEventSink, RecallRequest, RecallSet, StubTurnServices,
+    TurnEventSink, TurnServices,
 };
 
 // Shared types (from types/)

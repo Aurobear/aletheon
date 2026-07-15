@@ -7,14 +7,39 @@ use aletheon_kernel::capability::{DefaultCapabilityInvoker, StubToolExecutor, To
 use aletheon_kernel::chronos::TestClock;
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, AdmissionError, AdmissionRequest, CapabilityInvoker, CapabilityRequest,
-    CapabilityScope, ExecutionPermit, PermitId, RevokeReason, SandboxDecision, SandboxRequirement,
-    UsageReport,
+    AdmissionController, AdmissionError, AdmissionRequest, CapabilityAuthority, CapabilityCall,
+    CapabilityInvoker, CapabilityRequest, CapabilityScope, ExecutionPermit, InvocationControl,
+    PermitId, PrincipalId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
 use std::sync::Arc;
 
 fn test_clock() -> Arc<TestClock> {
     Arc::new(TestClock::default())
+}
+
+fn authorized_request(name: &str, input: serde_json::Value, call_id: &str) -> CapabilityRequest {
+    CapabilityRequest {
+        call: CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: name.into(),
+            input,
+            call_id: call_id.into(),
+            deadline: None,
+        },
+        authority: CapabilityAuthority {
+            principal: PrincipalId("test-agent".into()),
+            action: name.into(),
+            requested_scope: CapabilityScope::default(),
+            risk: RiskLevel::ReadOnly,
+            budget: None,
+            lease: None,
+            sandbox: SandboxRequirement::NotRequired,
+            session_id: "test-session".into(),
+            working_dir: std::env::temp_dir(),
+        },
+        control: InvocationControl::default(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -147,14 +172,11 @@ async fn invoker_pipeline_admit_execute_settle() {
     let invoker = DefaultCapabilityInvoker::new(admission, executor);
 
     let result = invoker
-        .invoke(CapabilityRequest {
-            operation_id: fabric::OperationId::new(),
-            process_id: fabric::ProcessId::new(),
-            name: "test.ping".into(),
-            input: serde_json::json!({"msg": "hello"}),
-            call_id: "call-1".into(),
-            deadline: None,
-        })
+        .invoke(authorized_request(
+            "test.ping",
+            serde_json::json!({"msg": "hello"}),
+            "call-1",
+        ))
         .await;
 
     assert!(!result.is_error);
@@ -171,14 +193,11 @@ async fn invoker_preserves_call_id_on_error() {
 
     // AllowAll never denies, but the structure preserves call_id.
     let result = invoker
-        .invoke(CapabilityRequest {
-            operation_id: fabric::OperationId::new(),
-            process_id: fabric::ProcessId::new(),
-            name: "test.noop".into(),
-            input: serde_json::json!({}),
-            call_id: "my-call-id".into(),
-            deadline: None,
-        })
+        .invoke(authorized_request(
+            "test.noop",
+            serde_json::json!({}),
+            "my-call-id",
+        ))
         .await;
 
     assert_eq!(result.call_id, "my-call-id");
@@ -197,7 +216,7 @@ impl ToolExecutor for ErrorToolExecutor {
         _permit: &ExecutionPermit,
     ) -> fabric::CapabilityResult {
         fabric::CapabilityResult {
-            call_id: request.call_id.clone(),
+            call_id: request.call.call_id.clone(),
             output: "tool failed: simulated error".into(),
             is_error: true,
             usage: fabric::UsageReport {
@@ -217,14 +236,11 @@ async fn invoker_reports_executor_errors() {
     let invoker = DefaultCapabilityInvoker::new(admission, executor);
 
     let result = invoker
-        .invoke(CapabilityRequest {
-            operation_id: fabric::OperationId::new(),
-            process_id: fabric::ProcessId::new(),
-            name: "test.failing".into(),
-            input: serde_json::json!({}),
-            call_id: "fail-1".into(),
-            deadline: None,
-        })
+        .invoke(authorized_request(
+            "test.failing",
+            serde_json::json!({}),
+            "fail-1",
+        ))
         .await;
 
     assert!(result.is_error);
@@ -268,14 +284,11 @@ async fn denied_admission_produces_error_result() {
     let invoker = DefaultCapabilityInvoker::new(admission, executor);
 
     let result = invoker
-        .invoke(CapabilityRequest {
-            operation_id: fabric::OperationId::new(),
-            process_id: fabric::ProcessId::new(),
-            name: "test.blocked".into(),
-            input: serde_json::json!({}),
-            call_id: "blocked-1".into(),
-            deadline: None,
-        })
+        .invoke(authorized_request(
+            "test.blocked",
+            serde_json::json!({}),
+            "blocked-1",
+        ))
         .await;
 
     assert!(result.is_error);

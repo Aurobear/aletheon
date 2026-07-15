@@ -6,7 +6,7 @@ use aletheon_kernel::service::ServicePorts;
 use async_trait::async_trait;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
-    CapabilityRequest, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
+    CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
     NoopTurnEventSink, OperationId, ProcessId, RecallRequest, RecallSet, StopReason,
     ToolDefinition, TurnRequest, TurnServices, Usage,
 };
@@ -124,7 +124,7 @@ impl TurnServices for PipelineServices {
         Ok(fabric::AgoraView::default())
     }
 
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
+    async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
         self.events
             .lock()
             .unwrap()

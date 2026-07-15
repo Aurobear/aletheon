@@ -1,6 +1,9 @@
 //! Turn service contracts shared by executive adapters and cognitive sessions.
 
-use crate::types::admission::{AuditEventId, UsageReport};
+use crate::types::admission::{
+    AuditEventId, BudgetRequest, CapabilityScope, LeaseRequest, PrincipalId, RiskLevel,
+    SandboxRequirement, UsageReport,
+};
 use crate::types::llm_types::{LlmProvider, ToolDefinition};
 use crate::types::message::Message;
 use crate::types::operation::{MonoDeadlineMillis, OperationId, ProcessId};
@@ -8,6 +11,8 @@ use crate::types::turn::{TurnEvent, TurnRequest};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RecallRequest {
@@ -31,13 +36,46 @@ pub struct AgoraView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityRequest {
+pub struct CapabilityCall {
     pub operation_id: OperationId,
     pub process_id: ProcessId,
     pub name: String,
     pub input: serde_json::Value,
     pub call_id: String,
     pub deadline: Option<MonoDeadlineMillis>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityAuthority {
+    pub principal: PrincipalId,
+    pub action: String,
+    pub requested_scope: CapabilityScope,
+    pub risk: RiskLevel,
+    pub budget: Option<BudgetRequest>,
+    pub lease: Option<LeaseRequest>,
+    pub sandbox: SandboxRequirement,
+    pub session_id: String,
+    pub working_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct InvocationControl {
+    pub cancel: CancellationToken,
+}
+
+impl Default for InvocationControl {
+    fn default() -> Self {
+        Self {
+            cancel: CancellationToken::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CapabilityRequest {
+    pub call: CapabilityCall,
+    pub authority: CapabilityAuthority,
+    pub control: InvocationControl,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +97,7 @@ pub trait TurnServices: Send + Sync {
     async fn recall(&self, req: RecallRequest) -> Result<RecallSet>;
     async fn dasein_view(&self, process: ProcessId) -> Result<DaseinView>;
     async fn agora_view(&self, session_id: &str) -> Result<AgoraView>;
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult;
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult;
 
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {
         None
@@ -98,7 +136,7 @@ impl TurnServices for StubTurnServices {
         Ok(AgoraView::default())
     }
 
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
+    async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
         CapabilityResult {
             call_id: req.call_id,
             output: format!("tool {} is unavailable in stub", req.name),

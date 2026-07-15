@@ -6,7 +6,7 @@ use crate::harness::linear::{CompactorTrait, ReActLoop};
 use anyhow::Result;
 use async_trait::async_trait;
 use fabric::{
-    CapabilityRequest, Message, TurnEvent, TurnEventSink, TurnMetrics as FabricTurnMetrics,
+    CapabilityCall, Message, TurnEvent, TurnEventSink, TurnMetrics as FabricTurnMetrics,
     TurnRequest, TurnResult, TurnServices, TurnStop,
 };
 use std::pin::Pin;
@@ -90,7 +90,7 @@ impl CognitiveSession for LinearCognitiveSession {
                     &DynLlmRef(llm),
                     &tool_defs,
                     |call_id, name, input| {
-                        let req = CapabilityRequest {
+                        let req = CapabilityCall {
                             operation_id: request.operation_id,
                             process_id,
                             name: name.to_string(),

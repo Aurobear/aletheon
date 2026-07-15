@@ -52,7 +52,7 @@ fn test_ports() -> Arc<ServicePorts> {
 fn stub_services() -> Arc<dyn TurnServices> {
     use async_trait::async_trait;
     use fabric::{
-        CapabilityRequest, CapabilityResult, LlmProvider, RecallRequest, RecallSet, ToolDefinition,
+        CapabilityCall, CapabilityResult, LlmProvider, RecallRequest, RecallSet, ToolDefinition,
         TurnServices,
     };
 
@@ -68,7 +68,7 @@ fn stub_services() -> Arc<dyn TurnServices> {
         async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
             Ok(fabric::AgoraView::default())
         }
-        async fn invoke(&self, _req: CapabilityRequest) -> CapabilityResult {
+        async fn invoke(&self, _req: CapabilityCall) -> CapabilityResult {
             CapabilityResult {
                 call_id: String::new(),
                 output: String::new(),
@@ -384,7 +384,7 @@ async fn no_orphan_tasks_after_cancel_and_drain() {
 async fn deadline_exceeded_sets_operation_to_cancelled() {
     use async_trait::async_trait;
     use fabric::{
-        CapabilityRequest, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
+        CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
         Message, RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices, Usage,
     };
 
@@ -439,7 +439,7 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
         async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
             Ok(fabric::AgoraView::default())
         }
-        async fn invoke(&self, _req: CapabilityRequest) -> CapabilityResult {
+        async fn invoke(&self, _req: CapabilityCall) -> CapabilityResult {
             CapabilityResult {
                 call_id: String::new(),
                 output: String::new(),
