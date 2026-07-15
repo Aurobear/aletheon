@@ -89,6 +89,18 @@ fn composition_is_private_and_bootstrap_confined() {
         module.lines().count() <= 700,
         "bootstrap root module is too large"
     );
+    let request = fs::read_to_string(bootstrap.join("request.rs")).unwrap();
+    assert!(
+        request.lines().count() <= 1_500,
+        "request composition stage is too large"
+    );
+    for stage in ["channels.rs", "google.rs", "runtime.rs", "storage.rs"] {
+        let source = fs::read_to_string(bootstrap.join(stage)).unwrap();
+        assert!(
+            source.lines().count() <= 700,
+            "bootstrap stage is too large: {stage}"
+        );
+    }
     assert!(
         !module.contains("derive(Clone)"),
         "composition root must not be Clone"

@@ -18,7 +18,7 @@ fn kernel_and_domain_composition_are_separate() {
     let kernel_lib = fs::read_to_string(root.join("kernel/src/lib.rs")).unwrap();
     let kernel_runtime = fs::read_to_string(root.join("kernel/src/runtime.rs")).unwrap();
     let bootstrap =
-        fs::read_to_string(root.join("executive/src/impl/daemon/handler/init.rs")).unwrap();
+        fs::read_to_string(root.join("executive/src/impl/daemon/bootstrap/request.rs")).unwrap();
     let domain_ports = fs::read_to_string(root.join("executive/src/core/domain_ports.rs")).unwrap();
 
     assert!(!kernel_lib.contains("pub mod service"));

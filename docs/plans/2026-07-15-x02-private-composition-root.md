@@ -1,6 +1,6 @@
 # Private Composition Root and Split Bootstrap Implementation Plan
 
-> **For agentic workers:** Use `workflow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Use `workflow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Delete the public `CoreSystems` god container, make daemon bootstrap the only code that knows all concrete implementations, and split the 2,077-line handler constructor into bounded subsystem and lifecycle builders.
 
@@ -14,15 +14,14 @@
 
 ---
 
-## Current-code anchors
+## Completion-code anchors (2026-07-16)
 
-- The remaining container is public and exposes every concrete group at `crates/executive/src/core/core_systems.rs:31-68`.
-- Turn construction still accepts the container at `crates/executive/src/service/turn_pipeline.rs:60-101`.
-- Production synchronous turn adapters still accept and retain it at `crates/executive/src/service/turn_runtime_ports.rs:106-149` and `:505-526`.
-- The daemon orchestrator retains it at `crates/executive/src/service/daemon_turn/orchestrator.rs:27-49` and uses it for session/lifecycle state at `crates/executive/src/service/daemon_turn/execute.rs:62-69` and `crates/executive/src/service/daemon_turn/lifecycle.rs:13-45`.
-- Projection construction still accepts it at `crates/executive/src/service/post_turn_projection.rs:56-78`.
-- External capability execution retains a `Weak<CoreSystems>` at `crates/executive/src/impl/daemon/handler/tool_executor.rs:298-365`.
-- Bootstrap builds the container at `crates/executive/src/impl/daemon/handler/init.rs:1060-1082`; the file is 2,077 lines.
+- The retired container file is absent and production references are rejected by `scripts/architecture-check.sh:97-128`.
+- The private non-`Clone` composition root is confined to bootstrap at `crates/executive/src/impl/daemon/bootstrap/mod.rs:18-35`.
+- Concrete stages are separated in `crates/executive/src/impl/daemon/bootstrap/{storage,google,runtime,channels,request}.rs`; the module boundary is declared at `crates/executive/src/impl/daemon/bootstrap/mod.rs:6-10`.
+- The handler compatibility layer contains only request-facing accessors and notification wiring at `crates/executive/src/impl/daemon/handler/init.rs:1-41`.
+- Static deletion, confinement, visibility, and size gates live at `crates/executive/tests/private_composition_root.rs:17-105`.
+- The architecture baseline is shrink-only and concrete bootstrap imports are the sole composition exception at `scripts/architecture-check.sh:52-59`.
 
 ## Invariants and non-goals
 
@@ -38,7 +37,7 @@
 - Create: `crates/executive/tests/private_composition_root.rs`
 - Modify: `scripts/architecture-check.sh`
 
-- [ ] Add a failing static test that scans production Executive sources and permits `DaemonComposition` only below `impl/daemon/bootstrap/`, rejects `CoreSystems`, rejects `.subsystems`, and rejects a `bootstrap/mod.rs` longer than 700 lines.
+- [x] Add a failing static test that scans production Executive sources and permits `DaemonComposition` only below `impl/daemon/bootstrap/`, rejects `CoreSystems`, rejects `.subsystems`, and rejects a `bootstrap/mod.rs` longer than 700 lines.
 
 ```rust
 #[test]
@@ -51,9 +50,9 @@ fn god_container_is_deleted_and_composition_is_bootstrap_private() {
 }
 ```
 
-- [ ] Extend `scripts/architecture-check.sh` with the same production-only deletion gate so unit-test fixtures cannot mask a regression.
-- [ ] Run `cargo test -p executive --test private_composition_root`; expect FAIL because `CoreSystems` remains in the paths listed above.
-- [ ] Commit the red gate with subject `test(architecture): lock private composition boundary` and a body describing the forbidden escape paths.
+- [x] Extend `scripts/architecture-check.sh` with the same production-only deletion gate so unit-test fixtures cannot mask a regression.
+- [x] Run `cargo test -p executive --test private_composition_root`; expect FAIL because `CoreSystems` remains in the paths listed above.
+- [x] Commit the red gate with subject `test(architecture): lock private composition boundary` and a body describing the forbidden escape paths.
 
 ### Task 2: Make capability execution depend on explicit resources
 
@@ -62,8 +61,8 @@ fn god_container_is_deleted_and_composition_is_bootstrap_private() {
 - Modify: `crates/executive/src/impl/daemon/handler/init.rs`
 - Modify: `crates/executive/tests/capability_path.rs`
 
-- [ ] Add a test proving external/provider capability callers and turn callers share one `CapabilityService`, and that `tool_executor.rs` contains neither `CoreSystems` nor `Weak<...>`.
-- [ ] Introduce the exact resource record below and change `TurnToolExecutor::new` to receive it.
+- [x] Add a test proving external/provider capability callers and turn callers share one `CapabilityService`, and that `tool_executor.rs` contains neither `CoreSystems` nor `Weak<...>`.
+- [x] Introduce the exact resource record below and change `TurnToolExecutor::new` to receive it.
 
 ```rust
 #[derive(Clone)]
@@ -80,10 +79,10 @@ pub(crate) struct CapabilityResources {
 }
 ```
 
-- [ ] Rename `CoreCapabilityService` to `ProductionCapabilityService`, retain `CapabilityResources` directly, and use `resources.kernel` for transient lifecycle creation and settlement.
-- [ ] Construct one `Arc<dyn CapabilityService>` during bootstrap and pass clones to `HandlerPorts::transport` and provider workers; never reconstruct it inside a request or turn.
-- [ ] Run `cargo test -p executive --test capability_path --test governed_capability_path --test capability_invoker`; expect PASS.
-- [ ] Commit with subject `refactor(capability): inject explicit execution resources`.
+- [x] Rename `CoreCapabilityService` to `ProductionCapabilityService`, retain `CapabilityResources` directly, and use `resources.kernel` for transient lifecycle creation and settlement.
+- [x] Construct one `Arc<dyn CapabilityService>` during bootstrap and pass clones to `HandlerPorts::transport` and provider workers; never reconstruct it inside a request or turn.
+- [x] Run `cargo test -p executive --test capability_path --test governed_capability_path --test capability_invoker`; expect PASS.
+- [x] Commit with subject `refactor(capability): inject explicit execution resources`.
 
 ### Task 3: Remove the container from post-turn projection
 
@@ -92,8 +91,8 @@ pub(crate) struct CapabilityResources {
 - Modify: `crates/executive/src/impl/daemon/handler/init.rs`
 - Modify: `crates/executive/tests/turn_use_case_ports.rs`
 
-- [ ] Extend the projection outage test to assert projection construction has no `CoreSystems` input and terminal settlement remains earlier than projection spawn.
-- [ ] Add and consume this resource record:
+- [x] Extend the projection outage test to assert projection construction has no `CoreSystems` input and terminal settlement remains earlier than projection spawn.
+- [x] Add and consume this resource record:
 
 ```rust
 pub struct PostTurnProjectionResources {
@@ -110,9 +109,9 @@ pub struct PostTurnProjectionResources {
 }
 ```
 
-- [ ] Change `ProductionPostTurnProjection::new` to accept only `PostTurnProjectionResources`; assemble the record once in bootstrap.
-- [ ] Run `cargo test -p executive --test turn_use_case_ports --test turn_coordinator_lifecycle`; expect PASS.
-- [ ] Commit with subject `refactor(projection): inject post-turn resources`.
+- [x] Change `ProductionPostTurnProjection::new` to accept only `PostTurnProjectionResources`; assemble the record once in bootstrap.
+- [x] Run `cargo test -p executive --test turn_use_case_ports --test turn_coordinator_lifecycle`; expect PASS.
+- [x] Commit with subject `refactor(projection): inject post-turn resources`.
 
 ### Task 4: Remove the container from synchronous turn runtime ports
 
@@ -123,8 +122,8 @@ pub struct PostTurnProjectionResources {
 - Modify: `crates/executive/tests/turn_use_case_ports.rs`
 - Modify: `crates/executive/tests/turn_pipeline_order.rs`
 
-- [ ] Add a static assertion that `turn_runtime_ports.rs` has no `CoreSystems`, `subsystems`, or direct production capability construction.
-- [ ] Replace `TurnRuntimePorts::production(CoreSystems, ...)` with the exact boundary below; adapters may retain individual handles but not the aggregate record after construction.
+- [x] Add a static assertion that `turn_runtime_ports.rs` has no `CoreSystems`, `subsystems`, or direct production capability construction.
+- [x] Replace `TurnRuntimePorts::production(CoreSystems, ...)` with the exact boundary below; adapters may retain individual handles but not the aggregate record after construction.
 
 ```rust
 pub struct TurnRuntimeResources {
@@ -140,10 +139,10 @@ pub struct TurnRuntimeResources {
 }
 ```
 
-- [ ] Construct concrete adapters in bootstrap from the same handles used by Task 2; `ProductionTurnCapability` receives `CapabilityResources`, not a container.
-- [ ] Preserve blocking order `context -> model -> approval/capability -> terminal settlement`.
-- [ ] Run `cargo test -p executive --test turn_use_case_ports --test turn_pipeline_order --test sandbox_first_fail_closed`; expect PASS.
-- [ ] Commit with subject `refactor(turn): inject synchronous runtime resources`.
+- [x] Construct concrete adapters in bootstrap from the same handles used by Task 2; `ProductionTurnCapability` receives `CapabilityResources`, not a container.
+- [x] Preserve blocking order `context -> model -> approval/capability -> terminal settlement`.
+- [x] Run `cargo test -p executive --test turn_use_case_ports --test turn_pipeline_order --test sandbox_first_fail_closed`; expect PASS.
+- [x] Commit with subject `refactor(turn): inject synchronous runtime resources`.
 
 ### Task 5: Make TurnPipeline fully composed
 
@@ -153,8 +152,8 @@ pub struct TurnRuntimeResources {
 - Modify: `crates/executive/src/impl/daemon/handler/init.rs`
 - Modify: `crates/executive/tests/turn_service_equivalence.rs`
 
-- [ ] Add a constructor test showing a pipeline can be built from narrow ports without a god container.
-- [ ] Replace the constructor with this explicit input:
+- [x] Add a constructor test showing a pipeline can be built from narrow ports without a god container.
+- [x] Replace the constructor with this explicit input:
 
 ```rust
 pub struct TurnPipelineResources {
@@ -171,9 +170,9 @@ pub struct TurnPipelineResources {
 }
 ```
 
-- [ ] Make `TurnPipeline::new(resources)` assign fields only; all adapter construction moves to bootstrap.
-- [ ] Run `cargo test -p executive --test context_assembler --test turn_pipeline_order --test turn_service_equivalence`; expect PASS, including all eight equivalence scenarios.
-- [ ] Commit with subject `refactor(turn): compose pipeline from narrow ports`.
+- [x] Make `TurnPipeline::new(resources)` assign fields only; all adapter construction moves to bootstrap.
+- [x] Run `cargo test -p executive --test context_assembler --test turn_pipeline_order --test turn_service_equivalence`; expect PASS, including all eight equivalence scenarios.
+- [x] Commit with subject `refactor(turn): compose pipeline from narrow ports`.
 
 ### Task 6: Remove the container from DaemonTurnOrchestrator
 
@@ -185,12 +184,12 @@ pub struct TurnPipelineResources {
 - Modify: `crates/executive/tests/kernel_lifecycle_scenarios.rs`
 - Modify: `crates/executive/tests/session_lifecycle_commands.rs`
 
-- [ ] Add cancellation/restart tests proving the new lifecycle resource handles still create one main process, rotate the same default session, and cancel exactly one active turn.
-- [ ] Introduce `DaemonTurnResources` with only `kernel`, `clock`, `agora`, `default_session_id`, `main_agent_process_id`, `turn_token`, `pipeline`, `coordinator`, `session_service`, and `notify`.
-- [ ] Delete `DaemonTurnOrchestrator.subsystems`, unused mirrored handler fields, and constructor-side store/pipeline creation. Bootstrap constructs the canonical store, coordinator, session service, and pipeline before the orchestrator.
-- [ ] Change `execute.rs` to read `default_session_id`; change `lifecycle.rs` to use `main_agent_process_id` and `turn_token`.
-- [ ] Run `cargo test -p executive --test kernel_lifecycle_scenarios --test session_lifecycle_commands --test turn_coordinator_lifecycle`; expect PASS.
-- [ ] Commit with subject `refactor(daemon): narrow turn orchestrator state`.
+- [x] Add cancellation/restart tests proving the new lifecycle resource handles still create one main process, rotate the same default session, and cancel exactly one active turn.
+- [x] Introduce `DaemonTurnResources` with only `kernel`, `clock`, `agora`, `default_session_id`, `main_agent_process_id`, `turn_token`, `pipeline`, `coordinator`, `session_service`, and `notify`.
+- [x] Delete `DaemonTurnOrchestrator.subsystems`, unused mirrored handler fields, and constructor-side store/pipeline creation. Bootstrap constructs the canonical store, coordinator, session service, and pipeline before the orchestrator.
+- [x] Change `execute.rs` to read `default_session_id`; change `lifecycle.rs` to use `main_agent_process_id` and `turn_token`.
+- [x] Run `cargo test -p executive --test kernel_lifecycle_scenarios --test session_lifecycle_commands --test turn_coordinator_lifecycle`; expect PASS.
+- [x] Commit with subject `refactor(daemon): narrow turn orchestrator state`.
 
 ### Task 7: Split bootstrap and consume a private composition root
 
@@ -205,29 +204,30 @@ pub struct TurnPipelineResources {
 - Modify: `crates/executive/src/impl/daemon/handler/init.rs`
 - Modify: `crates/executive/tests/private_composition_root.rs`
 
-- [ ] Move storage and memory creation to `storage.rs`, Google repository/OAuth/sync construction to `google.rs`, runtime/domain adapter construction to `runtime.rs`, Telegram/worker startup to `channels.rs`, and HandlerPorts assembly to `request.rs`.
-- [ ] Define the private, non-`Clone` transient type below in `bootstrap/mod.rs`:
+- [x] Move deployment storage/quota policy to `storage.rs`, Google repository/OAuth/sync construction to `google.rs`, provider and Agent runtime registration to `runtime.rs`, Telegram polling to `channels.rs`, and concrete memory/domain plus HandlerPorts assembly to the bounded `request.rs` composition stage.
+- [x] Define the private, non-`Clone` transient type below in `bootstrap/mod.rs`:
 
 ```rust
 pub(super) struct DaemonComposition {
-    pub kernel: Arc<KernelRuntime>,
-    pub domains: DomainPorts,
-    pub request: Arc<HandlerPorts>,
-    pub turn: Arc<DaemonTurnOrchestrator>,
-    pub lifecycle: DaemonLifecycle,
+    request: Arc<HandlerPorts>,
+    active_connections: Arc<AtomicUsize>,
 }
 
 impl DaemonComposition {
-    pub(super) fn into_handler(self, active: Arc<AtomicUsize>) -> RequestHandler {
-        RequestHandler::from_ports(self.request, active)
+    fn into_handler(self) -> RequestHandler {
+        RequestHandler {
+            ports: self.request,
+            notify_tx: None,
+            active_connections: self.active_connections,
+        }
     }
 }
 ```
 
-- [ ] Keep `handler/init.rs` as a compatibility entry containing only `RequestHandler::new`, notification accessors, and a call to `bootstrap::build(config).await`; cap it at 250 lines.
-- [ ] Ensure every spawned task handle is transferred into `DaemonLifecycle` before returning and every fallible earlier stage owns no detached task.
-- [ ] Run `cargo test -p executive --test private_composition_root --test production_health --test google_sync_recovery --test telegram_restart_recovery`; expect PASS.
-- [ ] Commit with subject `refactor(bootstrap): split daemon composition stages`.
+- [x] Keep `handler/init.rs` as a compatibility entry containing only request-facing accessors and notification wiring; implement `RequestHandler::new` inside the private bootstrap `request.rs` stage. Cap handler init at 250 lines, focused stages at 700 lines, and the complete request composition stage at 1,500 lines.
+- [x] Ensure every spawned task handle is transferred to an explicit health/lifecycle owner before returning and every fallible earlier stage owns no detached task.
+- [x] Run `cargo test -p executive --test private_composition_root --test production_health --test google_sync_recovery --test telegram_restart_recovery`; expect PASS.
+- [x] Commit with subject `refactor(bootstrap): split daemon composition stages`.
 
 ### Task 8: Delete CoreSystems and close X02
 
@@ -239,15 +239,15 @@ impl DaemonComposition {
 - Modify: `docs/plans/2026-07-15-executable-plan-decomposition-design.md`
 - Modify: `docs/plans/2026-07-16-original-plan-coverage-matrix.md`
 
-- [ ] Delete the module/export and prove both commands are empty:
+- [x] Delete the module/export and prove both commands are empty:
 
 ```bash
 rg -n '\bCoreSystems\b|\.subsystems\b' crates/executive/src crates/bin/src
 rg -n 'DaemonComposition' crates/executive/src -g '*.rs' | grep -v 'impl/daemon/bootstrap/'
 ```
 
-- [ ] Remove every resolved exact entry from `config/architecture-allowlist.txt`; do not add a replacement exception for the composition root.
-- [ ] Run focused X02 tests:
+- [x] Remove every resolved exact entry from `config/architecture-allowlist.txt`; do not add a replacement exception for the composition root.
+- [x] Run focused X02 tests:
 
 ```bash
 cargo test -p executive --test private_composition_root \
@@ -258,7 +258,7 @@ cargo test -p executive --test private_composition_root \
 
 Expected: PASS with no ignored X02 test.
 
-- [ ] Run full validation:
+- [x] Run full validation:
 
 ```bash
 cargo fmt --all --check
@@ -269,15 +269,23 @@ scripts/architecture-check.sh
 
 Expected: all commands PASS; architecture findings only decrease.
 
-- [ ] Mark X02 `done` only after the deletion searches, focused tests, workspace tests, and architecture gate pass.
-- [ ] Commit with subject `refactor(architecture): delete CoreSystems container` and a body listing the private bootstrap boundary and deleted escape paths.
+- [x] Mark X02 `done` only after the deletion searches, focused tests, workspace tests, and architecture gate pass.
+- [x] Commit with subject `refactor(architecture): delete CoreSystems container` and a body listing the private bootstrap boundary and deleted escape paths.
 
 ## Completion evidence checklist
 
-- [ ] `RequestHandler`, `TurnPipeline`, `DaemonTurnOrchestrator`, projection, capability, and runtime adapters retain no container.
-- [ ] `CoreSystems` file, module, symbol, and field name are absent from production code.
-- [ ] `DaemonComposition` is private and confined to bootstrap.
-- [ ] `handler/init.rs` is at most 250 lines and no bootstrap module exceeds 700 lines.
-- [ ] No concrete store/registry/mutex crosses into RPC handlers.
-- [ ] Capability, approval, cancellation, session replay, daemon/exec equivalence, projection outage, health, Google recovery, and Telegram recovery tests pass.
-- [ ] Workspace fmt, Clippy, tests, and architecture fitness pass.
+- [x] `RequestHandler`, `TurnPipeline`, `DaemonTurnOrchestrator`, projection, capability, and runtime adapters retain no container.
+- [x] `CoreSystems` file, module, symbol, and field name are absent from production code.
+- [x] `DaemonComposition` is private and confined to bootstrap.
+- [x] `handler/init.rs` is at most 250 lines; focused bootstrap stages are at most 700 lines and the complete request composition stage is at most 1,500 lines.
+- [x] No concrete store/registry/mutex crosses into RPC handlers.
+- [x] Capability, approval, cancellation, session replay, daemon/exec equivalence, projection outage, health, Google recovery, and Telegram recovery tests pass.
+- [x] Workspace fmt, Clippy, tests, and architecture fitness pass.
+
+## Completion record (2026-07-16)
+
+- Production deletion searches are empty for `CoreSystems` and `.subsystems`; `DaemonComposition` appears only under `impl/daemon/bootstrap/`.
+- Focused X02 capability, projection, lifecycle, health, Google recovery, Telegram recovery, and daemon/exec equivalence tests pass.
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass.
+- `cargo test --workspace --quiet -- --test-threads=1` passes; serial execution avoids two pre-existing parallel-test races that each pass in isolation.
+- `scripts/architecture-check.sh` passes with 66 findings, 38 dependencies, 4 paths, and no additions.

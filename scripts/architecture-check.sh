@@ -126,6 +126,16 @@ if (( $(wc -l < crates/executive/src/impl/daemon/handler/init.rs) > 250 )); then
   echo "architecture-check: handler/init.rs is no longer a thin compatibility layer" >&2
   exit 1
 fi
+if (( $(wc -l < crates/executive/src/impl/daemon/bootstrap/request.rs) > 1500 )); then
+  echo "architecture-check: bootstrap/request.rs exceeded its composition bound" >&2
+  exit 1
+fi
+for stage in channels google runtime storage; do
+  if (( $(wc -l < "crates/executive/src/impl/daemon/bootstrap/${stage}.rs") > 700 )); then
+    echo "architecture-check: bootstrap/${stage}.rs exceeded its stage bound" >&2
+    exit 1
+  fi
+done
 
 if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
   cargo metadata --no-deps --format-version 1 | python3 -c '

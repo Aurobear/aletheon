@@ -23,7 +23,7 @@ This decomposition preserves, rather than replaces, the following designs:
 
 The first plans must address verified current boundaries:
 
-- `CoreSystems` exposes concrete runtime/domain groups: `crates/executive/src/core/core_systems.rs:33-68`.
+- X02 removed the former `CoreSystems`; the private composition root now exists only at `crates/executive/src/impl/daemon/bootstrap/mod.rs:18-35`.
 - `DefaultCapabilityInvoker` declares the production invariant but is not wired by Executive: `crates/kernel/src/capability/mod.rs:1-5`, `crates/kernel/src/capability/mod.rs:27-50`.
 - Dasein construction hard-codes temporal retention: `crates/dasein/src/dasein/mod.rs:57-65`.
 - Sorge uses concrete `SystemTimer`: `crates/dasein/src/dasein/sorge.rs:72-80`, `crates/dasein/src/dasein/sorge.rs:151-163`.
@@ -33,7 +33,7 @@ The first plans must address verified current boundaries:
 
 ### 2.1 Implemented boundary update
 
-- K02 is complete: `KernelRuntime` is the sole cross-table lifecycle handle (`crates/kernel/src/runtime.rs:24-47`), lifecycle tables are crate-private (`crates/kernel/src/process/mod.rs:4-6`, `crates/kernel/src/operation/mod.rs:3-6`), and Executive alone pairs it with `DomainPorts` (`crates/executive/src/core/core_systems.rs:31-36`).
+- K02 is complete: `KernelRuntime` is the sole cross-table lifecycle handle (`crates/kernel/src/runtime.rs:24-47`), lifecycle tables are crate-private (`crates/kernel/src/process/mod.rs:4-6`, `crates/kernel/src/operation/mod.rs:3-6`), and Executive alone owns `DomainPorts` (`crates/executive/src/core/domain_ports.rs:6-18`) and pairs it with the runtime inside private bootstrap (`crates/executive/src/impl/daemon/bootstrap/request.rs`).
 - The invariant is permanent rather than documentary: `scripts/architecture-check.sh:30-124` rejects raw production tool execution, domain concrete clocks, lifecycle table escape hatches, the deleted Executive-local kernel, Kernel domain dependencies, and non-Executive `DomainPorts` composition.
 - Deterministic success, failure, cancellation, reconstruction, supervision, hierarchy, and terminal cleanup are covered by `crates/executive/tests/kernel_lifecycle_scenarios.rs:145-260`, `crates/kernel/tests/terminal_cleanup.rs`, and `crates/kernel/tests/hierarchical_budget.rs`; the complete workspace suite passes.
 
@@ -172,7 +172,7 @@ V02 installed-daemon real scenario and migration gate
 | K01 | `2026-07-16-k01-kernel-runtime-contracts.md` | Opaque lifecycle ports and exact transition validation | S02 |
 | K02 | `2026-07-16-k02-kernel-authority-cleanup.md` | **Done:** hierarchical budgets, deterministic cleanup and removal of Executive-local kernel | K01 |
 | X01 | `2026-07-15-x01-executive-use-case-ports.md` | **Done:** narrow handler ports and extracted context/session/projection services | S02 |
-| X02 | `2026-07-15-x02-private-composition-root.md` | Private composition root and split lifecycle bootstrap | X01, K01 |
+| X02 | `2026-07-15-x02-private-composition-root.md` | **Done:** private composition root and split lifecycle bootstrap | X01, K01 |
 | F01 | `2026-07-15-f01-domain-facade-authority.md` | Metacog, Cognit and remaining Corpus production paths use authoritative facades | X02, E03 |
 | R01 | `2026-07-15-r01-canonical-event-spine.md` | EnvelopeV2, ordered tree sequence and raw observation separation | S02 |
 | R02 | `2026-07-15-r02-deterministic-event-projections.md` | Replayable public/debug/memory/Agent/metrics reducers | R01 |
