@@ -62,7 +62,7 @@ use crate::r#impl::channel::gmail::{
 };
 use crate::r#impl::channel::router::{
     ChannelApprovalExecutor, ChannelGoalExecutor, ChannelRouter, ChannelTransport,
-    ChannelTurnExecutor, GmailDraftApprovalExecutor,
+    ChannelTurnExecutor, GmailDraftApprovalExecutor, GoalProgress,
 };
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
@@ -394,6 +394,7 @@ fn register_configured_google_read_tools(
                 )),
             })?;
         }
+
         if drive_enabled && grant.scopes.contains(&fabric::ExternalScope::DriveReadonly) {
             manager.register(crate::r#impl::google::GoogleSyncRegistration {
                 principal: identity.principal_id,
@@ -1124,6 +1125,15 @@ impl RequestHandler {
             }
         }
 
+        let goal_runtime_registry = if goal_runtime.enabled {
+            let runtime = subsystems.runtime.lock().await;
+            Some(Arc::new(
+                runtime.sub_agent_spawner().runtime_registry().clone(),
+            ))
+        } else {
+            None
+        };
+
         // Repoint the sub-agent spawner at the shared kernel tables so
         // sub-agents register in the same ProcessTable/OperationTable as the
         // main agent (Phase 2c: enables fork-on-spawn for process parents).
@@ -1379,6 +1389,32 @@ impl RequestHandler {
         // so they are available for Telegram channel initialization.
         let _turn_orch_for_telegram = turn_orchestrator.clone();
         let _cancel_for_telegram = cancel_token.clone();
+        let (goal_progress_tx, goal_progress_rx) = mpsc::channel(64);
+        let goal_worker_task = if let Some(runtime_registry) = goal_runtime_registry {
+            let worker_route = goal_runtime
+                .worker
+                .as_ref()
+                .context("missing Goal worker route")?;
+            let reviewer_route = goal_runtime
+                .reviewer
+                .as_ref()
+                .context("missing Goal reviewer route")?;
+            let worker = crate::r#impl::goal::GoalWorker::new(
+                Arc::new(std::sync::Mutex::new(ObjectiveStore::open(
+                    &objective_db_path,
+                )?)),
+                runtime_registry,
+                fabric::RuntimeId(worker_route.runtime_id.clone()),
+                fabric::RuntimeId(reviewer_route.runtime_id.clone()),
+                goal_progress_tx,
+            );
+            let worker_cancel = cancel_token.clone();
+            Some(tokio::spawn(worker.run(worker_cancel)))
+        } else {
+            drop(goal_progress_tx);
+            None
+        };
+        let goal_worker_enabled = goal_worker_task.is_some();
 
         let mut handler = Self {
             subsystems,
@@ -1393,6 +1429,7 @@ impl RequestHandler {
             daemon_cancel_token: Some(cancel_token),
             turn_orchestrator,
             telegram_task: None,
+            goal_worker_task: goal_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
             google_sync: google_sync.map(|handle| Arc::new(Mutex::new(Some(handle)))),
             gbrain_worker_task: gbrain_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
             approved_apply: approved_apply.clone(),
@@ -1491,6 +1528,7 @@ impl RequestHandler {
                 approved_apply,
                 handler.google.clone(),
                 _cancel_for_telegram,
+                goal_worker_enabled.then_some(goal_progress_rx),
             );
             handler.telegram_task = Some(Arc::new(jh));
         } else {
@@ -1512,6 +1550,7 @@ impl RequestHandler {
         approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
         google: Option<Arc<GoogleIntegration>>,
         cancel: CancellationToken,
+        goal_progress_rx: Option<mpsc::Receiver<GoalProgress>>,
     ) -> tokio::task::JoinHandle<()> {
         let store_path = data_dir.join("channels.db");
         let store = ChannelStore::open(&store_path).expect("opening channel store for Telegram");
@@ -1578,6 +1617,7 @@ impl RequestHandler {
                 approval_repository_for_poll,
                 approval_conversation,
                 cancel,
+                goal_progress_rx,
             )
             .await;
         })
@@ -1591,6 +1631,7 @@ impl RequestHandler {
         approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
         approval_conversation: Option<fabric::channel::ConversationId>,
         cancel: CancellationToken,
+        mut goal_progress_rx: Option<mpsc::Receiver<GoalProgress>>,
     ) {
         let mut backoff_ms: u64 = 1_000;
         let max_backoff_ms: u64 = 60_000;
@@ -1639,6 +1680,23 @@ impl RequestHandler {
                     break;
                 }
                 r = transport.receive(cursor.clone()) => r,
+                progress = async {
+                    match &mut goal_progress_rx {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let (Some(progress), Some(conversation)) = (progress, &approval_conversation) {
+                        if let Err(error) = router.queue_goal_progress(
+                            transport.channel_id(),
+                            conversation.clone(),
+                            &progress,
+                        ) {
+                            warn!(goal_id = %progress.goal_id, error = %error, "Telegram Goal progress notification failed");
+                        }
+                    }
+                    continue;
+                }
             };
 
             match result {
