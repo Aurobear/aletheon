@@ -78,6 +78,7 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
                             audit_id: None,
                         },
                     ],
+                    projection: None,
                 })
             },
         )

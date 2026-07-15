@@ -25,9 +25,6 @@ core_systems_field|crates/executive/src/impl/daemon/handler/turn_handler.rs| let
 core_systems_field|crates/executive/src/impl/memory_projection.rs| match self.memory.record(event).await {
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.runtime.clone(),
-core_systems_field|crates/executive/src/service/daemon_turn/post_phases.rs| let mem = self.subsystems.memory.episodic_memory.lock().await;
-core_systems_field|crates/executive/src/service/daemon_turn/post_phases.rs| let mut am = self.subsystems.memory.auto_memory.lock().await;
-core_systems_field|crates/executive/src/service/daemon_turn/post_phases.rs| let rm = self.subsystems.memory.recall_memory.lock().await;
 core_systems_field|crates/executive/src/service/turn_pipeline.rs| let config = self.subsystems.runtime.lock().await.config().clone();
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::HookRegistry;
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::tools::tools::ToolRegistry;

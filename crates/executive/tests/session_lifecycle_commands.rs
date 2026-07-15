@@ -44,6 +44,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
                         },
                     },
                     items: vec![],
+                    projection: None,
                 })
             },
         )
@@ -83,6 +84,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
                     Ok(TurnExecution {
                         result: cancelled_result(),
                         items: vec![],
+                        projection: None,
                     })
                 },
             )

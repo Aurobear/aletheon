@@ -58,6 +58,8 @@ pub struct TurnPipeline {
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
     pub(crate) context_assembler: Arc<crate::service::context_assembler::ContextAssembler>,
     pub(crate) canonical_sessions: Arc<crate::service::session_service::SessionService>,
+    pub(crate) post_turn_projection:
+        Arc<dyn crate::service::post_turn_projection::PostTurnProjection>,
 }
 
 impl TurnPipeline {
@@ -78,6 +80,11 @@ impl TurnPipeline {
         let admission = kernel.admission();
         let agora = Some(subsystems.domains.agora());
 
+        let post_turn_projection = Arc::new(
+            crate::service::post_turn_projection::ProductionPostTurnProjection::new(
+                subsystems.clone(),
+            ),
+        );
         Self {
             subsystems,
             sessions,
@@ -93,6 +100,7 @@ impl TurnPipeline {
             daemon_cancel_token,
             context_assembler,
             canonical_sessions,
+            post_turn_projection,
         }
     }
 
@@ -700,11 +708,6 @@ impl TurnPipeline {
         )
         .await;
 
-        self.run_post_turn_hooks().await;
-        if turn_succeeded {
-            self.extract_auto_memory(&message, &text).await;
-        }
-
         // Session history push
         let turn = if turn_succeeded {
             let (_sid, sm_arc) = self.get_or_create_session(None).await?;
@@ -746,55 +749,6 @@ impl TurnPipeline {
             sm.turn_count()
         };
 
-        if turn_succeeded {
-            let sess_id = self.get_or_create_session(None).await?.0;
-            let observed_at = fabric::wall_to_datetime(self.clock.wall_now());
-            let _ = self
-                .subsystems
-                .memory
-                .memory_service
-                .record(mnemosyne::ExperienceEvent::Message {
-                    session: sess_id.clone(),
-                    role: "assistant".into(),
-                    content: text.clone(),
-                    metadata: mnemosyne::MemoryMetadata::local(
-                        format!("message:{sess_id}:assistant:{turn}"),
-                        format!("{sess_id}:assistant:{turn}"),
-                        observed_at,
-                    ),
-                })
-                .await;
-            let hr = self.subsystems.corpus.hook_registry.lock().await;
-            let ctx = HookContext {
-                point: HookPoint::OnMemoryStore,
-                session_id: sess_id.clone(),
-                turn_count: turn,
-                tool_name: None,
-                tool_input: None,
-                tool_result: None,
-                message: None,
-                metadata: HashMap::new(),
-            };
-            hr.execute(&ctx).await;
-        }
-
-        let task_summary = if message.len() > 100 {
-            let end = message
-                .char_indices()
-                .nth(100)
-                .map(|(i, _)| i)
-                .unwrap_or(message.len());
-            format!("{}...", &message[..end])
-        } else {
-            message.to_string()
-        };
-        self.record_turn_reflection(&task_summary, &text, turn)
-            .await;
-        self.run_post_evolution(&task_summary, &text, &metrics)
-            .await;
-        self.commit_agora_snapshot(&session_id_for_agora, agora_start_version)
-            .await;
-
         // -- PR-3: drain the per-turn OperationScope (guarantees no orphan tasks) --
         {
             let mut guard = self.current_scope.lock().await;
@@ -819,7 +773,11 @@ impl TurnPipeline {
                     "iterations": metrics.iterations,
                     "completed_normally": metrics.completed_normally
                 },
-                "canonical_items": canonical_items
+                "canonical_items": canonical_items,
+                "projection": {
+                    "session_id": session_id_for_agora,
+                    "agora_start_version": agora_start_version
+                }
         }}))
     }
 }

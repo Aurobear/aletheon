@@ -17,6 +17,12 @@ use super::turn_policy::TurnPolicy;
 pub struct TurnExecution {
     pub result: TurnResult,
     pub items: Vec<ItemPayload>,
+    pub projection: Option<super::post_turn_projection::PostTurnDispatch>,
+}
+
+struct CompletedExecution {
+    result: TurnResult,
+    projection: Option<super::post_turn_projection::PostTurnDispatch>,
 }
 
 #[derive(Clone)]
@@ -100,9 +106,9 @@ impl TurnCoordinator {
             .await;
         self.active.lock().await.remove(&request.session_id);
         match outcome {
-            Ok(result) => {
-                let terminal = match result.stop {
-                    TurnStop::Completed if result.metrics.completed_normally => {
+            Ok(completed) => {
+                let terminal = match completed.result.stop {
+                    TurnStop::Completed if completed.result.metrics.completed_normally => {
                         self.kernel.succeed_operation(operation.id).await
                     }
                     TurnStop::Cancelled => {
@@ -119,12 +125,19 @@ impl TurnCoordinator {
                     }
                     _ => {
                         self.kernel
-                            .fail_operation(operation.id, format!("{:?}", result.stop))
+                            .fail_operation(operation.id, format!("{:?}", completed.result.stop))
                             .await
                     }
                 };
                 terminal?;
-                Ok(result)
+                if let Some(dispatch) = completed.projection {
+                    tokio::spawn(async move {
+                        if let Err(error) = dispatch.projector.project(dispatch.outcome).await {
+                            tracing::warn!(%error, "post-turn projection failed after settlement");
+                        }
+                    });
+                }
+                Ok(completed.result)
             }
             Err(error) => {
                 self.kernel
@@ -140,7 +153,7 @@ impl TurnCoordinator {
         request: &TurnRequest,
         cancel: CancellationToken,
         runner: F,
-    ) -> Result<TurnResult>
+    ) -> Result<CompletedExecution>
     where
         F: FnOnce(TurnRequest, CancellationToken) -> Fut,
         Fut: Future<Output = Result<TurnExecution>>,
@@ -172,22 +185,27 @@ impl TurnCoordinator {
         let execution = runner(request.clone(), cancel).await;
         match execution {
             Ok(execution) => {
-                for payload in execution.items {
+                let TurnExecution {
+                    result,
+                    items,
+                    projection,
+                } = execution;
+                for payload in items {
                     self.append(&session_id, turn_id, &mut sequence, payload)
                         .await?;
                 }
-                let terminal = if execution.result.stop == TurnStop::Completed {
+                let terminal = if result.stop == TurnStop::Completed {
                     ItemPayload::AssistantMessage {
-                        content: execution.result.output.clone(),
+                        content: result.output.clone(),
                     }
                 } else {
                     ItemPayload::SystemNotice {
-                        content: format!("turn stopped: {:?}", execution.result.stop),
+                        content: format!("turn stopped: {:?}", result.stop),
                     }
                 };
                 self.append(&session_id, turn_id, &mut sequence, terminal)
                     .await?;
-                Ok(execution.result)
+                Ok(CompletedExecution { result, projection })
             }
             Err(error) => {
                 self.append(

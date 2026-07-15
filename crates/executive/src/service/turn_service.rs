@@ -131,6 +131,7 @@ impl TurnService {
                 Ok(TurnExecution {
                     result,
                     items: recording.take_items().await,
+                    projection: None,
                 })
             })
             .await?;

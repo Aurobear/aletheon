@@ -126,6 +126,27 @@ impl DaemonTurnOrchestrator {
                     iterations: metric["iterations"].as_u64().unwrap_or(0) as usize,
                     completed_normally: metric["completed_normally"].as_bool().unwrap_or(false),
                 };
+                let projection = crate::service::post_turn_projection::PostTurnDispatch {
+                    projector: pipeline.post_turn_projection.clone(),
+                    outcome: crate::service::post_turn_projection::PostTurnOutcome {
+                        session_id: result["projection"]["session_id"]
+                            .as_str()
+                            .unwrap_or(&request.session_id)
+                            .to_string(),
+                        input: request.input.clone(),
+                        output: output.clone(),
+                        turn: result["turn"].as_u64().unwrap_or(0) as usize,
+                        succeeded,
+                        tool_calls_made: metrics.tool_calls_made,
+                        tool_errors: metrics.tool_errors,
+                        elapsed_ms: metrics.elapsed_ms,
+                        iterations: metrics.iterations,
+                        completed_normally: metrics.completed_normally,
+                        agora_start_version: result["projection"]["agora_start_version"]
+                            .as_u64()
+                            .unwrap_or(0),
+                    },
+                };
                 Ok(TurnExecution {
                     result: TurnResult {
                         output,
@@ -139,6 +160,7 @@ impl DaemonTurnOrchestrator {
                         metrics,
                     },
                     items,
+                    projection: Some(projection),
                 })
             })
             .await;
