@@ -1,5 +1,6 @@
 pub mod admin_service;
 pub mod approval_service;
+pub mod context_assembler;
 pub mod daemon_react;
 pub mod daemon_turn;
 pub mod exec_session;

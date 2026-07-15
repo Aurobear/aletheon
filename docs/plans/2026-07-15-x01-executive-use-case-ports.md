@@ -103,6 +103,8 @@
 - [ ] Migrate session RPC/routing code to those operations and prove resume/fork/replay/interrupt still use canonical Session/Turn/Item state.
 - [ ] Run context/session focused tests plus `session_lifecycle_commands`, `session_append_store`, and `turn_service_equivalence`; expected PASS.
 
+**Task 5 progress:** the pure request/history boundary, deterministic fragment order (`recall -> core memory -> facts -> skills -> Dasein -> Agora`), UTF-8-safe per-fragment/aggregate caps, and canonical-history bounding are implemented at `crates/executive/src/service/context_assembler.rs`; focused contract tests are at `crates/executive/tests/context_assembler.rs`. The task remains open until live memory/skill/domain sources are adapted to `ContextSource`, `TurnPipeline` delegates to it, and legacy session RPC is migrated.
+
 ### Task 6: Extract synchronous turn adapters and post-turn projections
 
 **Files:**
