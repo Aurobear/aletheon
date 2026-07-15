@@ -9,6 +9,7 @@ pub mod bewandtnis;
 pub mod care_structure;
 pub mod context_injection;
 pub mod event_bridge;
+pub mod ledger;
 pub mod negativity;
 pub mod persistence;
 pub mod reducer;
@@ -27,6 +28,7 @@ use bewandtnis::Bewandtnisganzheit;
 use care_structure::CareStructure;
 use context_injection::format_dasein_context;
 pub use event_bridge::DaseinEventBridge;
+use ledger::SelfLedger;
 use reducer::DaseinStateEngine;
 use self_model::MutableSelfModel;
 use sorge::{SorgeLoop, SorgeTimer, SystemSorgeTimer};
@@ -102,6 +104,15 @@ impl DaseinModule {
         timer: Arc<dyn SorgeTimer>,
         config: DaseinRuntimeConfig,
     ) -> anyhow::Result<(Self, mpsc::Sender<DaseinEvent>)> {
+        Self::with_runtime_and_ledger(clock, timer, config, None)
+    }
+
+    pub fn with_runtime_and_ledger(
+        clock: Arc<dyn fabric::Clock>,
+        timer: Arc<dyn SorgeTimer>,
+        config: DaseinRuntimeConfig,
+        ledger: Option<Arc<SelfLedger>>,
+    ) -> anyhow::Result<(Self, mpsc::Sender<DaseinEvent>)> {
         config.validate()?;
         let (sorge, event_tx) = SorgeLoop::new(config.event_buffer, clock.clone(), timer);
         let external_tx = event_tx.clone();
@@ -121,6 +132,7 @@ impl DaseinModule {
             care.clone(),
             mood.clone(),
             clock.clone(),
+            ledger,
         ));
 
         let module = Self {
@@ -156,11 +168,6 @@ impl DaseinModule {
     /// Get current mood.
     pub fn mood(&self) -> Stimmung {
         self.mood.read().clone()
-    }
-
-    /// Get raw mood RwLock for persistence.
-    pub fn mood_raw(&self) -> &parking_lot::RwLock<Stimmung> {
-        &self.mood
     }
 
     /// Get the event sender for external events.
@@ -199,6 +206,42 @@ impl DaseinModule {
                 },
             )
             .await
+    }
+
+    pub(crate) async fn transition_current_for_restore(
+        &self,
+        source: ExperienceSource,
+        producer: &str,
+        content: InterpretedExperience,
+    ) -> anyhow::Result<SelfTransitionReceipt> {
+        self.engine
+            .transition_current(source, producer, content)
+            .await
+    }
+
+    pub async fn replay_durable_state(&self) -> anyhow::Result<usize> {
+        self.engine.replay().await
+    }
+
+    pub async fn record_resumption_after_replay(
+        &self,
+    ) -> anyhow::Result<Option<SelfTransitionReceipt>> {
+        let Some(last_observed) = self.engine.last_durable_observed_at()? else {
+            return Ok(None);
+        };
+        let elapsed_ms = self.clock.wall_now().0.saturating_sub(last_observed.0) as u64;
+        self.engine
+            .transition_current(
+                ExperienceSource::Dasein,
+                "dasein-restart",
+                InterpretedExperience::ResumedAfterInterval { elapsed_ms },
+            )
+            .await
+            .map(Some)
+    }
+
+    pub fn checkpoint_durable_state(&self) -> anyhow::Result<()> {
+        self.engine.checkpoint()
     }
 
     /// Generate context injection for LLM.

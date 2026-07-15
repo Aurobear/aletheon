@@ -96,7 +96,7 @@ pub struct SelfField {
     mutation: MutationLayer,
     initialized: bool,
     /// Optional SQLite store for persistence.
-    store: Option<SelfFieldStore>,
+    store: Option<Arc<SelfFieldStore>>,
     // Bridges to external subsystems
     policy_bridge: PolicyBridge,
     loop_bridge: LoopBridge,
@@ -138,7 +138,8 @@ impl SelfField {
 
         let store = config
             .db_path
-            .and_then(|path| SelfFieldStore::new(path).ok());
+            .and_then(|path| SelfFieldStore::new(path).ok())
+            .map(Arc::new);
 
         let (dasein, dasein_event_tx) = if config.enable_dasein {
             let runtime_config = crate::dasein::DaseinRuntimeConfig {
@@ -146,10 +147,14 @@ impl SelfField {
                 decay_rate: config.dasein_decay_rate,
                 ..Default::default()
             };
-            let (module, tx) = DaseinModule::with_runtime(
+            let ledger = store
+                .as_ref()
+                .map(|store| Arc::new(crate::dasein::ledger::SelfLedger::new(store.clone())));
+            let (module, tx) = DaseinModule::with_runtime_and_ledger(
                 clock.clone(),
                 Arc::new(crate::dasein::sorge::SystemSorgeTimer),
                 runtime_config,
+                ledger,
             )
             .expect("SelfField Dasein configuration must be valid");
             (Some(module), Some(tx))
@@ -334,14 +339,11 @@ impl Subsystem for SelfField {
         self.narrative
             .narrate("init", "SelfField subsystem initialized");
         if let Some(ref dasein) = self.dasein {
-            dasein.start_sorge_loop();
-            info!("DaseinModule sorge loop started");
-            // Load DaseinModule state from database
             if let Some(ref store) = self.store {
-                if let Err(e) = crate::dasein::persistence::load_dasein_state(dasein, store) {
-                    tracing::warn!("Failed to load DaseinModule state: {}", e);
-                }
+                crate::dasein::persistence::load_dasein_state(dasein, store).await?;
             }
+            dasein.start_sorge_loop();
+            info!("DaseinModule durable state restored; sorge loop started");
         }
         self.initialized = true;
         Ok(())
@@ -358,15 +360,12 @@ impl Subsystem for SelfField {
 
     async fn shutdown(&mut self) -> Result<()> {
         info!("SelfField shutting down");
-        // Save DaseinModule state before stopping sorge loop
-        if let (Some(ref dasein), Some(ref store)) = (&self.dasein, &self.store) {
-            if let Err(e) = crate::dasein::persistence::save_dasein_state(dasein, store) {
-                tracing::warn!("Failed to save DaseinModule state: {}", e);
-            }
-        }
         if let Some(ref dasein) = self.dasein {
             dasein.stop_sorge_loop().await;
             info!("DaseinModule sorge loop stopped");
+            if let Some(ref store) = self.store {
+                crate::dasein::persistence::save_dasein_state(dasein, store)?;
+            }
         }
         self.narrative
             .narrate("shutdown", "SelfField subsystem shutting down");

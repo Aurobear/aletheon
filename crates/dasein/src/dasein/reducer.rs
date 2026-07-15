@@ -1,9 +1,11 @@
 use super::bewandtnis::Bewandtnisganzheit;
 use super::care_structure::CareStructure;
+use super::ledger::SelfLedger;
 use super::self_model::{
     AssertionSource, MutableSelfModel, NegationReason, SelfAssertion, SelfPossibility,
 };
 use super::temporality::{ExperientialContent, TemporalStream};
+use super::types::BewandtnisNode;
 use super::types::{EntityId, ReadinessState as InternalReadinessState};
 use fabric::dasein::{
     DaseinEvent, ExperienceProvenance, ExperienceSource, InterpretedExperience, NarrativeEntryId,
@@ -31,6 +33,7 @@ pub struct DaseinStateEngine {
     mood: Arc<RwLock<Stimmung>>,
     state: Mutex<ReducerState>,
     clock: Arc<dyn fabric::Clock>,
+    ledger: Option<Arc<SelfLedger>>,
 }
 
 impl DaseinStateEngine {
@@ -41,6 +44,7 @@ impl DaseinStateEngine {
         care: Arc<CareStructure>,
         mood: Arc<RwLock<Stimmung>>,
         clock: Arc<dyn fabric::Clock>,
+        ledger: Option<Arc<SelfLedger>>,
     ) -> Self {
         Self {
             temporality,
@@ -54,6 +58,7 @@ impl DaseinStateEngine {
                 narrative: VecDeque::with_capacity(MAX_NARRATIVE_REFERENCES),
             }),
             clock,
+            ledger,
         }
     }
 
@@ -74,13 +79,14 @@ impl DaseinStateEngine {
         request: SelfTransitionRequest,
     ) -> anyhow::Result<SelfTransitionReceipt> {
         let mut state = self.state.lock().await;
-        self.transition_locked(&mut state, request)
+        self.transition_locked(&mut state, request, true)
     }
 
     fn transition_locked(
         &self,
         state: &mut ReducerState,
         request: SelfTransitionRequest,
+        persist: bool,
     ) -> anyhow::Result<SelfTransitionReceipt> {
         if let Some(receipt) = state.receipts.get(&request.event_id) {
             return Ok(receipt.clone());
@@ -94,9 +100,21 @@ impl DaseinStateEngine {
             state.version.0
         );
 
+        self.preflight(&request.content)?;
+
         let previous_version = state.version;
-        let emitted = self.reduce(&request.content)?;
         let current_version = SelfVersion(previous_version.0 + 1);
+        if persist {
+            if let Some(ledger) = &self.ledger {
+                let durable = ledger.append(&request)?;
+                anyhow::ensure!(
+                    durable.previous_version == previous_version
+                        && durable.current_version == current_version,
+                    "self ledger and reducer version diverged"
+                );
+            }
+        }
+        let emitted = self.reduce(&request.content);
         let narrative_entry_id = NarrativeEntryId::for_event(request.event_id);
         let receipt = SelfTransitionReceipt {
             event_id: request.event_id,
@@ -190,10 +208,63 @@ impl DaseinStateEngine {
             },
             expected_version: state.version,
         };
-        self.transition_locked(&mut state, request)
+        self.transition_locked(&mut state, request, true)
     }
 
-    fn reduce(&self, content: &InterpretedExperience) -> anyhow::Result<Vec<SelfSignal>> {
+    pub async fn replay(&self) -> anyhow::Result<usize> {
+        let Some(ledger) = &self.ledger else {
+            return Ok(0);
+        };
+        let events = ledger.load_replay_plan()?;
+        let mut state = self.state.lock().await;
+        anyhow::ensure!(
+            state.version == SelfVersion(0) && state.receipts.is_empty(),
+            "Dasein replay requires a pristine state engine"
+        );
+        for event in &events {
+            let receipt = self.transition_locked(&mut state, event.request.clone(), false)?;
+            anyhow::ensure!(
+                receipt.previous_version == event.previous_version
+                    && receipt.current_version == event.current_version,
+                "Dasein replay receipt diverged at sequence {}",
+                event.sequence
+            );
+        }
+        Ok(events.len())
+    }
+
+    pub fn checkpoint(&self) -> anyhow::Result<()> {
+        let Some(ledger) = &self.ledger else {
+            return Ok(());
+        };
+        let events = ledger.load_verified()?;
+        ledger.save_checkpoint(&events, self.clock.wall_now().0)
+    }
+
+    pub fn last_durable_observed_at(&self) -> anyhow::Result<Option<fabric::WallTime>> {
+        let Some(ledger) = &self.ledger else {
+            return Ok(None);
+        };
+        Ok(ledger
+            .load_verified()?
+            .last()
+            .map(|event| event.request.observed_at))
+    }
+
+    fn preflight(&self, content: &InterpretedExperience) -> anyhow::Result<()> {
+        if let InterpretedExperience::ReadinessChanged {
+            entity_id,
+            old_state,
+            ..
+        } = content
+        {
+            self.world
+                .validate_readiness(&EntityId::new(entity_id), &to_internal_readiness(old_state))?;
+        }
+        Ok(())
+    }
+
+    fn reduce(&self, content: &InterpretedExperience) -> Vec<SelfSignal> {
         let mut emitted = Vec::new();
         match content {
             InterpretedExperience::Lived {
@@ -278,6 +349,24 @@ impl DaseinStateEngine {
             InterpretedExperience::MoodObserved { mood, .. } => {
                 self.set_mood(mood.clone(), &mut emitted);
             }
+            InterpretedExperience::WorldEntityObserved {
+                entity_id,
+                what_it_is,
+                for_the_sake_of,
+                readiness,
+            } => {
+                self.world.add_entity(BewandtnisNode {
+                    id: EntityId::new(entity_id),
+                    what_it_is: what_it_is.clone(),
+                    for_the_sake_of: for_the_sake_of.iter().map(EntityId::new).collect(),
+                    appears_in: Vec::new(),
+                    readiness: to_internal_readiness(readiness),
+                });
+                emitted.push(SelfSignal::WorldEntityIntegrated {
+                    entity_id: entity_id.clone(),
+                });
+                self.synthesize_mood(&mut emitted);
+            }
             InterpretedExperience::ReadinessChanged {
                 entity_id,
                 old_state,
@@ -285,11 +374,13 @@ impl DaseinStateEngine {
             } => {
                 let entity_id = EntityId::new(entity_id);
                 let expected_old = to_internal_readiness(old_state);
-                self.world.update_readiness_if(
-                    &entity_id,
-                    &expected_old,
-                    to_internal_readiness(new_state),
-                )?;
+                self.world
+                    .update_readiness_if(
+                        &entity_id,
+                        &expected_old,
+                        to_internal_readiness(new_state),
+                    )
+                    .expect("readiness was verified by reducer preflight");
                 emitted.push(SelfSignal::WorldReadinessChanged {
                     entity_id: entity_id.to_string(),
                 });
@@ -302,6 +393,18 @@ impl DaseinStateEngine {
                     });
                 }
             }
+            InterpretedExperience::ResumedAfterInterval { elapsed_ms } => {
+                self.temporality.ingest(
+                    ExperientialContent {
+                        semantic: format!("resumed after {elapsed_ms} ms"),
+                        action: Some("runtime_resumption".into()),
+                        perception: None,
+                        negation: None,
+                    },
+                    self.mood.read().clone(),
+                );
+                self.synthesize_mood(&mut emitted);
+            }
             InterpretedExperience::ScheduledReflection => {
                 let patterns = self.temporality.passive_synthesize();
                 self.temporality.update_protentions_from_patterns(&patterns);
@@ -313,7 +416,7 @@ impl DaseinStateEngine {
                 emitted.push(SelfSignal::ReflectionCompleted);
             }
         }
-        Ok(emitted)
+        emitted
     }
 
     fn synthesize_mood(&self, emitted: &mut Vec<SelfSignal>) {

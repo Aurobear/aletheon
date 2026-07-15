@@ -95,6 +95,22 @@ impl Bewandtnisganzheit {
         Ok(())
     }
 
+    pub fn validate_readiness(
+        &self,
+        id: &EntityId,
+        expected: &ReadinessState,
+    ) -> anyhow::Result<()> {
+        let nodes = self.nodes.read();
+        let node = nodes
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown Dasein world entity {id}"))?;
+        anyhow::ensure!(
+            node.readiness == *expected,
+            "Dasein readiness conflict for {id}"
+        );
+        Ok(())
+    }
+
     /// Get all entities with a given readiness state.
     pub fn entities_by_readiness(&self, readiness: &ReadinessState) -> Vec<BewandtnisNode> {
         let nodes = self.nodes.read();
@@ -251,6 +267,9 @@ impl Bewandtnisganzheit {
                 }
             }
         }
+        ready.sort_by(|left, right| left.id.cmp(&right.id));
+        present.sort_by(|left, right| left.id.cmp(&right.id));
+        unavailable.sort_by(|left, right| left.id.cmp(&right.id));
 
         BewandtnisSnapshot {
             ready_to_hand: ready,

@@ -99,6 +99,12 @@ pub enum InterpretedExperience {
         mood: Stimmung,
         reason: String,
     },
+    WorldEntityObserved {
+        entity_id: String,
+        what_it_is: String,
+        for_the_sake_of: Vec<String>,
+        readiness: ReadinessState,
+    },
     ReadinessChanged {
         entity_id: String,
         old_state: ReadinessState,
@@ -107,6 +113,9 @@ pub enum InterpretedExperience {
     TemporalSignal {
         kind: TemporalEventKind,
         content: String,
+    },
+    ResumedAfterInterval {
+        elapsed_ms: u64,
     },
     ScheduledReflection,
 }
@@ -148,19 +157,39 @@ impl InterpretedExperience {
             Self::MoodObserved { reason, .. } => {
                 validate_text("mood observation reason", reason, false)?
             }
+            Self::WorldEntityObserved {
+                entity_id,
+                what_it_is,
+                for_the_sake_of,
+                ..
+            } => {
+                validate_text("world entity ID", entity_id, false)?;
+                validate_text("world entity description", what_it_is, false)?;
+                anyhow::ensure!(
+                    for_the_sake_of.len() <= MAX_POSSIBILITIES,
+                    "world entity involvement list exceeds item limit"
+                );
+                for target in for_the_sake_of {
+                    validate_text("world entity involvement", target, false)?;
+                }
+            }
             Self::ReadinessChanged { entity_id, .. } => {
                 validate_text("readiness entity", entity_id, false)?
             }
             Self::TemporalSignal { content, .. } => {
                 validate_text("temporal signal content", content, false)?
             }
+            Self::ResumedAfterInterval { .. } => {}
             Self::ScheduledReflection => {}
         }
         Ok(())
     }
 
     pub fn is_lived(&self) -> bool {
-        matches!(self, Self::Lived { .. } | Self::Outcome { .. })
+        matches!(
+            self,
+            Self::Lived { .. } | Self::Outcome { .. } | Self::ResumedAfterInterval { .. }
+        )
     }
 }
 
@@ -172,6 +201,7 @@ pub enum SelfSignal {
     KnowledgeIntegrated { assertion_count: usize },
     PossibilitiesOpened { count: usize },
     WorldReadinessChanged { entity_id: String },
+    WorldEntityIntegrated { entity_id: String },
     ReflectionCompleted,
 }
 
@@ -199,6 +229,50 @@ pub struct SelfTransitionReceipt {
     pub current_version: SelfVersion,
     pub narrative_entry_id: NarrativeEntryId,
     pub emitted: Vec<SelfSignal>,
+}
+
+pub const SELF_EVENT_SCHEMA_V1: u16 = 1;
+pub const SELF_REDUCER_V1: u16 = 1;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SelfEventV1 {
+    pub schema_version: u16,
+    pub reducer_version: u16,
+    pub sequence: u64,
+    pub request: SelfTransitionRequest,
+    pub previous_version: SelfVersion,
+    pub current_version: SelfVersion,
+    pub previous_checksum: String,
+    pub checksum: String,
+}
+
+impl SelfEventV1 {
+    pub fn validate_versions(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema_version == SELF_EVENT_SCHEMA_V1,
+            "unsupported self event schema {}",
+            self.schema_version
+        );
+        anyhow::ensure!(
+            self.reducer_version == SELF_REDUCER_V1,
+            "unsupported self reducer version {}",
+            self.reducer_version
+        );
+        anyhow::ensure!(
+            self.current_version.0 == self.previous_version.0 + 1,
+            "self event version range must advance exactly once"
+        );
+        self.request.validate()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelfLineageV1 {
+    pub version: String,
+    pub parent_version: Option<String>,
+    pub mutation_id: Option<String>,
+    pub approval_id: Option<String>,
+    pub checksum: String,
 }
 
 fn validate_optional_text(field: &str, value: &Option<String>) -> anyhow::Result<()> {
@@ -282,5 +356,41 @@ mod tests {
             NarrativeEntryId::for_event(event),
             NarrativeEntryId::for_event(event)
         );
+    }
+
+    #[test]
+    fn durable_self_event_round_trips_and_validates_versions() {
+        let request = request(InterpretedExperience::ResumedAfterInterval { elapsed_ms: 10 });
+        let event = SelfEventV1 {
+            schema_version: SELF_EVENT_SCHEMA_V1,
+            reducer_version: SELF_REDUCER_V1,
+            sequence: 1,
+            previous_version: SelfVersion(0),
+            current_version: SelfVersion(1),
+            previous_checksum: String::new(),
+            checksum: "abc".into(),
+            request,
+        };
+        event.validate_versions().unwrap();
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<SelfEventV1>(&json).unwrap(), event);
+    }
+
+    #[test]
+    fn durable_self_event_rejects_unknown_schema_and_reducer() {
+        let mut event = SelfEventV1 {
+            schema_version: 99,
+            reducer_version: SELF_REDUCER_V1,
+            sequence: 1,
+            previous_version: SelfVersion(0),
+            current_version: SelfVersion(1),
+            previous_checksum: String::new(),
+            checksum: "abc".into(),
+            request: request(InterpretedExperience::ScheduledReflection),
+        };
+        assert!(event.validate_versions().is_err());
+        event.schema_version = SELF_EVENT_SCHEMA_V1;
+        event.reducer_version = 99;
+        assert!(event.validate_versions().is_err());
     }
 }

@@ -70,6 +70,30 @@ impl SelfFieldStore {
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS self_events (
+                seq INTEGER PRIMARY KEY,
+                event_id TEXT NOT NULL UNIQUE,
+                previous_version INTEGER NOT NULL,
+                next_version INTEGER NOT NULL UNIQUE,
+                request_json TEXT NOT NULL,
+                previous_checksum TEXT NOT NULL,
+                checksum TEXT NOT NULL,
+                observed_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS self_snapshots (
+                version INTEGER PRIMARY KEY,
+                last_event_seq INTEGER NOT NULL,
+                event_prefix_json TEXT NOT NULL,
+                checksum TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS self_lineage (
+                version TEXT PRIMARY KEY,
+                parent_version TEXT,
+                mutation_id TEXT,
+                approval_id TEXT,
+                checksum TEXT NOT NULL
+            );
             ",
         )
         .context("Failed to create tables")?;
