@@ -57,6 +57,7 @@ pub struct TurnPipeline {
     pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
     pub(crate) context_assembler: Arc<crate::service::context_assembler::ContextAssembler>,
+    pub(crate) canonical_sessions: Arc<crate::service::session_service::SessionService>,
 }
 
 impl TurnPipeline {
@@ -70,6 +71,7 @@ impl TurnPipeline {
         notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
         daemon_cancel_token: Option<CancellationToken>,
         context_assembler: Arc<crate::service::context_assembler::ContextAssembler>,
+        canonical_sessions: Arc<crate::service::session_service::SessionService>,
     ) -> Self {
         let clock = subsystems.kernel.clock();
         let kernel = subsystems.kernel.clone();
@@ -90,6 +92,7 @@ impl TurnPipeline {
             current_scope: Arc::new(Mutex::new(None)),
             daemon_cancel_token,
             context_assembler,
+            canonical_sessions,
         }
     }
 
@@ -419,12 +422,13 @@ impl TurnPipeline {
         let goal_message = message.to_string();
         let goal_message_for_gw = goal_message.clone();
 
-        // History compaction
+        // Canonical Session/Turn/Item history is the only model replay source.
         let existing_messages = {
-            let (_sid, sm_arc) = self.get_or_create_session(None).await?;
-            let mut sm = sm_arc.lock().await;
-            let _ = sm.compact_if_needed(&*self.llm).await;
-            let mut full_history = sm.history().to_vec();
+            let mut full_history = self
+                .canonical_sessions
+                .resume(&fabric::SessionId(turn_request.session_id.clone()))
+                .await?
+                .messages;
             if full_history.last().is_some_and(|last| {
                 last.role == Role::User
                     && last.content.iter().any(

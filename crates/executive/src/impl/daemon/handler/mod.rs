@@ -312,10 +312,7 @@ impl RequestHandler {
             method.as_str(),
             "session.resume" | "session.fork" | "session.interrupt" | "session.replay"
         ) {
-            let service = crate::service::session_service::SessionService::new(
-                self.turn_orchestrator.coordinator.store(),
-                self.turn_orchestrator.coordinator.active_index(),
-            );
+            let service = &self.turn_orchestrator.session_service;
             let session_id = fabric::SessionId(
                 params
                     .get("session_id")

@@ -55,6 +55,7 @@ pub struct DaemonTurnOrchestrator {
     // --- Shared turn pipeline ---
     pub(crate) pipeline: Arc<TurnPipeline>,
     pub(crate) coordinator: Arc<TurnCoordinator>,
+    pub(crate) session_service: Arc<crate::service::session_service::SessionService>,
 }
 
 impl DaemonTurnOrchestrator {
@@ -77,16 +78,6 @@ impl DaemonTurnOrchestrator {
         let admission = kernel.admission();
         let agora = Some(subsystems.domains.agora());
 
-        let pipeline = Arc::new(TurnPipeline::new(
-            subsystems.clone(),
-            sessions.clone(),
-            session_gateway.clone(),
-            llm.clone(),
-            model_router.clone(),
-            notify_tx.clone(),
-            daemon_cancel_token.clone(),
-            context_assembler,
-        ));
         let session_db = default_session_db_path();
         if let Some(parent) = session_db.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -98,6 +89,21 @@ impl DaemonTurnOrchestrator {
         let coordinator = Arc::new(TurnCoordinator::new(
             kernel.clone(),
             Arc::new(canonical_store),
+        ));
+        let session_service = Arc::new(crate::service::session_service::SessionService::new(
+            coordinator.store(),
+            coordinator.active_index(),
+        ));
+        let pipeline = Arc::new(TurnPipeline::new(
+            subsystems.clone(),
+            sessions.clone(),
+            session_gateway.clone(),
+            llm.clone(),
+            model_router.clone(),
+            notify_tx.clone(),
+            daemon_cancel_token.clone(),
+            context_assembler,
+            session_service.clone(),
         ));
 
         Self {
@@ -117,6 +123,7 @@ impl DaemonTurnOrchestrator {
             current_scope: Mutex::new(None),
             pipeline,
             coordinator,
+            session_service,
         }
     }
 

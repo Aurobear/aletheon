@@ -95,12 +95,15 @@ fn turn_pipeline_has_one_context_assembly_route() {
     let pipeline = include_str!("../src/service/turn_pipeline.rs");
     assert!(pipeline.contains(".context_assembler"));
     assert!(pipeline.contains(".assemble(&context_request, &existing_messages)"));
+    assert!(pipeline.contains(".canonical_sessions"));
+    assert!(pipeline.contains(".resume(&fabric::SessionId"));
     for removed in [
         "inject_keyword_skills",
         "inject_composite_recall",
         "inject_core_memory",
         "inject_skill_suggestion",
         "build_request_messages(system_prompt",
+        "sm.history()",
     ] {
         assert!(
             !pipeline.contains(removed),
