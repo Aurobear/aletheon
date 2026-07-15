@@ -24,6 +24,7 @@ validate_dir() {
   done
   if [[ -e "$root/google-vault.key" ]]; then
     [[ $(stat -Lc '%s' "$root/google-vault.key") -eq 32 ]] || fail "Google vault key must contain exactly 32 bytes"
+    [[ $(stat -Lc '%U:%G' "$root/google-vault.key") == root:aletheon ]] || fail "Google vault key source must be root:aletheon"
   fi
   if command -v git >/dev/null && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     while IFS= read -r file; do

@@ -50,7 +50,7 @@ if [[ "$command" == init ]]; then
     tmp=$(mktemp --tmpdir="$root" .vault-key.XXXXXX)
     trap 'rm -f -- "${tmp:-}"' EXIT
     dd if=/dev/urandom of="$tmp" bs=32 count=1 status=none
-    chown aletheon:aletheon "$tmp"
+    chown root:aletheon "$tmp"
     chmod 0600 "$tmp"
     mv -T -- "$tmp" "$root/google-vault.key"
     sync -d "$root" 2>/dev/null || true
@@ -67,5 +67,9 @@ case "$name" in
   provider.env|telegram.env|google-vault.key|gbrain.env|restic-password|restic-repository) ;;
   *) echo "unsupported credential name" >&2; exit 64 ;;
 esac
-atomic_install "$root/$name" aletheon aletheon
+if [[ "$name" == google-vault.key ]]; then
+  atomic_install "$root/$name" root aletheon
+else
+  atomic_install "$root/$name" aletheon aletheon
+fi
 echo "credential replaced atomically: $name" >&2

@@ -228,13 +228,25 @@ fn require_secure_file(path: &Path, require_root: bool) -> Result<()> {
         metadata.file_type().is_file(),
         "credential path is not a regular file"
     );
-    anyhow::ensure!(
-        metadata.permissions().mode() & 0o777 == 0o600,
-        "credential file mode must be 0600"
-    );
+    let mode = metadata.permissions().mode() & 0o777;
+    let credential_copy = require_root
+        && std::env::var_os("CREDENTIALS_DIRECTORY")
+            .is_some_and(|directory| path.starts_with(PathBuf::from(directory)));
+    if credential_copy {
+        anyhow::ensure!(
+            matches!(mode, 0o400 | 0o600),
+            "systemd credential copy mode must be 0400 or 0600"
+        );
+        anyhow::ensure!(
+            metadata.uid() == unsafe { libc::geteuid() },
+            "systemd credential copy is not owned by the service user"
+        );
+    } else {
+        anyhow::ensure!(mode == 0o600, "credential file mode must be 0600");
+    }
     if require_root {
         anyhow::ensure!(
-            metadata.uid() == 0,
+            credential_copy || metadata.uid() == 0,
             "credential master key must be root-owned"
         );
     }

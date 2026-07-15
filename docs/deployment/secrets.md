@@ -15,7 +15,7 @@ copies. The service has
 | Model provider keys | `aletheon:aletheon` | `provider.env` | Create overlapping key, replace, restart/test, revoke old key at provider |
 | Telegram bot token | `aletheon:aletheon` | `telegram.env` | Revoke/regenerate with BotFather, replace, restart, test long poll |
 | Google OAuth client secret | `aletheon:aletheon` | `provider.env` | Create client secret where overlap is supported, replace/test, delete old secret |
-| Google encrypted-vault master key | `aletheon:aletheon` | `google-vault.key` | Re-encrypt every vault record under a new key before atomic replacement; loss makes OAuth records unrecoverable |
+| Google encrypted-vault master key | `root:aletheon` | `google-vault.key` | Re-encrypt every vault record under a new key before atomic replacement; loss makes OAuth records unrecoverable |
 | GBrain bearer/database credentials | `aletheon:aletheon` | `gbrain.env` | Add overlapping bearer credential, replace/restart/test spool drain, revoke old credential |
 | Restic repository password | `aletheon:aletheon` | `restic-password` | Add/test new repository key before removing the old key; retain separately encrypted recovery material |
 | Restic repository reference | `aletheon:aletheon` | `restic-repository` | Replace only after the destination is initialized and a test snapshot succeeds |
