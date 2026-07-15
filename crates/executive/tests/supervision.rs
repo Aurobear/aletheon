@@ -7,6 +7,15 @@
 use aletheon_kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
 use executive::core::SubAgentSpawner;
 use fabric::{ExitReason, ProcessId, SubAgentState};
+use std::sync::Arc;
+
+fn deterministic_spawner() -> SubAgentSpawner {
+    let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+    SubAgentSpawner::with_kernel(
+        Arc::new(aletheon_kernel::KernelRuntime::with_clock(clock.clone())),
+        clock,
+    )
+}
 
 // ---------------------------------------------------------------------------
 // SupervisorTree (kernel) direct tests
@@ -153,7 +162,7 @@ fn supervision_restart_attempts_increment_only_on_failure() {
 
 #[tokio::test]
 async fn spawner_restart_on_failure_max_1_restarts_once() {
-    let mut spawner = SubAgentSpawner::new();
+    let mut spawner = deterministic_spawner();
     let original = spawner
         .spawn_with_policy(
             "task-a".into(),
@@ -202,7 +211,7 @@ async fn spawner_restart_on_failure_max_1_restarts_once() {
 
 #[tokio::test]
 async fn spawner_never_policy_does_not_restart() {
-    let mut spawner = SubAgentSpawner::new();
+    let mut spawner = deterministic_spawner();
     // Default spawn() uses RestartPolicy::Never.
     let agent = spawner
         .spawn("task-a".into(), "turn-1".into())
@@ -230,7 +239,7 @@ async fn spawner_never_policy_does_not_restart() {
 
 #[tokio::test]
 async fn spawner_restart_attempt_is_tracked_in_supervisor_tree() {
-    let mut spawner = SubAgentSpawner::new();
+    let mut spawner = deterministic_spawner();
     let original = spawner
         .spawn_with_policy(
             "task-a".into(),

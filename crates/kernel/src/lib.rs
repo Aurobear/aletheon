@@ -9,4 +9,4 @@ pub mod runtime;
 pub mod space;
 pub mod supervision;
 
-pub use runtime::KernelRuntime;
+pub use runtime::{KernelRuntime, LifecycleFaultInjector};

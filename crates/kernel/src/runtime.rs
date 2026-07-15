@@ -43,7 +43,19 @@ pub struct KernelRuntime {
     terminal_progress: Mutex<HashMap<ProcessId, TerminalProgress>>,
     lifecycle: Mutex<()>,
     identities: Mutex<IdentityRegistry>,
+    lifecycle_faults: Arc<dyn LifecycleFaultInjector>,
 }
+
+/// Optional deterministic fault boundary for lifecycle resilience testing and
+/// controlled chaos validation. Production composition uses the no-op default.
+pub trait LifecycleFaultInjector: Send + Sync {
+    fn before_process_cleanup(&self, _process: ProcessId) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+struct NoLifecycleFaults;
+impl LifecycleFaultInjector for NoLifecycleFaults {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalOutcome {
@@ -89,19 +101,17 @@ struct BudgetOwnership {
 impl KernelRuntime {
     pub fn new() -> Self {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-        let budget = Arc::new(InMemoryBudgetController::new());
-        let leases = Arc::new(InMemoryResourceLeaseManager::new());
-        let production = Arc::new(
-            ProductionAdmissionController::new(clock.clone())
-                .with_budget(budget.clone())
-                .with_leases(leases.clone())
-                .with_sandbox_available(false),
-        );
-        let admission: Arc<dyn AdmissionController> = production.clone();
-        Self::with_components(clock, admission, Some(production), budget, leases)
+        Self::with_clock(clock)
     }
 
     pub fn with_clock(clock: Arc<dyn Clock>) -> Self {
+        Self::with_clock_and_faults(clock, Arc::new(NoLifecycleFaults))
+    }
+
+    pub fn with_clock_and_faults(
+        clock: Arc<dyn Clock>,
+        lifecycle_faults: Arc<dyn LifecycleFaultInjector>,
+    ) -> Self {
         let budget = Arc::new(InMemoryBudgetController::new());
         let leases = Arc::new(InMemoryResourceLeaseManager::new());
         let production = Arc::new(
@@ -111,7 +121,14 @@ impl KernelRuntime {
                 .with_sandbox_available(false),
         );
         let admission: Arc<dyn AdmissionController> = production.clone();
-        Self::with_components(clock, admission, Some(production), budget, leases)
+        Self::with_components(
+            clock,
+            admission,
+            Some(production),
+            budget,
+            leases,
+            lifecycle_faults,
+        )
     }
 
     pub fn with_admission(clock: Arc<dyn Clock>, admission: Arc<dyn AdmissionController>) -> Self {
@@ -121,6 +138,7 @@ impl KernelRuntime {
             None,
             Arc::new(InMemoryBudgetController::new()),
             Arc::new(InMemoryResourceLeaseManager::new()),
+            Arc::new(NoLifecycleFaults),
         )
     }
 
@@ -130,6 +148,7 @@ impl KernelRuntime {
         production_admission: Option<Arc<ProductionAdmissionController>>,
         budget: Arc<InMemoryBudgetController>,
         leases: Arc<InMemoryResourceLeaseManager>,
+        lifecycle_faults: Arc<dyn LifecycleFaultInjector>,
     ) -> Self {
         let spaces = Arc::new(InMemorySpaceManager::new());
         let processes = Arc::new(ProcessTable::with_space_manager(
@@ -155,6 +174,7 @@ impl KernelRuntime {
             terminal_progress: Mutex::new(HashMap::new()),
             lifecycle: Mutex::new(()),
             identities: Mutex::new(IdentityRegistry::default()),
+            lifecycle_faults,
         }
     }
 
@@ -587,6 +607,7 @@ impl KernelRuntime {
     }
 
     async fn cleanup_process_resources(&self, id: ProcessId) -> anyhow::Result<()> {
+        self.lifecycle_faults.before_process_cleanup(id)?;
         let snapshot = self.processes.inspect(id).await?;
         for operation in self.operations.ids_for_owner(id).await {
             self.operations
@@ -744,6 +765,32 @@ impl KernelRuntime {
 
     pub fn inspect_space(&self, id: SpaceId) -> Option<ContextSpace> {
         self.spaces.get_space(id)
+    }
+
+    pub fn active_space_count(&self) -> usize {
+        self.spaces.space_count()
+    }
+
+    pub async fn active_permits_for_process(&self, process: ProcessId) -> usize {
+        match &self.production_admission {
+            Some(admission) => admission.active_for_process(process).await,
+            None => 0,
+        }
+    }
+
+    pub async fn active_operation_count(&self, process: ProcessId) -> usize {
+        let mut count = 0;
+        for id in self.operations.ids_for_owner(process).await {
+            if self
+                .operations
+                .inspect(id)
+                .await
+                .is_ok_and(|operation| !operation.state.is_terminal())
+            {
+                count += 1;
+            }
+        }
+        count
     }
 
     pub fn upsert_space_binding(&self, id: SpaceId, binding: ContextBinding) {

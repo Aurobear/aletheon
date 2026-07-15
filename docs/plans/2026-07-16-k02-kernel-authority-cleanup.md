@@ -121,10 +121,10 @@
 - Test: `crates/executive/tests/capability_path.rs`
 - Test: `crates/executive/tests/kernel_domain_composition.rs`
 
-- [ ] Add a failing static test proving every production capability invocation follows `Executive governance -> DefaultCapabilityInvoker -> Kernel admission/reservation -> Corpus execution -> Kernel settlement`; reject direct admit/execute/settle paths.
-- [ ] Make `DefaultCapabilityInvoker` the single inner production invoker and retain policy review/approval only in its governed Executive wrapper.
-- [ ] Scan domain production sources for concrete `SystemClock` construction/imports. Change affected constructors to accept `Arc<dyn Clock>`; concrete clock construction is allowed only in the composition root and tests.
-- [ ] Add architecture gates for both invariants and run the focused Executive/domain tests.
+- [x] Add a failing static test proving every production capability invocation follows `Executive governance -> DefaultCapabilityInvoker -> Kernel admission/reservation -> Corpus execution -> Kernel settlement`; reject direct admit/execute/settle paths.
+- [x] Make `DefaultCapabilityInvoker` the single inner production invoker and retain policy review/approval only in its governed Executive wrapper.
+- [x] Scan domain production sources for concrete `SystemClock` construction/imports. Change affected constructors to accept `Arc<dyn Clock>`; concrete clock construction is allowed only in the composition root and tests.
+- [x] Add architecture gates for both invariants and run the focused Executive/domain tests.
 
 ### Task 8: Real lifecycle failure scenarios
 
@@ -133,12 +133,12 @@
 - Modify: `crates/kernel/tests/terminal_cleanup.rs`
 - Modify: `crates/executive/tests/supervision.rs`
 
-- [ ] Build a deterministic harness with `TestClock`, injectable cleanup failures and observable reservation/mailbox/Space counts.
-- [ ] Verify a successful Turn leaves no Operation, capability hold, lease or mailbox residue while its owning Process remains healthy.
-- [ ] Verify user cancellation and tool failure cancel descendants and settle/release every resource exactly once.
-- [ ] Verify a sub-agent crash performs cleanup before one policy-authorized restart, and retrying the same terminal event neither leaks resources nor starts a duplicate generation.
-- [ ] Verify daemon reconstruction from persisted lifecycle metadata cannot revive terminal Operations or stale identity bindings.
-- [ ] Verify concurrent sibling reservations contend atomically under a shared parent and never exceed the root rollout reservation.
+- [x] Build a deterministic harness with `TestClock`, injectable cleanup failures and observable reservation/mailbox/Space counts.
+- [x] Verify a successful Turn leaves no Operation, capability hold, lease or mailbox residue while its owning Process remains healthy.
+- [x] Verify user cancellation and tool failure cancel descendants and settle/release every resource exactly once.
+- [x] Verify a sub-agent crash performs cleanup before one policy-authorized restart, and retrying the same terminal event neither leaks resources nor starts a duplicate generation.
+- [x] Verify daemon reconstruction from persisted lifecycle metadata cannot revive terminal Operations or stale identity bindings.
+- [x] Verify concurrent sibling reservations contend atomically under a shared parent and never exceed the root rollout reservation.
 
 ### Task 9: Deletion gates and validation
 

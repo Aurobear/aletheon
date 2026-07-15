@@ -1,5 +1,5 @@
 use aletheon_kernel::supervision::{RestartDecision, RestartPolicy};
-use aletheon_kernel::KernelRuntime;
+use aletheon_kernel::{KernelRuntime, LifecycleFaultInjector};
 use fabric::ipc::envelope_v2::Target;
 use fabric::ipc::mailbox::{InProcessMailbox, MailboxService};
 use fabric::types::admission::RiskLevel;
@@ -7,7 +7,19 @@ use fabric::{
     AdmissionRequest, BudgetRequest, CapabilityId, CapabilityScope, ExitReason, LeaseRequest,
     OperationKind, OperationRequest, PrincipalId, ProcessSignal, SandboxRequirement, SpawnSpec,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+struct FailCleanupOnce(AtomicBool);
+
+impl LifecycleFaultInjector for FailCleanupOnce {
+    fn before_process_cleanup(&self, _process: fabric::ProcessId) -> anyhow::Result<()> {
+        if self.0.swap(false, Ordering::SeqCst) {
+            anyhow::bail!("injected cleanup failure");
+        }
+        Ok(())
+    }
+}
 
 async fn running_process_with_operation(
     runtime: &KernelRuntime,
@@ -35,6 +47,9 @@ async fn terminal_transaction_cleans_all_owned_resources_before_publishing_exit(
     let runtime = KernelRuntime::new();
     let (process, operation) = running_process_with_operation(&runtime).await;
     let space = runtime.inspect_process(process.id).await.unwrap().space;
+    runtime
+        .set_space_overlay(space, "fault-test", serde_json::json!(true))
+        .unwrap();
     runtime
         .register_process_mailbox(
             process.id,
@@ -67,6 +82,7 @@ async fn terminal_transaction_cleans_all_owned_resources_before_publishing_exit(
         .await
         .unwrap();
     assert_ne!(permit.id.0, uuid::Uuid::nil());
+    assert_eq!(runtime.active_permits_for_process(process.id).await, 1);
 
     let outcome = runtime
         .terminate_process(process.id, ExitReason::Failed("boom".into()))
@@ -87,6 +103,7 @@ async fn terminal_transaction_cleans_all_owned_resources_before_publishing_exit(
         .is_terminal());
     assert!(runtime.inspect_space(space).is_none());
     assert_eq!(runtime.mailbox_service().len().await, 0);
+    assert_eq!(runtime.active_permits_for_process(process.id).await, 0);
     assert_eq!(
         runtime
             .lease_manager()
@@ -107,6 +124,76 @@ async fn terminal_transaction_cleans_all_owned_resources_before_publishing_exit(
         .await
         .unwrap();
     assert_eq!(retried, outcome);
+}
+
+#[tokio::test]
+async fn cleanup_failure_is_retryable_before_terminal_publication() {
+    let runtime = KernelRuntime::with_clock_and_faults(
+        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(FailCleanupOnce(AtomicBool::new(true))),
+    );
+    let (process, operation) = running_process_with_operation(&runtime).await;
+    let space = runtime.inspect_process(process.id).await.unwrap().space;
+    runtime
+        .set_space_overlay(space, "fault-test", serde_json::json!(true))
+        .unwrap();
+    runtime
+        .register_process_mailbox(
+            process.id,
+            Target::from("agent:fault"),
+            Arc::new(InProcessMailbox::with_capacity(1)),
+        )
+        .await
+        .unwrap();
+    runtime
+        .admission()
+        .admit(AdmissionRequest {
+            operation_id: operation.id,
+            process_id: process.id,
+            principal: PrincipalId("fault-owner".into()),
+            capability: CapabilityId("tool".into()),
+            action: "execute".into(),
+            input_summary: String::new(),
+            risk: RiskLevel::ReadOnly,
+            requested_scope: CapabilityScope::default(),
+            budget: Some(BudgetRequest {
+                max_tokens: Some(1),
+                max_cost_micro: None,
+            }),
+            lease: None,
+            sandbox: SandboxRequirement::NotRequired,
+        })
+        .await
+        .unwrap();
+
+    let first = runtime
+        .terminate_process(process.id, ExitReason::Failed("boom".into()))
+        .await
+        .unwrap_err();
+    assert!(first.to_string().contains("injected cleanup failure"));
+    assert!(!runtime
+        .inspect_process(process.id)
+        .await
+        .unwrap()
+        .state
+        .is_terminal());
+    assert!(runtime.inspect_space(space).is_some());
+    assert_eq!(runtime.mailbox_service().len().await, 1);
+    assert_eq!(runtime.active_permits_for_process(process.id).await, 1);
+
+    runtime
+        .terminate_process(process.id, ExitReason::Failed("retry".into()))
+        .await
+        .unwrap();
+    assert!(runtime
+        .inspect_process(process.id)
+        .await
+        .unwrap()
+        .state
+        .is_terminal());
+    assert!(runtime.inspect_space(space).is_none());
+    assert_eq!(runtime.mailbox_service().len().await, 0);
+    assert_eq!(runtime.active_permits_for_process(process.id).await, 0);
 }
 
 #[tokio::test]
