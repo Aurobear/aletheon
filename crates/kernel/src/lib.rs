@@ -5,9 +5,11 @@ pub mod capability;
 pub mod chronos;
 pub mod operation;
 pub mod process;
+pub mod runtime;
 pub mod service;
 pub mod space;
 pub mod supervision;
 
 // Backward compatibility: old path aletheon_kernel::service::ServicePorts
+pub use runtime::KernelRuntime;
 pub use service as service_ports;

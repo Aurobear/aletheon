@@ -163,7 +163,7 @@ V02 installed-daemon real scenario and migration gate
 
 | ID | Plan artifact | Deliverable | Prerequisites |
 |---|---|---|---|
-| K01 | `2026-07-15-k01-kernel-runtime-contracts.md` | Opaque lifecycle ports and exact transition validation | S02 |
+| K01 | `2026-07-16-k01-kernel-runtime-contracts.md` | Opaque lifecycle ports and exact transition validation | S02 |
 | K02 | `2026-07-15-k02-kernel-authority-cleanup.md` | Hierarchical budgets, deterministic cleanup and removal of Executive-local kernel | K01 |
 | X01 | `2026-07-15-x01-executive-use-case-ports.md` | Narrow handler ports and extracted context/session/projection services | S02 |
 | X02 | `2026-07-15-x02-private-composition-root.md` | Private composition root and split lifecycle bootstrap | X01, K01 |

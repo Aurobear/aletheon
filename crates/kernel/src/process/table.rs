@@ -85,14 +85,29 @@ impl ProcessTable {
             let runtime = records
                 .get_mut(&id)
                 .ok_or_else(|| anyhow::anyhow!("unknown process: {:?}", id))?;
+            let from = runtime.record.state;
+            anyhow::ensure!(!from.is_terminal(), "process {id:?} is already terminal");
+            let terminal = match &reason {
+                ExitReason::Failed(_) | ExitReason::Panic(_) => ProcessState::Failed,
+                _ => ProcessState::Exited,
+            };
+            if terminal == ProcessState::Exited && from != ProcessState::Stopping {
+                anyhow::ensure!(
+                    from.can_transition_to(ProcessState::Stopping),
+                    "illegal process exit transition {from:?} -> Stopping"
+                );
+                runtime.record.state = ProcessState::Stopping;
+            }
+            anyhow::ensure!(
+                runtime.record.state.can_transition_to(terminal),
+                "illegal process exit transition {:?} -> {terminal:?}",
+                runtime.record.state
+            );
             runtime.record.exit = Some(ExitStatus {
                 reason: reason.clone(),
                 at: self.clock.mono_now(),
             });
-            runtime.record.state = match reason {
-                ExitReason::Failed(_) | ExitReason::Panic(_) => ProcessState::Failed,
-                _ => ProcessState::Exited,
-            };
+            runtime.record.state = terminal;
             runtime.record.last_heartbeat = self.clock.mono_now();
             (runtime.notify.clone(), runtime.record.space)
         };
@@ -150,8 +165,19 @@ impl ProcessManager for ProcessTable {
         // Look up the parent's space (scoped lock — released before await).
         let parent_space = {
             let records = self.records.lock().await;
-            spec.parent
-                .and_then(|pid| records.get(&pid).map(|r| r.record.space))
+            match spec.parent {
+                Some(parent) => {
+                    let runtime = records
+                        .get(&parent)
+                        .ok_or_else(|| anyhow::anyhow!("unknown parent process: {parent:?}"))?;
+                    anyhow::ensure!(
+                        !runtime.record.state.is_terminal(),
+                        "parent process is terminal"
+                    );
+                    Some(runtime.record.space)
+                }
+                None => None,
+            }
         };
         // Fork the child space from the parent (inherits bindings read-only),
         // or mint a fresh root space for parentless processes.
@@ -211,12 +237,19 @@ impl ProcessManager for ProcessTable {
                     ProcessState::Running | ProcessState::Waiting => {
                         self.transition(id, ProcessState::Stopping).await?;
                     }
-                    ProcessState::Stopping | ProcessState::Exited | ProcessState::Failed => {}
+                    ProcessState::Stopping => {}
+                    ProcessState::Exited | ProcessState::Failed => return Ok(()),
                 }
                 self.mark_exit(id, ExitReason::Cancelled("terminated".into()))
                     .await
             }
-            ProcessSignal::Kill => self.mark_exit(id, ExitReason::Panic("killed".into())).await,
+            ProcessSignal::Kill => {
+                if self.inspect(id).await?.state.is_terminal() {
+                    Ok(())
+                } else {
+                    self.mark_exit(id, ExitReason::Panic("killed".into())).await
+                }
+            }
         }
     }
 

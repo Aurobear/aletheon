@@ -27,7 +27,8 @@
 | Freeze dependency and bypass drift | `architecture-coupling-optimization-plan.md:937-956` | E01 | `scripts/architecture_check.py`, CI gate and shrink-only baseline | done |
 | One governed capability path | `architecture-coupling-optimization-plan.md:958-979` | E02, E03 | Corpus executor plus Executive governed invoker | done |
 | Canonical Session/Turn/Item lifecycle | `architecture-coupling-optimization-plan.md:981-1006` | S01, S02 | canonical store and shared `TurnCoordinator` | done |
-| Kernel is the sole lifecycle authority | `architecture-coupling-optimization-plan.md:1008-1032` | K01, K02 | Detailed plans still required | mapped |
+| Opaque Kernel runtime, exact transitions and parent/owner validation | `architecture-coupling-optimization-plan.md:1012-1017`, `:1027-1031` | K01 | Runtime: `crates/kernel/src/runtime.rs:18`; total matrices: `crates/fabric/src/types/process.rs:71`, `crates/fabric/src/types/operation.rs:61`; orphan/ownership tests: `crates/kernel/tests/lifecycle_integrity.rs:22`, `:31`, `:60`; opaque runtime/cleanup tests: `crates/kernel/tests/kernel_runtime.rs:7`, `:28`, `:47` | done |
+| Kernel becomes the sole lifecycle authority and Executive-local kernel is deleted | `architecture-coupling-optimization-plan.md:1013-1025`, `:1029-1032` | K02 | Production callers still use public tables/`ServicePorts`; detailed migration plan required | mapped |
 | Replace `CoreSystems` god container with use-case ports | `architecture-coupling-optimization-plan.md:1034-1063` | X01, X02 | Detailed plans still required | mapped |
 | Authoritative domain facades | `architecture-coupling-optimization-plan.md:1065-1115` | M01-M08, D01-D03, A01-A03, G01-G10, F01 | Memory/conscious/SubAgent slices mapped; Metacog/Cognit/Corpus cleanup requires F01 | mapped |
 | Canonical event spine and deterministic projections | `architecture-coupling-optimization-plan.md:1117-1139` | R01, R02 | Detailed plans still required | mapped |
