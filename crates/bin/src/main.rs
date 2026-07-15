@@ -32,6 +32,26 @@ struct Cli {
     /// Socket path (default: /run/aletheon/aletheon.sock)
     #[arg(short, long, default_value = "/run/aletheon/aletheon.sock")]
     socket: PathBuf,
+
+    /// Path to write TUI frame snapshots (test instrumentation)
+    #[arg(long, hide = true)]
+    record_frames: Option<PathBuf>,
+
+    /// Path to write daemon-to-TUI events (test instrumentation)
+    #[arg(long, hide = true)]
+    record_events: Option<PathBuf>,
+
+    /// Path containing one TUI input per line (test instrumentation)
+    #[arg(long, hide = true)]
+    test_input: Option<PathBuf>,
+
+    /// Automatically submit test input lines
+    #[arg(long, hide = true)]
+    auto_submit: bool,
+
+    /// TUI test timeout in seconds
+    #[arg(long, default_value_t = 120, hide = true)]
+    test_timeout: u64,
 }
 
 #[derive(Subcommand)]
@@ -187,8 +207,18 @@ async fn main() -> Result<()> {
         }
         // -m flag: single message to daemon
         (None, Some(msg)) => interact::cli::single_message(&cli.socket, msg).await,
-        // No subcommand, no -m: TUI mode (interact crate handles arg parsing)
-        (None, None) => interact::cli::run().await,
+        // No subcommand, no -m: TUI mode. The unified binary owns argument
+        // parsing, so pass instrumentation through instead of parsing twice.
+        (None, None) => {
+            let config = interact::tui::TestConfig {
+                test_input: cli.test_input,
+                record_frames: cli.record_frames,
+                record_events: cli.record_events,
+                auto_submit: cli.auto_submit,
+                test_timeout: cli.test_timeout,
+            };
+            interact::tui::run_with_config(cli.socket.to_string_lossy().as_ref(), config).await
+        }
     }
 }
 
