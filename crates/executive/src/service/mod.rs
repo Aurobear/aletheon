@@ -1,6 +1,7 @@
 pub mod daemon_react;
 pub mod daemon_turn;
 pub mod exec_session;
+pub mod goal_service;
 pub mod governed_capability;
 pub mod harness_factory;
 pub mod post_turn;
@@ -15,6 +16,7 @@ pub mod verification;
 
 pub use daemon_turn::DaemonTurnOrchestrator;
 pub use exec_session::ExecSessionBuilder;
+pub use goal_service::{GoalService, GoalUseCases};
 pub use governed_capability::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, CapabilityService,
     RegistryAuthorityProvider,

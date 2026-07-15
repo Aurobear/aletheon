@@ -59,11 +59,13 @@
 - Modify: `crates/executive/src/impl/daemon/handler/rpc/rpc_goal.rs`
 - Test: `crates/executive/tests/goal_service.rs`
 
-- [ ] Define a `GoalUseCases` async trait covering the four legacy objective operations and versioned create/list/pause/run/cancel operations with typed `GoalServiceError::{NotFound, InvalidTransition, Conflict, Store}`.
-- [ ] Implement `GoalService` with the private existing `Arc<Mutex<ObjectiveStore>>`; keep optimistic version checks and immutable original intent.
-- [ ] Test create/list/get/resume and every legal/illegal pause/run/cancel transition, including stale-version conflict and terminal cancellation rejection.
-- [ ] Migrate goal RPC handlers to the port without changing method names, response fields, or error-code mapping.
-- [ ] Run `cargo test -p executive --test goal_service --test goal_rpc --test goal_lifecycle`; expected PASS.
+- [x] Define a `GoalUseCases` async trait covering the four legacy objective operations and versioned create/list/pause/run/cancel operations with typed `GoalServiceError::{NotFound, InvalidTransition, Conflict, Store}`.
+- [x] Implement `GoalService` with the private existing `Arc<Mutex<ObjectiveStore>>`; keep optimistic version checks and immutable original intent.
+- [x] Test create/list/get/resume and every legal/illegal pause/run/cancel transition, including stale-version conflict and terminal cancellation rejection.
+- [x] Migrate goal RPC handlers to the port without changing method names, response fields, or error-code mapping.
+- [x] Run `cargo test -p executive --test goal_service --test goal_rpc --test goal_lifecycle`; PASS (19 focused tests).
+
+**Task 3 evidence:** request-safe trait/error boundary and private store adapter at `crates/executive/src/service/goal_service.rs:31-234`; bootstrap-only adapter construction at `crates/executive/src/impl/daemon/handler/init.rs:1029-1032`; port-only request handling at `crates/executive/src/impl/daemon/handler/rpc/rpc_goal.rs`; compatibility, legal/illegal transition, terminal, and stale-version coverage at `crates/executive/tests/goal_service.rs:28-165`. `cargo check -p executive --all-targets`, focused Clippy, and architecture fitness also pass; the `rpc_goal` service-locator baseline entry was deleted.
 
 ### Task 4: Introduce approval and admin use cases
 

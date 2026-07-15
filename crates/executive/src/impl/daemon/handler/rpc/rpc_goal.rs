@@ -1,10 +1,44 @@
 //! Goal/objective tracking RPC handlers.
-//!
-//! Methods: goal.set, goal.show, goal.status, goal.resume.
 
 use super::RequestHandler;
 
+use crate::service::goal_service::{GoalAction, GoalServiceError};
 use serde_json::json;
+
+fn goal_error(
+    id: &serde_json::Value,
+    error: GoalServiceError,
+    transition: bool,
+) -> serde_json::Value {
+    let code = match error {
+        GoalServiceError::NotFound => -32021,
+        GoalServiceError::InvalidTransition(_) | GoalServiceError::Conflict(_) => -32022,
+        GoalServiceError::Store(_) if transition => -32022,
+        GoalServiceError::Store(_) => -32020,
+    };
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": error.to_string() }
+    })
+}
+
+fn goal_id(
+    id: &serde_json::Value,
+    request: &serde_json::Value,
+) -> Result<fabric::GoalId, serde_json::Value> {
+    request["params"]["goal_id"]
+        .as_i64()
+        .filter(|value| *value > 0)
+        .map(fabric::GoalId)
+        .ok_or_else(|| {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32602, "message": "invalid goal_id" }
+            })
+        })
+}
 
 impl RequestHandler {
     pub(super) async fn handle_goal_set(
@@ -12,31 +46,31 @@ impl RequestHandler {
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let p = &request["params"];
-        let description = p["description"].as_str().unwrap_or("");
-        let scope = p["scope"].as_str().unwrap_or("session");
+        let params = &request["params"];
+        let description = params["description"].as_str().unwrap_or("");
+        let scope = params["scope"].as_str().unwrap_or("session");
         let session_id = match self.get_or_create_session(None).await {
-            Ok(v) => v.0,
-            Err(e) => {
+            Ok(value) => value.0,
+            Err(error) => {
                 return json!({
                     "jsonrpc": "2.0",
                     "id": id,
-                    "error": { "code": -32000, "message": e.to_string() }
+                    "error": { "code": -32000, "message": error.to_string() }
                 })
             }
         };
-        let store = self.subsystems.memory.objective_store.lock().await;
-        match store.create(description, None, &session_id, scope) {
-            Ok(oid) => json!({
+        match self
+            .ports
+            .goals
+            .create_legacy(description.into(), session_id, scope.into())
+            .await
+        {
+            Ok(objective_id) => json!({
                 "jsonrpc": "2.0",
                 "id": id,
-                "result": { "objective_id": oid }
+                "result": { "objective_id": objective_id }
             }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32020, "message": e.to_string() }
-            }),
+            Err(error) => goal_error(id, error, false),
         }
     }
 
@@ -45,28 +79,22 @@ impl RequestHandler {
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let oid = request["params"]["id"].as_i64().unwrap_or(0);
-        let store = self.subsystems.memory.objective_store.lock().await;
-        match store.get(oid) {
-            Ok(Some(obj)) => {
-                let subs = store.sub_goals(oid).unwrap_or_default();
-                let summaries: Vec<_> = subs.iter().map(|s| s.to_summary()).collect();
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": { "objective": obj, "sub_goals": summaries }
-                })
-            }
-            Ok(None) => json!({
+        let objective_id = request["params"]["id"].as_i64().unwrap_or(0);
+        match self.ports.goals.show_legacy(objective_id).await {
+            Ok(detail) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "objective": detail.objective,
+                    "sub_goals": detail.sub_goals,
+                }
+            }),
+            Err(GoalServiceError::NotFound) => json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "error": { "code": -32021, "message": "objective not found" }
             }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32020, "message": e.to_string() }
-            }),
+            Err(error) => goal_error(id, error, false),
         }
     }
 
@@ -75,39 +103,31 @@ impl RequestHandler {
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let p = &request["params"];
-        let store = self.subsystems.memory.objective_store.lock().await;
-        // With an id: update status. Without: list objectives.
-        if let Some(oid) = p["id"].as_i64() {
-            let new_status = p["status"].as_str().unwrap_or("in_progress");
-            match store.set_status(oid, new_status) {
+        let params = &request["params"];
+        if let Some(objective_id) = params["id"].as_i64() {
+            let status = params["status"].as_str().unwrap_or("in_progress");
+            match self
+                .ports
+                .goals
+                .set_legacy_status(objective_id, status.into())
+                .await
+            {
                 Ok(changed) => json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": { "ok": changed }
                 }),
-                Err(e) => json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32020, "message": e.to_string() }
-                }),
+                Err(error) => goal_error(id, error, false),
             }
         } else {
-            let filter = p["filter"].as_str();
-            match store.list(filter, 50) {
-                Ok(rows) => {
-                    let summaries: Vec<_> = rows.iter().map(|r| r.to_summary()).collect();
-                    json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "result": { "objectives": summaries }
-                    })
-                }
-                Err(e) => json!({
+            let filter = params["filter"].as_str().map(str::to_string);
+            match self.ports.goals.list_legacy(filter).await {
+                Ok(objectives) => json!({
                     "jsonrpc": "2.0",
                     "id": id,
-                    "error": { "code": -32020, "message": e.to_string() }
+                    "result": { "objectives": objectives }
                 }),
+                Err(error) => goal_error(id, error, false),
             }
         }
     }
@@ -117,40 +137,31 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let store = self.subsystems.memory.objective_store.lock().await;
-        match store.resume() {
-            Ok(Some((obj, subs))) => {
-                let summaries: Vec<_> = subs.iter().map(|s| s.to_summary()).collect();
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": { "objective": obj, "sub_goals": summaries }
-                })
-            }
+        match self.ports.goals.resume_legacy().await {
+            Ok(Some(resume)) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "objective": resume.objective,
+                    "sub_goals": resume.sub_goals,
+                }
+            }),
             Ok(None) => json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "result": { "objective": null, "sub_goals": [] }
             }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32020, "message": e.to_string() }
-            }),
+            Err(error) => goal_error(id, error, false),
         }
     }
-
-    // -----------------------------------------------------------------------
-    // M2 Goal lifecycle RPC (new — beside legacy API)
-    // -----------------------------------------------------------------------
 
     pub(super) async fn handle_goal_create(
         &self,
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let p = &request["params"];
-        let intent = p["intent"].as_str().unwrap_or("");
+        let params = &request["params"];
+        let intent = params["intent"].as_str().unwrap_or("");
         if intent.is_empty() {
             return json!({
                 "jsonrpc": "2.0",
@@ -158,31 +169,35 @@ impl RequestHandler {
                 "error": { "code": -32602, "message": "intent must not be empty" }
             });
         }
-        let scope = p["scope"].as_str().unwrap_or("session");
+        let scope = params["scope"].as_str().unwrap_or("session");
         let session_id = match self.get_or_create_session(None).await {
-            Ok(v) => v.0,
-            Err(e) => {
+            Ok(value) => value.0,
+            Err(error) => {
                 return json!({
                     "jsonrpc": "2.0",
                     "id": id,
-                    "error": { "code": -32000, "message": e.to_string() }
+                    "error": { "code": -32000, "message": error.to_string() }
                 })
             }
         };
         let spec = fabric::GoalSpec {
-            original_intent: intent.to_string(),
+            original_intent: intent.into(),
             desired_state: vec![],
             constraints: vec![],
             acceptance_criteria: vec![],
             budget: Default::default(),
         };
-        let store = self.subsystems.memory.objective_store.lock().await;
-        match store.create_goal(
-            &fabric::PrincipalId(session_id.clone()),
-            &session_id,
-            scope,
-            &spec,
-        ) {
+        match self
+            .ports
+            .goals
+            .create_goal(
+                fabric::PrincipalId(session_id.clone()),
+                session_id,
+                scope.into(),
+                spec,
+            )
+            .await
+        {
             Ok(snapshot) => json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -193,11 +208,7 @@ impl RequestHandler {
                     "version": snapshot.version,
                 }
             }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32020, "message": e.to_string() }
-            }),
+            Err(error) => goal_error(id, error, false),
         }
     }
 
@@ -206,33 +217,51 @@ impl RequestHandler {
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let p = &request["params"];
-        let limit = p["limit"].as_u64().unwrap_or(20).min(100) as usize;
-        let store = self.subsystems.memory.objective_store.lock().await;
-        match store.list_goals(&[], limit) {
+        let limit = request["params"]["limit"].as_u64().unwrap_or(20).min(100) as usize;
+        match self.ports.goals.list_goals(limit).await {
             Ok(snapshots) => {
-                let items: Vec<_> = snapshots
-                    .iter()
-                    .map(|s| {
+                let goals: Vec<_> = snapshots
+                    .into_iter()
+                    .map(|snapshot| {
                         json!({
-                            "id": s.id.0,
-                            "state": s.state.as_str(),
-                            "intent": s.spec.original_intent,
-                            "version": s.version,
+                            "id": snapshot.id.0,
+                            "state": snapshot.state.as_str(),
+                            "intent": snapshot.spec.original_intent,
+                            "version": snapshot.version,
                         })
                     })
                     .collect();
                 json!({
                     "jsonrpc": "2.0",
                     "id": id,
-                    "result": { "goals": items }
+                    "result": { "goals": goals }
                 })
             }
-            Err(e) => json!({
+            Err(error) => goal_error(id, error, false),
+        }
+    }
+
+    async fn handle_goal_action(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+        action: GoalAction,
+    ) -> serde_json::Value {
+        let goal_id = match goal_id(id, request) {
+            Ok(goal_id) => goal_id,
+            Err(response) => return response,
+        };
+        match self.ports.goals.act(goal_id, action, None).await {
+            Ok(snapshot) => json!({
                 "jsonrpc": "2.0",
                 "id": id,
-                "error": { "code": -32020, "message": e.to_string() }
+                "result": {
+                    "id": snapshot.id.0,
+                    "state": snapshot.state.as_str(),
+                    "version": snapshot.version,
+                }
             }),
+            Err(error) => goal_error(id, error, true),
         }
     }
 
@@ -241,56 +270,8 @@ impl RequestHandler {
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let goal_id = match request["params"]["goal_id"].as_i64() {
-            Some(v) if v > 0 => fabric::GoalId(v),
-            _ => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32602, "message": "invalid goal_id" }
-                });
-            }
-        };
-        let store = self.subsystems.memory.objective_store.lock().await;
-        let current = match store.get_goal(goal_id) {
-            Ok(Some(g)) => g,
-            Ok(None) => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32021, "message": "goal not found" }
-                });
-            }
-            Err(e) => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32020, "message": e.to_string() }
-                });
-            }
-        };
-        match store.transition_goal(
-            goal_id,
-            current.version,
-            fabric::GoalState::Suspended,
-            None,
-            &serde_json::json!({"action": "pause"}),
-        ) {
-            Ok(snapshot) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "id": snapshot.id.0,
-                    "state": snapshot.state.as_str(),
-                    "version": snapshot.version,
-                }
-            }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32022, "message": e.to_string() }
-            }),
-        }
+        self.handle_goal_action(id, request, GoalAction::Pause)
+            .await
     }
 
     pub(super) async fn handle_goal_run(
@@ -298,67 +279,7 @@ impl RequestHandler {
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let goal_id = match request["params"]["goal_id"].as_i64() {
-            Some(v) if v > 0 => fabric::GoalId(v),
-            _ => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32602, "message": "invalid goal_id" }
-                });
-            }
-        };
-        let store = self.subsystems.memory.objective_store.lock().await;
-        let current = match store.get_goal(goal_id) {
-            Ok(Some(g)) => g,
-            Ok(None) => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32021, "message": "goal not found" }
-                });
-            }
-            Err(e) => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32020, "message": e.to_string() }
-                });
-            }
-        };
-        // Resume: map Suspended/Blocked to Ready.
-        let next = match current.state {
-            fabric::GoalState::Suspended | fabric::GoalState::Blocked => fabric::GoalState::Ready,
-            other => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32022, "message": format!("cannot run from state {}", other) }
-                });
-            }
-        };
-        match store.transition_goal(
-            goal_id,
-            current.version,
-            next,
-            None,
-            &serde_json::json!({"action": "run"}),
-        ) {
-            Ok(snapshot) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "id": snapshot.id.0,
-                    "state": snapshot.state.as_str(),
-                    "version": snapshot.version,
-                }
-            }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32022, "message": e.to_string() }
-            }),
-        }
+        self.handle_goal_action(id, request, GoalAction::Run).await
     }
 
     pub(super) async fn handle_goal_cancel(
@@ -366,62 +287,7 @@ impl RequestHandler {
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let goal_id = match request["params"]["goal_id"].as_i64() {
-            Some(v) if v > 0 => fabric::GoalId(v),
-            _ => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32602, "message": "invalid goal_id" }
-                });
-            }
-        };
-        let store = self.subsystems.memory.objective_store.lock().await;
-        let current = match store.get_goal(goal_id) {
-            Ok(Some(g)) => g,
-            Ok(None) => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32021, "message": "goal not found" }
-                });
-            }
-            Err(e) => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32020, "message": e.to_string() }
-                });
-            }
-        };
-        if current.state.is_terminal() {
-            return json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32022, "message": "goal already terminal" }
-            });
-        }
-        match store.transition_goal(
-            goal_id,
-            current.version,
-            fabric::GoalState::Cancelled,
-            None,
-            &serde_json::json!({"action": "cancel"}),
-        ) {
-            Ok(snapshot) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "id": snapshot.id.0,
-                    "state": snapshot.state.as_str(),
-                    "version": snapshot.version,
-                }
-            }),
-            Err(e) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32022, "message": e.to_string() }
-            }),
-        }
+        self.handle_goal_action(id, request, GoalAction::Cancel)
+            .await
     }
 }
