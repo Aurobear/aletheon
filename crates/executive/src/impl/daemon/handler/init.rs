@@ -675,18 +675,15 @@ impl RequestHandler {
                 }
             }
             if config.gbrain_memory.enabled {
-                let required = if config.gbrain_memory.projection_enabled {
-                    &["query", "get_page", "put_page"][..]
-                } else {
-                    &["query", "get_page"][..]
-                };
-                if mcp.server_has_tools(&config.gbrain_memory.server_name, required) {
+                if mcp
+                    .server_tools(&config.gbrain_memory.server_name)
+                    .is_some()
+                {
                     retained_mcp = Some(Arc::new(mcp));
                 } else {
                     tracing::warn!(
                         server = %config.gbrain_memory.server_name,
-                        ?required,
-                        "gbrain disabled: server disconnected or required tools missing"
+                        "GBrain server unavailable; local memory remains active"
                     );
                 }
             }
@@ -883,6 +880,23 @@ impl RequestHandler {
             clock.clone(),
         ));
 
+        let local_memory: Arc<dyn mnemosyne::MemoryService> =
+            Arc::new(mnemosyne::DefaultMemoryService::new(
+                recall_memory.clone(),
+                fact_store.clone(),
+                core_memory.clone(),
+                episodic_memory.clone(),
+                clock.clone(),
+            ));
+        let gbrain_runtime = crate::r#impl::gbrain::build_gbrain_memory_runtime(
+            local_memory,
+            retained_mcp,
+            &config.gbrain_memory,
+            clock.clone(),
+            &cancel_token,
+        );
+        let gbrain_worker_task = gbrain_runtime.worker_task;
+
         let ports = aletheon_kernel::service::ServicePorts::new()
             .with_agora(Arc::new(agora::AgoraRegistry::new()));
         let subsystems = Arc::new(crate::core::core_systems::CoreSystems {
@@ -891,15 +905,8 @@ impl RequestHandler {
             self_field,
             reflector,
             memory: crate::core::MemoryGroup {
-                gbrain: retained_mcp,
-                gbrain_config: config.gbrain_memory.clone(),
-                memory_service: Arc::new(mnemosyne::DefaultMemoryService::new(
-                    recall_memory.clone(),
-                    fact_store.clone(),
-                    core_memory.clone(),
-                    episodic_memory.clone(),
-                    clock.clone(),
-                )),
+                memory_service: gbrain_runtime.memory_service,
+                supplemental_memory_health: gbrain_runtime.health,
                 episodic_memory,
                 recall_memory,
                 core_memory,
@@ -1266,6 +1273,7 @@ impl RequestHandler {
             turn_orchestrator,
             telegram_task: None,
             google_sync: google_sync.map(|handle| Arc::new(Mutex::new(Some(handle)))),
+            gbrain_worker_task: gbrain_worker_task.map(|task| Arc::new(Mutex::new(Some(task)))),
             approved_apply: approved_apply.clone(),
             google,
         };

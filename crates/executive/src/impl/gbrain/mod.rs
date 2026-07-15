@@ -1,5 +1,6 @@
 //! Optional GBrain supplemental-memory transport.
 
+pub mod bootstrap;
 pub mod mcp_adapter;
 pub mod worker;
 
@@ -9,3 +10,5 @@ pub use mcp_adapter::{
 };
 
 pub use worker::{DrainReport, GbrainWorker};
+
+pub use bootstrap::{backend_config, build_gbrain_memory_runtime, GbrainMemoryRuntime};

@@ -145,6 +145,7 @@ fn category_name(category: SupplementalErrorCategory) -> &'static str {
         SupplementalErrorCategory::Transport => "transport",
         SupplementalErrorCategory::MalformedResponse => "malformed_response",
         SupplementalErrorCategory::OversizedResponse => "oversized_response",
+        SupplementalErrorCategory::Spool => "spool",
         SupplementalErrorCategory::Unsupported => "unsupported",
     }
 }

@@ -25,6 +25,16 @@ impl RequestHandler {
                 handle.shutdown().await;
             }
         }
+        if let Some(worker) = &self.gbrain_worker_task {
+            if let Some(task) = worker.lock().await.take() {
+                if tokio::time::timeout(std::time::Duration::from_secs(5), task)
+                    .await
+                    .is_err()
+                {
+                    warn!("GBrain worker did not stop within shutdown bound");
+                }
+            }
+        }
         json!({
             "jsonrpc": "2.0",
             "id": id,

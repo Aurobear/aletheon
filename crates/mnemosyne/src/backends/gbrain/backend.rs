@@ -29,6 +29,7 @@ pub enum SupplementalErrorCategory {
     Transport,
     MalformedResponse,
     OversizedResponse,
+    Spool,
     Unsupported,
 }
 
@@ -139,6 +140,9 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
         event: &ExperienceEvent,
         now_ms: i64,
     ) -> Result<EnqueueOutcome, GbrainBackendError> {
+        if !self.config.projection_enabled {
+            return Ok(EnqueueOutcome::ExcludedSensitive);
+        }
         let metadata = match event {
             ExperienceEvent::ArchitectureDecision { metadata, .. }
             | ExperienceEvent::GoalOutcome { metadata, .. }

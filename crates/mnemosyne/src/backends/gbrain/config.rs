@@ -51,6 +51,7 @@ impl Default for SpoolPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GbrainBackendConfig {
     pub enabled: bool,
+    pub projection_enabled: bool,
     pub server_name: String,
     pub read_sources: Vec<String>,
     pub write_source: String,
@@ -67,6 +68,7 @@ impl Default for GbrainBackendConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            projection_enabled: false,
             server_name: "gbrain".into(),
             read_sources: vec!["aletheon".into(), "general".into()],
             write_source: "aletheon".into(),

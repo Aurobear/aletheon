@@ -129,6 +129,7 @@ fn build_backend(
     );
     let config = GbrainBackendConfig {
         enabled: true,
+        projection_enabled: true,
         read_sources: vec!["aletheon".into()],
         write_source: "aletheon".into(),
         request_timeout_ms: timeout_ms,
