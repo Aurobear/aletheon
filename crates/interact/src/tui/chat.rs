@@ -228,11 +228,15 @@ impl ExecEntry {
             }
         } else if self.finished {
             let line_count = self.output.lines().count();
-            if line_count > 3 {
+            let char_count = self.output.chars().count();
+            if line_count > 3 || char_count > 240 {
                 lines.push(Line::from(vec![
                     Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
                     Span::styled(
-                        format!("{} lines output, Ctrl+B to expand", line_count),
+                        format!(
+                            "{} output, Ctrl+B to expand",
+                            compact_output_size(line_count, char_count)
+                        ),
                         Style::default().fg(Color::DarkGray),
                     ),
                 ]));
@@ -276,10 +280,18 @@ fn tool_color(tool: &str) -> Color {
 
 /// Truncate tool args to `max` chars, appending "…" if needed.
 fn truncate_args(args: &str, max: usize) -> String {
-    if args.len() <= max {
+    if args.chars().count() <= max {
         args.to_string()
     } else {
-        format!("{}...", &args[..max])
+        format!("{}...", args.chars().take(max).collect::<String>())
+    }
+}
+
+fn compact_output_size(line_count: usize, char_count: usize) -> String {
+    if line_count > 3 {
+        format!("{line_count} lines / {char_count} chars")
+    } else {
+        format!("{char_count} chars")
     }
 }
 
@@ -978,6 +990,33 @@ mod tests {
         assert!(entry.expanded);
         entry.toggle();
         assert!(!entry.expanded);
+    }
+
+    #[test]
+    fn test_exec_entry_collapses_large_single_line_output() {
+        let mut entry = ExecEntry::new(
+            "call_json".to_string(),
+            "google_gmail_search".to_string(),
+            r#"{"account":"aurobear-gmail"}"#.to_string(),
+        );
+        let raw = format!(r#"{{"messages":["{}"]}}"#, "x".repeat(4_000));
+        entry.finish(&raw, false);
+
+        let rendered = entry.render_lines(0, 80);
+        let text = rendered
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(text.contains("chars output, Ctrl+B to expand"));
+        assert!(!text.contains(&"x".repeat(100)));
+    }
+
+    #[test]
+    fn test_truncate_args_respects_utf8_boundaries() {
+        let truncated = truncate_args("看看我最新7天的gmail", 6);
+        assert_eq!(truncated, "看看我最新7...");
     }
 
     #[test]
