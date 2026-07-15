@@ -34,9 +34,18 @@ install -D -o root -g root -m 0755 "$repo_root/scripts/aletheon-secret-audit.sh"
   /usr/libexec/aletheon/aletheon-secret-audit.sh
 install -D -o root -g root -m 0755 "$repo_root/scripts/aletheon-secret-init.sh" \
   /usr/libexec/aletheon/aletheon-secret-init.sh
+for helper in aletheon-healthcheck.sh backup-aletheon.sh restore-aletheon.sh \
+  cleanup-aletheon.sh verify-network-exposure.sh upgrade-aletheon.sh; do
+  install -D -o root -g root -m 0755 "$repo_root/scripts/$helper" \
+    "/usr/libexec/aletheon/$helper"
+done
 /usr/libexec/aletheon/aletheon-secret-init.sh init /etc/aletheon/credentials
 install -o root -g root -m 0644 "$repo_root/config/aletheon.service" \
   /etc/systemd/system/aletheon.service
+for unit in aletheon-backup.service aletheon-backup.timer \
+  aletheon-cleanup.service aletheon-cleanup.timer; do
+  install -o root -g root -m 0644 "$repo_root/config/$unit" "/etc/systemd/system/$unit"
+done
 if [[ ! -e /etc/aletheon/config.toml ]]; then
   install -o root -g aletheon -m 0640 "$config_source" /etc/aletheon/config.toml
 fi
@@ -46,7 +55,10 @@ install -D -o root -g root -m 0644 "$repo_root/docs/deployment/systemd.md" \
 /usr/libexec/aletheon/verify-systemd.sh --preflight \
   --binary /usr/bin/aletheon --config /etc/aletheon/config.toml
 systemd-analyze verify /etc/systemd/system/aletheon.service
+systemd-analyze verify /etc/systemd/system/aletheon-backup.service
+systemd-analyze verify /etc/systemd/system/aletheon-cleanup.service
 systemctl daemon-reload
 if ((enable)); then
   systemctl enable --now aletheon.service
+  systemctl enable --now aletheon-backup.timer aletheon-cleanup.timer
 fi
