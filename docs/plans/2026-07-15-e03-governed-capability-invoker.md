@@ -14,6 +14,15 @@
 
 ---
 
+## Resolved design conflicts
+
+| Earlier statement | Code reality | Resolution |
+|---|---|---|
+| Admission example used `scope` and String capability | `AdmissionRequest` requires `requested_scope`, `CapabilityId`, `action`, and `input_summary`: `crates/fabric/src/types/admission.rs:148-162` | Map every exact field from E02 call/authority |
+| One `Arc` must be pointer-identical across daemon and exec | They have different composition roots: `exec_session.rs:91-174`, `daemon_turn/orchestrator.rs:63-115` | Require one factory and behavioral parity, not cross-process pointer identity |
+| Existing Dasein capability reviewer could be adapted directly | Current review is a turn-level `sf_review` block: `turn_pipeline.rs:125-165` | Define an Executive authority port and explicit daemon/exec adapters |
+| Cancellation could be handled by a synchronous drop guard | `AdmissionController::revoke` is async: `crates/fabric/src/include/admission.rs:40-45` | Kernel invocation owns an async select and performs exactly one settle-or-revoke transition |
+
 ## Anchors and invariants
 
 - Hard-coded authority is in `crates/kernel/src/capability/mod.rs:67-86`.
@@ -46,79 +55,78 @@ exec ------/                  review + trusted policy      admit/settle
 - [ ] Replace lines 72-86 mapping with:
 
 ```rust
-let policy = request.policy.as_ref().ok_or_else(|| anyhow!("missing application capability policy"))?;
 let admission = AdmissionRequest {
-    operation_id: request.operation_id,
-    process_id: request.process_id,
-    principal: policy.principal.clone(),
-    capability: request.name.clone(),
-    risk: policy.risk,
-    scope: policy.scope.clone(),
-    budget: policy.budget.clone(),
-    lease: policy.lease.clone(),
-    sandbox: policy.sandbox,
+    operation_id: request.call.operation_id,
+    process_id: request.call.process_id,
+    principal: request.authority.principal.clone(),
+    capability: CapabilityId(request.call.name.clone()),
+    action: request.authority.action.clone(),
+    input_summary: format!("{:?}", request.call.input).chars().take(200).collect(),
+    risk: request.authority.risk,
+    requested_scope: request.authority.requested_scope.clone(),
+    budget: request.authority.budget.clone(),
+    lease: request.authority.lease.clone(),
+    sandbox: request.authority.sandbox,
 };
 ```
 
-- [ ] Run the exact test; expected PASS. Add a missing-policy test; expected error before admission call count changes.
+- [ ] Run the exact test; expected PASS. Authority cannot be absent because E02 makes it a required field; add a compile-fail doctest showing `CapabilityRequest { call }` is rejected.
 
 ### Task 2: Add the governed Executive decorator
 
-- [ ] In `governed_capability_path.rs`, use a recording inner invoker and fake reviewer. Assert ordering `review -> inner`, policy attachment, and that rejection leaves inner call count at zero.
+- [ ] In `governed_capability_path.rs`, use a recording inner invoker and fake reviewer. Assert ordering `review -> inner`, authorized request construction, and that rejection leaves inner call count at zero.
 - [ ] Run `cargo test -p executive --test governed_capability_path`; expected FAIL: type absent.
 - [ ] Create:
 
 ```rust
-pub struct TurnCapabilityContext {
-    pub principal: PrincipalId,
-    pub risk_for: Arc<dyn Fn(&str) -> RiskLevel + Send + Sync>,
-    pub scope: CapabilityScope,
-    pub budget: Option<BudgetRequest>,
-    pub lease: Option<LeaseRequest>,
-    pub sandbox_for: Arc<dyn Fn(&str) -> SandboxRequirement + Send + Sync>,
-    pub session_id: String,
-    pub working_dir: PathBuf,
+#[async_trait]
+pub trait TurnAuthorityProvider: Send + Sync {
+    async fn authorize(&self, call: &CapabilityCall) -> anyhow::Result<AuthorizedInvocation>;
+}
+
+pub struct AuthorizedInvocation {
+    pub authority: CapabilityAuthority,
+    pub control: InvocationControl,
 }
 
 pub struct GovernedCapabilityInvoker {
     inner: Arc<dyn CapabilityInvoker>,
-    reviewer: Arc<dyn CapabilityReviewer>,
-    context: TurnCapabilityContext,
+    authority: Arc<dyn TurnAuthorityProvider>,
 }
 ```
 
-Its `invoke` rejects pre-populated policy, asks the reviewer, creates `CapabilityPolicy` from trusted context, then delegates exactly once. Define `CapabilityReviewer` in this module as an async `review(&CapabilityRequest, &CapabilityPolicy) -> Result<()>` port and adapt the existing Dasein/approval service rather than copying its logic.
+Its Cognit-facing `invoke(call: CapabilityCall)` asks `TurnAuthorityProvider::authorize(&call)` for trusted authority plus the current operation cancellation token, constructs `CapabilityRequest { call, authority, control }`, then delegates once. The daemon adapter maps the existing `sf_review` verdict and request context (`turn_pipeline.rs:125-165`); exec maps `TerminalApprovalGate`, configured sandbox preference, session, and working directory (`exec_session.rs:121-159`). Review error, denial, or confirmation failure returns a structured error before Kernel admission.
 - [ ] Run the focused test; expected PASS for approve/reject/order cases.
 
 ### Task 3: Construct one production graph
 
-- [ ] Add a bootstrap test that obtains exec and daemon `Arc<dyn CapabilityInvoker>` handles and asserts `Arc::ptr_eq` on the underlying shared governed invoker.
-- [ ] Run it; expected FAIL because both paths build their own closures/runtime.
+- [ ] Add a bootstrap test that obtains exec and daemon `Arc<dyn CapabilityInvoker>` handles and asserts both adapters were produced by the same `CapabilityRuntimeFactory` and share the same recording admission/executor Arcs.
+- [ ] Run it; expected FAIL because no common runtime factory exists.
 - [ ] At the existing Executive composition root, construct in this order:
 
 ```text
 shared ToolRegistry + ToolRunnerWithGuard
  -> CorpusToolExecutor
- -> DefaultCapabilityInvoker(admission, audit, clock)
- -> GovernedCapabilityInvoker(reviewer, trusted turn context)
+ -> DefaultCapabilityInvoker(admission, executor)
+ -> GovernedCapabilityInvoker(authority provider)
  -> Arc<dyn CapabilityInvoker>
 ```
 
-Pass the final trait object into both builders. Do not expose the inner invoker from a public accessor.
+Add `CapabilityRuntimeFactory::build(context) -> Arc<dyn TurnCapabilityInvoker>` and use it in both composition roots. Daemon and exec are separate application lifetimes, so pointer equality between modes is not required; identical factory composition and parity tests are the invariant. Do not expose the inner Kernel invoker.
 - [ ] Run the bootstrap test; expected PASS.
 
 ### Task 4: Migrate exec and daemon and prove parity
 
-- [ ] Add a table-driven integration test invoking a counting tool through exec and daemon. Assert equal output/error classification and recorder counts `admit=1`, `execute=1`, `settle=1`, `audit=1` for each mode.
+- [ ] Add a table-driven integration test invoking a counting tool through exec and daemon. Assert equal output/error classification, recorder counts `admit=1`, `execute=1`, `settle=1`, `revoke=0`, and exactly one durable E02 audit row whose ID equals `CapabilityResult.audit_id` for each mode.
 - [ ] Run it; expected FAIL because manual paths do not share the recorder.
-- [ ] Replace exec lines 218-316 and daemon lines 392-452 with `invoker.invoke(request).await`; keep only event projection outside the invoker. Delete builder fields for direct admission, registry, and runner access when no remaining consumer exists.
+- [ ] Replace exec lines 218-316 and daemon lines 392-452 with `governed.invoke(call).await`; keep only event projection outside the invoker. Delete builder fields for direct admission, registry, and runner access when no remaining consumer exists.
 - [ ] Run the parity test; expected PASS with all counts exactly one.
 
 ### Task 5: Cancellation, sandbox, and settlement failure
 
-- [ ] Add three tests: cancelled execution settles once, required sandbox unavailable never executes, settlement failure returns an error result and emits an audit failure.
+- [ ] Add three tests: cancelled execution revokes once and never settles, required sandbox unavailable never executes, settlement failure returns an error result while preserving the permit/audit IDs.
 - [ ] Run them; expected FAIL on at least the cancellation/settlement assertions.
-- [ ] Add one drop-safe reservation guard in `DefaultCapabilityInvoker`: transition it from `Reserved` to `Settled` atomically, and settle cancellation/error in the same owner. Never settle in front ends.
+- [ ] Use E02's non-serialized `InvocationControl` and add a Kernel-local `PermitDisposition` state. After admission, use `tokio::select!` between `executor.execute_with_permit(...)` and `request.control.cancel.cancelled()`. Execution completion calls `settle` once; cancellation calls `revoke(permit.id, RevokeReason::OperationCancelled)` once. Timeout is converted to cancellation by S02. Never settle or revoke in front ends.
 - [ ] Run `cargo test -p executive --test governed_capability_path && cargo test -p executive --test capability_invoker`; expected PASS.
 
 ### Task 6: Remove bypass access and commit

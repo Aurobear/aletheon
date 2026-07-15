@@ -21,7 +21,16 @@
 - Exec owns a separate state machine: `crates/executive/src/service/exec_session.rs:91-316`.
 - Every started operation reaches exactly one of succeed/fail/cancel, including pre-turn, model, append, timeout, and event-sink errors.
 - Canonical items reproduce the next input; memory and trace remain separate.
-- Non-goals: resume/fork/interrupt public APIs, generated clients, memory consolidation, or SubAgent migration.
+- Non-goals: memory consolidation and SubAgent runtime migration. Resume, fork, interrupt, replay, and duplicate ReAct removal are required here by the Phase 2 source.
+
+## Resolved design conflicts
+
+| Earlier statement | Code reality | Resolution |
+|---|---|---|
+| Record start/succeed/fail through `OperationManager` | That trait exposes only submit/cancel/wait: `crates/fabric/src/include/process.rs:32-37` | Temporarily inject the existing concrete `OperationTable` from `ServicePorts`; Phase 3 later completes the port |
+| Async cleanup from `Drop` settles every path | Rust `Drop` cannot await operation-table calls | Put fallible work in `run_started_turn`; `submit` always awaits one terminal transition after matching its outcome |
+| Lifecycle commands could be deferred | Source explicitly requires resume/fork/interrupt/replay: `architecture-coupling...:997-998` | Implement and integration-test all four in this plan |
+| Existing harness factory is object-safe | It returns concrete `ReActLoop`: `crates/executive/src/service/harness_factory.rs:24-39` | Add a factory returning `Box<dyn CognitiveSession>` and remove direct production loop ownership |
 
 ```text
 daemon adapter --\
@@ -36,6 +45,7 @@ exec adapter ----/       |                                  |
 - Create: `crates/executive/src/service/turn_policy.rs` — explicit mode policies.
 - Modify: `crates/executive/src/service/harness_factory.rs` — object-safe `CognitiveSessionFactory`.
 - Modify: `crates/executive/src/service/mod.rs` — exports.
+- Create: `crates/executive/src/service/session_service.rs` — lifecycle commands over the S01 store.
 - Modify: `crates/executive/src/service/exec_session.rs` — thin adapter.
 - Modify: `crates/executive/src/service/daemon_turn/execute.rs` and `turn_pipeline.rs` — thin adapter.
 - Modify: bootstrap call sites found with `rg -n 'TurnService::new|ExecSessionBuilder|TurnPipeline::new' crates/executive crates/bin`.
@@ -69,9 +79,9 @@ Move existing Harness construction behind the factory; do not add a second model
 
 ### Task 2: Centralize operation ownership
 
-- [ ] Add a recording `OperationManager` test matrix for success, pre-turn error, Cognit error, timeout, cancellation, and append error. Assert `kind == Turn`, owner equals request process, parent ownership is validated, and one terminal transition occurs.
+- [ ] Add test `ServicePorts` with its concrete in-memory `OperationTable`, then run a matrix for success, pre-turn error, Cognit error, timeout, cancellation, and append error. Inspect each `OperationRecord`; assert `kind == Turn`, owner equals request process, parent ownership is validated, and one terminal state is recorded.
 - [ ] Run the matrix; expected FAIL: coordinator absent.
-- [ ] Implement `TurnCoordinator::submit` by extracting the operation code at `turn_service.rs:56-97`, wrapping all later exits in an `OperationCompletionGuard`, and using the injected `Clock` for deadlines. The guard exposes only `succeed`, `fail`, `cancel`, each consuming `self`; its `Drop` records a test-visible invariant violation and schedules fail-closed cleanup through an owned cancellation token.
+- [ ] Implement `TurnCoordinator::submit` with the concrete `OperationTable` already carried by `ServicePorts`: submit/start `OperationKind::Turn`, await `run_started_turn`, then match `Completed`, `Failed`, or `Cancelled` and await exactly one `succeed`, `fail`, or `cancel`. Do not use `?` between `start` and the terminal match. Use the injected Clock and operation-scope token for deadline cancellation.
 - [ ] Run the matrix; expected PASS with one terminal call per row.
 
 ### Task 3: Append the canonical lifecycle
@@ -101,10 +111,25 @@ Move existing Harness construction behind the factory; do not add a second model
 - [ ] Add timeout and cancellation rows for both adapters and assert identical terminal operation and canonical failure notice.
 - [ ] Run `cargo test -p executive --test turn_coordinator_lifecycle && cargo test -p executive --test turn_service_equivalence`; expected PASS.
 
-### Task 7: Remove migration scaffolding and commit
+### Task 7: Implement resume, fork, interrupt, and replay
+
+- [ ] Create `crates/executive/tests/session_lifecycle_commands.rs` with four failing tests: resume returns next sequence plus projected context; fork creates a child with `parent_session_id` and copies items only through the requested sequence; interrupt cancels the active Turn and appends one interruption notice; replay projects byte-identical messages without invoking LLM or tools.
+- [ ] Run `cargo test -p executive --test session_lifecycle_commands`; expected FAIL because `SessionService` is absent.
+- [ ] Implement `SessionService::{resume,fork,interrupt,replay}` over S01 `SessionAppendStore`, a coordinator active-operation index, and the pure projector. Fork writes child record and copied immutable items in one SQLite transaction. Interrupt is idempotent: a second call returns `AlreadyTerminal` and appends no second notice.
+- [ ] Route the typed S01 Interact requests in the existing daemon RPC match located with `rg -n '"chat"|match method' crates/executive/src/impl/daemon/handler`; serialize Fabric records rather than hand-built lifecycle response fields.
+- [ ] Run the four tests and `cargo test -p interact --test session_protocol`; expected PASS.
+
+### Task 8: Remove duplicate Executive ReAct state
+
+- [ ] Add an architecture test asserting `AletheonExecutive` no longer stores `ReActLoop` and production loop creation occurs only inside `CognitiveSessionFactory`.
+- [ ] Run it; expected FAIL at `crates/executive/src/core/orchestrator.rs:24-40`.
+- [ ] Remove `react_loop` from `AletheonExecutive`. Return awareness signals in the completed coordinator turn result so post-turn evolution consumes per-turn signals instead of retained loop state.
+- [ ] Run `cargo test -p executive --test genome_runtime_mapping && cargo test -p executive --test turn_coordinator_lifecycle`; expected PASS.
+
+### Task 9: Remove migration scaffolding and commit
 
 - [ ] Delete the S01 `LegacyJournalProjector` only after `rg -n 'LegacyJournalProjector|OperationKind::SubAgent' crates/executive/src/service` shows no production turn use. Remove resolved E01 allowlist entries.
-- [ ] Run `cargo fmt --all -- --check && cargo test -p executive --test turn_coordinator_lifecycle && cargo test -p executive --test turn_service_equivalence && cargo test -p executive --test governed_capability_path && cargo test --workspace && bash scripts/architecture-check.sh`.
+- [ ] Run `cargo fmt --all -- --check && cargo test -p executive --test turn_coordinator_lifecycle && cargo test -p executive --test turn_service_equivalence && cargo test -p executive --test session_lifecycle_commands && cargo test -p executive --test governed_capability_path && cargo test -p interact --test session_protocol && cargo test --workspace && bash scripts/architecture-check.sh`.
 - [ ] Expected: all pass; architecture output contains no manual daemon/exec capability finding.
 - [ ] Commit:
 
@@ -127,5 +152,7 @@ Delete the old `TurnPipeline`, `TurnService`, and Exec ReAct state when `rg` sho
 - [ ] Daemon and exec equivalence tests compare the same normalized record stream.
 - [ ] Every failure matrix row settles one `OperationKind::Turn` exactly once.
 - [ ] Restart projects prior canonical items into the next Cognit session.
+- [ ] Resume, fork, interrupt, and replay pass through typed protocol requests.
+- [ ] `AletheonExecutive` stores no duplicate ReAct loop.
 - [ ] No production front end accesses admission, registry, runner, or settlement.
 - [ ] Full workspace and E01 gates pass.

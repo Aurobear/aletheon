@@ -4,7 +4,7 @@
 
 **Goal:** Make CI reject new dependency and execution-path bypasses while preserving the explicitly recorded legacy baseline.
 
-**Architecture:** A repository-local Rust-free checker reads Cargo manifests and ripgrep output, normalizes each finding as `rule|path:line|text`, and compares it with a checked-in allowlist. Exact equality makes the allowlist shrink-only: deleting a known finding passes, adding one fails. The checker observes architecture; it does not change runtime behavior.
+**Architecture:** A repository-local checker normalizes Cargo edges and source findings, then rejects only `actual - baseline`. Resolved findings may disappear, while new findings always fail; stale allowlist entries are reported for deletion. This is genuinely shrink-only rather than exact equality, which would incorrectly fail when code improves.
 
 **Tech Stack:** Bash, ripgrep, Cargo metadata, GitHub Actions
 
@@ -29,8 +29,11 @@ source tree -> rule scanners -> normalized findings -> allowlist comparison -> p
 ## File map
 
 - Create: `scripts/architecture-check.sh` — rule runner and comparison logic.
-- Create: `config/architecture-allowlist.txt` — exact current findings.
+- Create: `config/architecture-allowlist.txt` — maximum set of current findings; adding entries is forbidden.
+- Create: `config/architecture-dependencies.txt` — maximum set of current workspace edges.
+- Create: `config/architecture-path-inventory.txt` — current turn and capability production paths.
 - Create: `tests/architecture_check.sh` — shrink/add regression fixture.
+- Create: `tests/architecture_path_inventory.sh` — migration inventory for both turn paths and every capability path.
 - Modify: `.github/workflows/ci.yml` — dedicated architecture job.
 - Modify: `justfile` — local `architecture-check` recipe.
 
@@ -44,12 +47,14 @@ source tree -> rule scanners -> normalized findings -> allowlist comparison -> p
 #!/usr/bin/env bash
 set -euo pipefail
 root=$(mktemp -d); trap 'rm -rf "$root"' EXIT
-mkdir -p "$root/config" "$root/crates/demo/src"
-printf 'direct_tool|crates/demo/src/lib.rs:1|tool.execute(x)\n' > "$root/config/architecture-allowlist.txt"
-printf 'tool.execute(x)\n' > "$root/crates/demo/src/lib.rs"
+mkdir -p "$root/config" "$root/crates/corpus/src/legacy"
+printf 'direct_tool|crates/corpus/src/legacy/mod.rs:1|tool.execute(x)\n' > "$root/config/architecture-allowlist.txt"
+printf 'tool.execute(x)\n' > "$root/crates/corpus/src/legacy/mod.rs"
 ARCH_ROOT="$root" bash scripts/architecture-check.sh
-printf 'tool.execute(y)\n' >> "$root/crates/demo/src/lib.rs"
+printf 'tool.execute(y)\n' >> "$root/crates/corpus/src/legacy/mod.rs"
 if ARCH_ROOT="$root" bash scripts/architecture-check.sh; then exit 1; fi
+rm "$root/crates/corpus/src/legacy/mod.rs"
+ARCH_ROOT="$root" bash scripts/architecture-check.sh
 ```
 
 - [ ] **Step 2: Verify the missing checker fails**
@@ -71,11 +76,18 @@ rg -n --no-heading '(^|[^[:alnum:]_])([[:alnum:]_]+\.)?execute\(' crates/corpus 
   -g '*.rs' | grep -vE '^crates/corpus/src/(security/runner|tools/tools/executor)\.rs:' \
   | sed 's/^/direct_tool|/' >> "$actual" || true
 sort -u "$ALLOW" > "$expected"; sort -u "$actual" -o "$actual"
-if ! diff -u "$expected" "$actual"; then
-  echo 'architecture-check: baseline changed; remove resolved entries or reject new bypasses' >&2
+comm -23 "$actual" "$expected" > "$actual.new"
+comm -13 "$actual" "$expected" > "$actual.stale"
+if [[ -s "$actual.new" ]]; then
+  echo 'architecture-check: new forbidden findings:' >&2
+  cat "$actual.new" >&2
   exit 1
 fi
-echo "architecture-check: $(wc -l < "$actual") known findings, no drift"
+if [[ -s "$actual.stale" ]]; then
+  echo 'architecture-check: resolved allowlist entries (delete in this change):'
+  cat "$actual.stale"
+fi
+echo "architecture-check: $(wc -l < "$actual") findings, no additions"
 ```
 
 - [ ] **Step 4: Run the fixture**
@@ -112,7 +124,7 @@ scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates
 scan duplicate_kernel 'executive::impl::kernel|crate::impl::kernel' crates
 ```
 
-Filter each rule with an adjacent `grep -vFf config/architecture-approved-paths/<rule>.txt` only for modules explicitly approved by the source requirement; do not use directory-wide exclusions.
+Exclude approved Corpus runtime modules and tests directly in the scanner command. Do not introduce a second path-approval mechanism: every remaining legacy production match belongs in `config/architecture-allowlist.txt`.
 
 - [ ] **Step 3: Generate and inspect the baseline**
 
@@ -130,7 +142,7 @@ Expected: allowlist entries use `rule|path:line|source`; every entry is a verifi
 
 Run: `bash scripts/architecture-check.sh && cp config/architecture-allowlist.txt /tmp/a && sed -i '1d' config/architecture-allowlist.txt; ! bash scripts/architecture-check.sh; mv /tmp/a config/architecture-allowlist.txt`
 
-Expected: baseline passes; deleting an entry while code remains fails; restored baseline passes.
+Expected: baseline passes; deleting an entry while code remains fails as a new finding; deleting the corresponding code first passes and reports a stale entry.
 
 ### Task 3: Gate workspace dependency edges
 
@@ -148,7 +160,7 @@ import json,sys
 d=json.load(sys.stdin); names={p["name"] for p in d["packages"]}
 for p in d["packages"]:
   for dep in p["dependencies"]:
-    if dep["name"] in names: print(f"dependency|{p[chr(110)+chr(97)+chr(109)+chr(101)]}|{dep[chr(110)+chr(97)+chr(109)+chr(101)]}")
+    if dep["name"] in names: print("dependency|{}|{}".format(p["name"], dep["name"]))
 ' | sort -u > "$ROOT/target/architecture-dependencies.actual"
 diff -u "$ROOT/config/architecture-dependencies.txt" "$ROOT/target/architecture-dependencies.actual"
 ```
@@ -163,15 +175,35 @@ Expected: dependency baseline and bypass baseline both match.
 
 **Files:** Modify `justfile`; modify `.github/workflows/ci.yml`.
 
-- [ ] **Step 1: Add the local recipe**
+- [ ] **Step 1: Add the migration inventory test**
+
+Create `tests/architecture_path_inventory.sh` with exact `rg` assertions for `TurnService`, `TurnPipeline`, `ExecTurnServices::invoke`, daemon closure admission, `DefaultCapabilityInvoker`, and every `impl CapabilityInvoker`. It writes sorted `kind|path:line|symbol` output and compares it with `config/architecture-path-inventory.txt`. A new path fails; E02/E03/S02 delete resolved entries as they converge.
+
+- [ ] **Step 2: Reject allowlist additions relative to the target branch**
+
+Add to the checker when `ARCH_BASE_REF` is set:
+
+```bash
+for file in config/architecture-allowlist.txt config/architecture-dependencies.txt config/architecture-path-inventory.txt; do
+  if git diff --unified=0 "$ARCH_BASE_REF" -- "$file" | grep -q '^+[^+]'; then
+    echo "architecture-check: $file may only lose entries" >&2
+    exit 1
+  fi
+done
+```
+
+CI fetches the pull-request base and runs with `ARCH_BASE_REF=origin/${{ github.base_ref }}`. `ARCH_UPDATE=1` is a bootstrap/local regeneration aid only; it is never accepted as evidence for adding entries.
+
+- [ ] **Step 3: Add the local recipe**
 
 ```make
 architecture-check:
     bash tests/architecture_check.sh
+    bash tests/architecture_path_inventory.sh
     bash scripts/architecture-check.sh
 ```
 
-- [ ] **Step 2: Add the CI job**
+- [ ] **Step 4: Add the CI job**
 
 ```yaml
   architecture:
@@ -182,10 +214,15 @@ architecture-check:
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y ripgrep
       - run: bash tests/architecture_check.sh
+      - run: bash tests/architecture_path_inventory.sh
       - run: bash scripts/architecture-check.sh
 ```
 
-- [ ] **Step 3: Run all gates**
+- [ ] **Step 5: Correct stale architecture claims**
+
+Run `rg -n 'all inter-subsystem|single turn path|all capabilities|fabric only' docs README.md crates/*/README.md`. For each statement contradicted by the generated dependency/path inventories, update it to describe verified current behavior and link the migration plan. Re-run the same search and inspect every remaining match.
+
+- [ ] **Step 6: Run all gates**
 
 Run: `just architecture-check && cargo fmt --all -- --check && cargo check --workspace --all-targets`
 
