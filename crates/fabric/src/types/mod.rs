@@ -24,6 +24,7 @@ pub mod paths;
 pub mod permission;
 pub mod resource;
 pub mod sandbox;
+pub mod session;
 pub mod tool;
 pub mod vision;
 

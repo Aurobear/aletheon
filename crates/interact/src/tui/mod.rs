@@ -3,6 +3,7 @@
 pub mod app;
 pub mod render;
 pub mod response;
+pub mod session_protocol;
 pub mod test_infra;
 
 pub mod approval_dialog;

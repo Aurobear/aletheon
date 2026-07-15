@@ -1,6 +1,7 @@
 //! Turn request/result contracts used by adapters and execution services.
 
 use crate::types::operation::{MonoDeadlineMillis, OperationId, ProcessId};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -15,7 +16,7 @@ pub struct TurnRequest {
     pub deadline: Option<MonoDeadlineMillis>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TurnStop {
     Completed,
     Blocked,

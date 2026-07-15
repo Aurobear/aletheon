@@ -69,6 +69,7 @@ pub use types::paths;
 pub use types::permission;
 pub use types::resource;
 pub use types::sandbox;
+pub use types::session;
 pub use types::tool;
 pub use types::vision;
 
@@ -203,6 +204,11 @@ pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
     SandboxExecutor, SandboxPreference, SandboxResult,
+};
+pub use types::session::{
+    AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
+    SessionNotification, SessionProtocolV1, SessionRecord, SessionStatus, TurnId, TurnRecord,
+    SESSION_SCHEMA_VERSION,
 };
 pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,
