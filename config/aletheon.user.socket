@@ -1,0 +1,10 @@
+[Unit]
+Description=Aletheon per-user runtime socket
+
+[Socket]
+ListenStream=%t/aletheon/aletheon.sock
+DirectoryMode=0700
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target

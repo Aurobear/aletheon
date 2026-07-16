@@ -1,8 +1,5 @@
-# Compatibility unit for installations that still refer to aletheon.service.
-# Keep this core-only definition in sync with aletheon-core.service. New
-# installations enable aletheon-core.service directly.
 [Unit]
-Description=Aletheon system inference core (compatibility name)
+Description=Aletheon system inference core
 Documentation=file:/usr/share/doc/aletheon/systemd.md
 After=network-online.target
 Wants=network-online.target
@@ -29,6 +26,8 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=aletheon-core
 
+# Only machine-scoped provider credentials are available to the core. User
+# integration credentials remain in the per-user runtime.
 LoadCredential=provider.env:/etc/aletheon/credentials/provider.env
 EnvironmentFile=-%d/provider.env
 Environment=ALETHEON_DATA_ROOT=/var/lib/aletheon

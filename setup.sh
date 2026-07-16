@@ -443,18 +443,18 @@ setup_systemd() {
         echo "    journalctl -u aletheon -f        # follow logs"
     else
         mkdir -p "$(dirname "$SYS_SVC")"
-        sed "s|ExecStart=/usr/bin/aletheon daemon|ExecStart=$BIN_DIR/aletheon daemon|" \
+        sed "s|ExecStart=%h/.local/bin/aletheon daemon|ExecStart=$BIN_DIR/aletheon daemon|" \
             "$SCRIPT_DIR/config/aletheon.user.service" > "$SYS_SVC"
+        cp "$SCRIPT_DIR/config/aletheon.user.socket" \
+            "$(dirname "$SYS_SVC")/aletheon.socket"
         systemctl --user daemon-reload
-        systemctl --user enable aletheon.service
-        log "Systemd user service installed: $SYS_SVC"
-        # Auto-start daemon now
-        systemctl --user start aletheon.service
-        log "Daemon started"
+        systemctl --user enable --now aletheon.socket
+        log "Systemd user socket installed and enabled: $(dirname "$SYS_SVC")/aletheon.socket"
         echo ""
         echo "  Commands:"
-        echo "    systemctl --user start aletheon    # start daemon"
-        echo "    systemctl --user status aletheon   # check status"
+        echo "    systemctl --user start aletheon.socket  # accept client connections"
+        echo "    systemctl --user status aletheon.socket # check socket status"
+        echo "    systemctl --user status aletheon.service # check runtime status"
         echo "    journalctl --user -u aletheon -f   # follow logs"
     fi
 }
@@ -481,7 +481,7 @@ if [[ "$MODE" == "system" ]]; then
     echo "    aletheon exec -p 'hello'     # non-interactive run"
 else
     echo "  Quick start:"
-    echo "    systemctl --user start aletheon"
+    echo "    systemctl --user start aletheon.socket"
     echo "    aletheon                     # launch TUI"
     echo "    aletheon daemon              # foreground debug"
     echo "    aletheon exec -p 'hello'     # non-interactive run"
