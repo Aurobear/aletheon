@@ -112,7 +112,9 @@ impl TurnService {
                 let canonical_seed = crate::r#impl::session::canonical_store::project_messages(&history)?;
                 let recording = RecordingTurnServices::new(services, canonical_seed);
                 let request = pre_turn.run(request, &recording).await?;
-                let mut session = factory.create(&session_record, &runner_policy).await?;
+                let mut session = factory
+                    .create(&session_record, &runner_policy, cancel.clone())
+                    .await?;
                 let start = clock.mono_now();
                 let run = session.run_turn(request.clone(), &recording, events);
                 let mut result = match request.deadline {

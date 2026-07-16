@@ -1,0 +1,192 @@
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use cognit::{
+    CognitErrorKind, CognitRetryDisposition, CognitiveSessionDependencies, CognitiveSessionFactory,
+    DefaultCognitiveSessionFactory, HarnessConfig,
+};
+use fabric::{
+    CapabilityCall, CapabilityResult, LlmProvider, LlmResponse, LlmStream, OperationId, ProcessId,
+    ToolDefinition, TurnEvent, TurnEventSink, TurnRequest, TurnServices,
+};
+use tokio_util::sync::CancellationToken;
+
+fn request() -> TurnRequest {
+    TurnRequest {
+        operation_id: OperationId::new(),
+        process_id: ProcessId::new(),
+        session_id: "facade".into(),
+        input: "test facade".into(),
+        working_dir: PathBuf::from("."),
+        model_policy: None,
+        deadline: None,
+    }
+}
+
+fn dependencies(cancel: CancellationToken) -> CognitiveSessionDependencies {
+    CognitiveSessionDependencies {
+        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        cancellation: cancel,
+    }
+}
+
+#[derive(Default)]
+struct RecordingEvents(Mutex<Vec<TurnEvent>>);
+
+#[async_trait]
+impl TurnEventSink for RecordingEvents {
+    async fn emit(&self, event: TurnEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
+struct FailingProvider(&'static str);
+
+#[async_trait]
+impl LlmProvider for FailingProvider {
+    async fn complete(
+        &self,
+        _messages: &[fabric::Message],
+        _tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmResponse> {
+        anyhow::bail!(self.0)
+    }
+
+    async fn complete_stream(
+        &self,
+        _messages: &[fabric::Message],
+        _tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmStream> {
+        anyhow::bail!(self.0)
+    }
+
+    fn name(&self) -> &str {
+        "failing"
+    }
+
+    fn max_context_length(&self) -> usize {
+        128_000
+    }
+}
+
+struct Services(FailingProvider);
+
+#[async_trait]
+impl TurnServices for Services {
+    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+        Ok(fabric::RecallSet::default())
+    }
+
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+        Ok(fabric::DaseinView::default())
+    }
+
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+        Ok(fabric::AgoraView::default())
+    }
+
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        CapabilityResult {
+            call_id: call.call_id,
+            output: "not reached".into(),
+            is_error: true,
+            usage: fabric::UsageReport::default(),
+            audit_id: None,
+        }
+    }
+
+    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
+        Some(&self.0)
+    }
+}
+
+#[tokio::test]
+async fn factory_injects_cancellation_events_and_capability_boundary() {
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let factory = DefaultCognitiveSessionFactory;
+    let mut session = factory
+        .create(HarnessConfig::default(), dependencies(cancel))
+        .unwrap();
+    let events = RecordingEvents::default();
+
+    let error = session
+        .run_turn(request(), &Services(FailingProvider("unused")), &events)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.kind(), CognitErrorKind::Cancelled);
+    assert_eq!(error.retry_disposition(), CognitRetryDisposition::Never);
+    let events = events.0.lock().unwrap();
+    assert!(matches!(events[0], TurnEvent::Started { .. }));
+    assert!(matches!(
+        events[1],
+        TurnEvent::Finished {
+            stop: fabric::TurnStop::Cancelled,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn provider_failures_cross_the_facade_as_typed_retry_policy() {
+    let factory = DefaultCognitiveSessionFactory;
+    let mut transient = factory
+        .create(
+            HarnessConfig::default(),
+            dependencies(CancellationToken::new()),
+        )
+        .unwrap();
+    let error = transient
+        .run_turn(
+            request(),
+            &Services(FailingProvider("provider 429 too many requests")),
+            &RecordingEvents::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), CognitErrorKind::TransientProvider);
+    assert_eq!(
+        error.retry_disposition(),
+        CognitRetryDisposition::AfterBackoff
+    );
+
+    let mut terminal = factory
+        .create(
+            HarnessConfig::default(),
+            dependencies(CancellationToken::new()),
+        )
+        .unwrap();
+    let error = terminal
+        .run_turn(
+            request(),
+            &Services(FailingProvider("provider 401 unauthorized")),
+            &RecordingEvents::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), CognitErrorKind::TerminalRuntime);
+    assert_eq!(error.retry_disposition(), CognitRetryDisposition::Never);
+}
+
+#[test]
+fn production_cognit_has_no_concrete_kernel_dependency() {
+    let manifest: toml::Value = toml::from_str(include_str!("../Cargo.toml")).unwrap();
+    assert!(manifest["dependencies"].get("aletheon-kernel").is_none());
+    assert!(manifest["dev-dependencies"]
+        .get("aletheon-kernel")
+        .is_some());
+
+    let scheduler = include_str!("../src/impl/llm/scheduler.rs");
+    let production = scheduler.split("#[cfg(test)]").next().unwrap();
+    assert!(!production.contains("aletheon_kernel::"));
+}
+
+#[test]
+fn crate_root_exposes_session_facade_not_concrete_loop() {
+    let root = include_str!("../src/lib.rs");
+    assert!(root.contains("CognitiveSessionFactory"));
+    assert!(!root.contains("ReActLoop"));
+    assert!(!root.contains("build_harness"));
+}

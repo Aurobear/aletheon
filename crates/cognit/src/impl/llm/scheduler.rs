@@ -12,7 +12,6 @@ use anyhow::Result;
 use fabric::evolution::{LlmPurpose, ProviderHealth};
 use fabric::message::Message;
 use fabric::Clock;
-use fabric::Timer;
 
 use super::provider::{LlmProvider, LlmResponse, ToolDefinition};
 use super::provider_factory::create_provider_by_kind;
@@ -316,9 +315,7 @@ impl LlmScheduler {
                                 .saturating_mul(1u64 << shift)
                                 .min(self.retry_policy.max_backoff_ms);
                             if backoff > 0 {
-                                aletheon_kernel::chronos::SystemTimer
-                                    .sleep(Duration::from_millis(backoff))
-                                    .await;
+                                tokio::time::sleep(Duration::from_millis(backoff)).await;
                             }
                             attempt += 1;
                             continue;

@@ -131,7 +131,12 @@ impl NativeCognitRuntime {
         let mut session = self
             .resources
             .sessions
-            .create_configured(&session_record, &TurnPolicy::daemon(), config)
+            .create_configured(
+                &session_record,
+                &TurnPolicy::daemon(),
+                config,
+                input.cancellation.clone(),
+            )
             .await
             .map_err(runtime_failure)?;
 

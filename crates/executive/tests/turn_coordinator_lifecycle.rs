@@ -175,6 +175,7 @@ impl CognitiveSessionFactory for SeedCapturingFactory {
         &self,
         _session: &fabric::SessionRecord,
         _policy: &TurnPolicy,
+        _cancellation: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
         Ok(Box::new(SeedCapturingSession(self.0.clone())))
     }
@@ -189,7 +190,7 @@ impl cognit::harness::CognitiveSession for SeedCapturingSession {
         request: TurnRequest,
         services: &dyn fabric::TurnServices,
         _events: &dyn fabric::TurnEventSink,
-    ) -> anyhow::Result<TurnResult> {
+    ) -> Result<TurnResult, cognit::CognitError> {
         self.0
             .lock()
             .await

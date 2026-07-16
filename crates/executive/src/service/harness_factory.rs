@@ -4,6 +4,7 @@ use cognit::harness::config::HarnessConfig;
 use cognit::harness::linear::ReActLoop;
 use fabric::SessionRecord;
 use mnemosyne::AdvancedCompressor;
+use tokio_util::sync::CancellationToken;
 
 use crate::core::config::ExecutiveConfig;
 use crate::service::turn_policy::TurnPolicy;
@@ -14,6 +15,7 @@ pub trait CognitiveSessionFactory: Send + Sync {
         &self,
         session: &SessionRecord,
         policy: &TurnPolicy,
+        cancellation: CancellationToken,
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>>;
 
     async fn create_configured(
@@ -21,8 +23,9 @@ pub trait CognitiveSessionFactory: Send + Sync {
         session: &SessionRecord,
         policy: &TurnPolicy,
         _config: HarnessConfig,
+        cancellation: CancellationToken,
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
-        self.create(session, policy).await
+        self.create(session, policy, cancellation).await
     }
 }
 
@@ -43,10 +46,14 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
         &self,
         _session: &SessionRecord,
         _policy: &TurnPolicy,
+        cancellation: CancellationToken,
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
         Ok(Box::new(cognit::harness::LinearCognitiveSession::new(
             self.config.clone(),
-            self.clock.clone(),
+            cognit::CognitiveSessionDependencies {
+                clock: self.clock.clone(),
+                cancellation,
+            },
         )))
     }
 
@@ -55,10 +62,14 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
         _session: &SessionRecord,
         _policy: &TurnPolicy,
         config: HarnessConfig,
+        cancellation: CancellationToken,
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
         Ok(Box::new(cognit::harness::LinearCognitiveSession::new(
             config,
-            self.clock.clone(),
+            cognit::CognitiveSessionDependencies {
+                clock: self.clock.clone(),
+                cancellation,
+            },
         )))
     }
 }

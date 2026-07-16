@@ -1,12 +1,22 @@
 use async_trait::async_trait;
-use cognit::harness::{CognitiveSession, HarnessConfig, LinearCognitiveSession};
+use cognit::harness::{
+    CognitiveSession, CognitiveSessionDependencies, HarnessConfig, LinearCognitiveSession,
+};
 use fabric::{
     CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
     NoopTurnEventSink, OperationId, ProcessId, StopReason, StubTurnServices, ToolDefinition,
     TurnRequest, TurnServices, TurnStop, Usage,
 };
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use tokio_util::sync::CancellationToken;
+
+fn dependencies() -> CognitiveSessionDependencies {
+    CognitiveSessionDependencies {
+        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        cancellation: CancellationToken::new(),
+    }
+}
 
 fn request(input: &str) -> TurnRequest {
     TurnRequest {
@@ -22,10 +32,7 @@ fn request(input: &str) -> TurnRequest {
 
 #[tokio::test]
 async fn linear_session_returns_turn_result() {
-    let mut session = LinearCognitiveSession::new(
-        HarnessConfig::default(),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
-    );
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
 
     let result = session
         .run_turn(request("hello"), &StubTurnServices, &NoopTurnEventSink)
@@ -147,7 +154,7 @@ async fn linear_session_runs_react_with_turn_services() {
             max_iterations: 4,
             ..Default::default()
         },
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        dependencies(),
     );
 
     let result = session
@@ -160,4 +167,3 @@ async fn linear_session_runs_react_with_turn_services() {
     assert_eq!(result.metrics.tool_calls_made, 1);
     assert_eq!(*services.invoked.lock().unwrap(), vec!["echo_tool"]);
 }
-use std::sync::Arc;
