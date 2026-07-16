@@ -7,6 +7,7 @@ use mnemosyne::backends::gbrain::{
     GbrainPage, GbrainSpool, RemoteMemoryReceipt, RetryOutcome, RetryPolicy, SpoolError,
     SupplementalErrorCategory, SupplementalMemoryTransport,
 };
+use mnemosyne::RetentionRepository;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -26,6 +27,7 @@ pub struct GbrainWorker<T: SupplementalMemoryTransport> {
     worker_id: String,
     batch_size: usize,
     lease_ms: i64,
+    retention: Option<Arc<RetentionRepository>>,
 }
 
 impl<T: SupplementalMemoryTransport> GbrainWorker<T> {
@@ -48,7 +50,13 @@ impl<T: SupplementalMemoryTransport> GbrainWorker<T> {
             worker_id,
             batch_size,
             lease_ms,
+            retention: None,
         })
+    }
+
+    pub fn with_retention_repository(mut self, retention: Arc<RetentionRepository>) -> Self {
+        self.retention = Some(retention);
+        self
     }
 
     pub async fn drain_once(
@@ -56,6 +64,16 @@ impl<T: SupplementalMemoryTransport> GbrainWorker<T> {
         now_ms: i64,
         cancel: &CancellationToken,
     ) -> Result<DrainReport, SpoolError> {
+        if let Some(retention) = &self.retention {
+            let pending = retention
+                .pending_remote_records(self.batch_size)
+                .map_err(|_| SpoolError::Invalid("retention tombstone outbox is unavailable"))?;
+            let reconciliation =
+                mnemosyne::backends::gbrain::GbrainReconciliation::new(&self.spool);
+            for record in pending {
+                reconciliation.enqueue(&record, now_ms)?;
+            }
+        }
         let claimed = self
             .spool
             .claim(&self.worker_id, now_ms, self.lease_ms, self.batch_size)?;
@@ -84,6 +102,17 @@ impl<T: SupplementalMemoryTransport> GbrainWorker<T> {
                         synced_at_ms: now_ms,
                     };
                     self.spool.acknowledge(&item, &self.worker_id, &receipt)?;
+                    if item.operation
+                        == mnemosyne::backends::gbrain::ReconcileOperationKind::Tombstone
+                    {
+                        if let (Some(retention), Some(record_id)) =
+                            (&self.retention, item.record_id.strip_suffix(":tombstone"))
+                        {
+                            if let Err(error) = retention.mark_remote_settled(record_id) {
+                                tracing::warn!(%error, record_id, "GBrain tombstone delivered but retention settlement update failed");
+                            }
+                        }
+                    }
                     report.delivered += 1;
                 }
                 Err(error)

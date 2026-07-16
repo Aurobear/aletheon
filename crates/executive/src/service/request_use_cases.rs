@@ -817,3 +817,82 @@ impl DebugUseCases for ProductionDebugUseCases {
         self.0.clone()
     }
 }
+
+#[async_trait]
+pub trait MemoryAdminUseCases: Send + Sync {
+    async fn preview_forget(
+        &self,
+        policy: mnemosyne::ForgetPolicy,
+    ) -> anyhow::Result<mnemosyne::ForgetReceipt>;
+    async fn tombstone(
+        &self,
+        policy: mnemosyne::ForgetPolicy,
+    ) -> anyhow::Result<mnemosyne::ForgetReceipt>;
+    async fn compact_retention(
+        &self,
+        owner: &str,
+        now_ms: i64,
+        policy: mnemosyne::RetentionCompactionPolicy,
+    ) -> anyhow::Result<mnemosyne::RetentionCompactionReport>;
+}
+
+pub struct ProductionMemoryAdminUseCases {
+    service: Arc<dyn mnemosyne::MemoryService>,
+    retention: Arc<mnemosyne::RetentionRepository>,
+    authenticated_principal: String,
+}
+
+impl ProductionMemoryAdminUseCases {
+    pub fn new(
+        service: Arc<dyn mnemosyne::MemoryService>,
+        retention: Arc<mnemosyne::RetentionRepository>,
+        authenticated_principal: impl Into<String>,
+    ) -> Self {
+        Self {
+            service,
+            retention,
+            authenticated_principal: authenticated_principal.into(),
+        }
+    }
+
+    fn authenticate(&self, requester: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.authenticated_principal.trim().is_empty()
+                && requester == self.authenticated_principal,
+            "memory administration requester is not authenticated"
+        );
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl MemoryAdminUseCases for ProductionMemoryAdminUseCases {
+    async fn preview_forget(
+        &self,
+        policy: mnemosyne::ForgetPolicy,
+    ) -> anyhow::Result<mnemosyne::ForgetReceipt> {
+        self.authenticate(&policy.requester)?;
+        self.service.preview_forget(policy).await
+    }
+
+    async fn tombstone(
+        &self,
+        policy: mnemosyne::ForgetPolicy,
+    ) -> anyhow::Result<mnemosyne::ForgetReceipt> {
+        self.authenticate(&policy.requester)?;
+        self.service.forget(policy).await
+    }
+
+    async fn compact_retention(
+        &self,
+        owner: &str,
+        now_ms: i64,
+        policy: mnemosyne::RetentionCompactionPolicy,
+    ) -> anyhow::Result<mnemosyne::RetentionCompactionReport> {
+        anyhow::ensure!(
+            owner == self.authenticated_principal,
+            "memory compaction owner is not authenticated"
+        );
+        mnemosyne::RetentionCompactor::new(&self.retention).run(owner, now_ms, &policy)
+    }
+}

@@ -24,8 +24,8 @@ impl mnemosyne::MemoryService for Memory {
         }
         Ok(())
     }
-    async fn forget(&self, _: mnemosyne::ForgetPolicy) -> anyhow::Result<()> {
-        Ok(())
+    async fn forget(&self, _: mnemosyne::ForgetPolicy) -> anyhow::Result<mnemosyne::ForgetReceipt> {
+        Ok(mnemosyne::ForgetReceipt::default())
     }
 }
 #[tokio::test]

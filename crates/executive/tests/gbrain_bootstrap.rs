@@ -44,8 +44,8 @@ impl MemoryService for LocalMemory {
     async fn consolidate(&self, _scope: mnemosyne::service::MemoryScope) -> anyhow::Result<()> {
         Ok(())
     }
-    async fn forget(&self, _policy: ForgetPolicy) -> anyhow::Result<()> {
-        Ok(())
+    async fn forget(&self, _policy: ForgetPolicy) -> anyhow::Result<mnemosyne::ForgetReceipt> {
+        Ok(mnemosyne::ForgetReceipt::default())
     }
 }
 

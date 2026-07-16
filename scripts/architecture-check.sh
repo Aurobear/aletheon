@@ -312,6 +312,20 @@ if (( $(wc -l < crates/executive/src/impl/daemon/bootstrap/request.rs) > 1500 ))
   echo "architecture-check: bootstrap/request.rs exceeded its composition bound" >&2
   exit 1
 fi
+
+if rg -n 'Conservatively no-op|let _ = policy' crates/mnemosyne/src/service.rs; then
+  echo "architecture-check: MemoryService forgetting regressed to a silent no-op" >&2
+  exit 1
+fi
+if ! rg -q 'elevated forget requires a matching dry-run preview' crates/mnemosyne/src/retention/repository.rs; then
+  echo "architecture-check: elevated memory deletion lost its preview gate" >&2
+  exit 1
+fi
+if rg -n '\.forget_memory\(' crates/executive/src -g '*.rs' \
+  | grep -v '^crates/executive/src/service/admin_service.rs:'; then
+  echo "architecture-check: governed memory forgetting escaped the admin service" >&2
+  exit 1
+fi
 for stage in channels google runtime storage; do
   if (( $(wc -l < "crates/executive/src/impl/daemon/bootstrap/${stage}.rs") > 700 )); then
     echo "architecture-check: bootstrap/${stage}.rs exceeded its stage bound" >&2

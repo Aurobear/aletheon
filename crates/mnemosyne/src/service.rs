@@ -179,10 +179,97 @@ impl RecallItem {
     }
 }
 
-/// Conservative forget policy. `session: None` means "no-op" (see `forget`).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ForgetSelector {
+    Exact {
+        record_ids: Vec<MemoryRecordId>,
+        within: MemoryScope,
+    },
+    Scope {
+        scope: MemoryScope,
+        limit: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ForgetAuthority {
+    Ordinary,
+    Elevated { proof: String },
+}
+
+/// Audited logical-deletion policy. Every selector is exact or explicitly bounded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForgetPolicy {
-    pub session: Option<String>,
+    pub request_id: String,
+    pub selector: ForgetSelector,
+    pub requester: String,
+    pub reason: String,
+    pub authority: ForgetAuthority,
+}
+
+impl ForgetPolicy {
+    pub const MAX_RECORDS: usize = 100;
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.request_id.trim().is_empty(),
+            "forget request ID is required"
+        );
+        anyhow::ensure!(
+            !self.requester.trim().is_empty(),
+            "forget requester is required"
+        );
+        anyhow::ensure!(!self.reason.trim().is_empty(), "forget reason is required");
+        if let ForgetAuthority::Elevated { proof } = &self.authority {
+            anyhow::ensure!(
+                !proof.trim().is_empty(),
+                "elevated forget proof is required"
+            );
+        }
+        match &self.selector {
+            ForgetSelector::Exact { record_ids, within } => {
+                anyhow::ensure!(
+                    !record_ids.is_empty() && record_ids.len() <= Self::MAX_RECORDS,
+                    "exact forget selector is unbounded"
+                );
+                anyhow::ensure!(
+                    record_ids.iter().all(|id| !id.0.trim().is_empty()),
+                    "forget record ID is required"
+                );
+                within.validate()?;
+            }
+            ForgetSelector::Scope { scope, limit } => {
+                anyhow::ensure!(
+                    (1..=Self::MAX_RECORDS).contains(limit),
+                    "scope forget selector is unbounded"
+                );
+                scope.validate()?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForgetReceipt {
+    pub tombstoned: Vec<MemoryRecordId>,
+    pub already_tombstoned: Vec<MemoryRecordId>,
+    pub denied: Vec<MemoryRecordId>,
+    pub remote_pending: Vec<MemoryRecordId>,
+}
+
+impl ForgetReceipt {
+    pub(crate) fn sort(&mut self) {
+        for ids in [
+            &mut self.tombstoned,
+            &mut self.already_tombstoned,
+            &mut self.denied,
+            &mut self.remote_pending,
+        ] {
+            ids.sort_by(|left, right| left.0.cmp(&right.0));
+            ids.dedup();
+        }
+    }
 }
 
 /// Unified facade over the Mnemosyne memory objects.
@@ -191,7 +278,10 @@ pub trait MemoryService: Send + Sync {
     async fn record(&self, event: ExperienceEvent) -> anyhow::Result<()>;
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet>;
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()>;
-    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<()>;
+    async fn preview_forget(&self, _policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        anyhow::bail!("forget preview is unavailable")
+    }
+    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt>;
 }
 
 /// Default `MemoryService` implementation delegating to the real
@@ -204,6 +294,7 @@ pub struct DefaultMemoryService {
     episodic: Arc<Mutex<EpisodicMemory>>,
     clock: Arc<dyn fabric::Clock>,
     consolidation: Option<Arc<crate::consolidation::ConsolidationRepository>>,
+    retention: Option<Arc<crate::retention::RetentionRepository>>,
 }
 
 impl DefaultMemoryService {
@@ -221,7 +312,28 @@ impl DefaultMemoryService {
             episodic,
             clock,
             consolidation: None,
+            retention: None,
         }
+    }
+
+    pub fn with_retention_repository(
+        mut self,
+        repository: Arc<crate::retention::RetentionRepository>,
+    ) -> Self {
+        self.retention = Some(repository);
+        self
+    }
+
+    pub fn retention_repository(&self) -> Option<&Arc<crate::retention::RetentionRepository>> {
+        self.retention.as_ref()
+    }
+
+    pub fn preview_forget(&self, policy: &ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        let repository = self
+            .retention
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("retention repository is unavailable"))?;
+        repository.preview_forget(policy, self.clock.wall_now().0.max(0))
     }
 
     pub fn with_consolidation_repository(
@@ -250,31 +362,95 @@ impl MemoryService for DefaultMemoryService {
                     other => other,
                 };
                 let rm = self.recall_memory.lock().await;
-                rm.store(&session, entry_type, &content, None)?;
+                rm.store(
+                    &session,
+                    entry_type,
+                    &content,
+                    Some(&serde_json::to_string(&metadata)?),
+                )?;
+                drop(rm);
+                if let Some(retention) = &self.retention {
+                    let record = MemoryRecord {
+                        id: MemoryRecordId(metadata.record_id.clone()),
+                        kind: MemoryKind::Message,
+                        scope: MemoryScope::Session(session),
+                        content,
+                        metadata,
+                        status: MemoryStatus::Current,
+                        authority: MemoryAuthority::RawExperience,
+                        source_event_ids: Vec::new(),
+                        tags: Vec::new(),
+                    };
+                    retention.register(&record, self.clock.wall_now().0.max(0))?;
+                }
                 Ok(())
             }
-            ExperienceEvent::Reflection { content, metadata }
-            | ExperienceEvent::ArchitectureDecision {
-                content, metadata, ..
-            }
-            | ExperienceEvent::GoalOutcome {
-                content, metadata, ..
-            } => {
+            event @ (ExperienceEvent::Reflection { .. }
+            | ExperienceEvent::ArchitectureDecision { .. }
+            | ExperienceEvent::GoalOutcome { .. }) => {
+                let (content, metadata, kind, scope) = match event {
+                    ExperienceEvent::Reflection { content, metadata } => {
+                        let scope = metadata
+                            .provenance
+                            .principal
+                            .clone()
+                            .map(MemoryScope::Principal)
+                            .unwrap_or(MemoryScope::Global);
+                        (content, metadata, MemoryKind::Reflection, scope)
+                    }
+                    ExperienceEvent::ArchitectureDecision {
+                        content, metadata, ..
+                    } => (
+                        content,
+                        metadata,
+                        MemoryKind::ArchitectureDecision,
+                        MemoryScope::Global,
+                    ),
+                    ExperienceEvent::GoalOutcome {
+                        goal_id,
+                        content,
+                        metadata,
+                        ..
+                    } => (
+                        content,
+                        metadata,
+                        MemoryKind::GoalOutcome,
+                        MemoryScope::Goal(goal_id),
+                    ),
+                    ExperienceEvent::Message { .. } => unreachable!(),
+                };
                 metadata.validate()?;
                 let entry = ReflectionEntry {
-                    id: metadata.record_id,
+                    id: metadata.record_id.clone(),
                     timestamp: wall_to_datetime(self.clock.wall_now()),
                     trigger: ReflectionTrigger::Manual,
                     task_summary: content.clone(),
                     outcome: ReflectionOutcome::Success,
                     what_worked: Vec::new(),
                     what_failed: Vec::new(),
-                    learned: vec![content],
+                    learned: vec![content.clone()],
                     behavior_changes: Vec::new(),
                     confidence: 0.5,
                 };
                 let episodic = self.episodic.lock().await;
                 episodic.store_reflection(&entry)?;
+                drop(episodic);
+                if let Some(retention) = &self.retention {
+                    retention.register(
+                        &MemoryRecord {
+                            id: MemoryRecordId(metadata.record_id.clone()),
+                            kind,
+                            scope,
+                            content,
+                            metadata,
+                            status: MemoryStatus::Current,
+                            authority: MemoryAuthority::LocalEpisode,
+                            source_event_ids: Vec::new(),
+                            tags: Vec::new(),
+                        },
+                        self.clock.wall_now().0.max(0),
+                    )?;
+                }
                 Ok(())
             }
         }
@@ -336,8 +512,16 @@ impl MemoryService for DefaultMemoryService {
                 }
             }
         }
+        let mut items = crate::recall::merge_items(sources, &req);
+        if let Some(retention) = &self.retention {
+            items.retain(|item| {
+                !retention
+                    .is_tombstoned(&item.metadata.record_id)
+                    .unwrap_or(false)
+            });
+        }
         Ok(RecallSet {
-            items: crate::recall::merge_items(sources, &req),
+            items,
             degraded_sources,
         })
     }
@@ -353,12 +537,16 @@ impl MemoryService for DefaultMemoryService {
         Ok(())
     }
 
-    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<()> {
-        // No destructive delete-by-session method exists on RecallMemory or
-        // FactStore today; implementing one is out of scope for this
-        // additive facade. Conservatively no-op and document the gap.
-        let _ = policy;
-        Ok(())
+    async fn preview_forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        DefaultMemoryService::preview_forget(self, &policy)
+    }
+
+    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        let repository = self
+            .retention
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("retention repository is unavailable"))?;
+        repository.forget(&policy, self.clock.wall_now().0.max(0))
     }
 }
 
@@ -503,18 +691,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn consolidate_and_forget_are_ok() {
+    async fn consolidate_is_ok_and_forget_fails_without_retention() {
         let dir = tempfile::tempdir().unwrap();
         let svc = build_service(dir.path()).await;
         svc.consolidate(MemoryScope::Global).await.unwrap();
         svc.consolidate(MemoryScope::Session("s1".into()))
             .await
             .unwrap();
-        svc.forget(ForgetPolicy {
-            session: Some("s1".into()),
-        })
-        .await
-        .unwrap();
-        svc.forget(ForgetPolicy::default()).await.unwrap();
+        assert!(svc
+            .forget(ForgetPolicy {
+                request_id: "request-1".into(),
+                selector: ForgetSelector::Scope {
+                    scope: MemoryScope::Session("s1".into()),
+                    limit: 1,
+                },
+                requester: "owner".into(),
+                reason: "test".into(),
+                authority: ForgetAuthority::Ordinary,
+            })
+            .await
+            .is_err());
     }
 }

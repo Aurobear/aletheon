@@ -286,7 +286,16 @@ fn forget_is_explicitly_unsupported() {
     let dir = tempfile::tempdir().unwrap();
     let backend = build_backend(&dir, Arc::new(FakeTransport::healthy()), 100);
     assert!(backend
-        .forget(ForgetPolicy::default())
+        .forget(ForgetPolicy {
+            request_id: "request-1".into(),
+            selector: mnemosyne::ForgetSelector::Scope {
+                scope: mnemosyne::MemoryScope::Session("s".into()),
+                limit: 1,
+            },
+            requester: "owner".into(),
+            reason: "test".into(),
+            authority: mnemosyne::ForgetAuthority::Ordinary,
+        })
         .unwrap_err()
         .to_string()
         .contains("unsupported"));

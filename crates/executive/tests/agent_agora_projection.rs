@@ -310,8 +310,8 @@ impl mnemosyne::MemoryService for EmptyMemory {
     async fn consolidate(&self, _scope: MemoryScope) -> anyhow::Result<()> {
         Ok(())
     }
-    async fn forget(&self, _policy: ForgetPolicy) -> anyhow::Result<()> {
-        Ok(())
+    async fn forget(&self, _policy: ForgetPolicy) -> anyhow::Result<mnemosyne::ForgetReceipt> {
+        Ok(mnemosyne::ForgetReceipt::default())
     }
 }
 

@@ -38,8 +38,8 @@ impl mnemosyne::MemoryService for EmptyMemory {
         Ok(())
     }
 
-    async fn forget(&self, _policy: ForgetPolicy) -> anyhow::Result<()> {
-        Ok(())
+    async fn forget(&self, _policy: ForgetPolicy) -> anyhow::Result<mnemosyne::ForgetReceipt> {
+        Ok(mnemosyne::ForgetReceipt::default())
     }
 }
 

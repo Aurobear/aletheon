@@ -11,28 +11,35 @@ use crate::{
 pub(crate) fn messages(rows: Vec<RecallEntry>, request: &RecallRequest) -> Vec<RecallItem> {
     rows.into_iter()
         .filter(|row| row.session_id == request.session)
-        .map(|row| RecallItem {
-            content: row.content,
-            metadata: MemoryMetadata {
-                record_id: format!("mnemosyne:message:{}", row.id),
-                provenance: MemoryProvenance {
-                    source: "mnemosyne.recall_memory".into(),
-                    source_id: row.id.to_string(),
-                    principal: None,
-                    source_commit: None,
-                },
-                source_time: Some(row.timestamp),
-                observed_time: row.timestamp,
-                valid_from: Some(row.timestamp),
-                valid_until: None,
-                supersedes: None,
-                superseded_by: None,
-                confidence: 1.0,
-                sensitivity: MemorySensitivity::Internal,
-            },
-            temporal_state: TemporalState::Current,
-            authority: MemoryAuthority::RawExperience,
-            scope: MemoryScope::Session(request.session.clone()),
+        .map(|row| {
+            let metadata = row
+                .metadata
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<MemoryMetadata>(json).ok())
+                .unwrap_or_else(|| MemoryMetadata {
+                    record_id: format!("mnemosyne:message:{}", row.id),
+                    provenance: MemoryProvenance {
+                        source: "mnemosyne.recall_memory".into(),
+                        source_id: row.id.to_string(),
+                        principal: None,
+                        source_commit: None,
+                    },
+                    source_time: Some(row.timestamp),
+                    observed_time: row.timestamp,
+                    valid_from: Some(row.timestamp),
+                    valid_until: None,
+                    supersedes: None,
+                    superseded_by: None,
+                    confidence: 1.0,
+                    sensitivity: MemorySensitivity::Internal,
+                });
+            RecallItem {
+                content: row.content,
+                metadata,
+                temporal_state: TemporalState::Current,
+                authority: MemoryAuthority::RawExperience,
+                scope: MemoryScope::Session(request.session.clone()),
+            }
         })
         .collect()
 }

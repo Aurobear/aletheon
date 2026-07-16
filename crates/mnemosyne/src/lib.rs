@@ -14,6 +14,7 @@ pub mod model;
 pub mod ops;
 pub mod projection;
 mod recall;
+pub mod retention;
 pub mod service;
 
 pub use composite_service::{
@@ -36,9 +37,12 @@ pub use projection::{
     DefaultMemoryWorkspaceProjector, MemoryCandidateContext, MemoryProjection,
     MemoryProjectionLimits, MemoryWorkspaceProjector, ProjectedMemory,
 };
+pub use retention::{
+    RetentionCompactionPolicy, RetentionCompactionReport, RetentionCompactor, RetentionRepository,
+};
 pub use service::{
-    DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryService, RecallItem, RecallRequest,
-    RecallSet,
+    DefaultMemoryService, ExperienceEvent, ForgetAuthority, ForgetPolicy, ForgetReceipt,
+    ForgetSelector, MemoryService, RecallItem, RecallRequest, RecallSet,
 };
 
 // Always-available exports

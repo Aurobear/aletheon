@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::core::orchestrator::AletheonExecutive;
+use crate::service::request_use_cases::MemoryAdminUseCases;
 
 const MAX_ADMIN_ITEMS: usize = 200;
 
@@ -81,6 +82,20 @@ pub trait AdminUseCases: Send + Sync {
     async fn tools(&self) -> Result<Vec<fabric::ToolDefinition>, AdminServiceError>;
     async fn hooks(&self) -> Result<Vec<HookDescriptor>, AdminServiceError>;
     async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError>;
+    async fn preview_memory_forget(
+        &self,
+        policy: mnemosyne::ForgetPolicy,
+    ) -> Result<mnemosyne::ForgetReceipt, AdminServiceError>;
+    async fn forget_memory(
+        &self,
+        policy: mnemosyne::ForgetPolicy,
+    ) -> Result<mnemosyne::ForgetReceipt, AdminServiceError>;
+    async fn compact_memory_retention(
+        &self,
+        owner: &str,
+        now_ms: i64,
+        policy: mnemosyne::RetentionCompactionPolicy,
+    ) -> Result<mnemosyne::RetentionCompactionReport, AdminServiceError>;
 }
 
 #[async_trait]
@@ -135,6 +150,7 @@ pub struct AdminResources {
     pub google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
     pub gbrain_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     pub goal_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
+    pub memory_admin: Option<Arc<dyn MemoryAdminUseCases>>,
 }
 
 pub type ToolCatalogFuture =
@@ -278,5 +294,46 @@ impl AdminUseCases for AdminService {
                 status: format!("{:?}", agent.status),
             })
             .collect())
+    }
+
+    async fn preview_memory_forget(
+        &self,
+        policy: mnemosyne::ForgetPolicy,
+    ) -> Result<mnemosyne::ForgetReceipt, AdminServiceError> {
+        let admin = self.resources.memory_admin.as_ref().ok_or_else(|| {
+            AdminServiceError::Operation("memory administration is unavailable".into())
+        })?;
+        admin
+            .preview_forget(policy)
+            .await
+            .map_err(|error| AdminServiceError::Operation(error.to_string()))
+    }
+
+    async fn forget_memory(
+        &self,
+        policy: mnemosyne::ForgetPolicy,
+    ) -> Result<mnemosyne::ForgetReceipt, AdminServiceError> {
+        let admin = self.resources.memory_admin.as_ref().ok_or_else(|| {
+            AdminServiceError::Operation("memory administration is unavailable".into())
+        })?;
+        admin
+            .tombstone(policy)
+            .await
+            .map_err(|error| AdminServiceError::Operation(error.to_string()))
+    }
+
+    async fn compact_memory_retention(
+        &self,
+        owner: &str,
+        now_ms: i64,
+        policy: mnemosyne::RetentionCompactionPolicy,
+    ) -> Result<mnemosyne::RetentionCompactionReport, AdminServiceError> {
+        let admin = self.resources.memory_admin.as_ref().ok_or_else(|| {
+            AdminServiceError::Operation("memory administration is unavailable".into())
+        })?;
+        admin
+            .compact_retention(owner, now_ms, policy)
+            .await
+            .map_err(|error| AdminServiceError::Operation(error.to_string()))
     }
 }

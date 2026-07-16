@@ -56,6 +56,17 @@ pub fn build_gbrain_memory_runtime(
     clock: Arc<dyn fabric::Clock>,
     daemon_cancel: &CancellationToken,
 ) -> GbrainMemoryRuntime {
+    build_gbrain_memory_runtime_with_retention(local, manager, config, clock, daemon_cancel, None)
+}
+
+pub fn build_gbrain_memory_runtime_with_retention(
+    local: Arc<dyn MemoryService>,
+    manager: Option<Arc<McpManager>>,
+    config: &GbrainMemoryConfig,
+    clock: Arc<dyn fabric::Clock>,
+    daemon_cancel: &CancellationToken,
+    retention: Option<Arc<mnemosyne::RetentionRepository>>,
+) -> GbrainMemoryRuntime {
     if !config.enabled {
         return local_runtime(local, clock, false, None);
     }
@@ -112,7 +123,10 @@ pub fn build_gbrain_memory_runtime(
             config.delivery_batch_size,
             30_000,
         ) {
-            Ok(worker) => Some(worker),
+            Ok(worker) => Some(match &retention {
+                Some(repository) => worker.with_retention_repository(repository.clone()),
+                None => worker,
+            }),
             Err(error) => {
                 tracing::warn!(error = %error, "GBrain worker configuration invalid; using local memory only");
                 return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Spool));

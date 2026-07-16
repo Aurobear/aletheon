@@ -605,6 +605,9 @@ impl RequestHandler {
             Arc::new(mnemosyne::consolidation::ConsolidationRepository::open(
                 data_dir.join("memory_consolidation.db"),
             )?);
+        let retention_repository = Arc::new(mnemosyne::RetentionRepository::open(
+            data_dir.join("memory_retention.db"),
+        )?);
         let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(
             mnemosyne::DefaultMemoryService::new(
                 recall_memory.clone(),
@@ -613,14 +616,25 @@ impl RequestHandler {
                 episodic_memory.clone(),
                 clock.clone(),
             )
-            .with_consolidation_repository(consolidation_repository),
+            .with_consolidation_repository(consolidation_repository)
+            .with_retention_repository(retention_repository.clone()),
         );
-        let gbrain_runtime = crate::r#impl::gbrain::build_gbrain_memory_runtime(
+        let gbrain_runtime = crate::r#impl::gbrain::build_gbrain_memory_runtime_with_retention(
             local_memory,
             retained_mcp,
             &config.gbrain_memory,
             clock.clone(),
             &cancel_token,
+            Some(retention_repository.clone()),
+        );
+        let memory_admin_use_cases: Arc<
+            dyn crate::service::request_use_cases::MemoryAdminUseCases,
+        > = Arc::new(
+            crate::service::request_use_cases::ProductionMemoryAdminUseCases::new(
+                gbrain_runtime.memory_service.clone(),
+                retention_repository,
+                fabric::LOCAL_OWNER_PRINCIPAL.to_string(),
+            ),
         );
         let gbrain_worker_task = gbrain_runtime.worker_task;
         let consolidation_cancel = cancel_token.clone();
@@ -1126,6 +1140,7 @@ impl RequestHandler {
                 google_sync: google_sync.clone(),
                 gbrain_worker: gbrain_worker_task.clone(),
                 goal_worker: goal_worker_task.clone(),
+                memory_admin: Some(memory_admin_use_cases),
             }),
         );
         let legacy_sessions: Arc<

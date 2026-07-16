@@ -11,7 +11,8 @@ use crate::backends::gbrain::{
     SupplementalMemoryTransport, SupplementalRecall,
 };
 use crate::service::{
-    ExperienceEvent, ForgetPolicy, MemoryScope, MemoryService, RecallRequest, RecallSet,
+    ExperienceEvent, ForgetPolicy, ForgetReceipt, MemoryScope, MemoryService, RecallRequest,
+    RecallSet,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,11 +219,13 @@ impl MemoryService for CompositeMemoryService {
         self.local.consolidate(scope).await
     }
 
-    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<()> {
-        self.local.forget(policy.clone()).await?;
-        if let Some(supplemental) = &self.supplemental {
-            supplemental.forget(policy)?;
-        }
-        Ok(())
+    async fn preview_forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        self.local.preview_forget(policy).await
+    }
+
+    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        // The local retention transaction persists remote-pending state. The
+        // supplemental worker propagates that durable outbox asynchronously.
+        self.local.forget(policy).await
     }
 }
