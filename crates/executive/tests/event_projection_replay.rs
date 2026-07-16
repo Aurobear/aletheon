@@ -31,12 +31,20 @@ fn fixture() -> Vec<SpineEvent> {
         .map(|line| serde_json::from_str::<FixtureRow>(line).unwrap())
         .map(|row| {
             let value = match row.kind.as_str() {
+                "session" => serde_json::to_value(fabric::SessionRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: SessionId("fixture-session".into()),
+                    parent: None,
+                    created_at_ms: 900,
+                    status: fabric::SessionStatus::Active,
+                })
+                .unwrap(),
                 "turn" => serde_json::to_value(ItemRecord {
                     schema_version: SESSION_SCHEMA_VERSION,
                     id: ItemId(uuid::Uuid::from_u128(1)),
                     session_id: SessionId("fixture-session".into()),
                     turn_id: TurnId(uuid::Uuid::from_u128(2)),
-                    sequence: row.sequence,
+                    sequence: 1,
                     created_at_ms: 1_000,
                     payload: ItemPayload::AssistantMessage {
                         content: "public answer".into(),
@@ -47,7 +55,12 @@ fn fixture() -> Vec<SpineEvent> {
                     "agent_id": "00000000-0000-0000-0000-000000000003",
                     "parent_agent_id": "00000000-0000-0000-0000-000000000004"
                 }),
-                "memory_candidate" => serde_json::json!({"source_event": 1}),
+                "memory_candidate" => serde_json::json!({
+                    "record_id": "candidate:fixture",
+                    "kind": "fixture_candidate",
+                    "content": {"source_event": 1},
+                    "sensitivity": "internal"
+                }),
                 "agora_broadcast" => serde_json::json!({"epoch": 7, "selected": ["candidate"]}),
                 "restart" => serde_json::json!({"generation": 2}),
                 "raw_tool" => serde_json::json!({"reference": "artifact://secret"}),

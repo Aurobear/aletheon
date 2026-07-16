@@ -59,6 +59,17 @@ pub struct SessionFork {
     pub through_sequence: u64,
 }
 
+/// Canonical control-event payload for a forked public Session view.
+/// Item identities are allocated before append so replay is byte-stable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionForkedEvent {
+    #[schemars(with = "String")]
+    pub parent_session_id: SessionId,
+    pub through_sequence: u64,
+    pub child: SessionRecord,
+    pub inherited_items: Vec<ItemRecord>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {

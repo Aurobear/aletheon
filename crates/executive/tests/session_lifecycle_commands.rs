@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use aletheon_kernel::KernelRuntime;
+use executive::r#impl::events::{EventReadFilter, SqliteEventSpine};
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::session_service::{InterruptOutcome, SessionService};
 use executive::service::turn_coordinator::{cancelled_result, TurnCoordinator, TurnExecution};
@@ -28,7 +29,12 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
         .unwrap();
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = Arc::new(TurnCoordinator::new(kernel, store.clone()));
+    let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
+    let coordinator = Arc::new(TurnCoordinator::with_event_spine(
+        kernel,
+        store.clone(),
+        event_spine.clone(),
+    ));
     coordinator
         .submit_with(
             request("base", process.id),
@@ -51,7 +57,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
         )
         .await
         .unwrap();
-    let service = SessionService::new(store.clone(), coordinator.active_index());
+    let service = SessionService::new(coordinator.store(), coordinator.active_index());
     let resumed = service.resume(&SessionId("base".into())).await.unwrap();
     assert_eq!(resumed.next_sequence, 3);
     assert_eq!(resumed.messages.len(), 2);
@@ -73,6 +79,20 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
     let child = service.fork(&SessionId("base".into()), 1).await.unwrap();
     assert_eq!(child.parent.as_ref().unwrap().through_sequence, 1);
     assert_eq!(store.load_items(&child.id, None).await.unwrap().len(), 1);
+    let fork_events = event_spine
+        .read_tree(
+            fabric::EventTreeId::for_root_session(&child.id.0),
+            EventReadFilter {
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(fork_events.len(), 1);
+    assert_eq!(
+        fork_events[0].schema.0,
+        fabric::SchemaId::EVENT_SESSION_FORKED_V1
+    );
 
     let running = coordinator.clone();
     let task = tokio::spawn(async move {

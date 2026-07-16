@@ -131,9 +131,13 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
             },
         )
         .unwrap();
-    assert_eq!(events.len(), items.len());
+    assert_eq!(events.len(), items.len() + 1);
+    assert_eq!(
+        events[0].schema.0,
+        fabric::SchemaId::EVENT_SESSION_CREATED_V1
+    );
     assert_eq!(events[0].position.sequence, fabric::TreeSequence(1));
-    assert_eq!(events[4].position.sequence, fabric::TreeSequence(5));
+    assert_eq!(events[5].position.sequence, fabric::TreeSequence(6));
 }
 
 #[tokio::test]

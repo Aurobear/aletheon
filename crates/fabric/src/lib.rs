@@ -235,8 +235,8 @@ pub use types::sandbox::{
 };
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
-    SessionNotification, SessionProtocolV1, SessionRecord, SessionStatus, TurnId, TurnRecord,
-    SESSION_SCHEMA_VERSION,
+    SessionForkedEvent, SessionNotification, SessionProtocolV1, SessionRecord, SessionStatus,
+    TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
 };
 pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,

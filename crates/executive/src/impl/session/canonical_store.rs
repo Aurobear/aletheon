@@ -77,10 +77,26 @@ impl SessionAppendStore for CanonicalSessionStore {
     async fn create(&self, session: SessionRecord) -> Result<()> {
         Self::validate_session(&session)?;
         let json = serde_json::to_string(&session)?;
-        self.connection.lock().unwrap().execute(
-            "INSERT INTO sessions(session_id,schema_version,record_json,next_sequence) VALUES(?1,?2,?3,1)",
-            params![session.id.0, session.schema_version, json],
-        ).context("create canonical session")?;
+        let connection = self.connection.lock().unwrap();
+        let existing = connection
+            .query_row(
+                "SELECT record_json FROM sessions WHERE session_id=?1",
+                params![session.id.0],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            if existing != json {
+                bail!("session creation conflicts with persisted content");
+            }
+            return Ok(());
+        }
+        connection
+            .execute(
+                "INSERT INTO sessions(session_id,schema_version,record_json,next_sequence) VALUES(?1,?2,?3,1)",
+                params![session.id.0, session.schema_version, json],
+            )
+            .context("create canonical session")?;
         Ok(())
     }
 
