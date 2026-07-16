@@ -158,6 +158,13 @@ if rg -n '\b(InProcessMailbox|mailbox_service|mailbox_target)\b' crates/executiv
   exit 1
 fi
 
+# G08 production must use validated, Kernel-backed hierarchical admission;
+# the compatibility semaphore constructor is restricted to focused tests.
+if rg -n 'BoundedAgentAdmission::new\(' crates/executive/src/impl/daemon/bootstrap -g '*.rs'; then
+  echo "architecture-check: production Agent admission bypasses typed Kernel-backed config" >&2
+  exit 1
+fi
+
 # K02/X02 composition gate: Kernel remains domain-neutral. DomainPorts belongs
 # to Executive, and the retired CoreSystems service locator must stay deleted.
 if rg -n '^\s*(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)\s*=' \
@@ -223,7 +230,7 @@ fi
   rg -l 'CapabilityInvoker for' crates -g '*.rs' -g '!**/tests/**' 2>/dev/null \
     | grep -v 'crates/executive/src/service/governed_capability.rs' \
     | sed 's#^#capability_path|#; s#$#|CapabilityInvoker#' || true
-  rg -l 'AdmissionRequest \{' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#capability_path|#; s#$#|manual_admission#' || true
+  rg -l '\bAdmissionRequest \{' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#capability_path|#; s#$#|manual_admission#' || true
 } | sort -u > "$path_actual"
 
 compare_maximum() {

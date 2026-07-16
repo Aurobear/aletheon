@@ -27,7 +27,10 @@ pub mod mailbox;
 pub mod repository;
 pub mod sqlite_repository;
 
-pub use admission::{AgentAdmissionLease, AgentAdmissionPort, BoundedAgentAdmission};
+pub use admission::{
+    AgentAdmissionLease, AgentAdmissionMetrics, AgentAdmissionPort, AgentAdmissionRequest,
+    AgentStorageRequest, BoundedAgentAdmission,
+};
 pub use candidate_projection::{
     AgentCandidateProjector, AgentCandidateSubmissionPort, ProjectingAgentEventSink,
 };
@@ -51,6 +54,8 @@ struct ValidatedAgentIdentity {
     agent_id: AgentId,
     root_process_id: Option<ProcessId>,
     root_workspace_id: Option<fabric::AgoraSpaceId>,
+    depth: u16,
+    parent_profile: Option<fabric::AgentProfileId>,
 }
 
 #[async_trait]
@@ -134,6 +139,10 @@ impl AgentControlService {
 
     pub fn live_runs(&self) -> Arc<LiveAgentRuns> {
         self.live.clone()
+    }
+
+    pub fn admission_metrics(&self) -> AgentAdmissionMetrics {
+        self.admission.metrics()
     }
 
     /// Install an explicit parent policy for one directional sibling route.
@@ -269,9 +278,13 @@ impl AgentControlService {
                 agent_id: request.root_agent_id,
                 root_process_id: None,
                 root_workspace_id: None,
+                depth: 0,
+                parent_profile: None,
             }),
             (Some(parent), Some(parent_process)) => {
                 let root_process_id;
+                let depth;
+                let parent_profile;
                 if let Some(parent_run) = self.repository.get(parent).await? {
                     if parent_run.root_agent_id() != request.root_agent_id
                         || parent_run.snapshot.handle.process_id != parent_process
@@ -283,6 +296,8 @@ impl AgentControlService {
                         ));
                     }
                     root_process_id = parent_run.root_process_id;
+                    depth = self.depth_after(&parent_run).await?;
+                    parent_profile = Some(parent_run.snapshot.handle.profile_id.clone());
                 } else {
                     let process =
                         self.kernel
@@ -304,6 +319,8 @@ impl AgentControlService {
                         ));
                     }
                     root_process_id = parent_process;
+                    depth = 1;
+                    parent_profile = Some(process.profile.clone());
                 }
                 let root_process = self
                     .kernel
@@ -336,12 +353,29 @@ impl AgentControlService {
                     agent_id: AgentId::new(),
                     root_process_id: Some(root_process_id),
                     root_workspace_id: Some(root_workspace_id),
+                    depth,
+                    parent_profile,
                 })
             }
             _ => Err(AgentControlError::invalid(
                 "parent Agent and parent Process must be supplied together",
             )),
         }
+    }
+
+    async fn depth_after(&self, parent: &AgentRunRecord) -> Result<u16, AgentControlError> {
+        let mut depth = 1u16;
+        let mut next = parent.snapshot.handle.parent_agent_id;
+        while let Some(agent) = next {
+            let Some(run) = self.repository.get(agent).await? else {
+                break;
+            };
+            depth = depth
+                .checked_add(1)
+                .ok_or_else(|| AgentControlError::invalid("Agent tree depth overflow"))?;
+            next = run.snapshot.handle.parent_agent_id;
+        }
+        Ok(depth)
     }
 
     async fn authorize(
@@ -409,7 +443,23 @@ impl AgentControlPort for AgentControlService {
         let agent_id = identity.agent_id;
         let workspace_id = agent_workspace_id(agent_id);
         let request_hash = SqliteAgentRunRepository::request_hash(&request)?;
-        let mut admission = self.admission.reserve(&request).await?;
+        let storage = if request.runtime_id.0.contains("pi") {
+            AgentStorageRequest {
+                bytes: 1024 * 1024 * 1024,
+                items: 1,
+            }
+        } else {
+            AgentStorageRequest::default()
+        };
+        let mut admission = self
+            .admission
+            .reserve(AgentAdmissionRequest {
+                spawn: &request,
+                depth: identity.depth,
+                parent_profile: identity.parent_profile.as_ref(),
+                storage,
+            })
+            .await?;
 
         let deadline = Some(fabric::MonoDeadline::after(
             self.clock.mono_now(),
@@ -429,7 +479,7 @@ impl AgentControlPort for AgentControlService {
         {
             Ok(process) => process,
             Err(error) => {
-                admission.revoke();
+                let _ = admission.revoke().await;
                 return Err(runtime_error(error));
             }
         };
@@ -440,7 +490,7 @@ impl AgentControlPort for AgentControlService {
                     .kernel
                     .terminate_process(process.id, ExitReason::Failed(error.to_string()))
                     .await;
-                admission.revoke();
+                let _ = admission.revoke().await;
                 return Err(runtime_error(error));
             }
         };
@@ -465,7 +515,7 @@ impl AgentControlPort for AgentControlService {
                 .kernel
                 .terminate_process(process.id, ExitReason::Failed(error.to_string()))
                 .await;
-            admission.revoke();
+            let _ = admission.revoke().await;
             return Err(runtime_error(error));
         }
         let operation = match self
@@ -484,7 +534,7 @@ impl AgentControlPort for AgentControlService {
                     .kernel
                     .terminate_process(process.id, ExitReason::Failed(error.to_string()))
                     .await;
-                admission.revoke();
+                let _ = admission.revoke().await;
                 return Err(runtime_error(error));
             }
         };
@@ -506,7 +556,7 @@ impl AgentControlPort for AgentControlService {
                 .kernel
                 .terminate_process(process.id, ExitReason::Failed(error.to_string()))
                 .await;
-            admission.revoke();
+            let _ = admission.revoke().await;
             return Err(runtime_error(error));
         }
 
@@ -551,7 +601,7 @@ impl AgentControlPort for AgentControlService {
                 .kernel
                 .terminate_process(process.id, ExitReason::Failed(error.to_string()))
                 .await;
-            admission.revoke();
+            let _ = admission.revoke().await;
             return Err(error);
         }
 
@@ -586,7 +636,7 @@ impl AgentControlPort for AgentControlService {
                     ExitReason::Failed("duplicate live Agent".into()),
                 )
                 .await;
-            admission.revoke();
+            let _ = admission.revoke().await;
             return Err(control_error(
                 AgentControlErrorKind::Conflict,
                 "Agent already has a live runtime",
@@ -829,7 +879,7 @@ async fn run_agent(
         let _ = kernel
             .terminate_process(process, ExitReason::Failed(error.to_string()))
             .await;
-        admission.revoke();
+        let _ = admission.revoke().await;
         live.remove(agent).await;
         return;
     }
@@ -852,11 +902,19 @@ async fn run_agent(
             let _ = kernel
                 .terminate_process(process, ExitReason::Failed(error.to_string()))
                 .await;
-            admission.revoke();
+            let _ = admission.revoke().await;
             live.remove(agent).await;
             return;
         }
     };
+    if let Err(error) = admission.mark_running().await {
+        let _ = kernel
+            .terminate_process(process, ExitReason::Failed(error.to_string()))
+            .await;
+        let _ = admission.revoke().await;
+        live.remove(agent).await;
+        return;
+    }
     snapshots.send_replace(running.snapshot);
 
     let (outcome_sender, outcome_receiver) = tokio::sync::oneshot::channel();
@@ -909,6 +967,7 @@ async fn run_agent(
             ExitReason::Failed(error.message),
         ),
     };
+    let settlement_usage = result.as_ref().map(|result| result.usage.clone());
     match next {
         AgentRunStatus::Succeeded => {
             let _ = kernel.succeed_operation(operation).await;
@@ -940,7 +999,13 @@ async fn run_agent(
         tracing::error!(agent = ?agent, reason = ?exit.reason, "failed to persist terminal Agent state");
     }
     let _ = kernel.terminate_process(process, process_exit).await;
-    admission.release_completed();
+    let settlement = match settlement_usage {
+        Some(usage) if next == AgentRunStatus::Succeeded => admission.settle(&usage).await,
+        _ => admission.revoke().await,
+    };
+    if let Err(error) = settlement {
+        tracing::error!(agent = ?agent, %error, "failed to settle Agent admission lease");
+    }
     live.remove(agent).await;
 }
 

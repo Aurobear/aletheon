@@ -53,6 +53,8 @@ pub struct DaemonConfig {
     pub gbrain_memory: cognit::config::GbrainMemoryConfig,
     /// Typed deployment paths, quotas, integrations, and health policy.
     pub deployment: cognit::config::DeploymentConfig,
+    /// Root-scoped multi-Agent topology and rollout limits.
+    pub agent_admission: cognit::config::AgentAdmissionConfig,
 }
 
 /// Default config file search paths.

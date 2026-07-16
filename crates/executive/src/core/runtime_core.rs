@@ -128,6 +128,7 @@ impl RuntimeCore {
             telegram: app_config.telegram.clone(),
             gbrain_memory: app_config.memory.gbrain.clone(),
             deployment: app_config.deployment.clone(),
+            agent_admission: app_config.agent.admission.clone(),
         };
 
         // ── Event bus ───────────────────────────────────────────────

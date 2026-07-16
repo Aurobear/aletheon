@@ -865,8 +865,11 @@ impl RequestHandler {
                 clock.clone(),
                 agent_repository,
                 Arc::new(
-                    crate::service::agent_control::BoundedAgentAdmission::new(64)
-                        .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+                    crate::service::agent_control::BoundedAgentAdmission::with_budget(
+                        config.agent_admission.clone(),
+                        kernel.budget_controller(),
+                    )
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
                 ),
                 agent_runtimes,
             ));
