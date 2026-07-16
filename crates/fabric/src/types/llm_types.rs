@@ -18,7 +18,7 @@ pub struct ToolDefinition {
 }
 
 /// A chunk of a streamed LLM response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StreamChunk {
     /// Text content delta
     TextDelta { text: String },
@@ -91,7 +91,7 @@ pub trait LlmProvider: Send + Sync {
 }
 
 /// Response from the LLM.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmResponse {
     pub content: Vec<crate::message::ContentBlock>,
     pub stop_reason: StopReason,
@@ -102,15 +102,52 @@ pub struct LlmResponse {
     pub cache_miss_tokens: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StopReason {
     EndTurn,
     ToolUse,
     MaxTokens,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::ContentBlock;
+
+    #[test]
+    fn inference_response_and_stream_frames_round_trip() {
+        let response = LlmResponse {
+            content: vec![ContentBlock::Text { text: "ok".into() }],
+            stop_reason: StopReason::EndTurn,
+            usage: Usage {
+                input_tokens: 3,
+                output_tokens: 2,
+            },
+            cache_hit_tokens: 1,
+            cache_miss_tokens: 2,
+        };
+        let response_json = serde_json::to_value(&response).unwrap();
+        let decoded: LlmResponse = serde_json::from_value(response_json).unwrap();
+        assert_eq!(decoded.stop_reason, StopReason::EndTurn);
+        assert_eq!(decoded.usage, response.usage);
+        assert_eq!(decoded.cache_hit_tokens, 1);
+        assert_eq!(decoded.cache_miss_tokens, 2);
+
+        for chunk in [
+            StreamChunk::TextDelta { text: "a".into() },
+            StreamChunk::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ] {
+            let json = serde_json::to_value(&chunk).unwrap();
+            let decoded: StreamChunk = serde_json::from_value(json).unwrap();
+            assert_eq!(decoded, chunk);
+        }
+    }
 }
