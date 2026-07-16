@@ -174,6 +174,13 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
     };
     AgentRuntimeInput {
         context: AgentContextProjection::from_fork(&request.context).unwrap(),
+        memory_context: mnemosyne::AgentMemoryContext::verified(
+            process,
+            root,
+            fabric::AgentTaskId("test-task".into()),
+            "sha256:test-projection",
+        )
+        .unwrap(),
         handle: AgentHandle {
             agent_id: root,
             root_agent_id: root,

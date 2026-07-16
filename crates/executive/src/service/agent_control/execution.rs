@@ -189,6 +189,8 @@ pub struct AgentRuntimeInput {
     pub root_workspace_id: AgoraSpaceId,
     pub root_process_id: ProcessId,
     pub context: AgentContextProjection,
+    /// Trusted process-bound memory authority derived by AgentControl.
+    pub memory_context: mnemosyne::AgentMemoryContext,
     pub inbox: AgentRuntimeInbox,
     pub cancellation: CancellationToken,
 }

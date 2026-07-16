@@ -1,4 +1,5 @@
 use fabric::{AgentContextFork, AgentControlError, AgentControlErrorKind, ContentId};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub const MAX_CONTEXT_GOAL_BYTES: usize = 8 * 1024;
@@ -8,7 +9,7 @@ pub const MAX_CONTEXT_ITEM_BYTES: usize = 8 * 1024;
 pub const MAX_CONTEXT_TOTAL_BYTES: usize = 64 * 1024;
 pub const MAX_CONTEXT_BROADCAST_REFS: usize = 64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AgentContextItemKind {
     Selected,
     RecentTurns,
@@ -19,14 +20,14 @@ pub enum AgentContextItemKind {
     RawToolOutput,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentContextItem {
     pub kind: AgentContextItemKind,
     pub label: String,
     pub content: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentContextProjection {
     pub goal: Option<String>,
     pub constraints: Vec<String>,

@@ -24,6 +24,7 @@ pub mod context_fork;
 pub mod execution;
 pub mod live_runs;
 pub mod mailbox;
+pub mod memory;
 pub mod repository;
 pub mod sqlite_repository;
 
@@ -43,6 +44,7 @@ pub use execution::{
 };
 pub use live_runs::{LiveAgentRun, LiveAgentRuns};
 pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
+pub use memory::MemoryRecordingAgentEventSink;
 pub use repository::{agent_workspace_id, AgentMessageRecord, AgentRunRecord, AgentRunRepository};
 pub use sqlite_repository::SqliteAgentRunRepository;
 
@@ -97,6 +99,7 @@ pub struct AgentControlService {
     live: Arc<LiveAgentRuns>,
     tasks: Mutex<JoinSet<()>>,
     sibling_routes: parking_lot::RwLock<HashSet<(AgentId, AgentId, AgentId)>>,
+    memory: Arc<mnemosyne::AgentMemoryVault>,
 }
 
 impl std::fmt::Debug for AgentControlService {
@@ -132,6 +135,9 @@ impl AgentControlService {
             live: Arc::new(LiveAgentRuns::default()),
             tasks: Mutex::new(JoinSet::new()),
             sibling_routes: parking_lot::RwLock::new(HashSet::new()),
+            memory: Arc::new(
+                mnemosyne::AgentMemoryVault::in_memory().expect("in-memory Agent memory vault"),
+            ),
         }
     }
 
@@ -155,6 +161,11 @@ impl AgentControlService {
 
     pub fn with_wait_timer(mut self, timer: Arc<dyn AgentWaitTimer>) -> Self {
         self.timer = timer;
+        self
+    }
+
+    pub fn with_memory_vault(mut self, memory: Arc<mnemosyne::AgentMemoryVault>) -> Self {
+        self.memory = memory;
         self
     }
 
@@ -590,6 +601,17 @@ impl AgentControlPort for AgentControlService {
             runtime_id: request.runtime_id.clone(),
             profile_id: request.profile_id.clone(),
         };
+        let parent_projection_receipt = memory::context_projection_receipt(&context)?;
+        let memory_context = mnemosyne::AgentMemoryContext::verified(
+            process.id,
+            agent_id,
+            fabric::AgentTaskId(format!("task:{request_hash}")),
+            parent_projection_receipt,
+        )
+        .map_err(|error| AgentControlError::invalid(error.to_string()))?;
+        self.memory
+            .register(&memory_context)
+            .map_err(|error| control_error(AgentControlErrorKind::Persistence, error.to_string()))?;
         let created_at_ms = self.clock.wall_now().0;
         let queued = AgentSnapshot {
             handle: handle.clone(),
@@ -678,6 +700,7 @@ impl AgentControlPort for AgentControlService {
             root_workspace_id,
             root_process_id,
             context,
+            memory_context: memory_context.clone(),
             inbox,
             cancellation,
         };
@@ -686,6 +709,11 @@ impl AgentControlPort for AgentControlService {
             event_spine,
             runtime_input.clone(),
             event_projections,
+        ));
+        let events: Arc<dyn AgentEventSink> = Arc::new(MemoryRecordingAgentEventSink::new(
+            events,
+            self.memory.clone(),
+            memory_context,
         ));
         self.tasks.lock().await.spawn(async move {
             run_agent(

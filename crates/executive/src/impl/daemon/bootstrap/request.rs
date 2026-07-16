@@ -925,7 +925,11 @@ impl RequestHandler {
                 agent_runtimes,
             )
             .with_event_spine(canonical_event_spine.clone())
-            .with_event_projections(event_projections.clone()),
+            .with_event_projections(event_projections.clone())
+            .with_memory_vault(Arc::new(
+                mnemosyne::AgentMemoryVault::open(agent_state_root.join("agent_memory.db"))
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+            )),
         );
         let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
         let agent_shutdown_cancel = cancel_token.clone();

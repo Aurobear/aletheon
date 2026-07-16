@@ -55,6 +55,13 @@ fn input() -> AgentRuntimeInput {
     };
     AgentRuntimeInput {
         context: AgentContextProjection::from_fork(&request.context).unwrap(),
+        memory_context: mnemosyne::AgentMemoryContext::verified(
+            child,
+            child_agent,
+            fabric::AgentTaskId("test-task".into()),
+            "sha256:test-projection",
+        )
+        .unwrap(),
         handle: AgentHandle {
             agent_id: child_agent,
             root_agent_id: root_agent,
