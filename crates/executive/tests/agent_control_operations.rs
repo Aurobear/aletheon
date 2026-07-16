@@ -92,7 +92,10 @@ async fn send_is_sequenced_and_cancel_is_idempotent() {
         .port
         .send(AgentSendRequest {
             caller_root_agent_id: root,
+            sender_agent_id: None,
             agent_id: handle.agent_id,
+            kind: fabric::AgentMessageKind::Input,
+            delivery_id: None,
             message: "first".into(),
             start_turn: false,
         })
@@ -102,7 +105,10 @@ async fn send_is_sequenced_and_cancel_is_idempotent() {
         .port
         .send(AgentSendRequest {
             caller_root_agent_id: root,
+            sender_agent_id: None,
             agent_id: handle.agent_id,
+            kind: fabric::AgentMessageKind::Input,
+            delivery_id: None,
             message: "second".into(),
             start_turn: true,
         })
@@ -118,7 +124,10 @@ async fn send_is_sequenced_and_cancel_is_idempotent() {
         .port
         .send(AgentSendRequest {
             caller_root_agent_id: root,
+            sender_agent_id: None,
             agent_id: handle.agent_id,
+            kind: fabric::AgentMessageKind::Input,
+            delivery_id: None,
             message: "too late".into(),
             start_turn: false,
         })

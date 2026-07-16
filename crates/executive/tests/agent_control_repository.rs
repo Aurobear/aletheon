@@ -264,14 +264,22 @@ async fn message_reference_is_persisted_before_sequence_is_returned() {
     let run = record(root, None, 10);
     repository.create(&run).await.unwrap();
 
+    let payload = |content: &str| fabric::AgentMessagePayload {
+        schema_version: fabric::AGENT_MESSAGE_SCHEMA_V1,
+        kind: fabric::AgentMessageKind::Input,
+        content: content.into(),
+        start_turn: false,
+        correlation_id: None,
+    };
+
     let first = repository
-        .append_message(root, root, "one", 11)
+        .append_message(root, root, uuid::Uuid::new_v4(), &payload("one"), 11)
         .await
         .unwrap();
     let second = repository
-        .append_message(root, root, "two", 12)
+        .append_message(root, root, uuid::Uuid::new_v4(), &payload("two"), 12)
         .await
         .unwrap();
     assert_eq!((first.sequence, second.sequence), (1, 2));
-    assert_ne!(first.content_hash, second.content_hash);
+    assert_ne!(first.payload_ref, second.payload_ref);
 }

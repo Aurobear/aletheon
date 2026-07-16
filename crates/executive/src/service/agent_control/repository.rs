@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use fabric::{
-    AgentBroadcastRef, AgentControlError, AgentId, AgentResult, AgentRunStatus, AgentSnapshot,
-    AgentSpawnRequest, AgoraSpaceId, BroadcastEpoch, ProcessId, VisibilityScope,
-    WorkspaceCandidate,
+    AgentBroadcastRef, AgentControlError, AgentId, AgentMessageDeliveryState, AgentMessagePayload,
+    AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId, BroadcastEpoch,
+    ProcessId, VisibilityScope, WorkspaceCandidate,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,8 +61,13 @@ pub fn agent_workspace_id(agent: AgentId) -> AgoraSpaceId {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentMessageRecord {
+    pub delivery_id: uuid::Uuid,
     pub sequence: u64,
-    pub content_hash: String,
+    pub from: AgentId,
+    pub payload_ref: String,
+    pub payload: AgentMessagePayload,
+    pub delivery: AgentMessageDeliveryState,
+    pub created_at_ms: i64,
 }
 
 #[async_trait]
@@ -92,7 +97,15 @@ pub trait AgentRunRepository: Send + Sync {
         &self,
         agent: AgentId,
         from: AgentId,
-        content: &str,
+        delivery_id: uuid::Uuid,
+        payload: &AgentMessagePayload,
         created_at_ms: i64,
+    ) -> Result<AgentMessageRecord, AgentControlError>;
+
+    async fn mark_message_delivery(
+        &self,
+        agent: AgentId,
+        delivery_id: uuid::Uuid,
+        delivery: AgentMessageDeliveryState,
     ) -> Result<AgentMessageRecord, AgentControlError>;
 }

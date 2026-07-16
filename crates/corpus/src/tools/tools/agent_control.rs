@@ -227,7 +227,10 @@ impl Tool for AgentControlTool {
                 Ok(input) => {
                     let request = AgentSendRequest {
                         caller_root_agent_id: trusted.caller_root_agent_id,
+                        sender_agent_id: Some(trusted.parent_agent_id),
                         agent_id: input.agent_id,
+                        kind: fabric::AgentMessageKind::Input,
+                        delivery_id: None,
                         message: input.message,
                         start_turn: input.start_turn,
                     };

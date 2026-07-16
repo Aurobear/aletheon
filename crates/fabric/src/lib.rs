@@ -168,8 +168,9 @@ pub use types::agent::Pid;
 pub use types::agent_control::{
     AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentControlError,
     AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle, AgentListRequest,
+    AgentMessageDeliveryState, AgentMessageKind, AgentMessagePayload, AgentMessageReceipt,
     AgentProfile, AgentResult, AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest,
-    AgentWaitRequest,
+    AgentWaitRequest, AGENT_MESSAGE_SCHEMA_V1,
 };
 pub use types::approval::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,

@@ -95,7 +95,10 @@ fn request_validation_enforces_all_bounds() {
     .is_err());
     assert!(AgentSendRequest {
         caller_root_agent_id: root,
+        sender_agent_id: None,
         agent_id: AgentId::new(),
+        kind: fabric::AgentMessageKind::Input,
+        delivery_id: None,
         message: String::new(),
         start_turn: false,
     }
@@ -149,9 +152,14 @@ impl AgentControlPort for MockPort {
     ) -> Result<AgentControlMessage, AgentControlError> {
         request.validate()?;
         Ok(AgentControlMessage {
+            delivery_id: request.delivery_id.unwrap_or_else(uuid::Uuid::new_v4),
             sequence: 1,
-            from: request.caller_root_agent_id,
+            from: request
+                .sender_agent_id
+                .unwrap_or(request.caller_root_agent_id),
             to: request.agent_id,
+            kind: request.kind,
+            delivery: fabric::AgentMessageDeliveryState::Delivered,
             content: request.message,
         })
     }

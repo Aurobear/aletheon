@@ -9,10 +9,10 @@ use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use fabric::ipc::mailbox::{InProcessMailbox, Mailbox, MailboxService};
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
-    AgentId, AgentListRequest, AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest,
-    AgentWaitRequest, AgoraVersion, CancelReason, Clock, ContextBinding, ExitReason, NamespaceId,
-    OperationExitReason, OperationKind, OperationRequest, ProcessId, ProcessSignal, SpawnSpec,
-    Timer,
+    AgentId, AgentListRequest, AgentMessageDeliveryState, AgentMessagePayload, AgentRunStatus,
+    AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentWaitRequest, AgoraVersion,
+    CancelReason, Clock, ContextBinding, ExitReason, NamespaceId, OperationExitReason,
+    OperationKind, OperationRequest, ProcessId, ProcessSignal, SpawnSpec, Timer,
 };
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
@@ -568,30 +568,63 @@ impl AgentControlPort for AgentControlService {
         let live = self.live.get(request.agent_id).await.ok_or_else(|| {
             control_error(AgentControlErrorKind::Runtime, "Agent mailbox is not live")
         })?;
+        let delivery_id = request.delivery_id.unwrap_or_else(uuid::Uuid::new_v4);
+        let from = request
+            .sender_agent_id
+            .unwrap_or(request.caller_root_agent_id);
+        let payload = AgentMessagePayload {
+            schema_version: fabric::AGENT_MESSAGE_SCHEMA_V1,
+            kind: request.kind.clone(),
+            content: request.message.clone(),
+            start_turn: request.start_turn,
+            correlation_id: None,
+        };
         let message = self
             .repository
             .append_message(
                 request.agent_id,
-                request.caller_root_agent_id,
-                &request.message,
+                from,
+                delivery_id,
+                &payload,
                 self.clock.wall_now().0,
             )
             .await?;
+        if message.delivery != AgentMessageDeliveryState::Pending {
+            return Ok(AgentControlMessage {
+                delivery_id,
+                sequence: message.sequence,
+                from,
+                to: request.agent_id,
+                kind: request.kind,
+                delivery: message.delivery,
+                content: request.message,
+            });
+        }
         let envelope = EnvelopeV2::new(
             SchemaId::from(SchemaId::AGENT_CONTROL_MESSAGE_V1),
-            Target::from(format!("agent:{}", request.caller_root_agent_id.0)),
+            Target::from(format!("agent:{}", from.0)),
             live.mailbox_target,
             DeliveryPattern::Direct,
             NamespaceId(request.caller_root_agent_id.0.to_string()),
             serde_json::json!({
                 "sequence": message.sequence,
-                "content": request.message,
+                "delivery_id": delivery_id,
+                "payload": payload,
                 "start_turn": request.start_turn,
             }),
         )
         .with_operation_id(run.snapshot.handle.operation_id)
         .with_logical_time(message.sequence);
         let receipt = self.kernel.mailbox_service().route(envelope).await;
+        let delivery = if receipt.is_ok() {
+            AgentMessageDeliveryState::Delivered
+        } else {
+            AgentMessageDeliveryState::Rejected
+        };
+        let settled = self
+            .repository
+            .mark_message_delivery(request.agent_id, delivery_id, delivery)
+            .await?;
         if !receipt.is_ok() {
             return Err(control_error(
                 AgentControlErrorKind::Runtime,
@@ -599,9 +632,12 @@ impl AgentControlPort for AgentControlService {
             ));
         }
         Ok(AgentControlMessage {
+            delivery_id,
             sequence: message.sequence,
-            from: request.caller_root_agent_id,
+            from,
             to: request.agent_id,
+            kind: request.kind,
+            delivery: settled.delivery,
             content: request.message,
         })
     }

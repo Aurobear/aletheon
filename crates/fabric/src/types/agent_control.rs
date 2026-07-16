@@ -15,6 +15,7 @@ pub const MAX_EVIDENCE_ITEMS: usize = 128;
 pub const MAX_ARTIFACTS: usize = 128;
 pub const MAX_LIST_ITEMS: usize = 1000;
 pub const MAX_AGENT_BROADCAST_REFS: usize = 64;
+pub const AGENT_MESSAGE_SCHEMA_V1: u16 = 1;
 
 /// Immutable receipt for workspace content explicitly made available to a
 /// child Agent. The triple is required so a content ID cannot be replayed from
@@ -215,14 +216,33 @@ impl AgentWaitRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSendRequest {
     pub caller_root_agent_id: AgentId,
+    /// Trusted immediate sender. `None` denotes the external/root caller.
+    #[serde(default)]
+    pub sender_agent_id: Option<AgentId>,
     pub agent_id: AgentId,
+    #[serde(default)]
+    pub kind: AgentMessageKind,
+    /// Caller-generated delivery identity used for idempotent retries.
+    #[serde(default)]
+    pub delivery_id: Option<uuid::Uuid>,
     pub message: String,
     pub start_turn: bool,
 }
 
 impl AgentSendRequest {
     pub fn validate(&self) -> Result<(), AgentControlError> {
-        ensure_text(&self.message, MAX_AGENT_MESSAGE_BYTES, "Agent message")
+        ensure_text(&self.message, MAX_AGENT_MESSAGE_BYTES, "Agent message")?;
+        if self.delivery_id.is_some_and(|id| id.is_nil()) {
+            return Err(AgentControlError::invalid(
+                "Agent message delivery ID must not be nil",
+            ));
+        }
+        if self.start_turn && self.kind != AgentMessageKind::Input {
+            return Err(AgentControlError::invalid(
+                "only Agent input messages may start a turn",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -274,11 +294,55 @@ pub struct AgentHandle {
     pub profile_id: AgentProfileId,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentMessageKind {
+    #[default]
+    Input,
+    Progress,
+    Result,
+    Signal,
+    Request,
+    Response,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentMessageDeliveryState {
+    Pending,
+    Delivered,
+    Rejected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentMessagePayload {
+    pub schema_version: u16,
+    pub kind: AgentMessageKind,
+    pub content: String,
+    pub start_turn: bool,
+    #[serde(default)]
+    pub correlation_id: Option<uuid::Uuid>,
+}
+
+impl AgentMessagePayload {
+    pub fn validate(&self) -> Result<(), AgentControlError> {
+        if self.schema_version != AGENT_MESSAGE_SCHEMA_V1 {
+            return Err(AgentControlError::invalid(
+                "unsupported Agent message payload schema",
+            ));
+        }
+        ensure_text(&self.content, MAX_AGENT_MESSAGE_BYTES, "Agent message")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentControlMessage {
+    pub delivery_id: uuid::Uuid,
     pub sequence: u64,
     pub from: AgentId,
     pub to: AgentId,
+    pub kind: AgentMessageKind,
+    pub delivery: AgentMessageDeliveryState,
     pub content: String,
 }
 
@@ -286,6 +350,14 @@ impl AgentControlMessage {
     pub fn validate(&self) -> Result<(), AgentControlError> {
         ensure_text(&self.content, MAX_AGENT_MESSAGE_BYTES, "Agent message")
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentMessageReceipt {
+    pub delivery_id: uuid::Uuid,
+    pub agent_id: AgentId,
+    pub sequence: u64,
+    pub delivery: AgentMessageDeliveryState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

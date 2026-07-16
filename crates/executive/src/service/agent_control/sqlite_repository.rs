@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use fabric::types::agent_control::MAX_LIST_ITEMS;
 use fabric::{
     AgentBroadcastRef, AgentControlError, AgentControlErrorKind, AgentHandle, AgentId,
-    AgentProfileId, AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId,
-    OperationId, ProcessId, RuntimeId,
+    AgentMessageDeliveryState, AgentMessagePayload, AgentProfileId, AgentResult, AgentRunStatus,
+    AgentSnapshot, AgentSpawnRequest, AgoraSpaceId, OperationId, ProcessId, RuntimeId,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
@@ -16,6 +16,7 @@ use uuid::Uuid;
 use super::repository::{AgentMessageRecord, AgentRunRecord, AgentRunRepository};
 
 const MIGRATION: &str = include_str!("migrations/001_agent_runs.sql");
+const MESSAGE_MIGRATION: &str = include_str!("migrations/002_agent_messages.sql");
 const RUN_COLUMNS: &str = "agent_id, root_agent_id, parent_agent_id, process_id, operation_id, \
     runtime_id, profile_id, status, request_json, request_hash, result_json, created_at_ms, \
     started_at_ms, ended_at_ms, last_error, version, retain_until_ms, workspace_id, \
@@ -50,6 +51,9 @@ impl SqliteAgentRunRepository {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(persistence)?;
         connection.execute_batch(MIGRATION).map_err(persistence)?;
+        connection
+            .execute_batch(MESSAGE_MIGRATION)
+            .map_err(persistence)?;
         ensure_workspace_columns(&connection)?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -270,10 +274,18 @@ impl AgentRunRepository for SqliteAgentRunRepository {
         &self,
         agent: AgentId,
         from: AgentId,
-        content: &str,
+        delivery_id: Uuid,
+        payload: &AgentMessagePayload,
         created_at_ms: i64,
     ) -> Result<AgentMessageRecord, AgentControlError> {
-        let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+        payload.validate()?;
+        if delivery_id.is_nil() {
+            return Err(AgentControlError::invalid(
+                "message delivery ID must not be nil",
+            ));
+        }
+        let payload_json = serde_json::to_string(payload).map_err(persistence)?;
+        let payload_ref = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
         let mut connection = self.connection.lock();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -298,24 +310,130 @@ impl AgentRunRepository for SqliteAgentRunRepository {
                 "terminal Agent rejects new messages",
             ));
         }
+        if let Some(existing) = query_message(&transaction, agent, delivery_id)? {
+            transaction.commit().map_err(persistence)?;
+            return Ok(existing);
+        }
         let sequence: u64 = transaction
             .query_row(
-                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_run_messages WHERE agent_id = ?1",
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_messages_v2 WHERE agent_id = ?1",
                 [agent.0.to_string()],
                 |row| row.get(0),
             )
             .map_err(persistence)?;
         transaction
             .execute(
-                "INSERT INTO agent_run_messages(agent_id, sequence, from_agent_id, content_hash, content_bytes, created_at_ms) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-                params![agent.0.to_string(), sequence, from.0.to_string(), content_hash, content.len() as i64, created_at_ms],
+                "INSERT INTO agent_messages_v2(agent_id, delivery_id, sequence, from_agent_id, kind, payload_ref, payload_json, delivery_state, created_at_ms) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8)",
+                params![agent.0.to_string(), delivery_id.to_string(), sequence, from.0.to_string(), message_kind_wire(&payload.kind), payload_ref, payload_json, created_at_ms],
             )
             .map_err(persistence)?;
         transaction.commit().map_err(persistence)?;
         Ok(AgentMessageRecord {
+            delivery_id,
             sequence,
-            content_hash,
+            from,
+            payload_ref,
+            payload: payload.clone(),
+            delivery: AgentMessageDeliveryState::Pending,
+            created_at_ms,
         })
+    }
+
+    async fn mark_message_delivery(
+        &self,
+        agent: AgentId,
+        delivery_id: Uuid,
+        delivery: AgentMessageDeliveryState,
+    ) -> Result<AgentMessageRecord, AgentControlError> {
+        if delivery == AgentMessageDeliveryState::Pending {
+            return Err(AgentControlError::invalid(
+                "delivery settlement must be terminal",
+            ));
+        }
+        let connection = self.connection.lock();
+        let changed = connection
+            .execute(
+                "UPDATE agent_messages_v2 SET delivery_state = ?1 WHERE agent_id = ?2 AND delivery_id = ?3 AND delivery_state = 'pending'",
+                params![delivery_wire(delivery), agent.0.to_string(), delivery_id.to_string()],
+            )
+            .map_err(persistence)?;
+        let record = query_message(&connection, agent, delivery_id)?.ok_or_else(|| {
+            control_error(
+                AgentControlErrorKind::NotFound,
+                "Agent message was not found",
+            )
+        })?;
+        if changed == 0 && record.delivery != delivery {
+            return Err(control_error(
+                AgentControlErrorKind::Conflict,
+                "Agent message delivery is already settled differently",
+            ));
+        }
+        Ok(record)
+    }
+}
+
+fn query_message(
+    connection: &Connection,
+    agent: AgentId,
+    delivery_id: Uuid,
+) -> Result<Option<AgentMessageRecord>, AgentControlError> {
+    connection
+        .query_row(
+            "SELECT sequence, from_agent_id, payload_ref, payload_json, delivery_state, created_at_ms FROM agent_messages_v2 WHERE agent_id = ?1 AND delivery_id = ?2",
+            params![agent.0.to_string(), delivery_id.to_string()],
+            |row| {
+                let from: String = row.get(1)?;
+                let payload_json: String = row.get(3)?;
+                let state: String = row.get(4)?;
+                Ok((row.get::<_, u64>(0)?, from, row.get::<_, String>(2)?, payload_json, state, row.get::<_, i64>(5)?))
+            },
+        )
+        .optional()
+        .map_err(persistence)?
+        .map(|(sequence, from, payload_ref, payload_json, state, created_at_ms)| {
+            Ok(AgentMessageRecord {
+                delivery_id,
+                sequence,
+                from: parse_agent(&from)?,
+                payload_ref,
+                payload: serde_json::from_str(&payload_json).map_err(persistence)?,
+                delivery: parse_delivery(&state)?,
+                created_at_ms,
+            })
+        })
+        .transpose()
+}
+
+fn message_kind_wire(kind: &fabric::AgentMessageKind) -> &'static str {
+    use fabric::AgentMessageKind::*;
+    match kind {
+        Input => "input",
+        Progress => "progress",
+        Result => "result",
+        Signal => "signal",
+        Request => "request",
+        Response => "response",
+    }
+}
+
+fn delivery_wire(delivery: AgentMessageDeliveryState) -> &'static str {
+    match delivery {
+        AgentMessageDeliveryState::Pending => "pending",
+        AgentMessageDeliveryState::Delivered => "delivered",
+        AgentMessageDeliveryState::Rejected => "rejected",
+    }
+}
+
+fn parse_delivery(value: &str) -> Result<AgentMessageDeliveryState, AgentControlError> {
+    match value {
+        "pending" => Ok(AgentMessageDeliveryState::Pending),
+        "delivered" => Ok(AgentMessageDeliveryState::Delivered),
+        "rejected" => Ok(AgentMessageDeliveryState::Rejected),
+        _ => Err(control_error(
+            AgentControlErrorKind::Persistence,
+            "invalid Agent message delivery state",
+        )),
     }
 }
 
