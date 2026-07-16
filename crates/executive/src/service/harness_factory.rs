@@ -15,6 +15,15 @@ pub trait CognitiveSessionFactory: Send + Sync {
         session: &SessionRecord,
         policy: &TurnPolicy,
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>>;
+
+    async fn create_configured(
+        &self,
+        session: &SessionRecord,
+        policy: &TurnPolicy,
+        _config: HarnessConfig,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        self.create(session, policy).await
+    }
 }
 
 pub struct LinearCognitiveSessionFactory {
@@ -37,6 +46,18 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
         Ok(Box::new(cognit::harness::LinearCognitiveSession::new(
             self.config.clone(),
+            self.clock.clone(),
+        )))
+    }
+
+    async fn create_configured(
+        &self,
+        _session: &SessionRecord,
+        _policy: &TurnPolicy,
+        config: HarnessConfig,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        Ok(Box::new(cognit::harness::LinearCognitiveSession::new(
+            config,
             self.clock.clone(),
         )))
     }

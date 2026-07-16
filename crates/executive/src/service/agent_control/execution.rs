@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::{
-    AgentControlError, AgentControlErrorKind, AgentHandle, AgentResult, AgentSpawnRequest,
-    RuntimeId,
+    AgentControlError, AgentControlErrorKind, AgentHandle, AgentId, AgentResult, AgentRunStatus,
+    AgentSpawnRequest, AttemptEvidence, AttemptUsage, OperationId, ProcessId, RuntimeId,
 };
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -15,9 +15,32 @@ use super::context_fork::AgentContextProjection;
 
 #[derive(Debug, Clone)]
 pub enum AgentRuntimeEvent {
-    Started,
-    Progress { summary: String },
-    Terminal,
+    Started {
+        agent_id: AgentId,
+        process_id: ProcessId,
+        operation_id: OperationId,
+    },
+    Progress {
+        agent_id: AgentId,
+        process_id: ProcessId,
+        operation_id: OperationId,
+        summary: String,
+    },
+    Tool {
+        agent_id: AgentId,
+        process_id: ProcessId,
+        operation_id: OperationId,
+        name: String,
+        is_error: bool,
+    },
+    Terminal {
+        agent_id: AgentId,
+        process_id: ProcessId,
+        operation_id: OperationId,
+        status: AgentRunStatus,
+        usage: AttemptUsage,
+        evidence: Vec<AttemptEvidence>,
+    },
 }
 
 #[async_trait]
@@ -107,7 +130,13 @@ impl AgentRuntimeLauncher for CompatibilityRuntimeLauncher {
         input: AgentRuntimeInput,
         events: Arc<dyn AgentEventSink>,
     ) -> Result<AgentResult, AgentControlError> {
-        events.emit(AgentRuntimeEvent::Started).await;
+        events
+            .emit(AgentRuntimeEvent::Started {
+                agent_id: input.handle.agent_id,
+                process_id: input.handle.process_id,
+                operation_id: input.handle.operation_id,
+            })
+            .await;
         let context = SubAgentExecutionContext {
             process_id: input.handle.process_id,
             operation_id: input.handle.operation_id,
@@ -129,7 +158,16 @@ impl AgentRuntimeLauncher for CompatibilityRuntimeLauncher {
             artifacts: vec![],
         };
         result.validate()?;
-        events.emit(AgentRuntimeEvent::Terminal).await;
+        events
+            .emit(AgentRuntimeEvent::Terminal {
+                agent_id: input.handle.agent_id,
+                process_id: input.handle.process_id,
+                operation_id: input.handle.operation_id,
+                status: AgentRunStatus::Succeeded,
+                usage: result.usage.clone(),
+                evidence: result.evidence.clone(),
+            })
+            .await;
         Ok(result)
     }
 }

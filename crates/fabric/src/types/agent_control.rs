@@ -14,6 +14,46 @@ pub const MAX_ARTIFACTS: usize = 128;
 pub const MAX_LIST_ITEMS: usize = 1000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentProfile {
+    pub id: AgentProfileId,
+    pub system_prompt: String,
+    pub model: String,
+    pub allowed_tools: Vec<String>,
+    pub max_iterations: usize,
+    pub max_input_tokens: u64,
+    pub max_output_tokens: u64,
+    pub max_tool_calls: u32,
+    pub max_elapsed_ms: u64,
+}
+
+impl AgentProfile {
+    pub fn validate(&self) -> Result<(), AgentControlError> {
+        ensure_text(&self.id.0, 512, "profile ID")?;
+        ensure_text(
+            &self.system_prompt,
+            MAX_AGENT_MESSAGE_BYTES,
+            "profile system prompt",
+        )?;
+        ensure_text(&self.model, 512, "profile model")?;
+        ensure_count(self.allowed_tools.len(), 256, "profile tools")?;
+        for tool in &self.allowed_tools {
+            ensure_text(tool, 512, "profile tool")?;
+        }
+        if self.max_iterations == 0
+            || self.max_input_tokens == 0
+            || self.max_output_tokens == 0
+            || self.max_tool_calls == 0
+            || self.max_elapsed_ms == 0
+        {
+            return Err(AgentControlError::invalid(
+                "Agent profile limits must be nonzero",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum AgentContextFork {
     None,
