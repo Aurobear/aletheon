@@ -156,6 +156,7 @@ impl NativeCognitRuntime {
                 sandbox: SandboxRequirement::NotRequired,
                 cancel: input.cancellation.clone(),
                 turn_count: 0,
+                action_loop: None,
             },
             cancellation: input.cancellation.clone(),
             evidence: evidence.clone(),

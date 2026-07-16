@@ -11,8 +11,9 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, CapabilityAuthority, CapabilityCall, CapabilityInvoker, CapabilityResult,
-    CapabilityScope, InvocationControl, PrincipalId, SandboxRequirement, UsageReport,
+    AdmissionController, BroadcastEpoch, CapabilityAuthority, CapabilityCall, CapabilityInvoker,
+    CapabilityResult, CapabilityScope, ContentId, InvocationControl, PrincipalId, ProcessId,
+    SandboxRequirement, UsageReport, WorkspaceAttribution,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -28,6 +29,17 @@ pub struct CapabilityExecutionContext {
     pub sandbox: SandboxRequirement,
     pub cancel: CancellationToken,
     pub turn_count: usize,
+    pub action_loop: Option<Arc<dyn GovernedActionLoop>>,
+}
+
+#[async_trait]
+pub trait GovernedActionLoopResolver: Send + Sync {
+    async fn resolve(
+        &self,
+        space: fabric::AgoraSpaceId,
+        source: ProcessId,
+        root: ProcessId,
+    ) -> Result<Arc<dyn GovernedActionLoop>>;
 }
 
 /// Canonical application capability entry point used outside the turn pipeline.
@@ -51,6 +63,34 @@ pub struct AuthorizedInvocation {
     pub control: InvocationControl,
 }
 
+#[derive(Debug, Clone)]
+pub struct SelectedActionContext {
+    pub candidate_id: ContentId,
+    pub broadcast_epoch: BroadcastEpoch,
+    pub operation_id: fabric::OperationId,
+    pub source_process: ProcessId,
+    pub attribution: WorkspaceAttribution,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectedActionOutcomeReceipt {
+    pub outcome_id: ContentId,
+    pub permit_id: String,
+    pub broadcast_epoch: BroadcastEpoch,
+}
+
+#[async_trait]
+pub trait GovernedActionLoop: Send + Sync {
+    async fn select_action(&self, call: &CapabilityCall) -> Result<SelectedActionContext>;
+
+    async fn observe_outcome(
+        &self,
+        selected: &SelectedActionContext,
+        call: &CapabilityCall,
+        result: &CapabilityResult,
+    ) -> Result<SelectedActionOutcomeReceipt>;
+}
+
 #[async_trait]
 pub trait TurnAuthorityProvider: Send + Sync {
     async fn authorize(&self, call: &CapabilityCall) -> Result<AuthorizedInvocation>;
@@ -65,6 +105,7 @@ pub trait TurnCapabilityInvoker: Send + Sync {
 pub struct GovernedCapabilityInvoker {
     inner: Arc<dyn CapabilityInvoker>,
     authority: Arc<dyn TurnAuthorityProvider>,
+    action_loop: Option<Arc<dyn GovernedActionLoop>>,
 }
 
 impl GovernedCapabilityInvoker {
@@ -72,7 +113,16 @@ impl GovernedCapabilityInvoker {
         inner: Arc<dyn CapabilityInvoker>,
         authority: Arc<dyn TurnAuthorityProvider>,
     ) -> Self {
-        Self { inner, authority }
+        Self {
+            inner,
+            authority,
+            action_loop: None,
+        }
+    }
+
+    pub fn with_action_loop(mut self, action_loop: Arc<dyn GovernedActionLoop>) -> Self {
+        self.action_loop = Some(action_loop);
+        self
     }
 }
 
@@ -91,13 +141,48 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                 };
             }
         };
-        self.inner
+        let selected = if let Some(action_loop) = &self.action_loop {
+            match action_loop.select_action(&call).await {
+                Ok(selected) => Some(selected),
+                Err(error) => {
+                    return CapabilityResult {
+                        call_id: call.call_id,
+                        output: format!("capability action was not selected: {error}"),
+                        is_error: true,
+                        usage: UsageReport::default(),
+                        audit_id: None,
+                    };
+                }
+            }
+        } else {
+            None
+        };
+        let observed_call = call.clone();
+        let result = self
+            .inner
             .invoke(fabric::CapabilityRequest {
                 call,
                 authority: authorized.authority,
                 control: authorized.control,
             })
-            .await
+            .await;
+        if let (Some(action_loop), Some(selected)) = (&self.action_loop, selected.as_ref()) {
+            if let Err(error) = action_loop
+                .observe_outcome(selected, &observed_call, &result)
+                .await
+            {
+                return CapabilityResult {
+                    call_id: result.call_id,
+                    output: format!(
+                        "capability executed but governed outcome recurrence failed: {error}"
+                    ),
+                    is_error: true,
+                    usage: result.usage,
+                    audit_id: result.audit_id,
+                };
+            }
+        }
+        result
     }
 }
 
@@ -113,6 +198,17 @@ impl CapabilityRuntimeFactory {
         let kernel: Arc<dyn CapabilityInvoker> =
             Arc::new(DefaultCapabilityInvoker::new(admission, executor));
         Arc::new(GovernedCapabilityInvoker::new(kernel, authority))
+    }
+
+    pub fn build_with_action_loop(
+        admission: Arc<dyn AdmissionController>,
+        executor: Arc<dyn ToolExecutor>,
+        authority: Arc<dyn TurnAuthorityProvider>,
+        action_loop: Arc<dyn GovernedActionLoop>,
+    ) -> Arc<dyn TurnCapabilityInvoker> {
+        let kernel: Arc<dyn CapabilityInvoker> =
+            Arc::new(DefaultCapabilityInvoker::new(admission, executor));
+        Arc::new(GovernedCapabilityInvoker::new(kernel, authority).with_action_loop(action_loop))
     }
 }
 

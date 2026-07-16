@@ -252,6 +252,7 @@ impl ProviderWorkerRuntime {
                             sandbox: SandboxRequirement::NotRequired,
                             cancel: cancel.clone(),
                             turn_count: 0,
+                            action_loop: None,
                         });
                     let result = self
                         .capability

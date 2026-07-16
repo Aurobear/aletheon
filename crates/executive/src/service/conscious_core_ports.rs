@@ -24,6 +24,10 @@ pub enum CandidateCause {
         permit_id: String,
         operation_id: fabric::OperationId,
     },
+    GovernedActionProposal {
+        operation_id: fabric::OperationId,
+        call_id: String,
+    },
 }
 
 impl CandidateCause {
@@ -41,6 +45,10 @@ impl CandidateCause {
                 permit_id,
                 operation_id,
             } => format!("capability:{permit_id}:{}", operation_id.0),
+            Self::GovernedActionProposal {
+                operation_id,
+                call_id,
+            } => format!("action-call:{}:{call_id}", operation_id.0),
         }
     }
 
@@ -55,6 +63,10 @@ impl CandidateCause {
             Self::GovernedActionOutcome { permit_id, .. } => anyhow::ensure!(
                 !permit_id.trim().is_empty() && permit_id.len() <= 1024,
                 "capability permit reference is invalid"
+            ),
+            Self::GovernedActionProposal { call_id, .. } => anyhow::ensure!(
+                !call_id.trim().is_empty() && call_id.len() <= 1024,
+                "governed action call reference is invalid"
             ),
         }
         Ok(())

@@ -551,9 +551,18 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             )
             .with_agent_context(context.agent),
         );
+        let invoker = match context.action_loop {
+            Some(action_loop) => CapabilityRuntimeFactory::build_with_action_loop(
+                self.admission.clone(),
+                executor,
+                authority,
+                action_loop,
+            ),
+            None => CapabilityRuntimeFactory::build(self.admission.clone(), executor, authority),
+        };
         Ok(PreparedCapabilities {
             definitions,
-            invoker: CapabilityRuntimeFactory::build(self.admission.clone(), executor, authority),
+            invoker,
         })
     }
 }

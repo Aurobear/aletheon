@@ -431,6 +431,7 @@ impl CapabilityService for ProductionCapabilityService {
             sandbox: fabric::SandboxRequirement::NotRequired,
             cancel,
             turn_count: 0,
+            action_loop: None,
         };
         let result = Self::invoke_existing(&self.resources, context, call).await;
         if result.is_error {

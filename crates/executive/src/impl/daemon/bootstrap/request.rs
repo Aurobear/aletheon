@@ -943,6 +943,7 @@ impl RequestHandler {
                 canonical_sessions: session_service.clone(),
                 projection,
                 runtime: runtime_ports,
+                conscious_actions: None,
             },
         ));
         let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(

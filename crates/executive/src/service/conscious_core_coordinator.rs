@@ -107,6 +107,10 @@ pub struct ConsciousCoreCoordinator {
 }
 
 impl ConsciousCoreCoordinator {
+    pub fn space(&self) -> &AgoraSpaceId {
+        &self.space
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         space: AgoraSpaceId,

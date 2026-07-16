@@ -51,6 +51,8 @@ pub struct TurnPipeline {
     pub(crate) post_turn_projection:
         Arc<dyn crate::service::post_turn_projection::PostTurnProjection>,
     pub(crate) runtime_ports: Arc<crate::service::turn_runtime_ports::TurnRuntimePorts>,
+    pub(crate) conscious_actions:
+        Option<Arc<dyn crate::service::governed_capability::GovernedActionLoopResolver>>,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -65,6 +67,8 @@ pub(crate) struct TurnPipelineResources {
     pub(crate) canonical_sessions: Arc<crate::service::session_service::SessionService>,
     pub(crate) projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection>,
     pub(crate) runtime: Arc<crate::service::turn_runtime_ports::TurnRuntimePorts>,
+    pub(crate) conscious_actions:
+        Option<Arc<dyn crate::service::governed_capability::GovernedActionLoopResolver>>,
 }
 
 impl TurnPipeline {
@@ -81,6 +85,7 @@ impl TurnPipeline {
             canonical_sessions: resources.canonical_sessions,
             post_turn_projection: resources.projection,
             runtime_ports: resources.runtime,
+            conscious_actions: resources.conscious_actions,
         }
     }
 
@@ -272,6 +277,14 @@ impl TurnPipeline {
         let agora_for_events = agora.clone();
         let clock_for_agora = self.clock.clone();
 
+        let action_loop = match &self.conscious_actions {
+            Some(resolver) => Some(
+                resolver
+                    .resolve(AgoraSpaceId(sess_id.clone()), main_pid, main_pid)
+                    .await?,
+            ),
+            None => None,
+        };
         let prepared = self
             .runtime_ports
             .capabilities
@@ -289,6 +302,7 @@ impl TurnPipeline {
                 sandbox: sandbox_requirement,
                 cancel: scope_token.clone(),
                 turn_count,
+                action_loop,
             })
             .await?;
         let tool_defs = prepared.definitions;
