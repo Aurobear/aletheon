@@ -83,3 +83,9 @@ setup-sccache:
         echo 'rustc-wrapper = "sccache"' >> .cargo/config.toml; \
     fi
     @echo "sccache configured in .cargo/config.toml"
+
+# V02: installed-host production migration, scenario, failure and rollback gate.
+# This invokes V01 through scripts/release-acceptance.sh and fails closed when
+# the disposable host, release binary, live credentials or operator are absent.
+release-acceptance:
+    bash scripts/release-acceptance.sh

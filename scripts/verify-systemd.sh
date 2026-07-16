@@ -34,6 +34,19 @@ case "$mode" in
         -e "s#/usr/libexec/aletheon/cleanup-aletheon.sh#$scripts_dir/cleanup-aletheon.sh#g" \
         "$unit" > "$staged"
     systemd-analyze verify "$staged"
+    # Release verification is not only syntax: assert the installed unit keeps
+    # the daemon unprivileged, journal-backed and limited to explicit roots.
+    for contract in \
+      '^User=aletheon$' '^Group=aletheon$' '^NoNewPrivileges=yes$' \
+      '^ProtectSystem=strict$' '^StandardOutput=journal$' \
+      '^RestrictAddressFamilies=.*AF_UNIX'; do
+      grep -Eq "$contract" "$staged" || {
+        echo "unit verification: missing boundary $contract" >&2; exit 1;
+      }
+    done
+    grep -Eq '^ExecStart=.* daemon .*--socket ' "$staged" || {
+      echo "unit verification: daemon must expose an explicit AF_UNIX socket" >&2; exit 1;
+    }
     ;;
   --preflight)
     [[ -x "$binary" && -f "$config" && ! -L "$config" ]] || {

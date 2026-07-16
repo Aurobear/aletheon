@@ -1,0 +1,87 @@
+# Production migration and installed-daemon scenarios
+
+V02 is a fail-closed release gate. It does not use a mock daemon, temporary
+in-process coordinator, fake provider result, or a development-host service.
+The staged-host scripts refuse to run unless they find an explicitly marked,
+systemd-booted disposable VM/container.
+
+```
+V01 acceptance
+      |
+migration matrix -- installed release/systemd -- real monitor workflows
+      |                       |                         |
+      +---------------- failure/recovery ---------------+
+                              |
+                 matching data+binary rollback
+                              |
+                    signed operator receipt
+```
+
+## Lanes
+
+### Static lane
+
+Run `scripts/verify-migration-matrix.sh`, shell syntax checks, monitor pytest,
+Python bytecode compilation, and `scripts/verify-systemd.sh --unit ...` against
+a real release binary. These checks are useful before a disposable host exists,
+but are not release approval.
+
+### Credential-free disposable-host lane
+
+Inside a freshly booted, virtualization-detectable systemd VM/container, set
+`ALETHEON_DISPOSABLE_HOST=1`, supply `ALETHEON_RELEASE_BINARY`, and run
+`tests/production/install_upgrade_restart.sh`. The script installs the actual
+binary and checked-in units, verifies readiness, controlled restart, ownership,
+modes, AF_UNIX exposure, journal output, SQLite integrity, forward upgrade, and
+matching data+binary rollback. External integrations stay disabled by the
+production config. This lane proves installation assets without personal
+credentials; it does not claim that Gmail passed.
+
+### Live workflow and release lane
+
+Configure an isolated Gmail test account and set
+`ALETHEON_PRODUCTION_GMAIL_ACCOUNT`. Run from `tools/aletheon-monitor`:
+
+```sh
+python3 -m pytest -q tests
+python3 -m src.__main__ scenario --suite production --source-root ../..
+```
+
+The four scenarios validate Git/workspace boundaries, bounded Gmail summary
+evidence, SubAgent lifecycle records, and TUI reconnect/final-answer durability.
+Missing credentials produce `BLOCKED` and a nonzero exit; raw mailbox data is
+not emitted into the report.
+
+The failure lane additionally requires a real
+`ALETHEON_PRODUCTION_FAILURE_DRIVER`. The driver establishes and verifies the
+actual daemon boundary for event append, memory lease, remote GBrain success,
+and Agent runtime completion. It must also provide bounded disposable-scope
+queue-full, disk-full, corrupt-response, provider-timeout, and disconnect
+receipts. A mock driver cannot establish release evidence.
+
+## Aggregate release gate
+
+Run `just release-acceptance` only inside the disposable host. Required inputs:
+
+- the real release executable (`ALETHEON_RELEASE_BINARY`);
+- a passing V01 JSON report (`ALETHEON_V01_ACCEPTANCE_REPORT` when non-default);
+- the production failure driver;
+- isolated production credentials for live-account cases;
+- `ALETHEON_RELEASE_OPERATOR` for the final receipt;
+- `just`, `jq`, `sqlite3`, systemd tooling, tmux, Python pytest, and Cargo.
+
+The gate first invokes `just acceptance`; this prerequisite cannot be bypassed.
+It requires a clean `target/release-acceptance` directory and zero blocked or
+ignored cases. Default time bounds are 30 seconds for readiness, 120 seconds for
+ordinary TUI workflows, and 180 seconds for SubAgent/reconnect workflows.
+
+## Rollback decision
+
+- No data change and explicit matrix compatibility: a verified binary rollback
+  may be considered, but must retain release evidence.
+- Any data change or unknown compatibility: stop service; preserve upgraded
+  roots; restore the matching pre-upgrade data/config to empty roots; install
+  the matching saved binary; preflight; start; verify readiness, SQLite
+  integrity, and V01 projection/state checksums.
+- Never start an old binary against migrated data. Never run mixed binaries
+  against shared durable roots.

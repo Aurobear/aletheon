@@ -200,22 +200,38 @@ async def run(name: str, source_root: str) -> dict:
     return result
 
 
+async def run_production_suite(source_root: str) -> dict:
+    """Run all real production workflows; BLOCKED is a failing gate, never a skip."""
+    from scenarios import gmail_analysis, project_workspace, reconnect_resume, subagent_research
+    provenance = preflight(source_root)
+    cases = []
+    for module in (project_workspace, gmail_analysis, subagent_research, reconnect_resume):
+        try:
+            cases.append(await module.run(source_root))
+        except Exception as error:
+            cases.append({"scenario": module.__name__.split(".")[-1], "status": "FAIL",
+                          "failure": f"{type(error).__name__}: {error}"})
+    statuses = {case.get("status", "FAIL") for case in cases}
+    return {"suite": "production", "status": "PASS" if statuses == {"PASS"} else "FAIL",
+            "preflight": provenance, "cases": cases,
+            "summary": {status: sum(case.get("status") == status for case in cases)
+                        for status in ("PASS", "FAIL", "BLOCKED")}}
+
+
 def main() -> None:
     import argparse
-
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "scenario",
-        choices=[
-            "artifact_delivery",
-            "repository_analysis",
-            "workspace_boundary",
-            "gmail_read",
-        ],
-    )
+    parser.add_argument("scenario", nargs="?", choices=[
+        "artifact_delivery", "repository_analysis", "workspace_boundary", "gmail_read"])
+    parser.add_argument("--suite", choices=["production"])
     parser.add_argument("--source-root", default=os.getcwd())
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(run(args.scenario, args.source_root)), ensure_ascii=False, indent=2))
+    if bool(args.scenario) == bool(args.suite):
+        parser.error("choose exactly one scenario or --suite production")
+    result = asyncio.run(run_production_suite(args.source_root) if args.suite else run(args.scenario, args.source_root))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if result.get("status") != "PASS":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

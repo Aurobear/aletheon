@@ -37,3 +37,23 @@ Never point an old binary at a migrated database. Never remove the only known
 good snapshot or overwrite the pre-restore directory. Record the binary hash,
 snapshot ID, schema versions, start/readiness times, and operator in the release
 evidence bundle.
+
+## Release compatibility matrix
+
+The authoritative per-component compatibility declaration is
+`config/release/migration-matrix.toml`. Run
+`scripts/verify-migration-matrix.sh` before staging a candidate. The verifier
+requires every durable component to declare its source and target version,
+backup boundary, forward action, integrity evidence and rollback method.
+
+A transition marked `data_change = true` is never eligible for binary-only
+rollback. Stop the upgraded daemon, retain its data root as evidence, restore
+the pre-upgrade snapshot into empty roots, install the binary saved with that
+snapshot, then run preflight, readiness and representative V01 checks. Mixed
+old/new daemon operation against the same durable roots is forbidden.
+
+The production drill runs only inside a disposable systemd VM/container. It
+records installation modes, AF_UNIX exposure, journal output, upgrade receipts,
+SQLite integrity results, and the matching data+binary rollback receipt. A
+missing disposable host, release binary, V01 report, production credential or
+operator identity blocks release; it is not an ignored case.
