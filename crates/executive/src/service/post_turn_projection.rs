@@ -3,12 +3,8 @@
 use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
-use cognit::core::reflector::Reflector;
 use fabric::hook::{HookContext, HookPoint};
-use fabric::{AgoraOps, Clock, ReflectionTrigger};
 use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
-use mnemosyne::{AutoMemory, MemoryService, RecallMemory};
-use tracing::info;
 
 #[derive(Clone, Debug)]
 pub struct PostTurnOutcome {
@@ -37,15 +33,8 @@ pub struct PostTurnDispatch {
 
 pub struct ProductionPostTurnProjection {
     run_hook: Arc<HookProjectionFn>,
-    memory_service: Arc<dyn MemoryService>,
-    auto_memory: Arc<tokio::sync::Mutex<AutoMemory>>,
-    reflector: Reflector,
-    episodic_memory: Arc<tokio::sync::Mutex<mnemosyne::episodic::EpisodicMemory>>,
-    clock: Arc<dyn Clock>,
     runtime: Arc<tokio::sync::Mutex<crate::core::orchestrator::AletheonExecutive>>,
     evolution_pipeline: Arc<MorphogenesisPipeline<DefaultMetaRuntime>>,
-    agora: Arc<dyn AgoraOps>,
-    recall_memory: Arc<tokio::sync::Mutex<RecallMemory>>,
 }
 
 type HookProjectionFn =
@@ -53,15 +42,8 @@ type HookProjectionFn =
 
 pub struct PostTurnProjectionResources {
     pub hooks: crate::core::corpus_group::HookRegistryHandle,
-    pub memory: Arc<dyn MemoryService>,
-    pub auto_memory: Arc<tokio::sync::Mutex<AutoMemory>>,
-    pub reflector: Reflector,
-    pub episodic: Arc<tokio::sync::Mutex<mnemosyne::episodic::EpisodicMemory>>,
-    pub clock: Arc<dyn Clock>,
     pub executive: Arc<tokio::sync::Mutex<crate::core::orchestrator::AletheonExecutive>>,
     pub evolution: Arc<MorphogenesisPipeline<DefaultMetaRuntime>>,
-    pub agora: Arc<dyn AgoraOps>,
-    pub recall: Arc<tokio::sync::Mutex<RecallMemory>>,
 }
 
 impl ProductionPostTurnProjection {
@@ -75,15 +57,8 @@ impl ProductionPostTurnProjection {
         });
         Self {
             run_hook,
-            memory_service: resources.memory,
-            auto_memory: resources.auto_memory,
-            reflector: resources.reflector,
-            episodic_memory: resources.episodic,
-            clock: resources.clock,
             runtime: resources.executive,
             evolution_pipeline: resources.evolution,
-            agora: resources.agora,
-            recall_memory: resources.recall,
         }
     }
 }
@@ -94,22 +69,8 @@ impl PostTurnProjection for ProductionPostTurnProjection {
         let mut failures = Vec::new();
         self.run_post_turn_hook(&outcome).await;
 
-        if outcome.succeeded {
-            if let Err(error) = self.record_assistant_message(&outcome).await {
-                failures.push(format!("assistant memory: {error}"));
-            }
-            if let Err(error) = self.extract_auto_memory(&outcome).await {
-                failures.push(format!("auto memory: {error}"));
-            }
-        }
-        if let Err(error) = self.record_reflection(&outcome).await {
-            failures.push(format!("reflection: {error}"));
-        }
         if let Err(error) = self.run_evolution(&outcome).await {
             failures.push(format!("evolution: {error}"));
-        }
-        if let Err(error) = self.persist_agora_commits(&outcome).await {
-            failures.push(format!("agora: {error}"));
         }
 
         if failures.is_empty() {
@@ -135,106 +96,6 @@ impl ProductionPostTurnProjection {
         (self.run_hook)(context).await;
     }
 
-    async fn record_assistant_message(&self, outcome: &PostTurnOutcome) -> anyhow::Result<()> {
-        let observed_at = fabric::wall_to_datetime(self.clock.wall_now());
-        self.memory_service
-            .record(mnemosyne::ExperienceEvent::Message {
-                session: outcome.session_id.clone(),
-                role: "assistant".into(),
-                content: outcome.output.clone(),
-                metadata: mnemosyne::MemoryMetadata::local(
-                    format!("message:{}:assistant:{}", outcome.session_id, outcome.turn),
-                    format!("{}:assistant:{}", outcome.session_id, outcome.turn),
-                    observed_at,
-                ),
-            })
-            .await?;
-        let context = HookContext {
-            point: HookPoint::OnMemoryStore,
-            session_id: outcome.session_id.clone(),
-            turn_count: outcome.turn,
-            tool_name: None,
-            tool_input: None,
-            tool_result: None,
-            message: None,
-            metadata: HashMap::new(),
-        };
-        (self.run_hook)(context).await;
-        Ok(())
-    }
-
-    async fn extract_auto_memory(&self, outcome: &PostTurnOutcome) -> anyhow::Result<()> {
-        let facts = self
-            .auto_memory
-            .lock()
-            .await
-            .analyze_and_store(&outcome.input, &outcome.output)
-            .await?;
-        if !facts.is_empty() {
-            info!(count = facts.len(), "Auto-memory: stored facts");
-        }
-        Ok(())
-    }
-
-    async fn record_reflection(&self, outcome: &PostTurnOutcome) -> anyhow::Result<()> {
-        let task_summary = bounded_summary(&outcome.input, 100);
-        let mut what_worked = vec![format!("Conversation turn #{}", outcome.turn)];
-        let mut what_failed = Vec::new();
-        let mut learned = Vec::new();
-        let response_len = outcome.output.len();
-        what_worked.push(if response_len > 500 {
-            format!("Detailed response ({response_len} chars)")
-        } else if response_len > 100 {
-            format!("Concise response ({response_len} chars)")
-        } else {
-            format!("Brief response ({response_len} chars)")
-        });
-        let lower = outcome.output.to_lowercase();
-        for indicator in [
-            "error",
-            "failed",
-            "unable",
-            "cannot",
-            "couldn't",
-            "sorry, i",
-            "i don't know",
-        ] {
-            if lower.contains(indicator) {
-                what_failed.push(format!("Response contains '{indicator}'"));
-            }
-        }
-        for indicator in [
-            "i learned",
-            "i now understand",
-            "i realize",
-            "correction:",
-            "actually,",
-        ] {
-            if lower.contains(indicator) {
-                learned.push(format!("Self-correction detected: '{indicator}'"));
-            }
-        }
-        let entry = self.reflector.reflect_conversation(
-            &task_summary,
-            ReflectionTrigger::TaskComplete,
-            what_failed.is_empty(),
-            what_worked,
-            what_failed,
-            learned,
-        );
-        let memory = self.episodic_memory.lock().await;
-        memory.store_reflection(&entry)?;
-        info!(id = %entry.id, task = %task_summary, "Chat reflection stored");
-        if memory.reflection_count()? > 0 && memory.reflection_count()? % 10 == 0 {
-            let recent = memory.recall_reflections(20)?;
-            let summarizer = cognit::core::ExperienceSummarizer::new(self.clock.clone());
-            if let Some(evolution) = summarizer.summarize(&recent) {
-                memory.store_evolution_log(&evolution)?;
-            }
-        }
-        Ok(())
-    }
-
     async fn run_evolution(&self, outcome: &PostTurnOutcome) -> anyhow::Result<()> {
         self.runtime
             .lock()
@@ -251,23 +112,6 @@ impl ProductionPostTurnProjection {
             )
             .await
             .map(|_| ())
-    }
-
-    async fn persist_agora_commits(&self, outcome: &PostTurnOutcome) -> anyhow::Result<()> {
-        let commits = self
-            .agora
-            .changes_since(&outcome.session_id, outcome.agora_start_version)
-            .await;
-        let memory = self.recall_memory.lock().await;
-        for commit in commits {
-            memory.store(
-                &outcome.session_id,
-                "agora_commit",
-                &serde_json::to_string(&commit)?,
-                None,
-            )?;
-        }
-        Ok(())
     }
 }
 

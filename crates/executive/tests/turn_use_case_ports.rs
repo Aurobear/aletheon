@@ -159,4 +159,21 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
     let settlement = coordinator.find("terminal?;").unwrap();
     let projection = coordinator.find("dispatch.projector.project").unwrap();
     assert!(settlement < projection);
+
+    let post_turn = include_str!("../src/service/post_turn_projection.rs");
+    for forbidden in [
+        "MemoryService",
+        "AutoMemory",
+        "RecallMemory",
+        "analyze_and_store",
+        "store_reflection",
+        "store_evolution_log",
+        "record_assistant_message",
+        "persist_agora_commits",
+    ] {
+        assert!(
+            !post_turn.contains(forbidden),
+            "post-turn handler bypasses the event-driven projection path with {forbidden}"
+        );
+    }
 }

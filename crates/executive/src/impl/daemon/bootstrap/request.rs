@@ -55,7 +55,6 @@ use corpus::skill::plugin::register_skill;
 use corpus::HookRegistry;
 use corpus::SkillLoader;
 use corpus::SkillRouter;
-use mnemosyne::AutoMemory;
 use mnemosyne::FactStore;
 
 use super::super::debug_handler::DebugHandler;
@@ -554,20 +553,6 @@ impl RequestHandler {
             "ModelRouter initialized"
         );
 
-        // AutoMemory
-        let cheap_llm: Arc<dyn LlmProvider> =
-            match model_router.create_provider(TaskType::AutoMemory) {
-                Ok(provider) => {
-                    info!(model = provider.name(), "AutoMemory using routed model");
-                    Arc::from(provider)
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "ModelRouter AutoMemory failed, fallback");
-                    Arc::from(registry.resolve_and_create("").expect("no LLM available"))
-                }
-            };
-        let auto_memory = Arc::new(Mutex::new(AutoMemory::new(cheap_llm, core_memory.clone())));
-
         // Debug
         let debug_perf = Arc::new(PerfCounter::default());
         let debug_hook = Arc::new(tokio::sync::Mutex::new(DebugBusHook::new(
@@ -680,8 +665,6 @@ impl RequestHandler {
             memory_service: gbrain_runtime.memory_service,
             supplemental_memory_health: gbrain_runtime.health,
             episodic_memory,
-            recall_memory,
-            auto_memory,
             objective_store,
             approval_repository,
         };
@@ -938,15 +921,8 @@ impl RequestHandler {
                 crate::service::post_turn_projection::ProductionPostTurnProjection::new(
                     crate::service::post_turn_projection::PostTurnProjectionResources {
                         hooks: corpus_group.hook_registry.clone(),
-                        memory: memory_group.memory_service.clone(),
-                        auto_memory: memory_group.auto_memory.clone(),
-                        reflector: reflector.clone(),
-                        episodic: memory_group.episodic_memory.clone(),
-                        clock: clock.clone(),
                         executive: runtime.clone(),
                         evolution: pipeline.clone(),
-                        agora: domains.agora(),
-                        recall: memory_group.recall_memory.clone(),
                     },
                 ),
             );
