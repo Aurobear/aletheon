@@ -250,16 +250,13 @@ pub use types::tool::{
 pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 
 // Event types
-pub use events::event_log;
-pub use events::event_log::{EventLog, LogEntry};
 pub use events::spine::{
     EventId, EventIdentity, EventPayload, EventPosition, EventSpine, EventTreeId, EventVisibility,
     ParentEventId, SpineEvent, TreeSequence, UnsequencedEvent,
 };
+pub use events::subscription::{AsyncEnvelopeHandler, EnvelopeHandler};
 pub use events::types as event;
-pub use events::types::{
-    AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
-};
+pub use events::types::{EventType, Priority, SubscriptionId};
 pub use events::ui_event::{
     AwarenessLevel, ClientEvent, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate,
     SubAgentHandle, SubAgentState, SubAgentStatus,

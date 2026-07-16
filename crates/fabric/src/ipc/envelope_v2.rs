@@ -248,130 +248,6 @@ impl EnvelopeV2 {
     pub fn validate_known_schema(&self) -> Result<(), UnsupportedSchema> {
         self.schema.validate_known()
     }
-
-    // ------------------------------------------------------------------
-    // Legacy converter
-    // ------------------------------------------------------------------
-
-    /// Convert a legacy [`super::envelope::Envelope`] into an `EnvelopeV2`.
-    ///
-    /// This is a **best-effort lossy mapping**:
-    ///
-    /// | Legacy field        | V2 field           | Mapping |
-    /// |---------------------|--------------------|---------|
-    /// | `id` (u64)          | `id` (MessageId)   | fresh UUID v4 — legacy counter is not preserved |
-    /// | (none)              | `schema`           | `"aletheon.legacy.envelope/v0"` |
-    /// | `source` (Endpoint) | `source` (Target)  | `"{variant}:{value}"` string |
-    /// | `target` (Target)   | `target` (Target)  | `"{variant}:{value}"` string |
-    /// | `pattern`           | `pattern`          | best-match mapping (see below) |
-    /// | `correlation_id`    | `correlation_id`   | wrapped in `MessageId` (lossy: u64 → UUID) |
-    /// | `timestamp_ms`      | `logical_time`     | reused as logical time |
-    /// | `ttl_ms`            | `deadline`         | `timestamp_ms + ttl_ms` → `MonoDeadlineMillis` |
-    /// | `priority`          | `priority`         | Priority enum → u8 |
-    /// | `payload`           | `payload`          | Json→pass through; Binary→base64-wrapped; Empty→null |
-    pub fn from_legacy(legacy: &super::envelope::Envelope) -> Self {
-        use super::envelope::{Pattern, Payload};
-
-        let source = endpoint_to_target_str(&legacy.source);
-        let target = legacy_target_to_target_str(&legacy.target);
-
-        let pattern = match legacy.pattern {
-            Pattern::Request { .. } => DeliveryPattern::RequestResponse,
-            Pattern::Response => DeliveryPattern::Direct,
-            Pattern::Publish => DeliveryPattern::FanOut,
-            Pattern::FireAndForget => DeliveryPattern::Direct,
-            Pattern::Stream { .. } => DeliveryPattern::Direct,
-        };
-
-        let correlation_id = legacy
-            .correlation_id
-            .map(|cid| MessageId(uuid_from_u64(cid)));
-
-        let payload = match &legacy.payload {
-            Payload::Json(v) => v.clone(),
-            Payload::Binary(b) => {
-                use base64::Engine;
-                let encoded = base64::engine::general_purpose::STANDARD.encode(b);
-                serde_json::Value::String(encoded)
-            }
-            Payload::Empty => serde_json::Value::Null,
-        };
-
-        let priority = legacy.priority.into_u8();
-
-        let deadline = legacy
-            .ttl_ms
-            .map(|ttl| MonoDeadlineMillis(legacy.timestamp_ms.saturating_add(ttl)));
-
-        Self {
-            id: MessageId::new(),
-            schema: SchemaId("aletheon.legacy.envelope/v0".into()),
-            source,
-            target,
-            pattern,
-            operation_id: None,
-            causation_id: None,
-            correlation_id,
-            namespace: NamespaceId("legacy".into()),
-            logical_time: legacy.timestamp_ms,
-            deadline,
-            priority,
-            payload,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn endpoint_to_target_str(e: &super::envelope::Endpoint) -> Target {
-    use super::envelope::Endpoint;
-    match e {
-        Endpoint::Module(m) => Target(format!("module:{m:?}")),
-        Endpoint::Agent(pid) => Target(format!("agent:{pid}")),
-        Endpoint::System => Target("system".into()),
-    }
-}
-
-fn legacy_target_to_target_str(t: &super::envelope::Target) -> Target {
-    use super::envelope::Target as LegacyTarget;
-    match t {
-        LegacyTarget::Module(m) => Target(format!("module:{m:?}")),
-        LegacyTarget::Agent(pid) => Target(format!("agent:{pid}")),
-        LegacyTarget::Topic(name) => Target(format!("topic:{name}")),
-        LegacyTarget::Broadcast => Target("broadcast".into()),
-    }
-}
-
-/// Deterministic UUID v5 from a u64 (namespace = DNS "aletheon.local").
-fn uuid_from_u64(n: u64) -> Uuid {
-    let ns = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8") // DNS namespace
-        .unwrap_or(Uuid::nil());
-    Uuid::new_v5(&ns, n.to_le_bytes().as_ref())
-}
-
-// ---------------------------------------------------------------------------
-// Priority conversion (compatibility with legacy Priority enum)
-// ---------------------------------------------------------------------------
-
-/// Extend the legacy `Priority` enum with a `u8` conversion so the
-/// `From<Priority>` impl in `EnvelopeV2::from_legacy` works without
-/// modifying the legacy event module.
-trait PriorityU8 {
-    fn into_u8(self) -> u8;
-}
-
-impl PriorityU8 for crate::events::types::Priority {
-    fn into_u8(self) -> u8 {
-        match self {
-            crate::events::types::Priority::Low => 50,
-            crate::events::types::Priority::Normal => 128,
-            crate::events::types::Priority::High => 200,
-            crate::events::types::Priority::Critical => 255,
-            crate::events::types::Priority::Background => 10,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +261,6 @@ impl SchemaId {
     pub const CAPABILITY_REQUEST_V1: &'static str = "aletheon.capability.request/v1";
     pub const CAPABILITY_RESULT_V1: &'static str = "aletheon.capability.result/v1";
     pub const AGENT_CONTROL_MESSAGE_V1: &'static str = "aletheon.agent.control-message/v1";
-    pub const LEGACY_ENVELOPE_V0: &'static str = "aletheon.legacy.envelope/v0";
 
     // -- Migration bridge: each legacy EventType variant maps to a SchemaId --
     // User-space
@@ -448,7 +323,6 @@ impl SchemaId {
             Self::CAPABILITY_REQUEST_V1,
             Self::CAPABILITY_RESULT_V1,
             Self::AGENT_CONTROL_MESSAGE_V1,
-            Self::LEGACY_ENVELOPE_V0,
         ]
     }
 
@@ -469,53 +343,6 @@ impl SchemaId {
                     .map(|s| s.to_string())
                     .collect(),
             })
-        }
-    }
-
-    /// Map a legacy `EventType` to its corresponding `SchemaId` string.
-    ///
-    /// This is the migration bridge: old code that used `EventType` routing
-    /// can use this to produce an `EnvelopeV2` with the correct schema.
-    pub fn from_event_type(et: &crate::events::types::EventType) -> &'static str {
-        use crate::events::types::EventType;
-        match et {
-            EventType::UserIntent => Self::EVENT_USER_INTENT_V1,
-            EventType::UserFeedback => Self::EVENT_USER_FEEDBACK_V1,
-            EventType::EnvironmentChange => Self::EVENT_ENVIRONMENT_CHANGE_V1,
-            EventType::PerceptionUpdate => Self::EVENT_PERCEPTION_UPDATE_V1,
-            EventType::ToolObservation => Self::EVENT_TOOL_OBSERVATION_V1,
-            EventType::ToolError => Self::EVENT_TOOL_ERROR_V1,
-            EventType::ActionCompleted => Self::EVENT_ACTION_COMPLETED_V1,
-            EventType::MemoryStored => Self::EVENT_MEMORY_STORED_V1,
-            EventType::MemoryRecalled => Self::EVENT_MEMORY_RECALLED_V1,
-            EventType::MemoryCompacted => Self::EVENT_MEMORY_COMPACTED_V1,
-            EventType::IdentityQuery => Self::EVENT_IDENTITY_QUERY_V1,
-            EventType::BoundaryCheck => Self::EVENT_BOUNDARY_CHECK_V1,
-            EventType::ConflictDetected => Self::EVENT_CONFLICT_DETECTED_V1,
-            EventType::RejectionIssued => Self::EVENT_REJECTION_ISSUED_V1,
-            EventType::PlanGenerated => Self::EVENT_PLAN_GENERATED_V1,
-            EventType::ReflectionComplete => Self::EVENT_REFLECTION_COMPLETE_V1,
-            EventType::CriticismRaised => Self::EVENT_CRITICISM_RAISED_V1,
-            EventType::MutationIntent => Self::EVENT_MUTATION_INTENT_V1,
-            EventType::RuntimeCandidate => Self::EVENT_RUNTIME_CANDIDATE_V1,
-            EventType::MigrationStarted => Self::EVENT_MIGRATION_STARTED_V1,
-            EventType::MigrationComplete => Self::EVENT_MIGRATION_COMPLETE_V1,
-            EventType::SubsystemStarted => Self::EVENT_SUBSYSTEM_STARTED_V1,
-            EventType::SubsystemFailed => Self::EVENT_SUBSYSTEM_FAILED_V1,
-            EventType::HealthCheck => Self::EVENT_HEALTH_CHECK_V1,
-            EventType::AgentStarted => Self::EVENT_AGENT_STARTED_V1,
-            EventType::AgentStopped => Self::EVENT_AGENT_STOPPED_V1,
-            EventType::AgentFailed => Self::EVENT_AGENT_FAILED_V1,
-            EventType::ScheduledTaskFired => Self::EVENT_SCHEDULED_TASK_FIRED_V1,
-            EventType::BootPhaseChanged => Self::EVENT_BOOT_PHASE_CHANGED_V1,
-            EventType::ReActIterationStart => Self::EVENT_REACT_ITERATION_START_V1,
-            EventType::ReActIterationEnd => Self::EVENT_REACT_ITERATION_END_V1,
-            EventType::AgentForkCompleted => Self::EVENT_AGENT_FORK_COMPLETED_V1,
-            EventType::RuleExtracted => Self::EVENT_RULE_EXTRACTED_V1,
-            EventType::EvolutionTriggered => Self::EVENT_EVOLUTION_TRIGGERED_V1,
-            EventType::EvolutionResult => Self::EVENT_EVOLUTION_RESULT_V1,
-            EventType::CognitivePulse => Self::EVENT_COGNITIVE_PULSE_V1,
-            EventType::AgentSpawned => Self::EVENT_AGENT_SPAWNED_V1,
         }
     }
 }
@@ -662,77 +489,5 @@ mod tests {
 
         assert!(!env.is_expired_at(0));
         assert!(!env.is_expired_at(u64::MAX));
-    }
-
-    // -- SchemaId::from_event_type migration bridge tests -----------------
-
-    #[test]
-    fn from_event_type_covers_all_variants_without_panic() {
-        use crate::events::types::EventType;
-        // Every variant must map to a distinct non-empty schema string.
-        let variants = [
-            EventType::UserIntent,
-            EventType::UserFeedback,
-            EventType::EnvironmentChange,
-            EventType::PerceptionUpdate,
-            EventType::ToolObservation,
-            EventType::ToolError,
-            EventType::ActionCompleted,
-            EventType::MemoryStored,
-            EventType::MemoryRecalled,
-            EventType::MemoryCompacted,
-            EventType::IdentityQuery,
-            EventType::BoundaryCheck,
-            EventType::ConflictDetected,
-            EventType::RejectionIssued,
-            EventType::PlanGenerated,
-            EventType::ReflectionComplete,
-            EventType::CriticismRaised,
-            EventType::MutationIntent,
-            EventType::RuntimeCandidate,
-            EventType::MigrationStarted,
-            EventType::MigrationComplete,
-            EventType::SubsystemStarted,
-            EventType::SubsystemFailed,
-            EventType::HealthCheck,
-            EventType::AgentStarted,
-            EventType::AgentStopped,
-            EventType::AgentFailed,
-            EventType::ScheduledTaskFired,
-            EventType::BootPhaseChanged,
-            EventType::ReActIterationStart,
-            EventType::ReActIterationEnd,
-            EventType::AgentForkCompleted,
-            EventType::RuleExtracted,
-            EventType::EvolutionTriggered,
-            EventType::EvolutionResult,
-            EventType::CognitivePulse,
-            EventType::AgentSpawned,
-        ];
-        let mut seen = std::collections::HashSet::new();
-        for v in &variants {
-            let schema = SchemaId::from_event_type(v);
-            assert!(!schema.is_empty(), "empty schema for {v:?}");
-            assert!(seen.insert(schema), "duplicate schema '{schema}' for {v:?}");
-        }
-        assert_eq!(seen.len(), variants.len(), "schema count mismatch");
-    }
-
-    #[test]
-    fn from_event_type_schemas_are_valid() {
-        use crate::events::types::EventType;
-        // Spot-check a few well-known mappings.
-        assert_eq!(
-            SchemaId::from_event_type(&EventType::UserIntent),
-            "aletheon.event.user_intent/v1"
-        );
-        assert_eq!(
-            SchemaId::from_event_type(&EventType::ToolObservation),
-            "aletheon.event.tool_observation/v1"
-        );
-        assert_eq!(
-            SchemaId::from_event_type(&EventType::AgentStarted),
-            "aletheon.event.agent_started/v1"
-        );
     }
 }

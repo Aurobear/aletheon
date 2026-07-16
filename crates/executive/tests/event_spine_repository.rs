@@ -50,6 +50,8 @@ fn append_is_idempotent_and_conflicting_retry_is_rejected() {
         .unwrap_err()
         .to_string()
         .contains("conflicts"));
+    assert_eq!(store.metrics().accepted, 2);
+    assert_eq!(store.metrics().rejected, 1);
 }
 
 #[test]

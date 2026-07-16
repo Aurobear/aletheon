@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
+use executive::r#impl::events::{EventReadFilter, SqliteEventSpine};
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::harness_factory::CognitiveSessionFactory;
 use executive::service::turn_coordinator::{TurnCoordinator, TurnExecution};
@@ -42,7 +43,9 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
     let kernel = Arc::new(KernelRuntime::new());
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = TurnCoordinator::new(kernel.clone(), store.clone());
+    let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
+    let coordinator =
+        TurnCoordinator::with_event_spine(kernel.clone(), store.clone(), event_spine.clone());
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await
@@ -119,6 +122,18 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
         items[4].payload,
         ItemPayload::AssistantMessage { .. }
     ));
+    let events = event_spine
+        .read_tree(
+            fabric::EventTreeId::for_root_session("success"),
+            EventReadFilter {
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(events.len(), items.len());
+    assert_eq!(events[0].position.sequence, fabric::TreeSequence(1));
+    assert_eq!(events[4].position.sequence, fabric::TreeSequence(5));
 }
 
 #[tokio::test]

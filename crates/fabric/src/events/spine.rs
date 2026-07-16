@@ -36,6 +36,15 @@ macro_rules! uuid_id {
 uuid_id!(EventTreeId);
 uuid_id!(EventId);
 
+impl EventTreeId {
+    /// Stable tree identity for a root Session. Agent descendants use this
+    /// identifier so their events share one ordered causal spine.
+    pub fn for_root_session(root_session_id: &str) -> Self {
+        const NAMESPACE: Uuid = Uuid::from_u128(0x46552d8e_ebda_4fe2_88cc_6bb139ba498e);
+        Self(Uuid::new_v5(&NAMESPACE, root_session_id.as_bytes()))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ParentEventId(pub EventId);
 

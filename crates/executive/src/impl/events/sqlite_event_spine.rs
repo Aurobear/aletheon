@@ -1,4 +1,8 @@
-use std::{path::Path, sync::Mutex};
+use std::{
+    path::Path,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use anyhow::{bail, Context, Result};
 use fabric::{
@@ -6,6 +10,13 @@ use fabric::{
     UnsequencedEvent,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EventAppendMetrics {
+    pub accepted: u64,
+    pub rejected: u64,
+    pub backpressure_rejections: u64,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct EventReadFilter {
@@ -17,7 +28,14 @@ pub struct EventReadFilter {
 }
 
 pub struct SqliteEventSpine {
-    connection: Mutex<Connection>,
+    connection: parking_lot::Mutex<Connection>,
+    accepted: AtomicU64,
+    rejected: AtomicU64,
+    backpressure_rejections: AtomicU64,
+}
+
+pub fn default_event_spine_path() -> std::path::PathBuf {
+    fabric::paths::xdg_data_dir().join("event-spine-v1.db")
 }
 
 impl SqliteEventSpine {
@@ -46,8 +64,19 @@ impl SqliteEventSpine {
                ON spine_events(tree_id, sequence, schema_id, visibility);",
         )?;
         Ok(Self {
-            connection: Mutex::new(connection),
+            connection: parking_lot::Mutex::new(connection),
+            accepted: AtomicU64::new(0),
+            rejected: AtomicU64::new(0),
+            backpressure_rejections: AtomicU64::new(0),
         })
+    }
+
+    pub fn metrics(&self) -> EventAppendMetrics {
+        EventAppendMetrics {
+            accepted: self.accepted.load(Ordering::Relaxed),
+            rejected: self.rejected.load(Ordering::Relaxed),
+            backpressure_rejections: self.backpressure_rejections.load(Ordering::Relaxed),
+        }
     }
 
     pub fn read_tree(
@@ -62,7 +91,7 @@ impl SqliteEventSpine {
             .map_or(i64::MAX as u64, |value| value.0.min(i64::MAX as u64));
         let schema = filter.schema.map(|value| value.0);
         let visibility = filter.visibility.map(visibility_name);
-        let connection = self.connection.lock().unwrap();
+        let connection = self.connection.lock();
         let mut statement = connection.prepare(
             "SELECT event_json FROM spine_events
              WHERE tree_id=?1 AND sequence>=?2 AND sequence<=?3
@@ -91,9 +120,23 @@ impl SqliteEventSpine {
 
 impl EventSpine for SqliteEventSpine {
     fn append(&self, event: UnsequencedEvent) -> Result<SpineEvent> {
+        let result = self.append_inner(event);
+        match &result {
+            Ok(_) => self.accepted.fetch_add(1, Ordering::Relaxed),
+            Err(_) => self.rejected.fetch_add(1, Ordering::Relaxed),
+        };
+        result
+    }
+}
+
+impl SqliteEventSpine {
+    fn append_inner(&self, event: UnsequencedEvent) -> Result<SpineEvent> {
         event.validate()?;
         let input_json = serde_json::to_string(&event)?;
-        let mut connection = self.connection.lock().unwrap();
+        let Some(mut connection) = self.connection.try_lock_for(Duration::from_secs(1)) else {
+            self.backpressure_rejections.fetch_add(1, Ordering::Relaxed);
+            bail!("event spine overloaded: append admission timed out");
+        };
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         if let Some((existing_input, existing_event)) = transaction

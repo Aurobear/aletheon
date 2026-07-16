@@ -12,7 +12,7 @@ use fabric::{
     AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
     AgentId, AgentListRequest, AgentMessageDeliveryState, AgentMessagePayload, AgentRunStatus,
     AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentWaitRequest, AgoraVersion,
-    CancelReason, Clock, ContextBinding, ExitReason, NamespaceId, OperationExitReason,
+    CancelReason, Clock, ContextBinding, EventSpine, ExitReason, NamespaceId, OperationExitReason,
     OperationKind, OperationRequest, ProcessId, ProcessSignal, SpawnSpec, Timer,
 };
 use tokio::sync::{watch, Mutex};
@@ -39,7 +39,7 @@ pub use context_fork::{
 };
 pub use execution::{
     AgentEventSink, AgentRuntimeEvent, AgentRuntimeInput, AgentRuntimeLauncher,
-    AgentRuntimeRegistry, CompatibilityRuntimeLauncher, NoopAgentEventSink,
+    AgentRuntimeRegistry, CompatibilityRuntimeLauncher, NoopAgentEventSink, SpineAgentEventSink,
 };
 pub use live_runs::{LiveAgentRun, LiveAgentRuns};
 pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
@@ -91,6 +91,7 @@ pub struct AgentControlService {
     admission: Arc<dyn AgentAdmissionPort>,
     runtimes: Arc<AgentRuntimeRegistry>,
     events: Arc<dyn AgentEventSink>,
+    event_spine: Arc<dyn EventSpine>,
     timer: Arc<dyn AgentWaitTimer>,
     live: Arc<LiveAgentRuns>,
     tasks: Mutex<JoinSet<()>>,
@@ -113,6 +114,10 @@ impl AgentControlService {
         admission: Arc<dyn AgentAdmissionPort>,
         runtimes: Arc<AgentRuntimeRegistry>,
     ) -> Self {
+        let event_spine = Arc::new(
+            crate::r#impl::events::SqliteEventSpine::open(":memory:")
+                .expect("in-memory Agent event spine"),
+        );
         Self {
             kernel,
             clock,
@@ -120,6 +125,7 @@ impl AgentControlService {
             admission,
             runtimes,
             events: Arc::new(NoopAgentEventSink),
+            event_spine,
             timer: Arc::new(SystemAgentWaitTimer),
             live: Arc::new(LiveAgentRuns::default()),
             tasks: Mutex::new(JoinSet::new()),
@@ -129,6 +135,11 @@ impl AgentControlService {
 
     pub fn with_event_sink(mut self, events: Arc<dyn AgentEventSink>) -> Self {
         self.events = events;
+        self
+    }
+
+    pub fn with_event_spine(mut self, event_spine: Arc<dyn EventSpine>) -> Self {
+        self.event_spine = event_spine;
         self
     }
 
@@ -453,12 +464,12 @@ impl AgentControlPort for AgentControlService {
         };
         let mut admission = self
             .admission
-            .reserve(AgentAdmissionRequest {
-                spawn: &request,
-                depth: identity.depth,
-                parent_profile: identity.parent_profile.as_ref(),
+            .reserve(AgentAdmissionRequest::new(
+                &request,
+                identity.depth,
+                identity.parent_profile.as_ref(),
                 storage,
-            })
+            ))
             .await?;
 
         let deadline = Some(fabric::MonoDeadline::after(
@@ -648,6 +659,7 @@ impl AgentControlPort for AgentControlService {
         let repository = self.repository.clone();
         let live = self.live.clone();
         let events = self.events.clone();
+        let event_spine = self.event_spine.clone();
         let runtime_input = AgentRuntimeInput {
             request,
             handle: handle.clone(),
@@ -658,6 +670,11 @@ impl AgentControlPort for AgentControlService {
             inbox,
             cancellation,
         };
+        let events: Arc<dyn AgentEventSink> = Arc::new(SpineAgentEventSink::new(
+            events,
+            event_spine,
+            runtime_input.clone(),
+        ));
         self.tasks.lock().await.spawn(async move {
             run_agent(
                 kernel,
@@ -1000,7 +1017,9 @@ async fn run_agent(
     }
     let _ = kernel.terminate_process(process, process_exit).await;
     let settlement = match settlement_usage {
-        Some(usage) if next == AgentRunStatus::Succeeded => admission.settle(&usage).await,
+        Some(usage) if next == AgentRunStatus::Succeeded => {
+            AgentAdmissionLease::settle(&mut *admission, &usage).await
+        }
         _ => admission.revoke().await,
     };
     if let Err(error) = settlement {

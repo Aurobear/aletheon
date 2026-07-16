@@ -276,43 +276,6 @@ pub fn system_wall_now() -> WallTime {
     WallTime(system_millis_now() as i64)
 }
 
-/// Extension trait for converting Events into Envelopes.
-pub trait EventEnvelopeExt {
-    /// Wrap this Event as an Envelope payload.
-    /// The Event is serialized to JSON for cross-process compatibility.
-    fn into_envelope(self, source: Endpoint, target: Target, pattern: Pattern) -> Envelope;
-
-    /// Wrap this Event as an Envelope payload with an explicit timestamp.
-    fn into_envelope_at(
-        self,
-        source: Endpoint,
-        target: Target,
-        pattern: Pattern,
-        timestamp: WallTime,
-    ) -> Envelope;
-}
-
-impl<E: crate::events::types::Event> EventEnvelopeExt for E {
-    fn into_envelope(self, source: Endpoint, target: Target, pattern: Pattern) -> Envelope {
-        let priority = self.priority();
-        let json = self.to_json();
-        Envelope::new(source, target, pattern, Payload::Json(json)).with_priority(priority)
-    }
-
-    fn into_envelope_at(
-        self,
-        source: Endpoint,
-        target: Target,
-        pattern: Pattern,
-        timestamp: WallTime,
-    ) -> Envelope {
-        let priority = self.priority();
-        let json = self.to_json();
-        Envelope::new_at(source, target, pattern, Payload::Json(json), timestamp)
-            .with_priority(priority)
-    }
-}
-
 /// Create a request envelope with JSON payload.
 pub fn json_request(
     source: Endpoint,

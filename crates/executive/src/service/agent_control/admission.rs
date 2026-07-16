@@ -25,6 +25,22 @@ pub struct AgentAdmissionRequest<'a> {
     pub storage: AgentStorageRequest,
 }
 
+impl<'a> AgentAdmissionRequest<'a> {
+    pub fn new(
+        spawn: &'a AgentSpawnRequest,
+        depth: u16,
+        parent_profile: Option<&'a AgentProfileId>,
+        storage: AgentStorageRequest,
+    ) -> Self {
+        Self {
+            spawn,
+            depth,
+            parent_profile,
+            storage,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AgentAdmissionMetrics {
     pub roots: usize,

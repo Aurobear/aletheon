@@ -12,7 +12,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use crate::events::types::EventType;
 use crate::ipc::envelope::*;
 use crate::ipc::envelope_v2::{EnvelopeV2, SchemaId, Target as V2Target};
 use crate::ipc::protocol::Protocol;
@@ -50,6 +49,7 @@ impl Default for BusConfig {
 pub struct CommunicationBus {
     /// Intra-process transport.
     in_process: Arc<InProcessTransport>,
+    event_bus: Arc<KernelEventBus>,
 
     /// Cross-process transports for `Target::Agent(pid)` routing.
     /// Each transport is tested via `can_reach()` before sending.
@@ -74,12 +74,13 @@ impl CommunicationBus {
     /// Create a new CommunicationBus with custom config.
     pub fn with_config(config: BusConfig) -> Self {
         let event_bus = Arc::new(KernelEventBus::new(config.log_capacity));
-        let in_process = Arc::new(InProcessTransport::new(event_bus));
+        let in_process = Arc::new(InProcessTransport::new(event_bus.clone()));
         let request_response = Arc::new(RequestResponseProtocol::new(in_process.clone()));
         let pubsub = Arc::new(PubSubProtocol::new(in_process.clone()));
 
         Self {
             in_process,
+            event_bus,
             transports: Vec::new(),
             request_response,
             pubsub,
@@ -153,42 +154,21 @@ impl CommunicationBus {
 
     /// Publish an `EnvelopeV2` through the bus.
     ///
-    /// This is the preferred publishing API for new code. It converts the
-    /// V2 envelope to the legacy `Envelope` format for transport, preserving
-    /// the schema in the payload metadata so downstream consumers can
-    /// reconstruct the original.
+    /// This is the canonical event publication API. No legacy-envelope
+    /// coercion occurs on this path.
     pub async fn publish_envelope_v2(&self, env: EnvelopeV2) -> Result<()> {
-        // Embed schema + priority in the legacy envelope payload.
-        let payload = serde_json::json!({
-            "_schema": env.schema.0,
-            "_source": env.source.0,
-            "_target": env.target.0,
-            "_priority": env.priority,
-            "data": env.payload,
-        });
-        let topic = env.schema.0.clone();
-        let legacy = Envelope::new(
-            Endpoint::System,
-            Target::Topic(topic),
-            Pattern::Publish,
-            Payload::Json(payload),
-        );
-        self.publish(legacy).await
+        self.event_bus.publish(env).await
     }
 
-    /// Publish an `EnvelopeV2` for a specific event type.
-    ///
-    /// Convenience method that constructs an `EnvelopeV2` with the correct
-    /// `SchemaId` for the given `EventType` and publishes it.
+    /// Publish a payload under an explicit versioned schema.
     pub async fn publish_event_v2(
         &self,
-        event_type: &EventType,
+        schema: SchemaId,
         source: impl Into<String>,
         payload: serde_json::Value,
     ) -> Result<()> {
-        let schema = SchemaId::from_event_type(event_type);
         let env = EnvelopeV2::new(
-            SchemaId::from(schema),
+            schema,
             V2Target(source.into()),
             V2Target("broadcast".into()),
             crate::ipc::envelope_v2::DeliveryPattern::FanOut,
@@ -196,6 +176,10 @@ impl CommunicationBus {
             payload,
         );
         self.publish_envelope_v2(env).await
+    }
+
+    pub fn subscribe_envelope_v2(&self, schema: SchemaId) -> broadcast::Receiver<EnvelopeV2> {
+        self.event_bus.subscribe_channel(schema)
     }
 
     /// Send an envelope directly (point-to-point or topic).

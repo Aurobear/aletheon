@@ -859,8 +859,18 @@ impl RequestHandler {
             )
             .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         );
-        let agent_control_service =
-            Arc::new(crate::service::agent_control::AgentControlService::new(
+        let canonical_event_spine = Arc::new(
+            crate::r#impl::events::SqliteEventSpine::open(
+                crate::r#impl::events::default_event_spine_path(),
+            )
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "canonical event spine unavailable; using process-local fallback");
+                crate::r#impl::events::SqliteEventSpine::open(":memory:")
+                    .expect("in-memory event spine")
+            }),
+        );
+        let agent_control_service = Arc::new(
+            crate::service::agent_control::AgentControlService::new(
                 kernel.clone(),
                 clock.clone(),
                 agent_repository,
@@ -872,7 +882,9 @@ impl RequestHandler {
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?,
                 ),
                 agent_runtimes,
-            ));
+            )
+            .with_event_spine(canonical_event_spine.clone()),
+        );
         let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
         let agent_shutdown_cancel = cancel_token.clone();
         tokio::spawn(async move {
@@ -899,10 +911,13 @@ impl RequestHandler {
                     crate::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
                         .expect("in-memory canonical session store")
                 });
-        let coordinator = Arc::new(crate::service::turn_coordinator::TurnCoordinator::new(
-            kernel.clone(),
-            Arc::new(canonical_store),
-        ));
+        let coordinator = Arc::new(
+            crate::service::turn_coordinator::TurnCoordinator::with_event_spine(
+                kernel.clone(),
+                Arc::new(canonical_store),
+                canonical_event_spine,
+            ),
+        );
         let session_service = Arc::new(crate::service::session_service::SessionService::new(
             coordinator.store(),
             coordinator.active_index(),

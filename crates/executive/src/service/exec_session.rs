@@ -174,9 +174,11 @@ impl ExecSessionBuilder {
         if let Some(parent) = session_db.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let coordinator = Arc::new(TurnCoordinator::new(
+        let event_db = crate::r#impl::events::default_event_spine_path();
+        let coordinator = Arc::new(TurnCoordinator::with_event_spine(
             kernel.clone(),
             Arc::new(CanonicalSessionStore::open(session_db)?),
+            Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?),
         ));
 
         let services = Arc::new(ExecTurnServices {

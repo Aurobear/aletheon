@@ -11,16 +11,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
-use parking_lot::RwLock;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::events::types::{Event, EventType, Priority};
 use crate::ipc::envelope::*;
 use crate::ipc::transport::{HealthStatus, Transport, TransportHealth, TransportKind};
 use crate::Clock;
 
-use crate::event_log::EventLog;
-use crate::events::routing_policy::{RouteAction, RoutingPolicy};
 use crate::ipc::bus::kernel_bus::KernelEventBus;
 
 /// Priority-aware channel wrapper for envelope delivery.
@@ -161,9 +157,6 @@ pub struct InProcessTransport {
     /// KernelEventBus for event dispatch.
     event_bus: Arc<KernelEventBus>,
 
-    /// Event log (shared with KernelEventBus).
-    event_log: Arc<RwLock<EventLog>>,
-
     /// Global sequence counter for priority ordering.
     sequence: std::sync::atomic::AtomicU64,
 
@@ -178,13 +171,11 @@ pub struct InProcessTransport {
 impl InProcessTransport {
     /// Create a new InProcessTransport wrapping an existing KernelEventBus.
     pub fn new(event_bus: Arc<KernelEventBus>) -> Self {
-        let event_log = event_bus.event_log();
         Self {
             mailboxes: DashMap::new(),
             agent_mailboxes: DashMap::new(),
             topics: DashMap::new(),
             event_bus,
-            event_log,
             sequence: std::sync::atomic::AtomicU64::new(0),
             metrics: TransportMetrics::new(),
             clock: None,
@@ -200,19 +191,12 @@ impl InProcessTransport {
     /// Create a new InProcessTransport with cross-process transport bridging.
     ///
     /// The provided transport is passed to KernelEventBus for event bridging.
-    pub fn with_transport(event_bus: Arc<KernelEventBus>, transport: Arc<dyn Transport>) -> Self {
-        let event_log = event_bus.event_log();
-        // Create a new KernelEventBus with the transport for bridging
-        let bridged_bus = Arc::new(KernelEventBus::with_transport(
-            event_log.read().capacity(),
-            transport,
-        ));
+    pub fn with_transport(event_bus: Arc<KernelEventBus>, _transport: Arc<dyn Transport>) -> Self {
         Self {
             mailboxes: DashMap::new(),
             agent_mailboxes: DashMap::new(),
             topics: DashMap::new(),
-            event_bus: bridged_bus,
-            event_log,
+            event_bus,
             sequence: std::sync::atomic::AtomicU64::new(0),
             metrics: TransportMetrics::new(),
             clock: None,
@@ -258,12 +242,6 @@ impl InProcessTransport {
     /// Deliver an envelope to its target.
     async fn deliver(&self, envelope: Envelope) -> Result<()> {
         let start = std::time::Instant::now();
-
-        // Record in event log
-        {
-            let mut log = self.event_log.write();
-            log.record(&OwnedEnvelopeEventAdapter::new(&envelope));
-        }
 
         let mut seq = self
             .sequence
@@ -351,18 +329,6 @@ impl Transport for InProcessTransport {
             anyhow::bail!("envelope expired");
         }
 
-        // Apply routing policy for Critical priority
-        if envelope.priority == Priority::Critical {
-            match RoutingPolicy::evaluate(&EventType::UserIntent, &envelope.priority) {
-                RouteAction::RequireSelfFieldReview => {
-                    tracing::warn!(
-                        "Critical envelope requires SelfField review (Phase 1: delivering anyway)"
-                    );
-                }
-                RouteAction::FastPath => {}
-            }
-        }
-
         self.deliver(envelope).await
     }
 
@@ -393,67 +359,5 @@ impl Transport for InProcessTransport {
             queue_depth: 0,                                   // Not tracked for in-process
             error_rate,
         }
-    }
-}
-
-/// Owned adapter to implement Event trait for Envelope (for event log recording).
-struct OwnedEnvelopeEventAdapter {
-    id: u64,
-    priority: Priority,
-    source: String,
-    pattern: String,
-    target: String,
-    json: serde_json::Value,
-}
-
-impl OwnedEnvelopeEventAdapter {
-    fn new(envelope: &Envelope) -> Self {
-        let source = match &envelope.source {
-            Endpoint::Module(m) => match m {
-                ModuleId::Cognit => "cognit".to_string(),
-                ModuleId::Dasein => "dasein".to_string(),
-                ModuleId::Mnemosyne => "mnemosyne".to_string(),
-                ModuleId::Corpus => "corpus".to_string(),
-                ModuleId::Metacog => "metacog".to_string(),
-                ModuleId::Executive => "executive".to_string(),
-                ModuleId::Perception => "perception".to_string(),
-            },
-            Endpoint::Agent(_) => "agent".to_string(),
-            Endpoint::System => "system".to_string(),
-        };
-        Self {
-            id: envelope.id,
-            priority: envelope.priority,
-            source,
-            pattern: format!("{:?}", envelope.pattern),
-            target: format!("{:?}", envelope.target),
-            json: serde_json::to_value(envelope).unwrap_or_default(),
-        }
-    }
-}
-
-impl Event for OwnedEnvelopeEventAdapter {
-    fn event_type(&self) -> EventType {
-        EventType::UserIntent
-    }
-
-    fn priority(&self) -> Priority {
-        self.priority
-    }
-
-    fn source(&self) -> &str {
-        &self.source
-    }
-
-    fn payload(&self) -> &dyn std::any::Any {
-        &()
-    }
-
-    fn summary(&self) -> String {
-        format!("Envelope {} {} {}", self.id, self.pattern, self.target)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        self.json.clone()
     }
 }

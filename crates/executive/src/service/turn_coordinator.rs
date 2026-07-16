@@ -5,9 +5,11 @@ use std::{collections::HashMap, future::Future, sync::Arc};
 use aletheon_kernel::KernelRuntime;
 use anyhow::{anyhow, Result};
 use fabric::{
-    CancelReason, ItemId, ItemPayload, ItemRecord, MonoDeadline, OperationKind, OperationManager,
-    OperationRequest, SessionAppendStore, SessionId, SessionRecord, SessionStatus, TurnId,
-    TurnMetrics, TurnRequest, TurnResult, TurnStop, SESSION_SCHEMA_VERSION,
+    CancelReason, EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity,
+    EventPayload, EventSpine, EventTreeId, EventVisibility, ItemId, ItemPayload, ItemRecord,
+    MonoDeadline, NamespaceId, OperationKind, OperationManager, OperationRequest, SchemaId,
+    SessionAppendStore, SessionId, SessionRecord, SessionStatus, TurnId, TurnMetrics, TurnRequest,
+    TurnResult, TurnStop, UnsequencedEvent, SESSION_SCHEMA_VERSION,
 };
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -36,15 +38,29 @@ pub struct TurnCoordinator {
     kernel: Arc<KernelRuntime>,
     clock: Arc<dyn fabric::Clock>,
     store: Arc<dyn SessionAppendStore>,
+    event_spine: Arc<dyn EventSpine>,
     active: Arc<Mutex<HashMap<String, ActiveTurn>>>,
 }
 
 impl TurnCoordinator {
     pub fn new(kernel: Arc<KernelRuntime>, store: Arc<dyn SessionAppendStore>) -> Self {
+        let event_spine = Arc::new(
+            crate::r#impl::events::SqliteEventSpine::open(":memory:")
+                .expect("in-memory event spine"),
+        );
+        Self::with_event_spine(kernel, store, event_spine)
+    }
+
+    pub fn with_event_spine(
+        kernel: Arc<KernelRuntime>,
+        store: Arc<dyn SessionAppendStore>,
+        event_spine: Arc<dyn EventSpine>,
+    ) -> Self {
         Self {
             clock: kernel.clock(),
             kernel,
             store,
+            event_spine,
             active: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -264,6 +280,37 @@ impl TurnCoordinator {
         payload: ItemPayload,
     ) -> Result<()> {
         let current = *sequence;
+        let visibility = match &payload {
+            ItemPayload::UserMessage { .. }
+            | ItemPayload::AssistantMessage { .. }
+            | ItemPayload::ToolCall { .. }
+            | ItemPayload::ToolResult { .. } => EventVisibility::ModelVisible,
+            _ => EventVisibility::Control,
+        };
+        let payload_json = serde_json::to_value(&payload)?;
+        let tree_id = EventTreeId::for_root_session(&session.0);
+        self.event_spine.append(UnsequencedEvent {
+            tree_id,
+            event_id: EventId::new(),
+            parent: None,
+            identity: EventIdentity {
+                root_session_id: session.0.clone(),
+                session_id: session.0.clone(),
+                agent_id: None,
+            },
+            envelope: EnvelopeV2::new(
+                SchemaId(SchemaId::TURN_EVENT_V1.into()),
+                EnvelopeV2Target("turn-coordinator".into()),
+                EnvelopeV2Target(format!("session:{}", session.0)),
+                EnvelopeV2Delivery::Direct,
+                NamespaceId(format!("session:{}", session.0)),
+                payload_json.clone(),
+            ),
+            visibility,
+            payload: EventPayload::Inline {
+                value: payload_json,
+            },
+        })?;
         self.store
             .append(
                 session,

@@ -17,7 +17,7 @@ impl ReActLoop {
         llm: &L,
         tool_defs: &[ToolDefinition],
         execute_tool: F,
-        event_sink: &dyn EventSink,
+        event_sink: &impl EventSink,
     ) -> anyhow::Result<(String, TurnMetrics)>
     where
         L: LlmProvider,

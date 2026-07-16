@@ -3,9 +3,11 @@ use std::sync::Arc;
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
+use executive::r#impl::events::{EventReadFilter, SqliteEventSpine};
 use executive::service::agent_control::{
-    AgentCandidateProjector, AgentCandidateSubmissionPort, AgentContextProjection,
-    AgentRuntimeEvent, AgentRuntimeInbox, AgentRuntimeInput,
+    AgentCandidateProjector, AgentCandidateSubmissionPort, AgentContextProjection, AgentEventSink,
+    AgentRuntimeEvent, AgentRuntimeInbox, AgentRuntimeInput, NoopAgentEventSink,
+    SpineAgentEventSink,
 };
 use executive::service::conscious_core_ports::LatestConsciousContextPort;
 use executive::service::conscious_workspace::ConsciousWorkspaceRegistry;
@@ -102,6 +104,52 @@ fn progress_is_private_bounded_and_never_targets_root() {
             if value.what.len() <= 4_100
                 && value.attribution == WorkspaceAttribution::ChildAgent { process: input.handle.process_id }
     ));
+}
+
+#[tokio::test]
+async fn agent_lifecycle_and_tool_events_append_to_root_tree() {
+    let input = input();
+    let spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
+    let sink = SpineAgentEventSink::new(Arc::new(NoopAgentEventSink), spine.clone(), input.clone());
+    sink.emit(AgentRuntimeEvent::Started {
+        agent_id: input.handle.agent_id,
+        process_id: input.handle.process_id,
+        operation_id: input.handle.operation_id,
+    })
+    .await;
+    sink.emit(AgentRuntimeEvent::Tool {
+        agent_id: input.handle.agent_id,
+        process_id: input.handle.process_id,
+        operation_id: input.handle.operation_id,
+        name: "file_read".into(),
+        is_error: false,
+    })
+    .await;
+    sink.emit(AgentRuntimeEvent::Terminal {
+        agent_id: input.handle.agent_id,
+        process_id: input.handle.process_id,
+        operation_id: input.handle.operation_id,
+        status: AgentRunStatus::Succeeded,
+        result: None,
+    })
+    .await;
+
+    let events = spine
+        .read_tree(
+            fabric::EventTreeId::for_root_session(&input.handle.root_agent_id.0.to_string()),
+            EventReadFilter {
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].schema.0, fabric::SchemaId::EVENT_AGENT_STARTED_V1);
+    assert_eq!(
+        events[1].schema.0,
+        fabric::SchemaId::EVENT_TOOL_OBSERVATION_V1
+    );
+    assert_eq!(events[2].schema.0, fabric::SchemaId::EVENT_AGENT_STOPPED_V1);
 }
 
 #[test]

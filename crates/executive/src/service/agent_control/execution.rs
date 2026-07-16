@@ -4,7 +4,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentHandle, AgentId, AgentResult, AgentRunStatus,
-    AgentSpawnRequest, AgoraSpaceId, OperationId, ProcessId, RuntimeId,
+    AgentSpawnRequest, AgoraSpaceId, EnvelopeV2, EventId, EventIdentity, EventPayload, EventSpine,
+    EventTreeId, EventVisibility, NamespaceId, OperationId, ProcessId, RuntimeId, UnsequencedEvent,
 };
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -54,6 +55,99 @@ pub struct NoopAgentEventSink;
 #[async_trait]
 impl AgentEventSink for NoopAgentEventSink {
     async fn emit(&self, _event: AgentRuntimeEvent) {}
+}
+
+pub struct SpineAgentEventSink {
+    downstream: Arc<dyn AgentEventSink>,
+    spine: Arc<dyn EventSpine>,
+    input: AgentRuntimeInput,
+}
+
+impl SpineAgentEventSink {
+    pub fn new(
+        downstream: Arc<dyn AgentEventSink>,
+        spine: Arc<dyn EventSpine>,
+        input: AgentRuntimeInput,
+    ) -> Self {
+        Self {
+            downstream,
+            spine,
+            input,
+        }
+    }
+
+    fn append(&self, event: &AgentRuntimeEvent) -> anyhow::Result<()> {
+        let (schema, kind, extra) = match event {
+            AgentRuntimeEvent::Started { .. } => (
+                fabric::SchemaId::EVENT_AGENT_STARTED_V1,
+                "started",
+                serde_json::Value::Null,
+            ),
+            AgentRuntimeEvent::Progress { summary, .. } => (
+                fabric::SchemaId::TURN_EVENT_V1,
+                "progress",
+                serde_json::json!({"summary": summary.chars().take(4096).collect::<String>()}),
+            ),
+            AgentRuntimeEvent::Tool { name, is_error, .. } => (
+                fabric::SchemaId::EVENT_TOOL_OBSERVATION_V1,
+                "tool",
+                serde_json::json!({"name": name, "is_error": is_error}),
+            ),
+            AgentRuntimeEvent::Terminal { status, result, .. } => (
+                if *status == AgentRunStatus::Failed {
+                    fabric::SchemaId::EVENT_AGENT_FAILED_V1
+                } else {
+                    fabric::SchemaId::EVENT_AGENT_STOPPED_V1
+                },
+                "terminal",
+                serde_json::json!({
+                    "status": format!("{status:?}"),
+                    "has_result": result.is_some(),
+                }),
+            ),
+        };
+        let payload = serde_json::json!({
+            "kind": kind,
+            "agent_id": self.input.handle.agent_id.0,
+            "process_id": self.input.handle.process_id.0,
+            "operation_id": self.input.handle.operation_id.0,
+            "detail": extra,
+        });
+        let root = self.input.handle.root_agent_id.0.to_string();
+        let mut envelope = EnvelopeV2::new(
+            fabric::SchemaId(schema.into()),
+            fabric::EnvelopeV2Target(format!("agent:{}", self.input.handle.agent_id.0)),
+            fabric::EnvelopeV2Target(format!("agent-tree:{root}")),
+            fabric::EnvelopeV2Delivery::FanOut,
+            NamespaceId(format!("agent-tree:{root}")),
+            payload.clone(),
+        );
+        envelope = envelope.with_operation_id(self.input.handle.operation_id);
+        self.spine.append(UnsequencedEvent {
+            tree_id: EventTreeId::for_root_session(&root),
+            event_id: EventId::new(),
+            parent: None,
+            identity: EventIdentity {
+                root_session_id: root.clone(),
+                session_id: root,
+                agent_id: Some(self.input.handle.agent_id.0.to_string()),
+            },
+            envelope,
+            visibility: EventVisibility::Control,
+            payload: EventPayload::Inline { value: payload },
+        })?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AgentEventSink for SpineAgentEventSink {
+    async fn emit(&self, event: AgentRuntimeEvent) {
+        if let Err(error) = self.append(&event) {
+            tracing::warn!(%error, "canonical Agent event append rejected");
+        }
+        self.downstream.emit(event).await;
+    }
 }
 
 #[derive(Debug, Clone)]

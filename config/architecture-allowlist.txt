@@ -39,10 +39,6 @@ legacy_event|crates/executive/src/impl/engine/modules/perception_module.rs|use f
 legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs| let resp_envelope = Envelope::response(&envelope, serialize_response(&response));
 legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs|use fabric::envelope::*;
 legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs|use fabric::envelope::Payload;
-legacy_event|crates/fabric/src/ipc/bus/communication_bus.rs| let legacy = Envelope::new(
-legacy_event|crates/fabric/src/ipc/bus/kernel_bus.rs| let envelope = crate::ipc::envelope::Envelope::new_at(
-legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::new(source, target, pattern, Payload::Json(json)).with_priority(priority)
-legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::new_at(source, target, pattern, Payload::Json(json), timestamp)
 legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::publish(source, topic, Payload::Json(value))
 legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::request(source, target, Payload::Json(value), timeout)
 legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::response(request, Payload::Json(value))
