@@ -75,7 +75,7 @@ pub struct ExecLaunch {
     pub model: String,
     pub max_turns: usize,
     pub sandbox: String,
-    pub working_dir: PathBuf,
+    pub workspace: WorkspacePolicy,
     pub config: Option<PathBuf>,
     pub json: bool,
 }
@@ -87,10 +87,7 @@ pub struct ExecHostOutcome {
 }
 
 pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
-    let working_dir = request
-        .working_dir
-        .canonicalize()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
+    let working_dir = request.workspace.cwd().to_path_buf();
     let mut builder = ExecSessionBuilder::new(working_dir.clone())
         .with_model(request.model.clone())
         .with_max_turns(request.max_turns)
@@ -115,8 +112,7 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
                         },
                         ConnectionId::new(),
                         ThreadId(thread_id),
-                        WorkspacePolicy::from_resolved_roots(working_dir.clone(), Vec::new())
-                            .map_err(anyhow::Error::msg)?,
+                        request.workspace.clone(),
                         PermissionProfileId::workspace_write(),
                         ApprovalPolicy::OnRequest,
                     )

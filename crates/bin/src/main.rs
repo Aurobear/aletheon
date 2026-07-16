@@ -8,6 +8,7 @@
 //!   version      Print version + git commit
 
 use aletheon_bin::endpoint::{resolve_client_socket, resolve_daemon_socket};
+use aletheon_bin::workspace::WorkspaceArgs;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use fabric::paths::ProcessRuntimeEnvironment;
@@ -28,6 +29,9 @@ struct Cli {
     /// Socket path (default: $XDG_RUNTIME_DIR/aletheon/aletheon.sock)
     #[arg(short, long)]
     socket: Option<PathBuf>,
+
+    #[command(flatten)]
+    workspace: WorkspaceArgs,
 
     /// Path to write TUI frame snapshots (test instrumentation)
     #[arg(long, hide = true)]
@@ -87,9 +91,6 @@ enum Commands {
         /// Sandbox preference: auto, require, or forbid
         #[arg(long, default_value = "auto")]
         sandbox: String,
-        /// Working directory for tool execution
-        #[arg(short = 'd', long, default_value = ".")]
-        working_dir: PathBuf,
         /// Path to config file
         #[arg(short, long)]
         config: Option<PathBuf>,
@@ -106,6 +107,17 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let workspace = match (&cli.command, &cli.message) {
+        (Some(Commands::Exec { .. }), _) | (None, _) => {
+            let process_cwd = std::env::current_dir()
+                .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
+            Some(cli.workspace.resolve(
+                &process_cwd,
+                &fabric::PermissionProfileId::workspace_write(),
+            )?)
+        }
+        _ => None,
+    };
 
     match (&cli.command, &cli.message) {
         // Subcommand-driven paths
@@ -142,7 +154,6 @@ async fn main() -> Result<()> {
                 model,
                 max_turns,
                 sandbox,
-                working_dir,
                 config,
                 output,
             }),
@@ -155,7 +166,7 @@ async fn main() -> Result<()> {
                     model: model.clone(),
                     max_turns: *max_turns,
                     sandbox: sandbox.clone(),
-                    working_dir: working_dir.clone(),
+                    workspace: workspace.clone().expect("exec workspace was resolved"),
                     config: config.clone(),
                     json: output == "json",
                 })
@@ -178,12 +189,16 @@ async fn main() -> Result<()> {
         }
         // -m flag: single message to daemon
         (None, Some(msg)) => {
+            let workspace = workspace.expect("message workspace was resolved");
+            std::env::set_current_dir(workspace.cwd())?;
             let socket = resolve_client_socket(cli.socket.clone(), &ProcessRuntimeEnvironment)?;
             interact::cli::single_message(&socket, msg).await
         }
         // No subcommand, no -m: TUI mode. The unified binary owns argument
         // parsing, so pass instrumentation through instead of parsing twice.
         (None, None) => {
+            let workspace = workspace.expect("TUI workspace was resolved");
+            std::env::set_current_dir(workspace.cwd())?;
             let socket = resolve_client_socket(cli.socket.clone(), &ProcessRuntimeEnvironment)?;
             let config = interact::tui::TestConfig {
                 test_input: cli.test_input,

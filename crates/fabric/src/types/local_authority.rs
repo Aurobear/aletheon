@@ -1,7 +1,11 @@
 //! Authenticated local principal and workspace authority contracts.
 
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    io,
+    path::{Path, PathBuf},
+};
 use uuid::Uuid;
 
 use super::{admission::PrincipalId, session::TurnId};
@@ -99,6 +103,99 @@ impl WorkspacePolicy {
     pub fn writable_roots(&self) -> &[PathBuf] {
         &self.writable_roots
     }
+}
+
+/// Raw workspace options supplied by one client invocation.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WorkspaceSelection {
+    cwd: Option<PathBuf>,
+    add_dirs: Vec<PathBuf>,
+}
+
+impl WorkspaceSelection {
+    pub fn new(cwd: Option<PathBuf>, add_dirs: Vec<PathBuf>) -> Self {
+        Self { cwd, add_dirs }
+    }
+
+    pub fn resolve(self, process_cwd: &Path) -> Result<WorkspacePolicy, WorkspaceResolveError> {
+        self.resolve_with_profile(process_cwd, &PermissionProfileId::workspace_write())
+    }
+
+    pub fn resolve_with_profile(
+        self,
+        process_cwd: &Path,
+        profile: &PermissionProfileId,
+    ) -> Result<WorkspacePolicy, WorkspaceResolveError> {
+        let explicitly_selected = self.cwd.is_some();
+        let requested = self.cwd.unwrap_or_else(|| process_cwd.to_path_buf());
+        let cwd_input = if requested.is_absolute() {
+            requested
+        } else {
+            process_cwd.join(requested)
+        };
+        let cwd = canonical_directory(&cwd_input)?;
+        if cwd == Path::new("/") && !explicitly_selected {
+            return Err(WorkspaceResolveError::ImplicitFilesystemRoot);
+        }
+        ensure_filesystem_root_allowed(&cwd, profile)?;
+
+        let mut roots = Vec::with_capacity(self.add_dirs.len());
+        for raw in self.add_dirs {
+            let input = if raw.is_absolute() {
+                raw
+            } else {
+                cwd.join(raw)
+            };
+            let root = canonical_directory(&input)?;
+            ensure_filesystem_root_allowed(&root, profile)?;
+            roots.push(root);
+        }
+
+        WorkspacePolicy::from_resolved_roots(cwd, roots).map_err(WorkspaceResolveError::Policy)
+    }
+}
+
+fn canonical_directory(input: &Path) -> Result<PathBuf, WorkspaceResolveError> {
+    let canonical =
+        std::fs::canonicalize(input).map_err(|source| WorkspaceResolveError::Filesystem {
+            path: input.to_path_buf(),
+            source,
+        })?;
+    if !canonical.is_dir() {
+        return Err(WorkspaceResolveError::Filesystem {
+            path: input.to_path_buf(),
+            source: io::Error::new(io::ErrorKind::NotADirectory, "path is not a directory"),
+        });
+    }
+    Ok(canonical)
+}
+
+fn ensure_filesystem_root_allowed(
+    root: &Path,
+    profile: &PermissionProfileId,
+) -> Result<(), WorkspaceResolveError> {
+    if root == Path::new("/") && !profile.permits_filesystem_root() {
+        return Err(WorkspaceResolveError::FilesystemRootDenied {
+            profile: profile.clone(),
+        });
+    }
+    Ok(())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum WorkspaceResolveError {
+    #[error("workspace path '{}': {source}", path.display())]
+    Filesystem {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("the filesystem root cannot be inferred as a workspace")]
+    ImplicitFilesystemRoot,
+    #[error("permission profile '{}' does not permit the filesystem root", profile.0)]
+    FilesystemRootDenied { profile: PermissionProfileId },
+    #[error("invalid resolved workspace policy: {0}")]
+    Policy(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
