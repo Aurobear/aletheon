@@ -6,6 +6,7 @@
 //! off-by-default `cognitive-memory` feature (M-H Option A).
 
 pub mod backends;
+pub mod agent_scope;
 pub mod composite_service;
 pub mod consolidation;
 pub mod fact_service;
@@ -20,6 +21,7 @@ pub mod service;
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
 };
+pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
 pub use fact_service::{
     AddFactRequest, DefaultFactUseCases, FactServiceError, FactUseCases, FactView,
     ListFactsRequest, SearchFactsRequest,

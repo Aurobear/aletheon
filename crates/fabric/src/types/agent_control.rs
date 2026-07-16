@@ -17,6 +17,12 @@ pub const MAX_LIST_ITEMS: usize = 1000;
 pub const MAX_AGENT_BROADCAST_REFS: usize = 64;
 pub const AGENT_MESSAGE_SCHEMA_V1: u16 = 1;
 
+/// Durable task lineage owned by AgentControl. Callers may describe a task,
+/// but may not choose the identifier used for memory authority or recovery.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AgentTaskId(pub String);
+
 /// Immutable receipt for workspace content explicitly made available to a
 /// child Agent. The triple is required so a content ID cannot be replayed from
 /// a different space or broadcast epoch.

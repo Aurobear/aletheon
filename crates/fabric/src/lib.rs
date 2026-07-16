@@ -170,7 +170,7 @@ pub use types::agent_control::{
     AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle, AgentListRequest,
     AgentMessageDeliveryState, AgentMessageKind, AgentMessagePayload, AgentMessageReceipt,
     AgentProfile, AgentResult, AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest,
-    AgentWaitRequest, AGENT_MESSAGE_SCHEMA_V1,
+    AgentTaskId, AgentWaitRequest, AGENT_MESSAGE_SCHEMA_V1,
 };
 pub use types::approval::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,
