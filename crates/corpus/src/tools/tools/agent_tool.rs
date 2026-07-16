@@ -108,6 +108,7 @@ impl Tool for AgentTool {
             runtime_id: self.runtime_id.clone(),
             task: prompt.to_string(),
             context: AgentContextFork::None,
+            broadcast_refs: vec![],
             allowed_tools: profile.allowed_tools.clone(),
             budget: AgentBudget {
                 max_input_tokens: profile.max_input_tokens,

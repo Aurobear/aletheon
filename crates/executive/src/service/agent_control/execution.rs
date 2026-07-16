@@ -4,7 +4,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentHandle, AgentId, AgentResult, AgentRunStatus,
-    AgentSpawnRequest, AttemptEvidence, AttemptUsage, OperationId, ProcessId, RuntimeId,
+    AgentSpawnRequest, AgoraSpaceId, AttemptEvidence, AttemptUsage, OperationId, ProcessId,
+    RuntimeId,
 };
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -60,6 +61,8 @@ impl AgentEventSink for NoopAgentEventSink {
 pub struct AgentRuntimeInput {
     pub request: AgentSpawnRequest,
     pub handle: AgentHandle,
+    pub workspace_id: AgoraSpaceId,
+    pub root_process_id: ProcessId,
     pub context: AgentContextProjection,
     pub cancellation: CancellationToken,
 }

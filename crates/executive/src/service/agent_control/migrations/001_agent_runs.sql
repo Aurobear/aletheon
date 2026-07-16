@@ -15,7 +15,10 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     ended_at_ms INTEGER,
     last_error TEXT,
     version INTEGER NOT NULL DEFAULT 0,
-    retain_until_ms INTEGER NOT NULL
+    retain_until_ms INTEGER NOT NULL,
+    workspace_id TEXT NOT NULL,
+    root_process_id TEXT NOT NULL,
+    broadcast_refs_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_root_status_created

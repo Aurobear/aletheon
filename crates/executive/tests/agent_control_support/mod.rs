@@ -139,6 +139,7 @@ pub fn spawn_request(root: AgentId, parent: Option<(AgentId, ProcessId)>) -> Age
         context: AgentContextFork::SelectedProjection {
             items: vec!["labelled context".into()],
         },
+        broadcast_refs: vec![],
         allowed_tools: vec!["file_read".into()],
         budget: AgentBudget {
             max_input_tokens: 1_000,

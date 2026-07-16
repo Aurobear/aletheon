@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::{
-    AgentBudget, AgentContextFork, AgentControlError, AgentControlMessage, AgentControlPort,
-    AgentHandle, AgentId, AgentListRequest, AgentProfileId, AgentRunStatus, AgentSendRequest,
-    AgentSnapshot, AgentSpawnRequest, AgentWaitRequest, OperationId, ProcessId, RuntimeId,
+    AgentBroadcastRef, AgentBudget, AgentContextFork, AgentControlError, AgentControlMessage,
+    AgentControlPort, AgentHandle, AgentId, AgentListRequest, AgentProfileId, AgentRunStatus,
+    AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentWaitRequest, AgoraSpaceId,
+    BroadcastEpoch, ContentId, OperationId, ProcessId, RuntimeId,
 };
 use uuid::Uuid;
 
@@ -30,6 +31,7 @@ fn spawn_request() -> AgentSpawnRequest {
         context: AgentContextFork::SelectedProjection {
             items: vec!["goal: preserve behavior".into()],
         },
+        broadcast_refs: vec![],
         allowed_tools: vec!["file_read".into()],
         budget: budget(),
     }
@@ -74,6 +76,15 @@ fn request_validation_enforces_all_bounds() {
     invalid.budget.max_tool_calls = 0;
     assert!(invalid.validate().is_err());
 
+    let receipt = AgentBroadcastRef {
+        space: AgoraSpaceId("root:workspace".into()),
+        epoch: BroadcastEpoch(1),
+        content_id: ContentId::new(),
+    };
+    let mut invalid = spawn_request();
+    invalid.broadcast_refs = vec![receipt.clone(), receipt];
+    assert!(invalid.validate().is_err());
+
     let root = AgentId::new();
     assert!(AgentWaitRequest {
         caller_root_agent_id: root,
@@ -111,6 +122,11 @@ fn serialization_uses_stable_status_and_context_tags() {
     let restored: AgentSpawnRequest =
         serde_json::from_str(&serde_json::to_string(&request).unwrap()).unwrap();
     assert_eq!(restored, request);
+
+    let mut legacy = serde_json::to_value(spawn_request()).unwrap();
+    legacy.as_object_mut().unwrap().remove("broadcast_refs");
+    let restored: AgentSpawnRequest = serde_json::from_value(legacy).unwrap();
+    assert!(restored.broadcast_refs.is_empty());
 }
 
 struct MockPort;

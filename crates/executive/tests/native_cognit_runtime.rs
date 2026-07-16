@@ -149,6 +149,7 @@ fn profile() -> AgentProfile {
 
 fn input(cancel: CancellationToken) -> AgentRuntimeInput {
     let root = AgentId::new();
+    let process = ProcessId::new();
     let request = AgentSpawnRequest {
         root_agent_id: root,
         parent_agent_id: None,
@@ -159,6 +160,7 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         context: AgentContextFork::SelectedProjection {
             items: vec!["reference context".into()],
         },
+        broadcast_refs: vec![],
         allowed_tools: vec!["echo".into()],
         budget: AgentBudget {
             max_input_tokens: 4_000,
@@ -175,11 +177,13 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
             agent_id: root,
             root_agent_id: root,
             parent_agent_id: None,
-            process_id: ProcessId::new(),
+            process_id: process,
             operation_id: OperationId::new(),
             runtime_id: request.runtime_id.clone(),
             profile_id: request.profile_id.clone(),
         },
+        workspace_id: fabric::AgoraSpaceId(format!("agent:{}", root.0)),
+        root_process_id: process,
         request,
         cancellation: cancel,
     }

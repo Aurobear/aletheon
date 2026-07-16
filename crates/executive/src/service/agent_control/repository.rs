@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use fabric::{
-    AgentControlError, AgentId, AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest,
+    AgentBroadcastRef, AgentControlError, AgentId, AgentResult, AgentRunStatus, AgentSnapshot,
+    AgentSpawnRequest, AgoraSpaceId, BroadcastEpoch, ProcessId, VisibilityScope,
+    WorkspaceCandidate,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -8,6 +10,9 @@ pub struct AgentRunRecord {
     pub snapshot: AgentSnapshot,
     pub request: AgentSpawnRequest,
     pub request_hash: String,
+    pub workspace_id: AgoraSpaceId,
+    pub root_process_id: ProcessId,
+    pub broadcast_refs: Vec<AgentBroadcastRef>,
     pub version: u64,
     pub retain_until_ms: i64,
 }
@@ -24,6 +29,34 @@ impl AgentRunRecord {
     pub fn status(&self) -> AgentRunStatus {
         self.snapshot.status
     }
+
+    /// Return whether a durable, visibility-filtered broadcast item may be
+    /// observed by this child. Exact space/epoch/content provenance is required
+    /// in addition to the candidate's visibility scope.
+    pub fn can_observe_broadcast(
+        &self,
+        epoch: BroadcastEpoch,
+        candidate: &WorkspaceCandidate,
+    ) -> bool {
+        let referenced = self.broadcast_refs.iter().any(|reference| {
+            reference.space == candidate.space
+                && reference.epoch == epoch
+                && reference.content_id == candidate.id
+        });
+        candidate.validate().is_ok()
+            && referenced
+            && match candidate.visibility {
+                VisibilityScope::PrivateProcess { process } => {
+                    process == self.snapshot.handle.process_id
+                }
+                VisibilityScope::AgentTree { root } => root == self.root_process_id,
+                VisibilityScope::Session => true,
+            }
+    }
+}
+
+pub fn agent_workspace_id(agent: AgentId) -> AgoraSpaceId {
+    AgoraSpaceId(format!("agent:{}", agent.0))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

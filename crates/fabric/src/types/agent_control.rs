@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use super::attempt::{AttemptEvidence, AttemptUsage, RuntimeId};
 use super::operation::{OperationId, ProcessId};
 use super::process::{AgentId, AgentProfileId};
+use super::space::AgoraSpaceId;
+use super::workspace::{BroadcastEpoch, ContentId};
 
 pub const MAX_AGENT_TASK_BYTES: usize = 64 * 1024;
 pub const MAX_AGENT_MESSAGE_BYTES: usize = 64 * 1024;
@@ -12,6 +14,29 @@ pub const MAX_CONTEXT_ITEMS: usize = 64;
 pub const MAX_EVIDENCE_ITEMS: usize = 128;
 pub const MAX_ARTIFACTS: usize = 128;
 pub const MAX_LIST_ITEMS: usize = 1000;
+pub const MAX_AGENT_BROADCAST_REFS: usize = 64;
+
+/// Immutable receipt for workspace content explicitly made available to a
+/// child Agent. The triple is required so a content ID cannot be replayed from
+/// a different space or broadcast epoch.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AgentBroadcastRef {
+    pub space: AgoraSpaceId,
+    pub epoch: BroadcastEpoch,
+    pub content_id: ContentId,
+}
+
+impl AgentBroadcastRef {
+    pub fn validate(&self) -> Result<(), AgentControlError> {
+        ensure_text(&self.space.0, 1024, "broadcast space ID")?;
+        if self.epoch.0 == 0 {
+            return Err(AgentControlError::invalid(
+                "broadcast epoch must be nonzero",
+            ));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentProfile {
@@ -127,6 +152,8 @@ pub struct AgentSpawnRequest {
     pub runtime_id: RuntimeId,
     pub task: String,
     pub context: AgentContextFork,
+    #[serde(default)]
+    pub broadcast_refs: Vec<AgentBroadcastRef>,
     pub allowed_tools: Vec<String>,
     pub budget: AgentBudget,
 }
@@ -141,6 +168,28 @@ impl AgentSpawnRequest {
             ensure_text(tool, 512, "allowed tool")?;
         }
         self.context.validate()?;
+        ensure_count(
+            self.broadcast_refs.len(),
+            MAX_AGENT_BROADCAST_REFS,
+            "broadcast references",
+        )?;
+        for reference in &self.broadcast_refs {
+            reference.validate()?;
+        }
+        let mut unique = self.broadcast_refs.clone();
+        unique.sort_by(|left, right| {
+            (&left.space.0, left.epoch, left.content_id).cmp(&(
+                &right.space.0,
+                right.epoch,
+                right.content_id,
+            ))
+        });
+        unique.dedup();
+        if unique.len() != self.broadcast_refs.len() {
+            return Err(AgentControlError::invalid(
+                "broadcast references contain duplicates",
+            ));
+        }
         self.budget.validate()
     }
 }

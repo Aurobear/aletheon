@@ -4,8 +4,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::types::agent_control::MAX_LIST_ITEMS;
 use fabric::{
-    AgentControlError, AgentControlErrorKind, AgentHandle, AgentId, AgentProfileId, AgentResult,
-    AgentRunStatus, AgentSnapshot, AgentSpawnRequest, OperationId, ProcessId, RuntimeId,
+    AgentBroadcastRef, AgentControlError, AgentControlErrorKind, AgentHandle, AgentId,
+    AgentProfileId, AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId,
+    OperationId, ProcessId, RuntimeId,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
@@ -16,8 +17,9 @@ use super::repository::{AgentMessageRecord, AgentRunRecord, AgentRunRepository};
 
 const MIGRATION: &str = include_str!("migrations/001_agent_runs.sql");
 const RUN_COLUMNS: &str = "agent_id, root_agent_id, parent_agent_id, process_id, operation_id, \
-runtime_id, profile_id, status, request_json, request_hash, result_json, created_at_ms, \
-started_at_ms, ended_at_ms, last_error, version, retain_until_ms";
+    runtime_id, profile_id, status, request_json, request_hash, result_json, created_at_ms, \
+    started_at_ms, ended_at_ms, last_error, version, retain_until_ms, workspace_id, \
+    root_process_id, broadcast_refs_json";
 
 #[derive(Clone)]
 pub struct SqliteAgentRunRepository {
@@ -48,6 +50,7 @@ impl SqliteAgentRunRepository {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(persistence)?;
         connection.execute_batch(MIGRATION).map_err(persistence)?;
+        ensure_workspace_columns(&connection)?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
         })
@@ -84,8 +87,22 @@ impl AgentRunRepository for SqliteAgentRunRepository {
                 "new Agent run must be queued at version zero",
             ));
         }
+        if run.workspace_id != super::repository::agent_workspace_id(run.agent_id()) {
+            return Err(control_error(
+                AgentControlErrorKind::InvalidRequest,
+                "Agent workspace ID does not match durable Agent identity",
+            ));
+        }
+        if run.broadcast_refs != run.request.broadcast_refs {
+            return Err(control_error(
+                AgentControlErrorKind::Conflict,
+                "Agent broadcast receipts do not match spawn request",
+            ));
+        }
 
         let request_json = serde_json::to_string(&run.request).map_err(persistence)?;
+        let broadcast_refs_json =
+            serde_json::to_string(&run.broadcast_refs).map_err(persistence)?;
         let mut connection = self.connection.lock();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -94,8 +111,9 @@ impl AgentRunRepository for SqliteAgentRunRepository {
             "INSERT INTO agent_runs (
                 agent_id, root_agent_id, parent_agent_id, process_id, operation_id,
                 runtime_id, profile_id, status, request_json, request_hash, result_json,
-                created_at_ms, started_at_ms, ended_at_ms, last_error, version, retain_until_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, NULL, NULL, NULL, 0, ?12)",
+                created_at_ms, started_at_ms, ended_at_ms, last_error, version, retain_until_ms,
+                workspace_id, root_process_id, broadcast_refs_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, NULL, NULL, NULL, 0, ?12, ?13, ?14, ?15)",
             params![
                 run.snapshot.handle.agent_id.0.to_string(),
                 run.snapshot.handle.root_agent_id.0.to_string(),
@@ -109,6 +127,9 @@ impl AgentRunRepository for SqliteAgentRunRepository {
                 run.request_hash,
                 run.snapshot.created_at_ms,
                 run.retain_until_ms,
+                run.workspace_id.0,
+                run.root_process_id.0.to_string(),
+                broadcast_refs_json,
             ],
         );
         match inserted {
@@ -359,9 +380,53 @@ fn map_run_row_fallible(row: &Row<'_>) -> Result<AgentRunRecord, AgentControlErr
         },
         request,
         request_hash,
+        workspace_id: AgoraSpaceId(column(row, 17)?),
+        root_process_id: ProcessId(parse_uuid(&column::<String>(row, 18)?)?),
+        broadcast_refs: serde_json::from_str::<Vec<AgentBroadcastRef>>(&column::<String>(row, 19)?)
+            .map_err(persistence)?,
         version: column(row, 15)?,
         retain_until_ms: column(row, 16)?,
     })
+}
+
+fn ensure_workspace_columns(connection: &Connection) -> Result<(), AgentControlError> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(agent_runs)")
+        .map_err(persistence)?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(persistence)?
+        .collect::<Result<std::collections::HashSet<_>, _>>()
+        .map_err(persistence)?;
+    drop(statement);
+
+    if !columns.contains("workspace_id") {
+        connection
+            .execute_batch(
+                "ALTER TABLE agent_runs ADD COLUMN workspace_id TEXT NOT NULL DEFAULT '';",
+            )
+            .map_err(persistence)?;
+    }
+    if !columns.contains("root_process_id") {
+        connection
+            .execute_batch(
+                "ALTER TABLE agent_runs ADD COLUMN root_process_id TEXT NOT NULL DEFAULT '';",
+            )
+            .map_err(persistence)?;
+    }
+    if !columns.contains("broadcast_refs_json") {
+        connection
+            .execute_batch(
+                "ALTER TABLE agent_runs ADD COLUMN broadcast_refs_json TEXT NOT NULL DEFAULT '[]';",
+            )
+            .map_err(persistence)?;
+    }
+    connection
+        .execute_batch(
+            "UPDATE agent_runs SET workspace_id = 'agent:' || agent_id WHERE workspace_id = '';
+             UPDATE agent_runs SET root_process_id = process_id WHERE root_process_id = '';",
+        )
+        .map_err(persistence)
 }
 
 fn column<T: rusqlite::types::FromSql>(

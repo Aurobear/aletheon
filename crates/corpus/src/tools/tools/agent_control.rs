@@ -198,6 +198,7 @@ impl Tool for AgentControlTool {
                         runtime_id: RuntimeId(input.runtime),
                         task: input.task,
                         context: input.context,
+                        broadcast_refs: vec![],
                         allowed_tools: input.tools,
                         budget: input.budget,
                     };

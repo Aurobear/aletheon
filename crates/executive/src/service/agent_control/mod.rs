@@ -10,8 +10,9 @@ use fabric::ipc::mailbox::{InProcessMailbox, Mailbox, MailboxService};
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
     AgentId, AgentListRequest, AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest,
-    AgentWaitRequest, CancelReason, Clock, ExitReason, NamespaceId, OperationExitReason,
-    OperationKind, OperationRequest, ProcessSignal, SpawnSpec, Timer,
+    AgentWaitRequest, AgoraVersion, CancelReason, Clock, ContextBinding, ExitReason, NamespaceId,
+    OperationExitReason, OperationKind, OperationRequest, ProcessId, ProcessSignal, SpawnSpec,
+    Timer,
 };
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
@@ -32,12 +33,17 @@ pub use execution::{
     AgentRuntimeRegistry, CompatibilityRuntimeLauncher, NoopAgentEventSink,
 };
 pub use live_runs::{LiveAgentRun, LiveAgentRuns};
-pub use repository::{AgentMessageRecord, AgentRunRecord, AgentRunRepository};
+pub use repository::{agent_workspace_id, AgentMessageRecord, AgentRunRecord, AgentRunRepository};
 pub use sqlite_repository::SqliteAgentRunRepository;
 
 const DEFAULT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 const MAILBOX_CAPACITY: usize = 64;
 const CANCEL_WAIT: Duration = Duration::from_secs(30);
+
+struct ValidatedAgentIdentity {
+    agent_id: AgentId,
+    root_process_id: Option<ProcessId>,
+}
 
 #[async_trait]
 pub trait AgentWaitTimer: Send + Sync {
@@ -120,6 +126,45 @@ impl AgentControlService {
         self.live.clone()
     }
 
+    /// Authorize one visibility-filtered broadcast item against both durable
+    /// receipts and the child's current Kernel context-space binding.
+    pub async fn authorize_broadcast(
+        &self,
+        caller_root: AgentId,
+        agent: AgentId,
+        epoch: fabric::BroadcastEpoch,
+        candidate: &fabric::WorkspaceCandidate,
+    ) -> Result<(), AgentControlError> {
+        candidate
+            .validate()
+            .map_err(|error| AgentControlError::invalid(error.to_string()))?;
+        let run = self.authorize(caller_root, agent).await?;
+        let process = self
+            .kernel
+            .inspect_process(run.snapshot.handle.process_id)
+            .await
+            .map_err(runtime_error)?;
+        let context = self.kernel.inspect_space(process.space).ok_or_else(|| {
+            control_error(
+                AgentControlErrorKind::Runtime,
+                "Agent Kernel context space is unavailable",
+            )
+        })?;
+        let bound = context.bindings.iter().any(|binding| {
+            matches!(
+                binding,
+                ContextBinding::Agora(space, _) if space == &run.workspace_id
+            )
+        });
+        if !bound || !run.can_observe_broadcast(epoch, candidate) {
+            return Err(control_error(
+                AgentControlErrorKind::Forbidden,
+                "broadcast is not permitted by Agent workspace receipt",
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn shutdown(&self) {
         for run in self.live.all().await {
             run.cancellation.cancel();
@@ -131,10 +176,14 @@ impl AgentControlService {
     async fn validated_parent(
         &self,
         request: &AgentSpawnRequest,
-    ) -> Result<AgentId, AgentControlError> {
+    ) -> Result<ValidatedAgentIdentity, AgentControlError> {
         match (request.parent_agent_id, request.parent_process_id) {
-            (None, None) => Ok(request.root_agent_id),
+            (None, None) => Ok(ValidatedAgentIdentity {
+                agent_id: request.root_agent_id,
+                root_process_id: None,
+            }),
             (Some(parent), Some(parent_process)) => {
+                let root_process_id;
                 if let Some(parent_run) = self.repository.get(parent).await? {
                     if parent_run.root_agent_id() != request.root_agent_id
                         || parent_run.snapshot.handle.process_id != parent_process
@@ -145,6 +194,7 @@ impl AgentControlService {
                             "parent Agent does not belong to the requested live root/process",
                         ));
                     }
+                    root_process_id = parent_run.root_process_id;
                 } else {
                     let process =
                         self.kernel
@@ -165,8 +215,12 @@ impl AgentControlService {
                             "external root parent identity is not live or does not match",
                         ));
                     }
+                    root_process_id = parent_process;
                 }
-                Ok(AgentId::new())
+                Ok(ValidatedAgentIdentity {
+                    agent_id: AgentId::new(),
+                    root_process_id: Some(root_process_id),
+                })
             }
             _ => Err(AgentControlError::invalid(
                 "parent Agent and parent Process must be supplied together",
@@ -230,8 +284,14 @@ impl AgentControlPort for AgentControlService {
     async fn spawn(&self, request: AgentSpawnRequest) -> Result<AgentHandle, AgentControlError> {
         request.validate()?;
         let launcher = self.runtimes.resolve(&request.runtime_id)?;
-        let context = AgentContextProjection::from_fork(&request.context)?;
-        let agent_id = self.validated_parent(&request).await?;
+        let mut context_builder = AgentContextProjectionBuilder::new().fork(&request.context)?;
+        for reference in &request.broadcast_refs {
+            context_builder = context_builder.broadcast_ref(reference.content_id);
+        }
+        let context = context_builder.build()?;
+        let identity = self.validated_parent(&request).await?;
+        let agent_id = identity.agent_id;
+        let workspace_id = agent_workspace_id(agent_id);
         let request_hash = SqliteAgentRunRepository::request_hash(&request)?;
         let mut admission = self.admission.reserve(&request).await?;
 
@@ -257,6 +317,38 @@ impl AgentControlPort for AgentControlService {
                 return Err(runtime_error(error));
             }
         };
+        let process_snapshot = match self.kernel.inspect_process(process.id).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let _ = self
+                    .kernel
+                    .terminate_process(process.id, ExitReason::Failed(error.to_string()))
+                    .await;
+                admission.revoke();
+                return Err(runtime_error(error));
+            }
+        };
+        let root_process_id = identity.root_process_id.unwrap_or(process.id);
+        self.kernel.upsert_space_binding(
+            process_snapshot.space,
+            ContextBinding::Agora(workspace_id.clone(), AgoraVersion(0)),
+        );
+        if let Err(error) = self.kernel.set_space_overlay(
+            process_snapshot.space,
+            "agent.workspace_receipt",
+            serde_json::json!({
+                "workspace_id": workspace_id,
+                "root_process_id": root_process_id,
+                "broadcast_refs": request.broadcast_refs,
+            }),
+        ) {
+            let _ = self
+                .kernel
+                .terminate_process(process.id, ExitReason::Failed(error.to_string()))
+                .await;
+            admission.revoke();
+            return Err(runtime_error(error));
+        }
         let operation = match self
             .kernel
             .submit_operation(OperationRequest {
@@ -322,6 +414,9 @@ impl AgentControlPort for AgentControlService {
             snapshot: queued.clone(),
             request: request.clone(),
             request_hash,
+            workspace_id: workspace_id.clone(),
+            root_process_id,
+            broadcast_refs: request.broadcast_refs.clone(),
             version: 0,
             retain_until_ms: created_at_ms.saturating_add(DEFAULT_RETENTION_MS),
         };
@@ -385,6 +480,8 @@ impl AgentControlPort for AgentControlService {
         let runtime_input = AgentRuntimeInput {
             request,
             handle: handle.clone(),
+            workspace_id,
+            root_process_id,
             context,
             cancellation,
         };

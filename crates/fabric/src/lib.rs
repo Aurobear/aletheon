@@ -157,9 +157,9 @@ pub use types::admission::{
 };
 pub use types::agent::Pid;
 pub use types::agent_control::{
-    AgentArtifact, AgentBudget, AgentContextFork, AgentControlError, AgentControlErrorKind,
-    AgentControlMessage, AgentControlPort, AgentHandle, AgentListRequest, AgentProfile,
-    AgentResult, AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest,
+    AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentControlError,
+    AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle, AgentListRequest,
+    AgentProfile, AgentResult, AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest,
     AgentWaitRequest,
 };
 pub use types::approval::{
