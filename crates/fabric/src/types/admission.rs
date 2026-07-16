@@ -32,6 +32,12 @@ impl Default for PermitId {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PrincipalId(pub String);
 
+impl PrincipalId {
+    pub fn local_uid(uid: u32) -> Self {
+        Self(format!("local-uid:{uid}"))
+    }
+}
+
 /// Human-readable capability name (e.g. "shell.execute", "memory.write").
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CapabilityId(pub String);

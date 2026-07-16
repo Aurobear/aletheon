@@ -24,6 +24,25 @@ pub enum TurnStop {
     Failed,
 }
 
+/// Authoritative terminal status exposed by the versioned client protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnTerminalStatus {
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+impl From<TurnStop> for TurnTerminalStatus {
+    fn from(value: TurnStop) -> Self {
+        match value {
+            TurnStop::Completed => Self::Completed,
+            TurnStop::Cancelled => Self::Interrupted,
+            TurnStop::Blocked | TurnStop::Failed => Self::Failed,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnMetrics {
     pub tool_calls_made: usize,

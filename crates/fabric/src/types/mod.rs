@@ -22,6 +22,7 @@ pub mod grounding;
 pub mod hook;
 pub mod hook_ext;
 pub mod llm_types;
+pub mod local_authority;
 pub mod message;
 pub mod objective;
 pub mod paths;

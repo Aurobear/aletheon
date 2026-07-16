@@ -233,6 +233,10 @@ pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
 pub use types::llm_types::{
     LlmProvider, LlmResponse, LlmStream, ModelInfo, StopReason, StreamChunk, ToolDefinition, Usage,
 };
+pub use types::local_authority::{
+    ApprovalPolicy, ConnectionId, LocalOsPrincipal, PermissionProfileId, PrincipalContext,
+    ThreadId, WorkspacePolicy,
+};
 pub use types::message::{ContentBlock, ImageSource, Message, Priority as MessagePriority, Role};
 pub use types::objective::{Objective, ObjectiveStatus, ObjectiveSummary};
 pub use types::operation::{
@@ -266,7 +270,9 @@ pub use types::tool::{
     AgentToolContext, PermissionLevel as ToolPermissionLevel, Tool, ToolContext, ToolResult,
     ToolResultMeta,
 };
-pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
+pub use types::turn::{
+    TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop, TurnTerminalStatus,
+};
 
 // Event types
 pub use events::spine::{

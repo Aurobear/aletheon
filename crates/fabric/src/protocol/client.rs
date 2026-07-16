@@ -5,9 +5,39 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{AgentSnapshot, ApprovalSnapshot, ItemRecord, SessionId};
+use crate::{
+    AgentSnapshot, ApprovalSnapshot, ConnectionId, ItemRecord, LocalOsPrincipal, PrincipalId,
+    SessionId,
+};
 
 pub const CLIENT_PROTOCOL_VERSION: u16 = 1;
+const SUPPORTED_CLIENT_PROTOCOL_VERSIONS: &[u16] = &[CLIENT_PROTOCOL_VERSION];
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ClientCapabilities {
+    pub item_events: bool,
+    pub cursors: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InitializeParams {
+    pub client_version: String,
+    pub protocol_versions: Vec<u16>,
+    pub capabilities: ClientCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InitializedResult {
+    pub protocol_version: u16,
+    pub server_capabilities: ClientCapabilities,
+    #[schemars(with = "String")]
+    pub connection_id: ConnectionId,
+    #[schemars(with = "String")]
+    pub principal_id: PrincipalId,
+    #[schemars(with = "serde_json::Value")]
+    pub os_principal: LocalOsPrincipal,
+    pub runtime_version: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EventCursor {
@@ -41,6 +71,8 @@ pub struct EventSubscription {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ClientRequest {
+    Initialize(InitializeParams),
+    Initialized,
     Snapshot(SnapshotRequest),
     Subscribe(EventSubscription),
 }
@@ -98,6 +130,7 @@ pub struct AgentEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ClientEvent {
+    InitializeResponse(InitializedResult),
     Snapshot(UiSnapshot),
     Item(ItemEvent),
     Approval(ApprovalEvent),
@@ -123,6 +156,20 @@ pub struct ClientMessage<T> {
 pub struct UnsupportedClientVersion {
     pub actual: u16,
     pub expected: u16,
+}
+
+pub fn negotiate_protocol_version(
+    offered_versions: &[u16],
+) -> Result<u16, UnsupportedClientVersion> {
+    SUPPORTED_CLIENT_PROTOCOL_VERSIONS
+        .iter()
+        .copied()
+        .filter(|version| offered_versions.contains(version))
+        .max()
+        .ok_or_else(|| UnsupportedClientVersion {
+            actual: offered_versions.iter().copied().max().unwrap_or_default(),
+            expected: CLIENT_PROTOCOL_VERSION,
+        })
 }
 
 impl<T> ClientMessage<T> {
