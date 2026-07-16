@@ -1,5 +1,6 @@
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
 use super::tool_budget;
+use super::tool_output::{bounded_tool_result, MAX_TOOL_RESULT_BYTES};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 
 use crate::r#impl::llm::provider::LlmProvider;
@@ -255,35 +256,14 @@ impl ReActLoop {
                 if self.reflection_engine.record_call(is_timeout) {
                     should_reflect = true;
                 }
-                // Truncate large tool outputs before storing in conversation
-                const MAX_TOOL_RESULT_CHARS: usize = 8000;
-                let truncated_content = if content.len() > MAX_TOOL_RESULT_CHARS {
-                    let head = &content[..content
-                        .char_indices()
-                        .nth(3500)
-                        .map(|(i, _)| i)
-                        .unwrap_or(3500)];
-                    let tail_start = content
-                        .char_indices()
-                        .nth(content.chars().count().saturating_sub(3500))
-                        .map(|(i, _)| i)
-                        .unwrap_or(0);
-                    let tail = &content[tail_start..];
-                    format!(
-                        "{}\n... ({} chars truncated) ...\n{}",
-                        head,
-                        content.len() - 7000,
-                        tail
-                    )
-                } else {
-                    content.clone()
-                };
+                // Keep only a transient bounded copy in the active model context.
+                let bounded_content = bounded_tool_result(&content, MAX_TOOL_RESULT_BYTES);
                 // Accumulate tool result block for combined push after loop.
                 // Anthropic API requires all tool_result blocks for one assistant
                 // message to be in a SINGLE subsequent user message.
                 tool_result_blocks.push(ContentBlock::ToolResult {
                     tool_use_id: id.clone(),
-                    content: truncated_content,
+                    content: bounded_content,
                     is_error,
                 });
                 // Defer reflection until after all tool results

@@ -8,6 +8,7 @@ pub mod reflection;
 mod step;
 pub mod tool_budget;
 mod tool_exec;
+mod tool_output;
 
 pub use batching::{partition_tool_calls, ToolBatch};
 pub use metrics::TurnMetrics;

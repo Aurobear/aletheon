@@ -96,11 +96,25 @@ impl AdvancedCompressor {
 
         let summary = self.generate_summary(&pruned_messages, llm).await?;
 
+        // A request at index zero cannot be part of both sides of a contiguous
+        // prefix/tail split. Preserve it explicitly after the summary so it
+        // remains the verbatim active instruction instead of existing only in
+        // generated summary text.
+        let latest_text_user = messages.iter().rposition(|message| {
+            message.role == fabric::Role::User
+                && message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ContentBlock::Text { .. }))
+        });
+        let protected_initial_user = (latest_text_user == Some(0)).then(|| messages[0].clone());
+
         let mut compacted = Vec::new();
         compacted.push(Message::system(format!(
             "{}\n{}\n[End Summary]",
             SUMMARY_PREFIX, summary
         )));
+        compacted.extend(protected_initial_user);
         compacted.extend_from_slice(tail_messages);
 
         self.previous_summary = Some(summary);
@@ -241,6 +255,7 @@ mod tests {
             before,
             messages.len()
         );
+        assert!(contains_text_user(&messages, "start"));
     }
 
     #[tokio::test]
@@ -259,5 +274,75 @@ mod tests {
         let did = c.force_compact(&mut messages, &llm).await.unwrap();
         assert!(did, "force_compact should compact regardless of threshold");
         assert_eq!(c.last_summary(), Some("this is a summary"));
+    }
+
+    #[tokio::test]
+    async fn repeated_multibyte_compaction_preserves_latest_user_and_tool_boundary() {
+        let mut c = AdvancedCompressor::new(20, 200, 1_000);
+        let llm = SimpleLlm;
+        let mut messages = vec![Message::user("旧任务")];
+        for i in 0..8 {
+            messages.push(Message {
+                role: fabric::Role::Assistant,
+                content: vec![ContentBlock::ToolUse {
+                    id: format!("old-{i}"),
+                    name: "bash_exec".into(),
+                    input: serde_json::json!({"command": "读取机器人运控文档🧠".repeat(30)}),
+                }],
+            });
+            messages.push(Message::tool_result(
+                format!("old-{i}"),
+                "多字节工具结果🧠".repeat(80),
+                false,
+            ));
+            messages.push(Message::assistant("旧结论".repeat(40)));
+        }
+        messages.push(Message::user("还是A吧"));
+        messages.push(Message {
+            role: fabric::Role::Assistant,
+            content: vec![ContentBlock::ToolUse {
+                id: "latest".into(),
+                name: "file_read".into(),
+                input: serde_json::json!({"path": "机器人/运控/设计🧠.md"}),
+            }],
+        });
+        messages.push(Message::tool_result("latest", "最新工具结果🧠", false));
+
+        assert!(c.force_compact(&mut messages, &llm).await.unwrap());
+        let first = messages.clone();
+        assert!(contains_text_user(&messages, "还是A吧"));
+        assert_tail_is_tool_boundary_safe(&messages);
+
+        assert!(c.force_compact(&mut messages, &llm).await.unwrap());
+        assert_eq!(
+            serde_json::to_value(&messages).unwrap(),
+            serde_json::to_value(&first).unwrap()
+        );
+        assert!(contains_text_user(&messages, "还是A吧"));
+        assert_tail_is_tool_boundary_safe(&messages);
+    }
+
+    fn contains_text_user(messages: &[Message], expected: &str) -> bool {
+        messages.iter().any(|message| {
+            message.role == fabric::Role::User
+                && message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, ContentBlock::Text { text } if text == expected))
+        })
+    }
+
+    fn assert_tail_is_tool_boundary_safe(messages: &[Message]) {
+        let first_non_system = messages
+            .iter()
+            .find(|message| message.role != fabric::Role::System)
+            .expect("compacted tail");
+        assert!(
+            !matches!(
+                first_non_system.content.first(),
+                Some(ContentBlock::ToolResult { .. })
+            ),
+            "compacted tail must not begin with an orphan tool result"
+        );
     }
 }

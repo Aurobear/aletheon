@@ -1,4 +1,4 @@
-use fabric::message::Message;
+use fabric::message::{ContentBlock, Message, Role};
 
 #[derive(Debug, Clone)]
 pub struct TailProtectionConfig {
@@ -37,8 +37,8 @@ pub fn find_tail_cut(messages: &[Message], config: &TailProtectionConfig) -> usi
 
     let min_cut = messages.len().saturating_sub(config.min_tail_messages);
     cut = cut.min(min_cut);
-    cut = align_boundary_backward(messages, cut);
     cut = ensure_last_user_message_in_tail(messages, cut);
+    cut = align_boundary_backward(messages, cut);
 
     cut
 }
@@ -95,24 +95,26 @@ fn align_boundary_backward(messages: &[Message], cut: usize) -> usize {
 }
 
 fn ensure_last_user_message_in_tail(messages: &[Message], cut: usize) -> usize {
-    // Find the last user message before the cut.
-    let last_user_before_cut = messages[..cut]
-        .iter()
-        .rposition(|m| m.role == fabric::message::Role::User);
+    // Tool results also use Role::User, so only text-bearing user messages are
+    // user requests. Preserve the newest request regardless of its distance
+    // from the budget-derived cut.
+    let latest_user_request = messages.iter().rposition(|message| {
+        message.role == Role::User
+            && message
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::Text { .. }))
+    });
 
-    match last_user_before_cut {
-        Some(pos) => {
-            let distance = cut - pos;
-            // Only pull back if the user message is immediately before the cut
-            // (within 1 message) to keep user+response together.
-            if distance <= 1 && pos > 0 {
-                pos
-            } else {
-                cut
-            }
+    latest_user_request.map_or(cut, |position| {
+        // A prefix/suffix split cannot both summarize and retain index zero.
+        // The compressor re-inserts that one protected request verbatim.
+        if position == 0 {
+            cut
+        } else {
+            cut.min(position)
         }
-        None => cut,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -145,5 +147,47 @@ mod tests {
         assert!(cut > 0);
         assert!(cut < messages.len());
         assert!(messages.len() - cut >= 3);
+    }
+
+    #[test]
+    fn latest_text_user_request_is_preserved_with_its_tool_chain() {
+        let mut messages: Vec<Message> = (0..20)
+            .flat_map(|i| {
+                [
+                    Message::user(format!("old request {i}")),
+                    Message::assistant("old response".repeat(40)),
+                ]
+            })
+            .collect();
+        let latest = messages.len();
+        messages.push(Message::user("还是A吧"));
+        messages.push(Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolUse {
+                id: "latest-call".into(),
+                name: "bash_exec".into(),
+                input: serde_json::json!({"command": "查看运控"}),
+            }],
+        });
+        messages.push(Message::tool_result(
+            "latest-call",
+            "工具结果".repeat(100),
+            false,
+        ));
+
+        let cut = find_tail_cut(
+            &messages,
+            &TailProtectionConfig {
+                tail_token_budget: 10,
+                min_tail_messages: 1,
+                soft_ceiling_multiplier: 1.0,
+            },
+        );
+
+        assert_eq!(cut, latest);
+        assert!(
+            matches!(messages[cut].content[0], ContentBlock::Text { ref text } if text == "还是A吧")
+        );
+        assert!(!fabric::message::is_tool_message(&messages[cut]));
     }
 }
