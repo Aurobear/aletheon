@@ -7,6 +7,7 @@ use fabric::{
     ToolContext, UsageReport,
 };
 
+use crate::{CorpusError, ExtensionDescriptor, ExtensionKind};
 use crate::{ToolRegistry, ToolRunnerWithGuard};
 
 pub fn default_tool_registry() -> Arc<tokio::sync::Mutex<ToolRegistry>> {
@@ -36,6 +37,41 @@ pub async fn tool_risk_levels(
             Some((definition.name, risk))
         })
         .collect()
+}
+
+/// Discover deterministic tool descriptors without activating any tool.
+pub async fn discover_tool_extensions(
+    registry: &Arc<tokio::sync::Mutex<ToolRegistry>>,
+) -> Result<Vec<ExtensionDescriptor>, CorpusError> {
+    let registry = registry.lock().await;
+    let mut definitions = registry.definitions();
+    definitions.sort_by(|left, right| left.name.cmp(&right.name));
+    definitions
+        .into_iter()
+        .map(|definition| {
+            let tool = registry
+                .get(&definition.name)
+                .ok_or_else(|| CorpusError::InvalidDescriptor(definition.name.clone()))?;
+            ExtensionDescriptor::new(
+                ExtensionKind::Tool,
+                &definition.name,
+                env!("CARGO_PKG_VERSION"),
+                definition.description.clone(),
+                CapabilityId(definition.name.clone()),
+                permission_risk(tool.permission_level()),
+            )?
+            .with_tool_definition(definition)
+        })
+        .collect()
+}
+
+fn permission_risk(level: fabric::tool::PermissionLevel) -> fabric::types::admission::RiskLevel {
+    match level {
+        fabric::tool::PermissionLevel::L0 => fabric::types::admission::RiskLevel::ReadOnly,
+        fabric::tool::PermissionLevel::L1 => fabric::types::admission::RiskLevel::Sandboxed,
+        fabric::tool::PermissionLevel::L2 => fabric::types::admission::RiskLevel::SystemModify,
+        fabric::tool::PermissionLevel::L3 => fabric::types::admission::RiskLevel::Destructive,
+    }
 }
 
 pub struct CorpusToolExecutor {
