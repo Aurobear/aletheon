@@ -183,6 +183,102 @@ impl AgentControlService {
         self.admission.metrics()
     }
 
+    /// Reconcile every bounded open durable row before bootstrap publishes
+    /// Agent spawn tools. Native runtimes are `Never` resumable, so absence or
+    /// ambiguity always becomes an explicit interruption rather than replay.
+    pub async fn reconcile_startup(
+        &self,
+        daemon_generation: &str,
+    ) -> Result<AgentRecoveryReport, AgentControlError> {
+        let coordinator = AgentRecoveryCoordinator::new(
+            self.repository.clone(),
+            daemon_generation,
+            self.clock.wall_now().0,
+        )?;
+        let runs = self.repository.list_open(MAX_STARTUP_RECOVERY_ROWS).await?;
+        let mut report = AgentRecoveryReport {
+            open_rows: runs.len(),
+            ..Default::default()
+        };
+        for run in runs {
+            let process_live = self
+                .kernel
+                .inspect_process(run.snapshot.handle.process_id)
+                .await
+                .is_ok();
+            let operation_terminal = self
+                .kernel
+                .inspect_operation(run.snapshot.handle.operation_id)
+                .await
+                .ok()
+                .and_then(|operation| match operation.state {
+                    fabric::OperationState::Succeeded => Some(AgentRunStatus::Succeeded),
+                    fabric::OperationState::Failed => Some(AgentRunStatus::Failed),
+                    fabric::OperationState::Cancelled => Some(AgentRunStatus::Cancelled),
+                    _ => None,
+                });
+            let checkpoint_available = matches!(
+                &run.resumability,
+                fabric::RuntimeResumability::Checkpointed { reference }
+                    if !reference.trim().is_empty()
+            );
+            match coordinator
+                .recover_one(
+                    &run,
+                    AgentRecoveryObservation {
+                        process_live,
+                        operation_terminal,
+                        checkpoint_available,
+                    },
+                )
+                .await
+            {
+                Ok(fabric::AgentRecoveryDecision::Interrupt) => report.interrupted += 1,
+                Ok(fabric::AgentRecoveryDecision::Resume) => {
+                    let checkpoint_reference = match &run.resumability {
+                        fabric::RuntimeResumability::Checkpointed { reference } => {
+                            reference.clone()
+                        }
+                        fabric::RuntimeResumability::Never => {
+                            unreachable!("resume requires checkpoint")
+                        }
+                    };
+                    match self.runtimes.resolve(&run.snapshot.handle.runtime_id) {
+                        Ok(runtime)
+                            if runtime.resumability() == run.resumability
+                                && runtime
+                                    .resume_from_checkpoint(AgentRecoveryRuntimeInput {
+                                        handle: run.snapshot.handle.clone(),
+                                        request: run.request.clone(),
+                                        checkpoint_reference,
+                                    })
+                                    .await
+                                    .is_ok() =>
+                        {
+                            report.resumed += 1;
+                        }
+                        _ => report.recovery_failed += 1,
+                    }
+                }
+                Ok(fabric::AgentRecoveryDecision::Finalize) => report.finalized += 1,
+                _ => report.recovery_failed += 1,
+            }
+        }
+        report.unreconciled = self
+            .repository
+            .list_open(MAX_STARTUP_RECOVERY_ROWS)
+            .await?
+            .into_iter()
+            .filter(|run| {
+                !matches!(
+                    run.recovery.as_ref().map(|receipt| receipt.decision),
+                    Some(fabric::AgentRecoveryDecision::Resume)
+                )
+            })
+            .count();
+        Ok(report)
+    }
+
     /// Install an explicit parent policy for one directional sibling route.
     /// All identities are revalidated against durable topology before the
     /// policy becomes active.

@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use aletheon_kernel::chronos::TestClock;
+use aletheon_kernel::KernelRuntime;
 use executive::service::agent_control::{
-    AgentRecoveryCoordinator, AgentRecoveryObservation, AgentRunRecord, AgentRunRepository,
-    SqliteAgentRunRepository,
+    AgentControlService, AgentRecoveryCoordinator, AgentRecoveryObservation, AgentRunRecord,
+    AgentRunRepository, AgentRuntimeRegistry, BoundedAgentAdmission, SqliteAgentRunRepository,
 };
 use fabric::{
     AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentProfileId, AgentRecoveryDecision,
@@ -234,6 +236,39 @@ async fn checkpoint_resume_preserves_identity_and_pre_action_crash_replays_only_
     assert_eq!(
         reopened
             .get(interrupted.agent_id())
+            .await
+            .unwrap()
+            .unwrap()
+            .status(),
+        AgentRunStatus::Interrupted
+    );
+}
+
+#[tokio::test]
+async fn startup_reconciles_open_rows_before_admission_and_never_replays_native_work() {
+    let clock = Arc::new(TestClock::new(1_000, 0));
+    let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
+    let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
+    let run = record(AgentRunStatus::Queued, RuntimeResumability::Never);
+    persist(&repository, &run).await;
+    let service = AgentControlService::new(
+        kernel,
+        clock,
+        repository.clone(),
+        Arc::new(BoundedAgentAdmission::new(1).unwrap()),
+        Arc::new(AgentRuntimeRegistry::default()),
+    );
+
+    let report = service
+        .reconcile_startup("daemon:startup-test")
+        .await
+        .unwrap();
+    assert!(report.ready());
+    assert_eq!(report.open_rows, 1);
+    assert_eq!(report.interrupted, 1);
+    assert_eq!(
+        repository
+            .get(run.agent_id())
             .await
             .unwrap()
             .unwrap()

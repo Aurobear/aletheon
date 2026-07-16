@@ -931,6 +931,24 @@ impl RequestHandler {
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?,
             )),
         );
+        let agent_recovery = agent_control_service
+            .reconcile_startup(&format!("daemon:{}", uuid::Uuid::new_v4()))
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if !agent_recovery.ready() {
+            anyhow::bail!(
+                "Agent recovery left {} failed and {} unreconciled rows",
+                agent_recovery.recovery_failed,
+                agent_recovery.unreconciled
+            );
+        }
+        info!(
+            open = agent_recovery.open_rows,
+            interrupted = agent_recovery.interrupted,
+            resumed = agent_recovery.resumed,
+            finalized = agent_recovery.finalized,
+            "Agent restart recovery completed before spawn admission"
+        );
         let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
         let agent_shutdown_cancel = cancel_token.clone();
         tokio::spawn(async move {
