@@ -7,15 +7,40 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct DomainPorts {
     agora: Arc<dyn AgoraOps>,
+    metacog: Arc<dyn metacog::MetacogService>,
+    corpus: Arc<dyn corpus::CorpusService>,
+    cognition: Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
 }
 
 impl DomainPorts {
-    pub fn new(agora: Arc<dyn AgoraOps>) -> Self {
-        Self { agora }
+    pub fn new(
+        agora: Arc<dyn AgoraOps>,
+        metacog: Arc<dyn metacog::MetacogService>,
+        corpus: Arc<dyn corpus::CorpusService>,
+        cognition: Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
+    ) -> Self {
+        Self {
+            agora,
+            metacog,
+            corpus,
+            cognition,
+        }
     }
 
     pub fn agora(&self) -> Arc<dyn AgoraOps> {
         self.agora.clone()
+    }
+
+    pub fn metacog(&self) -> Arc<dyn metacog::MetacogService> {
+        self.metacog.clone()
+    }
+
+    pub fn corpus(&self) -> Arc<dyn corpus::CorpusService> {
+        self.corpus.clone()
+    }
+
+    pub fn cognition(&self) -> Arc<dyn crate::service::harness_factory::CognitiveSessionFactory> {
+        self.cognition.clone()
     }
 }
 
@@ -24,6 +49,9 @@ impl std::fmt::Debug for DomainPorts {
         formatter
             .debug_struct("DomainPorts")
             .field("agora", &"configured")
+            .field("metacog", &"configured")
+            .field("corpus", &"configured")
+            .field("cognition", &"configured")
             .finish()
     }
 }

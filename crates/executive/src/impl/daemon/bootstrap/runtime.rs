@@ -104,9 +104,7 @@ pub(super) async fn register_agent_tools(
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
 use cognit::r#impl::provider_registry::ProviderRegistry;
-use corpus::tools::tools::ToolRegistry;
 use fabric::{Clock, LlmProvider};
-use tokio::sync::Mutex;
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
 
@@ -118,7 +116,7 @@ pub(crate) fn register_goal_runtimes(
     spawner: &mut SubAgentSpawner,
     config: &cognit::config::GoalRuntimeConfig,
     providers: &ProviderRegistry,
-    tools: Arc<Mutex<ToolRegistry>>,
+    tools: Vec<fabric::ToolDefinition>,
     capability: Arc<dyn CapabilityService>,
     clock: Arc<dyn Clock>,
 ) -> anyhow::Result<Vec<fabric::RuntimeId>> {
@@ -242,7 +240,7 @@ mod goal_runtime_tests {
             &mut spawner,
             &config,
             &providers,
-            Arc::new(Mutex::new(ToolRegistry::new())),
+            Vec::new(),
             Arc::new(NoopCapability),
             Arc::new(SystemClock::new()),
         )?;

@@ -157,6 +157,11 @@ pub struct MetacogStatus {
 
 #[async_trait]
 pub trait MetacogService: Send + Sync {
+    async fn genome(&self) -> Result<fabric::Genome, MetacogError> {
+        Err(MetacogError::InvalidRequest(
+            "genome projection is unavailable".into(),
+        ))
+    }
     async fn verify(&self, request: VerifyMutation) -> Result<VerificationReceipt, MetacogError>;
     async fn apply(&self, request: ApplyMutation) -> Result<MutationReceipt, MetacogError>;
     async fn rollback(&self, request: RollbackMutation) -> Result<MutationReceipt, MetacogError>;
@@ -357,6 +362,13 @@ impl<M: MetaRuntimeOps> DefaultMetacogService<M> {
 
 #[async_trait]
 impl<M: MetaRuntimeOps + 'static> MetacogService for DefaultMetacogService<M> {
+    async fn genome(&self) -> Result<fabric::Genome, MetacogError> {
+        self.runtime
+            .read_genome()
+            .await
+            .map_err(|error| runtime_error("read_genome", error))
+    }
+
     async fn verify(&self, request: VerifyMutation) -> Result<VerificationReceipt, MetacogError> {
         validate_verify_request(&request)?;
         let _guard = self.operations.lock().await;

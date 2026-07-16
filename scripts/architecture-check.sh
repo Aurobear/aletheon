@@ -54,9 +54,62 @@ scan concrete_clock 'SystemClock::new\(' crates/dasein crates/agora crates/cogni
 scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/bin/src
 scan duplicate_kernel 'executive::impl::kernel|crate::impl::kernel' crates
 scan raw_process 'tokio::process::Command' crates/dasein/src crates/executive/src
-# Concrete stores and registries are permitted only in the private composition root.
-scan executive_store_import 'mnemosyne::.*(Store|Database)|corpus::.*(Registry|Runner)' crates/executive/src -g '!**/impl/daemon/bootstrap/**'
+# Concrete stores and registries are permitted only in private composition roots.
+# Test modules are not production dependencies, so inspect only the production prefix.
+python3 - <<'PY' >> "$actual"
+from pathlib import Path
+import re
+
+pattern = re.compile(r"mnemosyne::.*(?:Store|Database)|corpus::.*(?:Registry|Runner)")
+for path in Path("crates/executive/src").rglob("*.rs"):
+    name = str(path)
+    if "/impl/daemon/bootstrap/" in name or name == "crates/executive/src/service/exec_session.rs":
+        continue
+    production = path.read_text().split("#[cfg(test)]", 1)[0]
+    for line in production.splitlines():
+        if pattern.search(line):
+            normalized = re.sub(r"\s+", " ", line).rstrip()
+            print(f"executive_store_import|{path}|{normalized}")
+PY
 sort -u "$actual" -o "$actual"
+
+# F01 deletion gate: request, turn and goal paths retain domain facades only.
+# Concrete construction remains allowed in private bootstrap and CLI composition.
+python3 - <<'PY'
+from pathlib import Path
+
+files = [
+    "crates/executive/src/impl/daemon/handler/mod.rs",
+    "crates/executive/src/impl/daemon/handler/init.rs",
+    "crates/executive/src/impl/daemon/handler/ports.rs",
+    "crates/executive/src/impl/daemon/handler/tool_executor.rs",
+    "crates/executive/src/impl/daemon/mcp_embedded.rs",
+    "crates/executive/src/impl/runtime/provider_worker.rs",
+    "crates/executive/src/service/request_use_cases.rs",
+    "crates/executive/src/service/post_turn_projection.rs",
+    "crates/executive/src/service/turn_pipeline.rs",
+    "crates/executive/src/service/turn_runtime_ports.rs",
+]
+forbidden = [
+    "mnemosyne::FactStore",
+    "corpus::tools::tools::ToolRegistry",
+    "corpus::HookRegistry",
+    "ToolRunnerWithGuard",
+    "metacog::r#impl",
+    "MorphogenesisPipeline",
+    "cognit::harness::linear",
+    "LinearCognitiveSession",
+]
+violations = []
+for name in files:
+    path = Path(name)
+    production = path.read_text().split("#[cfg(test)]", 1)[0]
+    for needle in forbidden:
+        if needle in production:
+            violations.append(f"{name}: {needle}")
+if violations:
+    raise SystemExit("architecture-check: domain facade bypass:\n" + "\n".join(violations))
+PY
 
 # K02 deletion gate: cognitive domains receive Clock from Executive. Unit-test
 # modules may use TestClock, but no production prefix may mention SystemClock.

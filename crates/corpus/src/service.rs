@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use aletheon_kernel::capability::ToolExecutor;
 use async_trait::async_trait;
+use fabric::hook::{HookContext, HookResult};
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AgentId, CapabilityId, CapabilityRequest, CapabilityResult, CapabilityScope, ExecutionPermit,
-    PrincipalId, ToolDefinition,
+    PrincipalId, Registry, Tool, ToolDefinition,
 };
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -212,6 +213,8 @@ pub enum CorpusError {
     PermitMismatch,
     #[error("extension is not executable: {0}")]
     NotExecutable(String),
+    #[error("extension catalog is read-only")]
+    ReadOnlyCatalog,
 }
 
 impl CorpusError {
@@ -245,14 +248,6 @@ impl ExtensionCatalog {
         self.entries.insert(id, descriptor);
         Ok(())
     }
-
-    fn eligible(&self, grant: &ExtensionGrant) -> Vec<ExtensionDescriptor> {
-        self.entries
-            .values()
-            .filter(|descriptor| grant.allows(&descriptor.capability))
-            .cloned()
-            .collect()
-    }
 }
 
 #[async_trait]
@@ -263,6 +258,16 @@ pub trait CorpusService: Send + Sync {
 
     async fn invoke(&self, invocation: GovernedInvocation)
         -> Result<CapabilityResult, CorpusError>;
+
+    /// Register a runtime-discovered tool through the authoritative catalog.
+    async fn register_tool(&self, _tool: Arc<dyn Tool>) -> Result<(), CorpusError> {
+        Err(CorpusError::ReadOnlyCatalog)
+    }
+
+    /// Execute lifecycle hooks without exposing the concrete hook registry.
+    async fn execute_hook(&self, _context: &HookContext) -> HookResult {
+        HookResult::Continue
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -273,18 +278,50 @@ struct ActiveGrant {
 
 /// Default adapter around the permit-enforcing Corpus runtime.
 pub struct DefaultCorpusService {
-    catalog: ExtensionCatalog,
+    catalog: CatalogBackend,
     executor: Arc<dyn ToolExecutor>,
+    hooks: Option<Arc<tokio::sync::Mutex<crate::HookRegistry>>>,
     activations: RwLock<HashMap<ActivationId, ActiveGrant>>,
+}
+
+enum CatalogBackend {
+    Static(ExtensionCatalog),
+    Runtime(Arc<tokio::sync::Mutex<crate::ToolRegistry>>),
 }
 
 impl DefaultCorpusService {
     pub fn new(catalog: ExtensionCatalog, executor: Arc<dyn ToolExecutor>) -> Self {
         Self {
-            catalog,
+            catalog: CatalogBackend::Static(catalog),
             executor,
+            hooks: None,
             activations: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Build the production adapter around Corpus-owned registry, runner and hooks.
+    pub fn from_runtime(
+        registry: Arc<tokio::sync::Mutex<crate::ToolRegistry>>,
+        executor: Arc<dyn ToolExecutor>,
+        hooks: Arc<tokio::sync::Mutex<crate::HookRegistry>>,
+    ) -> Self {
+        Self {
+            catalog: CatalogBackend::Runtime(registry),
+            executor,
+            hooks: Some(hooks),
+            activations: RwLock::new(HashMap::new()),
+        }
+    }
+
+    async fn descriptors(&self) -> Result<BTreeMap<ExtensionId, ExtensionDescriptor>, CorpusError> {
+        let descriptors = match &self.catalog {
+            CatalogBackend::Static(catalog) => return Ok(catalog.entries.clone()),
+            CatalogBackend::Runtime(registry) => crate::discover_tool_extensions(registry).await?,
+        };
+        Ok(descriptors
+            .into_iter()
+            .map(|descriptor| (descriptor.id.clone(), descriptor))
+            .collect())
     }
 }
 
@@ -292,8 +329,13 @@ impl DefaultCorpusService {
 impl CorpusService for DefaultCorpusService {
     async fn catalog(&self, grant: &ExtensionGrant) -> Result<ExtensionSnapshot, CorpusError> {
         grant.validate()?;
+        let catalog = self.descriptors().await?;
         Ok(ExtensionSnapshot {
-            entries: self.catalog.eligible(grant),
+            entries: catalog
+                .values()
+                .filter(|descriptor| grant.allows(&descriptor.capability))
+                .cloned()
+                .collect(),
         })
     }
 
@@ -302,10 +344,9 @@ impl CorpusService for DefaultCorpusService {
         let mut extensions = request.extensions;
         extensions.sort();
         extensions.dedup();
+        let catalog = self.descriptors().await?;
         for id in &extensions {
-            let descriptor = self
-                .catalog
-                .entries
+            let descriptor = catalog
                 .get(id)
                 .ok_or_else(|| CorpusError::UnknownExtension(id.0.clone()))?;
             if !request.grant.allows(&descriptor.capability) {
@@ -342,9 +383,8 @@ impl CorpusService for DefaultCorpusService {
         if !active.extensions.contains(&invocation.extension_id) {
             return Err(CorpusError::NotActivated(invocation.extension_id.0));
         }
-        let descriptor = self
-            .catalog
-            .entries
+        let catalog = self.descriptors().await?;
+        let descriptor = catalog
             .get(&invocation.extension_id)
             .ok_or_else(|| CorpusError::UnknownExtension(invocation.extension_id.0.clone()))?;
         if !descriptor.is_executable() {
@@ -367,6 +407,77 @@ impl CorpusService for DefaultCorpusService {
             .executor
             .execute_with_permit(&invocation.request, &invocation.permit)
             .await)
+    }
+
+    async fn register_tool(&self, tool: Arc<dyn Tool>) -> Result<(), CorpusError> {
+        match &self.catalog {
+            CatalogBackend::Static(_) => Err(CorpusError::ReadOnlyCatalog),
+            CatalogBackend::Runtime(registry) => registry
+                .lock()
+                .await
+                .register(tool)
+                .map(|_| ())
+                .map_err(|error| CorpusError::InvalidDescriptor(error.to_string())),
+        }
+    }
+
+    async fn execute_hook(&self, context: &HookContext) -> HookResult {
+        match &self.hooks {
+            Some(hooks) => hooks.lock().await.execute(context).await,
+            None => HookResult::Continue,
+        }
+    }
+}
+
+/// ToolExecutor adapter bound to one explicit Corpus activation.
+pub struct ActivatedCorpusExecutor {
+    service: Arc<dyn CorpusService>,
+    activation_id: ActivationId,
+}
+
+impl ActivatedCorpusExecutor {
+    pub fn new(service: Arc<dyn CorpusService>, activation_id: ActivationId) -> Self {
+        Self {
+            service,
+            activation_id,
+        }
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for ActivatedCorpusExecutor {
+    async fn execute_with_permit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+    ) -> CapabilityResult {
+        let extension_id = match ExtensionId::new(ExtensionKind::Tool, &request.call.name) {
+            Ok(id) => id,
+            Err(error) => {
+                return CapabilityResult {
+                    call_id: request.call.call_id.clone(),
+                    output: error.to_string(),
+                    is_error: true,
+                    usage: Default::default(),
+                    audit_id: None,
+                }
+            }
+        };
+        self.service
+            .invoke(GovernedInvocation {
+                activation_id: self.activation_id,
+                extension_id,
+                request: request.clone(),
+                permit: permit.clone(),
+            })
+            .await
+            .unwrap_or_else(|error| CapabilityResult {
+                call_id: request.call.call_id.clone(),
+                output: error.to_string(),
+                is_error: true,
+                usage: Default::default(),
+                audit_id: None,
+            })
     }
 }
 

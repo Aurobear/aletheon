@@ -4,7 +4,6 @@ use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
 use fabric::hook::{HookContext, HookPoint};
-use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
 
 #[derive(Clone, Debug)]
 pub struct PostTurnOutcome {
@@ -34,31 +33,31 @@ pub struct PostTurnDispatch {
 pub struct ProductionPostTurnProjection {
     run_hook: Arc<HookProjectionFn>,
     runtime: Arc<tokio::sync::Mutex<crate::core::orchestrator::AletheonExecutive>>,
-    evolution_pipeline: Arc<MorphogenesisPipeline<DefaultMetaRuntime>>,
+    evolution: Arc<dyn metacog::MetacogService>,
 }
 
 type HookProjectionFn =
     dyn Fn(HookContext) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
 
 pub struct PostTurnProjectionResources {
-    pub hooks: crate::core::corpus_group::HookRegistryHandle,
+    pub corpus: Arc<dyn corpus::CorpusService>,
     pub executive: Arc<tokio::sync::Mutex<crate::core::orchestrator::AletheonExecutive>>,
-    pub evolution: Arc<MorphogenesisPipeline<DefaultMetaRuntime>>,
+    pub evolution: Arc<dyn metacog::MetacogService>,
 }
 
 impl ProductionPostTurnProjection {
     pub fn new(resources: PostTurnProjectionResources) -> Self {
-        let hook_registry = resources.hooks;
+        let corpus = resources.corpus;
         let run_hook: Arc<HookProjectionFn> = Arc::new(move |context| {
-            let hook_registry = hook_registry.clone();
+            let corpus = corpus.clone();
             Box::pin(async move {
-                hook_registry.lock().await.execute(&context).await;
+                corpus.execute_hook(&context).await;
             })
         });
         Self {
             run_hook,
             runtime: resources.executive,
-            evolution_pipeline: resources.evolution,
+            evolution: resources.evolution,
         }
     }
 }
@@ -108,7 +107,7 @@ impl ProductionPostTurnProjection {
                 outcome.tool_errors,
                 outcome.elapsed_ms,
                 outcome.iterations,
-                &*self.evolution_pipeline,
+                self.evolution.as_ref(),
             )
             .await
             .map(|_| ())

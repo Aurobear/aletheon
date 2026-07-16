@@ -3,8 +3,8 @@
 //! Extracted from the former inline `execute_tool` closure (previously in chat.rs, now deleted)
 //! (RFC-018 D5 seam 3 / issue #4). Runs one tool through the full pipeline:
 //! PreTool hook → OnMemoryRecall hook → session-approval check → SelfField
-//! review → registry lookup → `ExecutionPermit`-guarded
-//! `ToolRunnerWithGuard::run` → PerfCounter → StormBreaker → PostTool hook,
+//! review → scoped Corpus activation → `ExecutionPermit`-guarded invocation →
+//! PerfCounter → StormBreaker → PostTool hook,
 //! returning `(content, is_error)`.
 //!
 //! Behaviour is identical to the previous closure; this only gives the pipeline
@@ -16,13 +16,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
 use aletheon_kernel::capability::ToolExecutor;
 use corpus::security::storm_breaker::StormBreaker;
-use corpus::CorpusToolExecutor;
-use corpus::HookRegistry;
+use corpus::{
+    ActivatedCorpusExecutor, ActivationRequest, CorpusService, ExtensionGrant, ExtensionSnapshot,
+};
 use dasein::SelfField;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::kernel::debug_bus::PerfCounter;
@@ -42,9 +43,8 @@ use crate::service::{
 #[derive(Clone)]
 pub(crate) struct CapabilityResources {
     pub(crate) kernel: Arc<aletheon_kernel::KernelRuntime>,
-    pub(crate) tools: crate::core::corpus_group::ToolRegistryHandle,
-    pub(crate) runner: crate::core::security_group::ToolRunnerHandle,
-    pub(crate) hooks: crate::core::corpus_group::HookRegistryHandle,
+    pub(crate) corpus: Arc<dyn CorpusService>,
+    pub(crate) capabilities: Arc<RwLock<Vec<fabric::CapabilityId>>>,
     pub(crate) storm: Arc<Mutex<StormBreaker>>,
     pub(crate) memory_queue: Arc<Mutex<Vec<String>>>,
     pub(crate) approvals: Arc<Mutex<HashMap<String, bool>>>,
@@ -57,8 +57,8 @@ pub(crate) struct CapabilityResources {
 /// Holds the same subsystem handles the former `execute_tool` closure captured;
 /// cheap to wrap in `Arc` and clone per tool call.
 pub(crate) struct TurnToolExecutor {
-    inner: Arc<CorpusToolExecutor>,
-    hook_registry: Arc<Mutex<HookRegistry>>,
+    inner: Arc<dyn ToolExecutor>,
+    corpus: Arc<dyn CorpusService>,
     storm_breaker: Arc<Mutex<StormBreaker>>,
     memory_queue: Arc<Mutex<Vec<String>>>,
     session_approvals: Arc<Mutex<HashMap<String, bool>>>,
@@ -77,20 +77,16 @@ impl TurnToolExecutor {
     /// Build an executor for one turn, cloning the needed subsystem handles.
     pub(crate) fn new(
         resources: &CapabilityResources,
+        inner: Arc<dyn ToolExecutor>,
         session_id: String,
         turn_count: usize,
         working_dir: PathBuf,
         operation_id: OperationId,
         process_id: ProcessId,
     ) -> Self {
-        let inner = Arc::new(CorpusToolExecutor::new(
-            resources.tools.clone(),
-            resources.runner.clone(),
-            resources.kernel.clock(),
-        ));
         Self {
             inner,
-            hook_registry: resources.hooks.clone(),
+            corpus: resources.corpus.clone(),
             storm_breaker: resources.storm.clone(),
             memory_queue: resources.memory_queue.clone(),
             session_approvals: resources.approvals.clone(),
@@ -142,7 +138,7 @@ impl TurnToolExecutor {
 
         // Rebind captured handles/values so the pipeline body below is identical
         // to the former `execute_tool` closure.
-        let hook_registry_arc = &self.hook_registry;
+        let corpus = &self.corpus;
         let session_approvals_arc = &self.session_approvals;
         let self_field_arc = &self.self_field;
         let inner = &self.inner;
@@ -157,7 +153,6 @@ impl TurnToolExecutor {
 
         // --- PreTool hook ---
         {
-            let hr = hook_registry_arc.lock().await;
             let ctx = HookContext {
                 point: HookPoint::PreTool,
                 session_id: session_id.clone(),
@@ -168,14 +163,13 @@ impl TurnToolExecutor {
                 message: None,
                 metadata: HashMap::new(),
             };
-            if let HookResult::Block { reason } = hr.execute(&ctx).await {
+            if let HookResult::Block { reason } = corpus.execute_hook(&ctx).await {
                 return self.error_result(request, permit, format!("Blocked by hook: {reason}"));
             }
         }
 
         // --- OnMemoryRecall hook (when memory_search tool is invoked) ---
         if name == "memory_search" {
-            let hr = hook_registry_arc.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnMemoryRecall,
                 session_id: session_id.clone(),
@@ -186,7 +180,7 @@ impl TurnToolExecutor {
                 message: None,
                 metadata: HashMap::new(),
             };
-            hr.execute(&ctx).await;
+            corpus.execute_hook(&ctx).await;
         }
 
         // --- Check session approvals (auto-approve if "always" was used) ---
@@ -252,7 +246,6 @@ impl TurnToolExecutor {
 
         // --- PostTool hook ---
         {
-            let hr = hook_registry_arc.lock().await;
             let ctx = HookContext {
                 point: HookPoint::PostTool,
                 session_id,
@@ -267,7 +260,7 @@ impl TurnToolExecutor {
                 message: None,
                 metadata: HashMap::new(),
             };
-            hr.execute(&ctx).await;
+            corpus.execute_hook(&ctx).await;
         }
 
         // tool_call_result is emitted via EventSink in ReActLoop (single source of truth).
@@ -322,8 +315,13 @@ impl ProductionCapabilityService {
         context: CapabilityExecutionContext,
         call: CapabilityCall,
     ) -> CapabilityResult {
+        let prepared = match prepare_corpus(resources, &context).await {
+            Ok(prepared) => prepared,
+            Err(error) => return Self::unavailable(&call, error.to_string()),
+        };
         let executor = Arc::new(TurnToolExecutor::new(
             resources,
+            prepared.executor,
             context.session_id.clone(),
             context.turn_count,
             context.working_dir.clone(),
@@ -332,7 +330,7 @@ impl ProductionCapabilityService {
         ));
         let authority = Arc::new(
             RegistryAuthorityProvider::new(
-                corpus::tool_risk_levels(&resources.tools).await,
+                prepared.risk_by_tool,
                 context.principal,
                 context.session_id,
                 context.working_dir,
@@ -355,6 +353,55 @@ impl ProductionCapabilityService {
             audit_id: None,
         }
     }
+}
+
+pub(crate) struct PreparedCorpus {
+    pub(crate) snapshot: ExtensionSnapshot,
+    pub(crate) risk_by_tool: HashMap<String, fabric::types::admission::RiskLevel>,
+    pub(crate) executor: Arc<dyn ToolExecutor>,
+}
+
+pub(crate) async fn prepare_corpus(
+    resources: &CapabilityResources,
+    context: &CapabilityExecutionContext,
+) -> anyhow::Result<PreparedCorpus> {
+    let grant = ExtensionGrant {
+        grant_id: uuid::Uuid::new_v4().to_string(),
+        principal: context.principal.clone(),
+        session_id: context.session_id.clone(),
+        agent_id: context
+            .agent
+            .as_ref()
+            .map(|agent| agent.caller_root_agent_id),
+        capabilities: resources.capabilities.read().await.clone(),
+        resources: fabric::CapabilityScope::default(),
+    };
+    let snapshot = resources.corpus.catalog(&grant).await?;
+    let activation = resources
+        .corpus
+        .activate(ActivationRequest {
+            grant,
+            extensions: snapshot
+                .entries
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect(),
+        })
+        .await?;
+    let risk_by_tool = snapshot
+        .entries
+        .iter()
+        .map(|entry| (entry.capability.0.clone(), entry.risk))
+        .collect();
+    let executor = Arc::new(ActivatedCorpusExecutor::new(
+        resources.corpus.clone(),
+        activation.id,
+    ));
+    Ok(PreparedCorpus {
+        snapshot,
+        risk_by_tool,
+        executor,
+    })
 }
 
 #[async_trait::async_trait]

@@ -79,7 +79,7 @@ impl AletheonExecutive {
     /// Run post-turn evolution if a coordinator is attached.
     ///
     /// Returns `None` if evolution is not configured.
-    pub async fn post_evolution<M: fabric::meta::MetaRuntimeOps>(
+    pub async fn post_evolution(
         &mut self,
         task_summary: &str,
         output: &str,
@@ -88,7 +88,7 @@ impl AletheonExecutive {
         tool_errors: usize,
         elapsed_ms: u64,
         iterations: usize,
-        meta: &metacog::MorphogenesisPipeline<M>,
+        meta: &dyn metacog::MetacogService,
     ) -> Result<Option<EvolutionSummary>> {
         let signals = std::mem::take(&mut self.awareness_signals);
         match &self.evolution {

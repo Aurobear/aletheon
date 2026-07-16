@@ -149,7 +149,8 @@ impl crate::host::RuntimeHost for SystemdHost {
             .unwrap_or(&PathBuf::from("/tmp/aletheon"))
             .join("aletheon-mcp.sock");
         let mcp_server = McpEmbedded::new(
-            request_handler.tools(),
+            request_handler.corpus_service(),
+            request_handler.corpus_grant(),
             request_handler.capability_service(),
             mcp_socket.clone(),
         );

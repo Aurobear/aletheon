@@ -17,13 +17,9 @@ core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.ru
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::HookRegistry;
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/core/security_group.rs|use corpus::security::runner::ToolRunnerWithGuard;
-executive_store_import|crates/executive/src/impl/daemon/handler/tool_executor.rs|use corpus::HookRegistry;
-executive_store_import|crates/executive/src/impl/daemon/mcp_embedded.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/impl/engine/modules/body_module.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/impl/hook_lifecycle/recall_inject.rs|use mnemosyne::FactStore;
 executive_store_import|crates/executive/src/impl/hook_lifecycle/session_distiller.rs|use mnemosyne::FactStore;
-executive_store_import|crates/executive/src/impl/runtime/provider_worker.rs|use corpus::tools::tools::ToolRegistry;
-executive_store_import|crates/executive/src/service/exec_session.rs|use corpus::security::runner::ToolRunnerWithGuard;
 executive_store_import|crates/executive/src/service/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {
 executive_store_import|crates/executive/src/service/verification/command.rs|use corpus::tools::subagent::{CommandOutput, CommandRequest, CommandRunner};
 legacy_event|crates/executive/src/impl/engine/modules/body_module.rs| let resp_envelope = Envelope::response(&envelope, serialize_response(&response));

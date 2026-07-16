@@ -22,7 +22,7 @@ use corpus::security::approval::{ApprovalGate, TerminalApprovalGate};
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::SandboxPreference;
-use corpus::CorpusToolExecutor;
+use corpus::CorpusService;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AgoraOps, CapabilityCall, CapabilityResult, LlmProvider, Message, PrincipalId, ProcessId,
@@ -124,11 +124,6 @@ impl ExecSessionBuilder {
         let turn_id = uuid::Uuid::new_v4().to_string();
         runner.on_new_turn(&turn_id);
 
-        let tool_definitions = tool_registry.lock().await.definitions();
-        let tool_risks = corpus::tool_risk_levels(&tool_registry).await;
-        let tool_count = tool_definitions.len();
-        info!(tool_count, "Tools registered");
-
         let system_prompt = format!(
             "You are Aletheon, an AI agent executing a task non-interactively. \
              You have access to tools. Complete the user's request and provide a final response. \
@@ -140,11 +135,51 @@ impl ExecSessionBuilder {
 
         let kernel = Arc::new(KernelRuntime::new());
 
-        let executor = Arc::new(CorpusToolExecutor::new(
+        let raw_executor = Arc::new(corpus::CorpusToolExecutor::new(
             tool_registry.clone(),
             Arc::new(Mutex::new(runner)),
-            clock,
+            clock.clone(),
         ));
+        let corpus: Arc<dyn CorpusService> = Arc::new(corpus::DefaultCorpusService::from_runtime(
+            tool_registry.clone(),
+            raw_executor,
+            Arc::new(Mutex::new(corpus::HookRegistry::new(clock))),
+        ));
+        let descriptors = corpus::discover_tool_extensions(&tool_registry).await?;
+        let grant = corpus::ExtensionGrant {
+            grant_id: uuid::Uuid::new_v4().to_string(),
+            principal: PrincipalId("exec".into()),
+            session_id: session_id.clone(),
+            agent_id: None,
+            capabilities: descriptors
+                .iter()
+                .map(|descriptor| descriptor.capability.clone())
+                .collect(),
+            resources: Default::default(),
+        };
+        let snapshot = corpus.catalog(&grant).await?;
+        let activation = corpus
+            .activate(corpus::ActivationRequest {
+                grant,
+                extensions: snapshot
+                    .entries
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect(),
+            })
+            .await?;
+        let tool_definitions = snapshot
+            .entries
+            .iter()
+            .filter_map(|entry| entry.tool_definition.clone())
+            .collect::<Vec<_>>();
+        let tool_risks = snapshot
+            .entries
+            .iter()
+            .map(|entry| (entry.capability.0.clone(), entry.risk))
+            .collect();
+        info!(tool_count = tool_definitions.len(), "Tools registered");
+        let executor = Arc::new(corpus::ActivatedCorpusExecutor::new(corpus, activation.id));
         let authority = Arc::new(RegistryAuthorityProvider::new(
             tool_risks,
             PrincipalId("exec".into()),

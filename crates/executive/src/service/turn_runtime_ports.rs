@@ -10,7 +10,7 @@ use fabric::{
 };
 use tokio::sync::{mpsc, Mutex};
 
-use crate::r#impl::daemon::handler::tool_executor::TurnToolExecutor;
+use crate::r#impl::daemon::handler::tool_executor::{prepare_corpus, TurnToolExecutor};
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::service::governed_capability::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, RegistryAuthorityProvider,
@@ -103,7 +103,7 @@ pub struct TurnRuntimePorts {
 }
 
 pub(crate) struct TurnRuntimeResources {
-    pub(crate) hooks: crate::core::corpus_group::HookRegistryHandle,
+    pub(crate) corpus: Arc<dyn corpus::CorpusService>,
     pub(crate) pre_turn_scripts: Vec<String>,
     pub(crate) storm: Arc<Mutex<corpus::security::storm_breaker::StormBreaker>>,
     pub(crate) model_router: Arc<ModelRouter>,
@@ -136,10 +136,10 @@ pub(crate) struct TurnRuntimeResources {
 
 impl TurnRuntimePorts {
     pub(crate) fn production(resources: TurnRuntimeResources) -> Self {
-        let hook_registry = resources.hooks;
+        let corpus = resources.corpus;
         let execute_hook: Arc<HookExecutionFn> = Arc::new(move |context| {
-            let hook_registry = hook_registry.clone();
-            Box::pin(async move { hook_registry.lock().await.execute(&context).await })
+            let corpus = corpus.clone();
+            Box::pin(async move { corpus.execute_hook(&context).await })
         });
         let hooks: Arc<dyn TurnHookPort> = Arc::new(ProductionTurnHooks {
             execute_hook,
@@ -531,9 +531,16 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
         &self,
         context: CapabilityExecutionContext,
     ) -> anyhow::Result<PreparedCapabilities> {
-        let definitions = self.resources.tools.lock().await.definitions();
+        let prepared = prepare_corpus(&self.resources, &context).await?;
+        let definitions = prepared
+            .snapshot
+            .entries
+            .iter()
+            .filter_map(|entry| entry.tool_definition.clone())
+            .collect();
         let executor = Arc::new(TurnToolExecutor::new(
             &self.resources,
+            prepared.executor,
             context.session_id.clone(),
             context.turn_count,
             context.working_dir.clone(),
@@ -542,7 +549,7 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
         ));
         let authority = Arc::new(
             RegistryAuthorityProvider::new(
-                corpus::tool_risk_levels(&self.resources.tools).await,
+                prepared.risk_by_tool,
                 context.principal,
                 context.session_id,
                 context.working_dir,

@@ -15,14 +15,14 @@ use fabric::hook::{HookContext, HookPoint};
 use fabric::ui_event::InterruptReason;
 use fabric::{
     Clock, EvolutionLogEntry, ExternalIdentityState, ExternalScope, GrantState, OperationId,
-    OperationResult, PrincipalId, ProcessId, ReflectionEntry, ReflectionTrigger, Registry,
-    SessionId, LOCAL_OWNER_PRINCIPAL,
+    OperationResult, PrincipalId, ProcessId, ReflectionEntry, ReflectionTrigger, SessionId,
+    LOCAL_OWNER_PRINCIPAL,
 };
 use mnemosyne::episodic::EpisodicMemory;
 use serde::Serialize;
 use serde_json::json;
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::core::config::HooksConfig;
@@ -238,7 +238,7 @@ pub trait ReflectionUseCases: Send + Sync {
 pub struct ProductionReflectionUseCases {
     executive: Arc<Mutex<AletheonExecutive>>,
     episodic: Arc<Mutex<EpisodicMemory>>,
-    self_field: Arc<Mutex<SelfField>>,
+    metacog: Arc<dyn metacog::MetacogService>,
     reflector: Reflector,
 }
 
@@ -246,13 +246,13 @@ impl ProductionReflectionUseCases {
     pub fn new(
         executive: Arc<Mutex<AletheonExecutive>>,
         episodic: Arc<Mutex<EpisodicMemory>>,
-        self_field: Arc<Mutex<SelfField>>,
+        metacog: Arc<dyn metacog::MetacogService>,
         reflector: Reflector,
     ) -> Self {
         Self {
             executive,
             episodic,
-            self_field,
+            metacog,
             reflector,
         }
     }
@@ -304,9 +304,7 @@ impl ReflectionUseCases for ProductionReflectionUseCases {
     }
 
     async fn genome_yaml(&self) -> anyhow::Result<String> {
-        let self_field = self.self_field.lock().await;
-        let reader = metacog::r#impl::meta_runtime::self_reader::SelfReader::new();
-        let genome = reader.read_genome(&*self_field).await?;
+        let genome = self.metacog.genome().await?;
         Ok(serde_yaml::to_string(&genome)?)
     }
 
@@ -323,7 +321,7 @@ pub trait SessionLifecycleUseCases: Send + Sync {
 }
 
 pub struct ProductionSessionLifecycle {
-    hooks: crate::core::corpus_group::HookRegistryHandle,
+    corpus: Arc<dyn corpus::CorpusService>,
     config: HooksConfig,
     approvals: Arc<Mutex<HashMap<String, bool>>>,
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
@@ -331,13 +329,13 @@ pub struct ProductionSessionLifecycle {
 
 impl ProductionSessionLifecycle {
     pub fn new(
-        hooks: crate::core::corpus_group::HookRegistryHandle,
+        corpus: Arc<dyn corpus::CorpusService>,
         config: HooksConfig,
         approvals: Arc<Mutex<HashMap<String, bool>>>,
         cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     ) -> Self {
         Self {
-            hooks,
+            corpus,
             config,
             approvals,
             cancel_token,
@@ -362,7 +360,7 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
             message: None,
             metadata: HashMap::new(),
         };
-        self.hooks.lock().await.execute(&context).await;
+        self.corpus.execute_hook(&context).await;
         if !self.config.on_session_end.is_empty() {
             let input = json!({
                 "session_id": session_id,
@@ -390,7 +388,7 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
             message: None,
             metadata: HashMap::new(),
         };
-        self.hooks.lock().await.execute(&context).await;
+        self.corpus.execute_hook(&context).await;
     }
 }
 
@@ -534,19 +532,22 @@ pub struct GoogleRefresh {
 
 pub struct ProductionGoogleUseCases {
     integration: Option<Arc<GoogleIntegration>>,
-    tools: crate::core::corpus_group::ToolRegistryHandle,
+    corpus: Arc<dyn corpus::CorpusService>,
+    capabilities: Arc<RwLock<Vec<fabric::CapabilityId>>>,
     clock: Arc<dyn Clock>,
 }
 
 impl ProductionGoogleUseCases {
     pub fn new(
         integration: Option<Arc<GoogleIntegration>>,
-        tools: crate::core::corpus_group::ToolRegistryHandle,
+        corpus: Arc<dyn corpus::CorpusService>,
+        capabilities: Arc<RwLock<Vec<fabric::CapabilityId>>>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             integration,
-            tools,
+            corpus,
+            capabilities,
             clock,
         }
     }
@@ -581,27 +582,55 @@ impl ProductionGoogleUseCases {
         let accounts =
             Arc::new(crate::r#impl::external::ExecutiveGoogleAccountResolver::new(repository));
         let client = GoogleApiClient::new(credentials, GoogleApiEndpoints::default())?;
-        let mut tools = self.tools.lock().await;
-        if gmail && tools.get("google_gmail_search").is_none() {
+        if gmail && !self.tool_registered("google_gmail_search").await? {
             let gmail = Arc::new(GoogleGmailAdapter::new(client.clone()));
-            tools.register(Arc::new(corpus::tools::google::GoogleGmailSearchTool::new(
-                gmail.clone(),
-                accounts.clone(),
-            )))?;
-            tools.register(Arc::new(corpus::tools::google::GoogleGmailReadTool::new(
-                gmail,
-                accounts.clone(),
-            )))?;
+            self.corpus
+                .register_tool(Arc::new(corpus::tools::google::GoogleGmailSearchTool::new(
+                    gmail.clone(),
+                    accounts.clone(),
+                )))
+                .await?;
+            self.grant_tool("google_gmail_search").await;
+            self.corpus
+                .register_tool(Arc::new(corpus::tools::google::GoogleGmailReadTool::new(
+                    gmail,
+                    accounts.clone(),
+                )))
+                .await?;
+            self.grant_tool("google_gmail_read").await;
         }
-        if calendar && tools.get("google_calendar_list").is_none() {
-            tools.register(Arc::new(
-                corpus::tools::google::GoogleCalendarListTool::new(
-                    Arc::new(GoogleCalendarAdapter::new(client)),
-                    accounts,
-                ),
-            ))?;
+        if calendar && !self.tool_registered("google_calendar_list").await? {
+            self.corpus
+                .register_tool(Arc::new(
+                    corpus::tools::google::GoogleCalendarListTool::new(
+                        Arc::new(GoogleCalendarAdapter::new(client)),
+                        accounts,
+                    ),
+                ))
+                .await?;
+            self.grant_tool("google_calendar_list").await;
         }
         Ok(())
+    }
+
+    async fn tool_registered(&self, name: &str) -> anyhow::Result<bool> {
+        let grant = corpus::ExtensionGrant {
+            grant_id: format!("google-tool-check:{name}"),
+            principal: PrincipalId(LOCAL_OWNER_PRINCIPAL.into()),
+            session_id: "google-admin".into(),
+            agent_id: None,
+            capabilities: vec![fabric::CapabilityId(name.into())],
+            resources: fabric::CapabilityScope::default(),
+        };
+        Ok(!self.corpus.catalog(&grant).await?.entries.is_empty())
+    }
+
+    async fn grant_tool(&self, name: &str) {
+        let capability = fabric::CapabilityId(name.into());
+        let mut capabilities = self.capabilities.write().await;
+        if !capabilities.contains(&capability) {
+            capabilities.push(capability);
+        }
     }
 }
 

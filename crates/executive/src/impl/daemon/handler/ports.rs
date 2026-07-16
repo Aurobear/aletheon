@@ -12,7 +12,8 @@ use crate::service::request_use_cases::{
 use crate::service::{AdminUseCases, ApprovalUseCases, GoalUseCases};
 
 pub(crate) struct TransportPorts {
-    pub(crate) tools: crate::core::corpus_group::ToolRegistryHandle,
+    pub(crate) corpus: Arc<dyn corpus::CorpusService>,
+    pub(crate) capabilities_grant: corpus::ExtensionGrant,
     pub(crate) capabilities: Arc<dyn crate::service::governed_capability::CapabilityService>,
     pub(crate) clock: Arc<dyn fabric::Clock>,
 }

@@ -3,7 +3,6 @@
 use crate::core::sub_agent::{SubAgentExecutionContext, SubAgentRuntime};
 use crate::service::{CapabilityExecutionContext, CapabilityService};
 use async_trait::async_trait;
-use corpus::tools::tools::ToolRegistry;
 use fabric::{
     AttemptEvidence, AttemptUsage, Clock, CognitiveRole, ContentBlock, FailureClass, LlmProvider,
     Message, PrincipalId, Role, RuntimeFailure, RuntimeId, RuntimeResult, SandboxRequirement,
@@ -11,7 +10,6 @@ use fabric::{
 };
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 /// A generic provider runtime. Provider brands remain configuration concerns.
@@ -19,7 +17,7 @@ pub struct ProviderWorkerRuntime {
     runtime_id: RuntimeId,
     role: CognitiveRole,
     llm: Arc<dyn LlmProvider>,
-    tools: Arc<Mutex<ToolRegistry>>,
+    tools: Vec<ToolDefinition>,
     capability: Arc<dyn CapabilityService>,
     clock: Arc<dyn Clock>,
     max_steps: usize,
@@ -33,7 +31,7 @@ impl ProviderWorkerRuntime {
         runtime_id: RuntimeId,
         role: CognitiveRole,
         llm: Arc<dyn LlmProvider>,
-        tools: Arc<Mutex<ToolRegistry>>,
+        tools: Vec<ToolDefinition>,
         capability: Arc<dyn CapabilityService>,
         clock: Arc<dyn Clock>,
         max_steps: usize,
@@ -61,13 +59,11 @@ impl ProviderWorkerRuntime {
         self.role
     }
 
-    async fn tool_definitions(&self) -> Vec<ToolDefinition> {
+    fn tool_definitions(&self) -> Vec<ToolDefinition> {
         self.tools
-            .lock()
-            .await
-            .definitions()
-            .into_iter()
+            .iter()
             .filter(|tool| self.allowed_tools.contains(&tool.name))
+            .cloned()
             .collect()
     }
 
@@ -171,7 +167,7 @@ impl ProviderWorkerRuntime {
                 ));
             }
 
-            let tool_defs = self.tool_definitions().await;
+            let tool_defs = self.tool_definitions();
             let response = tokio::select! {
                 _ = cancel.cancelled() => {
                     return Err(self.failure(
@@ -301,10 +297,12 @@ mod tests {
     use super::*;
     use aletheon_kernel::chronos::TestClock;
     use anyhow::anyhow;
+    use corpus::tools::tools::ToolRegistry;
     use fabric::tool::{Tool, ToolContext, ToolResult, ToolResultMeta};
     use fabric::{LlmResponse, LlmStream, Registry, StopReason, Usage};
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Mutex;
 
     struct TestCapabilityService(Arc<AtomicUsize>);
 
@@ -438,13 +436,14 @@ mod tests {
         registry
             .register(Arc::new(CountingTool(counter.clone())))
             .unwrap();
+        let definitions = registry.definitions();
         let clock = Arc::new(TestClock::new(0, 0));
         (
             ProviderWorkerRuntime::new(
                 RuntimeId("worker".into()),
                 CognitiveRole::Worker,
                 provider.clone(),
-                Arc::new(Mutex::new(registry)),
+                definitions,
                 test_capability(counter),
                 clock,
                 max_steps,
@@ -499,7 +498,7 @@ mod tests {
             RuntimeId("worker".into()),
             CognitiveRole::Worker,
             provider,
-            Arc::new(Mutex::new(ToolRegistry::new())),
+            Vec::new(),
             test_capability(Arc::new(AtomicUsize::new(0))),
             clock,
             1,
@@ -534,7 +533,7 @@ mod tests {
             RuntimeId("worker".into()),
             CognitiveRole::Worker,
             provider,
-            Arc::new(Mutex::new(ToolRegistry::new())),
+            Vec::new(),
             test_capability(Arc::new(AtomicUsize::new(0))),
             Arc::new(TestClock::default()),
             1,

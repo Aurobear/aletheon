@@ -34,7 +34,7 @@ use fabric::LlmProvider;
 use fabric::Registry;
 use fabric::Version;
 use fabric::{Subsystem, SubsystemContext};
-use metacog::{DefaultMetaRuntime, MorphogenesisPipeline};
+use metacog::DefaultMetaRuntime;
 use mnemosyne::episodic::EpisodicMemory;
 use mnemosyne::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
 use mnemosyne::CoreMemory;
@@ -459,8 +459,16 @@ impl RequestHandler {
         }
 
         // Pipeline, reflector, episodic memory
-        let meta_runtime = DefaultMetaRuntime::new(Version::new(0, 1, 0), clock.clone());
-        let pipeline = Arc::new(MorphogenesisPipeline::new(meta_runtime));
+        let meta_runtime = Arc::new(DefaultMetaRuntime::new(
+            Version::new(0, 1, 0),
+            clock.clone(),
+        ));
+        let metacog: Arc<dyn metacog::MetacogService> =
+            Arc::new(metacog::DefaultMetacogService::with_state_path(
+                meta_runtime,
+                clock.clone(),
+                data_dir.join("metacog-mutations.json"),
+            )?);
         let reflector = Reflector::new(clock.clone());
         let episodic_db_path = data_dir.join("episodic.db");
         let mut episodic_memory = EpisodicMemory::new(episodic_db_path, clock.clone());
@@ -621,8 +629,6 @@ impl RequestHandler {
         let gbrain_worker_task = gbrain_runtime.worker_task;
 
         let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(clock.clone()));
-        let domains =
-            crate::core::DomainPorts::new(Arc::new(agora::AgoraRegistry::new(kernel.clock())));
         let fact_use_cases: Arc<dyn mnemosyne::FactUseCases> =
             Arc::new(mnemosyne::DefaultFactUseCases::new(fact_store.clone()));
         let goal_use_cases: Arc<dyn crate::service::GoalUseCases> =
@@ -689,6 +695,30 @@ impl RequestHandler {
             hook_registry,
             hooks_config,
         };
+        let corpus_executor = Arc::new(corpus::CorpusToolExecutor::new(
+            corpus_group.tools.clone(),
+            security_group.tool_runner.clone(),
+            clock.clone(),
+        ));
+        let corpus: Arc<dyn corpus::CorpusService> =
+            Arc::new(corpus::DefaultCorpusService::from_runtime(
+                corpus_group.tools.clone(),
+                corpus_executor,
+                corpus_group.hook_registry.clone(),
+            ));
+        let granted_capabilities = Arc::new(tokio::sync::RwLock::new(
+            corpus::discover_tool_extensions(&corpus_group.tools)
+                .await?
+                .into_iter()
+                .map(|entry| entry.capability)
+                .collect(),
+        ));
+        let domains = crate::core::DomainPorts::new(
+            Arc::new(agora::AgoraRegistry::new(kernel.clock())),
+            metacog,
+            corpus,
+            cognitive_sessions,
+        );
         let session_group = crate::core::SessionGroup {
             default_session_id: default_session_id.clone(),
             session_created_at: session_created_at.clone(),
@@ -701,9 +731,8 @@ impl RequestHandler {
         let capability_resources =
             crate::r#impl::daemon::handler::tool_executor::CapabilityResources {
                 kernel: kernel.clone(),
-                tools: corpus_group.tools.clone(),
-                runner: security_group.tool_runner.clone(),
-                hooks: corpus_group.hook_registry.clone(),
+                corpus: domains.corpus(),
+                capabilities: granted_capabilities.clone(),
                 storm: security_group.storm_breaker.clone(),
                 memory_queue: session_group.memory_queue.clone(),
                 approvals: security_group.session_approvals.clone(),
@@ -733,7 +762,7 @@ impl RequestHandler {
             agent_profiles_for_tools = tool_profiles;
             let native = Arc::new(crate::r#impl::runtime::NativeCognitRuntime::new(
                 crate::r#impl::runtime::NativeCognitRuntimeResources {
-                    sessions: cognitive_sessions.clone(),
+                    sessions: domains.cognition(),
                     capabilities: capability_service.clone(),
                     profiles,
                     clock: clock.clone(),
@@ -755,7 +784,7 @@ impl RequestHandler {
                 runtime.sub_agent_spawner_mut(),
                 &goal_runtime,
                 registry,
-                corpus_group.tools.clone(),
+                corpus_group.tools.lock().await.definitions(),
                 capability_service.clone(),
                 clock.clone(),
             )?;
@@ -893,6 +922,11 @@ impl RequestHandler {
             agent_profiles_for_tools,
         )
         .await;
+        *granted_capabilities.write().await = corpus::discover_tool_extensions(&corpus_group.tools)
+            .await?
+            .into_iter()
+            .map(|entry| entry.capability)
+            .collect();
 
         let shared_notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>> = Arc::new(Mutex::new(None));
         let session_db = crate::r#impl::session::canonical_store::default_session_db_path();
@@ -922,16 +956,16 @@ impl RequestHandler {
             Arc::new(
                 crate::service::post_turn_projection::ProductionPostTurnProjection::new(
                     crate::service::post_turn_projection::PostTurnProjectionResources {
-                        hooks: corpus_group.hook_registry.clone(),
+                        corpus: domains.corpus(),
                         executive: runtime.clone(),
-                        evolution: pipeline.clone(),
+                        evolution: domains.metacog(),
                     },
                 ),
             );
         let runtime_ports = Arc::new(
             crate::service::turn_runtime_ports::TurnRuntimePorts::production(
                 crate::service::turn_runtime_ports::TurnRuntimeResources {
-                    hooks: corpus_group.hook_registry.clone(),
+                    corpus: domains.corpus(),
                     pre_turn_scripts: corpus_group.hooks_config.pre_turn.clone(),
                     storm: security_group.storm_breaker.clone(),
                     model_router: model_router.clone(),
@@ -966,7 +1000,7 @@ impl RequestHandler {
                 canonical_sessions: session_service.clone(),
                 projection,
                 runtime: runtime_ports,
-                cognitive_sessions,
+                cognitive_sessions: domains.cognition(),
                 conscious_core: Some(conscious_registry),
             },
         ));
@@ -1114,7 +1148,7 @@ impl RequestHandler {
             dyn crate::service::request_use_cases::SessionLifecycleUseCases,
         > = Arc::new(
             crate::service::request_use_cases::ProductionSessionLifecycle::new(
-                corpus_group.hook_registry.clone(),
+                domains.corpus(),
                 corpus_group.hooks_config.clone(),
                 security_group.session_approvals.clone(),
                 turn_token.clone(),
@@ -1144,14 +1178,15 @@ impl RequestHandler {
                 crate::service::request_use_cases::ProductionReflectionUseCases::new(
                     runtime.clone(),
                     memory_group.episodic_memory.clone(),
-                    self_field.clone(),
+                    domains.metacog(),
                     reflector.clone(),
                 ),
             );
         let google_use_cases: Arc<dyn crate::service::request_use_cases::GoogleUseCases> = Arc::new(
             crate::service::request_use_cases::ProductionGoogleUseCases::new(
                 google.clone(),
-                corpus_group.tools.clone(),
+                domains.corpus(),
+                granted_capabilities.clone(),
                 clock.clone(),
             ),
         );
@@ -1173,7 +1208,15 @@ impl RequestHandler {
             crate::service::request_use_cases::ProductionDebugUseCases(debug_handler.clone()),
         );
         let transport_ports = Arc::new(crate::r#impl::daemon::handler::ports::TransportPorts {
-            tools: corpus_group.tools.clone(),
+            corpus: domains.corpus(),
+            capabilities_grant: corpus::ExtensionGrant {
+                grant_id: "embedded-mcp".into(),
+                principal: fabric::PrincipalId("embedded-mcp".into()),
+                session_id: "embedded-mcp".into(),
+                agent_id: None,
+                capabilities: granted_capabilities.read().await.clone(),
+                resources: fabric::CapabilityScope::default(),
+            },
             capabilities: capability_service,
             clock: clock.clone(),
         });

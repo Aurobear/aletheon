@@ -16,8 +16,12 @@ impl RequestHandler {
         self.ports.debug.handler()
     }
 
-    pub fn tools(&self) -> crate::core::corpus_group::ToolRegistryHandle {
-        self.ports.transport.tools.clone()
+    pub fn corpus_service(&self) -> Arc<dyn corpus::CorpusService> {
+        self.ports.transport.corpus.clone()
+    }
+
+    pub fn corpus_grant(&self) -> corpus::ExtensionGrant {
+        self.ports.transport.capabilities_grant.clone()
     }
 
     pub fn capability_service(&self) -> Arc<dyn CapabilityService> {
