@@ -1,4 +1,6 @@
 use std::ffi::CString;
+use std::ffi::OsString;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +23,180 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::handler::RequestHandler;
+
+/// Filesystem visibility of a path-bound daemon socket.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SocketPrivacy {
+    /// Per-user runtime: parent directory 0700 and socket 0600.
+    UserPrivate,
+    /// Machine core compatibility: socket remains owner/group accessible 0660.
+    SystemCore,
+}
+
+/// Injectable systemd activation environment. Tests use an in-memory
+/// implementation so they never mutate process-global environment variables.
+pub trait ActivationEnvironment: fabric::paths::RuntimeEnvironment {
+    fn remove_var(&self, key: &str);
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProcessActivationEnvironment;
+
+impl fabric::paths::RuntimeEnvironment for ProcessActivationEnvironment {
+    fn var_os(&self, key: &str) -> Option<OsString> {
+        std::env::var_os(key)
+    }
+}
+
+impl ActivationEnvironment for ProcessActivationEnvironment {
+    fn remove_var(&self, key: &str) {
+        std::env::remove_var(key);
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ActivationError {
+    #[error("LISTEN_PID and LISTEN_FDS must either both be set or both be absent")]
+    IncompleteEnvironment,
+    #[error("LISTEN_PID is invalid")]
+    InvalidPid,
+    #[error("LISTEN_PID {actual} does not match current pid {expected}")]
+    WrongPid { expected: u32, actual: u32 },
+    #[error("LISTEN_FDS must be exactly 1, got {0}")]
+    InvalidFdCount(u32),
+    #[error("socket activation declared one listener but no inherited fd was supplied")]
+    MissingFd,
+    #[error("inherited fd is not an AF_UNIX stream listener")]
+    InvalidListener,
+    #[error("unable to inspect inherited listener: {0}")]
+    Inspection(#[source] std::io::Error),
+}
+
+/// Validate and adopt a duplicated systemd activation descriptor.
+///
+/// The caller supplies an owned duplicate instead of this function taking fd 3
+/// directly. That keeps descriptor ownership explicit and makes tests safe to
+/// run in-process without replacing a real fd 3.
+pub fn inherited_listener(
+    env: &impl ActivationEnvironment,
+    inherited_fd: Option<OwnedFd>,
+) -> Result<Option<UnixListener>, ActivationError> {
+    if !activation_is_declared(env)? {
+        return Ok(None);
+    }
+
+    let inherited_fd = inherited_fd.ok_or(ActivationError::MissingFd)?;
+    validate_unix_stream_listener(&inherited_fd)?;
+    let listener: std::os::unix::net::UnixListener = inherited_fd.into();
+    listener
+        .set_nonblocking(true)
+        .map_err(ActivationError::Inspection)?;
+    let listener = UnixListener::from_std(listener).map_err(ActivationError::Inspection)?;
+    env.remove_var("LISTEN_PID");
+    env.remove_var("LISTEN_FDS");
+    Ok(Some(listener))
+}
+
+/// Adopt the single listener passed by systemd in production.
+///
+/// The inherited descriptor is duplicated before conversion so descriptor 3
+/// remains owned by the process activation contract rather than by a testable
+/// helper. Absence of activation is not an error and lets the caller bind the
+/// configured path instead.
+pub fn process_inherited_listener() -> Result<Option<UnixListener>, ActivationError> {
+    let env = ProcessActivationEnvironment;
+    if !activation_is_declared(&env)? {
+        return Ok(None);
+    }
+    // SAFETY: `fcntl` does not take ownership of fd 3. On success it returns a
+    // new close-on-exec descriptor owned by this function.
+    let duplicate = unsafe { libc::fcntl(3, libc::F_DUPFD_CLOEXEC, 3) };
+    if duplicate == -1 {
+        return Err(ActivationError::Inspection(std::io::Error::last_os_error()));
+    }
+    // SAFETY: a successful F_DUPFD_CLOEXEC returns a fresh owned descriptor.
+    let duplicate = unsafe { OwnedFd::from_raw_fd(duplicate) };
+    inherited_listener(&env, Some(duplicate))
+}
+
+fn activation_is_declared(env: &impl ActivationEnvironment) -> Result<bool, ActivationError> {
+    let listen_pid = env.var_os("LISTEN_PID");
+    let listen_fds = env.var_os("LISTEN_FDS");
+    let (listen_pid, listen_fds) = match (listen_pid, listen_fds) {
+        (None, None) => return Ok(false),
+        (Some(pid), Some(fds)) => (pid, fds),
+        _ => return Err(ActivationError::IncompleteEnvironment),
+    };
+
+    let listen_pid = listen_pid
+        .to_str()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or(ActivationError::InvalidPid)?;
+    let current_pid = std::process::id();
+    if listen_pid != current_pid {
+        return Err(ActivationError::WrongPid {
+            expected: current_pid,
+            actual: listen_pid,
+        });
+    }
+    let listen_fds = listen_fds
+        .to_str()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or(ActivationError::InvalidFdCount(0))?;
+    if listen_fds != 1 {
+        return Err(ActivationError::InvalidFdCount(listen_fds));
+    }
+    Ok(true)
+}
+
+fn validate_unix_stream_listener(fd: &OwnedFd) -> Result<(), ActivationError> {
+    let socket_type = socket_option(fd, libc::SO_TYPE)?;
+    let accepting = socket_option(fd, libc::SO_ACCEPTCONN)?;
+    let family = socket_family(fd)?;
+    if socket_type != libc::SOCK_STREAM || accepting != 1 || family != libc::AF_UNIX {
+        return Err(ActivationError::InvalidListener);
+    }
+    Ok(())
+}
+
+fn socket_option(fd: &OwnedFd, option: libc::c_int) -> Result<libc::c_int, ActivationError> {
+    let mut value: libc::c_int = 0;
+    let mut length = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: `value` and `length` point to initialized writable storage, and
+    // `fd` remains owned for the duration of the call.
+    let result = unsafe {
+        libc::getsockopt(
+            fd.as_raw_fd(),
+            libc::SOL_SOCKET,
+            option,
+            (&mut value as *mut libc::c_int).cast(),
+            &mut length,
+        )
+    };
+    if result == -1 {
+        return Err(ActivationError::Inspection(std::io::Error::last_os_error()));
+    }
+    Ok(value)
+}
+
+fn socket_family(fd: &OwnedFd) -> Result<libc::c_int, ActivationError> {
+    // SAFETY: zero is a valid initial byte representation for sockaddr_storage.
+    let mut address: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    // SAFETY: `address` and `length` describe valid writable storage, and `fd`
+    // remains owned for the duration of the call.
+    let result = unsafe {
+        libc::getsockname(
+            fd.as_raw_fd(),
+            (&mut address as *mut libc::sockaddr_storage).cast(),
+            &mut length,
+        )
+    };
+    if result == -1 {
+        return Err(ActivationError::Inspection(std::io::Error::last_os_error()));
+    }
+    Ok(libc::c_int::from(address.ss_family))
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConnectionContext {
@@ -256,21 +432,53 @@ impl UnixServer {
         group_gid: u32,
         clock: Arc<dyn Clock>,
     ) -> Result<Self> {
-        // Remove stale socket
-        if socket_path.exists() {
-            tokio::fs::remove_file(socket_path).await?;
-        }
-
-        let listener = UnixListener::bind(socket_path)?;
-        // Restrict socket to owner and group only (rw-rw----).
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
-        }
+        let listener =
+            bind_path_listener(socket_path, SocketPrivacy::SystemCore, owner_uid).await?;
         info!(path = %socket_path.display(), owner_uid, group_gid, "Unix socket listening");
 
-        Ok(Self {
+        Ok(Self::from_listener(
+            listener,
+            handler,
+            cancel_token,
+            owner_uid,
+            group_gid,
+            clock,
+        ))
+    }
+
+    /// Bind a per-user runtime socket with a private parent directory and mode.
+    pub async fn new_user_private(
+        socket_path: &Path,
+        handler: RequestHandler,
+        cancel_token: CancellationToken,
+        owner_uid: u32,
+        group_gid: u32,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        let listener =
+            bind_path_listener(socket_path, SocketPrivacy::UserPrivate, owner_uid).await?;
+        info!(path = %socket_path.display(), owner_uid, "Private Unix socket listening");
+        Ok(Self::from_listener(
+            listener,
+            handler,
+            cancel_token,
+            owner_uid,
+            group_gid,
+            clock,
+        ))
+    }
+
+    /// Construct the server around an already-bound listener, such as one
+    /// supplied by systemd socket activation.
+    pub fn from_listener(
+        listener: UnixListener,
+        handler: RequestHandler,
+        cancel_token: CancellationToken,
+        owner_uid: u32,
+        group_gid: u32,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
             listener,
             handler,
             cancel_token,
@@ -278,7 +486,7 @@ impl UnixServer {
             owner_uid,
             group_gid,
             clock,
-        })
+        }
     }
 
     /// Return a reference to the handler so the host can interact with it
@@ -563,9 +771,217 @@ impl UnixServer {
     }
 }
 
+async fn bind_path_listener(
+    socket_path: &Path,
+    privacy: SocketPrivacy,
+    owner_uid: u32,
+) -> Result<UnixListener> {
+    use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
+
+    if privacy == SocketPrivacy::UserPrivate {
+        let parent = socket_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("private socket path has no parent"))?;
+        if !parent.exists() {
+            let mut builder = std::fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700);
+            builder.create(parent)?;
+        }
+        let metadata = std::fs::symlink_metadata(parent)?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            anyhow::bail!("private socket parent is not a real directory");
+        }
+        if metadata.uid() != owner_uid {
+            anyhow::bail!(
+                "private socket parent is owned by uid {}, expected {}",
+                metadata.uid(),
+                owner_uid
+            );
+        }
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    }
+
+    match std::fs::symlink_metadata(socket_path) {
+        Ok(metadata) if privacy == SocketPrivacy::UserPrivate => {
+            if !metadata.file_type().is_socket() || metadata.uid() != owner_uid {
+                anyhow::bail!("refusing to replace non-owned private socket path");
+            }
+            tokio::fs::remove_file(socket_path).await?;
+        }
+        Ok(_) => tokio::fs::remove_file(socket_path).await?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let listener = UnixListener::bind(socket_path)?;
+    let mode = match privacy {
+        SocketPrivacy::UserPrivate => 0o600,
+        SocketPrivacy::SystemCore => 0o660,
+    };
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(mode))?;
+    Ok(listener)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
+
+    use fabric::paths::RuntimeEnvironment;
+
     use super::*;
+
+    #[derive(Default)]
+    struct FakeActivationEnvironment {
+        values: Mutex<BTreeMap<String, OsString>>,
+    }
+
+    impl FakeActivationEnvironment {
+        fn with(values: impl IntoIterator<Item = (&'static str, String)>) -> Self {
+            Self {
+                values: Mutex::new(
+                    values
+                        .into_iter()
+                        .map(|(key, value)| (key.to_owned(), value.into()))
+                        .collect(),
+                ),
+            }
+        }
+    }
+
+    impl fabric::paths::RuntimeEnvironment for FakeActivationEnvironment {
+        fn var_os(&self, key: &str) -> Option<OsString> {
+            self.values.lock().unwrap().get(key).cloned()
+        }
+    }
+
+    impl ActivationEnvironment for FakeActivationEnvironment {
+        fn remove_var(&self, key: &str) {
+            self.values.lock().unwrap().remove(key);
+        }
+    }
+
+    #[tokio::test]
+    async fn one_systemd_listener_is_adopted_without_using_real_fd_three() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("activated.sock");
+        let original = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let duplicate: OwnedFd = original.try_clone().unwrap().into();
+        let env = FakeActivationEnvironment::with([
+            ("LISTEN_PID", std::process::id().to_string()),
+            ("LISTEN_FDS", "1".to_owned()),
+        ]);
+
+        let adopted = inherited_listener(&env, Some(duplicate))
+            .unwrap()
+            .expect("activation listener");
+
+        assert_eq!(
+            adopted.local_addr().unwrap().as_pathname(),
+            Some(socket_path.as_path())
+        );
+        assert!(env.var_os("LISTEN_PID").is_none());
+        assert!(env.var_os("LISTEN_FDS").is_none());
+    }
+
+    #[tokio::test]
+    async fn absent_activation_environment_falls_back_to_path_binding() {
+        let env = FakeActivationEnvironment::default();
+        assert!(inherited_listener(&env, None).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn malformed_activation_environment_fails_closed() {
+        let cases = [
+            FakeActivationEnvironment::with([("LISTEN_PID", std::process::id().to_string())]),
+            FakeActivationEnvironment::with([
+                ("LISTEN_PID", (std::process::id() + 1).to_string()),
+                ("LISTEN_FDS", "1".to_owned()),
+            ]),
+            FakeActivationEnvironment::with([
+                ("LISTEN_PID", std::process::id().to_string()),
+                ("LISTEN_FDS", "2".to_owned()),
+            ]),
+        ];
+
+        assert!(matches!(
+            inherited_listener(&cases[0], None),
+            Err(ActivationError::IncompleteEnvironment)
+        ));
+        assert!(matches!(
+            inherited_listener(&cases[1], None),
+            Err(ActivationError::WrongPid { .. })
+        ));
+        assert!(matches!(
+            inherited_listener(&cases[2], None),
+            Err(ActivationError::InvalidFdCount(2))
+        ));
+    }
+
+    #[tokio::test]
+    async fn activation_rejects_a_non_listening_unix_socket() {
+        let datagram = std::os::unix::net::UnixDatagram::unbound().unwrap();
+        let env = FakeActivationEnvironment::with([
+            ("LISTEN_PID", std::process::id().to_string()),
+            ("LISTEN_FDS", "1".to_owned()),
+        ]);
+
+        assert!(matches!(
+            inherited_listener(&env, Some(datagram.into())),
+            Err(ActivationError::InvalidListener)
+        ));
+    }
+
+    #[tokio::test]
+    async fn private_path_binding_sets_parent_and_socket_modes() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("runtime/aletheon/aletheon.sock");
+        let owner_uid = nix::unistd::geteuid().as_raw();
+
+        let _listener = bind_path_listener(&socket_path, SocketPrivacy::UserPrivate, owner_uid)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::metadata(socket_path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[tokio::test]
+    async fn system_core_path_binding_retains_group_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("core.sock");
+        let _listener = bind_path_listener(
+            &socket_path,
+            SocketPrivacy::SystemCore,
+            nix::unistd::geteuid().as_raw(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o660
+        );
+    }
 
     fn capabilities() -> fabric::protocol::client::ClientCapabilities {
         fabric::protocol::client::ClientCapabilities {
