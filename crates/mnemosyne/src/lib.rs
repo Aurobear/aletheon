@@ -14,6 +14,7 @@ pub mod r#impl;
 pub mod model;
 pub mod ops;
 pub mod projection;
+pub mod promotion;
 mod recall;
 pub mod retention;
 pub mod service;
@@ -22,6 +23,9 @@ pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
 };
 pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
+pub use promotion::{
+    MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision,
+};
 pub use fact_service::{
     AddFactRequest, DefaultFactUseCases, FactServiceError, FactUseCases, FactView,
     ListFactsRequest, SearchFactsRequest,
