@@ -314,6 +314,9 @@ impl SchemaId {
     // Energy / agent lifecycle
     pub const EVENT_COGNITIVE_PULSE_V1: &'static str = "aletheon.event.cognitive_pulse/v1";
     pub const EVENT_AGENT_SPAWNED_V1: &'static str = "aletheon.event.agent_spawned/v1";
+    pub const EVENT_MEMORY_CANDIDATE_V1: &'static str = "aletheon.event.memory_candidate/v1";
+    pub const EVENT_AGORA_BROADCAST_V1: &'static str = "aletheon.event.agora_broadcast/v1";
+    pub const EVENT_RUNTIME_RESTART_V1: &'static str = "aletheon.event.runtime_restart/v1";
 
     pub fn supported_cross_process() -> &'static [&'static str] {
         &[

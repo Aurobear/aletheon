@@ -1,0 +1,6 @@
+{"sequence":1,"schema":"aletheon.turn.event/v1","visibility":"model_visible","kind":"turn"}
+{"sequence":2,"schema":"aletheon.event.tool_observation/v1","visibility":"sensitive","kind":"raw_tool"}
+{"sequence":3,"schema":"aletheon.event.agent_started/v1","visibility":"control","kind":"child_agent"}
+{"sequence":4,"schema":"aletheon.event.memory_candidate/v1","visibility":"control","kind":"memory_candidate"}
+{"sequence":5,"schema":"aletheon.event.agora_broadcast/v1","visibility":"control","kind":"agora_broadcast"}
+{"sequence":6,"schema":"aletheon.event.runtime_restart/v1","visibility":"control","kind":"restart"}

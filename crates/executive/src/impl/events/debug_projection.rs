@@ -78,4 +78,7 @@ pub const ALL_EVENT_SCHEMAS: &[&str] = &[
     fabric::SchemaId::EVENT_AGENT_STOPPED_V1,
     fabric::SchemaId::EVENT_AGENT_FAILED_V1,
     fabric::SchemaId::EVENT_MEMORY_STORED_V1,
+    fabric::SchemaId::EVENT_MEMORY_CANDIDATE_V1,
+    fabric::SchemaId::EVENT_AGORA_BROADCAST_V1,
+    fabric::SchemaId::EVENT_RUNTIME_RESTART_V1,
 ];
