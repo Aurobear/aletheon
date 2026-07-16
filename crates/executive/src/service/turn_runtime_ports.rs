@@ -540,14 +540,17 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             context.operation_id,
             context.process_id,
         ));
-        let authority = Arc::new(RegistryAuthorityProvider::new(
-            corpus::tool_risk_levels(&self.resources.tools).await,
-            context.principal,
-            context.session_id,
-            context.working_dir,
-            context.sandbox,
-            context.cancel,
-        ));
+        let authority = Arc::new(
+            RegistryAuthorityProvider::new(
+                corpus::tool_risk_levels(&self.resources.tools).await,
+                context.principal,
+                context.session_id,
+                context.working_dir,
+                context.sandbox,
+                context.cancel,
+            )
+            .with_agent_context(context.agent),
+        );
         Ok(PreparedCapabilities {
             definitions,
             invoker: CapabilityRuntimeFactory::build(self.admission.clone(), executor, authority),

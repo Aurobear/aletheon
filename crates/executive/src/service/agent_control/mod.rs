@@ -133,20 +133,36 @@ impl AgentControlService {
         match (request.parent_agent_id, request.parent_process_id) {
             (None, None) => Ok(request.root_agent_id),
             (Some(parent), Some(parent_process)) => {
-                let parent_run = self.repository.get(parent).await?.ok_or_else(|| {
-                    control_error(
-                        AgentControlErrorKind::NotFound,
-                        "parent Agent was not found",
-                    )
-                })?;
-                if parent_run.root_agent_id() != request.root_agent_id
-                    || parent_run.snapshot.handle.process_id != parent_process
-                    || parent_run.status().is_terminal()
-                {
-                    return Err(control_error(
-                        AgentControlErrorKind::Forbidden,
-                        "parent Agent does not belong to the requested live root/process",
-                    ));
+                if let Some(parent_run) = self.repository.get(parent).await? {
+                    if parent_run.root_agent_id() != request.root_agent_id
+                        || parent_run.snapshot.handle.process_id != parent_process
+                        || parent_run.status().is_terminal()
+                    {
+                        return Err(control_error(
+                            AgentControlErrorKind::Forbidden,
+                            "parent Agent does not belong to the requested live root/process",
+                        ));
+                    }
+                } else {
+                    let process =
+                        self.kernel
+                            .inspect_process(parent_process)
+                            .await
+                            .map_err(|_| {
+                                control_error(
+                                    AgentControlErrorKind::NotFound,
+                                    "parent Agent was not found",
+                                )
+                            })?;
+                    if process.agent_id != parent
+                        || request.root_agent_id != parent
+                        || process.state.is_terminal()
+                    {
+                        return Err(control_error(
+                            AgentControlErrorKind::Forbidden,
+                            "external root parent identity is not live or does not match",
+                        ));
+                    }
                 }
                 Ok(AgentId::new())
             }

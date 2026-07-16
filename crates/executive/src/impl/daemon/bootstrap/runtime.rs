@@ -8,81 +8,93 @@ use tracing::info;
 
 use crate::r#impl::agent_loader::AgentLoader;
 
-/// Register the legacy AgentTool against the canonical runtime and capability path.
-pub(super) async fn register_agent_tool(
+pub(super) fn load_agent_profiles(
     agents_dir: &std::path::Path,
+    providers: &ProviderRegistry,
+    default_llm: Arc<dyn LlmProvider>,
+    definitions: &[fabric::ToolDefinition],
+    config: &crate::core::config::ExecutiveConfig,
+) -> anyhow::Result<(
+    Arc<crate::r#impl::runtime::AgentProfileRegistry>,
+    HashMap<String, fabric::AgentProfile>,
+)> {
+    let mut loader = AgentLoader::new();
+    if agents_dir.exists() {
+        loader.load_from_dir(agents_dir)?;
+    }
+    let catalog = definitions
+        .iter()
+        .map(|definition| (definition.name.clone(), definition.clone()))
+        .collect::<HashMap<_, _>>();
+    let registry = Arc::new(crate::r#impl::runtime::AgentProfileRegistry::default());
+    let mut profiles = HashMap::new();
+    for role in loader.list() {
+        let llm: Arc<dyn LlmProvider> = match role.model.as_deref() {
+            Some(model) => Arc::from(providers.resolve_and_create(model)?),
+            None => default_llm.clone(),
+        };
+        let mut tools = Vec::with_capacity(role.tools.len());
+        for name in &role.tools {
+            let definition = catalog.get(name).cloned().with_context(|| {
+                format!(
+                    "Agent profile '{}' references unknown tool '{name}'",
+                    role.name
+                )
+            })?;
+            tools.push(definition);
+        }
+        let profile = fabric::AgentProfile {
+            id: fabric::AgentProfileId(role.name.clone()),
+            system_prompt: role.body.clone(),
+            model: llm.name().to_string(),
+            allowed_tools: role.tools.clone(),
+            max_iterations: role.max_iterations.min(config.max_iterations).max(1),
+            max_input_tokens: config.context_window_tokens as u64,
+            max_output_tokens: 16_384,
+            max_tool_calls: if config.agent_loop.max_tool_calls == 0 {
+                128
+            } else {
+                config.agent_loop.max_tool_calls as u32
+            },
+            max_elapsed_ms: 10 * 60 * 1_000,
+        };
+        registry.register(crate::r#impl::runtime::ResolvedAgentProfile {
+            profile: profile.clone(),
+            llm,
+            tools,
+        })?;
+        profiles.insert(role.name.clone(), profile);
+    }
+    Ok((registry, profiles))
+}
+
+/// Register thin explicit controls plus the bounded compatibility `agent` tool.
+pub(super) async fn register_agent_tools(
     tools: crate::core::corpus_group::ToolRegistryHandle,
     agent_control: Arc<dyn AgentControlPort>,
+    profiles: HashMap<String, fabric::AgentProfile>,
 ) {
-    let mut rt_agent_loader = AgentLoader::new();
-    if agents_dir.exists() {
-        let _ = rt_agent_loader.load_from_dir(agents_dir);
+    let explicit =
+        corpus::tools::tools::agent_control::AgentControlTools::new(agent_control.clone());
+    let mut registry = tools.lock().await;
+    for tool in explicit.tools() {
+        if let Err(error) = registry.register(tool) {
+            tracing::warn!(%error, "Failed to register explicit Agent control tool");
+        }
     }
-    let mut agent_defs: HashMap<String, corpus::tools::tools::agent_tool::AgentDefinition> =
-        HashMap::new();
-    for role in rt_agent_loader.list() {
-        agent_defs.insert(
-            role.name.clone(),
-            corpus::tools::tools::agent_tool::AgentDefinition {
-                name: role.name.clone(),
-                description: role.description.clone(),
-                tools: role.tools.clone(),
-                model: role.model.clone(),
-                max_iterations: 20,
-                system_prompt: role.body.clone(),
-            },
+    if !profiles.is_empty() {
+        let count = profiles.len();
+        let agent_tool = corpus::tools::tools::agent_tool::AgentTool::new(
+            profiles,
+            agent_control,
+            crate::r#impl::runtime::NativeCognitRuntime::runtime_id(),
         );
-    }
-    if !agent_defs.is_empty() {
-        let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
-            Arc::new(move |system_prompt, user_prompt, allowed_tools| {
-                let agent_control = agent_control.clone();
-                Box::pin(async move {
-                    let root = fabric::AgentId::new();
-                    let handle = agent_control
-                        .spawn(fabric::AgentSpawnRequest {
-                            root_agent_id: root,
-                            parent_agent_id: None,
-                            parent_process_id: None,
-                            profile_id: fabric::AgentProfileId("agent-tool".into()),
-                            runtime_id: fabric::RuntimeId("default".into()),
-                            task: user_prompt,
-                            context: fabric::AgentContextFork::SelectedProjection {
-                                items: vec![system_prompt],
-                            },
-                            allowed_tools,
-                            budget: fabric::AgentBudget {
-                                max_input_tokens: 128_000,
-                                max_output_tokens: 16_384,
-                                max_tool_calls: 128,
-                                max_elapsed_ms: 10 * 60 * 1_000,
-                                max_cost_usd: None,
-                                max_depth: 4,
-                            },
-                        })
-                        .await
-                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                    let snapshot = agent_control
-                        .wait(fabric::AgentWaitRequest {
-                            caller_root_agent_id: root,
-                            agent_id: handle.agent_id,
-                            timeout_ms: 10 * 60 * 1_000,
-                        })
-                        .await
-                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                    snapshot.result.map(|result| result.output).ok_or_else(|| {
-                        anyhow::anyhow!("Agent terminated without a result: {:?}", snapshot.status)
-                    })
-                })
-            });
-        let agent_tool =
-            corpus::tools::tools::agent_tool::AgentTool::new(agent_defs.clone(), execute_fn);
-        if let Err(e) = tools.lock().await.register(Arc::new(agent_tool)) {
+        if let Err(e) = registry.register(Arc::new(agent_tool)) {
             tracing::warn!(error = %e, "Failed to register AgentTool");
         } else {
             info!(
-                agents = agent_defs.len(),
-                "Registered AgentTool with sub-agents"
+                agents = count,
+                "Registered compatibility AgentTool control client"
             );
         }
     }
@@ -309,5 +321,42 @@ mod goal_runtime_tests {
         );
         assert!(spawner.runtime_registry().contains(&ids[0]));
         assert!(spawner.runtime_registry().contains(&ids[1]));
+    }
+
+    #[test]
+    fn agent_profiles_resolve_model_tools_and_frontmatter_limits() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("reviewer.md"),
+            "---\nname: reviewer\ndescription: review\ntools: [file_read, grep]\nmax_iterations: 3\n---\nReview evidence only.",
+        )
+        .unwrap();
+        let mut app = AppConfig::default();
+        app.providers.push(provider("shared"));
+        app.agent.default_provider = Some("shared".into());
+        app.agent.default_model = Some("model".into());
+        let providers = ProviderRegistry::from_config(&app).unwrap();
+        let llm: Arc<dyn LlmProvider> = Arc::from(providers.resolve_and_create("").unwrap());
+        let definitions = ["file_read", "grep"]
+            .into_iter()
+            .map(|name| fabric::ToolDefinition {
+                name: name.into(),
+                description: name.into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            })
+            .collect::<Vec<_>>();
+        let (registry, profiles) = super::load_agent_profiles(
+            directory.path(),
+            &providers,
+            llm,
+            &definitions,
+            &crate::core::config::ExecutiveConfig::default(),
+        )
+        .unwrap();
+        let profile = profiles.get("reviewer").unwrap();
+        assert_eq!(profile.allowed_tools, vec!["file_read", "grep"]);
+        assert_eq!(profile.max_iterations, 3);
+        assert_eq!(profile.max_tool_calls, 128);
+        assert!(registry.resolve(&profile.id).is_ok());
     }
 }

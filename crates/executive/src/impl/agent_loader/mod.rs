@@ -18,6 +18,7 @@ pub struct AgentRole {
     pub tools: Vec<String>,
     /// Optional model override (e.g. "sonnet", "opus").
     pub model: Option<String>,
+    pub max_iterations: usize,
     /// The markdown body after the frontmatter.
     pub body: String,
     /// Source file path.
@@ -107,6 +108,7 @@ fn parse_agent_md(content: &str, path: &Path) -> Option<AgentRole> {
     let mut description = String::new();
     let mut tools: Vec<String> = Vec::new();
     let mut model: Option<String> = None;
+    let mut max_iterations = 20;
 
     for line in frontmatter.lines() {
         let trimmed = line.trim();
@@ -117,8 +119,11 @@ fn parse_agent_md(content: &str, path: &Path) -> Option<AgentRole> {
                 "name" => name = unquote(value_trimmed),
                 "description" => description = unquote(value_trimmed),
                 "tools" => {
-                    // Comma-separated string: "Read, Grep, Glob"
-                    tools = value_trimmed
+                    let list = value_trimmed
+                        .strip_prefix('[')
+                        .and_then(|value| value.strip_suffix(']'))
+                        .unwrap_or(value_trimmed);
+                    tools = list
                         .split(',')
                         .map(|s| unquote(s.trim()))
                         .filter(|s| !s.is_empty())
@@ -129,6 +134,9 @@ fn parse_agent_md(content: &str, path: &Path) -> Option<AgentRole> {
                     if !v.is_empty() {
                         model = Some(v);
                     }
+                }
+                "max_iterations" => {
+                    max_iterations = value_trimmed.parse().unwrap_or(20).max(1);
                 }
                 _ => {}
             }
@@ -144,6 +152,7 @@ fn parse_agent_md(content: &str, path: &Path) -> Option<AgentRole> {
         description,
         tools,
         model,
+        max_iterations,
         body: body.to_string(),
         path: path.to_path_buf(),
     })

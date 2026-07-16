@@ -46,8 +46,8 @@ use tracing::{info, warn};
 
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::goal::ObjectiveStore;
+use crate::r#impl::runtime::register_pi_runtime;
 use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
-use crate::r#impl::runtime::{register_pi_runtime, ProviderWorkerRuntime};
 use crate::service::CapabilityService;
 use corpus::hook::builtin::audit_hook;
 use corpus::security::storm_breaker::StormBreaker;
@@ -601,7 +601,7 @@ impl RequestHandler {
             gw_state.clone(),
             initial_session.clone(),
             gw_started_at,
-            runtime_config_snapshot,
+            runtime_config_snapshot.clone(),
             core_memory.clone(),
             recall_memory.clone(),
             self_field.clone(),
@@ -711,41 +711,38 @@ impl RequestHandler {
         );
         let agent_runtimes =
             Arc::new(crate::service::agent_control::AgentRuntimeRegistry::default());
+        let agent_profiles_for_tools;
 
-        // Wire sub-agent execution runtime so spawned sub-agents run real
-        // LLM + tool reasoning instead of the cancellation-wait stub.
+        // Ordinary child Agents use one Cognit session runtime. Goal worker
+        // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
         {
-            let allowed_tools = corpus_group
-                .tools
-                .lock()
-                .await
-                .list()
-                .into_iter()
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
-            let sub_agent_runtime = Arc::new(ProviderWorkerRuntime::new(
-                fabric::RuntimeId("default".into()),
-                fabric::CognitiveRole::Worker,
+            let definitions = corpus_group.tools.lock().await.definitions();
+            let (profiles, tool_profiles) = super::runtime::load_agent_profiles(
+                &aletheon_dir.join("agents"),
+                registry,
                 llm.clone(),
-                corpus_group.tools.clone(),
-                capability_service.clone(),
-                clock.clone(),
-                8,
-                16 * 1024,
-                allowed_tools,
-            ));
-            runtime
-                .lock()
-                .await
-                .sub_agent_spawner_mut()
-                .with_runtime(sub_agent_runtime.clone());
-            agent_runtimes.register(
-                fabric::RuntimeId("default".into()),
-                Arc::new(
-                    crate::service::agent_control::CompatibilityRuntimeLauncher::new(
-                        sub_agent_runtime,
+                &definitions,
+                &runtime_config_snapshot,
+            )?;
+            agent_profiles_for_tools = tool_profiles;
+            let native = Arc::new(crate::r#impl::runtime::NativeCognitRuntime::new(
+                crate::r#impl::runtime::NativeCognitRuntimeResources {
+                    sessions: Arc::new(
+                        crate::service::harness_factory::LinearCognitiveSessionFactory::new(
+                            crate::service::harness_factory::harness_config_from_executive(
+                                &runtime_config_snapshot,
+                            ),
+                            clock.clone(),
+                        ),
                     ),
-                ),
+                    capabilities: capability_service.clone(),
+                    profiles,
+                    clock: clock.clone(),
+                },
+            ));
+            agent_runtimes.register(
+                crate::r#impl::runtime::NativeCognitRuntime::runtime_id(),
+                native,
             )?;
         }
 
@@ -864,10 +861,10 @@ impl RequestHandler {
             agent_control_service.shutdown().await;
         });
 
-        super::runtime::register_agent_tool(
-            &aletheon_dir.join("agents"),
+        super::runtime::register_agent_tools(
             corpus_group.tools.clone(),
             agent_control.clone(),
+            agent_profiles_for_tools,
         )
         .await;
 

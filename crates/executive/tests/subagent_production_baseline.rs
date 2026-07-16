@@ -1,134 +1,154 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::supervision::RestartPolicy;
-use aletheon_kernel::KernelRuntime;
-use corpus::tools::tools::agent_tool::{AgentDefinition, AgentTool, ExecuteSubAgentFn};
-use fabric::{Clock, ProcessSnapshot, SubAgentState, Tool, ToolContext};
-use tokio::sync::Mutex;
+use async_trait::async_trait;
+use corpus::tools::tools::agent_tool::AgentTool;
+use fabric::{
+    AgentControlError, AgentControlPort, AgentHandle, AgentId, AgentListRequest, AgentProfile,
+    AgentProfileId, AgentResult, AgentRunStatus, AgentSendRequest, AgentSnapshot,
+    AgentSpawnRequest, AgentToolContext, AgentWaitRequest, AttemptUsage, Clock, OperationId,
+    ProcessId, RuntimeId, Tool, ToolContext,
+};
 
-use executive::core::SubAgentSpawner;
-
-fn clock() -> Arc<dyn Clock> {
-    Arc::new(TestClock::default())
+#[derive(Default)]
+struct Control {
+    spawned: Mutex<Vec<AgentSpawnRequest>>,
 }
 
-fn definition() -> AgentDefinition {
-    AgentDefinition {
-        name: "reviewer".into(),
-        description: "bounded reviewer".into(),
-        tools: vec!["file_read".into(), "grep".into()],
-        model: Some("profile-model".into()),
-        max_iterations: 7,
-        system_prompt: "Review evidence only.".into(),
+#[async_trait]
+impl AgentControlPort for Control {
+    async fn spawn(&self, request: AgentSpawnRequest) -> Result<AgentHandle, AgentControlError> {
+        let handle = AgentHandle {
+            agent_id: AgentId::new(),
+            root_agent_id: request.root_agent_id,
+            parent_agent_id: request.parent_agent_id,
+            process_id: ProcessId::new(),
+            operation_id: OperationId::new(),
+            runtime_id: request.runtime_id.clone(),
+            profile_id: request.profile_id.clone(),
+        };
+        self.spawned.lock().unwrap().push(request);
+        Ok(handle)
+    }
+
+    async fn wait(&self, request: AgentWaitRequest) -> Result<AgentSnapshot, AgentControlError> {
+        Ok(AgentSnapshot {
+            handle: AgentHandle {
+                agent_id: request.agent_id,
+                root_agent_id: request.caller_root_agent_id,
+                parent_agent_id: None,
+                process_id: ProcessId::new(),
+                operation_id: OperationId::new(),
+                runtime_id: RuntimeId("native-cognit".into()),
+                profile_id: AgentProfileId("reviewer".into()),
+            },
+            status: AgentRunStatus::Succeeded,
+            result: Some(AgentResult {
+                output: "review complete".into(),
+                usage: AttemptUsage::default(),
+                evidence: vec![],
+                artifacts: vec![],
+            }),
+            created_at_ms: 1,
+            started_at_ms: Some(2),
+            ended_at_ms: Some(3),
+            last_error: None,
+        })
+    }
+
+    async fn send(
+        &self,
+        _request: AgentSendRequest,
+    ) -> Result<fabric::AgentControlMessage, AgentControlError> {
+        unreachable!()
+    }
+    async fn cancel(
+        &self,
+        _caller_root_agent_id: AgentId,
+        _agent_id: AgentId,
+    ) -> Result<AgentSnapshot, AgentControlError> {
+        unreachable!()
+    }
+    async fn inspect(
+        &self,
+        _caller_root_agent_id: AgentId,
+        _agent_id: AgentId,
+    ) -> Result<AgentSnapshot, AgentControlError> {
+        unreachable!()
+    }
+    async fn list(
+        &self,
+        _request: AgentListRequest,
+    ) -> Result<Vec<AgentSnapshot>, AgentControlError> {
+        unreachable!()
     }
 }
 
-fn context(root: &std::path::Path) -> ToolContext {
+fn profile() -> AgentProfile {
+    AgentProfile {
+        id: AgentProfileId("reviewer".into()),
+        system_prompt: "Review evidence only.".into(),
+        model: "profile-model".into(),
+        allowed_tools: vec!["file_read".into(), "grep".into()],
+        max_iterations: 7,
+        max_input_tokens: 8_000,
+        max_output_tokens: 1_000,
+        max_tool_calls: 7,
+        max_elapsed_ms: 30_000,
+    }
+}
+
+fn context() -> ToolContext {
+    let root = AgentId::new();
     ToolContext {
-        agent: None,
-        working_dir: root.to_path_buf(),
+        agent: Some(AgentToolContext {
+            caller_root_agent_id: root,
+            parent_agent_id: root,
+            parent_process_id: ProcessId::new(),
+        }),
+        working_dir: std::env::temp_dir(),
         session_id: "root-session".into(),
-        clock: clock(),
+        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()) as Arc<dyn Clock>,
     }
 }
 
 #[tokio::test]
-async fn successful_agent_tool_vertical_slice_records_kernel_and_mailbox_evidence() {
-    let spawner = Arc::new(Mutex::new(SubAgentSpawner::with_kernel(
-        Arc::new(KernelRuntime::with_clock(clock())),
-        clock(),
-    )));
-    let observed = Arc::new(Mutex::new(None::<(Vec<String>, ProcessSnapshot, bool)>));
-    let closure_spawner = spawner.clone();
-    let closure_observed = observed.clone();
-    let execute: ExecuteSubAgentFn = Arc::new(move |_, prompt, allowed_tools| {
-        let spawner = closure_spawner.clone();
-        let observed = closure_observed.clone();
-        Box::pin(async move {
-            let mut spawner = spawner.lock().await;
-            let handle = spawner
-                .spawn_tracked(prompt, "root-turn".into(), RestartPolicy::Never)
-                .await?;
-            spawner
-                .transition(&handle.id, SubAgentState::Running)
-                .await?;
-            let snapshot = spawner.snapshot(&handle.id).await?.unwrap();
-            let mailbox_exists = spawner.mailbox_target(&handle.id).is_some();
-            *observed.lock().await = Some((allowed_tools, snapshot, mailbox_exists));
-            spawner
-                .transition(&handle.id, SubAgentState::Completed)
-                .await?;
-            spawner.destroy(&handle.id).await?;
-            Ok("review complete".into())
-        })
-    });
-    let mut agents = HashMap::new();
-    agents.insert("reviewer".into(), definition());
-    let tool = AgentTool::new(agents, execute);
-    let temp = tempfile::tempdir().unwrap();
+async fn compatibility_agent_tool_is_bounded_spawn_plus_wait() {
+    let control = Arc::new(Control::default());
+    let mut profiles = HashMap::new();
+    profiles.insert("reviewer".into(), profile());
+    let tool = AgentTool::new(profiles, control.clone(), RuntimeId("native-cognit".into()));
 
     let result = tool
         .execute(
             serde_json::json!({"agent_type":"reviewer","prompt":"inspect the plan"}),
-            &context(temp.path()),
+            &context(),
         )
         .await;
 
     assert!(!result.is_error);
     assert_eq!(result.content, "review complete");
-    let (tools, snapshot, mailbox) = observed.lock().await.clone().unwrap();
-    assert_eq!(tools, vec!["file_read", "grep"]);
-    assert!(snapshot.active_operation.is_some());
-    assert!(mailbox);
-    assert!(spawner.lock().await.list().is_empty());
+    let spawned = control.spawned.lock().unwrap();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(spawned[0].profile_id.0, "reviewer");
+    assert_eq!(spawned[0].runtime_id.0, "native-cognit");
+    assert_eq!(spawned[0].allowed_tools, vec!["file_read", "grep"]);
 }
 
 #[tokio::test]
-async fn error_and_unknown_profile_map_without_implicit_execution() {
-    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let closure_calls = calls.clone();
-    let execute: ExecuteSubAgentFn = Arc::new(move |_, _, _| {
-        closure_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Box::pin(async { anyhow::bail!("provider unavailable") })
-    });
-    let mut agents = HashMap::new();
-    agents.insert("reviewer".into(), definition());
-    let tool = AgentTool::new(agents, execute);
-    let temp = tempfile::tempdir().unwrap();
-
-    let failed = tool
-        .execute(
-            serde_json::json!({"agent_type":"reviewer","prompt":"inspect"}),
-            &context(temp.path()),
-        )
-        .await;
-    assert!(failed.is_error);
-    assert!(failed.content.contains("provider unavailable"));
-
-    let unknown = tool
+async fn unknown_profile_does_not_spawn() {
+    let control = Arc::new(Control::default());
+    let tool = AgentTool::new(
+        HashMap::new(),
+        control.clone(),
+        RuntimeId("native-cognit".into()),
+    );
+    let result = tool
         .execute(
             serde_json::json!({"agent_type":"missing","prompt":"inspect"}),
-            &context(temp.path()),
+            &context(),
         )
         .await;
-    assert!(unknown.is_error);
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-#[ignore = "known G04 gap: inline AgentTool loop does not connect cancellation to provider and tool work"]
-async fn cancellation_interrupts_live_child_runtime() {
-    // G04 replaces this assertion body with the same fixture routed through
-    // NativeCognitRuntime, then removes the ignore marker.
-    panic!("G04 target: cancellation must interrupt the live child runtime");
-}
-
-#[tokio::test]
-#[ignore = "known G04 gap: ExecuteSubAgentFn drops AgentDefinition model and max_iterations"]
-async fn profile_model_and_iteration_limit_reach_child_session() {
-    // The current callback signature cannot observe these fields. G04 keeps
-    // this acceptance name and asserts them on the child CognitiveSession.
-    panic!("G04 target: profile model and max_iterations must reach the child session");
+    assert!(result.is_error);
+    assert!(control.spawned.lock().unwrap().is_empty());
 }

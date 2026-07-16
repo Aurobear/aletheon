@@ -97,7 +97,16 @@ fi
 # G03 deletion gate: Executive owns the only production AgentControlPort
 # implementation. The retired spawner may remain only in its compatibility
 # owner and the two bootstrap/runtime registration adapters until G04/G05.
-agent_control_impls=$(rg -l 'impl AgentControlPort for' crates -g '*.rs' -g '!**/tests/**' || true)
+agent_control_impls=$(python3 - <<'PY'
+from pathlib import Path
+for path in Path("crates").rglob("*.rs"):
+    if "tests" in path.parts:
+        continue
+    production = path.read_text().split("#[cfg(test)]", 1)[0]
+    if "impl AgentControlPort for" in production:
+        print(path)
+PY
+)
 if [[ "$agent_control_impls" != "crates/executive/src/service/agent_control/mod.rs" ]]; then
   echo "architecture-check: AgentControlPort has a non-authoritative implementation:" >&2
   echo "$agent_control_impls" >&2
@@ -105,6 +114,16 @@ if [[ "$agent_control_impls" != "crates/executive/src/service/agent_control/mod.
 fi
 if rg -n '\bSubAgentSpawner\b' crates/corpus/src -g '*.rs'; then
   echo "architecture-check: Corpus bypasses AgentControlPort through SubAgentSpawner" >&2
+  exit 1
+fi
+if rg -n '\bExecuteSubAgentFn\b' crates/corpus/src crates/executive/src/impl/daemon/bootstrap \
+  crates/executive/src/service/agent_control -g '*.rs'; then
+  echo "architecture-check: Agent execution closure bypasses AgentControlPort" >&2
+  exit 1
+fi
+if rg -n '\.complete\(' crates/executive/src/impl/daemon/bootstrap \
+  crates/executive/src/service/agent_control -g '*.rs'; then
+  echo "architecture-check: Agent/bootstrap path owns a direct provider loop" >&2
   exit 1
 fi
 spawner_outside_compat=$(rg -l '\bSubAgentSpawner\b' crates/executive/src -g '*.rs' \

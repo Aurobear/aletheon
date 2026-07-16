@@ -245,11 +245,11 @@ impl TurnPipeline {
         // session, not per turn). Bindings are upserted so the Agora version is
         // refreshed in place rather than accumulating. Space is released on
         // process exit (see orchestrator::exit_process).
-        let agent_space = match self.kernel.inspect_process(main_pid).await {
-            Ok(snap) => snap.space,
+        let (agent_space, main_agent_id) = match self.kernel.inspect_process(main_pid).await {
+            Ok(snapshot) => (snapshot.space, Some(snapshot.agent_id)),
             Err(e) => {
                 tracing::warn!(target: "space", error = %e, "inspect(main_pid) failed; using ephemeral space for this turn");
-                SpaceId::new()
+                (SpaceId::new(), None)
             }
         };
         self.kernel.upsert_space_binding(
@@ -276,7 +276,11 @@ impl TurnPipeline {
             .runtime_ports
             .capabilities
             .prepare(CapabilityExecutionContext {
-                agent: None,
+                agent: main_agent_id.map(|agent_id| fabric::AgentToolContext {
+                    caller_root_agent_id: agent_id,
+                    parent_agent_id: agent_id,
+                    parent_process_id: main_pid,
+                }),
                 process_id: main_pid,
                 operation_id,
                 principal,

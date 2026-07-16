@@ -2,8 +2,8 @@ mod agent_control_support;
 
 use agent_control_support::{fixture, spawn_request, TestLauncher};
 use fabric::{
-    AgentControlErrorKind, AgentId, AgentListRequest, AgentRunStatus, AgentSendRequest,
-    AgentWaitRequest,
+    AgentControlErrorKind, AgentId, AgentListRequest, AgentProfileId, AgentRunStatus,
+    AgentSendRequest, AgentWaitRequest, NamespaceId, ProcessSignal, SpawnSpec,
 };
 
 #[tokio::test]
@@ -46,6 +46,38 @@ async fn operations_enforce_root_scope_and_wait_timeout() {
         .is_empty());
 
     fixture.port.cancel(root, handle.agent_id).await.unwrap();
+}
+
+#[tokio::test]
+async fn trusted_live_root_process_can_spawn_its_first_durable_child() {
+    let launcher = TestLauncher::blocked();
+    let fixture = fixture(2, launcher.clone());
+    let root = AgentId::new();
+    let process = fixture
+        .kernel
+        .spawn_process(SpawnSpec {
+            agent_id: root,
+            profile: AgentProfileId("main".into()),
+            namespace: NamespaceId("main-session".into()),
+            ..SpawnSpec::default()
+        })
+        .await
+        .unwrap();
+    fixture
+        .kernel
+        .signal_process(process.id, ProcessSignal::Start)
+        .await
+        .unwrap();
+
+    let child = fixture
+        .port
+        .spawn(spawn_request(root, Some((root, process.id))))
+        .await
+        .unwrap();
+    assert_ne!(child.agent_id, root);
+    assert_eq!(child.root_agent_id, root);
+    assert_eq!(child.parent_agent_id, Some(root));
+    fixture.port.cancel(root, child.agent_id).await.unwrap();
 }
 
 #[tokio::test]
