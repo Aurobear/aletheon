@@ -20,6 +20,7 @@ use tokio::task::JoinSet;
 
 pub mod admission;
 pub mod candidate_projection;
+pub mod cleanup;
 pub mod context_fork;
 pub mod execution;
 pub mod live_runs;
@@ -36,6 +37,7 @@ pub use admission::{
 pub use candidate_projection::{
     AgentCandidateProjector, AgentCandidateSubmissionPort, ProjectingAgentEventSink,
 };
+pub use cleanup::{AgentCleanupCoordinator, AgentCleanupReport, MAX_CLEANUP_BATCH};
 pub use context_fork::{
     AgentContextItem, AgentContextItemKind, AgentContextProjection, AgentContextProjectionBuilder,
 };
@@ -51,7 +53,10 @@ pub use recovery::{
     AgentRecoveryCoordinator, AgentRecoveryObservation, AgentRecoveryReport,
     MAX_STARTUP_RECOVERY_ROWS,
 };
-pub use repository::{agent_workspace_id, AgentMessageRecord, AgentRunRecord, AgentRunRepository};
+pub use repository::{
+    agent_workspace_id, AgentMessageRecord, AgentResourceLease, AgentResourceLeaseKind,
+    AgentRunRecord, AgentRunRepository,
+};
 pub use sqlite_repository::SqliteAgentRunRepository;
 
 const DEFAULT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
@@ -753,6 +758,26 @@ impl AgentControlPort for AgentControlService {
             let _ = admission.revoke().await;
             return Err(error);
         }
+        let lease_owner = format!("process:{}", process.id.0);
+        let lease_expiry = created_at_ms.saturating_add(request.budget.max_elapsed_ms as i64);
+        for (kind, label) in [
+            (AgentResourceLeaseKind::Admission, "admission"),
+            (AgentResourceLeaseKind::Mailbox, "mailbox"),
+            (AgentResourceLeaseKind::Execution, "execution"),
+        ] {
+            self.repository
+                .put_resource_lease(&AgentResourceLease {
+                    lease_key: format!("{label}:{}", agent_id.0),
+                    agent_id,
+                    kind,
+                    owner: lease_owner.clone(),
+                    expires_at_ms: lease_expiry,
+                    worktree_root: None,
+                    worktree_path: None,
+                    expected_head: None,
+                })
+                .await?;
+        }
 
         let scope = OperationScope::new(operation.id);
         let cancellation = scope.token();
@@ -1170,6 +1195,12 @@ async fn run_agent(
     };
     if let Err(error) = settlement {
         tracing::error!(agent = ?agent, %error, "failed to settle Agent admission lease");
+    }
+    let lease_owner = format!("process:{}", process.0);
+    for label in ["admission", "mailbox", "execution"] {
+        let _ = repository
+            .delete_resource_lease(&format!("{label}:{}", agent.0), &lease_owner)
+            .await;
     }
     live.remove(agent).await;
 }

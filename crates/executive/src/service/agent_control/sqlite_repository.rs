@@ -14,10 +14,14 @@ use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::repository::{AgentMessageRecord, AgentRunRecord, AgentRunRepository};
+use super::repository::{
+    AgentMessageRecord, AgentResourceLease, AgentResourceLeaseKind, AgentRunRecord,
+    AgentRunRepository,
+};
 
 const MIGRATION: &str = include_str!("migrations/001_agent_runs.sql");
 const MESSAGE_MIGRATION: &str = include_str!("migrations/002_agent_messages.sql");
+const RECOVERY_MIGRATION: &str = include_str!("migrations/003_agent_recovery.sql");
 const RUN_COLUMNS: &str = "agent_id, root_agent_id, parent_agent_id, process_id, operation_id, \
     runtime_id, profile_id, status, request_json, request_hash, result_json, created_at_ms, \
     started_at_ms, ended_at_ms, last_error, version, retain_until_ms, workspace_id, \
@@ -54,6 +58,9 @@ impl SqliteAgentRunRepository {
         connection.execute_batch(MIGRATION).map_err(persistence)?;
         connection
             .execute_batch(MESSAGE_MIGRATION)
+            .map_err(persistence)?;
+        connection
+            .execute_batch(RECOVERY_MIGRATION)
             .map_err(persistence)?;
         ensure_workspace_columns(&connection)?;
         Ok(Self {
@@ -353,7 +360,7 @@ impl AgentRunRepository for SqliteAgentRunRepository {
             .map_err(persistence)?;
         let ids = {
             let mut statement = transaction
-                .prepare("SELECT agent_id FROM agent_runs WHERE status IN ('succeeded','failed','cancelled','interrupted') AND retain_until_ms<=?1 ORDER BY retain_until_ms,agent_id LIMIT ?2")
+                .prepare("SELECT agent_id FROM agent_runs WHERE status IN ('succeeded','failed','cancelled','interrupted') AND retain_until_ms<=?1 AND NOT EXISTS (SELECT 1 FROM agent_resource_leases l WHERE l.agent_id=agent_runs.agent_id) ORDER BY retain_until_ms,agent_id LIMIT ?2")
                 .map_err(persistence)?;
             let collected = statement
                 .query_map(params![now_ms, limit as i64], |row| row.get::<_, String>(0))
@@ -378,6 +385,81 @@ impl AgentRunRepository for SqliteAgentRunRepository {
         }
         transaction.commit().map_err(persistence)?;
         Ok(removed)
+    }
+
+    async fn put_resource_lease(
+        &self,
+        lease: &AgentResourceLease,
+    ) -> Result<(), AgentControlError> {
+        if lease.lease_key.trim().is_empty()
+            || lease.owner.trim().is_empty()
+            || lease.expires_at_ms <= 0
+        {
+            return Err(AgentControlError::invalid(
+                "Agent resource lease is incomplete",
+            ));
+        }
+        if lease.kind == AgentResourceLeaseKind::Worktree
+            && (lease.worktree_root.as_deref().is_none_or(str::is_empty)
+                || lease.worktree_path.as_deref().is_none_or(str::is_empty)
+                || lease.expected_head.as_deref().is_none_or(str::is_empty))
+        {
+            return Err(AgentControlError::invalid(
+                "worktree lease verification data is incomplete",
+            ));
+        }
+        let connection = self.connection.lock();
+        let changed = connection
+            .execute(
+                "INSERT INTO agent_resource_leases(lease_key,agent_id,kind,owner,expires_at_ms,worktree_root,worktree_path,expected_head) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(lease_key) DO NOTHING",
+                params![lease.lease_key, lease.agent_id.0.to_string(), lease_kind_wire(lease.kind), lease.owner, lease.expires_at_ms, lease.worktree_root, lease.worktree_path, lease.expected_head],
+            )
+            .map_err(persistence)?;
+        if changed == 0 {
+            let existing = query_resource_lease(&connection, &lease.lease_key)?;
+            if existing.as_ref() != Some(lease) {
+                return Err(control_error(
+                    AgentControlErrorKind::Conflict,
+                    "resource lease key conflicts with different metadata",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn list_expired_resource_leases(
+        &self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<AgentResourceLease>, AgentControlError> {
+        if limit == 0 || limit > MAX_LIST_ITEMS {
+            return Err(AgentControlError::invalid(
+                "resource lease recovery limit is invalid",
+            ));
+        }
+        let connection = self.connection.lock();
+        let mut statement = connection
+            .prepare("SELECT lease_key,agent_id,kind,owner,expires_at_ms,worktree_root,worktree_path,expected_head FROM agent_resource_leases WHERE expires_at_ms<=?1 ORDER BY expires_at_ms,lease_key LIMIT ?2")
+            .map_err(persistence)?;
+        let rows = statement
+            .query_map(params![now_ms, limit as i64], map_resource_lease)
+            .map_err(persistence)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
+    }
+
+    async fn delete_resource_lease(
+        &self,
+        lease_key: &str,
+        expected_owner: &str,
+    ) -> Result<bool, AgentControlError> {
+        let connection = self.connection.lock();
+        Ok(connection
+            .execute(
+                "DELETE FROM agent_resource_leases WHERE lease_key=?1 AND owner=?2",
+                params![lease_key, expected_owner],
+            )
+            .map_err(persistence)?
+            == 1)
     }
 
     async fn append_message(
@@ -736,6 +818,56 @@ fn parse_agent(value: &str) -> Result<AgentId, AgentControlError> {
 
 fn parse_uuid(value: &str) -> Result<Uuid, AgentControlError> {
     Uuid::parse_str(value).map_err(persistence)
+}
+
+fn lease_kind_wire(kind: AgentResourceLeaseKind) -> &'static str {
+    match kind {
+        AgentResourceLeaseKind::Admission => "admission",
+        AgentResourceLeaseKind::Mailbox => "mailbox",
+        AgentResourceLeaseKind::Execution => "execution",
+        AgentResourceLeaseKind::Worktree => "worktree",
+    }
+}
+
+fn parse_lease_kind(value: &str) -> Result<AgentResourceLeaseKind, AgentControlError> {
+    match value {
+        "admission" => Ok(AgentResourceLeaseKind::Admission),
+        "mailbox" => Ok(AgentResourceLeaseKind::Mailbox),
+        "execution" => Ok(AgentResourceLeaseKind::Execution),
+        "worktree" => Ok(AgentResourceLeaseKind::Worktree),
+        _ => Err(control_error(
+            AgentControlErrorKind::Persistence,
+            "invalid resource lease kind",
+        )),
+    }
+}
+
+fn map_resource_lease(row: &Row<'_>) -> rusqlite::Result<AgentResourceLease> {
+    let mapped = (|| -> Result<AgentResourceLease, AgentControlError> {
+        Ok(AgentResourceLease {
+            lease_key: column(row, 0)?,
+            agent_id: parse_agent(&column::<String>(row, 1)?)?,
+            kind: parse_lease_kind(&column::<String>(row, 2)?)?,
+            owner: column(row, 3)?,
+            expires_at_ms: column(row, 4)?,
+            worktree_root: column(row, 5)?,
+            worktree_path: column(row, 6)?,
+            expected_head: column(row, 7)?,
+        })
+    })();
+    mapped.map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+    })
+}
+
+fn query_resource_lease(
+    connection: &Connection,
+    key: &str,
+) -> Result<Option<AgentResourceLease>, AgentControlError> {
+    connection
+        .query_row("SELECT lease_key,agent_id,kind,owner,expires_at_ms,worktree_root,worktree_path,expected_head FROM agent_resource_leases WHERE lease_key=?1", [key], map_resource_lease)
+        .optional()
+        .map_err(persistence)
 }
 
 fn bound_text(value: &str, limit: usize) -> String {

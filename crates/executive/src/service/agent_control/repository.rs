@@ -73,6 +73,26 @@ pub struct AgentMessageRecord {
     pub created_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentResourceLeaseKind {
+    Admission,
+    Mailbox,
+    Execution,
+    Worktree,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentResourceLease {
+    pub lease_key: String,
+    pub agent_id: AgentId,
+    pub kind: AgentResourceLeaseKind,
+    pub owner: String,
+    pub expires_at_ms: i64,
+    pub worktree_root: Option<String>,
+    pub worktree_path: Option<String>,
+    pub expected_head: Option<String>,
+}
+
 #[async_trait]
 pub trait AgentRunRepository: Send + Sync {
     async fn create(&self, run: &AgentRunRecord) -> Result<(), AgentControlError>;
@@ -109,6 +129,21 @@ pub trait AgentRunRepository: Send + Sync {
         now_ms: i64,
         limit: usize,
     ) -> Result<Vec<AgentId>, AgentControlError>;
+
+    async fn put_resource_lease(&self, lease: &AgentResourceLease)
+        -> Result<(), AgentControlError>;
+
+    async fn list_expired_resource_leases(
+        &self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<AgentResourceLease>, AgentControlError>;
+
+    async fn delete_resource_lease(
+        &self,
+        lease_key: &str,
+        expected_owner: &str,
+    ) -> Result<bool, AgentControlError>;
 
     async fn append_message(
         &self,

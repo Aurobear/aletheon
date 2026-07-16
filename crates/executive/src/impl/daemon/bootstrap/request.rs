@@ -914,7 +914,7 @@ impl RequestHandler {
             crate::service::agent_control::AgentControlService::new(
                 kernel.clone(),
                 clock.clone(),
-                agent_repository,
+                agent_repository.clone(),
                 Arc::new(
                     crate::service::agent_control::BoundedAgentAdmission::with_budget(
                         config.agent_admission.clone(),
@@ -948,6 +948,24 @@ impl RequestHandler {
             resumed = agent_recovery.resumed,
             finalized = agent_recovery.finalized,
             "Agent restart recovery completed before spawn admission"
+        );
+        let agent_cleanup = crate::service::agent_control::AgentCleanupCoordinator::new(
+            agent_repository,
+            Arc::new(
+                crate::r#impl::runtime::worktree_recovery::VerifiedAgentWorktreeReclaimer::default(
+                ),
+            ),
+        )
+        .reclaim_expired(clock.wall_now().0)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        info!(
+            examined = agent_cleanup.examined,
+            reclaimed = agent_cleanup.reclaimed,
+            retained_unsafe = agent_cleanup.retained_unsafe,
+            failures = agent_cleanup.failures,
+            compacted = agent_cleanup.compacted_rows,
+            "Agent terminal resource cleanup completed"
         );
         let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
         let agent_shutdown_cancel = cancel_token.clone();
