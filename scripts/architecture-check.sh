@@ -166,6 +166,7 @@ paths = [
     Path("crates/executive/src/service/pre_turn.rs"),
     Path("crates/executive/src/service/context_assembler.rs"),
     Path("crates/executive/src/service/conscious_workspace.rs"),
+    Path("crates/executive/src/impl/conscious/memory_processor.rs"),
     Path("crates/executive/src/service/turn_pipeline.rs"),
     Path("crates/executive/src/impl/daemon/prefix_builder.rs"),
 ]
@@ -186,9 +187,9 @@ for path in paths:
     for needle in forbidden:
         if needle in production:
             violations.append(f"{path}: {needle}")
-workspace = Path("crates/executive/src/service/conscious_workspace.rs").read_text()
-if "DefaultMemoryWorkspaceProjector.project" not in workspace:
-    violations.append("conscious_workspace: missing Mnemosyne bounded projector")
+memory_adapter = Path("crates/executive/src/impl/conscious/memory_processor.rs").read_text()
+if "DefaultMemoryWorkspaceProjector.project" not in memory_adapter:
+    violations.append("conscious memory adapter: missing Mnemosyne bounded projector")
 if violations:
     raise SystemExit("architecture-check: memory workspace bypass:\n" + "\n".join(violations))
 PY

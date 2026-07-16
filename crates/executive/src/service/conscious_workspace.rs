@@ -17,9 +17,8 @@ use fabric::{
     PredictionFrame, ProcessId, ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId,
     ProcessorResponse, SalienceVector, VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast,
     WorkspaceCandidate, WorkspaceContent, WorkspaceObservation, WorkspaceProvenance,
-    WorkspaceReflection, WORKSPACE_SCHEMA_V1,
+    WORKSPACE_SCHEMA_V1,
 };
-use mnemosyne::MemoryWorkspaceProjector;
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -27,12 +26,17 @@ use uuid::Uuid;
 
 use super::agent_control::AgentCandidateSubmissionPort;
 use super::conscious_action::ConsciousActionBridge;
-use super::conscious_core_coordinator::{ConsciousCoreConfig, ConsciousCoreCoordinator};
+use super::conscious_core_coordinator::{
+    ConsciousCoreConfig, ConsciousCoreCoordinator, ProcessorRegistration,
+};
 use super::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, ConsciousCandidatePort,
     ConsciousCycleReceipt, DaseinWorkspacePort, LatestConsciousContextPort,
 };
 use super::governed_capability::{GovernedActionLoop, GovernedActionLoopResolver};
+use crate::r#impl::conscious::{
+    AgentAdapter, CorpusProcessor, MetacogProcessor, MnemosyneProcessor,
+};
 
 const WORKSPACE_NAMESPACE: Uuid = Uuid::from_u128(0x4021_c073_f88b_45c9_b913_89b9_42f8_0671);
 const PROCESSOR_TTL: Duration = Duration::from_secs(60);
@@ -162,41 +166,95 @@ impl ConsciousWorkspaceRegistry {
             self.kernel.clone(),
             self.core_config.clone(),
         )?);
-        for processor in self.processors(&space) {
-            coordinator.register_processor(processor, recipient, root)?;
+        for registration in self.processors(&space, recipient, root) {
+            coordinator.register_bounded_processor(registration)?;
         }
         spaces.insert(space, coordinator.clone());
         Ok(coordinator)
     }
 
-    fn processors(&self, space: &AgoraSpaceId) -> Vec<Arc<dyn ConsciousProcessor>> {
-        vec![
-            Arc::new(DomainProcessor::new(
-                space,
-                ProcessorKind::Dasein,
-                self.clock.clone(),
-            )),
-            Arc::new(DomainProcessor::new(
-                space,
-                ProcessorKind::Cognit,
-                self.clock.clone(),
-            )),
-            Arc::new(DomainProcessor::with_memory(
-                space,
-                self.clock.clone(),
-                self.memory_service.clone(),
-            )),
-            Arc::new(DomainProcessor::new(
-                space,
-                ProcessorKind::Metacog,
-                self.clock.clone(),
-            )),
-            Arc::new(DomainProcessor::with_skills(
-                space,
-                self.clock.clone(),
-                self.skills.clone(),
-            )),
-        ]
+    fn processors(
+        &self,
+        space: &AgoraSpaceId,
+        recipient: ProcessId,
+        root: ProcessId,
+    ) -> Vec<ProcessorRegistration> {
+        let processors: Vec<(Arc<dyn ConsciousProcessor>, Vec<&str>, VisibilityScope)> = vec![
+            (
+                Arc::new(DomainProcessor::new(
+                    space,
+                    ProcessorKind::Dasein,
+                    self.clock.clone(),
+                )),
+                vec!["aletheon.workspace.any/v1"],
+                VisibilityScope::Session,
+            ),
+            (
+                Arc::new(DomainProcessor::new(
+                    space,
+                    ProcessorKind::Cognit,
+                    self.clock.clone(),
+                )),
+                vec!["aletheon.workspace.any/v1"],
+                VisibilityScope::Session,
+            ),
+            (
+                Arc::new(MnemosyneProcessor::new(
+                    space,
+                    self.clock.clone(),
+                    self.memory_service.clone(),
+                )),
+                vec![
+                    "aletheon.workspace.observation/v1",
+                    "aletheon.workspace.agent-result/v1",
+                    "aletheon.workspace.governed-action-outcome/v1",
+                ],
+                VisibilityScope::PrivateProcess {
+                    process: crate::r#impl::conscious::processor_source(space, "mnemosyne"),
+                },
+            ),
+            (
+                Arc::new(MetacogProcessor::new(space, self.clock.clone())),
+                vec!["aletheon.workspace.any/v1"],
+                VisibilityScope::Session,
+            ),
+            (
+                Arc::new(CorpusProcessor::new(
+                    space,
+                    self.clock.clone(),
+                    self.skills.clone(),
+                )),
+                vec![
+                    "aletheon.workspace.observation/v1",
+                    "aletheon.workspace.goal/v1",
+                    "aletheon.workspace.plan/v1",
+                ],
+                VisibilityScope::Session,
+            ),
+            (
+                Arc::new(AgentAdapter::new(space, self.clock.clone())),
+                vec![
+                    "aletheon.workspace.observation/v1",
+                    "aletheon.workspace.evidence/v1",
+                    "aletheon.workspace.agent-result/v1",
+                ],
+                VisibilityScope::AgentTree { root },
+            ),
+        ];
+        processors
+            .into_iter()
+            .map(
+                |(processor, schemas, response_visibility)| ProcessorRegistration {
+                    processor,
+                    recipient,
+                    agent_root: root,
+                    schemas: schemas.into_iter().map(fabric::SchemaId::from).collect(),
+                    capacity: self.core_config.max_candidates_per_processor,
+                    deadline_ms: self.core_config.processor_timeout.as_millis() as u64,
+                    response_visibility,
+                },
+            )
+            .collect()
     }
 }
 
@@ -329,9 +387,6 @@ impl ConsciousTurnPort for ConsciousWorkspaceRegistry {
 enum ProcessorKind {
     Dasein,
     Cognit,
-    Mnemosyne(Arc<dyn mnemosyne::MemoryService>),
-    Metacog,
-    Corpus(Arc<Mutex<corpus::SkillLoader>>),
 }
 
 impl ProcessorKind {
@@ -339,9 +394,6 @@ impl ProcessorKind {
         match self {
             Self::Dasein => "dasein",
             Self::Cognit => "cognit",
-            Self::Mnemosyne(_) => "mnemosyne",
-            Self::Metacog => "metacog",
-            Self::Corpus(_) => "corpus",
         }
     }
 }
@@ -362,22 +414,6 @@ impl DomainProcessor {
             kind,
             clock,
         }
-    }
-
-    fn with_memory(
-        space: &AgoraSpaceId,
-        clock: Arc<dyn Clock>,
-        memory: Arc<dyn mnemosyne::MemoryService>,
-    ) -> Self {
-        Self::new(space, ProcessorKind::Mnemosyne(memory), clock)
-    }
-
-    fn with_skills(
-        space: &AgoraSpaceId,
-        clock: Arc<dyn Clock>,
-        skills: Arc<Mutex<corpus::SkillLoader>>,
-    ) -> Self {
-        Self::new(space, ProcessorKind::Corpus(skills), clock)
     }
 
     fn candidate(
@@ -433,8 +469,8 @@ impl ConsciousProcessor for DomainProcessor {
         context: ProcessorContext,
     ) -> ProcessorResponse {
         let query = broadcast_summary(&broadcast);
-        let mut health = ProcessorHealth::Healthy;
-        let mut detail = None;
+        let health = ProcessorHealth::Healthy;
+        let detail = None;
         let candidates = match &self.kind {
             ProcessorKind::Dasein => vec![],
             ProcessorKind::Cognit => vec![self.candidate(
@@ -449,105 +485,6 @@ impl ConsciousProcessor for DomainProcessor {
                 }),
                 processor_salience(0.6, 0.7, 0.5),
             )],
-            ProcessorKind::Mnemosyne(memory) => {
-                match memory
-                    .recall(mnemosyne::RecallRequest {
-                        session: broadcast.space.0.clone(),
-                        query: truncate_bytes(&query, mnemosyne::RecallRequest::MAX_QUERY_BYTES),
-                        max_items: context.max_candidates.clamp(1, 4),
-                        max_content_bytes: 16 * 1024,
-                        current_at: Some(fabric::wall_to_datetime(self.clock.wall_now())),
-                        include_historical: false,
-                    })
-                    .await
-                {
-                    Ok(recall) => match mnemosyne::DefaultMemoryWorkspaceProjector.project(
-                        &recall,
-                        mnemosyne::MemoryProjectionLimits {
-                            max_items: context.max_candidates.clamp(1, 8),
-                            ..Default::default()
-                        },
-                    ) {
-                        Ok(projection) => {
-                            if !projection.degraded_sources.is_empty() {
-                                health = ProcessorHealth::Degraded;
-                                detail = Some(format!(
-                                    "memory sources degraded: {}",
-                                    projection.degraded_sources.join(",")
-                                ));
-                            }
-                            match projection.to_candidates(&mnemosyne::MemoryCandidateContext {
-                                space: broadcast.space.clone(),
-                                source: self.source,
-                                source_epoch: broadcast.epoch,
-                                dependencies: broadcast.winner_ids.clone(),
-                                created_at: self.clock.mono_now(),
-                                ttl_ms: PROCESSOR_TTL.as_millis() as u64,
-                            }) {
-                                Ok(candidates) => candidates,
-                                Err(error) => {
-                                    health = ProcessorHealth::Degraded;
-                                    detail = Some(format!(
-                                        "memory candidate projection failed: {error}"
-                                    ));
-                                    vec![]
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            health = ProcessorHealth::Degraded;
-                            detail = Some(format!("bounded memory projection failed: {error}"));
-                            vec![]
-                        }
-                    },
-                    Err(error) => {
-                        health = ProcessorHealth::Degraded;
-                        detail = Some(format!("bounded recall failed: {error}"));
-                        vec![]
-                    }
-                }
-            }
-            ProcessorKind::Metacog => vec![self.candidate(
-                &broadcast,
-                0,
-                WorkspaceContent::Reflection(WorkspaceReflection {
-                    findings: vec![format!(
-                        "review confidence and conflicts for epoch {}",
-                        broadcast.epoch.0
-                    )],
-                    confidence: 0.7,
-                }),
-                processor_salience(0.4, 0.5, 0.6),
-            )],
-            ProcessorKind::Corpus(skills) => {
-                let loader = skills.lock().await;
-                let keywords = loader
-                    .plugins()
-                    .iter()
-                    .filter(|plugin| !plugin.keywords.is_empty())
-                    .map(|plugin| corpus::skill::keyword_matcher::SkillKeywords {
-                        name: plugin.name.clone(),
-                        keywords: plugin.keywords.clone(),
-                        body: plugin.system_prompt.clone(),
-                    })
-                    .collect::<Vec<_>>();
-                let matched = corpus::skill::keyword_matcher::match_skills(&query, &keywords);
-                if matched.is_empty() {
-                    vec![]
-                } else {
-                    vec![self.candidate(
-                        &broadcast,
-                        0,
-                        WorkspaceContent::Extension {
-                            schema: "v1/corpus/skill-projection".into(),
-                            payload: serde_json::json!({
-                                "matched": matched.into_iter().take(3).map(|item| truncate(&item, 2048)).collect::<Vec<_>>()
-                            }),
-                        },
-                        processor_salience(0.4, 0.7, 0.6),
-                    )]
-                }
-            }
         };
         ProcessorResponse {
             processor: self.id.clone(),
@@ -617,15 +554,4 @@ fn broadcast_summary(broadcast: &WorkspaceBroadcast) -> String {
 
 fn truncate(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
-}
-
-fn truncate_bytes(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-    let mut end = max_bytes;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
 }

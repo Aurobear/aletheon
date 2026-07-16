@@ -106,14 +106,27 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         .collect::<Vec<_>>();
     assert_eq!(
         processor_ids,
-        ["cognit", "corpus", "dasein", "metacog", "mnemosyne"]
+        [
+            "agent",
+            "cognit",
+            "corpus",
+            "dasein",
+            "metacog",
+            "mnemosyne"
+        ]
     );
     for processor in ["cognit", "metacog"] {
-        assert!(observed.processors.iter().any(|status| {
-            status.processor.0 == processor && !status.admitted_candidates.is_empty()
-        }));
+        assert!(
+            observed.processors.iter().any(|status| {
+                status.processor.0 == processor && !status.admitted_candidates.is_empty()
+            }),
+            "processor {processor} did not admit a candidate: {:?}",
+            observed.processors
+        );
     }
-    assert_eq!(memory.recalls.load(Ordering::SeqCst), 2);
+    // Mnemosyne accepts lived observations/outcomes, not the processor-only
+    // recurrence produced by Cognit and Metacog.
+    assert_eq!(memory.recalls.load(Ordering::SeqCst), 1);
     let after_observation = registry.store().replay(&space).unwrap();
     assert_eq!(after_observation.len(), 2);
     assert!(after_observation[1]

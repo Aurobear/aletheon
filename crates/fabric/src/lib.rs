@@ -83,6 +83,9 @@ pub use types::tool;
 pub use types::vision;
 pub use types::workspace;
 
+pub use protocol::conscious_core::{
+    CandidateDisposition, ConsciousCoreSnapshot, InspectorProcessorAck,
+};
 pub use types::conscious_core::{
     BroadcastIntegrationReceipt, ConsciousContextProjection, ConsciousProcessor,
     ContextProjectionReceipt, ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId,

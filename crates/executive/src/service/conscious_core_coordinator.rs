@@ -16,8 +16,8 @@ use fabric::{
     ConsciousContextProjection, ConsciousProcessor, ContentId, ContextProjectionReceipt, GoalFrame,
     MonoDeadline, MonoTime, OperationKind, OperationRequest, PredictionErrorFrame, PredictionFrame,
     ProcessId, ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, SalienceVector,
-    SelectionExplanation, SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate,
-    WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    SchemaId, SelectionExplanation, SelectionResult, VisibilityScope, WorkspaceBroadcast,
+    WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use parking_lot::RwLock;
 use tokio::sync::{Mutex, Semaphore};
@@ -88,6 +88,21 @@ struct RegisteredProcessor {
     processor: Arc<dyn ConsciousProcessor>,
     recipient: ProcessId,
     agent_root: ProcessId,
+    schemas: Vec<SchemaId>,
+    capacity: usize,
+    deadline: Duration,
+    response_visibility: VisibilityScope,
+}
+
+#[derive(Clone)]
+pub struct ProcessorRegistration {
+    pub processor: Arc<dyn ConsciousProcessor>,
+    pub recipient: ProcessId,
+    pub agent_root: ProcessId,
+    pub schemas: Vec<SchemaId>,
+    pub capacity: usize,
+    pub deadline_ms: u64,
+    pub response_visibility: VisibilityScope,
 }
 
 pub struct ConsciousCoreCoordinator {
@@ -151,8 +166,39 @@ impl ConsciousCoreCoordinator {
         recipient: ProcessId,
         agent_root: ProcessId,
     ) -> anyhow::Result<()> {
-        let id = processor.id();
+        self.register_bounded_processor(ProcessorRegistration {
+            processor,
+            recipient,
+            agent_root,
+            schemas: vec![SchemaId("aletheon.workspace.any/v1".into())],
+            capacity: self.config.max_candidates_per_processor,
+            deadline_ms: duration_millis(self.config.processor_timeout),
+            response_visibility: VisibilityScope::Session,
+        })
+    }
+
+    pub fn register_bounded_processor(
+        &self,
+        registration: ProcessorRegistration,
+    ) -> anyhow::Result<()> {
+        let id = registration.processor.id();
         id.validate()?;
+        anyhow::ensure!(
+            !registration.schemas.is_empty(),
+            "processor schemas are empty"
+        );
+        anyhow::ensure!(
+            registration
+                .schemas
+                .iter()
+                .all(|schema| !schema.0.trim().is_empty()),
+            "processor schema is invalid"
+        );
+        anyhow::ensure!(
+            (1..=self.config.max_candidates_per_processor).contains(&registration.capacity),
+            "processor capacity is invalid"
+        );
+        anyhow::ensure!(registration.deadline_ms > 0, "processor deadline is zero");
         let mut processors = self.processors.write();
         anyhow::ensure!(
             !processors.contains_key(&id.0),
@@ -165,9 +211,13 @@ impl ConsciousCoreCoordinator {
         processors.insert(
             id.0,
             RegisteredProcessor {
-                processor,
-                recipient,
-                agent_root,
+                processor: registration.processor,
+                recipient: registration.recipient,
+                agent_root: registration.agent_root,
+                schemas: registration.schemas,
+                capacity: registration.capacity,
+                deadline: Duration::from_millis(registration.deadline_ms),
+                response_visibility: registration.response_visibility,
             },
         );
         Ok(())
@@ -505,6 +555,7 @@ impl ConsciousCoreCoordinator {
                 broadcast,
                 registration.recipient,
                 registration.agent_root,
+                &registration.schemas,
             )?
             else {
                 continue;
@@ -519,10 +570,11 @@ impl ConsciousCoreCoordinator {
                 agent_root: registration.agent_root,
                 recurrence_depth,
                 deadline,
-                max_candidates: self.config.max_candidates_per_processor,
+                max_candidates: registration.capacity,
             };
             let semaphore = semaphore.clone();
-            let timeout = self.config.processor_timeout;
+            let timeout = self.config.processor_timeout.min(registration.deadline);
+            let response_visibility = registration.response_visibility.clone();
             tasks.spawn(async move {
                 let _permit = semaphore.acquire_owned().await?;
                 let response =
@@ -544,16 +596,28 @@ impl ConsciousCoreCoordinator {
                         detail: Some("processor deadline exceeded".into()),
                     },
                 };
-                anyhow::Ok((context, response))
+                anyhow::Ok((context, response, response_visibility))
             });
         }
 
         let mut statuses = Vec::new();
         while let Some(joined) = tasks.join_next().await {
             self.ensure_before(deadline)?;
-            let (context, response) = joined??;
+            let (context, response, response_visibility) = joined??;
             let response = match response.validate(&context) {
-                Ok(()) => response,
+                Ok(())
+                    if response
+                        .candidates
+                        .iter()
+                        .all(|candidate| candidate.visibility == response_visibility) =>
+                {
+                    response
+                }
+                Ok(()) => failed_response(
+                    response.processor,
+                    context.source_epoch,
+                    "processor response visibility exceeds registration",
+                ),
                 Err(error) => failed_response(
                     response.processor,
                     context.source_epoch,
@@ -680,6 +744,7 @@ fn processor_broadcast_view(
     broadcast: &WorkspaceBroadcast,
     recipient: ProcessId,
     agent_root: ProcessId,
+    schemas: &[SchemaId],
 ) -> anyhow::Result<Option<WorkspaceBroadcast>> {
     let selected = broadcast
         .selected
@@ -688,6 +753,12 @@ fn processor_broadcast_view(
             VisibilityScope::Session => true,
             VisibilityScope::PrivateProcess { process } => process == recipient,
             VisibilityScope::AgentTree { root } => root == agent_root,
+        })
+        .filter(|candidate| {
+            schemas.iter().any(|schema| {
+                schema.0 == "aletheon.workspace.any/v1"
+                    || schema.0 == workspace_schema(&candidate.content)
+            })
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -727,6 +798,29 @@ fn processor_broadcast_view(
         broadcast.workspace_version,
     )?;
     Ok(Some(view))
+}
+
+fn workspace_schema(content: &WorkspaceContent) -> &'static str {
+    match content {
+        WorkspaceContent::Observation(_) => "aletheon.workspace.observation/v1",
+        WorkspaceContent::RecalledExperience(_) => "aletheon.workspace.recalled-experience/v1",
+        WorkspaceContent::Evidence(_) => "aletheon.workspace.evidence/v1",
+        WorkspaceContent::Hypothesis(_) => "aletheon.workspace.hypothesis/v1",
+        WorkspaceContent::Prediction(_) => "aletheon.workspace.prediction/v1",
+        WorkspaceContent::PredictionError(_) => "aletheon.workspace.prediction-error/v1",
+        WorkspaceContent::Goal(_) => "aletheon.workspace.goal/v1",
+        WorkspaceContent::Concern(_) => "aletheon.workspace.concern/v1",
+        WorkspaceContent::CareConcern(_) => "aletheon.workspace.care-concern/v1",
+        WorkspaceContent::Plan(_) => "aletheon.workspace.plan/v1",
+        WorkspaceContent::ActionProposal(_) => "aletheon.workspace.action-proposal/v1",
+        WorkspaceContent::ToolOutcome(_) => "aletheon.workspace.tool-outcome/v1",
+        WorkspaceContent::GovernedActionOutcome(_) => {
+            "aletheon.workspace.governed-action-outcome/v1"
+        }
+        WorkspaceContent::AgentResult(_) => "aletheon.workspace.agent-result/v1",
+        WorkspaceContent::Reflection(_) => "aletheon.workspace.reflection/v1",
+        WorkspaceContent::Extension { .. } => "aletheon.workspace.extension/v1",
+    }
 }
 
 fn failed_response(

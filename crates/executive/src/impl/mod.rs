@@ -5,6 +5,7 @@ pub mod approval;
 pub mod artifact;
 pub mod automation;
 pub mod channel;
+pub mod conscious;
 pub mod daemon;
 pub mod engine;
 pub mod events;

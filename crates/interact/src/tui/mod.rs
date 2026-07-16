@@ -13,6 +13,7 @@ pub mod chat;
 pub mod command;
 pub mod completion;
 pub mod computer;
+pub mod conscious_core;
 
 pub mod help_overlay;
 pub mod history_search;
