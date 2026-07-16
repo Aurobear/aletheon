@@ -1,8 +1,6 @@
 dependency|agora|aletheon-kernel
 dependency|agora|fabric
-dependency|aletheon-bin|aletheon-kernel
 dependency|aletheon-bin|executive
-dependency|aletheon-bin|fabric
 dependency|aletheon-bin|interact
 dependency|aletheon-kernel|fabric
 dependency|basic-agent-example|executive
@@ -21,8 +19,6 @@ dependency|executive|dasein
 dependency|executive|fabric
 dependency|executive|metacog
 dependency|executive|mnemosyne
-dependency|interact|aletheon-kernel
-dependency|interact|corpus
 dependency|interact|fabric
 dependency|metacog|aletheon-kernel
 dependency|metacog|fabric

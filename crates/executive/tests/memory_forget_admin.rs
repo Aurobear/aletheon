@@ -106,6 +106,7 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         gbrain_worker: None,
         goal_worker: None,
         memory_admin: Some(memory_admin),
+        agent_runs: None,
     });
     assert!(
         service.forget_memory(policy("owner")).await.is_err(),
