@@ -593,8 +593,18 @@ fn runtime_failure(error: impl std::fmt::Display) -> AgentControlError {
 
 fn control_error(kind: AgentControlErrorKind, message: impl Into<String>) -> AgentControlError {
     let mut message = message.into();
-    if message.len() > MAX_ERROR_BYTES {
-        message.truncate(MAX_ERROR_BYTES);
-    }
+    fabric::truncate_utf8_bytes(&mut message, MAX_ERROR_BYTES);
     AgentControlError { kind, message }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_error_truncates_multibyte_text_on_utf8_boundary() {
+        let error = control_error(AgentControlErrorKind::Runtime, "中🙂".repeat(2_000));
+        assert!(error.message.len() <= MAX_ERROR_BYTES);
+        assert!(error.message.is_char_boundary(error.message.len()));
+    }
 }
