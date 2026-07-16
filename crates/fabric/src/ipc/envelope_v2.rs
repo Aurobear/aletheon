@@ -384,6 +384,7 @@ impl SchemaId {
     pub const PROCESS_SIGNAL_V1: &'static str = "aletheon.process.signal/v1";
     pub const CAPABILITY_REQUEST_V1: &'static str = "aletheon.capability.request/v1";
     pub const CAPABILITY_RESULT_V1: &'static str = "aletheon.capability.result/v1";
+    pub const AGENT_CONTROL_MESSAGE_V1: &'static str = "aletheon.agent.control-message/v1";
     pub const LEGACY_ENVELOPE_V0: &'static str = "aletheon.legacy.envelope/v0";
 
     // -- Migration bridge: each legacy EventType variant maps to a SchemaId --
@@ -446,6 +447,7 @@ impl SchemaId {
             Self::PROCESS_SIGNAL_V1,
             Self::CAPABILITY_REQUEST_V1,
             Self::CAPABILITY_RESULT_V1,
+            Self::AGENT_CONTROL_MESSAGE_V1,
             Self::LEGACY_ENVELOPE_V0,
         ]
     }
