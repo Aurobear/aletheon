@@ -81,10 +81,43 @@ pub struct WorkspaceReflection {
     pub confidence: f32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkspaceAttribution {
+    User,
+    Environment,
+    RootAgent { process: ProcessId },
+    ChildAgent { process: ProcessId },
+    ExternalMemory { provider: String },
+    Dasein,
+    Cognit,
+    Metacog,
+    Corpus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecalledExperienceFrame {
+    pub memory_id: String,
+    pub summary: String,
+    pub trust: f32,
+    pub attribution: WorkspaceAttribution,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernedActionOutcomeFrame {
+    pub action_id: ContentId,
+    pub permit_id: String,
+    pub operation: OperationId,
+    pub output_ref: String,
+    pub is_error: bool,
+    pub attribution: WorkspaceAttribution,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum WorkspaceContent {
     Observation(WorkspaceObservation),
+    RecalledExperience(RecalledExperienceFrame),
     Evidence(Evidence),
     Hypothesis(Hypothesis),
     Prediction(PredictionFrame),
@@ -94,6 +127,7 @@ pub enum WorkspaceContent {
     Plan(Plan),
     ActionProposal(ActionProposalFrame),
     ToolOutcome(ToolOutcomeFrame),
+    GovernedActionOutcome(GovernedActionOutcomeFrame),
     AgentResult(AgentResult),
     Reflection(WorkspaceReflection),
     Extension {
@@ -244,6 +278,14 @@ impl WorkspaceCandidate {
                 valid_text(&value.what) && valid_text(&value.source),
                 "observation is incomplete"
             ),
+            WorkspaceContent::RecalledExperience(value) => anyhow::ensure!(
+                valid_text(&value.memory_id)
+                    && valid_text(&value.summary)
+                    && value.trust.is_finite()
+                    && (0.0..=1.0).contains(&value.trust)
+                    && valid_attribution(&value.attribution),
+                "recalled experience is invalid"
+            ),
             WorkspaceContent::Evidence(value) => anyhow::ensure!(
                 valid_text(&value.id)
                     && valid_text(&value.source)
@@ -289,6 +331,12 @@ impl WorkspaceCandidate {
                     && valid_text(&value.output_ref),
                 "tool outcome is invalid"
             ),
+            WorkspaceContent::GovernedActionOutcome(value) => anyhow::ensure!(
+                valid_text(&value.permit_id)
+                    && valid_text(&value.output_ref)
+                    && valid_attribution(&value.attribution),
+                "governed action outcome is invalid"
+            ),
             WorkspaceContent::AgentResult(value) => value
                 .validate()
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?,
@@ -308,6 +356,15 @@ impl WorkspaceCandidate {
             ),
         }
         Ok(())
+    }
+}
+
+fn valid_attribution(attribution: &WorkspaceAttribution) -> bool {
+    match attribution {
+        WorkspaceAttribution::ExternalMemory { provider } => {
+            !provider.trim().is_empty() && provider.len() <= MAX_TEXT_BYTES
+        }
+        _ => true,
     }
 }
 

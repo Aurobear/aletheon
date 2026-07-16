@@ -53,6 +53,7 @@ pub use types::agent_control;
 pub use types::attempt;
 pub use types::capability;
 pub use types::channel;
+pub use types::conscious_core;
 pub use types::context;
 pub use types::evidence;
 pub use types::external_event;
@@ -75,10 +76,16 @@ pub use types::tool;
 pub use types::vision;
 pub use types::workspace;
 
+pub use types::conscious_core::{
+    ConsciousContextProjection, ConsciousProcessor, ContextProjectionReceipt, ProcessorAck,
+    ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, StructuredSelfView,
+    MAX_PROCESSOR_ACKNOWLEDGEMENTS, MAX_PROCESSOR_RESPONSE_CANDIDATES, MAX_SELF_VIEW_ITEMS,
+};
 pub use types::workspace::{
     ActionProposalFrame, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, BroadcastEpoch,
-    CandidateScore, ContentId, GoalFrame, PredictionErrorFrame, PredictionFrame, SalienceVector,
-    SelectionExplanation, SelectionResult, ToolOutcomeFrame, VisibilityScope, WorkspaceBroadcast,
+    CandidateScore, ContentId, GoalFrame, GovernedActionOutcomeFrame, PredictionErrorFrame,
+    PredictionFrame, RecalledExperienceFrame, SalienceVector, SelectionExplanation,
+    SelectionResult, ToolOutcomeFrame, VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast,
     WorkspaceCandidate, WorkspaceContent, WorkspaceObservation, WorkspaceProvenance,
     WorkspaceReflection, MAX_BROADCAST_RESPONSES, MAX_BROADCAST_WINNERS, WORKSPACE_SCHEMA_V1,
 };
