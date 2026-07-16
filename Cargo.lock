@@ -86,12 +86,17 @@ name = "aletheon-bin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
  "executive",
  "fabric",
+ "futures",
  "interact",
+ "libc",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

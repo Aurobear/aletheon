@@ -69,3 +69,27 @@ if ARCH_ROOT="$deps" ARCH_SKIP_DELETION_GATES=1 \
   echo 'expected a new dependency to fail' >&2; exit 1
 fi
 echo 'architecture-check fixture: pass'
+
+# Runtime authority invariants are checked against the real source tree. Keep
+# the strings split where the check itself names a forbidden local path.
+forbidden_root='/home/'"aurobear/Bear-ws"
+local_workspace='LOCAL_'"WORKSPACE_ROOT"
+legacy_workspace='LEGACY_'"WORKING_DIR"
+if git -C "$ROOT" grep -nE "${local_workspace}|${legacy_workspace}|${forbidden_root}" -- crates config scripts tests; then
+  echo 'forbidden fixed workspace root remains' >&2; exit 1
+fi
+if git -C "$ROOT" grep -n 'PrincipalId(session_id)' -- crates; then
+  echo 'session id is still used as a principal' >&2; exit 1
+fi
+if git -C "$ROOT" grep -n 'default_session_id.lock' -- crates/executive/src/service/daemon_turn; then
+  echo 'turn path still rereads the default session' >&2; exit 1
+fi
+if grep -qE 'ProviderRegistry|api_key|api_url' "$ROOT/crates/executive/src/user_runtime/mod.rs"; then
+  echo 'user runtime exposes machine provider authority' >&2; exit 1
+fi
+if grep -qE 'RequestHandler|ToolRegistry|Sandbox' "$ROOT/crates/executive/src/core/system_core_runtime.rs"; then
+  echo 'system core exposes user execution authority' >&2; exit 1
+fi
+test "$(git -C "$ROOT" grep -l 'resolve_and_create' -- crates/executive/src | wc -l)" -eq 1
+git -C "$ROOT" grep -q 'resolve_and_create' -- crates/executive/src/core/system_core_runtime.rs
+echo 'multi-user runtime architecture boundary: pass'

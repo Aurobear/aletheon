@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::info;
 
 use aletheon_kernel::chronos::SystemClock;
@@ -84,13 +84,12 @@ impl ExecSessionBuilder {
         self
     }
 
-    /// Wire up the full exec stack and return the `TurnService`, `LlmProvider`,
-    /// and the configured `RiskLevel`.
-    pub async fn build(self) -> Result<(TurnService, Arc<dyn LlmProvider>, RiskLevel)> {
-        let working_dir = self
-            .working_dir
-            .canonicalize()
-            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
+    /// Wire up the full exec stack and return the turn service, provider view,
+    /// risk level, and registered kernel process that owns the turn.
+    pub async fn build(self) -> Result<(TurnService, Arc<dyn LlmProvider>, RiskLevel, ProcessId)> {
+        let working_dir = self.working_dir.canonicalize().with_context(|| {
+            format!("resolving exec workspace '{}'", self.working_dir.display())
+        })?;
 
         // Load config
         let app_config = crate::core::config::load_for_host(
@@ -146,6 +145,7 @@ impl ExecSessionBuilder {
         let event_spine = Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?);
 
         let kernel = Arc::new(KernelRuntime::new());
+        let process = kernel.spawn_process(fabric::SpawnSpec::default()).await?;
 
         let raw_executor = Arc::new(corpus::CorpusToolExecutor::new(
             tool_registry.clone(),
@@ -255,7 +255,7 @@ impl ExecSessionBuilder {
             .with_coordinator(coordinator)
             .with_harness_config(harness_config);
 
-        Ok((turn_service, llm, RiskLevel::ReadOnly))
+        Ok((turn_service, llm, RiskLevel::ReadOnly, process.id))
     }
 }
 

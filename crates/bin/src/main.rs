@@ -122,7 +122,17 @@ async fn main() -> Result<()> {
         anyhow::bail!("aletheon core does not accept workspace authority");
     }
     let workspace = match (&cli.command, &cli.message) {
-        (Some(Commands::Exec { .. }), _) | (None, _) => {
+        (Some(Commands::Exec { sandbox, .. }), _) => {
+            let process_cwd = std::env::current_dir()
+                .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
+            let profile = if matches!(sandbox.as_str(), "danger-full-access") {
+                fabric::PermissionProfileId::danger_full_access()
+            } else {
+                fabric::PermissionProfileId::workspace_write()
+            };
+            Some(cli.workspace.resolve(&process_cwd, &profile)?)
+        }
+        (None, _) => {
             let process_cwd = std::env::current_dir()
                 .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
             Some(cli.workspace.resolve(

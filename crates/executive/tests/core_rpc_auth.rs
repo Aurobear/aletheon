@@ -168,7 +168,7 @@ async fn oversized_and_duplicate_frames_are_rejected() {
     let harness = Harness::start(128).await;
 
     let mut oversized = UnixStream::connect(&harness.socket).await.unwrap();
-    oversized.write_all(&vec![b'x'; 129]).await.unwrap();
+    oversized.write_all(&[b'x'; 129]).await.unwrap();
     let mut oversized_reader = BufReader::new(oversized);
     let mut line = String::new();
     oversized_reader.read_line(&mut line).await.unwrap();

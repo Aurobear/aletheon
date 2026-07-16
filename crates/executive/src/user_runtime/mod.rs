@@ -59,7 +59,7 @@ impl UserRuntimeConfig {
         let request = DaemonConfig {
             model,
             working_dir: std::env::current_dir()
-                .unwrap_or_else(|_| paths.state_root.clone())
+                .context("resolving user runtime process cwd")?
                 .to_string_lossy()
                 .into_owned(),
             data_dir: paths.state_root.to_string_lossy().into_owned(),

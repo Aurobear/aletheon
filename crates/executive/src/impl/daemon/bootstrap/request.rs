@@ -1280,6 +1280,11 @@ impl RequestHandler {
         let composition = super::DaemonComposition {
             request: handler_ports,
             active_connections,
+            thread_authority: Arc::new(
+                crate::service::thread_authority::ThreadAuthorityStore::persistent(
+                    data_dir.join("thread-authority"),
+                ),
+            ),
         };
         let handler = composition.into_handler();
 

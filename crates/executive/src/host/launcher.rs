@@ -6,8 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use fabric::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, NoopTurnEventSink, OperationId,
-    PermissionProfileId, PrincipalContext, PrincipalId, ProcessId, ThreadId, TurnRequest,
-    WorkspacePolicy,
+    PermissionProfileId, PrincipalContext, PrincipalId, ThreadId, TurnRequest, WorkspacePolicy,
 };
 use tracing::info;
 
@@ -98,12 +97,12 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
     if let Some(path) = request.config {
         builder = builder.with_config(path);
     }
-    let (turn_service, _, _) = builder.build().await?;
+    let (turn_service, _, _, process_id) = builder.build().await?;
     let result = turn_service
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
+                process_id,
                 context: {
                     let thread_id = uuid::Uuid::new_v4().to_string();
                     let uid = nix::unistd::Uid::effective().as_raw();

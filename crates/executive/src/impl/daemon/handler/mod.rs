@@ -59,6 +59,8 @@ pub struct RequestHandler {
     pub(crate) notify_tx: Option<mpsc::Sender<String>>,
     /// Active connection count.
     pub(crate) active_connections: Arc<AtomicUsize>,
+    /// User-state-root-scoped immutable thread authority records.
+    pub(crate) thread_authority: Arc<crate::service::thread_authority::ThreadAuthorityStore>,
 }
 
 impl RequestHandler {
@@ -181,7 +183,7 @@ impl RequestHandler {
             fabric::PermissionProfileId::workspace_write(),
             fabric::ApprovalPolicy::OnRequest,
         );
-        if let Err(error) = bind_thread_authority(&context, None) {
+        if let Err(error) = self.bind_thread_authority(&context, None) {
             return serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -209,6 +211,17 @@ impl RequestHandler {
             .await?;
         tracing::info!(%session_id, cwd = %working_dir.display(), "Selected new workspace session");
         Ok(LegacySessionThreadAdapter::thread_id(session_id))
+    }
+
+    fn bind_thread_authority(
+        &self,
+        context: &fabric::PrincipalContext,
+        model_policy: Option<String>,
+    ) -> Result<(), crate::service::thread_authority::ThreadAuthorityError> {
+        use crate::service::thread_authority::{ThreadAuthorityKey, ThreadSettings};
+        let key = ThreadAuthorityKey::new(context.principal_id.clone(), context.thread_id.clone());
+        self.thread_authority
+            .bind_or_verify(&key, &ThreadSettings::from_context(context, model_policy))
     }
 }
 
@@ -247,22 +260,6 @@ fn resolve_requested_workspace(
     )
     .resolve(Path::new(requested))
     .map_err(|error| error.to_string())
-}
-
-fn bind_thread_authority(
-    context: &fabric::PrincipalContext,
-    model_policy: Option<String>,
-) -> Result<(), crate::service::thread_authority::ThreadAuthorityError> {
-    use crate::service::thread_authority::{
-        ThreadAuthorityKey, ThreadAuthorityStore, ThreadSettings,
-    };
-    let state_home = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .ok_or(crate::service::thread_authority::ThreadAuthorityError::StateRootUnavailable)?;
-    let store = ThreadAuthorityStore::persistent(state_home.join("aletheon/thread-authority"));
-    let key = ThreadAuthorityKey::new(context.principal_id.clone(), context.thread_id.clone());
-    store.bind_or_verify(&key, &ThreadSettings::from_context(context, model_policy))
 }
 
 #[cfg(test)]
