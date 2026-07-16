@@ -19,7 +19,8 @@ use parking_lot::RwLock;
 use tokio::sync::Mutex;
 
 use crate::service::agent_control::{
-    AgentEventSink, AgentRuntimeEvent, AgentRuntimeInput, AgentRuntimeLauncher,
+    AgentCandidateSubmissionPort, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInput,
+    AgentRuntimeLauncher, ProjectingAgentEventSink,
 };
 use crate::service::harness_factory::CognitiveSessionFactory;
 use crate::service::turn_policy::TurnPolicy;
@@ -95,6 +96,7 @@ pub struct NativeCognitRuntimeResources {
     pub clock: Arc<dyn Clock>,
     pub conscious_actions:
         Option<Arc<dyn crate::service::governed_capability::GovernedActionLoopResolver>>,
+    pub conscious_candidates: Option<Arc<dyn AgentCandidateSubmissionPort>>,
 }
 
 pub struct NativeCognitRuntime {
@@ -264,6 +266,18 @@ impl AgentRuntimeLauncher for NativeCognitRuntime {
         events: Arc<dyn AgentEventSink>,
     ) -> Result<AgentResult, AgentControlError> {
         let ids = EventIds::from(&input);
+        let projection = self.resources.conscious_candidates.as_ref().map(|port| {
+            Arc::new(ProjectingAgentEventSink::new(
+                events.clone(),
+                port.clone(),
+                input.clone(),
+                self.resources.clock.clone(),
+            ))
+        });
+        let events: Arc<dyn AgentEventSink> = projection
+            .as_ref()
+            .map(|sink| sink.clone() as Arc<dyn AgentEventSink>)
+            .unwrap_or(events);
         events
             .emit(AgentRuntimeEvent::Started {
                 agent_id: ids.agent_id,
@@ -278,16 +292,12 @@ impl AgentRuntimeLauncher for NativeCognitRuntime {
                 "Agent runtime cancelled",
             ));
         }
-        let (status, usage, evidence) = match &outcome {
-            Ok(result) => (
-                AgentRunStatus::Succeeded,
-                result.usage.clone(),
-                result.evidence.clone(),
-            ),
+        let (status, result) = match &outcome {
+            Ok(result) => (AgentRunStatus::Succeeded, Some(result.clone())),
             Err(error) if error.kind == AgentControlErrorKind::Terminal => {
-                (AgentRunStatus::Cancelled, AttemptUsage::default(), vec![])
+                (AgentRunStatus::Cancelled, None)
             }
-            Err(_) => (AgentRunStatus::Failed, AttemptUsage::default(), vec![]),
+            Err(_) => (AgentRunStatus::Failed, None),
         };
         events
             .emit(AgentRuntimeEvent::Terminal {
@@ -295,10 +305,12 @@ impl AgentRuntimeLauncher for NativeCognitRuntime {
                 process_id: ids.process_id,
                 operation_id: ids.operation_id,
                 status,
-                usage,
-                evidence,
+                result,
             })
             .await;
+        if let Some(error) = projection.and_then(|sink| sink.take_error()) {
+            return Err(error);
+        }
         outcome
     }
 }

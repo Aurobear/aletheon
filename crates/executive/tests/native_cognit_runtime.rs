@@ -183,6 +183,7 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
             profile_id: request.profile_id.clone(),
         },
         workspace_id: fabric::AgoraSpaceId(format!("agent:{}", root.0)),
+        root_workspace_id: fabric::AgoraSpaceId(format!("root:{}", root.0)),
         root_process_id: process,
         request,
         cancellation: cancel,
@@ -212,6 +213,7 @@ fn runtime(llm: Arc<ScriptedLlm>, capability: Arc<RecordingCapability>) -> Nativ
         profiles,
         clock,
         conscious_actions: None,
+        conscious_candidates: None,
     })
 }
 
@@ -463,6 +465,7 @@ async fn provider_failure_and_iteration_exhaustion_are_bounded_runtime_errors() 
         profiles,
         clock,
         conscious_actions: None,
+        conscious_candidates: None,
     });
     let error = runtime
         .launch(

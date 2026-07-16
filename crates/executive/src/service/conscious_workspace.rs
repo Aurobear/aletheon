@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use super::agent_control::AgentCandidateSubmissionPort;
 use super::conscious_action::ConsciousActionBridge;
 use super::conscious_core_coordinator::{ConsciousCoreConfig, ConsciousCoreCoordinator};
 use super::conscious_core_ports::{
@@ -121,6 +122,21 @@ impl ConsciousWorkspaceRegistry {
         self.store.clone()
     }
 
+    /// Run a later C01 competition over already-admitted candidates. Agent
+    /// projection deliberately never calls this: admission and global
+    /// selection remain separate causal steps.
+    pub async fn run_pending_cycle(
+        &self,
+        space: AgoraSpaceId,
+        owner: ProcessId,
+        root: ProcessId,
+        recurrence_depth: u16,
+    ) -> anyhow::Result<ConsciousCycleReceipt> {
+        self.coordinator(space, owner, root)?
+            .run_cycle(owner, recurrence_depth)
+            .await
+    }
+
     fn coordinator(
         &self,
         space: AgoraSpaceId,
@@ -180,6 +196,19 @@ impl ConsciousWorkspaceRegistry {
                 self.skills.clone(),
             )),
         ]
+    }
+}
+
+#[async_trait]
+impl AgentCandidateSubmissionPort for ConsciousWorkspaceRegistry {
+    async fn submit_agent_candidate(
+        &self,
+        submission: CandidateSubmission,
+        recipient: ProcessId,
+        root: ProcessId,
+    ) -> anyhow::Result<super::conscious_core_ports::CandidateSubmissionReceipt> {
+        let coordinator = self.coordinator(submission.candidate.space.clone(), recipient, root)?;
+        coordinator.submit_candidate(submission).await
     }
 }
 

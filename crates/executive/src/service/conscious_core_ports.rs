@@ -28,6 +28,11 @@ pub enum CandidateCause {
         operation_id: fabric::OperationId,
         call_id: String,
     },
+    AgentRuntimeEvent {
+        agent_id: fabric::AgentId,
+        operation_id: fabric::OperationId,
+        event_kind: String,
+    },
 }
 
 impl CandidateCause {
@@ -49,6 +54,14 @@ impl CandidateCause {
                 operation_id,
                 call_id,
             } => format!("action-call:{}:{call_id}", operation_id.0),
+            Self::AgentRuntimeEvent {
+                agent_id,
+                operation_id,
+                event_kind,
+            } => format!(
+                "agent-runtime:{}:{}:{event_kind}",
+                agent_id.0, operation_id.0
+            ),
         }
     }
 
@@ -67,6 +80,10 @@ impl CandidateCause {
             Self::GovernedActionProposal { call_id, .. } => anyhow::ensure!(
                 !call_id.trim().is_empty() && call_id.len() <= 1024,
                 "governed action call reference is invalid"
+            ),
+            Self::AgentRuntimeEvent { event_kind, .. } => anyhow::ensure!(
+                !event_kind.trim().is_empty() && event_kind.len() <= 128,
+                "Agent runtime event kind is invalid"
             ),
         }
         Ok(())

@@ -4,8 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentHandle, AgentId, AgentResult, AgentRunStatus,
-    AgentSpawnRequest, AgoraSpaceId, AttemptEvidence, AttemptUsage, OperationId, ProcessId,
-    RuntimeId,
+    AgentSpawnRequest, AgoraSpaceId, OperationId, ProcessId, RuntimeId,
 };
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -39,8 +38,7 @@ pub enum AgentRuntimeEvent {
         process_id: ProcessId,
         operation_id: OperationId,
         status: AgentRunStatus,
-        usage: AttemptUsage,
-        evidence: Vec<AttemptEvidence>,
+        result: Option<AgentResult>,
     },
 }
 
@@ -62,6 +60,10 @@ pub struct AgentRuntimeInput {
     pub request: AgentSpawnRequest,
     pub handle: AgentHandle,
     pub workspace_id: AgoraSpaceId,
+    /// Root conscious workspace. Child-private candidates never use this
+    /// space; explicitly exportable candidates are admitted here for a later
+    /// C01 selection cycle.
+    pub root_workspace_id: AgoraSpaceId,
     pub root_process_id: ProcessId,
     pub context: AgentContextProjection,
     pub cancellation: CancellationToken,
@@ -167,8 +169,7 @@ impl AgentRuntimeLauncher for CompatibilityRuntimeLauncher {
                 process_id: input.handle.process_id,
                 operation_id: input.handle.operation_id,
                 status: AgentRunStatus::Succeeded,
-                usage: result.usage.clone(),
-                evidence: result.evidence.clone(),
+                result: Some(result.clone()),
             })
             .await;
         Ok(result)

@@ -753,6 +753,7 @@ impl RequestHandler {
                     profiles,
                     clock: clock.clone(),
                     conscious_actions: Some(conscious_registry.clone()),
+                    conscious_candidates: Some(conscious_registry.clone()),
                 },
             ));
             agent_runtimes.register(

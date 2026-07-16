@@ -134,6 +134,16 @@ if [[ -n "$spawner_outside_compat" ]]; then
   exit 1
 fi
 
+# G06 deletion gate: child runtime projection may only admit typed candidates
+# through the C01 port. It must never commit/broadcast Agora state, transition
+# Dasein, or write global memory directly.
+if rg -n 'AgoraOps|\.commit\(|broadcast_selection|integrate_broadcast|DaseinWorkspacePort|MemoryService|\.record\(' \
+  crates/executive/src/service/agent_control/candidate_projection.rs \
+  crates/executive/src/impl/runtime/native_cognit.rs; then
+  echo "architecture-check: child Agent bypasses C01 candidate admission" >&2
+  exit 1
+fi
+
 # K02/X02 composition gate: Kernel remains domain-neutral. DomainPorts belongs
 # to Executive, and the retired CoreSystems service locator must stay deleted.
 if rg -n '^\s*(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)\s*=' \

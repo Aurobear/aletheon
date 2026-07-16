@@ -18,6 +18,7 @@ use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
 
 pub mod admission;
+pub mod candidate_projection;
 pub mod context_fork;
 pub mod execution;
 pub mod live_runs;
@@ -25,6 +26,9 @@ pub mod repository;
 pub mod sqlite_repository;
 
 pub use admission::{AgentAdmissionLease, AgentAdmissionPort, BoundedAgentAdmission};
+pub use candidate_projection::{
+    AgentCandidateProjector, AgentCandidateSubmissionPort, ProjectingAgentEventSink,
+};
 pub use context_fork::{
     AgentContextItem, AgentContextItemKind, AgentContextProjection, AgentContextProjectionBuilder,
 };
@@ -43,6 +47,7 @@ const CANCEL_WAIT: Duration = Duration::from_secs(30);
 struct ValidatedAgentIdentity {
     agent_id: AgentId,
     root_process_id: Option<ProcessId>,
+    root_workspace_id: Option<fabric::AgoraSpaceId>,
 }
 
 #[async_trait]
@@ -181,6 +186,7 @@ impl AgentControlService {
             (None, None) => Ok(ValidatedAgentIdentity {
                 agent_id: request.root_agent_id,
                 root_process_id: None,
+                root_workspace_id: None,
             }),
             (Some(parent), Some(parent_process)) => {
                 let root_process_id;
@@ -217,9 +223,37 @@ impl AgentControlService {
                     }
                     root_process_id = parent_process;
                 }
+                let root_process = self
+                    .kernel
+                    .inspect_process(root_process_id)
+                    .await
+                    .map_err(runtime_error)?;
+                let root_workspace_id = self
+                    .kernel
+                    .inspect_space(root_process.space)
+                    .and_then(|space| {
+                        space
+                            .bindings
+                            .into_iter()
+                            .find_map(|binding| match binding {
+                                ContextBinding::Agora(id, _) => Some(id),
+                                _ => None,
+                            })
+                    })
+                    .or_else(|| {
+                        request
+                            .broadcast_refs
+                            .first()
+                            .map(|item| item.space.clone())
+                    })
+                    // A trusted external root may spawn before its first turn
+                    // has materialized a Kernel binding. Turn workspaces use
+                    // the durable root/session UUID as their canonical ID.
+                    .unwrap_or_else(|| fabric::AgoraSpaceId(request.root_agent_id.0.to_string()));
                 Ok(ValidatedAgentIdentity {
                     agent_id: AgentId::new(),
                     root_process_id: Some(root_process_id),
+                    root_workspace_id: Some(root_workspace_id),
                 })
             }
             _ => Err(AgentControlError::invalid(
@@ -329,6 +363,9 @@ impl AgentControlPort for AgentControlService {
             }
         };
         let root_process_id = identity.root_process_id.unwrap_or(process.id);
+        let root_workspace_id = identity
+            .root_workspace_id
+            .unwrap_or_else(|| workspace_id.clone());
         self.kernel.upsert_space_binding(
             process_snapshot.space,
             ContextBinding::Agora(workspace_id.clone(), AgoraVersion(0)),
@@ -481,6 +518,7 @@ impl AgentControlPort for AgentControlService {
             request,
             handle: handle.clone(),
             workspace_id,
+            root_workspace_id,
             root_process_id,
             context,
             cancellation,
