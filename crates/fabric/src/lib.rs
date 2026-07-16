@@ -235,7 +235,7 @@ pub use types::llm_types::{
 };
 pub use types::local_authority::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, PermissionProfileId, PrincipalContext,
-    ThreadId, WorkspacePolicy, WorkspaceResolveError, WorkspaceSelection,
+    ProtectedPathPolicy, ThreadId, WorkspacePolicy, WorkspaceResolveError, WorkspaceSelection,
 };
 pub use types::message::{ContentBlock, ImageSource, Message, Priority as MessagePriority, Role};
 pub use types::objective::{Objective, ObjectiveStatus, ObjectiveSummary};

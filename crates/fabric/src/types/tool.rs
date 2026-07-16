@@ -40,6 +40,24 @@ pub struct ToolContext {
     pub clock: Arc<dyn crate::Clock>,
 }
 
+impl ToolContext {
+    /// Materialize the effective workspace without changing the typed approval
+    /// authority contract. Governed calls retain all resolved writable roots;
+    /// legacy contexts are confined to their canonical working directory.
+    pub fn effective_workspace_policy(&self) -> Result<WorkspacePolicy, String> {
+        if let Some(authority) = &self.approval_authority {
+            return Ok(authority.workspace.clone());
+        }
+        let cwd = std::fs::canonicalize(&self.working_dir).map_err(|error| {
+            format!(
+                "invalid tool working directory '{}': {error}",
+                self.working_dir.display()
+            )
+        })?;
+        WorkspacePolicy::from_resolved_roots(cwd, Vec::new())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolApprovalAuthority {
     pub principal_id: PrincipalId,

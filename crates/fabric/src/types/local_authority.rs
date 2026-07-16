@@ -71,6 +71,8 @@ pub enum ApprovalPolicy {
 pub struct WorkspacePolicy {
     cwd: PathBuf,
     writable_roots: Vec<PathBuf>,
+    #[serde(default)]
+    protected_paths: ProtectedPathPolicy,
 }
 
 impl WorkspacePolicy {
@@ -93,6 +95,7 @@ impl WorkspacePolicy {
         Ok(Self {
             cwd,
             writable_roots,
+            protected_paths: ProtectedPathPolicy::default(),
         })
     }
 
@@ -103,6 +106,80 @@ impl WorkspacePolicy {
     pub fn writable_roots(&self) -> &[PathBuf] {
         &self.writable_roots
     }
+
+    pub fn with_protected_paths(mut self, protected_paths: ProtectedPathPolicy) -> Self {
+        self.protected_paths = protected_paths;
+        self
+    }
+
+    pub fn protected_paths(&self) -> &ProtectedPathPolicy {
+        &self.protected_paths
+    }
+}
+
+/// Paths that remain read-only even inside a writable workspace root.
+///
+/// Metadata names are intentionally limited to the design contract. Other
+/// credential locations must be supplied explicitly as absolute paths.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProtectedPathPolicy {
+    credential_paths: Vec<PathBuf>,
+}
+
+impl ProtectedPathPolicy {
+    pub fn new(credential_paths: Vec<PathBuf>) -> Result<Self, String> {
+        let mut seen = HashSet::new();
+        let mut materialized = Vec::new();
+        for path in credential_paths {
+            if !path.is_absolute() {
+                return Err(format!(
+                    "protected credential path is not absolute: {}",
+                    path.display()
+                ));
+            }
+            let path = materialize_protected_path(&path)?;
+            if seen.insert(path.clone()) {
+                materialized.push(path);
+            }
+        }
+        Ok(Self {
+            credential_paths: materialized,
+        })
+    }
+
+    pub fn credential_paths(&self) -> &[PathBuf] {
+        &self.credential_paths
+    }
+}
+
+fn materialize_protected_path(path: &Path) -> Result<PathBuf, String> {
+    let mut missing = Vec::new();
+    let mut ancestor = path;
+    while !ancestor.exists() {
+        let name = ancestor.file_name().ok_or_else(|| {
+            format!(
+                "protected credential path has no existing ancestor: {}",
+                path.display()
+            )
+        })?;
+        missing.push(name.to_os_string());
+        ancestor = ancestor.parent().ok_or_else(|| {
+            format!(
+                "protected credential path has no existing ancestor: {}",
+                path.display()
+            )
+        })?;
+    }
+    let mut resolved = std::fs::canonicalize(ancestor).map_err(|error| {
+        format!(
+            "cannot resolve protected credential path '{}': {error}",
+            path.display()
+        )
+    })?;
+    for component in missing.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
 }
 
 /// Raw workspace options supplied by one client invocation.

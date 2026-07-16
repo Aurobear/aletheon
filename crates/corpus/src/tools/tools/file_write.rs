@@ -47,7 +47,24 @@ impl Tool for FileWriteTool {
         let content = input["content"].as_str().unwrap_or("");
         let start = ctx.clock.mono_now();
 
-        let full_path = match validate_mutation_path(&ctx.working_dir, std::path::Path::new(path)) {
+        let workspace = match ctx.effective_workspace_policy() {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                return ToolResult {
+                    content: format!("Refused to write {path}: {error}"),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                        truncated: false,
+                    },
+                };
+            }
+        };
+        let full_path = match validate_mutation_path(
+            &workspace,
+            workspace.protected_paths(),
+            std::path::Path::new(path),
+        ) {
             Ok(path) => path,
             Err(error) => {
                 return ToolResult {
