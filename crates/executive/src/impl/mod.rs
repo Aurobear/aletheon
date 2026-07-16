@@ -7,6 +7,7 @@ pub mod automation;
 pub mod channel;
 pub mod daemon;
 pub mod engine;
+pub mod events;
 pub mod external;
 pub mod gbrain;
 pub mod goal;

@@ -140,7 +140,7 @@ pub enum DeliveryPattern {
 /// Replaces the legacy `Envelope` (Phase 4 migration).
 /// Every field is intentional; there is no `timestamp_ms` (use `logical_time`
 /// for ordering and `deadline` for expiry).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnvelopeV2 {
     /// Unique message identifier.
     pub id: MessageId,

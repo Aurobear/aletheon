@@ -252,6 +252,10 @@ pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop}
 // Event types
 pub use events::event_log;
 pub use events::event_log::{EventLog, LogEntry};
+pub use events::spine::{
+    EventId, EventIdentity, EventPayload, EventPosition, EventSpine, EventTreeId, EventVisibility,
+    ParentEventId, SpineEvent, TreeSequence, UnsequencedEvent,
+};
 pub use events::types as event;
 pub use events::types::{
     AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
