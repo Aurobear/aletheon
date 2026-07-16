@@ -175,11 +175,17 @@ impl ExecSessionBuilder {
             std::fs::create_dir_all(parent)?;
         }
         let event_db = crate::r#impl::events::default_event_spine_path();
-        let coordinator = Arc::new(TurnCoordinator::with_event_spine(
-            kernel.clone(),
-            Arc::new(CanonicalSessionStore::open(session_db)?),
-            Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?),
-        ));
+        let event_projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::open(
+            crate::r#impl::events::default_event_projection_path(),
+        )?);
+        let coordinator = Arc::new(
+            TurnCoordinator::with_event_spine(
+                kernel.clone(),
+                Arc::new(CanonicalSessionStore::open(session_db)?),
+                Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?),
+            )
+            .with_event_projections(event_projections),
+        );
 
         let services = Arc::new(ExecTurnServices {
             llm: llm.clone(),

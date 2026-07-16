@@ -869,6 +869,15 @@ impl RequestHandler {
                     .expect("in-memory event spine")
             }),
         );
+        let event_projections = Arc::new(
+            crate::r#impl::events::DefaultEventProjectionSet::open(
+                crate::r#impl::events::default_event_projection_path(),
+            )
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "event projections unavailable; using process-local fallback");
+                crate::r#impl::events::DefaultEventProjectionSet::in_memory()
+            }),
+        );
         let agent_control_service = Arc::new(
             crate::service::agent_control::AgentControlService::new(
                 kernel.clone(),
@@ -883,7 +892,8 @@ impl RequestHandler {
                 ),
                 agent_runtimes,
             )
-            .with_event_spine(canonical_event_spine.clone()),
+            .with_event_spine(canonical_event_spine.clone())
+            .with_event_projections(event_projections.clone()),
         );
         let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
         let agent_shutdown_cancel = cancel_token.clone();
@@ -916,7 +926,8 @@ impl RequestHandler {
                 kernel.clone(),
                 Arc::new(canonical_store),
                 canonical_event_spine,
-            ),
+            )
+            .with_event_projections(event_projections),
         );
         let session_service = Arc::new(crate::service::session_service::SessionService::new(
             coordinator.store(),

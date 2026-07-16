@@ -61,6 +61,7 @@ pub struct SpineAgentEventSink {
     downstream: Arc<dyn AgentEventSink>,
     spine: Arc<dyn EventSpine>,
     input: AgentRuntimeInput,
+    projections: Arc<dyn crate::service::event_projection::EventProjectionSink>,
 }
 
 impl SpineAgentEventSink {
@@ -68,11 +69,13 @@ impl SpineAgentEventSink {
         downstream: Arc<dyn AgentEventSink>,
         spine: Arc<dyn EventSpine>,
         input: AgentRuntimeInput,
+        projections: Arc<dyn crate::service::event_projection::EventProjectionSink>,
     ) -> Self {
         Self {
             downstream,
             spine,
             input,
+            projections,
         }
     }
 
@@ -111,6 +114,8 @@ impl SpineAgentEventSink {
             "agent_id": self.input.handle.agent_id.0,
             "process_id": self.input.handle.process_id.0,
             "operation_id": self.input.handle.operation_id.0,
+            "root_agent_id": self.input.handle.root_agent_id.0,
+            "parent_agent_id": self.input.handle.parent_agent_id.map(|id| id.0),
             "detail": extra,
         });
         let root = self.input.handle.root_agent_id.0.to_string();
@@ -123,7 +128,7 @@ impl SpineAgentEventSink {
             payload.clone(),
         );
         envelope = envelope.with_operation_id(self.input.handle.operation_id);
-        self.spine.append(UnsequencedEvent {
+        let event = self.spine.append(UnsequencedEvent {
             tree_id: EventTreeId::for_root_session(&root),
             event_id: EventId::new(),
             parent: None,
@@ -136,6 +141,14 @@ impl SpineAgentEventSink {
             visibility: EventVisibility::Control,
             payload: EventPayload::Inline { value: payload },
         })?;
+        let report = self.projections.project(&event);
+        for failure in report.failures {
+            tracing::warn!(
+                projection = %failure.projection,
+                error = %failure.error,
+                "Agent event projection failed; unrelated reducers continued"
+            );
+        }
         Ok(())
     }
 }

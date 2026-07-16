@@ -110,7 +110,12 @@ fn progress_is_private_bounded_and_never_targets_root() {
 async fn agent_lifecycle_and_tool_events_append_to_root_tree() {
     let input = input();
     let spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
-    let sink = SpineAgentEventSink::new(Arc::new(NoopAgentEventSink), spine.clone(), input.clone());
+    let sink = SpineAgentEventSink::new(
+        Arc::new(NoopAgentEventSink),
+        spine.clone(),
+        input.clone(),
+        Arc::new(executive::service::event_projection::NoopEventProjectionSink),
+    );
     sink.emit(AgentRuntimeEvent::Started {
         agent_id: input.handle.agent_id,
         process_id: input.handle.process_id,

@@ -92,6 +92,7 @@ pub struct AgentControlService {
     runtimes: Arc<AgentRuntimeRegistry>,
     events: Arc<dyn AgentEventSink>,
     event_spine: Arc<dyn EventSpine>,
+    event_projections: Arc<dyn crate::service::event_projection::EventProjectionSink>,
     timer: Arc<dyn AgentWaitTimer>,
     live: Arc<LiveAgentRuns>,
     tasks: Mutex<JoinSet<()>>,
@@ -126,6 +127,7 @@ impl AgentControlService {
             runtimes,
             events: Arc::new(NoopAgentEventSink),
             event_spine,
+            event_projections: Arc::new(crate::service::event_projection::NoopEventProjectionSink),
             timer: Arc::new(SystemAgentWaitTimer),
             live: Arc::new(LiveAgentRuns::default()),
             tasks: Mutex::new(JoinSet::new()),
@@ -140,6 +142,14 @@ impl AgentControlService {
 
     pub fn with_event_spine(mut self, event_spine: Arc<dyn EventSpine>) -> Self {
         self.event_spine = event_spine;
+        self
+    }
+
+    pub fn with_event_projections(
+        mut self,
+        projections: Arc<dyn crate::service::event_projection::EventProjectionSink>,
+    ) -> Self {
+        self.event_projections = projections;
         self
     }
 
@@ -660,6 +670,7 @@ impl AgentControlPort for AgentControlService {
         let live = self.live.clone();
         let events = self.events.clone();
         let event_spine = self.event_spine.clone();
+        let event_projections = self.event_projections.clone();
         let runtime_input = AgentRuntimeInput {
             request,
             handle: handle.clone(),
@@ -674,6 +685,7 @@ impl AgentControlPort for AgentControlService {
             events,
             event_spine,
             runtime_input.clone(),
+            event_projections,
         ));
         self.tasks.lock().await.spawn(async move {
             run_agent(

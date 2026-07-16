@@ -39,6 +39,7 @@ pub struct TurnCoordinator {
     clock: Arc<dyn fabric::Clock>,
     store: Arc<dyn SessionAppendStore>,
     event_spine: Arc<dyn EventSpine>,
+    event_projections: Arc<dyn super::event_projection::EventProjectionSink>,
     active: Arc<Mutex<HashMap<String, ActiveTurn>>>,
 }
 
@@ -61,8 +62,17 @@ impl TurnCoordinator {
             kernel,
             store,
             event_spine,
+            event_projections: Arc::new(super::event_projection::NoopEventProjectionSink),
             active: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn with_event_projections(
+        mut self,
+        projections: Arc<dyn super::event_projection::EventProjectionSink>,
+    ) -> Self {
+        self.event_projections = projections;
+        self
     }
 
     pub fn store(&self) -> Arc<dyn SessionAppendStore> {
@@ -287,9 +297,18 @@ impl TurnCoordinator {
             | ItemPayload::ToolResult { .. } => EventVisibility::ModelVisible,
             _ => EventVisibility::Control,
         };
-        let payload_json = serde_json::to_value(&payload)?;
+        let item = ItemRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: ItemId::new(),
+            session_id: session.clone(),
+            turn_id,
+            sequence: current,
+            created_at_ms: self.now_ms(),
+            payload,
+        };
+        let payload_json = serde_json::to_value(&item)?;
         let tree_id = EventTreeId::for_root_session(&session.0);
-        self.event_spine.append(UnsequencedEvent {
+        let event = self.event_spine.append(UnsequencedEvent {
             tree_id,
             event_id: EventId::new(),
             parent: None,
@@ -311,21 +330,15 @@ impl TurnCoordinator {
                 value: payload_json,
             },
         })?;
-        self.store
-            .append(
-                session,
-                current,
-                ItemRecord {
-                    schema_version: SESSION_SCHEMA_VERSION,
-                    id: ItemId::new(),
-                    session_id: session.clone(),
-                    turn_id,
-                    sequence: current,
-                    created_at_ms: self.now_ms(),
-                    payload,
-                },
-            )
-            .await?;
+        let projection = self.event_projections.project(&event);
+        for failure in projection.failures {
+            tracing::warn!(
+                projection = %failure.projection,
+                error = %failure.error,
+                "event projection failed; unrelated reducers continued"
+            );
+        }
+        self.store.append(session, current, item).await?;
         *sequence += 1;
         Ok(())
     }

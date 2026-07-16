@@ -43,6 +43,8 @@ pub enum ProjectionError {
     },
     #[error("projection event sequence is not strictly ordered: {previous} then {current}")]
     NonMonotonic { previous: u64, current: u64 },
+    #[error("one projection advance batch cannot mix event trees")]
+    MixedEventTrees,
     #[error("projection {projection} poisoned at event {event_id}: {message}")]
     Poisoned {
         projection: String,
@@ -60,6 +62,31 @@ pub trait EventProjection {
     fn apply(&self, state: &mut Self::State, event: &SpineEvent) -> Result<(), ProjectionError>;
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectionAdvanceReport {
+    pub checkpoints: Vec<ProjectionCheckpoint>,
+    pub failures: Vec<ProjectionFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionFailure {
+    pub projection: String,
+    pub error: String,
+}
+
+pub trait EventProjectionSink: Send + Sync {
+    fn project(&self, event: &SpineEvent) -> ProjectionAdvanceReport;
+}
+
+#[derive(Debug, Default)]
+pub struct NoopEventProjectionSink;
+
+impl EventProjectionSink for NoopEventProjectionSink {
+    fn project(&self, _event: &SpineEvent) -> ProjectionAdvanceReport {
+        ProjectionAdvanceReport::default()
+    }
+}
+
 pub struct SqliteProjectionStore {
     connection: Mutex<Connection>,
 }
@@ -73,17 +100,21 @@ impl SqliteProjectionStore {
             .execute_batch(
                 "PRAGMA foreign_keys = ON;
                  CREATE TABLE IF NOT EXISTS event_projection_state(
-                   projection TEXT PRIMARY KEY,
+                   projection TEXT NOT NULL,
+                   tree_id TEXT NOT NULL,
                    version INTEGER NOT NULL,
                    through_sequence INTEGER NOT NULL,
                    checksum TEXT NOT NULL,
-                   state_json TEXT NOT NULL
+                   state_json TEXT NOT NULL,
+                   PRIMARY KEY(projection,tree_id)
                  );
                  CREATE TABLE IF NOT EXISTS event_projection_poison(
-                   projection TEXT PRIMARY KEY,
+                   projection TEXT NOT NULL,
+                   tree_id TEXT NOT NULL,
                    event_id TEXT NOT NULL,
                    sequence INTEGER NOT NULL,
-                   error TEXT NOT NULL
+                   error TEXT NOT NULL,
+                   PRIMARY KEY(projection,tree_id)
                  );",
             )
             .map_err(anyhow::Error::from)
@@ -99,6 +130,7 @@ impl SqliteProjectionStore {
         events: &[SpineEvent],
     ) -> Result<(P::State, ProjectionCheckpoint), ProjectionError> {
         let descriptor = validate_descriptor(projection.descriptor())?;
+        let tree_id = event_tree(events)?;
         let mut connection = self.connection.lock().unwrap();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -107,8 +139,8 @@ impl SqliteProjectionStore {
         let stored: Option<(u32, u64, String, String)> = transaction
             .query_row(
                 "SELECT version,through_sequence,checksum,state_json
-                 FROM event_projection_state WHERE projection=?1",
-                params![descriptor.name],
+                 FROM event_projection_state WHERE projection=?1 AND tree_id=?2",
+                params![descriptor.name, tree_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
@@ -157,11 +189,11 @@ impl SqliteProjectionStore {
                     };
                     transaction
                         .execute(
-                            "INSERT INTO event_projection_poison(projection,event_id,sequence,error)
-                             VALUES(?1,?2,?3,?4)
-                             ON CONFLICT(projection) DO UPDATE SET
+                            "INSERT INTO event_projection_poison(projection,tree_id,event_id,sequence,error)
+                             VALUES(?1,?2,?3,?4,?5)
+                             ON CONFLICT(projection,tree_id) DO UPDATE SET
                                event_id=excluded.event_id,sequence=excluded.sequence,error=excluded.error",
-                            params![poison.projection, poison.event_id, poison.sequence, poison.error],
+                            params![poison.projection, tree_id, poison.event_id, poison.sequence, poison.error],
                         )
                         .map_err(anyhow::Error::from)
                         .map_err(ProjectionError::Storage)?;
@@ -190,13 +222,14 @@ impl SqliteProjectionStore {
         };
         transaction
             .execute(
-                "INSERT INTO event_projection_state(projection,version,through_sequence,checksum,state_json)
-                 VALUES(?1,?2,?3,?4,?5)
-                 ON CONFLICT(projection) DO UPDATE SET
+                "INSERT INTO event_projection_state(projection,tree_id,version,through_sequence,checksum,state_json)
+                 VALUES(?1,?2,?3,?4,?5,?6)
+                 ON CONFLICT(projection,tree_id) DO UPDATE SET
                    version=excluded.version,through_sequence=excluded.through_sequence,
                    checksum=excluded.checksum,state_json=excluded.state_json",
                 params![
                     checkpoint.projection,
+                    tree_id,
                     checkpoint.version,
                     checkpoint.through_sequence,
                     checkpoint.checksum,
@@ -207,8 +240,8 @@ impl SqliteProjectionStore {
             .map_err(ProjectionError::Storage)?;
         transaction
             .execute(
-                "DELETE FROM event_projection_poison WHERE projection=?1",
-                params![descriptor.name],
+                "DELETE FROM event_projection_poison WHERE projection=?1 AND tree_id=?2",
+                params![descriptor.name, tree_id],
             )
             .map_err(anyhow::Error::from)
             .map_err(ProjectionError::Storage)?;
@@ -225,12 +258,13 @@ impl SqliteProjectionStore {
         events: &[SpineEvent],
     ) -> Result<(P::State, ProjectionCheckpoint), ProjectionError> {
         let descriptor = validate_descriptor(projection.descriptor())?;
+        let tree_id = event_tree(events)?;
         {
             let connection = self.connection.lock().unwrap();
             connection
                 .execute(
-                    "DELETE FROM event_projection_state WHERE projection=?1",
-                    params![descriptor.name],
+                    "DELETE FROM event_projection_state WHERE projection=?1 AND tree_id=?2",
+                    params![descriptor.name, tree_id],
                 )
                 .map_err(anyhow::Error::from)
                 .map_err(ProjectionError::Storage)?;
@@ -244,7 +278,7 @@ impl SqliteProjectionStore {
             .unwrap()
             .query_row(
                 "SELECT projection,event_id,sequence,error FROM event_projection_poison
-                 WHERE projection=?1",
+                 WHERE projection=?1 ORDER BY sequence DESC LIMIT 1",
                 params![projection],
                 |row| {
                     Ok(ProjectionPoison {
@@ -276,6 +310,19 @@ fn validate_descriptor(
             .map_err(|error| ProjectionError::InvalidDescriptor(error.to_string()))?;
     }
     Ok(descriptor)
+}
+
+fn event_tree(events: &[SpineEvent]) -> Result<String, ProjectionError> {
+    let Some(first) = events.first() else {
+        return Ok("empty".into());
+    };
+    if events
+        .iter()
+        .any(|event| event.position.tree_id != first.position.tree_id)
+    {
+        return Err(ProjectionError::MixedEventTrees);
+    }
+    Ok(first.position.tree_id.to_string())
 }
 
 fn checksum(bytes: &[u8]) -> String {
