@@ -222,6 +222,7 @@ mod tests {
             "task": "do something"
         });
         let ctx = ToolContext {
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -251,6 +252,7 @@ mod tests {
             "task": "run tests"
         });
         let ctx = ToolContext {
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -271,6 +273,7 @@ mod tests {
             "task": "do something"
         });
         let ctx = ToolContext {
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),

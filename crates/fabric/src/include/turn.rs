@@ -47,6 +47,7 @@ pub struct CapabilityCall {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilityAuthority {
+    pub agent: Option<crate::AgentToolContext>,
     pub principal: PrincipalId,
     pub action: String,
     pub requested_scope: CapabilityScope,

@@ -234,7 +234,8 @@ pub use types::space::{
 };
 pub use types::time::{wall_to_datetime, MonoDeadline, MonoTime, WallTime};
 pub use types::tool::{
-    PermissionLevel as ToolPermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
+    AgentToolContext, PermissionLevel as ToolPermissionLevel, Tool, ToolContext, ToolResult,
+    ToolResultMeta,
 };
 pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 

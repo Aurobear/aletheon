@@ -1,5 +1,6 @@
 //! Tool registry and execution.
 
+pub mod agent_control;
 pub mod agent_tool;
 pub mod apply_patch;
 pub mod bash_exec;

@@ -276,6 +276,7 @@ impl TurnPipeline {
             .runtime_ports
             .capabilities
             .prepare(CapabilityExecutionContext {
+                agent: None,
                 process_id: main_pid,
                 operation_id,
                 principal,

@@ -97,6 +97,7 @@ impl Scenario {
                 deadline: None,
             },
             authority: CapabilityAuthority {
+                agent: None,
                 principal: PrincipalId("scenario".into()),
                 action: "execute".into(),
                 requested_scope: CapabilityScope::default(),

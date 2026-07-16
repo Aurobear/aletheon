@@ -143,6 +143,11 @@ impl NativeCognitRuntime {
             projected_context: labelled_context(input),
             capabilities: self.resources.capabilities.clone(),
             execution: CapabilityExecutionContext {
+                agent: Some(fabric::AgentToolContext {
+                    caller_root_agent_id: input.handle.root_agent_id,
+                    parent_agent_id: input.handle.agent_id,
+                    parent_process_id: input.handle.process_id,
+                }),
                 process_id: input.handle.process_id,
                 operation_id: input.handle.operation_id,
                 principal: PrincipalId(format!("agent:{}", input.handle.agent_id.0)),

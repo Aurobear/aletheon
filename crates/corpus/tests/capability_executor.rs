@@ -94,6 +94,7 @@ fn request(operation_id: OperationId, process_id: ProcessId) -> CapabilityReques
             deadline: None,
         },
         authority: CapabilityAuthority {
+            agent: None,
             principal: PrincipalId("test".into()),
             action: "execute".into(),
             requested_scope: CapabilityScope::default(),
@@ -218,6 +219,7 @@ async fn output_rejection_does_not_repeat_side_effect() {
         clock.clone(),
     );
     let ctx = ToolContext {
+        agent: None,
         working_dir: temp.path().into(),
         session_id: "s".into(),
         clock,
@@ -245,6 +247,7 @@ async fn unwritable_audit_path_fails_execution() {
         clock.clone(),
     );
     let ctx = ToolContext {
+        agent: None,
         working_dir: temp.path().into(),
         session_id: "s".into(),
         clock,

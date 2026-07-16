@@ -25,6 +25,7 @@ impl TurnAuthorityProvider for RecordingAuthority {
         }
         Ok(AuthorizedInvocation {
             authority: CapabilityAuthority {
+                agent: None,
                 principal: PrincipalId("trusted-application".into()),
                 action: call.name.clone(),
                 requested_scope: CapabilityScope::default(),

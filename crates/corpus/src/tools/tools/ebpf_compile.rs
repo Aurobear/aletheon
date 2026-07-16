@@ -234,6 +234,7 @@ mod tests {
     async fn test_ebpf_compile_missing_source() {
         let tool = EbpfCompileTool;
         let ctx = ToolContext {
+            agent: None,
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),

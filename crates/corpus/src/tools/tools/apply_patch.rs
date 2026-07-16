@@ -626,6 +626,7 @@ mod tests {
     async fn test_apply_patch_create_file() {
         let tmp = TempDir::new().unwrap();
         let ctx = ToolContext {
+            agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -653,6 +654,7 @@ mod tests {
             .unwrap();
 
         let ctx = ToolContext {
+            agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -676,6 +678,7 @@ mod tests {
         fs::write(&file_path, "delete me\n").await.unwrap();
 
         let ctx = ToolContext {
+            agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -718,6 +721,7 @@ mod tests {
     async fn test_empty_patch_input() {
         let tmp = TempDir::new().unwrap();
         let ctx = ToolContext {
+            agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),

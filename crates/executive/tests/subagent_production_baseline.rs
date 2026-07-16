@@ -27,6 +27,7 @@ fn definition() -> AgentDefinition {
 
 fn context(root: &std::path::Path) -> ToolContext {
     ToolContext {
+        agent: None,
         working_dir: root.to_path_buf(),
         session_id: "root-session".into(),
         clock: clock(),

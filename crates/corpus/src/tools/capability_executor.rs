@@ -120,6 +120,7 @@ impl ToolExecutor for CorpusToolExecutor {
         };
 
         let context = ToolContext {
+            agent: request.authority.agent,
             working_dir: request.authority.working_dir.clone(),
             session_id: request.authority.session_id.clone(),
             clock: self.clock.clone(),

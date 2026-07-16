@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 /// Trusted execution context attached by Executive, never by model input.
 #[derive(Clone)]
 pub struct CapabilityExecutionContext {
+    pub agent: Option<fabric::AgentToolContext>,
     pub process_id: fabric::ProcessId,
     pub operation_id: fabric::OperationId,
     pub principal: PrincipalId,
@@ -118,6 +119,7 @@ impl CapabilityRuntimeFactory {
 /// Registry-backed policy adapter. Unknown tools are rejected before admission;
 /// known tools derive risk from their declared permission level.
 pub struct RegistryAuthorityProvider {
+    agent: Option<fabric::AgentToolContext>,
     risk_by_tool: HashMap<String, RiskLevel>,
     principal: PrincipalId,
     session_id: String,
@@ -136,6 +138,7 @@ impl RegistryAuthorityProvider {
         cancel: CancellationToken,
     ) -> Self {
         Self {
+            agent: None,
             risk_by_tool,
             principal,
             session_id,
@@ -143,6 +146,11 @@ impl RegistryAuthorityProvider {
             sandbox,
             cancel,
         }
+    }
+
+    pub fn with_agent_context(mut self, agent: Option<fabric::AgentToolContext>) -> Self {
+        self.agent = agent;
+        self
     }
 }
 
@@ -155,6 +163,7 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
             .ok_or_else(|| anyhow!("unknown tool '{}'", call.name))?;
         Ok(AuthorizedInvocation {
             authority: CapabilityAuthority {
+                agent: self.agent,
                 principal: self.principal.clone(),
                 action: call.name.clone(),
                 requested_scope: CapabilityScope::default(),

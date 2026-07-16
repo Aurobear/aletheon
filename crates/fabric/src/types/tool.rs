@@ -6,6 +6,15 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::{AgentId, ProcessId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentToolContext {
+    pub caller_root_agent_id: AgentId,
+    pub parent_agent_id: AgentId,
+    pub parent_process_id: ProcessId,
+}
+
 /// Permission level for tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PermissionLevel {
@@ -21,6 +30,7 @@ pub enum PermissionLevel {
 
 /// Execution context passed to tools.
 pub struct ToolContext {
+    pub agent: Option<AgentToolContext>,
     pub working_dir: std::path::PathBuf,
     pub session_id: String,
     pub clock: Arc<dyn crate::Clock>,

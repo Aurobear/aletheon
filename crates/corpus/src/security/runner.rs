@@ -623,6 +623,7 @@ mod tests {
 
     fn make_ctx() -> ToolContext {
         ToolContext {
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test-session".into(),
             clock: test_clock(),

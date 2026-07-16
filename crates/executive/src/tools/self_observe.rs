@@ -222,6 +222,7 @@ mod tests {
     async fn test_mood_query() {
         let tool = make_tool();
         let ctx = ToolContext {
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -235,6 +236,7 @@ mod tests {
     async fn test_full_query() {
         let tool = make_tool();
         let ctx = ToolContext {
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -248,6 +250,7 @@ mod tests {
     async fn test_unknown_query() {
         let tool = make_tool();
         let ctx = ToolContext {
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -260,6 +263,7 @@ mod tests {
     async fn test_default_query_is_full() {
         let tool = make_tool();
         let ctx = ToolContext {
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),

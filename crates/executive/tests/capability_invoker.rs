@@ -29,6 +29,7 @@ fn authorized_request(name: &str, input: serde_json::Value, call_id: &str) -> Ca
             deadline: None,
         },
         authority: CapabilityAuthority {
+            agent: None,
             principal: PrincipalId("test-agent".into()),
             action: name.into(),
             requested_scope: CapabilityScope::default(),

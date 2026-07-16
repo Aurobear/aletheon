@@ -330,14 +330,17 @@ impl ProductionCapabilityService {
             context.operation_id,
             context.process_id,
         ));
-        let authority = Arc::new(RegistryAuthorityProvider::new(
-            corpus::tool_risk_levels(&resources.tools).await,
-            context.principal,
-            context.session_id,
-            context.working_dir,
-            context.sandbox,
-            context.cancel,
-        ));
+        let authority = Arc::new(
+            RegistryAuthorityProvider::new(
+                corpus::tool_risk_levels(&resources.tools).await,
+                context.principal,
+                context.session_id,
+                context.working_dir,
+                context.sandbox,
+                context.cancel,
+            )
+            .with_agent_context(context.agent),
+        );
         CapabilityRuntimeFactory::build(resources.kernel.admission(), executor, authority)
             .invoke(call)
             .await
@@ -419,6 +422,7 @@ impl CapabilityService for ProductionCapabilityService {
         call.process_id = process.id;
         call.operation_id = operation.id;
         let context = CapabilityExecutionContext {
+            agent: None,
             process_id: process.id,
             operation_id: operation.id,
             principal: fabric::PrincipalId("external-capability".into()),

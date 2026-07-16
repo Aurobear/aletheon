@@ -243,6 +243,7 @@ impl ProviderWorkerRuntime {
                 } else {
                     let capability_context =
                         execution.clone().map(|context| CapabilityExecutionContext {
+                            agent: None,
                             process_id: context.process_id,
                             operation_id: context.operation_id,
                             principal: PrincipalId(format!("sub-agent:{}", self.runtime_id.0)),

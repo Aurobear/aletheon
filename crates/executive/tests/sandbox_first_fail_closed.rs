@@ -77,6 +77,7 @@ fn request(
             deadline: None,
         },
         authority: CapabilityAuthority {
+            agent: None,
             principal: PrincipalId("test".into()),
             action: name.into(),
             requested_scope: CapabilityScope::default(),

@@ -392,6 +392,7 @@ mod tests {
 
     fn mock_ctx() -> ToolContext {
         ToolContext {
+            agent: None,
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),

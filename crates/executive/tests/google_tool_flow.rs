@@ -134,6 +134,7 @@ fn summary(account: ExternalIdentityId) -> GmailMessageSummary {
 
 fn context(owner: &PrincipalId, clock: Arc<TestClock>) -> ToolContext {
     ToolContext {
+        agent: None,
         working_dir: std::env::temp_dir(),
         session_id: owner.0.clone(),
         clock,
