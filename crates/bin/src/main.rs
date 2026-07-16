@@ -7,8 +7,10 @@
 //!   -m `msg`      Send single message to daemon
 //!   version      Print version + git commit
 
+use aletheon_bin::endpoint::{resolve_client_socket, resolve_daemon_socket};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use fabric::paths::ProcessRuntimeEnvironment;
 use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -23,9 +25,9 @@ struct Cli {
     #[arg(short = 'm', long = "message", value_name = "MSG")]
     message: Option<String>,
 
-    /// Socket path (default: /run/aletheon/aletheon.sock)
-    #[arg(short, long, default_value = "/run/aletheon/aletheon.sock")]
-    socket: PathBuf,
+    /// Socket path (default: $XDG_RUNTIME_DIR/aletheon/aletheon.sock)
+    #[arg(short, long)]
+    socket: Option<PathBuf>,
 
     /// Path to write TUI frame snapshots (test instrumentation)
     #[arg(long, hide = true)]
@@ -119,10 +121,15 @@ async fn main() -> Result<()> {
             _,
         ) => {
             init_tracing("aletheon::daemon");
+            let socket = resolve_daemon_socket(
+                socket.clone(),
+                cli.socket.clone(),
+                &ProcessRuntimeEnvironment,
+            )?;
             executive::host::launcher::run_daemon(executive::host::launcher::DaemonLaunch {
                 config: config.clone(),
                 env: env.clone(),
-                socket: socket.clone().unwrap_or(cli.socket),
+                socket,
                 container: container.clone(),
                 image: image.clone(),
                 enable_evolution: *enable_evolution,
@@ -170,10 +177,14 @@ async fn main() -> Result<()> {
             Ok(())
         }
         // -m flag: single message to daemon
-        (None, Some(msg)) => interact::cli::single_message(&cli.socket, msg).await,
+        (None, Some(msg)) => {
+            let socket = resolve_client_socket(cli.socket.clone(), &ProcessRuntimeEnvironment)?;
+            interact::cli::single_message(&socket, msg).await
+        }
         // No subcommand, no -m: TUI mode. The unified binary owns argument
         // parsing, so pass instrumentation through instead of parsing twice.
         (None, None) => {
+            let socket = resolve_client_socket(cli.socket.clone(), &ProcessRuntimeEnvironment)?;
             let config = interact::tui::TestConfig {
                 test_input: cli.test_input,
                 record_frames: cli.record_frames,
@@ -181,7 +192,7 @@ async fn main() -> Result<()> {
                 auto_submit: cli.auto_submit,
                 test_timeout: cli.test_timeout,
             };
-            interact::tui::run_with_config(cli.socket.to_string_lossy().as_ref(), config).await
+            interact::tui::run_with_config(socket.to_string_lossy().as_ref(), config).await
         }
     }
 }

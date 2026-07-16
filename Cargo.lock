@@ -88,6 +88,7 @@ dependencies = [
  "anyhow",
  "clap",
  "executive",
+ "fabric",
  "interact",
  "serde_json",
  "tokio",

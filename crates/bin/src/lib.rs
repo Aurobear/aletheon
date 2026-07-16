@@ -1,5 +1,7 @@
 //! Pure host routing contracts used by the launcher and tests.
 
+pub mod endpoint;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandKind {
     Daemon,
