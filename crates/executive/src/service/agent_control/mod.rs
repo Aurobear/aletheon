@@ -24,7 +24,9 @@ pub mod repository;
 pub mod sqlite_repository;
 
 pub use admission::{AgentAdmissionLease, AgentAdmissionPort, BoundedAgentAdmission};
-pub use context_fork::{AgentContextItem, AgentContextItemKind, AgentContextProjection};
+pub use context_fork::{
+    AgentContextItem, AgentContextItemKind, AgentContextProjection, AgentContextProjectionBuilder,
+};
 pub use execution::{
     AgentEventSink, AgentRuntimeEvent, AgentRuntimeInput, AgentRuntimeLauncher,
     AgentRuntimeRegistry, CompatibilityRuntimeLauncher, NoopAgentEventSink,
