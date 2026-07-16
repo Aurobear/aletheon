@@ -37,6 +37,75 @@ pub struct LocalInferencePort {
     provider: Arc<dyn LlmProvider>,
 }
 
+/// Presents one model selection on an `InferencePort` as the legacy provider
+/// interface consumed by Cognit sessions. Provider credentials remain behind
+/// the port; only the model specification crosses the boundary.
+#[derive(Clone)]
+pub struct PortLlmProvider {
+    inference: Arc<dyn InferencePort>,
+    model_spec: String,
+    display_name: String,
+    max_context: usize,
+}
+
+impl PortLlmProvider {
+    pub fn new(inference: Arc<dyn InferencePort>, model_spec: impl Into<String>) -> Self {
+        let model_spec = model_spec.into();
+        let display_name = if model_spec.is_empty() {
+            "core-default".to_string()
+        } else {
+            model_spec.clone()
+        };
+        Self {
+            inference,
+            model_spec,
+            display_name,
+            max_context: 128_000,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for PortLlmProvider {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmResponse> {
+        self.inference
+            .complete(CoreInferenceRequest {
+                messages: messages.to_vec(),
+                tools: tools.to_vec(),
+                model_spec: self.model_spec.clone(),
+            })
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn complete_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmStream> {
+        self.inference
+            .stream(CoreInferenceRequest {
+                messages: messages.to_vec(),
+                tools: tools.to_vec(),
+                model_spec: self.model_spec.clone(),
+            })
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    fn name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn max_context_length(&self) -> usize {
+        self.max_context
+    }
+}
+
 impl LocalInferencePort {
     pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
         Self { provider }

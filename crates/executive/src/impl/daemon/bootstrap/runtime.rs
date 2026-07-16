@@ -7,10 +7,11 @@ use fabric::{AgentControlPort, Registry};
 use tracing::info;
 
 use crate::r#impl::agent_loader::AgentLoader;
+use crate::service::inference_port::{InferencePort, PortLlmProvider};
 
 pub(super) fn load_agent_profiles(
     agents_dir: &std::path::Path,
-    providers: &ProviderRegistry,
+    inference: Arc<dyn InferencePort>,
     default_llm: Arc<dyn LlmProvider>,
     definitions: &[fabric::ToolDefinition],
     config: &crate::core::config::ExecutiveConfig,
@@ -30,7 +31,7 @@ pub(super) fn load_agent_profiles(
     let mut profiles = HashMap::new();
     for role in loader.list() {
         let llm: Arc<dyn LlmProvider> = match role.model.as_deref() {
-            Some(model) => Arc::from(providers.resolve_and_create(model)?),
+            Some(model) => Arc::new(PortLlmProvider::new(inference.clone(), model)),
             None => default_llm.clone(),
         };
         let mut tools = Vec::with_capacity(role.tools.len());
@@ -103,7 +104,6 @@ pub(super) async fn register_agent_tools(
 #[cfg(test)]
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
-use cognit::r#impl::provider_registry::ProviderRegistry;
 use fabric::{Clock, LlmProvider};
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
@@ -115,7 +115,8 @@ use crate::service::CapabilityService;
 pub(crate) fn register_goal_runtimes(
     registry: &mut RuntimeRegistry,
     config: &cognit::config::GoalRuntimeConfig,
-    providers: &ProviderRegistry,
+    inference: Arc<dyn InferencePort>,
+    model_aliases: &HashMap<String, String>,
     tools: Vec<fabric::ToolDefinition>,
     capability: Arc<dyn CapabilityService>,
     clock: Arc<dyn Clock>,
@@ -144,18 +145,16 @@ pub(crate) fn register_goal_runtimes(
         if route.runtime_id.trim().is_empty() {
             anyhow::bail!("goal runtime ID must not be empty");
         }
-        let (provider_config, model) =
-            providers
-                .resolve_role_alias(&route.model_alias)
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "resolving runtime '{}': {}: {error}",
-                        route.runtime_id,
-                        route.model_alias
-                    )
-                })?;
+        let model_spec = if route.model_alias.contains('/') {
+            route.model_alias.clone()
+        } else {
+            model_aliases
+                .get(&route.model_alias)
+                .cloned()
+                .with_context(|| format!("model alias '{}' not found", route.model_alias))?
+        };
         let provider: Arc<dyn LlmProvider> =
-            Arc::from(providers.create_provider(&provider_config, &model));
+            Arc::new(PortLlmProvider::new(inference.clone(), model_spec));
         let runtime_id = fabric::RuntimeId(route.runtime_id.clone());
         let runtime = Arc::new(ProviderWorkerRuntime::new(
             runtime_id.clone(),
@@ -186,6 +185,26 @@ mod goal_runtime_tests {
     use cognit::config::{GoalRuntimeConfig, ProviderConfig, RoleRuntimeConfig, Transport};
 
     struct NoopCapability;
+
+    #[derive(Default)]
+    struct NoopInference;
+
+    #[async_trait::async_trait]
+    impl InferencePort for NoopInference {
+        async fn complete(
+            &self,
+            _request: crate::service::inference_port::CoreInferenceRequest,
+        ) -> Result<fabric::LlmResponse, crate::service::inference_port::InferenceError> {
+            Err(anyhow::anyhow!("unused test inference").into())
+        }
+
+        async fn stream(
+            &self,
+            _request: crate::service::inference_port::CoreInferenceRequest,
+        ) -> Result<fabric::LlmStream, crate::service::inference_port::InferenceError> {
+            Err(anyhow::anyhow!("unused test inference").into())
+        }
+    }
 
     #[async_trait::async_trait]
     impl CapabilityService for NoopCapability {
@@ -231,12 +250,13 @@ mod goal_runtime_tests {
         config: GoalRuntimeConfig,
         app: AppConfig,
     ) -> anyhow::Result<(RuntimeRegistry, Vec<fabric::RuntimeId>)> {
-        let providers = ProviderRegistry::from_config(&app.cognit())?;
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
         let mut registry = RuntimeRegistry::new();
         let ids = super::register_goal_runtimes(
             &mut registry,
             &config,
-            &providers,
+            inference,
+            &app.model_aliases,
             Vec::new(),
             Arc::new(NoopCapability),
             Arc::new(SystemClock::new()),
@@ -328,8 +348,9 @@ mod goal_runtime_tests {
         app.providers.push(provider("shared"));
         app.agent.default_provider = Some("shared".into());
         app.agent.default_model = Some("model".into());
-        let providers = ProviderRegistry::from_config(&app.cognit()).unwrap();
-        let llm: Arc<dyn LlmProvider> = Arc::from(providers.resolve_and_create("").unwrap());
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
         let definitions = ["file_read", "grep"]
             .into_iter()
             .map(|name| fabric::ToolDefinition {
@@ -340,7 +361,7 @@ mod goal_runtime_tests {
             .collect::<Vec<_>>();
         let (registry, profiles) = super::load_agent_profiles(
             directory.path(),
-            &providers,
+            inference,
             llm,
             &definitions,
             &crate::core::config::ExecutiveConfig::default(),

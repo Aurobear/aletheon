@@ -65,8 +65,6 @@ impl RuntimeCore {
 
         // ── DaemonConfig ────────────────────────────────────────────
         let config = DaemonConfig {
-            api_key: default_provider_config.api_key.clone(),
-            api_url: default_provider_config.base_url.clone(),
             model: default_model.clone(),
             working_dir: std::env::var("AGENT_WORKING_DIR").unwrap_or_else(|_| "/tmp".to_string()),
             data_dir: std::env::var("AGENT_DATA_DIR").unwrap_or_else(|_| {
@@ -225,8 +223,11 @@ impl RuntimeCore {
         info!("Creating request handler...");
         let request_handler = RequestHandler::new(
             &config,
-            &registry,
+            Arc::new(crate::core::RegistryInferencePort::new(Arc::new(
+                registry.clone(),
+            ))),
             app_config.model_routing.clone(),
+            app_config.model_aliases.clone(),
             app_config.goal_runtime.clone().unwrap_or_default(),
             app_config.pi_runtime.clone(),
             config.enable_evolution,

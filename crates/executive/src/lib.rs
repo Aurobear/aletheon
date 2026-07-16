@@ -14,6 +14,7 @@ pub mod core;
 pub mod r#impl;
 pub mod service;
 pub mod tools;
+pub mod user_runtime;
 
 pub mod host;
 pub use aletheon_kernel as kernel;

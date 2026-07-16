@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::SystemClock;
 use anyhow::Result;
 use fabric::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, NoopTurnEventSink, OperationId,
@@ -12,8 +11,26 @@ use fabric::{
 };
 use tracing::info;
 
-use super::RuntimeHost;
+use crate::core::SystemCoreRuntime;
+use crate::r#impl::core_rpc::CoreRpcClient;
+use crate::user_runtime::{UserRuntime, UserRuntimeConfig};
 use crate::ExecSessionBuilder;
+
+#[derive(Debug, Clone)]
+pub struct CoreLaunch {
+    pub config: Option<PathBuf>,
+    pub socket: PathBuf,
+}
+
+pub async fn run_core(request: CoreLaunch) -> Result<()> {
+    let runtime = SystemCoreRuntime::bootstrap(request.config.as_deref(), request.socket).await?;
+    info!(
+        socket = %runtime.socket_path().display(),
+        providers = runtime.provider_count(),
+        "System inference core started"
+    );
+    runtime.run().await
+}
 
 #[derive(Debug, Clone)]
 pub struct DaemonLaunch {
@@ -26,47 +43,28 @@ pub struct DaemonLaunch {
 }
 
 pub async fn run_daemon(request: DaemonLaunch) -> Result<()> {
-    if let Some(runtime_name) = request.container {
-        let mut host = super::container::ContainerHost::new(
-            request.config,
-            request.env,
-            runtime_name,
-            request.image,
-            request.enable_evolution,
-        );
-        host.init().await?;
-        return Box::new(host).serve().await;
+    if let Some(env_path) = request.env.as_ref() {
+        super::load_dotenv(env_path);
     }
-    if std::env::var("NOTIFY_SOCKET").is_ok() {
-        let mut host = super::systemd::SystemdHost::new(
-            request.config,
-            request.env,
-            request.socket,
-            request.enable_evolution,
-            Arc::new(SystemClock::new()),
+    if request.container.is_some() {
+        tracing::warn!(
+            image = %request.image,
+            "container host selection is ignored by the per-user runtime boundary"
         );
-        host.init().await?;
-        return Box::new(host).serve().await;
     }
-    if std::env::var("CONTAINER").is_ok() || std::path::Path::new("/.dockerenv").exists() {
-        let mut host = super::container::ContainerHost::new(
-            request.config,
-            request.env,
-            "docker".into(),
-            request.image,
-            request.enable_evolution,
-        );
-        host.init().await?;
-        return Box::new(host).serve().await;
-    }
-    let mut host = super::DaemonHost::new(
-        request.config,
-        request.env,
+    let paths =
+        fabric::paths::UserRuntimePaths::resolve(&fabric::paths::ProcessRuntimeEnvironment)?;
+    let config = UserRuntimeConfig::load(
+        request.config.as_deref(),
+        paths,
         request.socket,
         request.enable_evolution,
-    );
-    host.init().await?;
-    Box::new(host).serve().await
+    )?;
+    let core_socket = std::env::var_os("ALETHEON_CORE_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/run/aletheon/core.sock"));
+    let inference = Arc::new(CoreRpcClient::new(core_socket));
+    UserRuntime::bootstrap(config, inference).await?.run().await
 }
 
 #[derive(Debug, Clone)]
@@ -91,7 +89,12 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
     let mut builder = ExecSessionBuilder::new(working_dir.clone())
         .with_model(request.model.clone())
         .with_max_turns(request.max_turns)
-        .with_sandbox(request.sandbox);
+        .with_sandbox(request.sandbox)
+        .with_inference(Arc::new(CoreRpcClient::new(
+            std::env::var_os("ALETHEON_CORE_SOCKET")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/run/aletheon/core.sock")),
+        )));
     if let Some(path) = request.config {
         builder = builder.with_config(path);
     }

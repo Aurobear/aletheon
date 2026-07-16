@@ -18,6 +18,11 @@ pub fn default_session_db_path() -> std::path::PathBuf {
     fabric::paths::xdg_data_dir().join("sessions-v1.db")
 }
 
+/// Canonical session database for an explicitly owned user state root.
+pub fn session_db_path(state_root: &Path) -> std::path::PathBuf {
+    state_root.join("sessions-v1.db")
+}
+
 impl CanonicalSessionStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path)?;

@@ -16,7 +16,6 @@ use tracing::info;
 use aletheon_kernel::chronos::SystemClock;
 use aletheon_kernel::KernelRuntime;
 use cognit::harness::HarnessConfig;
-use cognit::r#impl::provider_registry::ProviderRegistry;
 use corpus::security::approval::{ApprovalGate, TerminalApprovalGate};
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
@@ -30,11 +29,11 @@ use fabric::{
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::host::load_dotenv;
-use crate::r#impl::session::canonical_store::{default_session_db_path, CanonicalSessionStore};
+use crate::r#impl::session::canonical_store::CanonicalSessionStore;
 use crate::service::governed_capability::{
     CapabilityRuntimeFactory, RegistryAuthorityProvider, TurnCapabilityInvoker,
 };
+use crate::service::inference_port::{InferencePort, PortLlmProvider};
 use crate::service::turn_coordinator::TurnCoordinator;
 use crate::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 
@@ -45,6 +44,7 @@ pub struct ExecSessionBuilder {
     max_turns: usize,
     working_dir: PathBuf,
     sandbox: String,
+    inference: Option<Arc<dyn InferencePort>>,
 }
 
 impl ExecSessionBuilder {
@@ -55,6 +55,7 @@ impl ExecSessionBuilder {
             max_turns: 20,
             working_dir,
             sandbox: "auto".to_string(),
+            inference: None,
         }
     }
 
@@ -78,14 +79,14 @@ impl ExecSessionBuilder {
         self
     }
 
+    pub fn with_inference(mut self, inference: Arc<dyn InferencePort>) -> Self {
+        self.inference = Some(inference);
+        self
+    }
+
     /// Wire up the full exec stack and return the `TurnService`, `LlmProvider`,
     /// and the configured `RiskLevel`.
     pub async fn build(self) -> Result<(TurnService, Arc<dyn LlmProvider>, RiskLevel)> {
-        // Load ~/.aletheon/.env so provider API keys resolve.
-        if let Some(home) = std::env::var_os("HOME") {
-            load_dotenv(&PathBuf::from(home).join(".aletheon").join(".env"));
-        }
-
         let working_dir = self
             .working_dir
             .canonicalize()
@@ -98,18 +99,28 @@ impl ExecSessionBuilder {
         )?
         .value;
 
-        // Build provider registry
-        let registry = ProviderRegistry::from_config(&app_config.cognit())?;
-
-        // Create LLM provider
-        let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create(&self.model)?);
+        let inference = self.inference.unwrap_or_else(|| {
+            let socket = std::env::var_os("ALETHEON_CORE_SOCKET")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/run/aletheon/core.sock"));
+            Arc::new(crate::r#impl::core_rpc::CoreRpcClient::new(socket))
+        });
+        let model = if self.model.is_empty() {
+            app_config.model_routing.default.clone().unwrap_or_default()
+        } else {
+            self.model.clone()
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(inference, model));
         info!(provider = llm.name(), model = %self.model, "LLM provider initialized");
 
         // Create tool registry with default tools
         let tool_registry = corpus::default_tool_registry();
 
         // Guarded runner with terminal approval for risky (L2+) tools.
-        let audit_path = working_dir.join(".aletheon-audit.jsonl");
+        let user_paths =
+            fabric::paths::UserRuntimePaths::resolve(&fabric::paths::ProcessRuntimeEnvironment)?;
+        user_paths.prepare()?;
+        let audit_path = user_paths.state_root.join("exec-audit.jsonl");
         let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
         let sandbox_preference = SandboxPreference::from_str(&self.sandbox);
         info!(preference = ?sandbox_preference, "sandbox configured");
@@ -131,7 +142,7 @@ impl ExecSessionBuilder {
         );
 
         let session_id = uuid::Uuid::new_v4().to_string();
-        let event_db = crate::r#impl::events::default_event_spine_path();
+        let event_db = user_paths.state_root.join("exec-events.db");
         let event_spine = Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?);
 
         let kernel = Arc::new(KernelRuntime::new());
@@ -212,12 +223,12 @@ impl ExecSessionBuilder {
         ));
         let capability = CapabilityRuntimeFactory::build(kernel.admission(), executor, authority);
 
-        let session_db = default_session_db_path();
+        let session_db = user_paths.state_root.join("exec-sessions-v1.db");
         if let Some(parent) = session_db.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let event_projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::open(
-            crate::r#impl::events::default_event_projection_path(),
+            user_paths.state_root.join("exec-event-projections.db"),
         )?);
         let coordinator = Arc::new(
             TurnCoordinator::with_event_spine(

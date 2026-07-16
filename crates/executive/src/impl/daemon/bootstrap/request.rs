@@ -22,7 +22,6 @@ use crate::core::orchestrator::AletheonExecutive;
 use crate::r#impl::daemon::handler::RequestHandler;
 use crate::session::store::SessionStore;
 use cognit::core::reflector::Reflector;
-use cognit::r#impl::provider_registry::ProviderRegistry;
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
@@ -48,6 +47,7 @@ use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::r#impl::runtime::register_pi_runtime;
 use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
+use crate::service::inference_port::{InferencePort, PortLlmProvider};
 use crate::service::CapabilityService;
 use corpus::hook::builtin::audit_hook;
 use corpus::security::storm_breaker::StormBreaker;
@@ -65,15 +65,19 @@ use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 impl RequestHandler {
     pub async fn new(
         config: &DaemonConfig,
-        registry: &ProviderRegistry,
+        inference: Arc<dyn InferencePort>,
         model_routing: crate::core::config::ModelRoutingConfig,
+        model_aliases: HashMap<String, String>,
         goal_runtime: cognit::config::GoalRuntimeConfig,
         pi_runtime: cognit::config::PiRuntimeConfig,
         evolution_enabled: bool,
         event_bus: Option<Arc<CommunicationBus>>,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
-        let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create("")?);
+        let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(
+            inference.clone(),
+            config.model.clone(),
+        ));
         info!(provider = llm.name(), "LLM provider initialized");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
 
@@ -119,27 +123,19 @@ impl RequestHandler {
         )?));
 
         // FactStore
-        let aletheon_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".aletheon");
+        // Every durable user-runtime store is rooted in the injected state
+        // directory. Never rediscover HOME or a machine deployment path here.
+        let aletheon_dir = data_dir.clone();
         std::fs::create_dir_all(&aletheon_dir)?;
         let production = config.deployment.mode == cognit::config::DeploymentMode::Production;
-        let fact_root = if production {
-            config.deployment.paths.mnemosyne.clone()
-        } else {
-            aletheon_dir.clone()
-        };
+        let fact_root = data_dir.join("mnemosyne");
         std::fs::create_dir_all(&fact_root)?;
         let fact_store =
             FactStore::open(&fact_root.join("fact_store.db")).context("opening fact store")?;
         let fact_store = Arc::new(Mutex::new(fact_store));
 
         // ObjectiveStore
-        let objective_root = if production {
-            config.deployment.paths.goals.clone()
-        } else {
-            aletheon_dir.clone()
-        };
+        let objective_root = data_dir.join("goals");
         std::fs::create_dir_all(&objective_root)?;
         let objective_db_path = objective_root.join("objectives.db");
         let storage_quota = production
@@ -306,11 +302,7 @@ impl RequestHandler {
             fact_store: Some(fact_store.clone()),
             clock: clock.clone(),
         }));
-        let external_artifact_root = if production {
-            config.deployment.paths.artifacts.clone()
-        } else {
-            data_dir.join("external-artifacts")
-        };
+        let external_artifact_root = data_dir.join("external-artifacts");
         let (google, mut google_sync, google_sync_store, gmail_ingress) =
             match super::google::register_configured_google_read_tools(
                 &mut tools,
@@ -548,10 +540,7 @@ impl RequestHandler {
         let hooks_config = config.hooks.clone();
 
         // ModelRouter
-        let model_router = Arc::new(ModelRouter::new(
-            model_routing.clone(),
-            Arc::new(registry.clone()),
-        ));
+        let model_router = Arc::new(ModelRouter::new(model_routing.clone(), inference.clone()));
         info!(
             default = %model_router.model_name_for(TaskType::General),
             multimodal = %model_router.model_name_for(TaskType::Multimodal),
@@ -759,7 +748,7 @@ impl RequestHandler {
                 extension_decisions: Arc::new(
                     crate::service::extension_service::SpineExtensionDecisionSink::new(Arc::new(
                         crate::r#impl::events::SqliteEventSpine::open(
-                            crate::r#impl::events::default_event_spine_path(),
+                            data_dir.join("extension-events.db"),
                         )
                         .unwrap_or_else(|_| {
                             crate::r#impl::events::SqliteEventSpine::open(":memory:")
@@ -783,7 +772,7 @@ impl RequestHandler {
             let definitions = corpus_group.tools.lock().await.definitions();
             let (profiles, tool_profiles) = super::runtime::load_agent_profiles(
                 &aletheon_dir.join("agents"),
-                registry,
+                inference.clone(),
                 llm.clone(),
                 &definitions,
                 &runtime_config_snapshot,
@@ -812,7 +801,8 @@ impl RequestHandler {
             let registered = super::runtime::register_goal_runtimes(
                 runtime.compatibility_runtimes_mut(),
                 &goal_runtime,
-                registry,
+                inference.clone(),
+                &model_aliases,
                 corpus_group.tools.lock().await.definitions(),
                 capability_service.clone(),
                 clock.clone(),
@@ -874,11 +864,7 @@ impl RequestHandler {
         // Clone clock for later daemon services.
         let clock_2 = clock.clone();
 
-        let agent_state_root = if production {
-            config.deployment.paths.state.clone()
-        } else {
-            aletheon_dir.clone()
-        };
+        let agent_state_root = data_dir.join("agents");
         std::fs::create_dir_all(&agent_state_root)?;
         let agent_repository = Arc::new(
             crate::service::agent_control::SqliteAgentRunRepository::open(
@@ -888,7 +874,7 @@ impl RequestHandler {
         );
         let canonical_event_spine = Arc::new(
             crate::r#impl::events::SqliteEventSpine::open(
-                crate::r#impl::events::default_event_spine_path(),
+                data_dir.join("events.db"),
             )
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "canonical event spine unavailable; using process-local fallback");
@@ -898,7 +884,7 @@ impl RequestHandler {
         );
         let event_projections = Arc::new(
             crate::r#impl::events::DefaultEventProjectionSet::open(
-                crate::r#impl::events::default_event_projection_path(),
+                data_dir.join("event-projections.db"),
             )
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "event projections unavailable; using process-local fallback");
@@ -982,7 +968,7 @@ impl RequestHandler {
             .collect();
 
         let shared_notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>> = Arc::new(Mutex::new(None));
-        let session_db = crate::r#impl::session::canonical_store::default_session_db_path();
+        let session_db = data_dir.join("sessions-v1.db");
         if let Some(parent) = session_db.parent() {
             let _ = std::fs::create_dir_all(parent);
         }

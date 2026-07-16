@@ -259,7 +259,7 @@ fn bind_thread_authority(
     let state_home = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .ok_or(ThreadAuthorityError::StateRootUnavailable)?;
+        .ok_or(crate::service::thread_authority::ThreadAuthorityError::StateRootUnavailable)?;
     let store = ThreadAuthorityStore::persistent(state_home.join("aletheon/thread-authority"));
     let key = ThreadAuthorityKey::new(context.principal_id.clone(), context.thread_id.clone());
     store.bind_or_verify(&key, &ThreadSettings::from_context(context, model_policy))

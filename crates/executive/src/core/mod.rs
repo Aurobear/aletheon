@@ -14,6 +14,7 @@ pub mod session;
 pub mod session_gateway;
 pub(crate) mod session_group;
 pub mod sub_agent;
+pub mod system_core_runtime;
 pub mod verdict_handler;
 
 pub use config::{
@@ -31,4 +32,5 @@ pub(crate) use security_group::SecurityGroup;
 pub use session::{ContextState, Session, TuiSessionManager};
 pub(crate) use session_group::SessionGroup;
 pub use sub_agent::{SubAgentExecutionContext, SubAgentRuntime};
+pub use system_core_runtime::{RegistryInferencePort, ResolvedModel, SystemCoreRuntime};
 pub use verdict_handler::{DefaultVerdictHandler, Modifications};

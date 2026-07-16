@@ -56,6 +56,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Start the machine-scoped inference core
+    Core {
+        /// Path to machine configuration
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Group-authorized internal inference socket
+        #[arg(long, default_value = "/run/aletheon/core.sock")]
+        socket: PathBuf,
+    },
     /// Start daemon (auto-detects systemd/container/foreground)
     Daemon {
         /// Path to config file
@@ -107,6 +116,11 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if matches!(&cli.command, Some(Commands::Core { .. }))
+        && (cli.workspace.cwd.is_some() || !cli.workspace.add_dirs.is_empty())
+    {
+        anyhow::bail!("aletheon core does not accept workspace authority");
+    }
     let workspace = match (&cli.command, &cli.message) {
         (Some(Commands::Exec { .. }), _) | (None, _) => {
             let process_cwd = std::env::current_dir()
@@ -121,6 +135,14 @@ async fn main() -> Result<()> {
 
     match (&cli.command, &cli.message) {
         // Subcommand-driven paths
+        (Some(Commands::Core { config, socket }), _) => {
+            init_tracing("aletheon::core");
+            executive::host::launcher::run_core(executive::host::launcher::CoreLaunch {
+                config: config.clone(),
+                socket: socket.clone(),
+            })
+            .await
+        }
         (
             Some(Commands::Daemon {
                 config,

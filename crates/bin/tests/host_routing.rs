@@ -2,6 +2,7 @@ use aletheon_bin::{select_host, CommandKind, ExitStatus, HostRoute};
 
 #[test]
 fn every_cli_mode_selects_exactly_one_host_path() {
+    assert_eq!(select_host(Some(CommandKind::Core), false), HostRoute::Core);
     assert_eq!(
         select_host(Some(CommandKind::Daemon), false),
         HostRoute::Daemon

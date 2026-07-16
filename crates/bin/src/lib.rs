@@ -5,6 +5,7 @@ pub mod workspace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandKind {
+    Core,
     Daemon,
     Exec,
     Version,
@@ -12,6 +13,7 @@ pub enum CommandKind {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostRoute {
+    Core,
     Daemon,
     Exec,
     Message,
@@ -22,6 +24,7 @@ pub enum HostRoute {
 
 pub const fn select_host(command: Option<CommandKind>, has_message: bool) -> HostRoute {
     match command {
+        Some(CommandKind::Core) => HostRoute::Core,
         Some(CommandKind::Daemon) => HostRoute::Daemon,
         Some(CommandKind::Exec) => HostRoute::Exec,
         Some(CommandKind::Version) => HostRoute::Version,

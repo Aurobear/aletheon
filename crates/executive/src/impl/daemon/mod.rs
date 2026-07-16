@@ -34,8 +34,6 @@ use crate::host::RuntimeHost;
 /// Daemon configuration.
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
-    pub api_key: String,
-    pub api_url: String,
     pub model: String,
     pub working_dir: String,
     pub data_dir: String,
