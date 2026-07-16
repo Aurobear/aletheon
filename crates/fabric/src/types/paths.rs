@@ -1,5 +1,6 @@
 //! Centralized development and production path contracts for Aletheon.
 
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 pub const PRODUCTION_STATE_ROOT: &str = "/var/lib/aletheon";
@@ -13,6 +14,217 @@ pub const SOCKET_DIR: &str = PRODUCTION_RUNTIME_ROOT;
 pub const SNAPSHOT_DIR: &str = "/var/lib/aletheon/state/snapshots";
 pub const HOOKS_SYSTEM_DIR: &str = "/etc/aletheon/hooks";
 pub const CGROUP_PREFIX: &str = "aletheon";
+
+/// Environment lookup boundary used to resolve paths without mutating process
+/// environment in tests or embedders.
+pub trait RuntimeEnvironment {
+    fn var_os(&self, key: &str) -> Option<OsString>;
+}
+
+/// Process environment used by production clients and per-user runtimes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProcessRuntimeEnvironment;
+
+impl RuntimeEnvironment for ProcessRuntimeEnvironment {
+    fn var_os(&self, key: &str) -> Option<OsString> {
+        std::env::var_os(key)
+    }
+}
+
+/// Private filesystem locations owned by one invoking user.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserRuntimePaths {
+    pub runtime_root: PathBuf,
+    pub state_root: PathBuf,
+    pub cache_root: PathBuf,
+}
+
+impl UserRuntimePaths {
+    /// Resolve user-private roots from injected XDG/HOME values.
+    ///
+    /// `XDG_RUNTIME_DIR` is mandatory because falling back to a shared runtime
+    /// directory would make the control socket cross-user. State and cache use
+    /// the standard HOME fallbacks when their XDG variables are absent.
+    pub fn resolve(env: &impl RuntimeEnvironment) -> Result<Self, UserPathError> {
+        let runtime =
+            optional_env_path(env, "XDG_RUNTIME_DIR")?.ok_or(UserPathError::MissingRuntimeDir)?;
+        let home = optional_env_path(env, "HOME")?;
+        let state = match optional_env_path(env, "XDG_STATE_HOME")? {
+            Some(path) => path,
+            None => home
+                .as_ref()
+                .map(|path| path.join(".local/state"))
+                .ok_or(UserPathError::MissingHome)?,
+        };
+        let cache = match optional_env_path(env, "XDG_CACHE_HOME")? {
+            Some(path) => path,
+            None => home
+                .map(|path| path.join(".cache"))
+                .ok_or(UserPathError::MissingHome)?,
+        };
+        Ok(Self {
+            runtime_root: runtime.join("aletheon"),
+            state_root: state.join("aletheon"),
+            cache_root: cache.join("aletheon"),
+        })
+    }
+
+    pub fn socket_path(&self) -> PathBuf {
+        self.runtime_root.join("aletheon.sock")
+    }
+
+    /// Create private runtime/state/cache directories and verify that none is
+    /// controlled by another OS user. Existing directories are never chmodded
+    /// until their type and ownership have been verified.
+    #[cfg(unix)]
+    pub fn prepare(&self) -> Result<(), UserPathError> {
+        prepare_user_directories(self, nix::unistd::geteuid().as_raw())
+    }
+
+    #[cfg(not(unix))]
+    pub fn prepare(&self) -> Result<(), UserPathError> {
+        Err(UserPathError::UnsupportedPlatform)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UserPathError {
+    #[error("XDG_RUNTIME_DIR is not set for the invoking user")]
+    MissingRuntimeDir,
+    #[error("HOME is not set and an XDG state or cache location is missing")]
+    MissingHome,
+    #[error("{0} must be an absolute path")]
+    RelativePath(&'static str),
+    #[error("{label} '{}' is a symbolic link", path.display())]
+    Symlink { label: &'static str, path: PathBuf },
+    #[error("{label} '{}' is not a directory", path.display())]
+    NotDirectory { label: &'static str, path: PathBuf },
+    #[error("{label} '{}' is owned by uid {actual}, expected uid {expected}", path.display())]
+    WrongOwner {
+        label: &'static str,
+        path: PathBuf,
+        expected: u32,
+        actual: u32,
+    },
+    #[error("unable to {operation} {label} '{}': {source}", path.display())]
+    Io {
+        operation: &'static str,
+        label: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("per-user runtime paths are only supported on Unix")]
+    UnsupportedPlatform,
+}
+
+fn optional_env_path(
+    env: &impl RuntimeEnvironment,
+    key: &'static str,
+) -> Result<Option<PathBuf>, UserPathError> {
+    let Some(value) = env.var_os(key).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err(UserPathError::RelativePath(key));
+    }
+    Ok(Some(path))
+}
+
+#[cfg(unix)]
+fn prepare_user_directories(
+    paths: &UserRuntimePaths,
+    effective_uid: u32,
+) -> Result<(), UserPathError> {
+    for (path, label) in [
+        (&paths.runtime_root, "runtime root"),
+        (&paths.state_root, "state root"),
+        (&paths.cache_root, "cache root"),
+    ] {
+        prepare_user_directory(path, label, effective_uid)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn prepare_user_directory(
+    path: &Path,
+    label: &'static str,
+    effective_uid: u32,
+) -> Result<(), UserPathError> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => verify_user_directory(path, label, &metadata, effective_uid)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = std::fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700);
+            builder.create(path).map_err(|source| UserPathError::Io {
+                operation: "create",
+                label,
+                path: path.to_path_buf(),
+                source,
+            })?;
+            let metadata = std::fs::symlink_metadata(path).map_err(|source| UserPathError::Io {
+                operation: "inspect",
+                label,
+                path: path.to_path_buf(),
+                source,
+            })?;
+            verify_user_directory(path, label, &metadata, effective_uid)?;
+        }
+        Err(source) => {
+            return Err(UserPathError::Io {
+                operation: "inspect",
+                label,
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    }
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(|source| {
+        UserPathError::Io {
+            operation: "set permissions on",
+            label,
+            path: path.to_path_buf(),
+            source,
+        }
+    })
+}
+
+#[cfg(unix)]
+fn verify_user_directory(
+    path: &Path,
+    label: &'static str,
+    metadata: &std::fs::Metadata,
+    effective_uid: u32,
+) -> Result<(), UserPathError> {
+    use std::os::unix::fs::MetadataExt;
+
+    if metadata.file_type().is_symlink() {
+        return Err(UserPathError::Symlink {
+            label,
+            path: path.to_path_buf(),
+        });
+    }
+    if !metadata.is_dir() {
+        return Err(UserPathError::NotDirectory {
+            label,
+            path: path.to_path_buf(),
+        });
+    }
+    if metadata.uid() != effective_uid {
+        return Err(UserPathError::WrongOwner {
+            label,
+            path: path.to_path_buf(),
+            expected: effective_uid,
+            actual: metadata.uid(),
+        });
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionPaths {
@@ -321,6 +533,28 @@ mod tests {
             validate_existing_directory(&linked, "secret", true, true),
             Err(PathContractError::Symlinked("secret"))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_runtime_preparation_rejects_an_unexpected_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = UserRuntimePaths {
+            runtime_root: temp.path().join("runtime"),
+            state_root: temp.path().join("state"),
+            cache_root: temp.path().join("cache"),
+        };
+        let actual_uid = nix::unistd::geteuid().as_raw();
+        let unexpected_uid = actual_uid.wrapping_add(1);
+        let error = prepare_user_directories(&paths, unexpected_uid).unwrap_err();
+        assert!(matches!(
+            error,
+            UserPathError::WrongOwner {
+                expected,
+                actual,
+                ..
+            } if expected == unexpected_uid && actual == actual_uid
+        ));
     }
 
     #[test]
