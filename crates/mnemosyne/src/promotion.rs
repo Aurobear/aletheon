@@ -60,14 +60,14 @@ impl AgentMemoryVault {
             "parent/consolidator review receipt is missing"
         );
         anyhow::ensure!(
-            matches!(request.target_scope, MemoryScope::Session(_) | MemoryScope::Global),
+            matches!(
+                request.target_scope,
+                MemoryScope::Session(_) | MemoryScope::Global
+            ),
             "child memory may only be promoted to Session or Global scope"
         );
         request.target_scope.validate()?;
-        let request_hash = format!(
-            "sha256:{:x}",
-            Sha256::digest(serde_json::to_vec(request)?)
-        );
+        let request_hash = format!("sha256:{:x}", Sha256::digest(serde_json::to_vec(request)?));
         let connection = self.connection();
         let mut connection = connection.lock();
         connection.execute_batch(PROMOTION_SCHEMA)?;
@@ -89,7 +89,8 @@ impl AgentMemoryVault {
             )
             .optional()?;
         let source: MemoryRecord = serde_json::from_str(
-            &source_json.ok_or_else(|| anyhow::anyhow!("child source record provenance mismatch"))?,
+            &source_json
+                .ok_or_else(|| anyhow::anyhow!("child source record provenance mismatch"))?,
         )?;
         anyhow::ensure!(
             source.authority != MemoryAuthority::ApprovedCore,

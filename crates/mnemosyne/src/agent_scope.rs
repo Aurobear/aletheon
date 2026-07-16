@@ -127,7 +127,10 @@ impl AgentMemoryVault {
     }
 
     pub fn projection_receipt(projection: &MemoryProjection) -> anyhow::Result<String> {
-        Ok(format!("sha256:{:x}", Sha256::digest(serde_json::to_vec(projection)?)))
+        Ok(format!(
+            "sha256:{:x}",
+            Sha256::digest(serde_json::to_vec(projection)?)
+        ))
     }
 
     pub fn attach_parent_projection(
@@ -223,7 +226,11 @@ impl AgentMemoryVault {
             "SELECT record_json FROM agent_memory_records WHERE process_id=?1 AND agent_id=?2 AND task_id=?3 ORDER BY record_id",
         )?;
         let rows = statement.query_map(
-            params![context.process_id.0.to_string(), context.agent_id.0.to_string(), context.task_id.0],
+            params![
+                context.process_id.0.to_string(),
+                context.agent_id.0.to_string(),
+                context.task_id.0
+            ],
             |row| row.get::<_, String>(0),
         )?;
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()

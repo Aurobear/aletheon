@@ -28,21 +28,53 @@ fn draft(content: &str) -> ChildMemoryDraft {
 #[test]
 fn child_writes_are_bound_to_process_agent_and_task_without_sibling_leakage() {
     let vault = AgentMemoryVault::in_memory().unwrap();
-    let first = context(process(), AgentId(Uuid::new_v4()), "task-a", "sha256:none-a");
-    let sibling = context(process(), AgentId(Uuid::new_v4()), "task-b", "sha256:none-b");
+    let first = context(
+        process(),
+        AgentId(Uuid::new_v4()),
+        "task-a",
+        "sha256:none-a",
+    );
+    let sibling = context(
+        process(),
+        AgentId(Uuid::new_v4()),
+        "task-b",
+        "sha256:none-b",
+    );
     vault.register(&first).unwrap();
     vault.register(&sibling).unwrap();
-    let record = vault.record_child(&first, draft("private child fact")).unwrap();
+    let record = vault
+        .record_child(&first, draft("private child fact"))
+        .unwrap();
 
     assert_eq!(record.scope, MemoryScope::Task("task-a".into()));
-    assert!(record.tags.iter().any(|tag| tag == &format!("process:{}", first.process_id.0)));
-    assert!(record.tags.iter().any(|tag| tag == &format!("agent:{}", first.agent_id.0)));
+    assert!(record
+        .tags
+        .iter()
+        .any(|tag| tag == &format!("process:{}", first.process_id.0)));
+    assert!(record
+        .tags
+        .iter()
+        .any(|tag| tag == &format!("agent:{}", first.agent_id.0)));
     assert_eq!(vault.recall(&first).unwrap().len(), 1);
     assert!(vault.recall(&sibling).unwrap().is_empty());
 
-    let forged = context(first.process_id, sibling.agent_id, "task-a", "sha256:none-a");
-    assert!(vault.recall(&forged).unwrap_err().to_string().contains("binding"));
-    let unbound = context(process(), AgentId(Uuid::new_v4()), "task-x", "sha256:none-x");
+    let forged = context(
+        first.process_id,
+        sibling.agent_id,
+        "task-a",
+        "sha256:none-a",
+    );
+    assert!(vault
+        .recall(&forged)
+        .unwrap_err()
+        .to_string()
+        .contains("binding"));
+    let unbound = context(
+        process(),
+        AgentId(Uuid::new_v4()),
+        "task-x",
+        "sha256:none-x",
+    );
     assert!(vault.record_child(&unbound, draft("forged")).is_err());
 }
 
@@ -64,7 +96,11 @@ fn parent_projection_is_bounded_receipted_and_read_only() {
     let projection = DefaultMemoryWorkspaceProjector
         .project(
             &recall,
-            MemoryProjectionLimits { max_items: 2, max_total_bytes: 4096, max_item_bytes: 1024 },
+            MemoryProjectionLimits {
+                max_items: 2,
+                max_total_bytes: 4096,
+                max_item_bytes: 1024,
+            },
         )
         .unwrap();
     let receipt = AgentMemoryVault::projection_receipt(&projection).unwrap();
@@ -76,7 +112,10 @@ fn parent_projection_is_bounded_receipted_and_read_only() {
     assert_eq!(projected.len(), 2);
     assert_eq!(projected[0].record_id, projection.records[0].record_id);
     assert_eq!(projected[0].metadata, projection.records[0].metadata);
-    assert!(vault.recall(&child).unwrap().is_empty(), "projection is not a child write");
+    assert!(
+        vault.recall(&child).unwrap().is_empty(),
+        "projection is not a child write"
+    );
 
     let mut changed = MemoryProjection { ..projection };
     changed.records.pop();

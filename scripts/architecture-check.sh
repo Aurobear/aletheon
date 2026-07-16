@@ -276,6 +276,23 @@ if rg -n 'BoundedAgentAdmission::new\(' crates/executive/src/impl/daemon/bootstr
   exit 1
 fi
 
+# G09/M08 deletion gate: child memory authority is process-derived and the
+# only broader-scope write is the reviewed promotion module. Agent runtime and
+# candidate projection code may not directly mutate root memory or Dasein.
+agent_memory_bypass=$(rg -l 'MemoryScope::(Global|Principal|Session)|ApprovedCore|Dasein(Core|Ledger)|\.consolidate\(' \
+  crates/executive/src/service/agent_control crates/executive/src/impl/runtime -g '*.rs' \
+  | grep -Ev '^crates/executive/src/service/agent_control/memory\.rs$' || true)
+if [[ -n "$agent_memory_bypass" ]]; then
+  echo "architecture-check: child Agent escaped reviewed memory promotion:" >&2
+  echo "$agent_memory_bypass" >&2
+  exit 1
+fi
+if rg -n 'MemoryScope::(Agent|Task)\([^)]*(request|input|argument|scope)' \
+  crates/mnemosyne/src/agent_scope.rs crates/executive/src/service/agent_control -g '*.rs'; then
+  echo "architecture-check: child Agent scope is derived from caller-provided data" >&2
+  exit 1
+fi
+
 # K02/X02 composition gate: Kernel remains domain-neutral. DomainPorts belongs
 # to Executive, and the retired CoreSystems service locator must stay deleted.
 if rg -n '^\s*(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)\s*=' \

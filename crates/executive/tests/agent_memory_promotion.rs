@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use executive::service::agent_control::{
-    MemoryRecordingAgentEventSink, NoopAgentEventSink,
-};
+use executive::service::agent_control::{MemoryRecordingAgentEventSink, NoopAgentEventSink};
 use fabric::{
     AgentId, AgentTaskId, BroadcastEpoch, ContentId, OperationId, PrincipalId, ProcessId,
 };
@@ -36,11 +34,7 @@ fn root_selection_and_parent_review_are_required_and_restart_idempotent() {
             },
         )
         .unwrap();
-    let sink = MemoryRecordingAgentEventSink::new(
-        Arc::new(NoopAgentEventSink),
-        vault,
-        context,
-    );
+    let sink = MemoryRecordingAgentEventSink::new(Arc::new(NoopAgentEventSink), vault, context);
     let root_content = ContentId::new();
     let selected = ContentId::new();
     let first = sink
@@ -58,8 +52,20 @@ fn root_selection_and_parent_review_are_required_and_restart_idempotent() {
     drop(sink);
 
     let reopened = Arc::new(AgentMemoryVault::open(&path).unwrap());
-    let promoted = reopened.get_record(&first.resulting_record).unwrap().unwrap();
-    assert!(promoted.source_event_ids.iter().any(|item| item == "root-broadcast:11"));
-    assert!(promoted.source_event_ids.iter().any(|item| item == &format!("selected-candidate:{}", selected.0)));
-    assert!(reopened.get_record(&MemoryRecordId(source.id.0)).unwrap().is_some());
+    let promoted = reopened
+        .get_record(&first.resulting_record)
+        .unwrap()
+        .unwrap();
+    assert!(promoted
+        .source_event_ids
+        .iter()
+        .any(|item| item == "root-broadcast:11"));
+    assert!(promoted
+        .source_event_ids
+        .iter()
+        .any(|item| item == &format!("selected-candidate:{}", selected.0)));
+    assert!(reopened
+        .get_record(&MemoryRecordId(source.id.0))
+        .unwrap()
+        .is_some());
 }

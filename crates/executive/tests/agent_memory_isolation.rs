@@ -3,7 +3,7 @@ use std::sync::Arc;
 use executive::service::agent_control::{
     AgentEventSink, AgentRuntimeEvent, MemoryRecordingAgentEventSink, NoopAgentEventSink,
 };
-use fabric::{AgentId, AgentTaskId, AgentRunStatus, OperationId, ProcessId};
+use fabric::{AgentId, AgentRunStatus, AgentTaskId, OperationId, ProcessId};
 use mnemosyne::{AgentMemoryContext, AgentMemoryVault, MemoryScope};
 
 #[tokio::test]
@@ -41,8 +41,12 @@ async fn runtime_actions_and_results_remain_in_verified_child_scope() {
 
     let records = vault.recall(&context).unwrap();
     assert_eq!(records.len(), 2);
-    assert!(records.iter().all(|record| record.scope == context.task_scope));
-    assert!(records.iter().all(|record| record.scope != MemoryScope::Global));
+    assert!(records
+        .iter()
+        .all(|record| record.scope == context.task_scope));
+    assert!(records
+        .iter()
+        .all(|record| record.scope != MemoryScope::Global));
     assert!(sink.take_error().is_none());
 
     let sibling = AgentMemoryContext::verified(

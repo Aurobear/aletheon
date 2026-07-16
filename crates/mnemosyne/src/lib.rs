@@ -5,8 +5,8 @@
 //! Cognitive backends (MemoryRouter + semantic/procedural/self) are behind the
 //! off-by-default `cognitive-memory` feature (M-H Option A).
 
-pub mod backends;
 pub mod agent_scope;
+pub mod backends;
 pub mod composite_service;
 pub mod consolidation;
 pub mod fact_service;
@@ -19,17 +19,15 @@ mod recall;
 pub mod retention;
 pub mod service;
 
+pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
-};
-pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
-pub use promotion::{
-    MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision,
 };
 pub use fact_service::{
     AddFactRequest, DefaultFactUseCases, FactServiceError, FactUseCases, FactView,
     ListFactsRequest, SearchFactsRequest,
 };
+pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision};
 
 // MemoryService facade (docs/arch §11). NOTE: `MemoryScope` from `service` is
 // intentionally not re-exported here — it would collide with the existing

@@ -36,7 +36,12 @@ impl MemoryRecordingAgentEventSink {
         vault: Arc<AgentMemoryVault>,
         context: AgentMemoryContext,
     ) -> Self {
-        Self { downstream, vault, context, error: Mutex::new(None) }
+        Self {
+            downstream,
+            vault,
+            context,
+            error: Mutex::new(None),
+        }
     }
 
     pub fn take_error(&self) -> Option<AgentControlError> {
@@ -76,17 +81,31 @@ impl MemoryRecordingAgentEventSink {
                 "child Agent runtime started".to_string(),
                 format!("operation:{operation_id:?}:started"),
             ),
-            AgentRuntimeEvent::Progress { operation_id, summary, .. } => (
+            AgentRuntimeEvent::Progress {
+                operation_id,
+                summary,
+                ..
+            } => (
                 MemoryKind::Episodic,
                 format!("child Agent progress: {summary}"),
                 format!("operation:{operation_id:?}:progress"),
             ),
-            AgentRuntimeEvent::Tool { operation_id, name, is_error, .. } => (
+            AgentRuntimeEvent::Tool {
+                operation_id,
+                name,
+                is_error,
+                ..
+            } => (
                 MemoryKind::ToolOutcome,
                 format!("child Agent tool {name} error={is_error}"),
                 format!("operation:{operation_id:?}:tool:{name}"),
             ),
-            AgentRuntimeEvent::Terminal { operation_id, status, result, .. } => (
+            AgentRuntimeEvent::Terminal {
+                operation_id,
+                status,
+                result,
+                ..
+            } => (
                 MemoryKind::GoalOutcome,
                 result.as_ref().map_or_else(
                     || format!("child Agent ended {status:?}"),
@@ -124,5 +143,8 @@ impl AgentEventSink for MemoryRecordingAgentEventSink {
 }
 
 fn memory_error(error: anyhow::Error) -> AgentControlError {
-    AgentControlError { kind: AgentControlErrorKind::Persistence, message: error.to_string() }
+    AgentControlError {
+        kind: AgentControlErrorKind::Persistence,
+        message: error.to_string(),
+    }
 }

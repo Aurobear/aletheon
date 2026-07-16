@@ -2130,6 +2130,7 @@ dependencies = [
  "chrono",
  "dirs",
  "fabric",
+ "parking_lot",
  "regex",
  "reqwest",
  "rusqlite",

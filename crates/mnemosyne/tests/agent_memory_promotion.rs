@@ -6,7 +6,13 @@ use mnemosyne::{
 use tempfile::tempdir;
 use uuid::Uuid;
 
-fn fixture(path: &std::path::Path) -> (AgentMemoryVault, AgentMemoryContext, mnemosyne::MemoryRecord) {
+fn fixture(
+    path: &std::path::Path,
+) -> (
+    AgentMemoryVault,
+    AgentMemoryContext,
+    mnemosyne::MemoryRecord,
+) {
     let vault = AgentMemoryVault::open(path).unwrap();
     let context = AgentMemoryContext::verified(
         ProcessId(Uuid::new_v4()),
@@ -60,13 +66,36 @@ fn complete_reviewed_promotion_is_restart_idempotent_and_preserves_lineage() {
     let reopened = AgentMemoryVault::open(&path).unwrap();
     let repeated = reopened.promote(&request).unwrap();
     assert_eq!(first, repeated);
-    let promoted = reopened.get_record(&first.resulting_record).unwrap().unwrap();
+    let promoted = reopened
+        .get_record(&first.resulting_record)
+        .unwrap()
+        .unwrap();
     assert_eq!(promoted.scope, MemoryScope::Session("root-session".into()));
-    assert_eq!(promoted.metadata.provenance.source_commit.as_deref(), Some(source.id.0.as_str()));
-    for expected in ["child-process:", "child-agent:", "child-task:", "root-broadcast:7", "selected-candidate:", "selection-receipt:", "review-receipt:"] {
-        assert!(promoted.source_event_ids.iter().any(|item| item.starts_with(expected)), "missing {expected}");
+    assert_eq!(
+        promoted.metadata.provenance.source_commit.as_deref(),
+        Some(source.id.0.as_str())
+    );
+    for expected in [
+        "child-process:",
+        "child-agent:",
+        "child-task:",
+        "root-broadcast:7",
+        "selected-candidate:",
+        "selection-receipt:",
+        "review-receipt:",
+    ] {
+        assert!(
+            promoted
+                .source_event_ids
+                .iter()
+                .any(|item| item.starts_with(expected)),
+            "missing {expected}"
+        );
     }
-    assert!(reopened.get_record(&source.id).unwrap().is_some(), "child source is immutable");
+    assert!(
+        reopened.get_record(&source.id).unwrap().is_some(),
+        "child source is immutable"
+    );
 }
 
 #[test]
@@ -84,5 +113,9 @@ fn incomplete_escalating_and_conflicting_promotions_fail_closed() {
     vault.promote(&accepted).unwrap();
     let mut conflict = accepted;
     conflict.reviewer = PrincipalId("different-reviewer".into());
-    assert!(vault.promote(&conflict).unwrap_err().to_string().contains("conflicting"));
+    assert!(vault
+        .promote(&conflict)
+        .unwrap_err()
+        .to_string()
+        .contains("conflicting"));
 }

@@ -99,7 +99,7 @@ pub struct AgentControlService {
     live: Arc<LiveAgentRuns>,
     tasks: Mutex<JoinSet<()>>,
     sibling_routes: parking_lot::RwLock<HashSet<(AgentId, AgentId, AgentId)>>,
-    memory: Arc<mnemosyne::AgentMemoryVault>,
+    agent_memory_vault: Arc<mnemosyne::AgentMemoryVault>,
 }
 
 impl std::fmt::Debug for AgentControlService {
@@ -135,7 +135,7 @@ impl AgentControlService {
             live: Arc::new(LiveAgentRuns::default()),
             tasks: Mutex::new(JoinSet::new()),
             sibling_routes: parking_lot::RwLock::new(HashSet::new()),
-            memory: Arc::new(
+            agent_memory_vault: Arc::new(
                 mnemosyne::AgentMemoryVault::in_memory().expect("in-memory Agent memory vault"),
             ),
         }
@@ -165,7 +165,7 @@ impl AgentControlService {
     }
 
     pub fn with_memory_vault(mut self, memory: Arc<mnemosyne::AgentMemoryVault>) -> Self {
-        self.memory = memory;
+        self.agent_memory_vault = memory;
         self
     }
 
@@ -609,9 +609,11 @@ impl AgentControlPort for AgentControlService {
             parent_projection_receipt,
         )
         .map_err(|error| AgentControlError::invalid(error.to_string()))?;
-        self.memory
+        self.agent_memory_vault
             .register(&memory_context)
-            .map_err(|error| control_error(AgentControlErrorKind::Persistence, error.to_string()))?;
+            .map_err(|error| {
+                control_error(AgentControlErrorKind::Persistence, error.to_string())
+            })?;
         let created_at_ms = self.clock.wall_now().0;
         let queued = AgentSnapshot {
             handle: handle.clone(),
@@ -712,7 +714,7 @@ impl AgentControlPort for AgentControlService {
         ));
         let events: Arc<dyn AgentEventSink> = Arc::new(MemoryRecordingAgentEventSink::new(
             events,
-            self.memory.clone(),
+            self.agent_memory_vault.clone(),
             memory_context,
         ));
         self.tasks.lock().await.spawn(async move {
