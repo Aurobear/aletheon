@@ -29,8 +29,9 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     test_config: TestConfig,
     is_test_mode: bool,
     clock: Arc<dyn Clock>,
+    workspace: fabric::WorkspacePolicy,
 ) -> anyhow::Result<()> {
-    let mut app = App::new(stream, caps, model_name.clone(), clock);
+    let mut app = App::new(stream, caps, model_name.clone(), clock, workspace);
 
     // ── Test infrastructure setup ──
     let mut frame_recorder: Option<FrameRecorder> = test_config
@@ -199,6 +200,7 @@ pub async fn simple_line_mode(
     _caps: TermCaps,
     model_name: String,
     _clock: Arc<dyn Clock>,
+    workspace: fabric::WorkspacePolicy,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -267,13 +269,13 @@ pub async fn simple_line_mode(
                     "jsonrpc": "2.0", "method": "model_list", "id": 1
                 }),
                 "cwd" => {
-                    println!("{}", crate::tui::client_working_dir().display());
+                    println!("{}", workspace.cwd().display());
                     continue;
                 }
-                _ => crate::tui::chat_request(trimmed),
+                _ => crate::tui::chat_request(trimmed, &workspace),
             }
         } else {
-            crate::tui::chat_request(trimmed)
+            crate::tui::chat_request(trimmed, &workspace)
         };
         let payload = serde_json::to_string(&msg)?;
         stream

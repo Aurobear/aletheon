@@ -241,10 +241,11 @@ impl RegistryAuthorityProvider {
         turn_id: fabric::TurnId,
         workspace: fabric::WorkspacePolicy,
         session_id: String,
-        working_dir: PathBuf,
+        _working_dir: PathBuf,
         sandbox: SandboxRequirement,
         cancel: CancellationToken,
     ) -> Self {
+        let working_dir = workspace.cwd().to_path_buf();
         Self {
             agent: None,
             risk_by_tool,

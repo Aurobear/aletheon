@@ -255,8 +255,6 @@ impl TurnPipeline {
         let llm = self.runtime_ports.models.select(&message);
 
         // -- Governed capability setup --
-        let working_dir = turn_request.context.workspace.cwd().to_path_buf();
-
         // Context Space seed — user turn input is private overlay data, not
         // shared Agora fact. Shared visibility requires an explicit proposal.
         let agora = self.agora.clone();
@@ -325,7 +323,7 @@ impl TurnPipeline {
                     })?,
                     workspace: turn_request.context.workspace.clone(),
                     session_id: sess_id.clone(),
-                    working_dir,
+                    working_dir: turn_request.context.workspace.cwd().to_path_buf(),
                     sandbox: sandbox_requirement,
                     cancel: scope_token.clone(),
                     turn_count,

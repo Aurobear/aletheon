@@ -39,23 +39,17 @@ pub mod workflow;
 // Re-export the main entry point
 pub use cli::run;
 
-/// Canonical directory represented by this client process.
-pub fn client_working_dir() -> std::path::PathBuf {
-    std::env::current_dir()
-        .and_then(std::fs::canonicalize)
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-}
-
 /// Build the local chat envelope. Keeping this in one place prevents the TUI,
 /// line mode, and `-m` mode from silently diverging.
-pub fn chat_request(message: &str) -> serde_json::Value {
+pub fn chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> serde_json::Value {
     serde_json::json!({
         "jsonrpc": "2.0",
         "method": "chat",
         "id": 1,
         "params": {
             "message": message,
-            "working_dir": client_working_dir(),
+            "working_dir": workspace.cwd(),
+            "workspace_roots": workspace.writable_roots(),
         }
     })
 }
@@ -115,6 +109,16 @@ pub async fn run_tui(socket_path: &str) -> anyhow::Result<()> {
 
 /// Run the full TUI with optional test configuration.
 pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let workspace = fabric::WorkspaceSelection::default().resolve(&cwd)?;
+    run_with_workspace_config(socket_path, test_config, workspace).await
+}
+
+pub async fn run_with_workspace_config(
+    socket_path: &str,
+    test_config: TestConfig,
+    workspace: fabric::WorkspacePolicy,
+) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
     let clock: Arc<dyn Clock> = Arc::new(self::host_time::ClientClock::new());
 
@@ -140,7 +144,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
     if (!atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout))
         && test_config.test_input.is_none()
     {
-        return simple_line_mode(stream, caps, model_name, clock).await;
+        return simple_line_mode(stream, caps, model_name, clock, workspace).await;
     }
 
     // Check if we're in test mode (no TTY needed)
@@ -158,6 +162,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
             test_config,
             true,
             clock,
+            workspace.clone(),
         )
         .await
     } else {
@@ -234,6 +239,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
             test_config,
             false,
             clock,
+            workspace,
         )
         .await;
 
@@ -249,6 +255,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
 
 /// Main TUI application state.
 struct App {
+    workspace: fabric::WorkspacePolicy,
     chat: ChatWidget,
     input_buf: String,
     /// Cursor position in input_buf (byte index).
@@ -305,7 +312,13 @@ struct App {
 }
 
 impl App {
-    fn new(stream: UnixStream, caps: TermCaps, model_name: String, clock: Arc<dyn Clock>) -> Self {
+    fn new(
+        stream: UnixStream,
+        caps: TermCaps,
+        model_name: String,
+        clock: Arc<dyn Clock>,
+        workspace: fabric::WorkspacePolicy,
+    ) -> Self {
         let mut skill_loader = SkillLoader::new(SkillLoader::default_dir());
         if let Err(e) = skill_loader.load_all() {
             eprintln!("Warning: failed to load skills: {}", e);
@@ -315,6 +328,7 @@ impl App {
         status.model_name = model_name.clone();
 
         Self {
+            workspace,
             chat: ChatWidget::new(caps.clone()),
             input_buf: String::new(),
             cursor: 0,
@@ -366,13 +380,18 @@ impl App {
 #[cfg(test)]
 mod working_dir_tests {
     #[test]
-    fn chat_request_includes_canonical_client_working_directory() {
-        let request = super::chat_request("inspect this project");
+    fn chat_request_contains_the_resolved_workspace() {
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+            "/tmp/project".into(),
+            vec!["/tmp/shared".into()],
+        )
+        .unwrap();
+        let request = super::chat_request("inspect this project", &workspace);
         assert_eq!(request["params"]["message"], "inspect this project");
+        assert_eq!(request["params"]["working_dir"], "/tmp/project");
         assert_eq!(
-            request["params"]["working_dir"],
-            super::client_working_dir().to_string_lossy().as_ref()
+            request["params"]["workspace_roots"],
+            serde_json::json!(["/tmp/project", "/tmp/shared"])
         );
-        assert!(super::client_working_dir().is_absolute());
     }
 }

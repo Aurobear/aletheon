@@ -9,7 +9,7 @@ mod rpc;
 pub(crate) mod tool_executor;
 mod turn_handler;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -152,18 +152,17 @@ impl RequestHandler {
         request: serde_json::Value,
     ) -> serde_json::Value {
         let message = request["params"]["message"].as_str().unwrap_or("");
-        let working_dir =
-            match validate_local_working_dir(request["params"]["working_dir"].as_str()) {
-                Ok(path) => path,
-                Err(error) => {
-                    return serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": { "code": -32602, "message": error }
-                    });
-                }
-            };
-        let thread_id = match self.select_workspace_session(&working_dir).await {
+        let workspace = match resolve_requested_workspace(&request["params"]) {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                return serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": error }
+                });
+            }
+        };
+        let thread_id = match self.select_workspace_session(workspace.cwd()).await {
             Ok(thread_id) => thread_id,
             Err(error) => {
                 return serde_json::json!({
@@ -173,17 +172,6 @@ impl RequestHandler {
                 })
             }
         };
-        let workspace =
-            match fabric::WorkspacePolicy::from_resolved_roots(working_dir.clone(), Vec::new()) {
-                Ok(workspace) => workspace,
-                Err(error) => {
-                    return serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": { "code": -32602, "message": error }
-                    })
-                }
-            };
         let context = fabric::PrincipalContext::new(
             connection.principal_id.clone(),
             connection.os_principal,
@@ -193,6 +181,13 @@ impl RequestHandler {
             fabric::PermissionProfileId::workspace_write(),
             fabric::ApprovalPolicy::OnRequest,
         );
+        if let Err(error) = bind_thread_authority(&context, None) {
+            return serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32602, "message": error.to_string() }
+            });
+        }
         tracing::info!(message = %message, "Chat request received");
         self.ports
             .turn
@@ -226,65 +221,75 @@ impl LegacySessionThreadAdapter {
     }
 }
 
-const LOCAL_WORKSPACE_ROOT: &str = "/home/aurobear/Bear-ws";
-const LEGACY_WORKING_DIR: &str = "/var/lib/aletheon";
-
-fn validate_local_working_dir(value: Option<&str>) -> Result<std::path::PathBuf, String> {
-    validate_working_dir_against_roots(
-        value.unwrap_or(LEGACY_WORKING_DIR),
-        std::path::Path::new(LOCAL_WORKSPACE_ROOT),
-        std::path::Path::new(LEGACY_WORKING_DIR),
+fn resolve_requested_workspace(
+    params: &serde_json::Value,
+) -> Result<fabric::WorkspacePolicy, String> {
+    let requested = params["working_dir"]
+        .as_str()
+        .ok_or_else(|| "missing working_dir".to_string())?;
+    let roots = params["workspace_roots"]
+        .as_array()
+        .ok_or_else(|| "missing workspace_roots".to_string())?;
+    let roots: Vec<PathBuf> = roots
+        .iter()
+        .map(|root| {
+            root.as_str()
+                .map(PathBuf::from)
+                .ok_or_else(|| "workspace_roots must contain only paths".to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    if roots.first().map(PathBuf::as_path) != Some(Path::new(requested)) {
+        return Err("working_dir must be the first workspace root".into());
+    }
+    fabric::WorkspaceSelection::new(
+        Some(PathBuf::from(requested)),
+        roots.into_iter().skip(1).collect(),
     )
+    .resolve(Path::new(requested))
+    .map_err(|error| error.to_string())
 }
 
-fn validate_working_dir_against_roots(
-    requested: &str,
-    workspace_root: &std::path::Path,
-    legacy_root: &std::path::Path,
-) -> Result<std::path::PathBuf, String> {
-    let canonical = std::fs::canonicalize(requested)
-        .map_err(|error| format!("invalid working_dir '{requested}': {error}"))?;
-    let workspace_root =
-        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
-    if canonical.starts_with(&workspace_root) || canonical.starts_with(legacy_root) {
-        Ok(canonical)
-    } else {
-        Err(format!(
-            "working_dir '{}' is outside allowed roots '{}' and '{}'",
-            canonical.display(),
-            workspace_root.display(),
-            legacy_root.display()
-        ))
-    }
+fn bind_thread_authority(
+    context: &fabric::PrincipalContext,
+    model_policy: Option<String>,
+) -> Result<(), crate::service::thread_authority::ThreadAuthorityError> {
+    use crate::service::thread_authority::{
+        ThreadAuthorityKey, ThreadAuthorityStore, ThreadSettings,
+    };
+    let state_home = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+        .ok_or(ThreadAuthorityError::StateRootUnavailable)?;
+    let store = ThreadAuthorityStore::persistent(state_home.join("aletheon/thread-authority"));
+    let key = ThreadAuthorityKey::new(context.principal_id.clone(), context.thread_id.clone());
+    store.bind_or_verify(&key, &ThreadSettings::from_context(context, model_policy))
 }
 
 #[cfg(test)]
 mod working_dir_tests {
     #[test]
-    fn rejects_root_as_local_working_directory() {
-        assert!(super::validate_local_working_dir(Some("/")).is_err());
-    }
-
-    #[test]
-    fn rejects_missing_local_working_directory() {
+    fn rejects_workspace_without_roots() {
         assert!(
-            super::validate_local_working_dir(Some("/home/aurobear/Bear-ws/does-not-exist"))
-                .is_err()
+            super::resolve_requested_workspace(&serde_json::json!({"working_dir":"/tmp"})).is_err()
         );
     }
 
     #[test]
-    fn accepts_a_canonical_bear_workspace_directory() {
+    fn rejects_missing_local_working_directory() {
+        assert!(super::resolve_requested_workspace(&serde_json::json!({"working_dir":"/does-not-exist","workspace_roots":["/does-not-exist"]})).is_err());
+    }
+
+    #[test]
+    fn accepts_canonical_workspace_roots() {
         let root = std::env::temp_dir().join(format!("aletheon-cwd-test-{}", std::process::id()));
         let project = root.join("aletheon");
         std::fs::create_dir_all(&project).unwrap();
-        let path = super::validate_working_dir_against_roots(
-            project.to_str().unwrap(),
-            &root,
-            std::path::Path::new("/var/lib/aletheon"),
-        )
+        let workspace = super::resolve_requested_workspace(&serde_json::json!({
+            "working_dir": project,
+            "workspace_roots": [project, root]
+        }))
         .unwrap();
-        assert!(path.starts_with(std::fs::canonicalize(&root).unwrap()));
+        assert_eq!(workspace.writable_roots().len(), 2);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

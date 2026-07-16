@@ -721,7 +721,15 @@ mod tests {
             width: 80,
             height: 24,
         };
-        let mut app = App::new(stream, caps, "test".into(), Arc::new(ClientClock::new()));
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+        );
         app.streaming = true;
         app.status.waiting = true;
         app.app_state.streaming = true;

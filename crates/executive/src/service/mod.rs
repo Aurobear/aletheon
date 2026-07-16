@@ -22,6 +22,7 @@ pub mod memory_consolidation_worker;
 pub mod post_turn;
 pub mod pre_turn;
 pub mod session_service;
+pub mod thread_authority;
 pub mod turn_coordinator;
 pub mod turn_pipeline;
 pub mod turn_policy;

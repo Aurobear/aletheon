@@ -329,10 +329,11 @@ impl ProductionCapabilityService {
             prepared.executor,
             context.session_id.clone(),
             context.turn_count,
-            context.working_dir.clone(),
+            context.workspace.cwd().to_path_buf(),
             context.operation_id,
             context.process_id,
         ));
+        let authority_working_dir = context.workspace.cwd().to_path_buf();
         let authority = Arc::new(
             RegistryAuthorityProvider::new(
                 prepared.risk_by_tool,
@@ -342,7 +343,7 @@ impl ProductionCapabilityService {
                 context.turn_id,
                 context.workspace,
                 context.session_id,
-                context.working_dir,
+                authority_working_dir,
                 context.sandbox,
                 context.cancel,
             )

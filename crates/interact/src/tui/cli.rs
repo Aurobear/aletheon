@@ -36,6 +36,14 @@ pub struct Args {
     #[arg(short, long, default_value = DEFAULT_SOCKET, global = true)]
     pub socket: PathBuf,
 
+    /// Use this directory as the primary workspace.
+    #[arg(short = 'C', long = "chdir", global = true)]
+    pub working_directory: Option<PathBuf>,
+
+    /// Add an additional writable workspace root (repeatable).
+    #[arg(long = "add-dir", global = true)]
+    pub add_dirs: Vec<PathBuf>,
+
     /// Single message mode (non-interactive)
     #[arg(short, long)]
     pub message: Option<String>,
@@ -216,15 +224,22 @@ pub async fn run() -> Result<()> {
         return handle_command(&args.socket, cmd).await;
     }
 
+    // Resolve once for this client lifetime. Subcommands that do not open a
+    // chat turn intentionally do not require workspace initialization.
+    let process_cwd = std::env::current_dir()?;
+    let workspace =
+        fabric::WorkspaceSelection::new(args.working_directory.clone(), args.add_dirs.clone())
+            .resolve(&process_cwd)?;
+
     // Handle positional message args
     if !args.message_args.is_empty() {
         let msg = args.message_args.join(" ");
-        return single_message(&args.socket, &msg).await;
+        return single_message_with_workspace(&args.socket, &msg, &workspace).await;
     }
 
     // Handle -m flag
     if let Some(msg) = args.message {
-        return single_message(&args.socket, &msg).await;
+        return single_message_with_workspace(&args.socket, &msg, &workspace).await;
     }
 
     // Interactive mode: use the line-based TUI (IME-compatible)
@@ -235,7 +250,12 @@ pub async fn run() -> Result<()> {
         auto_submit: args.auto_submit,
         test_timeout: args.test_timeout,
     };
-    super::run_with_config(args.socket.to_str().unwrap_or(DEFAULT_SOCKET), test_config).await
+    super::run_with_workspace_config(
+        args.socket.to_str().unwrap_or(DEFAULT_SOCKET),
+        test_config,
+        workspace,
+    )
+    .await
 }
 
 /// Handle subcommands.
@@ -453,6 +473,16 @@ const SINGLE_MESSAGE_TIMEOUT_SECS: u64 = 120;
 
 /// Send a single message and print the response.
 pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
+    let process_cwd = std::env::current_dir()?;
+    let workspace = fabric::WorkspaceSelection::default().resolve(&process_cwd)?;
+    single_message_with_workspace(socket, msg, &workspace).await
+}
+
+pub async fn single_message_with_workspace(
+    socket: &PathBuf,
+    msg: &str,
+    workspace: &fabric::WorkspacePolicy,
+) -> Result<()> {
     let mut stream = UnixStream::connect(socket).await?;
     let (reader, mut writer) = stream.split();
     let mut reader = BufReader::new(reader);
@@ -481,13 +511,13 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
                 "jsonrpc": "2.0", "id": 1, "method": "status"
             }),
             "cwd" => {
-                println!("{}", super::client_working_dir().display());
+                println!("{}", workspace.cwd().display());
                 return Ok(());
             }
-            _ => super::chat_request(msg),
+            _ => super::chat_request(msg, workspace),
         }
     } else {
-        super::chat_request(msg)
+        super::chat_request(msg, workspace)
     };
     let req_str = serde_json::to_string(&request)?;
     writer.write_all(req_str.as_bytes()).await?;

@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use executive::service::governed_capability::{
-    AuthorizedInvocation, GovernedCapabilityInvoker, TurnAuthorityProvider, TurnCapabilityInvoker,
+    AuthorizedInvocation, GovernedCapabilityInvoker, RegistryAuthorityProvider,
+    TurnAuthorityProvider, TurnCapabilityInvoker,
 };
 use fabric::types::admission::RiskLevel;
 use fabric::{
@@ -124,4 +125,32 @@ async fn authorization_rejection_never_reaches_inner() {
     assert!(result.output.contains("policy rejected"));
     assert_eq!(*events.lock().unwrap(), ["authorize"]);
     assert!(requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn model_arguments_cannot_replace_capability_workspace() {
+    let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+        "/trusted/workspace".into(),
+        vec!["/trusted/shared".into()],
+    )
+    .unwrap();
+    let provider = RegistryAuthorityProvider::new(
+        std::collections::HashMap::from([("file_write".to_string(), RiskLevel::SystemModify)]),
+        PrincipalId("trusted-application".into()),
+        fabric::ConnectionId::new(),
+        fabric::ThreadId("thread-1".into()),
+        fabric::TurnId::new(),
+        workspace.clone(),
+        "session-1".into(),
+        "/etc".into(),
+        SandboxRequirement::Required,
+        tokio_util::sync::CancellationToken::new(),
+    );
+
+    let authorized = provider.authorize(&call()).await.unwrap();
+    assert_eq!(authorized.authority.workspace, workspace);
+    assert_eq!(
+        authorized.authority.working_dir,
+        std::path::PathBuf::from("/trusted/workspace")
+    );
 }
