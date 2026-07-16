@@ -85,6 +85,7 @@ impl LlmProvider for ScriptedLlm {
 #[derive(Default)]
 struct RecordingCapability {
     calls: Mutex<Vec<(Option<CapabilityExecutionContext>, CapabilityCall)>>,
+    block: bool,
 }
 
 #[async_trait]
@@ -96,6 +97,9 @@ impl CapabilityService for RecordingCapability {
         _cancel: CancellationToken,
     ) -> CapabilityResult {
         self.calls.lock().unwrap().push((context, call.clone()));
+        if self.block {
+            std::future::pending().await
+        }
         CapabilityResult {
             call_id: call.call_id,
             output: "tool-ok".into(),
@@ -295,6 +299,26 @@ async fn unknown_profile_and_disallowed_tool_fail_before_provider_call() {
     assert!(llm.seen.lock().unwrap().is_empty());
 }
 
+#[test]
+fn profile_registration_rejects_model_mismatch_before_session_creation() {
+    let profiles = AgentProfileRegistry::default();
+    let mut mismatched = profile();
+    mismatched.model = "different/model".into();
+    let error = profiles
+        .register(ResolvedAgentProfile {
+            profile: mismatched,
+            llm: ScriptedLlm::new(vec![]),
+            tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
+        })
+        .unwrap_err();
+    assert_eq!(error.kind, AgentControlErrorKind::InvalidRequest);
+    assert!(error.message.contains("does not match"));
+}
+
 #[tokio::test]
 async fn cancellation_interrupts_provider_and_emits_one_terminal() {
     let llm = ScriptedLlm::blocked();
@@ -321,5 +345,171 @@ async fn cancellation_interrupts_provider_and_emits_one_terminal() {
             .filter(|event| matches!(event, AgentRuntimeEvent::Terminal { .. }))
             .count(),
         1
+    );
+}
+
+#[tokio::test]
+async fn multiple_tools_are_governed_and_unknown_tools_never_reach_capability() {
+    let llm = ScriptedLlm::new(vec![
+        response(
+            vec![
+                ContentBlock::ToolUse {
+                    id: "call-1".into(),
+                    name: "echo".into(),
+                    input: serde_json::json!({"value": 1}),
+                },
+                ContentBlock::ToolUse {
+                    id: "call-2".into(),
+                    name: "echo".into(),
+                    input: serde_json::json!({"value": 2}),
+                },
+            ],
+            StopReason::ToolUse,
+        ),
+        response(
+            vec![ContentBlock::Text {
+                text: "two tools complete".into(),
+            }],
+            StopReason::EndTurn,
+        ),
+    ]);
+    let capability = Arc::new(RecordingCapability::default());
+    let result = runtime(llm, capability.clone())
+        .launch(
+            input(CancellationToken::new()),
+            Arc::new(RecordingEvents::default()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(capability.calls.lock().unwrap().len(), 2);
+    assert_eq!(result.evidence.len(), 2);
+
+    let llm = ScriptedLlm::new(vec![
+        response(
+            vec![ContentBlock::ToolUse {
+                id: "bad".into(),
+                name: "shell".into(),
+                input: serde_json::json!({}),
+            }],
+            StopReason::ToolUse,
+        ),
+        response(
+            vec![ContentBlock::Text {
+                text: "handled rejection".into(),
+            }],
+            StopReason::EndTurn,
+        ),
+    ]);
+    let capability = Arc::new(RecordingCapability::default());
+    let result = runtime(llm, capability.clone())
+        .launch(
+            input(CancellationToken::new()),
+            Arc::new(RecordingEvents::default()),
+        )
+        .await
+        .unwrap();
+    assert!(capability.calls.lock().unwrap().is_empty());
+    assert!(result.evidence[0].content.contains("not allowed"));
+}
+
+#[tokio::test]
+async fn provider_failure_and_iteration_exhaustion_are_bounded_runtime_errors() {
+    let llm = ScriptedLlm::new(vec![Err(anyhow::anyhow!("provider unavailable"))]);
+    let error = runtime(llm, Arc::new(RecordingCapability::default()))
+        .launch(
+            input(CancellationToken::new()),
+            Arc::new(RecordingEvents::default()),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, AgentControlErrorKind::Runtime);
+    assert!(error.message.contains("provider unavailable"));
+    assert!(error.message.len() <= 4 * 1024);
+
+    let llm = ScriptedLlm::new(vec![response(
+        vec![ContentBlock::ToolUse {
+            id: "repeat".into(),
+            name: "echo".into(),
+            input: serde_json::json!({}),
+        }],
+        StopReason::ToolUse,
+    )]);
+    let mut limited = profile();
+    limited.max_iterations = 1;
+    let clock = Arc::new(TestClock::default());
+    let profiles = Arc::new(AgentProfileRegistry::default());
+    profiles
+        .register(ResolvedAgentProfile {
+            profile: limited,
+            llm,
+            tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
+        })
+        .unwrap();
+    let runtime = NativeCognitRuntime::new(NativeCognitRuntimeResources {
+        sessions: Arc::new(LinearCognitiveSessionFactory::new(
+            cognit::harness::HarnessConfig::default(),
+            clock.clone(),
+        )),
+        capabilities: Arc::new(RecordingCapability::default()),
+        profiles,
+        clock,
+    });
+    let error = runtime
+        .launch(
+            input(CancellationToken::new()),
+            Arc::new(RecordingEvents::default()),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, AgentControlErrorKind::Runtime);
+}
+
+#[tokio::test]
+async fn cancellation_interrupts_a_live_tool_call() {
+    let llm = ScriptedLlm::new(vec![
+        response(
+            vec![ContentBlock::ToolUse {
+                id: "blocked-tool".into(),
+                name: "echo".into(),
+                input: serde_json::json!({}),
+            }],
+            StopReason::ToolUse,
+        ),
+        response(
+            vec![ContentBlock::Text {
+                text: "must still cancel".into(),
+            }],
+            StopReason::EndTurn,
+        ),
+    ]);
+    let capability = Arc::new(RecordingCapability {
+        calls: Mutex::new(Vec::new()),
+        block: true,
+    });
+    let runtime = runtime(llm, capability.clone());
+    let cancellation = CancellationToken::new();
+    let task = tokio::spawn({
+        let input = input(cancellation.clone());
+        async move {
+            runtime
+                .launch(input, Arc::new(RecordingEvents::default()))
+                .await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while capability.calls.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    cancellation.cancel();
+    assert_eq!(
+        task.await.unwrap().unwrap_err().kind,
+        AgentControlErrorKind::Terminal
     );
 }

@@ -43,6 +43,13 @@ pub struct AgentProfileRegistry {
 impl AgentProfileRegistry {
     pub fn register(&self, resolved: ResolvedAgentProfile) -> Result<(), AgentControlError> {
         resolved.profile.validate()?;
+        if resolved.profile.model != resolved.llm.name() {
+            return Err(AgentControlError::invalid(format!(
+                "profile model '{}' does not match resolved provider model '{}'",
+                resolved.profile.model,
+                resolved.llm.name()
+            )));
+        }
         let declared = resolved
             .profile
             .allowed_tools
@@ -131,6 +138,7 @@ impl NativeCognitRuntime {
                 .into_iter()
                 .filter(|tool| input.request.allowed_tools.contains(&tool.name))
                 .collect(),
+            allowed_tools: input.request.allowed_tools.iter().cloned().collect(),
             system_prompt: resolved.profile.system_prompt,
             projected_context: labelled_context(input),
             capabilities: self.resources.capabilities.clone(),
@@ -242,7 +250,13 @@ impl AgentRuntimeLauncher for NativeCognitRuntime {
                 operation_id: ids.operation_id,
             })
             .await;
-        let outcome = self.execute(&input, events.clone()).await;
+        let mut outcome = self.execute(&input, events.clone()).await;
+        if input.cancellation.is_cancelled() {
+            outcome = Err(control_error(
+                AgentControlErrorKind::Terminal,
+                "Agent runtime cancelled",
+            ));
+        }
         let (status, usage, evidence) = match &outcome {
             Ok(result) => (
                 AgentRunStatus::Succeeded,
@@ -309,6 +323,7 @@ impl TurnEventSink for NativeTurnEventSink {
 struct NativeTurnServices {
     llm: MeteredLlm,
     tools: Vec<ToolDefinition>,
+    allowed_tools: HashSet<String>,
     system_prompt: String,
     projected_context: Option<String>,
     capabilities: Arc<dyn CapabilityService>,
@@ -336,6 +351,17 @@ impl TurnServices for NativeTurnServices {
     async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
         let name = call.name.clone();
         let call_id = call.call_id.clone();
+        if !self.allowed_tools.contains(&name) {
+            let result = CapabilityResult {
+                call_id,
+                output: format!("Tool is not allowed for this Agent profile: {name}"),
+                is_error: true,
+                usage: fabric::UsageReport::default(),
+                audit_id: None,
+            };
+            self.record_tool_result(&name, &result).await;
+            return result;
+        }
         let result = tokio::select! {
             _ = self.cancellation.cancelled() => CapabilityResult {
                 call_id,
@@ -350,20 +376,7 @@ impl TurnServices for NativeTurnServices {
                 self.cancellation.clone(),
             ) => result,
         };
-        self.evidence.lock().await.push(AttemptEvidence {
-            kind: "tool_result".into(),
-            summary: format!("{}: {}", name, if result.is_error { "error" } else { "ok" }),
-            content: result.output.clone(),
-        });
-        self.events
-            .emit(AgentRuntimeEvent::Tool {
-                agent_id: self.ids.agent_id,
-                process_id: self.ids.process_id,
-                operation_id: self.ids.operation_id,
-                name,
-                is_error: result.is_error,
-            })
-            .await;
+        self.record_tool_result(&name, &result).await;
         result
     }
 
@@ -381,6 +394,25 @@ impl TurnServices for NativeTurnServices {
             messages.push(Message::user(context));
         }
         messages
+    }
+}
+
+impl NativeTurnServices {
+    async fn record_tool_result(&self, name: &str, result: &CapabilityResult) {
+        self.evidence.lock().await.push(AttemptEvidence {
+            kind: "tool_result".into(),
+            summary: format!("{}: {}", name, if result.is_error { "error" } else { "ok" }),
+            content: result.output.clone(),
+        });
+        self.events
+            .emit(AgentRuntimeEvent::Tool {
+                agent_id: self.ids.agent_id,
+                process_id: self.ids.process_id,
+                operation_id: self.ids.operation_id,
+                name: name.to_string(),
+                is_error: result.is_error,
+            })
+            .await;
     }
 }
 
