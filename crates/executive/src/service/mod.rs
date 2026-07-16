@@ -9,6 +9,7 @@ pub mod context_assembler;
 pub mod daemon_react;
 pub mod daemon_turn;
 pub mod dasein_workspace_adapter;
+pub mod event_projection;
 pub mod exec_session;
 pub mod goal_service;
 pub mod governed_capability;
