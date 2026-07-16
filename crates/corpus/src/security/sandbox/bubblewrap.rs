@@ -11,6 +11,8 @@ use crate::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
     SandboxResult,
 };
+use crate::security::sandbox::bwrap_builder::append_mount_plan;
+use crate::security::sandbox::policy::FilesystemPolicy;
 
 /// Bubblewrap-based sandbox backend — full namespace isolation.
 /// Requires: bwrap binary, user namespace support.
@@ -91,13 +93,8 @@ impl BubblewrapBackend {
             "--clearenv".into(),
         ];
 
-        // Bind entire root read-only FIRST, then mount --dev and --proc
-        // on top so the fresh devtmpfs is NOT overwritten by the
-        // recursive --ro-bind of the host root (MS_REC crosses submount
-        // boundaries and would replace a previously-mounted devtmpfs).
-        args.push("--ro-bind".into());
-        args.push("/".into());
-        args.push("/".into());
+        let policy = FilesystemPolicy::from_workspace(&config.workspace);
+        append_mount_plan(&mut args, &policy);
 
         // Fresh devtmpfs and proc on top of the read-only root
         args.push("--dev".into());
@@ -113,28 +110,8 @@ impl BubblewrapBackend {
         args.push("/dev/null".into());
         args.push("/dev/null".into());
 
-        // Writable working directory
-        args.push("--bind".into());
-        args.push(config.working_dir.clone());
-        args.push(config.working_dir.clone());
-
-        // Re-protect repository metadata and local secret stores after the
-        // working directory bind. Later bwrap mounts override earlier ones.
-        for relative in [".git", ".env", ".aletheon", ".ssh"] {
-            let protected = Path::new(&config.working_dir).join(relative);
-            if protected.exists() {
-                args.push("--ro-bind".into());
-                args.push(protected.to_string_lossy().into_owned());
-                args.push(protected.to_string_lossy().into_owned());
-            }
-        }
-
-        // Tmpfs for /tmp
-        args.push("--tmpfs".into());
-        args.push("/tmp".into());
-
         // Environment variables
-        for (key, value) in &config.env_vars {
+        for (key, value) in &config.environment {
             args.push("--setenv".into());
             args.push(key.clone());
             args.push(value.clone());
@@ -207,7 +184,7 @@ impl SandboxBackend for BubblewrapBackend {
             .timeout(timeout, async {
                 tokio::process::Command::new(&self.bwrap_path)
                     .args(&args)
-                    .current_dir(&config.working_dir)
+                    .current_dir(config.working_dir())
                     .output()
                     .await
             })
@@ -241,7 +218,7 @@ impl SandboxBackend for BubblewrapBackend {
 mod tests {
     use super::*;
     use aletheon_kernel::chronos::TestClock;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     #[test]
     fn argv_wrapper_is_networkless_and_only_worktree_is_writable() {
@@ -250,8 +227,12 @@ mod tests {
             clock: Arc::new(TestClock::default()),
         };
         let config = SandboxConfig {
-            working_dir: "/managed/job-1".into(),
-            env_vars: HashMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                "/managed/job-1".into(),
+                vec![],
+            )
+            .unwrap(),
+            environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
         };
         let wrapped = backend
             .wrap_argv(
@@ -289,13 +270,14 @@ mod tests {
             clock: Arc::new(TestClock::default()),
         };
         let config = SandboxConfig {
-            working_dir: work.to_string_lossy().into_owned(),
-            env_vars: Default::default(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(work.clone(), vec![]).unwrap(),
+            environment: Default::default(),
         };
         let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
+        let working_dir = config.working_dir().to_string_lossy().into_owned();
         let writable = args
             .windows(3)
-            .position(|items| items[0] == "--bind" && items[1] == config.working_dir)
+            .position(|items| items[0] == "--bind" && items[1] == working_dir)
             .unwrap();
         let git = work.join(".git").to_string_lossy().into_owned();
         let protected = args

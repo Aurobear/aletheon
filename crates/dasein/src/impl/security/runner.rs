@@ -194,8 +194,12 @@ impl ToolRunnerWithGuard {
             let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
             let sandbox_config = SandboxConfig {
-                working_dir: ctx.working_dir.to_string_lossy().to_string(),
-                env_vars: std::collections::HashMap::new(),
+                workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                    ctx.working_dir.clone(),
+                    vec![],
+                )
+                .map_err(|reason| ToolError::PolicyDenied { reason })?,
+                environment: std::collections::BTreeMap::new(),
             };
 
             match self

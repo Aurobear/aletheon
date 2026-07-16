@@ -159,10 +159,10 @@ impl ContainerBackend {
         // Read-only root filesystem with writable tmpfs at working dir
         args.push("--read-only".into());
         args.push("--tmpfs".into());
-        args.push(format!("{}:exec,mode=1777", config.working_dir));
+        args.push(format!("{}:exec,mode=1777", config.working_dir().display()));
 
         // Environment variables
-        for (key, value) in &config.env_vars {
+        for (key, value) in &config.environment {
             args.push("-e".into());
             args.push(format!("{}={}", key, value));
         }
@@ -267,7 +267,7 @@ impl SandboxBackend for ContainerBackend {
             .timeout(timeout, async {
                 tokio::process::Command::new(&runtime)
                     .args(&args)
-                    .current_dir(&config.working_dir)
+                    .current_dir(config.working_dir())
                     .output()
                     .await
             })
@@ -300,12 +300,13 @@ impl SandboxBackend for ContainerBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     fn default_config() -> SandboxConfig {
         SandboxConfig {
-            working_dir: "/workspace".to_string(),
-            env_vars: HashMap::new(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/workspace".into(), vec![])
+                .unwrap(),
+            environment: BTreeMap::new(),
         }
     }
 
@@ -437,9 +438,11 @@ mod tests {
     fn test_build_run_args_with_env_vars() {
         let backend = test_backend();
         let mut config = default_config();
-        config.env_vars.insert("FOO".to_string(), "bar".to_string());
         config
-            .env_vars
+            .environment
+            .insert("FOO".to_string(), "bar".to_string());
+        config
+            .environment
             .insert("BAZ".to_string(), "qux=1".to_string());
 
         let args = backend.build_run_args("env", &config);

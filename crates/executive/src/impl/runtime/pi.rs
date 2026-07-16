@@ -347,8 +347,17 @@ impl SubAgentRuntime for PiRuntime {
         sandbox_env.insert("PATH".into(), "/usr/local/bin:/usr/bin:/bin".into());
         sandbox_env.insert("HOME".into(), "/tmp".into());
         let sandbox_config = SandboxConfig {
-            working_dir: lease.path.to_string_lossy().into_owned(),
-            env_vars: sandbox_env,
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(lease.path.clone(), vec![])
+                .map_err(|error| {
+                    self.failure(
+                        FailureClass::ToolFailure,
+                        format!("invalid Pi workspace policy: {error}"),
+                        false,
+                        self.clock.mono_now().0.saturating_sub(started),
+                        vec![],
+                    )
+                })?,
+            environment: sandbox_env.into_iter().collect(),
         };
         let wrapped = match self.sandbox.wrap_argv(
             &self.config.executable,

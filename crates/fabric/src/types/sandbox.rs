@@ -1,11 +1,9 @@
 //! Sandbox trait and types.
-//!
-//! Sandbox trait and types.
 
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -23,13 +21,19 @@ pub enum IsolationLevel {
 }
 
 /// Runtime configuration passed to a sandbox execute call.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SandboxConfig {
-    /// Working directory for the spawned process.
-    pub working_dir: String,
+    /// Canonical workspace authority materialized into the process sandbox.
+    pub workspace: crate::WorkspacePolicy,
     /// Extra environment variables to set.
     #[serde(default)]
-    pub env_vars: HashMap<String, String>,
+    pub environment: BTreeMap<String, String>,
+}
+
+impl SandboxConfig {
+    pub fn working_dir(&self) -> &Path {
+        self.workspace.cwd()
+    }
 }
 
 /// Capabilities reported by a sandbox backend.
