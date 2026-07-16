@@ -392,6 +392,7 @@ impl TurnPipeline {
         let mut canonical_items: Vec<fabric::ItemPayload> = Vec::new();
         let mut acc_tokens_in: u64 = 0;
         let mut acc_tokens_out: u64 = 0;
+        let mut terminal_events = TerminalEventBuffer::default();
 
         let text = loop {
             tokio::select! {
@@ -406,6 +407,7 @@ impl TurnPipeline {
                             continue;
                         }
                     };
+                    let is_terminal = terminal_events.observe(&event);
                     match &event {
                         TurnEventV1::ToolCallStart { name, call_id } => {
                             tool_calls_for_session.push((call_id.clone(), name.clone(), serde_json::Value::Null));
@@ -469,7 +471,7 @@ impl TurnPipeline {
                         _ => {}
                     }
                     // Forward event to TUI client
-                    {
+                    if !is_terminal {
                         let guard = notify_tx.lock().await;
                         if let Some(ref tx) = *guard {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
@@ -511,14 +513,11 @@ impl TurnPipeline {
         // Drain remaining events from turn stream
         // Yield once to allow the bridge task to forward inflight events
         tokio::task::yield_now().await;
-        let mut had_turn_done = false;
         loop {
             match turn_stream.try_recv() {
                 Some(Ok(event)) => {
-                    if matches!(event, TurnEventV1::TurnDone { .. }) {
-                        had_turn_done = true;
-                    }
-                    {
+                    let is_terminal = terminal_events.observe(&event);
+                    if !is_terminal {
                         let guard = notify_tx.lock().await;
                         if let Some(ref tx) = *guard {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
@@ -540,11 +539,25 @@ impl TurnPipeline {
                 None => break,
             }
         }
-        if !had_turn_done {
+
+        // Terminal events are buffered while the ReAct task is running so a
+        // failed task always produces one ordered Error -> TurnDone sequence.
+        // Successful tasks produce exactly one TurnDone even when Cognit also
+        // reported completion before its task joined.
+        let turn_error = text.as_ref().err().map(ToString::to_string);
+        let normalized_terminal_events = terminal_events.into_client_events(turn_error);
+        {
             let guard = notify_tx.lock().await;
             if let Some(ref tx) = *guard {
-                if tx.send(json!({"jsonrpc": "2.0", "method": "event", "params": {"type": "turn_done"}}).to_string()).await.is_err() {
-                    warn!("Event sink closed, unable to send turn_done event");
+                for event in normalized_terminal_events {
+                    let Ok(json_str) = event_to_json(&event) else {
+                        warn!("Unable to serialize terminal turn event");
+                        continue;
+                    };
+                    if tx.send(json_str).await.is_err() {
+                        warn!("Event sink closed, unable to send terminal turn event");
+                        break;
+                    }
                 }
             }
         }
@@ -657,6 +670,47 @@ impl TurnPipeline {
                     "conscious_context": context_projection_receipt
                 }
         }}))
+    }
+}
+
+#[derive(Default)]
+struct TerminalEventBuffer {
+    error: Option<String>,
+    turn_done: bool,
+}
+
+impl TerminalEventBuffer {
+    /// Buffer terminal stream events instead of forwarding them immediately.
+    /// This lets the join result normalize failures without duplicate or
+    /// out-of-order completion notifications.
+    fn observe(&mut self, event: &TurnEventV1) -> bool {
+        match event {
+            TurnEventV1::Error { message } => {
+                if self.error.is_none() {
+                    self.error = Some(message.clone());
+                }
+                true
+            }
+            TurnEventV1::TurnDone { .. } => {
+                self.turn_done = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn into_client_events(self, turn_error: Option<String>) -> Vec<ClientEvent> {
+        let error = self.error.or(turn_error);
+        if !self.turn_done {
+            debug!("Synthesizing missing terminal turn_done event");
+        }
+
+        let mut events = Vec::with_capacity(if error.is_some() { 2 } else { 1 });
+        if let Some(message) = error {
+            events.push(ClientEvent::Error { message });
+        }
+        events.push(ClientEvent::TurnDone);
+        events
     }
 }
 
@@ -891,4 +945,55 @@ fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
         "params": event,
     });
     serde_json::to_string(&notification)
+}
+
+#[cfg(test)]
+mod terminal_event_tests {
+    use super::*;
+
+    #[test]
+    fn failed_react_task_emits_exactly_error_then_turn_done() {
+        let events =
+            TerminalEventBuffer::default().into_client_events(Some("react task panicked".into()));
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            ClientEvent::Error { message } if message == "react task panicked"
+        ));
+        assert!(matches!(&events[1], ClientEvent::TurnDone));
+    }
+
+    #[test]
+    fn reported_terminal_events_are_normalized_without_duplicates() {
+        let mut buffered = TerminalEventBuffer::default();
+        assert!(buffered.observe(&TurnEventV1::Error {
+            message: "compaction failed".into(),
+        }));
+        assert!(buffered.observe(&TurnEventV1::TurnDone {
+            result: Some("error: compaction failed".into()),
+        }));
+
+        let events = buffered.into_client_events(Some("fallback error".into()));
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            ClientEvent::Error { message } if message == "compaction failed"
+        ));
+        assert!(matches!(&events[1], ClientEvent::TurnDone));
+    }
+
+    #[test]
+    fn successful_react_task_emits_one_turn_done() {
+        let mut buffered = TerminalEventBuffer::default();
+        assert!(buffered.observe(&TurnEventV1::TurnDone {
+            result: Some("ok".into()),
+        }));
+
+        let events = buffered.into_client_events(None);
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], ClientEvent::TurnDone));
+    }
 }

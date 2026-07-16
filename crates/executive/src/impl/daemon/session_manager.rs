@@ -188,28 +188,27 @@ impl SessionManager {
 
     /// Compact the context window if we exceed the threshold, using the
     /// tool-boundary-safe compressor. Returns true if compaction happened.
-    pub async fn compact_if_needed(&mut self, llm: &dyn LlmProvider) -> bool {
+    pub async fn compact_if_needed(&mut self, llm: &dyn LlmProvider) -> Result<bool> {
         self.run_compaction(llm, false).await
     }
 
     /// Force compaction regardless of token estimate.
-    pub async fn force_compact(&mut self, llm: &dyn LlmProvider) -> bool {
+    pub async fn force_compact(&mut self, llm: &dyn LlmProvider) -> Result<bool> {
         if self.messages.len() <= 2 {
-            return false;
+            return Ok(false);
         }
         self.run_compaction(llm, true).await
     }
 
-    async fn run_compaction(&mut self, llm: &dyn LlmProvider, force: bool) -> bool {
+    async fn run_compaction(&mut self, llm: &dyn LlmProvider, force: bool) -> Result<bool> {
         let before_count = self.messages.len();
         let did = if force {
             self.compressor.force_compact(&mut self.messages, llm).await
         } else {
             self.compressor.maybe_compact(&mut self.messages, llm).await
-        }
-        .unwrap_or(false);
+        }?;
         if !did {
-            return false;
+            return Ok(false);
         }
         let after_count = self.messages.len();
         let summary = self.compressor.last_summary().unwrap_or("").to_string();
@@ -220,7 +219,7 @@ impl SessionManager {
             after = after_count,
             "Context compaction complete"
         );
-        true
+        Ok(true)
     }
 
     async fn persist_compaction(
@@ -539,6 +538,52 @@ mod compaction_tests {
         }
     }
 
+    struct FailingLlm;
+
+    #[async_trait]
+    impl LlmProvider for FailingLlm {
+        async fn complete(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            anyhow::bail!("summary failed")
+        }
+
+        async fn complete_stream(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            anyhow::bail!("mock(FailingLlm): streaming not implemented")
+        }
+
+        fn name(&self) -> &str {
+            "failing"
+        }
+
+        fn max_context_length(&self) -> usize {
+            1_000
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_error_is_not_reported_as_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sm = SessionManager::new(dir.path(), "fails".into(), 1_000, test_clock())
+            .await
+            .unwrap();
+        for i in 0..8 {
+            sm.push_user(&format!("request {i} {}", "中".repeat(200)))
+                .await;
+            sm.push_assistant(&format!("answer {i} {}", "🙂".repeat(200)))
+                .await;
+        }
+
+        let error = sm.force_compact(&FailingLlm).await.unwrap_err();
+        assert!(error.to_string().contains("summary failed"));
+    }
+
     #[tokio::test]
     async fn compaction_tail_never_starts_with_tool_result() {
         let dir = tempfile::tempdir().unwrap();
@@ -558,7 +603,7 @@ mod compaction_tests {
             .await;
             sm.push_user(&format!("user {i} {}", "z".repeat(400))).await;
         }
-        let did = sm.compact_if_needed(&StubLlm).await;
+        let did = sm.compact_if_needed(&StubLlm).await.unwrap();
         assert!(did, "should compact");
         let hist = sm.history();
         // first non-system message after the summary must not be a bare tool_result
@@ -583,7 +628,7 @@ mod compaction_tests {
                     .await;
                 sm.push_user(&format!("user {i} {}", "z".repeat(400))).await;
             }
-            assert!(sm.compact_if_needed(&StubLlm).await);
+            assert!(sm.compact_if_needed(&StubLlm).await.unwrap());
         }
         // Reopen: recover must include the summary system message
         let sm2 = SessionManager::new(dir.path(), "s2".into(), 1_000, test_clock())

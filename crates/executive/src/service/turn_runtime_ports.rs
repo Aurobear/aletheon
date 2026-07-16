@@ -461,7 +461,7 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                     .await;
             }
             manager.push_assistant(output).await;
-            let _ = manager.compact_if_needed(&*self.llm).await;
+            manager.compact_if_needed(&*self.llm).await?;
         }
         Ok(manager.turn_count())
     }

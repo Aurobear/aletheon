@@ -155,6 +155,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
+            app.turn_active = false;
         }
         ClientEvent::AwarenessChanged { level, context } => {
             if let Ok(awareness_level) =
@@ -691,7 +692,9 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::deduplicate_consecutive_text;
+    use super::{deduplicate_consecutive_text, handle_event};
+    use crate::tui::{host_time::ClientClock, term_compat::TermCaps, App};
+    use std::sync::Arc;
 
     #[test]
     fn deduplicates_only_an_exact_repeated_response() {
@@ -706,5 +709,31 @@ mod tests {
     fn preserves_markdown_that_starts_with_repeated_rule_characters() {
         let response = "----------------------------------------\n邮件分析结果\n- 重点一\n- 重点二";
         assert_eq!(deduplicate_consecutive_text(response), response);
+    }
+
+    #[tokio::test]
+    async fn error_event_releases_the_active_turn() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let mut app = App::new(stream, caps, "test".into(), Arc::new(ClientClock::new()));
+        app.streaming = true;
+        app.status.waiting = true;
+        app.app_state.streaming = true;
+        app.turn_active = true;
+
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "error", "message": "compaction failed"}),
+        );
+
+        assert!(!app.streaming);
+        assert!(!app.status.waiting);
+        assert!(!app.app_state.streaming);
+        assert!(!app.turn_active);
     }
 }

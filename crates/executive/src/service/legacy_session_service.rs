@@ -318,7 +318,11 @@ impl LegacySessionUseCases for LegacySessionService {
         let manager = self.manager(&previous.session_id).await?;
         let messages = {
             let mut manager = manager.lock().await;
-            if !manager.force_compact(&*self.llm).await {
+            if !manager
+                .force_compact(&*self.llm)
+                .await
+                .map_err(operation_error)?
+            {
                 return Ok(None);
             }
             manager.history().to_vec()

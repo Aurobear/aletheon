@@ -6,6 +6,7 @@ use std::time::Duration;
 use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
 use fabric::debug::DebugEvent;
+use fabric::events::ui_event::ClientEvent;
 use fabric::{Clock, Timer};
 use nix::unistd::{Gid, Uid, User};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -16,6 +17,26 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::handler::RequestHandler;
+
+fn request_task_failure(
+    request_id: serde_json::Value,
+    error: impl std::fmt::Display,
+) -> (serde_json::Value, Vec<ClientEvent>) {
+    let message = format!("request task failed: {error}");
+    (
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": { "code": -32603, "message": message }
+        }),
+        vec![
+            ClientEvent::Error {
+                message: message.clone(),
+            },
+            ClientEvent::TurnDone,
+        ],
+    )
+}
 
 pub struct UnixServer {
     listener: UnixListener,
@@ -208,10 +229,33 @@ impl UnixServer {
 
                     // Parse JSON request and spawn handler in background
                     let request: serde_json::Value = serde_json::from_str(&trimmed)?;
+                    let request_id = request
+                        .get("id")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                     let handler = handler.clone();
+                    let notify_tx = handler.notify_tx.clone();
                     let resp_tx = resp_tx.clone();
                     tokio::spawn(async move {
-                        let response = handler.handle(request).await;
+                        let task = tokio::spawn(async move { handler.handle(request).await });
+                        let response = match task.await {
+                            Ok(response) => response,
+                            Err(error) => {
+                                let (response, terminal_events) =
+                                    request_task_failure(request_id, error);
+                                error!(message = %response["error"]["message"], "Request handler task failed");
+                                if let Some(tx) = notify_tx {
+                                    for event in terminal_events {
+                                        if let Ok(payload) =
+                                            super::handler::format::event_to_json(&event)
+                                        {
+                                            let _ = tx.send(payload).await;
+                                        }
+                                    }
+                                }
+                                response
+                            }
+                        };
                         let response_json = serde_json::to_string(&response)
                             .unwrap_or_default();
                         let _ = resp_tx.send(response_json).await;
@@ -268,5 +312,25 @@ impl UnixServer {
 
         handler.decrement_connections();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_task_failure_retains_id_and_finishes_client_turn() {
+        let (response, events) = request_task_failure(serde_json::json!(42), "panic");
+        assert_eq!(response["id"], 42);
+        assert_eq!(response["error"]["code"], -32603);
+        assert!(response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("panic"));
+        assert!(matches!(
+            events.as_slice(),
+            [ClientEvent::Error { .. }, ClientEvent::TurnDone]
+        ));
     }
 }
