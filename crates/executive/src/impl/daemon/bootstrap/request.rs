@@ -601,14 +601,20 @@ impl RequestHandler {
             clock.clone(),
         ));
 
-        let local_memory: Arc<dyn mnemosyne::MemoryService> =
-            Arc::new(mnemosyne::DefaultMemoryService::new(
+        let consolidation_repository =
+            Arc::new(mnemosyne::consolidation::ConsolidationRepository::open(
+                data_dir.join("memory_consolidation.db"),
+            )?);
+        let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(
+            mnemosyne::DefaultMemoryService::new(
                 recall_memory.clone(),
                 fact_store.clone(),
                 core_memory.clone(),
                 episodic_memory.clone(),
                 clock.clone(),
-            ));
+            )
+            .with_consolidation_repository(consolidation_repository),
+        );
         let gbrain_runtime = crate::r#impl::gbrain::build_gbrain_memory_runtime(
             local_memory,
             retained_mcp,
@@ -617,6 +623,15 @@ impl RequestHandler {
             &cancel_token,
         );
         let gbrain_worker_task = gbrain_runtime.worker_task;
+        let consolidation_cancel = cancel_token.clone();
+        let consolidation_memory = gbrain_runtime.memory_service.clone();
+        tokio::spawn(async move {
+            crate::service::memory_consolidation_worker::MemoryConsolidationWorker::new(
+                consolidation_memory,
+            )
+            .run(consolidation_cancel)
+            .await;
+        });
 
         let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(clock.clone()));
         let fact_use_cases: Arc<dyn mnemosyne::FactUseCases> =

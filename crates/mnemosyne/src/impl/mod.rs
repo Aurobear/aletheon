@@ -4,7 +4,6 @@ pub mod compaction;
 pub mod compressor;
 pub mod core_memory;
 pub mod fact_store;
-pub mod pipeline;
 pub mod recall_memory;
 pub mod tools;
 pub mod vector_store;
@@ -21,8 +20,4 @@ pub use core_memory::{CoreMemory, MemoryBlock};
 pub use fact_store::{
     ConsolidationLogRow, EntityNeighbor, EpisodeRow, FactRow, FactStore, FeedbackResult,
     KnowledgeRow,
-};
-pub use pipeline::memory_pipeline::{
-    ExtractedFact, ExtractionResult as MemoryExtractionResult, FactCategory, MemoryPipeline,
-    MemoryPipelineConfig,
 };

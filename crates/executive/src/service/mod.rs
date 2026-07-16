@@ -15,6 +15,7 @@ pub mod goal_service;
 pub mod governed_capability;
 pub mod harness_factory;
 pub mod legacy_session_service;
+pub mod memory_consolidation_worker;
 pub mod post_turn;
 pub mod pre_turn;
 pub mod session_service;

@@ -7,6 +7,7 @@
 
 pub mod backends;
 pub mod composite_service;
+pub mod consolidation;
 pub mod fact_service;
 pub mod r#impl;
 pub mod model;
@@ -77,7 +78,6 @@ pub use r#impl::compaction::CompactionManager;
 pub use r#impl::compressor::AdvancedCompressor;
 pub use r#impl::core_memory::{CoreMemory, MemoryBlock};
 pub use r#impl::fact_store::FactStore;
-pub use r#impl::pipeline::memory_pipeline::MemoryPipeline;
 pub use r#impl::recall_memory::RecallMemory;
 pub use r#impl::tools as memory_tools;
 

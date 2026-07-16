@@ -203,6 +203,7 @@ pub struct DefaultMemoryService {
     core_memory: Arc<Mutex<CoreMemory>>,
     episodic: Arc<Mutex<EpisodicMemory>>,
     clock: Arc<dyn fabric::Clock>,
+    consolidation: Option<Arc<crate::consolidation::ConsolidationRepository>>,
 }
 
 impl DefaultMemoryService {
@@ -219,7 +220,16 @@ impl DefaultMemoryService {
             core_memory,
             episodic,
             clock,
+            consolidation: None,
         }
+    }
+
+    pub fn with_consolidation_repository(
+        mut self,
+        repository: Arc<crate::consolidation::ConsolidationRepository>,
+    ) -> Self {
+        self.consolidation = Some(repository);
+        self
     }
 }
 
@@ -333,11 +343,13 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
-        // Facts are not session-scoped, so scoped and Global calls behave the
-        // same for now: decay stale facts.
-        let _ = scope;
-        let fact_store = self.fact_store.lock().await;
-        fact_store.decay_stale()?;
+        if let Some(repository) = &self.consolidation {
+            let now_ms = self.clock.wall_now().0.max(0) as u64;
+            let owner = format!("executive-memory-worker:{}", std::process::id());
+            crate::consolidation::ScopedConsolidator::new(repository)
+                .run(&scope, &owner, now_ms, None)?;
+        }
+        self.fact_store.lock().await.decay_stale()?;
         Ok(())
     }
 

@@ -147,6 +147,28 @@ if violations:
     raise SystemExit("architecture-check: memory workspace bypass:\n" + "\n".join(violations))
 PY
 
+# M05 deletion gate: leased SQLite consolidation is the only exported memory
+# pipeline; the former process-local phase/state implementations stay deleted.
+python3 - <<'PY'
+from pathlib import Path
+
+legacy = Path("crates/mnemosyne/src/impl/pipeline")
+if legacy.exists():
+    raise SystemExit("architecture-check: legacy in-memory consolidation pipeline exists")
+required = [
+    "crates/mnemosyne/src/consolidation/repository.rs",
+    "crates/mnemosyne/src/consolidation/extractor.rs",
+    "crates/mnemosyne/src/consolidation/consolidator.rs",
+    "crates/executive/src/service/memory_consolidation_worker.rs",
+]
+missing = [path for path in required if not Path(path).is_file()]
+if missing:
+    raise SystemExit("architecture-check: missing durable consolidation boundary: " + ",".join(missing))
+service = Path("crates/mnemosyne/src/service.rs").read_text()
+if "ScopedConsolidator::new" not in service:
+    raise SystemExit("architecture-check: MemoryService bypasses canonical consolidation")
+PY
+
 # K02 deletion gate: cognitive domains receive Clock from Executive. Unit-test
 # modules may use TestClock, but no production prefix may mention SystemClock.
 python3 - <<'PY'
