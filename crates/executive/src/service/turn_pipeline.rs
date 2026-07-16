@@ -4,13 +4,14 @@
 //! and CLI exec paths share the same Pre/Cognit/Post turn pipeline.
 
 use crate::core::session_gateway::SessionGateway;
-use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
+use crate::service::daemon_react::{
+    submit_streaming_daemon_turn, DaemonCognitiveEvent as Event, DaemonStreamingTurnContext,
+};
 use crate::service::daemon_turn::helpers::bounded_text_history;
 use crate::service::governed_capability::CapabilityExecutionContext;
 use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::KernelRuntime;
-use cognit::harness::event_sink::{ChannelEventSink, Event};
-use cognit::harness::linear::TurnMetrics;
+use cognit::ChannelCognitiveStreamSink;
 use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::include::agora::{AgoraOperation, WorkspaceCommitPermit};
@@ -51,6 +52,8 @@ pub struct TurnPipeline {
     pub(crate) post_turn_projection:
         Arc<dyn crate::service::post_turn_projection::PostTurnProjection>,
     pub(crate) runtime_ports: Arc<crate::service::turn_runtime_ports::TurnRuntimePorts>,
+    pub(crate) cognitive_sessions:
+        Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
     pub(crate) conscious_core:
         Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
 }
@@ -67,6 +70,8 @@ pub(crate) struct TurnPipelineResources {
     pub(crate) canonical_sessions: Arc<crate::service::session_service::SessionService>,
     pub(crate) projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection>,
     pub(crate) runtime: Arc<crate::service::turn_runtime_ports::TurnRuntimePorts>,
+    pub(crate) cognitive_sessions:
+        Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
     pub(crate) conscious_core:
         Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
 }
@@ -85,6 +90,7 @@ impl TurnPipeline {
             canonical_sessions: resources.canonical_sessions,
             post_turn_projection: resources.projection,
             runtime_ports: resources.runtime,
+            cognitive_sessions: resources.cognitive_sessions,
             conscious_core: resources.conscious_core,
         }
     }
@@ -340,10 +346,10 @@ impl TurnPipeline {
             }
         };
 
-        // Event channel — kept for ReAct loop (ChannelEventSink)
+        // Cognit streaming events are projected into the canonical turn stream.
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(64);
-        let event_sink = ChannelEventSink::new(event_tx.clone());
-        drop(event_tx); // Only ChannelEventSink holds a sender; drops when react_task completes
+        let event_sink = ChannelCognitiveStreamSink::new(event_tx.clone());
+        drop(event_tx);
 
         // Turn event stream — EnvelopeV2-typed channel for turn orchestration
         let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
@@ -374,7 +380,7 @@ impl TurnPipeline {
                 request_messages,
                 dasein_context,
                 cancel_token: scope_token,
-                clock: self.clock.clone(),
+                sessions: self.cognitive_sessions.clone(),
             },
         ));
 
@@ -544,18 +550,19 @@ impl TurnPipeline {
         }
 
         let turn_succeeded = text.is_ok();
-        let (text, metrics) = text.unwrap_or_else(|e| {
-            (
-                format!("error: {e}"),
-                TurnMetrics {
-                    tool_calls_made: 0,
-                    tool_errors: 0,
-                    elapsed_ms: 0,
-                    iterations: 0,
-                    completed_normally: false,
-                },
-            )
+        let result = text.unwrap_or_else(|e| fabric::TurnResult {
+            output: format!("error: {e}"),
+            stop: fabric::TurnStop::Failed,
+            metrics: fabric::TurnMetrics {
+                tool_calls_made: 0,
+                tool_errors: 0,
+                elapsed_ms: 0,
+                iterations: 0,
+                completed_normally: false,
+            },
         });
+        let text = result.output;
+        let metrics = result.metrics;
         info!(len = text.len(), "ReAct loop completed");
 
         // -- Post-turn settlement --

@@ -434,6 +434,15 @@ impl RequestHandler {
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
+        let cognitive_sessions: Arc<dyn crate::service::harness_factory::CognitiveSessionFactory> =
+            Arc::new(
+                crate::service::harness_factory::LinearCognitiveSessionFactory::new(
+                    crate::service::harness_factory::harness_config_from_executive(
+                        &runtime_config_snapshot,
+                    ),
+                    clock.clone(),
+                ),
+            );
 
         let mut runtime = AletheonExecutive::new(runtime_config);
         let evo_config = EvolutionConfig {
@@ -724,14 +733,7 @@ impl RequestHandler {
             agent_profiles_for_tools = tool_profiles;
             let native = Arc::new(crate::r#impl::runtime::NativeCognitRuntime::new(
                 crate::r#impl::runtime::NativeCognitRuntimeResources {
-                    sessions: Arc::new(
-                        crate::service::harness_factory::LinearCognitiveSessionFactory::new(
-                            crate::service::harness_factory::harness_config_from_executive(
-                                &runtime_config_snapshot,
-                            ),
-                            clock.clone(),
-                        ),
-                    ),
+                    sessions: cognitive_sessions.clone(),
                     capabilities: capability_service.clone(),
                     profiles,
                     clock: clock.clone(),
@@ -964,6 +966,7 @@ impl RequestHandler {
                 canonical_sessions: session_service.clone(),
                 projection,
                 runtime: runtime_ports,
+                cognitive_sessions,
                 conscious_core: Some(conscious_registry),
             },
         ));

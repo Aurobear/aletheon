@@ -1,7 +1,5 @@
 use async_trait::async_trait;
-use cognit::harness::build_harness;
 use cognit::harness::config::HarnessConfig;
-use cognit::harness::linear::ReActLoop;
 use fabric::SessionRecord;
 use mnemosyne::AdvancedCompressor;
 use tokio_util::sync::CancellationToken;
@@ -53,6 +51,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
             cognit::CognitiveSessionDependencies {
                 clock: self.clock.clone(),
                 cancellation,
+                compactor: Some(compactor(&self.config)),
             },
         )))
     }
@@ -64,14 +63,29 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
         config: HarnessConfig,
         cancellation: CancellationToken,
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        let compactor = compactor(&config);
         Ok(Box::new(cognit::harness::LinearCognitiveSession::new(
             config,
             cognit::CognitiveSessionDependencies {
                 clock: self.clock.clone(),
                 cancellation,
+                compactor: Some(compactor),
             },
         )))
     }
+}
+
+fn compactor(config: &HarnessConfig) -> Box<dyn fabric::CompactorTrait> {
+    let effective_tail = if config.tail_token_budget * 4 < config.context_window_tokens {
+        config.context_window_tokens / 8
+    } else {
+        config.tail_token_budget
+    };
+    Box::new(AdvancedCompressor::new(
+        effective_tail,
+        config.target_summary_chars,
+        config.context_window_tokens,
+    ))
 }
 
 pub fn harness_config_from_executive(config: &ExecutiveConfig) -> HarnessConfig {
@@ -88,29 +102,4 @@ pub fn harness_config_from_executive(config: &ExecutiveConfig) -> HarnessConfig 
         circuit_breaker_window_size: config.circuit_breaker.window_size,
         learning_enabled: config.learning_enabled,
     }
-}
-
-pub fn build_configured_react_loop(
-    config: &ExecutiveConfig,
-    clock: std::sync::Arc<dyn fabric::Clock>,
-) -> ReActLoop {
-    build_react_loop(config, harness_config_from_executive(config), clock)
-}
-
-pub fn build_react_loop(
-    config: &ExecutiveConfig,
-    harness_config: HarnessConfig,
-    clock: std::sync::Arc<dyn fabric::Clock>,
-) -> ReActLoop {
-    let effective_tail = if config.tail_token_budget * 4 < config.context_window_tokens {
-        config.context_window_tokens / 8
-    } else {
-        config.tail_token_budget
-    };
-    let compressor = Box::new(AdvancedCompressor::new(
-        effective_tail,
-        config.target_summary_chars,
-        config.context_window_tokens,
-    )) as Box<dyn cognit::harness::linear::CompactorTrait>;
-    build_harness(config.harness_kind, harness_config, compressor, clock)
 }

@@ -13,6 +13,37 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
+pub type CognitiveStreamEvent = crate::harness::event_sink::Event;
+
+/// Cognit-owned streaming event boundary used by interactive frontends.
+pub trait CognitiveStreamSink: Send + Sync {
+    fn emit(&self, event: CognitiveStreamEvent);
+}
+
+pub struct ChannelCognitiveStreamSink {
+    tx: tokio::sync::mpsc::Sender<CognitiveStreamEvent>,
+}
+
+impl ChannelCognitiveStreamSink {
+    pub fn new(tx: tokio::sync::mpsc::Sender<CognitiveStreamEvent>) -> Self {
+        Self { tx }
+    }
+}
+
+impl CognitiveStreamSink for ChannelCognitiveStreamSink {
+    fn emit(&self, event: CognitiveStreamEvent) {
+        let _ = self.tx.try_send(event);
+    }
+}
+
+struct CognitiveStreamAdapter<'a>(&'a dyn CognitiveStreamSink);
+
+impl crate::harness::event_sink::EventSink for CognitiveStreamAdapter<'_> {
+    fn emit(&self, event: CognitiveStreamEvent) {
+        self.0.emit(event);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CognitRetryDisposition {
     Never,
@@ -69,10 +100,10 @@ impl CognitError {
     }
 }
 
-#[derive(Clone)]
 pub struct CognitiveSessionDependencies {
     pub clock: Arc<dyn fabric::Clock>,
     pub cancellation: CancellationToken,
+    pub compactor: Option<Box<dyn CompactorTrait>>,
 }
 
 struct NoopCompressor;
@@ -103,6 +134,23 @@ pub trait CognitiveSession: Send {
         services: &dyn TurnServices,
         events: &dyn TurnEventSink,
     ) -> Result<TurnResult, CognitError>;
+
+    async fn run_streaming_turn(
+        &mut self,
+        request: TurnRequest,
+        services: &dyn TurnServices,
+        events: &dyn TurnEventSink,
+        stream: &dyn CognitiveStreamSink,
+    ) -> Result<TurnResult, CognitError> {
+        let result = self.run_turn(request, services, events).await?;
+        stream.emit(CognitiveStreamEvent::Text {
+            text: result.output.clone(),
+        });
+        stream.emit(CognitiveStreamEvent::TurnDone {
+            result: Ok(result.output.clone()),
+        });
+        Ok(result)
+    }
 }
 
 pub trait CognitiveSessionFactory: Send + Sync {
@@ -133,8 +181,11 @@ pub struct LinearCognitiveSession {
 
 impl LinearCognitiveSession {
     pub fn new(config: HarnessConfig, dependencies: CognitiveSessionDependencies) -> Self {
+        let compactor = dependencies
+            .compactor
+            .unwrap_or_else(|| Box::new(NoopCompressor));
         Self {
-            inner: ReActLoop::new_with_clock(config, Box::new(NoopCompressor), dependencies.clock),
+            inner: ReActLoop::new_with_clock(config, compactor, dependencies.clock),
             cancellation: dependencies.cancellation,
         }
     }
@@ -241,6 +292,129 @@ impl CognitiveSession for LinearCognitiveSession {
             }
         };
 
+        events
+            .emit(TurnEvent::Finished {
+                operation_id: request.operation_id,
+                stop: result.stop.clone(),
+            })
+            .await;
+        Ok(result)
+    }
+
+    async fn run_streaming_turn(
+        &mut self,
+        request: TurnRequest,
+        services: &dyn TurnServices,
+        events: &dyn TurnEventSink,
+        stream: &dyn CognitiveStreamSink,
+    ) -> Result<TurnResult, CognitError> {
+        events
+            .emit(TurnEvent::Started {
+                operation_id: request.operation_id,
+            })
+            .await;
+        if self.cancellation.is_cancelled() {
+            events
+                .emit(TurnEvent::Finished {
+                    operation_id: request.operation_id,
+                    stop: TurnStop::Cancelled,
+                })
+                .await;
+            return Err(CognitError::cancelled());
+        }
+
+        let Some(llm) = services.llm_provider() else {
+            let result = TurnResult {
+                output: request.input,
+                stop: TurnStop::Completed,
+                metrics: FabricTurnMetrics {
+                    completed_normally: true,
+                    ..Default::default()
+                },
+            };
+            stream.emit(CognitiveStreamEvent::Text {
+                text: result.output.clone(),
+            });
+            stream.emit(CognitiveStreamEvent::TurnDone {
+                result: Ok(result.output.clone()),
+            });
+            events
+                .emit(TurnEvent::Finished {
+                    operation_id: request.operation_id,
+                    stop: result.stop.clone(),
+                })
+                .await;
+            return Ok(result);
+        };
+
+        self.inner.reset();
+        let seed_messages = services.seed_messages(&request);
+        if !seed_messages.is_empty() {
+            self.inner.seed_messages(seed_messages);
+        }
+        self.inner.set_goal(request.input.clone());
+        if let Ok(view) = services.dasein_view(request.process_id).await {
+            self.inner
+                .set_dasein_context_provider(Box::new(move || view.text.clone()));
+        }
+        stream.emit(CognitiveStreamEvent::GoalSet {
+            goal: request.input,
+            sub_goals: vec![],
+        });
+
+        let tool_defs = services.tool_definitions();
+        let process_id = request.process_id;
+        let llm = DynLlmRef(llm);
+        let sink = CognitiveStreamAdapter(stream);
+        let run = self.inner.run_streaming(
+            &llm,
+            &tool_defs,
+            |call_id, name, input| {
+                let call = CapabilityCall {
+                    operation_id: request.operation_id,
+                    process_id,
+                    name: name.to_string(),
+                    input: input.clone(),
+                    call_id: call_id.to_string(),
+                    deadline: None,
+                };
+                async move {
+                    let result = services.invoke(call).await;
+                    (result.output, result.is_error)
+                }
+            },
+            &sink,
+        );
+        let (output, metrics) = tokio::select! {
+            _ = self.cancellation.cancelled() => {
+                events.emit(TurnEvent::Finished {
+                    operation_id: request.operation_id,
+                    stop: TurnStop::Cancelled,
+                }).await;
+                return Err(CognitError::cancelled());
+            }
+            result = run => match result {
+                Ok(result) => result,
+                Err(error) => {
+                    events.emit(TurnEvent::Finished {
+                        operation_id: request.operation_id,
+                        stop: TurnStop::Failed,
+                    }).await;
+                    return Err(CognitError::from_runtime(error));
+                }
+            }
+        };
+        let result = TurnResult {
+            output,
+            stop: TurnStop::Completed,
+            metrics: FabricTurnMetrics {
+                tool_calls_made: metrics.tool_calls_made,
+                tool_errors: metrics.tool_errors,
+                elapsed_ms: metrics.elapsed_ms,
+                iterations: metrics.iterations,
+                completed_normally: metrics.completed_normally,
+            },
+        };
         events
             .emit(TurnEvent::Finished {
                 operation_id: request.operation_id,

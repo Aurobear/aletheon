@@ -1,26 +1,11 @@
 //! CLI `exec` session builder — shared factory for non-daemon single-turn execution.
 //!
-//! # Turn-path convergence (Stage 3)
-//!
-//! The exec path intentionally does NOT share `TurnPipeline` with the daemon
-//! because it lacks the daemon's production infrastructure (SelfField,
-//! SessionGateway, memory service, hook registry, Agora). Instead, convergence
-//! is achieved at the ReActLoop level:
-//!
-//! | Layer | Daemon | Exec | Shared? |
-//! |---|---|---|---|
-//! | Orchestration | TurnPipeline::run() | TurnService::submit() | No (different infra) |
-//! | Session | ReActLoop::run_streaming() | LinearCognitiveSession::run_turn() → ReActLoop::run() | Same ReActLoop type |
-//! | Admission | AdmissionController::admit/settle | same | ✅ |
-//! | Agora | Full (propose/commit) | None (single-user CLI) | Policy: documented in Stage 1 |
-//! | Memory | ExperienceEvent::Message | None | Policy: exec is stateless |
-//! | Events | ChannelEventSink (streaming) | NoopTurnEventSink | Different sinks |
-//!
-//! ReActLoop is constructed in exactly two places:
-//! - `harness_factory::build_configured_react_loop()` — daemon path
-//! - `LinearCognitiveSession::new()` — exec path (via TurnService)
-//!
-//! Both use `ReActLoop::new(HarnessConfig, compressor)`.
+//! The CLI keeps its lighter orchestration because it does not own the daemon's
+//! long-lived infrastructure. Daemon, CLI, and native Agent turns nevertheless
+//! cross the same Cognit `CognitiveSession`/factory boundary. Interactive daemon
+//! turns select the streaming session operation; CLI and native Agent turns use
+//! the ordinary operation. Concrete harness construction remains in the
+//! Executive composition adapter.
 
 use std::path::PathBuf;
 use std::sync::Arc;
