@@ -222,6 +222,7 @@ mod tests {
             "task": "do something"
         });
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
@@ -252,6 +253,7 @@ mod tests {
             "task": "run tests"
         });
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
@@ -273,6 +275,7 @@ mod tests {
             "task": "do something"
         });
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),

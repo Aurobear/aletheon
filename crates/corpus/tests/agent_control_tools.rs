@@ -134,6 +134,7 @@ impl AgentControlPort for FakeControl {
 
 fn context(root: AgentId, parent: AgentId, process: ProcessId) -> ToolContext {
     ToolContext {
+        approval_authority: None,
         agent: Some(AgentToolContext {
             caller_root_agent_id: root,
             parent_agent_id: parent,
@@ -258,6 +259,7 @@ async fn missing_trusted_context_and_zero_wait_fail_before_control() {
     let control = Arc::new(FakeControl::default());
     let tools = tools(control.clone());
     let untrusted_context = ToolContext {
+        approval_authority: None,
         agent: None,
         working_dir: std::env::temp_dir(),
         session_id: "untrusted".into(),

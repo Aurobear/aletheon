@@ -337,7 +337,7 @@ pub trait SessionLifecycleUseCases: Send + Sync {
 pub struct ProductionSessionLifecycle {
     corpus: Arc<dyn corpus::CorpusService>,
     config: HooksConfig,
-    approvals: Arc<Mutex<HashMap<String, bool>>>,
+    approvals: crate::service::admin_service::ScopedApprovalCache,
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
@@ -345,7 +345,7 @@ impl ProductionSessionLifecycle {
     pub fn new(
         corpus: Arc<dyn corpus::CorpusService>,
         config: HooksConfig,
-        approvals: Arc<Mutex<HashMap<String, bool>>>,
+        approvals: crate::service::admin_service::ScopedApprovalCache,
         cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     ) -> Self {
         Self {
@@ -390,7 +390,7 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
 
     async fn start(&self, session_id: String, clear_approvals: bool) {
         if clear_approvals {
-            self.approvals.lock().await.clear();
+            self.approvals.clear().await;
         }
         let context = HookContext {
             point: HookPoint::OnSessionStart,

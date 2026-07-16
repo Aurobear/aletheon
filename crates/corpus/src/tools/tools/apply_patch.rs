@@ -626,6 +626,7 @@ mod tests {
     async fn test_apply_patch_create_file() {
         let tmp = TempDir::new().unwrap();
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
@@ -654,6 +655,7 @@ mod tests {
             .unwrap();
 
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
@@ -678,6 +680,7 @@ mod tests {
         fs::write(&file_path, "delete me\n").await.unwrap();
 
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
@@ -721,6 +724,7 @@ mod tests {
     async fn test_empty_patch_input() {
         let tmp = TempDir::new().unwrap();
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),

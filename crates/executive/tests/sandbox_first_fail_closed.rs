@@ -89,6 +89,11 @@ fn request(
             budget: None,
             lease: None,
             sandbox,
+            connection_id: fabric::ConnectionId::new(),
+            thread_id: fabric::ThreadId("test".into()),
+            turn_id: fabric::TurnId::new(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(std::env::temp_dir(), vec![])
+                .unwrap(),
             session_id: "test".into(),
             working_dir: std::env::temp_dir(),
         },

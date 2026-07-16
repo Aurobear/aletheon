@@ -45,6 +45,11 @@ impl TurnAuthorityProvider for AllowAuthority {
                 budget: None,
                 lease: None,
                 sandbox: SandboxRequirement::NotRequired,
+                connection_id: fabric::ConnectionId::new(),
+                thread_id: fabric::ThreadId(SPACE.into()),
+                turn_id: fabric::TurnId::new(),
+                workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
+                    .unwrap(),
                 session_id: SPACE.into(),
                 working_dir: "/tmp".into(),
             },

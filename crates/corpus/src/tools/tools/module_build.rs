@@ -217,6 +217,7 @@ mod tests {
     async fn test_module_build_missing_dir() {
         let tool = ModuleBuildTool;
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),

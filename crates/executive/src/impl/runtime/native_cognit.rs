@@ -156,6 +156,11 @@ impl NativeCognitRuntime {
             None => None,
         };
         let evidence = Arc::new(Mutex::new(Vec::new()));
+        let mut principal_context = agent_principal_context(
+            input.handle.agent_id.0.to_string(),
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        )?;
+        principal_context.turn_id = Some(fabric::TurnId::new());
         let mut services = NativeTurnServices {
             llm: MeteredLlm::new(resolved.llm),
             tools: resolved
@@ -175,9 +180,15 @@ impl NativeCognitRuntime {
                 }),
                 process_id: input.handle.process_id,
                 operation_id: input.handle.operation_id,
-                principal: PrincipalId(format!("agent:{}", input.handle.agent_id.0)),
+                principal: principal_context.principal_id.clone(),
+                connection_id: principal_context.connection_id.clone(),
+                thread_id: principal_context.thread_id.clone(),
+                turn_id: principal_context
+                    .turn_id
+                    .expect("native turn id was assigned"),
+                workspace: principal_context.workspace.clone(),
                 session_id: input.handle.agent_id.0.to_string(),
-                working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                working_dir: principal_context.workspace.cwd().to_path_buf(),
                 sandbox: SandboxRequirement::NotRequired,
                 cancel: input.cancellation.clone(),
                 turn_count: 0,
@@ -195,10 +206,7 @@ impl NativeCognitRuntime {
         let mut request = TurnRequest {
             operation_id: input.handle.operation_id,
             process_id: input.handle.process_id,
-            context: agent_principal_context(
-                input.handle.agent_id.0.to_string(),
-                services.execution.working_dir.clone(),
-            )?,
+            context: principal_context.clone(),
             input: input.request.task.clone(),
             model_policy: Some(resolved.profile.model.clone()),
             deadline: None,
@@ -251,13 +259,14 @@ impl NativeCognitRuntime {
                 ));
             }
             services.execution.turn_count = completed_turns;
+            principal_context.turn_id = Some(fabric::TurnId::new());
+            services.execution.turn_id = principal_context
+                .turn_id
+                .expect("mailbox turn id was assigned");
             request = TurnRequest {
                 operation_id: input.handle.operation_id,
                 process_id: input.handle.process_id,
-                context: agent_principal_context(
-                    input.handle.agent_id.0.to_string(),
-                    services.execution.working_dir.clone(),
-                )?,
+                context: principal_context.clone(),
                 input: next.content,
                 model_policy: Some(resolved.profile.model.clone()),
                 deadline: None,

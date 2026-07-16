@@ -33,6 +33,7 @@ use fabric::{
     OperationRequest, ProcessSignal, SelfFieldOps, SpawnSpec, Verdict,
 };
 
+use crate::service::admin_service::ScopedApprovalCache;
 use crate::service::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, CapabilityService,
     RegistryAuthorityProvider,
@@ -45,7 +46,7 @@ pub(crate) struct CapabilityResources {
     pub(crate) capabilities: Arc<RwLock<Vec<fabric::CapabilityId>>>,
     pub(crate) storm: Arc<Mutex<StormBreaker>>,
     pub(crate) memory_queue: Arc<Mutex<Vec<String>>>,
-    pub(crate) approvals: Arc<Mutex<HashMap<String, bool>>>,
+    pub(crate) approvals: ScopedApprovalCache,
     pub(crate) perf: Arc<PerfCounter>,
     pub(crate) self_field: Arc<Mutex<SelfField>>,
     pub(crate) extension_decisions:
@@ -61,7 +62,7 @@ pub(crate) struct TurnToolExecutor {
     corpus: Arc<dyn CorpusService>,
     storm_breaker: Arc<Mutex<StormBreaker>>,
     memory_queue: Arc<Mutex<Vec<String>>>,
-    session_approvals: Arc<Mutex<HashMap<String, bool>>>,
+    session_approvals: ScopedApprovalCache,
     debug_perf: Arc<PerfCounter>,
     self_field: Arc<Mutex<SelfField>>,
     working_dir: PathBuf,
@@ -185,11 +186,15 @@ impl TurnToolExecutor {
 
         // --- Check session approvals (auto-approve if "always" was used) ---
         {
-            let approvals = session_approvals_arc.lock().await;
-            if let Some(&approved) = approvals.get(&name) {
-                if approved {
-                    info!(tool = %name, "Auto-approving tool from session approval cache");
-                }
+            if session_approvals_arc
+                .is_allowed(
+                    &request.authority.principal,
+                    &request.authority.thread_id,
+                    &name,
+                )
+                .await
+            {
+                info!(tool = %name, "Auto-approving tool from scoped thread approval cache");
             }
         }
 
@@ -332,6 +337,10 @@ impl ProductionCapabilityService {
             RegistryAuthorityProvider::new(
                 prepared.risk_by_tool,
                 context.principal,
+                context.connection_id,
+                context.thread_id,
+                context.turn_id,
+                context.workspace,
                 context.session_id,
                 context.working_dir,
                 context.sandbox,
@@ -481,6 +490,14 @@ impl CapabilityService for ProductionCapabilityService {
             process_id: process.id,
             operation_id: operation.id,
             principal: fabric::PrincipalId("external-capability".into()),
+            connection_id: fabric::ConnectionId::new(),
+            thread_id: fabric::ThreadId("external-capability".into()),
+            turn_id: fabric::TurnId::new(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/tmp")),
+                Vec::new(),
+            )
+            .expect("external capability workspace is absolute"),
             session_id: "external-capability".into(),
             working_dir: std::env::current_dir().unwrap_or_default(),
             sandbox: fabric::SandboxRequirement::NotRequired,

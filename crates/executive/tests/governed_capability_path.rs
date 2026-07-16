@@ -33,6 +33,14 @@ impl TurnAuthorityProvider for RecordingAuthority {
                 budget: None,
                 lease: None,
                 sandbox: SandboxRequirement::Required,
+                connection_id: fabric::ConnectionId::new(),
+                thread_id: fabric::ThreadId("session-1".into()),
+                turn_id: fabric::TurnId::new(),
+                workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                    "/trusted/workspace".into(),
+                    vec![],
+                )
+                .unwrap(),
                 session_id: "session-1".into(),
                 working_dir: "/trusted/workspace".into(),
             },

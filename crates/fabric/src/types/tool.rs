@@ -1,12 +1,10 @@
 //! Core tool types and trait definitions.
-//!
-//! Core tool types and trait definitions.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{AgentId, ProcessId};
+use crate::{AgentId, PrincipalId, ProcessId, ThreadId, TurnId, WorkspacePolicy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentToolContext {
@@ -31,9 +29,54 @@ pub enum PermissionLevel {
 /// Execution context passed to tools.
 pub struct ToolContext {
     pub agent: Option<AgentToolContext>,
+    /// Exact authenticated approval authority, when supplied by the governed
+    /// capability path. Legacy contexts are explicitly `None` and fail closed
+    /// if an approval is required.
+    pub approval_authority: Option<ToolApprovalAuthority>,
+    // Compatibility fields used by existing tool implementations. Approval
+    // ownership must use the typed fields above.
     pub working_dir: std::path::PathBuf,
     pub session_id: String,
     pub clock: Arc<dyn crate::Clock>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolApprovalAuthority {
+    pub principal_id: PrincipalId,
+    pub connection_id: crate::ConnectionId,
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub call_id: String,
+    pub workspace: WorkspacePolicy,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ApprovalOwner {
+    pub principal_id: PrincipalId,
+    pub thread_id: ThreadId,
+}
+
+impl ApprovalOwner {
+    pub fn new(principal_id: PrincipalId, thread_id: ThreadId) -> Self {
+        Self {
+            principal_id,
+            thread_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PendingApprovalKey {
+    pub owner: ApprovalOwner,
+    pub turn_id: TurnId,
+    pub call_id: String,
+    pub approval_id: String,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ThreadGrantKey {
+    pub owner: ApprovalOwner,
+    pub tool: String,
 }
 
 /// Result of a tool execution.

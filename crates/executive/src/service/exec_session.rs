@@ -200,6 +200,11 @@ impl ExecSessionBuilder {
         let authority = Arc::new(RegistryAuthorityProvider::new(
             tool_risks,
             PrincipalId("exec".into()),
+            fabric::ConnectionId::new(),
+            fabric::ThreadId(session_id.clone()),
+            fabric::TurnId::new(),
+            fabric::WorkspacePolicy::from_resolved_roots(working_dir.clone(), vec![])
+                .map_err(anyhow::Error::msg)?,
             session_id,
             working_dir,
             SandboxRequirement::NotRequired,

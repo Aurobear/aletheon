@@ -101,6 +101,7 @@ fn profile() -> AgentProfile {
 fn context() -> ToolContext {
     let root = AgentId::new();
     ToolContext {
+        approval_authority: None,
         agent: Some(AgentToolContext {
             caller_root_agent_id: root,
             parent_agent_id: root,

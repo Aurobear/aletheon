@@ -234,6 +234,7 @@ mod tests {
     async fn test_ebpf_compile_missing_source() {
         let tool = EbpfCompileTool;
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),

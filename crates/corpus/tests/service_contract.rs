@@ -173,6 +173,11 @@ async fn governed_invocation_requires_activation_binding_scope_and_permit() {
             budget: None,
             lease: None,
             sandbox: SandboxRequirement::NotRequired,
+            connection_id: fabric::ConnectionId::new(),
+            thread_id: fabric::ThreadId("session-1".into()),
+            turn_id: fabric::TurnId::new(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/workspace".into(), vec![])
+                .unwrap(),
             session_id: "session-1".into(),
             working_dir: "/workspace".into(),
         },

@@ -5,8 +5,10 @@ use crate::types::admission::{
     SandboxRequirement, UsageReport,
 };
 use crate::types::llm_types::{LlmProvider, ToolDefinition};
+use crate::types::local_authority::{ConnectionId, ThreadId, WorkspacePolicy};
 use crate::types::message::Message;
 use crate::types::operation::{MonoDeadlineMillis, OperationId, ProcessId};
+use crate::types::session::TurnId;
 use crate::types::turn::{TurnEvent, TurnRequest};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -55,6 +57,11 @@ pub struct CapabilityAuthority {
     pub budget: Option<BudgetRequest>,
     pub lease: Option<LeaseRequest>,
     pub sandbox: SandboxRequirement,
+    pub connection_id: ConnectionId,
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub workspace: WorkspacePolicy,
+    // Compatibility projection for non-approval consumers.
     pub session_id: String,
     pub working_dir: PathBuf,
 }

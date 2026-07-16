@@ -306,26 +306,32 @@ impl TurnPipeline {
             ),
             None => None,
         };
-        let prepared = self
-            .runtime_ports
-            .capabilities
-            .prepare(CapabilityExecutionContext {
-                agent: main_agent_id.map(|agent_id| fabric::AgentToolContext {
-                    caller_root_agent_id: agent_id,
-                    parent_agent_id: agent_id,
-                    parent_process_id: main_pid,
-                }),
-                process_id: main_pid,
-                operation_id,
-                principal,
-                session_id: sess_id.clone(),
-                working_dir,
-                sandbox: sandbox_requirement,
-                cancel: scope_token.clone(),
-                turn_count,
-                action_loop,
-            })
-            .await?;
+        let prepared =
+            self.runtime_ports
+                .capabilities
+                .prepare(CapabilityExecutionContext {
+                    agent: main_agent_id.map(|agent_id| fabric::AgentToolContext {
+                        caller_root_agent_id: agent_id,
+                        parent_agent_id: agent_id,
+                        parent_process_id: main_pid,
+                    }),
+                    process_id: main_pid,
+                    operation_id,
+                    principal,
+                    connection_id: turn_request.context.connection_id.clone(),
+                    thread_id: turn_request.context.thread_id.clone(),
+                    turn_id: turn_request.context.turn_id.ok_or_else(|| {
+                        anyhow::anyhow!("turn capability authority has no TurnId")
+                    })?,
+                    workspace: turn_request.context.workspace.clone(),
+                    session_id: sess_id.clone(),
+                    working_dir,
+                    sandbox: sandbox_requirement,
+                    cancel: scope_token.clone(),
+                    turn_count,
+                    action_loop,
+                })
+                .await?;
         let tool_defs = prepared.definitions;
         let capability = prepared.invoker;
 

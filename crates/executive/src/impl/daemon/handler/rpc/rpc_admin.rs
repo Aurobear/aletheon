@@ -42,6 +42,7 @@ impl RequestHandler {
 
     pub(super) async fn handle_approval_response(
         &self,
+        connection: &super::super::super::server::ConnectionContext,
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
@@ -53,14 +54,14 @@ impl RequestHandler {
             .as_str()
             .unwrap_or("reject")
             .to_string();
-        let tool_name = request["params"]["tool"].as_str().unwrap_or("").to_string();
         match self
             .ports
             .admin
             .resolve_transient_approval(TransientApprovalRequest {
+                principal_id: connection.principal_id.clone(),
+                connection_id: connection.connection_id.clone(),
                 approval_id,
                 decision,
-                tool_name,
             })
             .await
         {

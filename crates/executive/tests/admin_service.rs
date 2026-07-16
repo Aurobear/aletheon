@@ -1,12 +1,12 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use corpus::security::approval::ApprovalDecision;
 use executive::core::config::ExecutiveConfig;
 use executive::core::orchestrator::AletheonExecutive;
 use executive::service::admin_service::{
-    AdminResources, AdminService, AdminServiceError, AdminUseCases, DefaultSkillAdmin,
-    SkillAdminPort, TransientApprovalRequest,
+    AdminResources, AdminService, AdminServiceError, AdminUseCases, ApprovalOwner,
+    DefaultSkillAdmin, PendingApprovals, ScopedApprovalCache, SkillAdminPort,
+    TransientApprovalRequest,
 };
 use fabric::ui_event::{CollaborationMode, InterruptReason};
 use tempfile::tempdir;
@@ -37,8 +37,8 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
         skills,
         tool_catalog: Arc::new(|| Box::pin(async { vec![] })),
         hook_catalog: Arc::new(|| Box::pin(async { vec![] })),
-        pending_approvals: Arc::new(Mutex::new(HashMap::new())),
-        session_approvals: Arc::new(Mutex::new(HashMap::new())),
+        pending_approvals: PendingApprovals::default(),
+        session_approvals: ScopedApprovalCache::default(),
         daemon_cancel: cancellation.clone(),
         google_sync: None,
         gbrain_worker: None,
@@ -75,8 +75,8 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         skills: Arc::new(FailingSkillAdmin),
         tool_catalog: Arc::new(|| Box::pin(async { vec![] })),
         hook_catalog: Arc::new(|| Box::pin(async { vec![] })),
-        pending_approvals: Arc::new(Mutex::new(HashMap::new())),
-        session_approvals: Arc::new(Mutex::new(HashMap::new())),
+        pending_approvals: PendingApprovals::default(),
+        session_approvals: ScopedApprovalCache::default(),
         daemon_cancel: cancellation,
         google_sync: None,
         gbrain_worker: None,
@@ -116,8 +116,21 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
     let directory = tempdir().unwrap();
     let cancellation = CancellationToken::new();
     let (sender, receiver) = oneshot::channel();
-    let pending = Arc::new(Mutex::new(HashMap::from([("approval-1".into(), sender)])));
-    let session = Arc::new(Mutex::new(HashMap::new()));
+    let pending = PendingApprovals::default();
+    let session = ScopedApprovalCache::default();
+    let principal_id = fabric::PrincipalId::local_uid(1001);
+    let connection_id = fabric::ConnectionId::new();
+    let thread_id = fabric::ThreadId("thread-a".into());
+    let approval_id = pending
+        .insert(
+            ApprovalOwner::new(principal_id.clone(), thread_id.clone()),
+            fabric::TurnId::new(),
+            "call-1".into(),
+            "bash_exec".into(),
+            connection_id.clone(),
+            sender,
+        )
+        .await;
     let service = AdminService::new(AdminResources {
         orchestrator: Arc::new(Mutex::new(AletheonExecutive::new(
             ExecutiveConfig::default(),
@@ -143,14 +156,19 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
 
     assert!(service
         .resolve_transient_approval(TransientApprovalRequest {
-            approval_id: "approval-1".into(),
+            principal_id: principal_id.clone(),
+            connection_id,
+            approval_id,
             decision: "always".into(),
-            tool_name: "bash_exec".into(),
         })
         .await
         .unwrap());
     assert_eq!(receiver.await.unwrap(), ApprovalDecision::ApproveForSession);
-    assert_eq!(session.lock().await.get("bash_exec"), Some(&true));
+    assert!(
+        session
+            .is_allowed(&principal_id, &thread_id, "bash_exec")
+            .await
+    );
     service.shutdown().await.unwrap();
     assert!(cancellation.is_cancelled());
 }

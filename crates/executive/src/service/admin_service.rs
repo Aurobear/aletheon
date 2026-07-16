@@ -1,6 +1,6 @@
 //! Request-safe administrative use cases.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -56,9 +56,159 @@ pub struct SubAgentSummary {
 
 #[derive(Clone, Debug)]
 pub struct TransientApprovalRequest {
+    /// Principal authenticated by the transport adapter.
+    pub principal_id: fabric::PrincipalId,
+    pub connection_id: fabric::ConnectionId,
     pub approval_id: String,
     pub decision: String,
-    pub tool_name: String,
+}
+
+pub use fabric::{ApprovalOwner, PendingApprovalKey, ThreadGrantKey};
+
+struct PendingApprovalRecord {
+    connection_id: fabric::ConnectionId,
+    tool: String,
+    respond: oneshot::Sender<ApprovalDecision>,
+}
+
+#[derive(Debug, Error)]
+pub enum PendingApprovalError {
+    #[error("approval is not owned by authenticated principal")]
+    WrongOwner,
+    #[error("approval is not pending")]
+    NotFound,
+}
+
+#[derive(Debug)]
+pub struct ResolvedPendingApproval {
+    pub owner: ApprovalOwner,
+    pub tool: String,
+}
+
+#[derive(Clone, Default)]
+pub struct PendingApprovals {
+    inner: Arc<Mutex<HashMap<PendingApprovalKey, PendingApprovalRecord>>>,
+}
+
+impl PendingApprovals {
+    pub async fn insert(
+        &self,
+        owner: ApprovalOwner,
+        turn_id: fabric::TurnId,
+        call_id: String,
+        tool: String,
+        connection_id: fabric::ConnectionId,
+        respond: oneshot::Sender<ApprovalDecision>,
+    ) -> String {
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        self.inner.lock().await.insert(
+            PendingApprovalKey {
+                owner,
+                turn_id,
+                call_id,
+                approval_id: approval_id.clone(),
+            },
+            PendingApprovalRecord {
+                connection_id,
+                tool,
+                respond,
+            },
+        );
+        approval_id
+    }
+
+    pub async fn resolve(
+        &self,
+        owner: &ApprovalOwner,
+        approval_id: &str,
+        decision: ApprovalDecision,
+    ) -> Result<ResolvedPendingApproval, PendingApprovalError> {
+        let mut pending = self.inner.lock().await;
+        let key = pending
+            .keys()
+            .find(|key| key.approval_id == approval_id && &key.owner == owner)
+            .cloned();
+        let Some(key) = key else {
+            return if pending.keys().any(|key| key.approval_id == approval_id) {
+                Err(PendingApprovalError::WrongOwner)
+            } else {
+                Err(PendingApprovalError::NotFound)
+            };
+        };
+        let record = pending
+            .remove(&key)
+            .expect("pending key was selected while holding the same lock");
+        let _ = record.respond.send(decision);
+        Ok(ResolvedPendingApproval {
+            owner: key.owner,
+            tool: record.tool,
+        })
+    }
+
+    /// Legacy approval responses authenticate a principal but do not carry a
+    /// client-authoritative thread. Recover the exact thread only from the
+    /// pending key after verifying the authenticated principal.
+    pub async fn resolve_authenticated(
+        &self,
+        principal_id: &fabric::PrincipalId,
+        connection_id: &fabric::ConnectionId,
+        approval_id: &str,
+        decision: ApprovalDecision,
+    ) -> Result<ResolvedPendingApproval, PendingApprovalError> {
+        let owner = {
+            let pending = self.inner.lock().await;
+            let key = pending
+                .keys()
+                .find(|key| key.approval_id == approval_id)
+                .ok_or(PendingApprovalError::NotFound)?;
+            if &key.owner.principal_id != principal_id {
+                return Err(PendingApprovalError::WrongOwner);
+            }
+            let record = pending
+                .get(key)
+                .expect("pending key and record are read under the same lock");
+            if &record.connection_id != connection_id {
+                return Err(PendingApprovalError::WrongOwner);
+            }
+            key.owner.clone()
+        };
+        self.resolve(&owner, approval_id, decision).await
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct ScopedApprovalCache {
+    inner: Arc<Mutex<HashSet<ThreadGrantKey>>>,
+}
+
+impl ScopedApprovalCache {
+    pub async fn clear(&self) {
+        self.inner.lock().await.clear();
+    }
+
+    pub async fn allow_for_thread(
+        &self,
+        principal_id: fabric::PrincipalId,
+        thread_id: fabric::ThreadId,
+        tool: impl Into<String>,
+    ) {
+        self.inner.lock().await.insert(ThreadGrantKey {
+            owner: ApprovalOwner::new(principal_id, thread_id),
+            tool: tool.into(),
+        });
+    }
+
+    pub async fn is_allowed(
+        &self,
+        principal_id: &fabric::PrincipalId,
+        thread_id: &fabric::ThreadId,
+        tool: &str,
+    ) -> bool {
+        self.inner.lock().await.contains(&ThreadGrantKey {
+            owner: ApprovalOwner::new(principal_id.clone(), thread_id.clone()),
+            tool: tool.to_owned(),
+        })
+    }
 }
 
 #[derive(Debug, Error)]
@@ -144,8 +294,8 @@ pub struct AdminResources {
     pub skills: Arc<dyn SkillAdminPort>,
     pub tool_catalog: Arc<dyn Fn() -> ToolCatalogFuture + Send + Sync>,
     pub hook_catalog: Arc<dyn Fn() -> HookCatalogFuture + Send + Sync>,
-    pub pending_approvals: Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>>,
-    pub session_approvals: Arc<Mutex<HashMap<String, bool>>>,
+    pub pending_approvals: PendingApprovals,
+    pub session_approvals: ScopedApprovalCache,
     pub daemon_cancel: CancellationToken,
     pub google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
     pub gbrain_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
@@ -205,30 +355,31 @@ impl AdminUseCases for AdminService {
     ) -> Result<bool, AdminServiceError> {
         let decision = match request.decision.as_str() {
             "once" => ApprovalDecision::Approve,
-            "always" => {
-                if !request.tool_name.is_empty() {
-                    self.resources
-                        .session_approvals
-                        .lock()
-                        .await
-                        .insert(request.tool_name, true);
-                }
-                ApprovalDecision::ApproveForSession
-            }
+            "always" => ApprovalDecision::ApproveForSession,
             _ => ApprovalDecision::Deny,
         };
-        let sender = self
+        let resolved = self
             .resources
             .pending_approvals
-            .lock()
+            .resolve_authenticated(
+                &request.principal_id,
+                &request.connection_id,
+                &request.approval_id,
+                decision,
+            )
             .await
-            .remove(&request.approval_id);
-        if let Some(sender) = sender {
-            let _ = sender.send(decision);
-            Ok(true)
-        } else {
-            Ok(false)
+            .map_err(|error| AdminServiceError::Operation(error.to_string()))?;
+        if decision == ApprovalDecision::ApproveForSession {
+            self.resources
+                .session_approvals
+                .allow_for_thread(
+                    resolved.owner.principal_id,
+                    resolved.owner.thread_id,
+                    resolved.tool,
+                )
+                .await;
         }
+        Ok(true)
     }
 
     async fn interrupt(&self, reason: InterruptReason) -> Result<(), AdminServiceError> {

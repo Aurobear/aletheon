@@ -111,14 +111,7 @@ pub(crate) struct TurnRuntimeResources {
     pub(crate) self_field: Arc<Mutex<dasein::SelfField>>,
     pub(crate) approval_rx:
         Arc<Mutex<mpsc::Receiver<corpus::security::socket_approval::PendingApproval>>>,
-    pub(crate) pending_approvals: Arc<
-        Mutex<
-            HashMap<
-                String,
-                tokio::sync::oneshot::Sender<corpus::security::approval::ApprovalDecision>,
-            >,
-        >,
-    >,
+    pub(crate) pending_approvals: crate::service::admin_service::PendingApprovals,
     pub(crate) capabilities: crate::r#impl::daemon::handler::tool_executor::CapabilityResources,
     pub(crate) admission: Arc<dyn AdmissionController>,
     pub(crate) sessions: Arc<
@@ -490,21 +483,24 @@ impl TurnObservabilityPort for ProductionTurnObservability {
 
 struct ProductionTurnApprovals {
     receiver: Arc<Mutex<mpsc::Receiver<corpus::security::socket_approval::PendingApproval>>>,
-    pending: Arc<
-        Mutex<
-            HashMap<
-                String,
-                tokio::sync::oneshot::Sender<corpus::security::approval::ApprovalDecision>,
-            >,
-        >,
-    >,
+    pending: crate::service::admin_service::PendingApprovals,
 }
 
 #[async_trait]
 impl TurnApprovalPort for ProductionTurnApprovals {
     async fn next(&self) -> Option<ApprovalNotice> {
         let pending = self.receiver.lock().await.recv().await?;
-        let approval_id = uuid::Uuid::new_v4().to_string();
+        let approval_id = self
+            .pending
+            .insert(
+                pending.request.owner.clone(),
+                pending.request.turn_id,
+                pending.request.call_id.clone(),
+                pending.request.tool.clone(),
+                pending.request.connection_id.clone(),
+                pending.respond,
+            )
+            .await;
         let notice = ApprovalNotice {
             approval_id: approval_id.clone(),
             tool: pending.request.tool,
@@ -512,10 +508,6 @@ impl TurnApprovalPort for ProductionTurnApprovals {
             risk_level: pending.request.risk_level,
             detail: pending.request.detail,
         };
-        self.pending
-            .lock()
-            .await
-            .insert(approval_id, pending.respond);
         Some(notice)
     }
 }
@@ -551,6 +543,10 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             RegistryAuthorityProvider::new(
                 prepared.risk_by_tool,
                 context.principal,
+                context.connection_id,
+                context.thread_id,
+                context.turn_id,
+                context.workspace,
                 context.session_id,
                 context.working_dir,
                 context.sandbox,

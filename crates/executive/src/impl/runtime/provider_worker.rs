@@ -155,6 +155,22 @@ impl ProviderWorkerRuntime {
         let mut output_tokens = 0_u64;
         let mut evidence = Vec::new();
         let mut messages = vec![Message::user(task)];
+        let approval_authority = execution.as_ref().map(|context| {
+            let working_dir = if context.working_dir.is_absolute() {
+                context.working_dir.clone()
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| "/tmp".into())
+                    .join(&context.working_dir)
+            };
+            (
+                fabric::ConnectionId::new(),
+                fabric::ThreadId(context.session_id.clone()),
+                fabric::TurnId::new(),
+                fabric::WorkspacePolicy::from_resolved_roots(working_dir, vec![])
+                    .expect("sub-agent working directory was resolved"),
+            )
+        });
 
         for _ in 0..self.max_steps {
             if cancel.is_cancelled() {
@@ -237,19 +253,26 @@ impl ProviderWorkerRuntime {
                 let (content, is_error) = if !self.allowed_tools.contains(&name) {
                     (format!("Tool not allowed: {name}"), true)
                 } else {
-                    let capability_context =
-                        execution.clone().map(|context| CapabilityExecutionContext {
-                            agent: None,
-                            process_id: context.process_id,
-                            operation_id: context.operation_id,
-                            principal: PrincipalId(format!("sub-agent:{}", self.runtime_id.0)),
-                            session_id: context.session_id,
-                            working_dir: context.working_dir,
-                            sandbox: SandboxRequirement::NotRequired,
-                            cancel: cancel.clone(),
-                            turn_count: 0,
-                            action_loop: None,
-                        });
+                    let capability_context = execution.clone().zip(approval_authority.clone()).map(
+                        |(context, (connection_id, thread_id, turn_id, workspace))| {
+                            CapabilityExecutionContext {
+                                agent: None,
+                                process_id: context.process_id,
+                                operation_id: context.operation_id,
+                                principal: PrincipalId(format!("sub-agent:{}", self.runtime_id.0)),
+                                connection_id,
+                                thread_id,
+                                turn_id,
+                                workspace,
+                                session_id: context.session_id,
+                                working_dir: context.working_dir,
+                                sandbox: SandboxRequirement::NotRequired,
+                                cancel: cancel.clone(),
+                                turn_count: 0,
+                                action_loop: None,
+                            }
+                        },
+                    );
                     let result = self
                         .capability
                         .invoke(

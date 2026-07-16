@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -99,8 +98,8 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         skills: Arc::new(NoopSkills),
         tool_catalog: Arc::new(|| Box::pin(async { vec![] })),
         hook_catalog: Arc::new(|| Box::pin(async { vec![] })),
-        pending_approvals: Arc::new(Mutex::new(HashMap::new())),
-        session_approvals: Arc::new(Mutex::new(HashMap::new())),
+        pending_approvals: executive::service::admin_service::PendingApprovals::default(),
+        session_approvals: executive::service::admin_service::ScopedApprovalCache::default(),
         daemon_cancel: CancellationToken::new(),
         google_sync: None,
         gbrain_worker: None,

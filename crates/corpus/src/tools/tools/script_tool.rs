@@ -228,6 +228,7 @@ mod tests {
             PermissionLevel::L1,
         );
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".into(),
@@ -256,6 +257,7 @@ mod tests {
             PermissionLevel::L0,
         );
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
@@ -284,6 +286,7 @@ mod tests {
             PermissionLevel::L1,
         );
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
@@ -315,6 +318,7 @@ mod tests {
             PermissionLevel::L0,
         );
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),

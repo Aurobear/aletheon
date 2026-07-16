@@ -660,9 +660,9 @@ impl RequestHandler {
         let admin_hooks = hook_registry.clone();
         let cached_prefix = Arc::new(Mutex::new(cached_prefix));
         let admin_cached_prefix = cached_prefix.clone();
-        let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
+        let pending_approvals = crate::service::admin_service::PendingApprovals::default();
         let admin_pending_approvals = pending_approvals.clone();
-        let session_approvals = Arc::new(Mutex::new(HashMap::new()));
+        let session_approvals = crate::service::admin_service::ScopedApprovalCache::default();
         let admin_session_approvals = session_approvals.clone();
         let memory_queue = Arc::new(Mutex::new(Vec::new()));
         let dasein_handle = self_field

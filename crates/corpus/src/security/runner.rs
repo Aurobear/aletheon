@@ -61,8 +61,8 @@ pub struct ToolRunnerWithGuard {
     /// Approval gate consulted before executing tools that require approval.
     /// Defaults to AutoDenyGate (conservative: preserves prior "deny L2+" behavior).
     approval_gate: Arc<dyn ApprovalGate>,
-    /// Tool names approved for the rest of the session (via ApproveForSession).
-    session_approvals: std::collections::HashSet<String>,
+    /// Principal/thread/tool grants approved for the rest of one thread.
+    session_approvals: std::collections::HashSet<fabric::ThreadGrantKey>,
     /// Permission context for mode/rule-based pre-approval.
     permission_ctx: PermissionContext,
     /// Independent execpolicy engine. When set, takes precedence over the inline PolicyEngine.
@@ -262,10 +262,42 @@ impl ToolRunnerWithGuard {
                         }
                         PermissionBehavior::Ask => {
                             // Fall through to existing approval-gate flow.
-                            if self.session_approvals.contains(tool_name) {
+                            let Some(authority) = ctx.approval_authority.as_ref() else {
+                                self.log_audit(
+                                    audit_id,
+                                    tool_name,
+                                    &input,
+                                    tool.permission_level(),
+                                    turn_id,
+                                    None,
+                                    &start,
+                                    "approval_authority_missing",
+                                )
+                                .await
+                                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
+                                return Err(ToolError::PolicyDenied {
+                                    reason: format!(
+                                        "{}: authenticated approval authority is unavailable",
+                                        reason
+                                    ),
+                                });
+                            };
+                            let grant_key = fabric::ThreadGrantKey {
+                                owner: fabric::ApprovalOwner::new(
+                                    authority.principal_id.clone(),
+                                    authority.thread_id.clone(),
+                                ),
+                                tool: tool_name.to_owned(),
+                            };
+                            if self.session_approvals.contains(&grant_key) {
                                 // Previously approved-for-session; allow.
                             } else {
                                 let req = ApprovalRequest {
+                                    owner: grant_key.owner.clone(),
+                                    connection_id: authority.connection_id.clone(),
+                                    turn_id: authority.turn_id,
+                                    call_id: authority.call_id.clone(),
+                                    workspace: authority.workspace.clone(),
                                     tool: tool_name.to_string(),
                                     action_summary: summary,
                                     risk_level: format!("{:?}", tool.permission_level()),
@@ -274,7 +306,7 @@ impl ToolRunnerWithGuard {
                                 match self.approval_gate.request(&req).await {
                                     ApprovalDecision::Approve => {}
                                     ApprovalDecision::ApproveForSession => {
-                                        self.session_approvals.insert(tool_name.to_string());
+                                        self.session_approvals.insert(grant_key);
                                     }
                                     ApprovalDecision::Deny => {
                                         self.log_audit(
@@ -623,6 +655,15 @@ mod tests {
 
     fn make_ctx() -> ToolContext {
         ToolContext {
+            approval_authority: Some(fabric::ToolApprovalAuthority {
+                principal_id: fabric::PrincipalId("test".into()),
+                connection_id: fabric::ConnectionId::new(),
+                thread_id: fabric::ThreadId("test-session".into()),
+                turn_id: fabric::TurnId::new(),
+                call_id: "test-call".into(),
+                workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
+                    .unwrap(),
+            }),
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test-session".into(),

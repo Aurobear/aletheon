@@ -105,6 +105,11 @@ fn request(operation_id: OperationId, process_id: ProcessId) -> CapabilityReques
             }),
             lease: None,
             sandbox: SandboxRequirement::NotRequired,
+            connection_id: fabric::ConnectionId::new(),
+            thread_id: fabric::ThreadId("session-1".into()),
+            turn_id: fabric::TurnId::new(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(std::env::temp_dir(), vec![])
+                .unwrap(),
             session_id: "session-1".into(),
             working_dir: std::env::temp_dir(),
         },
@@ -219,6 +224,7 @@ async fn output_rejection_does_not_repeat_side_effect() {
         clock.clone(),
     );
     let ctx = ToolContext {
+        approval_authority: None,
         agent: None,
         working_dir: temp.path().into(),
         session_id: "s".into(),
@@ -247,6 +253,7 @@ async fn unwritable_audit_path_fails_execution() {
         clock.clone(),
     );
     let ctx = ToolContext {
+        approval_authority: None,
         agent: None,
         working_dir: temp.path().into(),
         session_id: "s".into(),

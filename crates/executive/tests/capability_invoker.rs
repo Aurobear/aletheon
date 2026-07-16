@@ -37,6 +37,11 @@ fn authorized_request(name: &str, input: serde_json::Value, call_id: &str) -> Ca
             budget: None,
             lease: None,
             sandbox: SandboxRequirement::NotRequired,
+            connection_id: fabric::ConnectionId::new(),
+            thread_id: fabric::ThreadId("test-session".into()),
+            turn_id: fabric::TurnId::new(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(std::env::temp_dir(), vec![])
+                .unwrap(),
             session_id: "test-session".into(),
             working_dir: std::env::temp_dir(),
         },

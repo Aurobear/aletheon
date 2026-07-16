@@ -513,6 +513,7 @@ mod tests {
     async fn test_kernel_build_invalid_action() {
         let tool = KernelBuildTool;
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
@@ -527,6 +528,7 @@ mod tests {
     async fn test_kernel_build_clone_existing_dir() {
         let tool = KernelBuildTool;
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),

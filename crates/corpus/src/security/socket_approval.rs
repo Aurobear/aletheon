@@ -76,6 +76,14 @@ mod tests {
         });
 
         let req = ApprovalRequest {
+            owner: fabric::ApprovalOwner::new(
+                fabric::PrincipalId("test".into()),
+                fabric::ThreadId("test".into()),
+            ),
+            connection_id: fabric::ConnectionId::new(),
+            turn_id: fabric::TurnId::new(),
+            call_id: "call".into(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap(),
             tool: "bash_exec".into(),
             action_summary: "rm -rf /tmp/x".into(),
             risk_level: "high".into(),
@@ -94,6 +102,14 @@ mod tests {
         drop(rx);
 
         let req = ApprovalRequest {
+            owner: fabric::ApprovalOwner::new(
+                fabric::PrincipalId("test".into()),
+                fabric::ThreadId("test".into()),
+            ),
+            connection_id: fabric::ConnectionId::new(),
+            turn_id: fabric::TurnId::new(),
+            call_id: "call".into(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap(),
             tool: "bash_exec".into(),
             action_summary: "ls".into(),
             risk_level: "low".into(),

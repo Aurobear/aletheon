@@ -222,6 +222,7 @@ mod tests {
     async fn test_mood_query() {
         let tool = make_tool();
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
@@ -236,6 +237,7 @@ mod tests {
     async fn test_full_query() {
         let tool = make_tool();
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
@@ -250,6 +252,7 @@ mod tests {
     async fn test_unknown_query() {
         let tool = make_tool();
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
@@ -263,6 +266,7 @@ mod tests {
     async fn test_default_query_is_full() {
         let tool = make_tool();
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),

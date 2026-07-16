@@ -160,6 +160,14 @@ impl ToolExecutor for CorpusToolExecutor {
 
         let context = ToolContext {
             agent: request.authority.agent,
+            approval_authority: Some(fabric::ToolApprovalAuthority {
+                principal_id: request.authority.principal.clone(),
+                connection_id: request.authority.connection_id.clone(),
+                thread_id: request.authority.thread_id.clone(),
+                turn_id: request.authority.turn_id,
+                call_id: request.call.call_id.clone(),
+                workspace: request.authority.workspace.clone(),
+            }),
             working_dir: request.authority.working_dir.clone(),
             session_id: request.authority.session_id.clone(),
             clock: self.clock.clone(),
@@ -173,7 +181,7 @@ impl ToolExecutor for CorpusToolExecutor {
                 tool.as_ref(),
                 request.call.input.clone(),
                 &context,
-                &request.call.operation_id.0.to_string(),
+                &request.authority.turn_id.0.to_string(),
             )
             .await;
 

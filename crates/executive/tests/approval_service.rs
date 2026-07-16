@@ -4,12 +4,14 @@ use std::sync::{Arc, Mutex};
 use aletheon_kernel::chronos::TestClock;
 use executive::r#impl::approval::{ApprovalCreate, ApprovalDecision, ApprovalRepository};
 use executive::r#impl::goal::ObjectiveStore;
+use executive::service::admin_service::{ApprovalOwner, PendingApprovals, ScopedApprovalCache};
 use executive::service::approval_service::{
     ApprovalContext, ApprovalService, ApprovalServiceError, ApprovalUseCases,
     ResolveApprovalRequest,
 };
 use fabric::{
     ApprovalCategory, ApprovalRisk, ApprovalSubject, Clock, GoalSpec, GoalState, PrincipalId,
+    ThreadId, TurnId,
 };
 use tempfile::tempdir;
 
@@ -19,6 +21,65 @@ struct Fixture {
     owner: ApprovalContext,
     other: ApprovalContext,
     goal_id: fabric::GoalId,
+}
+
+#[tokio::test]
+async fn another_principal_cannot_resolve_transient_approval() {
+    let pending = PendingApprovals::default();
+    let alice = ApprovalOwner::new(PrincipalId::local_uid(1001), ThreadId("a".into()));
+    let bob = ApprovalOwner::new(PrincipalId::local_uid(1002), ThreadId("b".into()));
+    let (sender, _receiver) = tokio::sync::oneshot::channel();
+    let alice_connection = fabric::ConnectionId::new();
+    let id = pending
+        .insert(
+            alice.clone(),
+            TurnId::new(),
+            "call-1".into(),
+            "shell".into(),
+            alice_connection,
+            sender,
+        )
+        .await;
+    let connection_error = pending
+        .resolve_authenticated(
+            &alice.principal_id,
+            &fabric::ConnectionId::new(),
+            &id,
+            corpus::security::approval::ApprovalDecision::Approve,
+        )
+        .await
+        .unwrap_err();
+    assert!(connection_error
+        .to_string()
+        .contains("not owned by authenticated principal"));
+    let error = pending
+        .resolve(
+            &bob,
+            &id,
+            corpus::security::approval::ApprovalDecision::Approve,
+        )
+        .await
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("not owned by authenticated principal"));
+}
+
+#[tokio::test]
+async fn session_grant_is_not_reused_by_another_principal() {
+    let cache = ScopedApprovalCache::default();
+    cache
+        .allow_for_thread(PrincipalId::local_uid(1001), ThreadId("a".into()), "shell")
+        .await;
+    assert!(
+        !cache
+            .is_allowed(
+                &PrincipalId::local_uid(1002),
+                &ThreadId("a".into()),
+                "shell",
+            )
+            .await
+    );
 }
 
 impl Fixture {

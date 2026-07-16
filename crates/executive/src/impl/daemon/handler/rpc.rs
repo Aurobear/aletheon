@@ -22,7 +22,7 @@ impl RequestHandler {
     /// function defined in one of the `rpc_*` sub-modules.
     pub(super) async fn handle_rpc(
         &self,
-        _connection: &super::super::server::ConnectionContext,
+        connection: &super::super::server::ConnectionContext,
         method: &str,
         id: serde_json::Value,
         request: serde_json::Value,
@@ -46,11 +46,17 @@ impl RequestHandler {
             // ── Admin / meta ──────────────────────────────────────────
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,
             "reload_skills" => self.handle_reload_skills(&id, &request).await,
-            "approval_response" => self.handle_approval_response(&id, &request).await,
-            "approval.list" => self.handle_approval_list(&id, &request).await,
-            "approval.show" => self.handle_approval_show(&id, &request).await,
-            "approval.approve" => self.handle_approval_approve(&id, &request).await,
-            "approval.reject" => self.handle_approval_reject(&id, &request).await,
+            "approval_response" => {
+                self.handle_approval_response(connection, &id, &request)
+                    .await
+            }
+            "approval.list" => self.handle_approval_list(connection, &id, &request).await,
+            "approval.show" => self.handle_approval_show(connection, &id, &request).await,
+            "approval.approve" => {
+                self.handle_approval_approve(connection, &id, &request)
+                    .await
+            }
+            "approval.reject" => self.handle_approval_reject(connection, &id, &request).await,
             "interrupt" => self.handle_interrupt(&id, &request).await,
             "mode_switch" => self.handle_mode_switch(&id, &request).await,
             "model_list" => self.handle_model_list(&id, &request).await,

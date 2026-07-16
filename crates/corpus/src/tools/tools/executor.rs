@@ -392,6 +392,7 @@ mod tests {
 
     fn mock_ctx() -> ToolContext {
         ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),

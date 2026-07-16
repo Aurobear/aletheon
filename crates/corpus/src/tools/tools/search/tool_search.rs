@@ -140,6 +140,7 @@ mod tests {
     async fn tool_search_finds_deferred() {
         let tool = ToolSearchTool::new(build_test_catalog());
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
@@ -156,6 +157,7 @@ mod tests {
     async fn tool_search_excludes_hidden() {
         let tool = ToolSearchTool::new(build_test_catalog());
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
@@ -172,6 +174,7 @@ mod tests {
     async fn tool_search_no_match() {
         let tool = ToolSearchTool::new(build_test_catalog());
         let ctx = ToolContext {
+            approval_authority: None,
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
