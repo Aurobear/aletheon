@@ -136,7 +136,7 @@ V02 installed-daemon real scenario and migration gate
 |---|---|---|---|
 | G01 | `2026-07-16-g01-subagent-production-baseline.md` | Current vertical-slice and known-gap tests | S02 |
 | G02 | `2026-07-16-g02-agent-control-contracts.md` | Shared bounded Agent control types and port | G01 |
-| G03 | `2026-07-15-g03-agent-control-service.md` | Transactional lifecycle and durable run repository | G02 |
+| G03 | `2026-07-15-g03-agent-control-service.md` | Transactional lifecycle and durable run repository | G02, K02, X02 |
 | G04 | `2026-07-15-g04-native-cognit-runtime.md` | Child Agents use Cognit Harness; inline loop removed | G03, E03 |
 | G05 | `2026-07-15-g05-agent-tools.md` | Thin spawn/wait/send/cancel/list clients | G04 |
 | G06 | `2026-07-15-g06-subagent-context-agora-projection.md` | Bounded context fork and typed child candidates | G05, C01 |
@@ -161,7 +161,7 @@ V02 installed-daemon real scenario and migration gate
 | ID | Plan artifact | Deliverable | Prerequisites |
 |---|---|---|---|
 | C01 | `2026-07-15-c01-recurrent-workspace-coordinator.md` | Dasein salience ↔ Agora broadcast recurrence | D03, A03, K02, X02, S02 |
-| C02 | `2026-07-15-c02-conscious-processors-integration.md` | Memory, Metacog, Corpus and SubAgent processors | M05, G10, C01, F01 |
+| C02 | `2026-07-15-c02-conscious-processors-integration.md` | Memory, Metacog, Corpus and SubAgent processors | M05, G10, C01, F01, Q02 |
 | V01 | `2026-07-15-v01-cross-domain-acceptance-suite.md` | Deterministic lifecycle, isolation and replay suite | C02, M07, M08, R02, Q02 |
 | V02 | `2026-07-15-v02-production-migration-scenarios.md` | Installed-daemon scenarios, rollback and release gates | V01 |
 
@@ -176,7 +176,7 @@ V02 installed-daemon real scenario and migration gate
 | F01 | `2026-07-15-f01-domain-facade-authority.md` | Metacog, Cognit and remaining Corpus production paths use authoritative facades | X02, E03 |
 | R01 | `2026-07-15-r01-canonical-event-spine.md` | EnvelopeV2, ordered tree sequence and raw observation separation | S02 |
 | R02 | `2026-07-15-r02-deterministic-event-projections.md` | Replayable public/debug/memory/Agent/metrics reducers | R01 |
-| Q01 | `2026-07-15-q01-layered-config-extension-catalog.md` | Provenanced config schema and policy-scoped extension catalog | X02, E03 |
+| Q01 | `2026-07-15-q01-layered-config-extension-catalog.md` | Provenanced config schema and policy-scoped extension catalog | X02, E03, R01 |
 | Q02 | `2026-07-15-q02-typed-interact-thin-bin.md` | Typed reducer-driven Interact and host-only Bin | Q01, R02 |
 
 The result is 42 implementation plans. The count is intentionally larger than the initial estimate because the original Kernel, composition-root, event-spine and Interact migrations, plus memory lifecycle and SubAgent recovery, cannot remain verifiable when silently combined.
