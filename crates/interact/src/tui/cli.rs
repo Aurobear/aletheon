@@ -14,7 +14,7 @@ use fabric::ui_event::ClientEvent;
 use std::io;
 use std::path::PathBuf;
 
-use aletheon_kernel::chronos::SystemTimer;
+use crate::tui::host_time::ClientTimer;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use fabric::Timer;
@@ -500,7 +500,7 @@ pub async fn single_message(socket: &PathBuf, msg: &str) -> Result<()> {
     // This provides a clean timeout mechanism.
     let timeout_duration = std::time::Duration::from_secs(SINGLE_MESSAGE_TIMEOUT_SECS);
 
-    let result = SystemTimer.timeout(timeout_duration, async {
+    let result = ClientTimer.timeout(timeout_duration, async {
         let mut response_buf = String::new();
         loop {
             response_buf.clear();

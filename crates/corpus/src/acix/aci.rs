@@ -1,12 +1,12 @@
 use super::grounding::{GroundingProvider, GroundingResult};
-use anyhow::Result;
-use corpus::drivers::{
+use crate::drivers::{
     a11y::A11yDriver,
     display::{ClipboardDriver, DisplayDriver, WindowInfo, WindowManager},
     input::InputDriver,
     ocr::OcrDriver,
     types::*,
 };
+use anyhow::Result;
 
 /// ACI — Agent-Computer Interface
 ///
@@ -202,7 +202,7 @@ impl Aci {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corpus::drivers::{
+    use crate::drivers::{
         a11y::MockA11yDriver,
         display::{MockClipboardDriver, MockDisplayDriver, MockWindowManager},
         input::MockInputDriver,

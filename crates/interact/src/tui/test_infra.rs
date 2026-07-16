@@ -1,5 +1,3 @@
-use aletheon_kernel::chronos::SystemClock;
-use fabric::Clock;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -18,7 +16,10 @@ pub struct TestConfig {
 
 /// Milliseconds since epoch.
 pub fn now_ms() -> u64 {
-    SystemClock::new().wall_now().0 as u64
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 // ── FrameRecorder ───────────────────────────────────────────────

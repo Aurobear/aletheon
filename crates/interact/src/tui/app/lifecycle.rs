@@ -8,7 +8,7 @@ use fabric::Clock;
 use ratatui::Terminal;
 use tokio::net::UnixStream;
 
-use aletheon_kernel::chronos::SystemTimer;
+use crate::tui::host_time::ClientTimer;
 use fabric::Timer;
 
 use super::super::response::{
@@ -61,7 +61,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         .await;
     let _ = app.stream.flush().await;
     // Read and discard the clear response so it doesn't pollute the socket buffer
-    SystemTimer.sleep(Duration::from_millis(50)).await;
+    ClientTimer.sleep(Duration::from_millis(50)).await;
     let _ = app.stream.try_read(&mut app.read_buf);
 
     // If test mode with auto_submit, submit the first line immediately
@@ -159,7 +159,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                         break;
                     }
                 }
-                _ = SystemTimer.sleep(Duration::from_millis(200)) => {}
+                _ = ClientTimer.sleep(Duration::from_millis(200)) => {}
             }
         }
 
@@ -174,7 +174,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             if !app.turn_active && !reader.is_exhausted() {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
-                    SystemTimer.sleep(Duration::from_millis(100)).await;
+                    ClientTimer.sleep(Duration::from_millis(100)).await;
                     submit_message(&mut app, next).await;
                 }
             }
@@ -286,7 +286,7 @@ pub async fn simple_line_mode(
         // Use Timer::timeout for clean timeout handling.
         let timeout_duration = Duration::from_secs(120);
 
-        let result = SystemTimer.timeout(timeout_duration, async {
+        let result = ClientTimer.timeout(timeout_duration, async {
             loop {
                 // Wait for stream to be readable
                 match stream.readable().await {
@@ -404,7 +404,7 @@ pub async fn simple_line_mode(
                         }
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        SystemTimer.sleep(Duration::from_millis(50)).await;
+                        ClientTimer.sleep(Duration::from_millis(50)).await;
                     }
                     Err(_) => return Ok(()),
                 }

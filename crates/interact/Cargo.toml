@@ -8,8 +8,6 @@ description = "User interaction: TUI, CLI, and ACIX"
 
 [dependencies]
 fabric = { path = "../fabric" }
-aletheon-kernel = { path = "../kernel" }
-corpus = { path = "../corpus", features = ["input", "display", "a11y", "ocr"] }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }

@@ -1,5 +1,7 @@
 //! Core execution body — the minimal runtime for tool execution.
 
+#[cfg(feature = "acix")]
+pub mod acix;
 pub mod catalog;
 pub mod core;
 pub mod drivers;
@@ -32,3 +34,7 @@ pub use skill::router::SkillRouter;
 pub use fabric::{
     ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
 };
+
+/// Compatibility export for the Corpus-owned ACIX tool adapter.
+#[cfg(feature = "acix")]
+pub use acix::tools as acix_tools;

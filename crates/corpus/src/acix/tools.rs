@@ -12,8 +12,8 @@ use serde_json::json;
 
 use crate::acix::Aci;
 use crate::acix::GroundingProvider;
-use corpus::drivers::types::{Key, ScrollDirection};
-use corpus::tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use crate::drivers::types::{Key, ScrollDirection};
+use crate::tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use fabric::Registry;
 
 // ---------------------------------------------------------------------------
@@ -150,7 +150,7 @@ impl Tool for TreeTool {
     }
 }
 
-fn format_element(elem: &corpus::drivers::types::Element, depth: usize) -> String {
+fn format_element(elem: &crate::drivers::types::Element, depth: usize) -> String {
     let indent = "  ".repeat(depth);
     let mut out = format!(
         "{}[{}] {:?} bounds=({},{}+{}x{})\n",
@@ -397,18 +397,18 @@ impl Tool for ObserveTool {
         match self.aci.smart_observe() {
             Ok(observation) => {
                 let text = match observation {
-                    corpus::drivers::types::Observation::AccessibilityTree(tree) => {
+                    crate::drivers::types::Observation::AccessibilityTree(tree) => {
                         format!(
                             "[AT-SPI2] app: {}\n{}",
                             tree.app_name,
                             format_element(&tree.root, 0),
                         )
                     }
-                    corpus::drivers::types::Observation::OcrFallback(ocr) => {
+                    crate::drivers::types::Observation::OcrFallback(ocr) => {
                         let words: Vec<&str> = ocr.words.iter().map(|w| w.text.as_str()).collect();
                         format!("[OCR] text: {}\nwords: {}", ocr.text, words.join(", "))
                     }
-                    corpus::drivers::types::Observation::ScreenshotOnly(img) => {
+                    crate::drivers::types::Observation::ScreenshotOnly(img) => {
                         format!(
                             "[Screenshot] {}x{} ({} bytes)",
                             img.width,
@@ -882,16 +882,16 @@ impl Tool for AcixGroundTool {
 /// Panics if called without the `input`, `display`, and `a11y` features enabled on the `drivers` crate.
 pub fn default_aci() -> Arc<Aci> {
     Arc::new(Aci::new_basic(
-        Box::new(corpus::drivers::input::MockInputDriver::new()),
-        Box::new(corpus::drivers::display::MockDisplayDriver::new(1920, 1080)),
-        Box::new(corpus::drivers::a11y::MockA11yDriver::new()),
-        Some(Box::new(corpus::drivers::ocr::MockOcrDriver)),
+        Box::new(crate::drivers::input::MockInputDriver::new()),
+        Box::new(crate::drivers::display::MockDisplayDriver::new(1920, 1080)),
+        Box::new(crate::drivers::a11y::MockA11yDriver::new()),
+        Some(Box::new(crate::drivers::ocr::MockOcrDriver)),
     ))
 }
 
 /// Register all ACIX tools into the given `ToolRegistry` using a caller-provided `Aci` and `Clock`.
 pub fn register_acix_tools_with(
-    registry: &mut corpus::tools::tools::ToolRegistry,
+    registry: &mut crate::tools::tools::ToolRegistry,
     aci: Arc<Aci>,
     clock: Arc<dyn Clock>,
 ) {
@@ -937,7 +937,7 @@ pub fn register_acix_tools_with(
 /// Register all ACIX tools into the given `ToolRegistry` with mock drivers.
 ///
 /// Convenience for testing. For production, use `register_acix_tools_with`.
-pub fn register_acix_tools(registry: &mut corpus::tools::tools::ToolRegistry) {
+pub fn register_acix_tools(registry: &mut crate::tools::tools::ToolRegistry) {
     register_acix_tools_with(
         registry,
         default_aci(),
@@ -950,7 +950,7 @@ pub fn register_acix_tools(registry: &mut corpus::tools::tools::ToolRegistry) {
 /// Requires a caller-provided `Aci` and `GroundingProvider`. The grounding
 /// provider is typically a `VisionGroundingProvider` backed by a multimodal LLM.
 pub fn register_acix_ground_tool(
-    registry: &mut corpus::tools::tools::ToolRegistry,
+    registry: &mut crate::tools::tools::ToolRegistry,
     aci: Arc<Aci>,
     grounding: Arc<dyn GroundingProvider>,
     clock: Arc<dyn Clock>,

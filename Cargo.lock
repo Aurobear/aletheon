@@ -85,18 +85,14 @@ dependencies = [
 name = "aletheon-bin"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
  "anyhow",
  "clap",
  "executive",
- "fabric",
  "interact",
- "serde",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -1857,13 +1853,11 @@ dependencies = [
 name = "interact"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
  "anyhow",
  "async-trait",
  "atty",
  "chrono",
  "clap",
- "corpus",
  "crossterm",
  "ctrlc",
  "dirs",

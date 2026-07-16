@@ -22,8 +22,5 @@
 pub mod acix;
 pub mod tui;
 
-/// Backward compatibility: acix_tools is now acix::tools
-pub use acix::tools as acix_tools;
-
 /// Backward compatibility: cli module is now tui::cli
 pub use tui::cli;

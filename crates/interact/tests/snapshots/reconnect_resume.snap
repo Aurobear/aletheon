@@ -1,0 +1,26 @@
+{
+  "cursor": 10,
+  "provider": "anthropic",
+  "model": "sonnet",
+  "items": [
+    {
+      "id": "00000000-0000-0000-0000-00000000000b",
+      "sequence": 1,
+      "kind": "assistant",
+      "content": "first",
+      "status": "completed",
+      "collapsed": false
+    },
+    {
+      "id": "00000000-0000-0000-0000-00000000000c",
+      "sequence": 2,
+      "kind": "assistant",
+      "content": "second",
+      "status": "completed",
+      "collapsed": false
+    }
+  ],
+  "approvals": [],
+  "agents": [],
+  "error": null
+}

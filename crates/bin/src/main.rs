@@ -7,15 +7,9 @@
 //!   -m `msg`      Send single message to daemon
 //!   version      Print version + git commit
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use aletheon_kernel::chronos::SystemClock;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use executive::host::RuntimeHost;
-use fabric::Clock;
-use tracing::info;
+use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
@@ -125,52 +119,15 @@ async fn main() -> Result<()> {
             _,
         ) => {
             init_tracing("aletheon::daemon");
-            info!(
-                component = "daemon",
-                event_category = "lifecycle",
-                outcome = "starting",
-                error_code = "none",
-                duration_ms = 0_u64,
-                "daemon startup"
-            );
-            let socket_path = socket.clone().unwrap_or(cli.socket);
-            let daemon_mode = detect_daemon_mode(container);
-
-            match daemon_mode {
-                DaemonMode::Systemd => {
-                    let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-                    let mut host = executive::host::systemd::SystemdHost::new(
-                        config.clone(),
-                        env.clone(),
-                        socket_path,
-                        *enable_evolution,
-                        clock,
-                    );
-                    host.init().await?;
-                    Box::new(host).serve().await
-                }
-                DaemonMode::Container { runtime_name } => {
-                    let mut host = executive::host::container::ContainerHost::new(
-                        config.clone(),
-                        env.clone(),
-                        runtime_name,
-                        image.clone(),
-                        *enable_evolution,
-                    );
-                    host.init().await?;
-                    Box::new(host).serve().await
-                }
-                DaemonMode::Foreground => {
-                    let mut host = executive::host::DaemonHost::new(
-                        config.clone(),
-                        env.clone(),
-                        socket_path,
-                        *enable_evolution,
-                    );
-                    host.init().await?;
-                    Box::new(host).serve().await
-                }
-            }
+            executive::host::launcher::run_daemon(executive::host::launcher::DaemonLaunch {
+                config: config.clone(),
+                env: env.clone(),
+                socket: socket.clone().unwrap_or(cli.socket),
+                container: container.clone(),
+                image: image.clone(),
+                enable_evolution: *enable_evolution,
+            })
+            .await
         }
         (
             Some(Commands::Exec {
@@ -185,16 +142,23 @@ async fn main() -> Result<()> {
             _,
         ) => {
             init_tracing("aletheon::exec");
-            run_exec(
-                prompt,
-                model,
-                *max_turns,
-                sandbox,
-                working_dir,
-                config,
-                output,
-            )
-            .await
+            let outcome =
+                executive::host::launcher::run_exec(executive::host::launcher::ExecLaunch {
+                    prompt: prompt.clone(),
+                    model: model.clone(),
+                    max_turns: *max_turns,
+                    sandbox: sandbox.clone(),
+                    working_dir: working_dir.clone(),
+                    config: config.clone(),
+                    json: output == "json",
+                })
+                .await?;
+            println!("{}", outcome.rendered);
+            if outcome.success {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("exec host failed"))
+            }
         }
         (Some(Commands::Version), _) => {
             println!("aletheon {}", env!("CARGO_PKG_VERSION"));
@@ -222,31 +186,6 @@ async fn main() -> Result<()> {
     }
 }
 
-// ── Daemon mode detection ──────────────────────────────────────────────────
-
-enum DaemonMode {
-    Systemd,
-    Container { runtime_name: String },
-    Foreground,
-}
-
-fn detect_daemon_mode(container_override: &Option<String>) -> DaemonMode {
-    if let Some(rt) = container_override {
-        return DaemonMode::Container {
-            runtime_name: rt.clone(),
-        };
-    }
-    if std::env::var("NOTIFY_SOCKET").is_ok() {
-        return DaemonMode::Systemd;
-    }
-    if std::env::var("CONTAINER").is_ok() || std::path::Path::new("/.dockerenv").exists() {
-        return DaemonMode::Container {
-            runtime_name: "docker".to_string(),
-        };
-    }
-    DaemonMode::Foreground
-}
-
 // ── Tracing ─────────────────────────────────────────────────────────────────
 
 fn init_tracing(target: &str) {
@@ -271,82 +210,4 @@ fn init_tracing(target: &str) {
         .with(env_filter)
         .with(stderr_layer)
         .init();
-}
-
-// ── Exec ────────────────────────────────────────────────────────────────────
-
-use executive::ExecSessionBuilder;
-use executive::{NoopTurnEventSink, OperationId, ProcessId, TurnRequest};
-
-/// Non-interactive exec logic — powered by ExecSessionBuilder (shared factory).
-async fn run_exec(
-    prompt: &str,
-    model: &str,
-    max_turns: usize,
-    sandbox: &str,
-    working_dir: &Path,
-    config: &Option<PathBuf>,
-    output: &str,
-) -> anyhow::Result<()> {
-    let working_dir = working_dir
-        .canonicalize()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
-
-    let mut builder = ExecSessionBuilder::new(working_dir.clone())
-        .with_model(model.to_string())
-        .with_max_turns(max_turns)
-        .with_sandbox(sandbox.to_string());
-    if let Some(ref path) = config {
-        builder = builder.with_config(path.clone());
-    }
-    let (turn_service, _llm, _risk_level) = builder.build().await?;
-
-    let session_id = uuid::Uuid::new_v4().to_string();
-
-    let result = turn_service
-        .submit(
-            TurnRequest {
-                operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                session_id,
-                input: prompt.to_string(),
-                working_dir,
-                model_policy: if model.is_empty() {
-                    None
-                } else {
-                    Some(model.to_string())
-                },
-                deadline: None,
-            },
-            &NoopTurnEventSink,
-        )
-        .await?;
-
-    let success = result.metrics.completed_normally;
-    info!(
-        iterations = result.metrics.iterations,
-        tool_calls = result.metrics.tool_calls_made,
-        tool_errors = result.metrics.tool_errors,
-        success = success,
-        "Execution complete"
-    );
-
-    if output == "json" {
-        let response = serde_json::json!({
-            "success": success,
-            "response": result.output,
-            "iterations": result.metrics.iterations,
-            "tool_calls_made": result.metrics.tool_calls_made,
-            "tool_errors": result.metrics.tool_errors,
-            "elapsed_ms": result.metrics.elapsed_ms,
-        });
-        println!("{}", serde_json::to_string_pretty(&response)?);
-    } else {
-        println!("{}", result.output);
-    }
-
-    if !success {
-        std::process::exit(1);
-    }
-    Ok(())
 }

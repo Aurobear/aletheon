@@ -1,8 +1,8 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::drivers::types::{Key, ScrollDirection};
 use async_trait::async_trait;
-use corpus::drivers::types::{Key, ScrollDirection};
 use fabric::Timer;
 use serde::{Deserialize, Serialize};
 
@@ -540,7 +540,7 @@ impl TaskWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corpus::drivers::{
+    use crate::drivers::{
         a11y::MockA11yDriver, display::MockDisplayDriver, input::MockInputDriver,
     };
 

@@ -28,8 +28,14 @@ pub mod ipc;
 pub mod kernel;
 pub mod policy;
 pub mod primitives;
+pub mod protocol;
 pub mod security;
 pub mod types;
+
+pub use protocol::client::{
+    ClientEvent as ProtocolClientEvent, ClientMessage, ClientRequest, EventCursor,
+    EventSubscription, SnapshotRequest, UiSnapshot, CLIENT_PROTOCOL_VERSION,
+};
 
 // === Backward-compatible module re-exports ===
 // These allow `fabric::genome::*`, `fabric::self_field::*`, etc. to continue working.
@@ -103,7 +109,7 @@ pub use events::ui_event;
 // Re-export ipc_msg types at ipc level for backward compatibility.
 pub use ipc::envelope;
 pub use ipc::ipc_types;
-pub use ipc::protocol;
+pub use ipc::protocol as legacy_protocol;
 pub use ipc::transport;
 
 // Kernel modules (from kernel/)

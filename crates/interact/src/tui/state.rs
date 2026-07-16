@@ -3,8 +3,11 @@
 //! Extracts state fields from the monolithic App struct in mod.rs
 //! into a focused module for clarity and testability.
 
+use fabric::protocol::client::EventCursor;
 use fabric::ui_event::{AwarenessLevel, CollaborationMode};
-use fabric::MonoTime;
+use fabric::{AgentSnapshot, ApprovalSnapshot, MonoTime};
+use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// Tracks the current awareness level from brain signals.
 #[derive(Debug, Clone)]
@@ -71,6 +74,37 @@ impl ContextDisplay {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiItemStatus {
+    Streaming,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UiItem {
+    pub id: String,
+    pub sequence: u64,
+    pub kind: String,
+    pub content: String,
+    pub status: UiItemStatus,
+    pub collapsed: bool,
+}
+
+impl UiItem {
+    pub fn streaming(id: String) -> Self {
+        Self {
+            id,
+            sequence: 0,
+            kind: "assistant".into(),
+            content: String::new(),
+            status: UiItemStatus::Streaming,
+            collapsed: false,
+        }
+    }
+}
+
 /// Centralized application state.
 #[derive(Debug)]
 pub struct AppState {
@@ -92,6 +126,14 @@ pub struct AppState {
     pub turn_active: bool,
     /// Current ReAct loop iteration (0 = first call, 1+ = after tool calls).
     pub current_iteration: usize,
+    /// Last protocol event included in this state.
+    pub cursor: EventCursor,
+    pub session_id: Option<String>,
+    pub provider_name: Option<String>,
+    pub items: BTreeMap<String, UiItem>,
+    pub approvals: BTreeMap<String, ApprovalSnapshot>,
+    pub agents: BTreeMap<String, AgentSnapshot>,
+    pub last_error: Option<String>,
 }
 
 impl Default for AppState {
@@ -106,6 +148,13 @@ impl Default for AppState {
             streaming: false,
             turn_active: false,
             current_iteration: 0,
+            cursor: EventCursor::origin(),
+            session_id: None,
+            provider_name: None,
+            items: BTreeMap::new(),
+            approvals: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            last_error: None,
         }
     }
 }

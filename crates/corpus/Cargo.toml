@@ -56,6 +56,7 @@ input = ["nix"]
 display = ["nix", "x11rb"]
 a11y = ["atspi"]
 ocr = []
+acix = ["input", "display", "a11y", "ocr"]
 ocr-tesseract = ["ocr", "tesseract"]
 # From security
 sandbox-primitives = ["nix"]

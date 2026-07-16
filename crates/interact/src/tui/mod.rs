@@ -1,6 +1,7 @@
 //! TUI interface — interactive terminal UI and CLI entry point.
 
 pub mod app;
+pub mod reducer;
 pub mod render;
 pub mod response;
 pub mod session_protocol;
@@ -15,6 +16,7 @@ pub mod computer;
 
 pub mod help_overlay;
 pub mod history_search;
+pub mod host_time;
 pub mod input;
 pub mod markdown;
 pub mod pager;
@@ -30,7 +32,7 @@ pub mod term_compat;
 pub mod cli;
 pub mod debug;
 pub mod goal;
-pub(crate) mod rpc_client;
+pub mod rpc_client;
 pub mod workflow;
 
 // Re-export the main entry point
@@ -113,7 +115,7 @@ pub async fn run_tui(socket_path: &str) -> anyhow::Result<()> {
 /// Run the full TUI with optional test configuration.
 pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
-    let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+    let clock: Arc<dyn Clock> = Arc::new(self::host_time::ClientClock::new());
 
     let stream = match UnixStream::connect(socket_path).await {
         Ok(s) => s,

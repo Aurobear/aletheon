@@ -33,6 +33,31 @@ if [[ ! -s config/schema/aletheon-config.schema.json ]]; then
   exit 1
 fi
 
+# Q02 deletion gates: Interact is a Fabric protocol client and Bin is a host
+# selector. Domain construction belongs to Executive/Corpus composition.
+if rg -n '^\s*(aletheon-kernel|corpus)\s*=' crates/interact/Cargo.toml || \
+   rg -n '\b(aletheon_kernel|corpus)::|use\s+(aletheon_kernel|corpus)\b' \
+     crates/interact/src -g '*.rs'; then
+  echo "architecture-check: Interact imports Kernel or Corpus" >&2
+  exit 1
+fi
+if rg -n '\b(aletheon_kernel|fabric|corpus|cognit|mnemosyne|dasein|agora|metacog)\s*=' \
+     crates/bin/Cargo.toml || \
+   rg -n '\b(ExecSessionBuilder|TurnRequest|RuntimeHost|KernelRuntime|ToolRegistry)\b|\b(corpus|cognit|mnemosyne|dasein|agora|metacog)::' \
+     crates/bin/src -g '*.rs'; then
+  echo "architecture-check: Bin owns domain or runtime construction" >&2
+  exit 1
+fi
+for required in \
+  crates/fabric/src/protocol/client.rs \
+  crates/interact/src/tui/reducer.rs \
+  crates/bin/src/lib.rs; do
+  if [[ ! -s "$required" ]]; then
+    echo "architecture-check: missing Q02 boundary: $required" >&2
+    exit 1
+  fi
+done
+
 normalize_rg() {
   local rule=$1
   awk -v rule="$rule" '{

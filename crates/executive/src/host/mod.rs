@@ -12,6 +12,7 @@
 //! - Object-safe: `serve` takes `self: Box<Self>` for ownership transfer
 
 pub mod container;
+pub mod launcher;
 pub mod systemd;
 
 use aletheon_kernel::chronos::SystemTimer;

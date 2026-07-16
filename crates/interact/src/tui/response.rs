@@ -290,6 +290,9 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
 }
 
 pub fn process_response(app: &mut App, msg: serde_json::Value) {
+    if apply_typed_protocol_event(app, &msg) {
+        return;
+    }
     if let Some(result) = msg.get("result") {
         if let Some(text) = result.get("response").and_then(|v| v.as_str()) {
             // Standard chat response - deduplicate consecutive identical text
@@ -350,6 +353,33 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
     //
     // Also do NOT clear response_buf — streaming events may follow in the
     // same try_read chunk.
+}
+
+fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {
+    use super::reducer::{reduce, UiAction, UiError};
+    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage};
+
+    let candidate = message
+        .get("params")
+        .or_else(|| message.get("result"))
+        .unwrap_or(message);
+    let Ok(message) = serde_json::from_value::<ClientMessage<ProtocolEvent>>(candidate.clone())
+    else {
+        return false;
+    };
+    let Ok(event) = message.into_v1() else {
+        return false;
+    };
+    let action = match event {
+        ProtocolEvent::Snapshot(value) => UiAction::Snapshot(value),
+        ProtocolEvent::Item(value) => UiAction::Item(value),
+        ProtocolEvent::Approval(value) => UiAction::Approval(value),
+        ProtocolEvent::Agent(value) => UiAction::Agent(value),
+        ProtocolEvent::Reconnected(value) => UiAction::Reconnected(value),
+        ProtocolEvent::Failed { cursor, message } => UiAction::Failed(UiError { cursor, message }),
+    };
+    let _effects = reduce(&mut app.app_state, action);
+    true
 }
 
 /// Deduplicate consecutive identical text blocks.
