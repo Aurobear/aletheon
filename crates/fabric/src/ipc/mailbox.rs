@@ -235,14 +235,23 @@ impl Mailbox for InProcessMailbox {
                 reason: "mailbox closed".into(),
             };
         }
-        let len = state.high.len() + state.normal.len();
-        if len >= self.inner.capacity {
+        let high_priority =
+            envelope.priority == 255 || envelope.schema.0 == SchemaId::PROCESS_SIGNAL_V1;
+        // Keep one bounded emergency lane outside ordinary capacity. A full
+        // normal queue must exert backpressure without dropping cancel or
+        // interrupt. Repeated high-priority signals remain bounded to one.
+        let full = if high_priority {
+            !state.high.is_empty()
+        } else {
+            state.normal.len() >= self.inner.capacity
+        };
+        if full {
             return DeliveryReceipt::Rejected {
                 message_id: msg_id,
                 reason: "mailbox buffer full".into(),
             };
         }
-        if envelope.priority == 255 || envelope.schema.0 == SchemaId::PROCESS_SIGNAL_V1 {
+        if high_priority {
             state.high.push_back(envelope);
         } else {
             state.normal.push_back(envelope);

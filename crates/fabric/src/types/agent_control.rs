@@ -225,6 +225,10 @@ pub struct AgentSendRequest {
     /// Caller-generated delivery identity used for idempotent retries.
     #[serde(default)]
     pub delivery_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub correlation_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub deadline_mono_ms: Option<u64>,
     pub message: String,
     pub start_turn: bool,
 }
@@ -240,6 +244,16 @@ impl AgentSendRequest {
         if self.start_turn && self.kind != AgentMessageKind::Input {
             return Err(AgentControlError::invalid(
                 "only Agent input messages may start a turn",
+            ));
+        }
+        if self.kind == AgentMessageKind::Response && self.correlation_id.is_none() {
+            return Err(AgentControlError::invalid(
+                "Agent response requires a correlation ID",
+            ));
+        }
+        if self.deadline_mono_ms == Some(0) {
+            return Err(AgentControlError::invalid(
+                "Agent message deadline must be nonzero",
             ));
         }
         Ok(())
@@ -322,6 +336,8 @@ pub struct AgentMessagePayload {
     pub start_turn: bool,
     #[serde(default)]
     pub correlation_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub deadline_mono_ms: Option<u64>,
 }
 
 impl AgentMessagePayload {

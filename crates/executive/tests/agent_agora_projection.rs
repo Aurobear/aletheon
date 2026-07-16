@@ -5,7 +5,7 @@ use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use executive::service::agent_control::{
     AgentCandidateProjector, AgentCandidateSubmissionPort, AgentContextProjection,
-    AgentRuntimeEvent, AgentRuntimeInput,
+    AgentRuntimeEvent, AgentRuntimeInbox, AgentRuntimeInput,
 };
 use executive::service::conscious_core_ports::LatestConsciousContextPort;
 use executive::service::conscious_workspace::ConsciousWorkspaceRegistry;
@@ -66,6 +66,7 @@ fn input() -> AgentRuntimeInput {
         workspace_id: AgoraSpaceId(format!("agent:{}", child_agent.0)),
         root_workspace_id: AgoraSpaceId("root-workspace".into()),
         root_process_id: root,
+        inbox: AgentRuntimeInbox::empty(),
         cancellation: CancellationToken::new(),
     }
 }

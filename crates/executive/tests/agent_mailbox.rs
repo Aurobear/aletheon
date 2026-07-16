@@ -1,11 +1,14 @@
 use executive::service::agent_control::{
     AgentRunRecord, AgentRunRepository, SqliteAgentRunRepository,
 };
+use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
+use fabric::ipc::mailbox::{InProcessMailbox, Mailbox};
 use fabric::{
     AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentMessageDeliveryState,
     AgentMessageKind, AgentMessagePayload, AgentProfileId, AgentRunStatus, AgentSnapshot,
     AgentSpawnRequest, OperationId, ProcessId, RuntimeId, AGENT_MESSAGE_SCHEMA_V1,
 };
+use tokio_util::sync::CancellationToken;
 
 fn run(root: AgentId) -> AgentRunRecord {
     let request = AgentSpawnRequest {
@@ -63,6 +66,7 @@ fn payload(content: &str) -> AgentMessagePayload {
         content: content.into(),
         start_turn: true,
         correlation_id: None,
+        deadline_mono_ms: None,
     }
 }
 
@@ -150,8 +154,68 @@ fn every_message_kind_has_a_versioned_bounded_payload() {
             content: "bounded".into(),
             start_turn: false,
             correlation_id: None,
+            deadline_mono_ms: None,
         }
         .validate()
         .unwrap();
     }
 }
+
+fn envelope(payload: AgentMessagePayload, priority: u8) -> EnvelopeV2 {
+    EnvelopeV2::new(
+        SchemaId::from(SchemaId::AGENT_CONTROL_MESSAGE_V1),
+        Target::from("agent:sender"),
+        Target::from("agent:target"),
+        DeliveryPattern::Direct,
+        fabric::NamespaceId("mailbox-test".into()),
+        serde_json::json!({"payload": payload}),
+    )
+    .with_priority(priority)
+}
+
+#[tokio::test]
+async fn live_delivery_decodes_versioned_input_and_preserves_signal_priority() {
+    let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(4));
+    let cancellation = CancellationToken::new();
+    let (bridge, inbox) =
+        AgentMailboxBridge::bounded(mailbox.clone(), 2, cancellation.clone()).unwrap();
+    mailbox.send(envelope(payload("normal"), 0)).await;
+    let mut signal = payload("cancel");
+    signal.kind = AgentMessageKind::Signal;
+    mailbox.send(envelope(signal, 255)).await;
+    bridge.run().await.unwrap();
+    assert!(cancellation.is_cancelled());
+    assert!(inbox.try_recv().await.is_none());
+
+    let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(1));
+    let cancellation = CancellationToken::new();
+    let (bridge, inbox) =
+        AgentMailboxBridge::bounded(mailbox.clone(), 1, cancellation.clone()).unwrap();
+    assert!(mailbox.send(envelope(payload("turn two"), 0)).await.is_ok());
+    let task = tokio::spawn(bridge.run());
+    let received = tokio::time::timeout(std::time::Duration::from_secs(1), inbox.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(received.content, "turn two");
+    cancellation.cancel();
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn normal_overload_never_drops_the_reserved_high_priority_signal() {
+    let mailbox = InProcessMailbox::with_capacity(1);
+    assert!(mailbox.send(envelope(payload("normal"), 0)).await.is_ok());
+    assert!(matches!(
+        mailbox.send(envelope(payload("overload"), 0)).await,
+        fabric::ipc::mailbox::DeliveryReceipt::Rejected { .. }
+    ));
+    let mut signal = payload("interrupt");
+    signal.kind = AgentMessageKind::Signal;
+    assert!(mailbox.send(envelope(signal, 255)).await.is_ok());
+    let received = mailbox.recv().await.unwrap();
+    assert_eq!(received.priority, 255);
+}
+use std::sync::Arc;
+
+use executive::service::agent_control::AgentMailboxBridge;

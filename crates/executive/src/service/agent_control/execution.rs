@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use crate::core::sub_agent::{SubAgentExecutionContext, SubAgentRuntime};
 
 use super::context_fork::AgentContextProjection;
+use super::mailbox::AgentRuntimeInbox;
 
 #[derive(Debug, Clone)]
 pub enum AgentRuntimeEvent {
@@ -66,6 +67,7 @@ pub struct AgentRuntimeInput {
     pub root_workspace_id: AgoraSpaceId,
     pub root_process_id: ProcessId,
     pub context: AgentContextProjection,
+    pub inbox: AgentRuntimeInbox,
     pub cancellation: CancellationToken,
 }
 

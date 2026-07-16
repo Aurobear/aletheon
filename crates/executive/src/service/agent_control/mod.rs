@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,7 @@ pub mod candidate_projection;
 pub mod context_fork;
 pub mod execution;
 pub mod live_runs;
+pub mod mailbox;
 pub mod repository;
 pub mod sqlite_repository;
 
@@ -37,6 +39,7 @@ pub use execution::{
     AgentRuntimeRegistry, CompatibilityRuntimeLauncher, NoopAgentEventSink,
 };
 pub use live_runs::{LiveAgentRun, LiveAgentRuns};
+pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
 pub use repository::{agent_workspace_id, AgentMessageRecord, AgentRunRecord, AgentRunRepository};
 pub use sqlite_repository::SqliteAgentRunRepository;
 
@@ -86,6 +89,7 @@ pub struct AgentControlService {
     timer: Arc<dyn AgentWaitTimer>,
     live: Arc<LiveAgentRuns>,
     tasks: Mutex<JoinSet<()>>,
+    sibling_routes: parking_lot::RwLock<HashSet<(AgentId, AgentId, AgentId)>>,
 }
 
 impl std::fmt::Debug for AgentControlService {
@@ -114,6 +118,7 @@ impl AgentControlService {
             timer: Arc::new(SystemAgentWaitTimer),
             live: Arc::new(LiveAgentRuns::default()),
             tasks: Mutex::new(JoinSet::new()),
+            sibling_routes: parking_lot::RwLock::new(HashSet::new()),
         }
     }
 
@@ -129,6 +134,34 @@ impl AgentControlService {
 
     pub fn live_runs(&self) -> Arc<LiveAgentRuns> {
         self.live.clone()
+    }
+
+    /// Install an explicit parent policy for one directional sibling route.
+    /// All identities are revalidated against durable topology before the
+    /// policy becomes active.
+    pub async fn permit_sibling_route(
+        &self,
+        caller_root: AgentId,
+        parent: AgentId,
+        from: AgentId,
+        to: AgentId,
+    ) -> Result<(), AgentControlError> {
+        let parent_run = self.authorize(caller_root, parent).await?;
+        let from_run = self.authorize(caller_root, from).await?;
+        let to_run = self.authorize(caller_root, to).await?;
+        if from_run.snapshot.handle.parent_agent_id != Some(parent)
+            || to_run.snapshot.handle.parent_agent_id != Some(parent)
+            || parent_run.status().is_terminal()
+            || from_run.status().is_terminal()
+            || to_run.status().is_terminal()
+        {
+            return Err(control_error(
+                AgentControlErrorKind::Forbidden,
+                "sibling route does not match one live parent topology",
+            ));
+        }
+        self.sibling_routes.write().insert((parent, from, to));
+        Ok(())
     }
 
     /// Authorize one visibility-filtered broadcast item against both durable
@@ -176,6 +209,55 @@ impl AgentControlService {
         }
         let mut tasks = self.tasks.lock().await;
         while tasks.join_next().await.is_some() {}
+    }
+
+    async fn authorize_message_sender(
+        &self,
+        target: &AgentRunRecord,
+        request: &AgentSendRequest,
+    ) -> Result<AgentId, AgentControlError> {
+        let Some(sender) = request.sender_agent_id else {
+            return Ok(request.caller_root_agent_id);
+        };
+        if sender == request.caller_root_agent_id {
+            return Ok(sender);
+        }
+        let sender_run = self.repository.get(sender).await?.ok_or_else(|| {
+            control_error(
+                AgentControlErrorKind::NotFound,
+                "message sender was not found",
+            )
+        })?;
+        if sender_run.root_agent_id() != request.caller_root_agent_id
+            || sender_run.status().is_terminal()
+        {
+            return Err(control_error(
+                AgentControlErrorKind::Forbidden,
+                "message sender is outside the live Agent tree",
+            ));
+        }
+        let direct_child = target.snapshot.handle.parent_agent_id == Some(sender);
+        let direct_parent = sender_run.snapshot.handle.parent_agent_id == Some(target.agent_id());
+        if direct_child || direct_parent {
+            return Ok(sender);
+        }
+        if let (Some(sender_parent), Some(target_parent)) = (
+            sender_run.snapshot.handle.parent_agent_id,
+            target.snapshot.handle.parent_agent_id,
+        ) {
+            if sender_parent == target_parent
+                && self
+                    .sibling_routes
+                    .read()
+                    .contains(&(sender_parent, sender, target.agent_id()))
+            {
+                return Ok(sender);
+            }
+        }
+        Err(control_error(
+            AgentControlErrorKind::Forbidden,
+            "sibling or non-adjacent Agent messaging requires explicit parent policy",
+        ))
     }
 
     async fn validated_parent(
@@ -410,7 +492,7 @@ impl AgentControlPort for AgentControlService {
         let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(MAILBOX_CAPACITY));
         if let Err(error) = self
             .kernel
-            .register_process_mailbox(process.id, mailbox_target.clone(), mailbox)
+            .register_process_mailbox(process.id, mailbox_target.clone(), mailbox.clone())
             .await
         {
             let _ = self
@@ -475,6 +557,8 @@ impl AgentControlPort for AgentControlService {
 
         let scope = OperationScope::new(operation.id);
         let cancellation = scope.token();
+        let (mailbox_bridge, inbox) =
+            AgentMailboxBridge::bounded(mailbox, MAILBOX_CAPACITY, cancellation.clone())?;
         let (snapshots, _) = watch::channel(queued);
         let inserted = self
             .live
@@ -521,6 +605,7 @@ impl AgentControlPort for AgentControlService {
             root_workspace_id,
             root_process_id,
             context,
+            inbox,
             cancellation,
         };
         self.tasks.lock().await.spawn(async move {
@@ -532,6 +617,7 @@ impl AgentControlPort for AgentControlService {
                 launcher,
                 events,
                 runtime_input,
+                mailbox_bridge,
                 snapshots,
                 scope,
                 admission,
@@ -569,15 +655,14 @@ impl AgentControlPort for AgentControlService {
             control_error(AgentControlErrorKind::Runtime, "Agent mailbox is not live")
         })?;
         let delivery_id = request.delivery_id.unwrap_or_else(uuid::Uuid::new_v4);
-        let from = request
-            .sender_agent_id
-            .unwrap_or(request.caller_root_agent_id);
+        let from = self.authorize_message_sender(&run, &request).await?;
         let payload = AgentMessagePayload {
             schema_version: fabric::AGENT_MESSAGE_SCHEMA_V1,
             kind: request.kind.clone(),
             content: request.message.clone(),
             start_turn: request.start_turn,
-            correlation_id: None,
+            correlation_id: request.correlation_id,
+            deadline_mono_ms: request.deadline_mono_ms,
         };
         let message = self
             .repository
@@ -600,7 +685,7 @@ impl AgentControlPort for AgentControlService {
                 content: request.message,
             });
         }
-        let envelope = EnvelopeV2::new(
+        let mut envelope = EnvelopeV2::new(
             SchemaId::from(SchemaId::AGENT_CONTROL_MESSAGE_V1),
             Target::from(format!("agent:{}", from.0)),
             live.mailbox_target,
@@ -615,6 +700,19 @@ impl AgentControlPort for AgentControlService {
         )
         .with_operation_id(run.snapshot.handle.operation_id)
         .with_logical_time(message.sequence);
+        envelope.id = fabric::ipc::envelope_v2::MessageId(delivery_id);
+        if let Some(correlation) = request.correlation_id {
+            envelope =
+                envelope.with_correlation_id(fabric::ipc::envelope_v2::MessageId(correlation));
+        }
+        if let Some(deadline) = request.deadline_mono_ms {
+            envelope = envelope.with_deadline(fabric::MonoDeadlineMillis(deadline));
+        }
+        let envelope = if request.kind == fabric::AgentMessageKind::Signal {
+            envelope.with_priority(255)
+        } else {
+            envelope
+        };
         let receipt = self.kernel.mailbox_service().route(envelope).await;
         let delivery = if receipt.is_ok() {
             AgentMessageDeliveryState::Delivered
@@ -694,6 +792,7 @@ async fn run_agent(
     launcher: Arc<dyn AgentRuntimeLauncher>,
     events: Arc<dyn AgentEventSink>,
     input: AgentRuntimeInput,
+    mailbox_bridge: AgentMailboxBridge,
     snapshots: watch::Sender<AgentSnapshot>,
     mut scope: OperationScope,
     mut admission: Box<dyn AgentAdmissionLease>,
@@ -761,6 +860,12 @@ async fn run_agent(
     snapshots.send_replace(running.snapshot);
 
     let (outcome_sender, outcome_receiver) = tokio::sync::oneshot::channel();
+    scope.spawn("agent-mailbox", async move {
+        match mailbox_bridge.run().await {
+            Ok(()) => OperationExitReason::Completed,
+            Err(error) => OperationExitReason::Failed(error.message),
+        }
+    });
     let task_cancel = scope.token();
     scope.spawn("agent-runtime", async move {
         let outcome = tokio::select! {

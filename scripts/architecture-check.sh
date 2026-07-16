@@ -144,6 +144,20 @@ if rg -n 'AgoraOps|\.commit\(|broadcast_selection|integrate_broadcast|DaseinWork
   exit 1
 fi
 
+# G07 deletion gate: Kernel owns the registry and AgentControl owns the only
+# application-level live Agent mailbox registration adapter.
+mailbox_registration_outside_owner=$(rg -l 'register_process_mailbox' crates -g '*.rs' -g '!**/tests/**' \
+  | grep -Ev '^crates/(kernel/src/runtime\.rs|executive/src/service/agent_control/mod\.rs)$' || true)
+if [[ -n "$mailbox_registration_outside_owner" ]]; then
+  echo "architecture-check: live Agent mailbox ownership escaped Kernel/AgentControl:" >&2
+  echo "$mailbox_registration_outside_owner" >&2
+  exit 1
+fi
+if rg -n '\b(InProcessMailbox|mailbox_service|mailbox_target)\b' crates/executive/src/core/sub_agent.rs; then
+  echo "architecture-check: compatibility SubAgentSpawner still owns mailbox state" >&2
+  exit 1
+fi
+
 # K02/X02 composition gate: Kernel remains domain-neutral. DomainPorts belongs
 # to Executive, and the retired CoreSystems service locator must stay deleted.
 if rg -n '^\s*(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)\s*=' \

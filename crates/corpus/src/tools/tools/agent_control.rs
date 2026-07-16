@@ -231,6 +231,8 @@ impl Tool for AgentControlTool {
                         agent_id: input.agent_id,
                         kind: fabric::AgentMessageKind::Input,
                         delivery_id: None,
+                        correlation_id: None,
+                        deadline_mono_ms: None,
                         message: input.message,
                         start_turn: input.start_turn,
                     };

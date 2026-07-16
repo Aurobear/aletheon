@@ -99,6 +99,8 @@ fn request_validation_enforces_all_bounds() {
         agent_id: AgentId::new(),
         kind: fabric::AgentMessageKind::Input,
         delivery_id: None,
+        correlation_id: None,
+        deadline_mono_ms: None,
         message: String::new(),
         start_turn: false,
     }

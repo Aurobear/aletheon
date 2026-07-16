@@ -25,8 +25,6 @@ use aletheon_kernel::chronos::{SystemClock, SystemTimer};
 use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::supervision::{RestartDecision, RestartPolicy};
 use aletheon_kernel::KernelRuntime;
-use fabric::ipc::envelope_v2::Target;
-use fabric::ipc::mailbox::{InProcessMailbox, InProcessMailboxService, Mailbox, MailboxService};
 use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use fabric::{
     AgentProfileId, AttemptUsage, CancelReason, Clock, ExitReason, FailureClass, NamespaceId,
@@ -156,7 +154,6 @@ struct SubAgentEntry {
     handle: SubAgentHandle,
     state: SubAgentState,
     process_id: ProcessId,
-    mailbox_target: Target,
     operation_id: fabric::OperationId,
     scope: OperationScope,
     /// Saved spawn parameters so we can restart on failure.
@@ -229,18 +226,6 @@ impl SubAgentSpawner {
         &mut self.runtime_registry
     }
 
-    /// Mailbox registry used by sub-agent process collaboration.
-    pub fn mailbox_service(&self) -> Arc<InProcessMailboxService> {
-        self.kernel.mailbox_service()
-    }
-
-    /// Routing target for a live sub-agent's mailbox.
-    pub fn mailbox_target(&self, id: &str) -> Option<Target> {
-        self.agents
-            .get(id)
-            .map(|entry| entry.mailbox_target.clone())
-    }
-
     /// Register a new sub-agent process and return the UI handle view.
     ///
     /// `restart_policy` governs whether the supervisor will restart this agent
@@ -289,7 +274,7 @@ impl SubAgentSpawner {
         runtime_id: Option<RuntimeId>,
         restart_policy: RestartPolicy,
     ) -> anyhow::Result<SubAgentHandle> {
-        // Resolve before creating any process, operation, or mailbox record.
+        // Resolve before creating any process or operation record.
         let runtime = runtime_id
             .as_ref()
             .map(|id| self.runtime_registry.resolve(id))
@@ -316,12 +301,6 @@ impl SubAgentSpawner {
         self.kernel
             .set_active_operation(process.id, Some(operation.id))
             .await?;
-        let mailbox_target = Self::mailbox_target_for(process.id);
-        let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(64));
-        self.kernel
-            .register_process_mailbox(process.id, mailbox_target.clone(), mailbox)
-            .await?;
-
         let mut scope = OperationScope::new(operation.id);
         let token = scope.token();
 
@@ -373,7 +352,6 @@ impl SubAgentSpawner {
                 handle: handle.clone(),
                 state: SubAgentState::Created,
                 process_id: process.id,
-                mailbox_target,
                 operation_id: operation.id,
                 scope,
                 task,
@@ -386,7 +364,7 @@ impl SubAgentSpawner {
 
     /// Register a tracked sub-agent entry without spawning a runtime task.
     ///
-    /// Creates process/operation/mailbox entries so the sub-agent appears in
+    /// Creates process/operation entries so the sub-agent appears in
     /// the process table and can be cancelled or waited on, but does not
     /// execute any LLM work. The caller is responsible for running the actual
     /// task and calling [`transition`](Self::transition) to update state.
@@ -434,12 +412,6 @@ impl SubAgentSpawner {
         self.kernel
             .set_active_operation(process.id, Some(operation.id))
             .await?;
-        let mailbox_target = Self::mailbox_target_for(process.id);
-        let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(64));
-        self.kernel
-            .register_process_mailbox(process.id, mailbox_target.clone(), mailbox)
-            .await?;
-
         let mut scope = OperationScope::new(operation.id);
         let token = scope.token();
 
@@ -463,7 +435,6 @@ impl SubAgentSpawner {
                 handle: handle.clone(),
                 state: SubAgentState::Created,
                 process_id: process.id,
-                mailbox_target,
                 operation_id: operation.id,
                 scope,
                 task,
@@ -631,15 +602,6 @@ impl SubAgentSpawner {
             .set_active_operation(process.id, Some(operation.id))
             .await
             .map_err(|e| TransitionError::Kernel(e.to_string()))?;
-        let mailbox_target = Self::mailbox_target_for(process.id);
-        self.kernel
-            .register_process_mailbox(
-                process.id,
-                mailbox_target.clone(),
-                Arc::new(InProcessMailbox::with_capacity(64)),
-            )
-            .await
-            .map_err(|e| TransitionError::Kernel(e.to_string()))?;
         let mut scope = OperationScope::new(operation.id);
         let token = scope.token();
         if let Some(runtime) = runtime {
@@ -679,7 +641,6 @@ impl SubAgentSpawner {
                 handle,
                 state: SubAgentState::Created,
                 process_id: process.id,
-                mailbox_target,
                 operation_id: operation.id,
                 scope,
                 task,
@@ -728,10 +689,6 @@ impl SubAgentSpawner {
         let Some(mut entry) = self.agents.remove(id) else {
             return Ok(false);
         };
-        self.kernel
-            .mailbox_service()
-            .unregister(&entry.mailbox_target)
-            .await;
         let _task_exits = entry
             .scope
             .cancel_and_drain(self.clock.as_ref(), Duration::from_millis(50))
@@ -792,17 +749,11 @@ impl SubAgentSpawner {
             spawned_at_ms: snapshot.process_id.0.as_u128() as u64,
         }
     }
-
-    fn mailbox_target_for(process_id: ProcessId) -> Target {
-        Target::from(format!("process:{}", process_id.0))
-    }
 }
 
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
-    use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId};
-    use fabric::ipc::mailbox::DeliveryReceipt;
     use fabric::SubAgentState;
 
     struct LegacyRuntime;
@@ -886,50 +837,6 @@ mod lifecycle_tests {
         assert!(s.remove(&h.id).await.unwrap());
         assert!(token.is_cancelled(), "remove must cancel the token");
         assert!(s.get(&h.id).is_none());
-    }
-
-    #[tokio::test]
-    async fn spawn_registers_process_mailbox_for_collaboration() {
-        let mut s = SubAgentSpawner::new();
-        let h = s.spawn("task".into(), "turn-1".into()).await.unwrap();
-        let target = s.mailbox_target(&h.id).expect("mailbox target exists");
-        let env = EnvelopeV2::new(
-            SchemaId::from("aletheon.test/v1"),
-            Target::from("tester"),
-            target,
-            DeliveryPattern::Direct,
-            NamespaceId("turn-1".into()),
-            serde_json::json!({"msg": "hello"}),
-        );
-
-        let receipt = s.mailbox_service().route(env).await;
-        assert!(
-            matches!(receipt, DeliveryReceipt::Delivered { .. }),
-            "sub-agent collaboration should route through its process mailbox, got {receipt:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn destroy_unregisters_process_mailbox() {
-        let mut s = SubAgentSpawner::new();
-        let h = s.spawn("task".into(), "turn-1".into()).await.unwrap();
-        let target = s.mailbox_target(&h.id).expect("mailbox target exists");
-
-        assert!(s.destroy(&h.id).await.unwrap());
-
-        let env = EnvelopeV2::new(
-            SchemaId::from("aletheon.test/v1"),
-            Target::from("tester"),
-            target.clone(),
-            DeliveryPattern::Direct,
-            NamespaceId("turn-1".into()),
-            serde_json::json!({"msg": "after-destroy"}),
-        );
-        let receipt = s.mailbox_service().route(env).await;
-        assert!(
-            matches!(receipt, DeliveryReceipt::NoSuchMailbox { target: ref got } if got == &target),
-            "destroyed sub-agent mailbox should be removed, got {receipt:?}"
-        );
     }
 
     #[tokio::test]

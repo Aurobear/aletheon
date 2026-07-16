@@ -96,6 +96,8 @@ async fn send_is_sequenced_and_cancel_is_idempotent() {
             agent_id: handle.agent_id,
             kind: fabric::AgentMessageKind::Input,
             delivery_id: None,
+            correlation_id: None,
+            deadline_mono_ms: None,
             message: "first".into(),
             start_turn: false,
         })
@@ -109,6 +111,8 @@ async fn send_is_sequenced_and_cancel_is_idempotent() {
             agent_id: handle.agent_id,
             kind: fabric::AgentMessageKind::Input,
             delivery_id: None,
+            correlation_id: None,
+            deadline_mono_ms: None,
             message: "second".into(),
             start_turn: true,
         })
@@ -128,6 +132,8 @@ async fn send_is_sequenced_and_cancel_is_idempotent() {
             agent_id: handle.agent_id,
             kind: fabric::AgentMessageKind::Input,
             delivery_id: None,
+            correlation_id: None,
+            deadline_mono_ms: None,
             message: "too late".into(),
             start_turn: false,
         })
@@ -165,5 +171,98 @@ async fn child_parent_identity_is_validated_server_side() {
         .unwrap_err();
     assert_eq!(error.kind, AgentControlErrorKind::Forbidden);
     fixture.port.cancel(root, child.agent_id).await.unwrap();
+    fixture.port.cancel(root, parent.agent_id).await.unwrap();
+}
+
+fn send_request(root: AgentId, sender: AgentId, target: AgentId, text: &str) -> AgentSendRequest {
+    AgentSendRequest {
+        caller_root_agent_id: root,
+        sender_agent_id: Some(sender),
+        agent_id: target,
+        kind: fabric::AgentMessageKind::Input,
+        delivery_id: None,
+        correlation_id: None,
+        deadline_mono_ms: None,
+        message: text.into(),
+        start_turn: false,
+    }
+}
+
+#[tokio::test]
+async fn topology_allows_direct_family_and_only_explicit_sibling_routes() {
+    let launcher = TestLauncher::blocked();
+    let fixture = fixture(3, launcher.clone());
+    let root = AgentId::new();
+    let parent = fixture.port.spawn(spawn_request(root, None)).await.unwrap();
+    launcher.wait_started().await;
+    let left = fixture
+        .port
+        .spawn(spawn_request(
+            root,
+            Some((parent.agent_id, parent.process_id)),
+        ))
+        .await
+        .unwrap();
+    let right = fixture
+        .port
+        .spawn(spawn_request(
+            root,
+            Some((parent.agent_id, parent.process_id)),
+        ))
+        .await
+        .unwrap();
+
+    fixture
+        .port
+        .send(send_request(
+            root,
+            parent.agent_id,
+            left.agent_id,
+            "parent-child",
+        ))
+        .await
+        .unwrap();
+    fixture
+        .port
+        .send(send_request(
+            root,
+            left.agent_id,
+            parent.agent_id,
+            "child-parent",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .port
+            .send(send_request(
+                root,
+                left.agent_id,
+                right.agent_id,
+                "forbidden"
+            ))
+            .await
+            .unwrap_err()
+            .kind,
+        AgentControlErrorKind::Forbidden
+    );
+    fixture
+        .service
+        .permit_sibling_route(root, parent.agent_id, left.agent_id, right.agent_id)
+        .await
+        .unwrap();
+    fixture
+        .port
+        .send(send_request(
+            root,
+            left.agent_id,
+            right.agent_id,
+            "permitted",
+        ))
+        .await
+        .unwrap();
+
+    fixture.port.cancel(root, left.agent_id).await.unwrap();
+    fixture.port.cancel(root, right.agent_id).await.unwrap();
     fixture.port.cancel(root, parent.agent_id).await.unwrap();
 }

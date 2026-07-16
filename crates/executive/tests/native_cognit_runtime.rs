@@ -7,15 +7,16 @@ use executive::r#impl::runtime::{
     AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources, ResolvedAgentProfile,
 };
 use executive::service::agent_control::{
-    AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInput,
-    AgentRuntimeLauncher,
+    AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInbox,
+    AgentRuntimeInput, AgentRuntimeLauncher,
 };
 use executive::service::harness_factory::LinearCognitiveSessionFactory;
 use executive::service::{CapabilityExecutionContext, CapabilityService};
 use fabric::{
-    AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle, AgentId, AgentProfile,
-    AgentProfileId, AgentSpawnRequest, CapabilityCall, CapabilityResult, ContentBlock, LlmProvider,
-    LlmResponse, LlmStream, OperationId, ProcessId, RuntimeId, StopReason, ToolDefinition, Usage,
+    AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle, AgentId, AgentMessageKind,
+    AgentMessagePayload, AgentProfile, AgentProfileId, AgentSpawnRequest, CapabilityCall,
+    CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream, OperationId, ProcessId,
+    RuntimeId, StopReason, ToolDefinition, Usage, AGENT_MESSAGE_SCHEMA_V1,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -185,6 +186,7 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         workspace_id: fabric::AgoraSpaceId(format!("agent:{}", root.0)),
         root_workspace_id: fabric::AgoraSpaceId(format!("root:{}", root.0)),
         root_process_id: process,
+        inbox: AgentRuntimeInbox::empty(),
         request,
         cancellation: cancel,
     }
@@ -246,6 +248,46 @@ async fn final_text_uses_profile_and_labelled_projection() {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn queued_start_turn_input_runs_in_the_same_cognit_session() {
+    let llm = ScriptedLlm::new(vec![
+        response(
+            vec![ContentBlock::Text {
+                text: "first turn".into(),
+            }],
+            StopReason::EndTurn,
+        ),
+        response(
+            vec![ContentBlock::Text {
+                text: "second turn".into(),
+            }],
+            StopReason::EndTurn,
+        ),
+    ]);
+    let (sender, inbox) = AgentRuntimeInbox::bounded_channel(2).unwrap();
+    sender
+        .send(AgentMessagePayload {
+            schema_version: AGENT_MESSAGE_SCHEMA_V1,
+            kind: AgentMessageKind::Input,
+            content: "follow-up input".into(),
+            start_turn: true,
+            correlation_id: None,
+            deadline_mono_ms: None,
+        })
+        .await
+        .unwrap();
+    let mut runtime_input = input(CancellationToken::new());
+    runtime_input.inbox = inbox;
+    let result = runtime(llm.clone(), Arc::new(RecordingCapability::default()))
+        .launch(runtime_input, Arc::new(RecordingEvents::default()))
+        .await
+        .unwrap();
+    assert_eq!(result.output, "second turn");
+    let seen = llm.seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert!(format!("{:?}", seen[1].0).contains("follow-up input"));
 }
 
 #[tokio::test]

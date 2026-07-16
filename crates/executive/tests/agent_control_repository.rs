@@ -270,6 +270,7 @@ async fn message_reference_is_persisted_before_sequence_is_returned() {
         content: content.into(),
         start_turn: false,
         correlation_id: None,
+        deadline_mono_ms: None,
     };
 
     let first = repository

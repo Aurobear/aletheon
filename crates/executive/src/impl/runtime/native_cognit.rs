@@ -28,6 +28,7 @@ use crate::service::{CapabilityExecutionContext, CapabilityService};
 
 pub const NATIVE_COGNIT_RUNTIME_ID: &str = "native-cognit";
 const MAX_ERROR_BYTES: usize = 4 * 1024;
+const MAX_MAILBOX_TURNS: usize = 16;
 
 #[derive(Clone)]
 pub struct ResolvedAgentProfile {
@@ -148,7 +149,7 @@ impl NativeCognitRuntime {
             None => None,
         };
         let evidence = Arc::new(Mutex::new(Vec::new()));
-        let services = NativeTurnServices {
+        let mut services = NativeTurnServices {
             llm: MeteredLlm::new(resolved.llm),
             tools: resolved
                 .tools
@@ -184,13 +185,13 @@ impl NativeCognitRuntime {
             events,
             ids: EventIds::from(input),
         };
-        let request = TurnRequest {
+        let mut request = TurnRequest {
             operation_id: input.handle.operation_id,
             process_id: input.handle.process_id,
             session_id: input.handle.agent_id.0.to_string(),
             input: input.request.task.clone(),
             working_dir: services.execution.working_dir.clone(),
-            model_policy: Some(resolved.profile.model),
+            model_policy: Some(resolved.profile.model.clone()),
             deadline: None,
         };
         let timeout = Duration::from_millis(
@@ -199,23 +200,58 @@ impl NativeCognitRuntime {
                 .max_elapsed_ms
                 .min(input.request.budget.max_elapsed_ms),
         );
-        let turn = tokio::select! {
-            _ = input.cancellation.cancelled() => {
-                return Err(control_error(AgentControlErrorKind::Terminal, "Agent runtime cancelled"));
+        let started = tokio::time::Instant::now();
+        let mut completed_turns = 0usize;
+        let mut elapsed_ms = 0u64;
+        let final_output = loop {
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(control_error(
+                    AgentControlErrorKind::Timeout,
+                    "Agent runtime elapsed-time budget exhausted",
+                ));
             }
-            result = tokio::time::timeout(timeout, session.run_turn(request, &services, &turn_events)) => {
-                match result {
-                    Ok(result) => result.map_err(runtime_failure)?,
-                    Err(_) => return Err(control_error(AgentControlErrorKind::Timeout, "Agent runtime elapsed-time budget exhausted")),
+            let turn = tokio::select! {
+                _ = input.cancellation.cancelled() => {
+                    return Err(control_error(AgentControlErrorKind::Terminal, "Agent runtime cancelled"));
                 }
+                result = tokio::time::timeout(remaining, session.run_turn(request, &services, &turn_events)) => {
+                    match result {
+                        Ok(result) => result.map_err(runtime_failure)?,
+                        Err(_) => return Err(control_error(AgentControlErrorKind::Timeout, "Agent runtime elapsed-time budget exhausted")),
+                    }
+                }
+            };
+            if turn.stop != TurnStop::Completed || !turn.metrics.completed_normally {
+                return Err(control_error(
+                    AgentControlErrorKind::Runtime,
+                    format!("Cognit session stopped without completion: {:?}", turn.stop),
+                ));
             }
+            completed_turns += 1;
+            elapsed_ms = elapsed_ms.saturating_add(turn.metrics.elapsed_ms);
+            let output = turn.output;
+            let next = input.inbox.try_recv().await.filter(|payload| {
+                payload.kind == fabric::AgentMessageKind::Input && payload.start_turn
+            });
+            let Some(next) = next else { break output };
+            if completed_turns >= MAX_MAILBOX_TURNS {
+                return Err(control_error(
+                    AgentControlErrorKind::Capacity,
+                    "Agent mailbox turn limit exhausted",
+                ));
+            }
+            services.execution.turn_count = completed_turns;
+            request = TurnRequest {
+                operation_id: input.handle.operation_id,
+                process_id: input.handle.process_id,
+                session_id: input.handle.agent_id.0.to_string(),
+                input: next.content,
+                working_dir: services.execution.working_dir.clone(),
+                model_policy: Some(resolved.profile.model.clone()),
+                deadline: None,
+            };
         };
-        if turn.stop != TurnStop::Completed || !turn.metrics.completed_normally {
-            return Err(control_error(
-                AgentControlErrorKind::Runtime,
-                format!("Cognit session stopped without completion: {:?}", turn.stop),
-            ));
-        }
         let (input_tokens, output_tokens) = services.llm.usage();
         let input_limit = resolved
             .profile
@@ -236,19 +272,19 @@ impl NativeCognitRuntime {
             .max_output_tokens
             .min(input.request.budget.max_output_tokens)
             .saturating_mul(4) as usize;
-        if turn.output.len() > output_limit {
+        if final_output.len() > output_limit {
             return Err(control_error(
                 AgentControlErrorKind::Runtime,
                 "Agent output exceeded the effective profile budget",
             ));
         }
         let result = AgentResult {
-            output: turn.output,
+            output: final_output,
             usage: AttemptUsage {
                 input_tokens,
                 output_tokens,
                 cost_usd: None,
-                elapsed_ms: turn.metrics.elapsed_ms,
+                elapsed_ms,
             },
             evidence: evidence.lock().await.clone(),
             artifacts: vec![],
