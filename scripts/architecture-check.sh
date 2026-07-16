@@ -14,6 +14,7 @@ cd "$ROOT"
 
 # Q01 deletion gates: application-layer discovery belongs only to Executive,
 # and only ExtensionService may translate discovery into Corpus activation.
+if [[ ${ARCH_SKIP_DELETION_GATES:-0} != 1 ]]; then
 if rg -n '\b(AppConfig|load_layered)\b|ALETHEON__|/etc/aletheon/config\.toml' \
   crates/cognit/src crates/corpus/src crates/mnemosyne/src crates/dasein/src \
   crates/agora/src -g '*.rs'; then
@@ -57,6 +58,7 @@ for required in \
     exit 1
   fi
 done
+fi
 
 normalize_rg() {
   local rule=$1
@@ -121,6 +123,7 @@ sort -u "$actual" -o "$actual"
 
 # F01 deletion gate: request, turn and goal paths retain domain facades only.
 # Concrete construction remains allowed in private bootstrap and CLI composition.
+if [[ ${ARCH_SKIP_DELETION_GATES:-0} != 1 ]]; then
 python3 - <<'PY'
 from pathlib import Path
 
@@ -412,6 +415,7 @@ for stage in channels google runtime storage; do
     exit 1
   fi
 done
+fi
 
 if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
   cargo metadata --no-deps --format-version 1 | python3 -c '

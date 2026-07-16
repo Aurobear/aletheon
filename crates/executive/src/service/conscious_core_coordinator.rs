@@ -126,6 +126,27 @@ impl ConsciousCoreCoordinator {
         &self.space
     }
 
+    /// Resolve one durable winner from the exact workspace epoch.
+    ///
+    /// Governed action outcomes use this read-only check so caller-provided
+    /// selection receipts cannot manufacture an authority edge.
+    pub fn durable_selected_candidate(
+        &self,
+        epoch: BroadcastEpoch,
+        candidate_id: ContentId,
+    ) -> anyhow::Result<Option<WorkspaceCandidate>> {
+        let replay = self.store.replay(&self.space)?;
+        Ok(replay
+            .into_iter()
+            .find(|entry| entry.broadcast.epoch == epoch)
+            .and_then(|entry| {
+                entry.broadcast.selected.into_iter().find(|candidate| {
+                    candidate.id == candidate_id
+                        && entry.broadcast.winner_ids.contains(&candidate.id)
+                })
+            }))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         space: AgoraSpaceId,

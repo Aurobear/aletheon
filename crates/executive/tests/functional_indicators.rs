@@ -3,17 +3,16 @@ mod support {
 }
 
 use fabric::{ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult};
-use support::conscious_core_harness::run;
+use support::conscious_core_harness::{run, run_ablation, AblationConfig};
 
-#[derive(Clone, Copy)]
-enum Ablation {
-    None,
-    Workspace,
-    Recurrence,
-    Dasein,
+fn write_functional_evidence(name: &str, value: &serde_json::Value) {
+    let output =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/acceptance");
+    std::fs::create_dir_all(&output).unwrap();
+    std::fs::write(output.join(name), serde_json::to_vec_pretty(value).unwrap()).unwrap();
 }
 
-fn metrics(trace: &ConsciousCoreTrace, ablation: Ablation) -> Vec<IndicatorResult> {
+fn metrics(trace: &ConsciousCoreTrace) -> Vec<IndicatorResult> {
     let broadcasts = trace
         .events
         .iter()
@@ -42,12 +41,9 @@ fn metrics(trace: &ConsciousCoreTrace, ablation: Ablation) -> Vec<IndicatorResul
         .iter()
         .filter(|event| matches!(event, ConsciousTraceEvent::GovernedAction { .. }))
         .count() as f64;
-    let (availability, recurrence, self_modulation) = match ablation {
-        Ablation::None => (recipients, broadcasts + candidates.min(1.0), integrations),
-        Ablation::Workspace => (0.0, 0.0, integrations),
-        Ablation::Recurrence => (recipients, broadcasts, integrations),
-        Ablation::Dasein => (recipients, broadcasts + candidates.min(1.0), 0.0),
-    };
+    let availability = recipients;
+    let recurrence = broadcasts + candidates.min(1.0);
+    let self_modulation = integrations;
     let make = |name: &str, definition: &str, value: f64, threshold: f64| IndicatorResult {
         name: name.into(),
         definition: definition.into(),
@@ -80,8 +76,8 @@ async fn functional_indicators_are_falsifiable_and_reproducible() {
     let second = tempfile::tempdir().unwrap();
     let first = run(first.path()).await.unwrap();
     let second = run(second.path()).await.unwrap();
-    let baseline = metrics(&first.trace, Ablation::None);
-    assert_eq!(baseline, metrics(&second.trace, Ablation::None));
+    let baseline = metrics(&first.trace);
+    assert_eq!(baseline, metrics(&second.trace));
     assert!(
         baseline.iter().all(|indicator| indicator.passed),
         "{baseline:#?}"
@@ -89,24 +85,74 @@ async fn functional_indicators_are_falsifiable_and_reproducible() {
     let encoded = serde_json::to_string(&baseline).unwrap();
     assert!(!encoded.contains("chain_of_thought"));
     assert!(!encoded.contains("are you conscious"));
+    write_functional_evidence(
+        "indicator-evidence.json",
+        &serde_json::json!({
+            "schema_version": 1,
+            "indicators": baseline,
+            "limitations": ["Functional indicators do not establish phenomenal consciousness."]
+        }),
+    );
 }
 
 #[tokio::test]
 async fn workspace_recurrence_and_dasein_ablations_reduce_target_metrics() {
-    let root = tempfile::tempdir().unwrap();
-    let result = run(root.path()).await.unwrap();
-    let baseline = metrics(&result.trace, Ablation::None);
-    let workspace = metrics(&result.trace, Ablation::Workspace);
-    let recurrence = metrics(&result.trace, Ablation::Recurrence);
-    let dasein = metrics(&result.trace, Ablation::Dasein);
-    let value = |items: &[IndicatorResult], name: &str| {
-        items
-            .iter()
-            .find(|item| item.name == name)
-            .unwrap()
-            .baseline
-    };
-    assert!(value(&workspace, "global_availability") < value(&baseline, "global_availability"));
-    assert!(value(&recurrence, "recurrent_processing") < value(&baseline, "recurrent_processing"));
-    assert!(value(&dasein, "attention_modulation") < value(&baseline, "attention_modulation"));
+    let baseline_root = tempfile::tempdir().unwrap();
+    let workspace_root = tempfile::tempdir().unwrap();
+    let recurrence_root = tempfile::tempdir().unwrap();
+    let dasein_root = tempfile::tempdir().unwrap();
+    let baseline = run_ablation(
+        baseline_root.path(),
+        AblationConfig {
+            workspace: true,
+            recurrence: true,
+            dasein_modulation: true,
+        },
+    )
+    .await
+    .unwrap();
+    let workspace = run_ablation(
+        workspace_root.path(),
+        AblationConfig {
+            workspace: false,
+            recurrence: true,
+            dasein_modulation: true,
+        },
+    )
+    .await
+    .unwrap();
+    let recurrence = run_ablation(
+        recurrence_root.path(),
+        AblationConfig {
+            workspace: true,
+            recurrence: false,
+            dasein_modulation: true,
+        },
+    )
+    .await
+    .unwrap();
+    let dasein = run_ablation(
+        dasein_root.path(),
+        AblationConfig {
+            workspace: true,
+            recurrence: true,
+            dasein_modulation: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(workspace.processor_deliveries < baseline.processor_deliveries);
+    assert!(recurrence.recurrent_broadcasts < baseline.recurrent_broadcasts);
+    assert!(dasein.dasein_modulations < baseline.dasein_modulations);
+    write_functional_evidence(
+        "ablation-evidence.json",
+        &serde_json::json!({
+            "schema_version": 1,
+            "ablations": {
+                "workspace": {"baseline":baseline.processor_deliveries,"ablated":workspace.processor_deliveries},
+                "recurrence": {"baseline":baseline.recurrent_broadcasts,"ablated":recurrence.recurrent_broadcasts},
+                "dasein": {"baseline":baseline.dasein_modulations,"ablated":dasein.dasein_modulations}
+            }
+        }),
+    );
 }

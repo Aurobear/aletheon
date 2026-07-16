@@ -188,6 +188,37 @@ impl GovernedActionLoop for ConsciousActionBridge {
             selected.source_process == call.process_id,
             "selected action process changed"
         );
+        anyhow::ensure!(
+            selected.source_process == self.source,
+            "selected action belongs to another process"
+        );
+        anyhow::ensure!(
+            selected.attribution == self.attribution(),
+            "selected action attribution changed"
+        );
+        let durable = self
+            .coordinator
+            .durable_selected_candidate(selected.broadcast_epoch, selected.candidate_id)?
+            .context("selected action is not a durable winner")?;
+        anyhow::ensure!(
+            durable.space == *self.coordinator.space(),
+            "selected action belongs to another workspace"
+        );
+        anyhow::ensure!(
+            durable.source == self.source
+                && durable.provenance.producer == self.source
+                && durable.provenance.operation == Some(call.operation_id),
+            "selected action authority provenance changed"
+        );
+        anyhow::ensure!(
+            matches!(
+                &durable.content,
+                WorkspaceContent::ActionProposal(frame)
+                    if frame.id == call.call_id
+                        && frame.summary == format!("invoke governed capability {}", call.name)
+            ),
+            "selected winner is not the requested governed action"
+        );
         let output_ref = format!("sha256:{:x}", Sha256::digest(result.output.as_bytes()));
         let now = self.clock.mono_now();
         let cause_ref = format!("capability:{permit_id}:{}", selected.operation_id.0);

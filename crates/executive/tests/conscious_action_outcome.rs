@@ -257,6 +257,64 @@ async fn unselected_action_never_reaches_capability_execution() {
     assert_eq!(*calls.lock().unwrap(), 0);
 }
 
+#[tokio::test]
+async fn forged_stale_and_cross_process_outcomes_cannot_create_a_broadcast() {
+    let fixture = fixture().await;
+    let bridge = ConsciousActionBridge::new(
+        fixture.coordinator.clone(),
+        fixture.owner,
+        fixture.owner,
+        fixture.clock,
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    let capability_call = call(fixture.owner);
+    let selected = bridge.select_action(&capability_call).await.unwrap();
+    let result = CapabilityResult {
+        call_id: capability_call.call_id.clone(),
+        output: "must remain uncommitted".into(),
+        is_error: false,
+        usage: UsageReport {
+            permit_id: PermitId(Uuid::from_u128(601)),
+            ..UsageReport::default()
+        },
+        audit_id: None,
+    };
+    let forged = [
+        SelectedActionContext {
+            candidate_id: fabric::ContentId(Uuid::from_u128(999)),
+            ..selected.clone()
+        },
+        SelectedActionContext {
+            broadcast_epoch: fabric::BroadcastEpoch(selected.broadcast_epoch.0 + 1),
+            ..selected.clone()
+        },
+        SelectedActionContext {
+            source_process: ProcessId(Uuid::from_u128(998)),
+            ..selected.clone()
+        },
+        SelectedActionContext {
+            attribution: WorkspaceAttribution::User,
+            ..selected
+        },
+    ];
+    for context in forged {
+        assert!(bridge
+            .observe_outcome(&context, &capability_call, &result)
+            .await
+            .is_err());
+        assert_eq!(
+            fixture
+                .store
+                .replay(&AgoraSpaceId(SPACE.into()))
+                .unwrap()
+                .len(),
+            1,
+            "rejected outcome mutated durable workspace"
+        );
+    }
+}
+
 #[test]
 fn source_attribution_contract_keeps_all_authorities_distinct() {
     let process = ProcessId(Uuid::from_u128(42));

@@ -25,14 +25,17 @@ legacy_event|crates/executive/src/lib.rs|use fabric::envelope::Envelope;
 BASE
 : > "$tmp/config/architecture-dependencies.txt"
 : > "$tmp/config/architecture-path-inventory.txt"
-ARCH_ROOT="$tmp" ARCH_SKIP_DEPENDENCIES=1 bash "$ROOT/scripts/architecture-check.sh" >/dev/null
+ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+  bash "$ROOT/scripts/architecture-check.sh" >/dev/null
 printf 'tool.execute(y)\n' >> "$tmp/crates/corpus/src/legacy/mod.rs"
-if ARCH_ROOT="$tmp" ARCH_SKIP_DEPENDENCIES=1 bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
+if ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+  bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a new finding to fail' >&2; exit 1
 fi
 sed -i '$d' "$tmp/crates/corpus/src/legacy/mod.rs"
 rm "$tmp/crates/dasein/src/lib.rs"
-out=$(ARCH_ROOT="$tmp" ARCH_SKIP_DEPENDENCIES=1 bash "$ROOT/scripts/architecture-check.sh")
+out=$(ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+  bash "$ROOT/scripts/architecture-check.sh")
 grep -q 'resolved findings entries' <<<"$out"
 
 # A local dependency edge not present in the maximum baseline must also fail.
@@ -61,7 +64,8 @@ TOML
 : > "$deps/config/architecture-allowlist.txt"
 : > "$deps/config/architecture-dependencies.txt"
 : > "$deps/config/architecture-path-inventory.txt"
-if ARCH_ROOT="$deps" bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
+if ARCH_ROOT="$deps" ARCH_SKIP_DELETION_GATES=1 \
+  bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a new dependency to fail' >&2; exit 1
 fi
 echo 'architecture-check fixture: pass'
