@@ -308,10 +308,11 @@ pub trait AgoraOps: Send + Sync {
     }
     /// Clear a session's workspace.
     async fn clear(&self, session: &str) -> Result<()>;
-    /// Append an entry onto a session's reasoning trace.
+    /// Append a best-effort, sensitive audit fact. Implementations reject
+    /// runtime reasoning/tool payload kinds and this is never replay authority.
     async fn trace(&self, session: &str, kind: &str, content: serde_json::Value) -> Result<()>;
 
-    // -- Typed vocabulary (RFC-017) layered over the generic trace --------
+    // -- Typed audit vocabulary ---------------------------------------------
     //
     // These default methods lower a cognitive primitive onto the untyped
     // trace so producers speak the RFC-017 vocabulary instead of hand-rolled
@@ -319,10 +320,14 @@ pub trait AgoraOps: Send + Sync {
     // type. Add more recorders here as real producers for other primitives
     // (Hypothesis, Narrative, …) appear — not before (YAGNI).
 
-    /// Record a typed [`Evidence`] onto the session's reasoning trace
-    /// (trace kind `"evidence"`).
+    /// Record redacted Evidence identity metadata in the audit trail.
     async fn record_evidence(&self, session: &str, evidence: &Evidence) -> Result<()> {
-        let content = serde_json::to_value(evidence)?;
+        let content = serde_json::json!({
+            "id": evidence.id,
+            "source": evidence.source,
+            "weight": evidence.weight,
+            "content_redacted": true,
+        });
         self.trace(session, "evidence", content).await
     }
 

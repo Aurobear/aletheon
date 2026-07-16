@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trace_appends_and_reflects_in_snapshot() {
+    async fn runtime_trace_payload_is_not_duplicated_in_agora() {
         let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         reg.publish("s1", "k", json!(1)).await.unwrap();
         let before = reg.snapshot("s1").await.unwrap();
@@ -383,7 +383,7 @@ mod tests {
             .await
             .unwrap();
         let after = reg.snapshot("s1").await.unwrap();
-        assert_eq!(after["trace_len"], json!(1));
+        assert_eq!(after["trace_len"], json!(0));
     }
 
     #[tokio::test]
@@ -395,14 +395,13 @@ mod tests {
 
         let snap = reg.snapshot("s1").await.unwrap();
         assert_eq!(snap["trace_len"], json!(1));
-        // Consumer half: the persisted snapshot carries the typed Evidence,
-        // recoverable as the same primitive the producer wrote.
         let entry = &snap["trace"][0];
         assert_eq!(entry["kind"], json!("evidence"));
-        let back: Evidence = serde_json::from_value(entry["content"].clone()).unwrap();
-        assert_eq!(back.id, "c1");
-        assert_eq!(back.source, "bash");
-        assert_eq!(back.weight, 1.0);
+        assert_eq!(entry["content"]["id"], json!("c1"));
+        assert_eq!(entry["content"]["source"], json!("bash"));
+        assert_eq!(entry["content"]["content_redacted"], json!(true));
+        assert_eq!(entry["authoritative"], json!(false));
+        assert_eq!(entry["sensitive"], json!(true));
     }
 
     #[tokio::test]

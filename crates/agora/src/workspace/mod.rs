@@ -313,16 +313,11 @@ impl Workspace {
                 self.blackboard.set(key, value.clone());
             }
             AgoraOperation::ProposePlan { plan } => {
-                // Store the plan as structured trace; full task-graph
-                // integration (RFC-014 Phase 3B) will materialize tasks
-                // from the plan schema.
-                self.trace.push("plan", plan.clone());
                 self.blackboard.set("current_plan", plan.clone());
             }
             AgoraOperation::UpdateTask { task_patch } => {
                 // Apply status/field updates from the patch to matching
                 // task-graph nodes when the patch carries an "id" field.
-                self.trace.push("task_update", task_patch.clone());
                 if let Some(id) = task_patch.get("id").and_then(|v| v.as_str()) {
                     if let Some(status) = task_patch.get("status").and_then(|v| v.as_str()) {
                         let s = parse_task_status(status)?;
@@ -330,12 +325,17 @@ impl Workspace {
                     }
                 }
             }
-            AgoraOperation::EmitObservation { obs } => {
-                self.trace.push("observation", obs.clone());
-            }
+            AgoraOperation::EmitObservation { .. } => {}
             AgoraOperation::AcceptEvidence { evidence } => {
-                let content = serde_json::to_value(evidence).unwrap_or(serde_json::Value::Null);
-                self.trace.push("evidence", content);
+                self.trace.push(
+                    "evidence",
+                    serde_json::json!({
+                        "id": evidence.id,
+                        "source": evidence.source,
+                        "weight": evidence.weight,
+                        "content_redacted": true,
+                    }),
+                );
             }
             AgoraOperation::ClaimSharedObject { oid } => {
                 // Track the claim with the author's process identity.
@@ -609,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_emit_observation_appends_to_trace() {
+    fn commit_emit_observation_does_not_duplicate_runtime_trace() {
         let mut ws = Workspace::new(
             "s1",
             Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -624,10 +624,7 @@ mod tests {
             )
             .unwrap();
         ws.commit(prop.id);
-        assert_eq!(ws.trace.len(), 1);
-        let entries = ws.trace.entries();
-        assert_eq!(entries[0].kind, "observation");
-        assert_eq!(entries[0].content["temp"], json!(72));
+        assert!(ws.trace.is_empty());
     }
 
     #[test]
@@ -664,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_propose_plan_traces_and_stores_on_blackboard() {
+    fn commit_propose_plan_stores_on_blackboard_without_runtime_trace() {
         let mut ws = Workspace::new(
             "s1",
             Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -678,9 +675,7 @@ mod tests {
             )
             .unwrap();
         ws.commit(prop.id);
-        // Plan is stored as a structured trace entry.
-        assert_eq!(ws.trace.len(), 1);
-        assert_eq!(ws.trace.entries()[0].kind, "plan");
+        assert!(ws.trace.is_empty());
         // Plan is also available on the blackboard for quick access.
         assert_eq!(ws.blackboard.get("current_plan").cloned(), Some(plan));
     }
@@ -704,8 +699,7 @@ mod tests {
         // Task status must have been updated.
         let node = ws.task_graph.get("t1").unwrap();
         assert_eq!(node.status, crate::task_graph::TaskStatus::Done);
-        // Trace records the update.
-        assert_eq!(ws.trace.entries()[0].kind, "task_update");
+        assert!(ws.trace.is_empty());
     }
 
     // -- reject behaviour ---------------------------------------------------
