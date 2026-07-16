@@ -94,6 +94,27 @@ if rg -n '^pub (mod manager|use manager::InMemorySpaceManager)' crates/kernel/sr
   exit 1
 fi
 
+# G03 deletion gate: Executive owns the only production AgentControlPort
+# implementation. The retired spawner may remain only in its compatibility
+# owner and the two bootstrap/runtime registration adapters until G04/G05.
+agent_control_impls=$(rg -l 'impl AgentControlPort for' crates -g '*.rs' -g '!**/tests/**' || true)
+if [[ "$agent_control_impls" != "crates/executive/src/service/agent_control/mod.rs" ]]; then
+  echo "architecture-check: AgentControlPort has a non-authoritative implementation:" >&2
+  echo "$agent_control_impls" >&2
+  exit 1
+fi
+if rg -n '\bSubAgentSpawner\b' crates/corpus/src -g '*.rs'; then
+  echo "architecture-check: Corpus bypasses AgentControlPort through SubAgentSpawner" >&2
+  exit 1
+fi
+spawner_outside_compat=$(rg -l '\bSubAgentSpawner\b' crates/executive/src -g '*.rs' \
+  | grep -Ev '^crates/executive/src/(core/(mod|orchestrator|sub_agent)\.rs|impl/daemon/bootstrap/runtime\.rs|impl/runtime/pi\.rs)$' || true)
+if [[ -n "$spawner_outside_compat" ]]; then
+  echo "architecture-check: new SubAgentSpawner dependency escaped compatibility paths:" >&2
+  echo "$spawner_outside_compat" >&2
+  exit 1
+fi
+
 # K02/X02 composition gate: Kernel remains domain-neutral. DomainPorts belongs
 # to Executive, and the retired CoreSystems service locator must stay deleted.
 if rg -n '^\s*(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)\s*=' \

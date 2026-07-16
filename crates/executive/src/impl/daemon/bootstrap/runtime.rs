@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aletheon_kernel::supervision::RestartPolicy;
-use fabric::{Registry, SubAgentState};
-use tokio_util::sync::CancellationToken;
+use fabric::{AgentControlPort, Registry};
 use tracing::info;
 
 use crate::r#impl::agent_loader::AgentLoader;
@@ -13,11 +11,8 @@ use crate::r#impl::agent_loader::AgentLoader;
 /// Register the legacy AgentTool against the canonical runtime and capability path.
 pub(super) async fn register_agent_tool(
     agents_dir: &std::path::Path,
-    llm: Arc<dyn LlmProvider>,
     tools: crate::core::corpus_group::ToolRegistryHandle,
-    executive: Arc<Mutex<crate::core::orchestrator::AletheonExecutive>>,
-    main_agent_process_id: Arc<Mutex<Option<fabric::ProcessId>>>,
-    capability: Arc<dyn CapabilityService>,
+    agent_control: Arc<dyn AgentControlPort>,
 ) {
     let mut rt_agent_loader = AgentLoader::new();
     if agents_dir.exists() {
@@ -39,151 +34,45 @@ pub(super) async fn register_agent_tool(
         );
     }
     if !agent_defs.is_empty() {
-        let llm_for_agents = llm;
-        let tools_for_agents = tools.clone();
-        let exec_for_agents = executive;
-        let main_slot = main_agent_process_id;
-        let capability_for_agents = capability;
         let execute_fn: corpus::tools::tools::agent_tool::ExecuteSubAgentFn =
             Arc::new(move |system_prompt, user_prompt, allowed_tools| {
-                let llm = llm_for_agents.clone();
-                let tools = tools_for_agents.clone();
-                let exec = exec_for_agents.clone();
-                let main_slot = main_slot.clone();
-                let sp = system_prompt;
-                let up = user_prompt;
-                let at = allowed_tools;
-                let capability = capability_for_agents.clone();
+                let agent_control = agent_control.clone();
                 Box::pin(async move {
-                    // 1. Register tracked sub-agent with SubAgentSpawner.
-                    let agent_id = {
-                        let mut runtime = exec.lock().await;
-                        let parent = *main_slot.lock().await;
-                        let handle = runtime
-                            .sub_agent_spawner_mut()
-                            .spawn_tracked_with_parent(
-                                up.clone(),
-                                "agent-tool".into(),
-                                RestartPolicy::Never,
-                                parent,
-                            )
-                            .await?;
-                        let id = handle.id.clone();
-                        // Transition to Running so the agent is "active"
-                        // in the process table.
-                        let _ = runtime
-                            .sub_agent_spawner_mut()
-                            .transition(&id, SubAgentState::Running)
-                            .await;
-                        id
-                    };
-
-                    // 2. Run the LLM loop (same as before, but with
-                    //    SubAgentSpawner tracking for cancellation).
-                    let result = {
-                        let reg = tools.lock().await;
-                        let agent_tool_defs: Vec<fabric::ToolDefinition> = reg
-                            .definitions()
-                            .into_iter()
-                            .filter(|d| at.contains(&d.name))
-                            .collect();
-                        drop(reg);
-                        let mut current_messages = vec![
-                            fabric::message::Message::system(&sp),
-                            fabric::message::Message::user(&up),
-                        ];
-                        #[allow(unused_assignments)]
-                        let mut response_text = String::new();
-                        let mut loop_result: Result<String, anyhow::Error> = Ok(String::new());
-                        for _ in 0..20 {
-                            match llm.complete(&current_messages, &agent_tool_defs).await {
-                                Ok(response) => {
-                                    let mut text_parts = Vec::new();
-                                    let mut tool_calls = Vec::new();
-                                    for block in &response.content {
-                                        match block {
-                                            fabric::message::ContentBlock::Text { text } => {
-                                                text_parts.push(text.clone());
-                                            }
-                                            fabric::message::ContentBlock::ToolUse {
-                                                id,
-                                                name,
-                                                input,
-                                            } => {
-                                                tool_calls.push((
-                                                    id.clone(),
-                                                    name.clone(),
-                                                    input.clone(),
-                                                ));
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    if tool_calls.is_empty() {
-                                        response_text = text_parts.join("\n");
-                                        loop_result = Ok(response_text);
-                                        break;
-                                    }
-                                    current_messages.push(fabric::message::Message {
-                                        role: fabric::message::Role::Assistant,
-                                        content: response.content.clone(),
-                                    });
-                                    for (cid, name, input) in tool_calls {
-                                        let known = tools.lock().await.get(&name).is_some();
-                                        let (content, is_error) = if known {
-                                            let result = capability
-                                                .invoke(
-                                                    None,
-                                                    fabric::CapabilityCall {
-                                                        operation_id: fabric::OperationId::default(
-                                                        ),
-                                                        process_id: fabric::ProcessId::default(),
-                                                        name: name.clone(),
-                                                        input,
-                                                        call_id: cid.clone(),
-                                                        deadline: None,
-                                                    },
-                                                    CancellationToken::new(),
-                                                )
-                                                .await;
-                                            (result.output, result.is_error)
-                                        } else {
-                                            (format!("Unknown tool: {}", name), true)
-                                        };
-                                        current_messages.push(
-                                            fabric::message::Message::tool_result(
-                                                &cid, &content, is_error,
-                                            ),
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    loop_result = Err(e);
-                                    break;
-                                }
-                            }
-                        }
-                        loop_result
-                    };
-
-                    // 3. Update spawner state and clean up.
-                    {
-                        let mut runtime = exec.lock().await;
-                        let spawner = runtime.sub_agent_spawner_mut();
-                        match &result {
-                            Ok(_) => {
-                                let _ = spawner
-                                    .transition(&agent_id, SubAgentState::Completed)
-                                    .await;
-                            }
-                            Err(_) => {
-                                let _ = spawner.transition(&agent_id, SubAgentState::Failed).await;
-                            }
-                        }
-                        let _ = spawner.destroy(&agent_id).await;
-                    }
-
-                    result.map_err(|e| anyhow::anyhow!("{e}"))
+                    let root = fabric::AgentId::new();
+                    let handle = agent_control
+                        .spawn(fabric::AgentSpawnRequest {
+                            root_agent_id: root,
+                            parent_agent_id: None,
+                            parent_process_id: None,
+                            profile_id: fabric::AgentProfileId("agent-tool".into()),
+                            runtime_id: fabric::RuntimeId("default".into()),
+                            task: user_prompt,
+                            context: fabric::AgentContextFork::SelectedProjection {
+                                items: vec![system_prompt],
+                            },
+                            allowed_tools,
+                            budget: fabric::AgentBudget {
+                                max_input_tokens: 128_000,
+                                max_output_tokens: 16_384,
+                                max_tool_calls: 128,
+                                max_elapsed_ms: 10 * 60 * 1_000,
+                                max_cost_usd: None,
+                                max_depth: 4,
+                            },
+                        })
+                        .await
+                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                    let snapshot = agent_control
+                        .wait(fabric::AgentWaitRequest {
+                            caller_root_agent_id: root,
+                            agent_id: handle.agent_id,
+                            timeout_ms: 10 * 60 * 1_000,
+                        })
+                        .await
+                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                    snapshot.result.map(|result| result.output).ok_or_else(|| {
+                        anyhow::anyhow!("Agent terminated without a result: {:?}", snapshot.status)
+                    })
                 })
             });
         let agent_tool =
@@ -206,6 +95,8 @@ use cognit::r#impl::provider_registry::ProviderRegistry;
 use corpus::tools::tools::ToolRegistry;
 use fabric::{Clock, LlmProvider};
 use tokio::sync::Mutex;
+#[cfg(test)]
+use tokio_util::sync::CancellationToken;
 
 use crate::core::sub_agent::SubAgentSpawner;
 use crate::r#impl::runtime::ProviderWorkerRuntime;

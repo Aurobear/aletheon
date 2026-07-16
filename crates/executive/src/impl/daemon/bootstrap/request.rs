@@ -709,6 +709,8 @@ impl RequestHandler {
                 capability_resources.clone(),
             ),
         );
+        let agent_runtimes =
+            Arc::new(crate::service::agent_control::AgentRuntimeRegistry::default());
 
         // Wire sub-agent execution runtime so spawned sub-agents run real
         // LLM + tool reasoning instead of the cancellation-wait stub.
@@ -736,7 +738,15 @@ impl RequestHandler {
                 .lock()
                 .await
                 .sub_agent_spawner_mut()
-                .with_runtime(sub_agent_runtime);
+                .with_runtime(sub_agent_runtime.clone());
+            agent_runtimes.register(
+                fabric::RuntimeId("default".into()),
+                Arc::new(
+                    crate::service::agent_control::CompatibilityRuntimeLauncher::new(
+                        sub_agent_runtime,
+                    ),
+                ),
+            )?;
         }
 
         // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
@@ -754,6 +764,20 @@ impl RequestHandler {
             if !registered.is_empty() {
                 info!(runtime_ids = ?registered, "Goal runtimes registered");
             }
+            for runtime_id in &registered {
+                let compatibility = runtime
+                    .sub_agent_spawner()
+                    .runtime_registry()
+                    .resolve(runtime_id)?;
+                agent_runtimes.register(
+                    runtime_id.clone(),
+                    Arc::new(
+                        crate::service::agent_control::CompatibilityRuntimeLauncher::new(
+                            compatibility,
+                        ),
+                    ),
+                )?;
+            }
         }
 
         // Coding jobs are fail-closed: only a probed namespace backend may
@@ -763,14 +787,27 @@ impl RequestHandler {
                 .await
                 .map(|backend| Arc::new(backend) as Arc<dyn fabric::sandbox::SandboxBackend>);
             let mut runtime = runtime.lock().await;
-            if pi_work_allowed
+            let registered = pi_work_allowed
                 && register_pi_runtime(
                     runtime.sub_agent_spawner_mut(),
                     &pi_runtime,
                     sandbox,
                     clock.clone(),
-                )?
-            {
+                )?;
+            if registered {
+                let runtime_id = crate::r#impl::runtime::PI_CODER_RUNTIME_ID;
+                let compatibility = runtime
+                    .sub_agent_spawner()
+                    .runtime_registry()
+                    .resolve(&fabric::RuntimeId(runtime_id.into()))?;
+                agent_runtimes.register(
+                    fabric::RuntimeId(runtime_id.into()),
+                    Arc::new(
+                        crate::service::agent_control::CompatibilityRuntimeLauncher::new(
+                            compatibility,
+                        ),
+                    ),
+                )?;
                 info!(runtime_id = "pi-coder", "Pi coding runtime registered");
             }
         }
@@ -797,13 +834,40 @@ impl RequestHandler {
         // Clone clock for later daemon services.
         let clock_2 = clock.clone();
 
+        let agent_state_root = if production {
+            config.deployment.paths.state.clone()
+        } else {
+            aletheon_dir.clone()
+        };
+        std::fs::create_dir_all(&agent_state_root)?;
+        let agent_repository = Arc::new(
+            crate::service::agent_control::SqliteAgentRunRepository::open(
+                agent_state_root.join("agent_control.db"),
+            )
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+        );
+        let agent_control_service =
+            Arc::new(crate::service::agent_control::AgentControlService::new(
+                kernel.clone(),
+                clock.clone(),
+                agent_repository,
+                Arc::new(
+                    crate::service::agent_control::BoundedAgentAdmission::new(64)
+                        .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+                ),
+                agent_runtimes,
+            ));
+        let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
+        let agent_shutdown_cancel = cancel_token.clone();
+        tokio::spawn(async move {
+            agent_shutdown_cancel.cancelled().await;
+            agent_control_service.shutdown().await;
+        });
+
         super::runtime::register_agent_tool(
             &aletheon_dir.join("agents"),
-            llm.clone(),
             corpus_group.tools.clone(),
-            runtime.clone(),
-            main_agent_process_id.clone(),
-            capability_service.clone(),
+            agent_control.clone(),
         )
         .await;
 
