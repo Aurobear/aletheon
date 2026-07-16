@@ -14,12 +14,18 @@ v01_report=${ALETHEON_V01_ACCEPTANCE_REPORT:-}
 [[ -f "$v01_report" && ! -L "$v01_report" ]] || {
   echo "BLOCKED: V01 machine-readable acceptance report is required" >&2; exit 78;
 }
-jq -e '.schema_version == 1
-  and (.results.cross_domain_acceptance | startswith("verified_"))
-  and (.results.functional_indicators | startswith("verified_"))
-  and (.results.architecture | startswith("verified_"))' "$v01_report" >/dev/null || {
-  echo "BLOCKED: V01 report does not prove PASS" >&2; exit 78;
+v01_recipe_receipt=${ALETHEON_V01_RECIPE_RECEIPT:-}
+[[ -f "$v01_recipe_receipt" && ! -L "$v01_recipe_receipt" ]] || {
+  echo "BLOCKED: failure matrix requires the aggregate gate's V01 recipe receipt" >&2; exit 78;
 }
+report_sha256=$(sha256sum "$v01_report" | cut -d' ' -f1)
+jq -e --arg report_sha256 "$report_sha256" \
+  '.schema_version == 1 and .status == "passed_in_aggregate_release_gate"
+   and .command == "just acceptance" and .report_sha256 == $report_sha256' \
+  "$v01_recipe_receipt" >/dev/null || {
+  echo "BLOCKED: V01 recipe receipt does not match the acceptance report" >&2; exit 78;
+}
+"$repo_root/scripts/release-acceptance.sh" --validate-v01-report "$v01_report"
 
 for phase in event_append memory_lease gbrain_remote_success agent_runtime_completion; do
   before="$artifacts/$phase-before.json"

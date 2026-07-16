@@ -77,6 +77,14 @@ Run `just release-acceptance` only inside the disposable host. Required inputs:
 - `just`, `jq`, `sqlite3`, systemd tooling, tmux, Python pytest, and Cargo.
 
 The gate first invokes `just acceptance`; this prerequisite cannot be bypassed.
+It then validates the emitted event/projection checksums and projection
+inventory, positive Agent/mailbox reopen counts, recovered memory lease, zero
+unexpected external calls, every functional indicator, strictly reducing
+workspace/recurrence/Dasein ablations, and the architecture-recipe marker.
+The failure lane accepts that architecture marker only with the aggregate
+gate's guest-local V01 recipe receipt, whose report checksum must match the
+validated report immediately produced by `just acceptance`; a standalone
+report cannot assert that the recipe ran.
 It requires a clean `target/release-acceptance` directory and zero blocked or
 ignored cases. Default time bounds are 30 seconds for readiness, 120 seconds for
 ordinary TUI workflows, and 180 seconds for SubAgent/reconnect workflows.
