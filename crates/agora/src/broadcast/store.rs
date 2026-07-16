@@ -1,6 +1,8 @@
 use fabric::dasein::SelfVersion;
 use fabric::{
-    AgoraSpaceId, BroadcastAck, BroadcastEpoch, SelectionResult, WallTime, WorkspaceBroadcast,
+    AgoraSpaceId, BroadcastAck, BroadcastEpoch, BroadcastIntegrationReceipt,
+    ConsciousContextProjection, ProcessorContext, ProcessorResponse, SelectionResult, WallTime,
+    WorkspaceBroadcast,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
@@ -44,6 +46,31 @@ impl SqliteBroadcastStore {
                 checksum TEXT NOT NULL,
                 PRIMARY KEY(space, epoch, processor),
                 FOREIGN KEY(space, epoch) REFERENCES broadcast_epochs(space, epoch)
+             );
+             CREATE TABLE IF NOT EXISTS conscious_integrations (
+                space TEXT NOT NULL,
+                epoch INTEGER NOT NULL,
+                receipt_json BLOB NOT NULL,
+                checksum TEXT NOT NULL,
+                PRIMARY KEY(space, epoch),
+                FOREIGN KEY(space, epoch) REFERENCES broadcast_epochs(space, epoch)
+             );
+             CREATE TABLE IF NOT EXISTS conscious_processor_responses (
+                space TEXT NOT NULL,
+                epoch INTEGER NOT NULL,
+                processor TEXT NOT NULL,
+                response_json BLOB NOT NULL,
+                checksum TEXT NOT NULL,
+                PRIMARY KEY(space, epoch, processor),
+                FOREIGN KEY(space, epoch) REFERENCES conscious_integrations(space, epoch)
+             );
+             CREATE TABLE IF NOT EXISTS conscious_context_projections (
+                space TEXT NOT NULL,
+                epoch INTEGER NOT NULL,
+                projection_json BLOB NOT NULL,
+                checksum TEXT NOT NULL,
+                PRIMARY KEY(space, epoch),
+                FOREIGN KEY(space, epoch) REFERENCES conscious_integrations(space, epoch)
              );",
         )?;
         Ok(Self {
@@ -192,6 +219,171 @@ impl SqliteBroadcastStore {
         Ok(())
     }
 
+    pub fn append_integration(&self, receipt: &BroadcastIntegrationReceipt) -> anyhow::Result<()> {
+        receipt.validate()?;
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("broadcast store lock poisoned"))?;
+        let stored: Option<(Vec<u8>, String, Option<i64>)> = connection
+            .query_row(
+                "SELECT broadcast_json, checksum, closed_at FROM broadcast_epochs
+                 WHERE space = ?1 AND epoch = ?2",
+                params![receipt.space.0, receipt.epoch.0],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let (broadcast_json, broadcast_checksum, closed_at) =
+            stored.ok_or_else(|| anyhow::anyhow!("integration broadcast does not exist"))?;
+        anyhow::ensure!(closed_at.is_some(), "integration broadcast is not closed");
+        anyhow::ensure!(
+            broadcast_checksum == receipt.broadcast_checksum,
+            "integration checksum differs from durable broadcast"
+        );
+        let broadcast: WorkspaceBroadcast = serde_json::from_slice(&broadcast_json)?;
+        anyhow::ensure!(
+            receipt.transition.previous_version == broadcast.dasein_version,
+            "integration starts from the wrong Dasein version"
+        );
+        insert_idempotent_blob(
+            &connection,
+            "conscious_integrations",
+            "receipt_json",
+            &receipt.space,
+            receipt.epoch,
+            None,
+            serde_json::to_vec(receipt)?,
+        )
+    }
+
+    pub fn integration(
+        &self,
+        space: &AgoraSpaceId,
+        epoch: BroadcastEpoch,
+    ) -> anyhow::Result<Option<BroadcastIntegrationReceipt>> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("broadcast store lock poisoned"))?;
+        let json: Option<Vec<u8>> = connection
+            .query_row(
+                "SELECT receipt_json FROM conscious_integrations WHERE space = ?1 AND epoch = ?2",
+                params![space.0, epoch.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        json.map(|json| {
+            let receipt: BroadcastIntegrationReceipt = serde_json::from_slice(&json)?;
+            receipt.validate()?;
+            Ok(receipt)
+        })
+        .transpose()
+    }
+
+    pub fn append_processor_response(
+        &self,
+        context: &ProcessorContext,
+        response: &ProcessorResponse,
+    ) -> anyhow::Result<()> {
+        response.validate(context)?;
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("broadcast store lock poisoned"))?;
+        insert_idempotent_blob(
+            &connection,
+            "conscious_processor_responses",
+            "response_json",
+            &context.space,
+            context.source_epoch,
+            Some(&response.processor.0),
+            serde_json::to_vec(response)?,
+        )
+    }
+
+    pub fn processor_responses(
+        &self,
+        space: &AgoraSpaceId,
+        epoch: BroadcastEpoch,
+    ) -> anyhow::Result<Vec<ProcessorResponse>> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("broadcast store lock poisoned"))?;
+        let mut statement = connection.prepare(
+            "SELECT response_json, checksum FROM conscious_processor_responses
+             WHERE space = ?1 AND epoch = ?2 ORDER BY processor",
+        )?;
+        let rows = statement.query_map(params![space.0, epoch.0], |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut responses = Vec::new();
+        for row in rows {
+            let (json, stored_checksum) = row?;
+            anyhow::ensure!(
+                checksum(&json) == stored_checksum,
+                "response checksum mismatch"
+            );
+            let response: ProcessorResponse = serde_json::from_slice(&json)?;
+            response.validate_persisted(space, epoch)?;
+            responses.push(response);
+        }
+        Ok(responses)
+    }
+
+    pub fn save_context_projection(
+        &self,
+        projection: &ConsciousContextProjection,
+    ) -> anyhow::Result<()> {
+        projection.validate()?;
+        let epoch = projection
+            .receipt
+            .broadcast_epoch
+            .ok_or_else(|| anyhow::anyhow!("only broadcast-backed projections are durable"))?;
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("broadcast store lock poisoned"))?;
+        insert_idempotent_blob(
+            &connection,
+            "conscious_context_projections",
+            "projection_json",
+            &projection.receipt.space,
+            epoch,
+            None,
+            serde_json::to_vec(projection)?,
+        )
+    }
+
+    pub fn latest_context_projection(
+        &self,
+        space: &AgoraSpaceId,
+    ) -> anyhow::Result<Option<ConsciousContextProjection>> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("broadcast store lock poisoned"))?;
+        let stored: Option<(Vec<u8>, String)> = connection
+            .query_row(
+                "SELECT projection_json, checksum FROM conscious_context_projections
+                 WHERE space = ?1 ORDER BY epoch DESC LIMIT 1",
+                params![space.0],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        stored
+            .map(|(json, stored_checksum)| {
+                anyhow::ensure!(
+                    checksum(&json) == stored_checksum,
+                    "context projection checksum mismatch"
+                );
+                let projection: ConsciousContextProjection = serde_json::from_slice(&json)?;
+                projection.validate()?;
+                Ok(projection)
+            })
+            .transpose()
+    }
+
     pub fn replay(&self, space: &AgoraSpaceId) -> anyhow::Result<Vec<BroadcastReplay>> {
         let connection = self
             .connection
@@ -314,4 +506,62 @@ fn selection_key(
 fn checksum(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn insert_idempotent_blob(
+    connection: &Connection,
+    table: &str,
+    value_column: &str,
+    space: &AgoraSpaceId,
+    epoch: BroadcastEpoch,
+    processor: Option<&str>,
+    json: Vec<u8>,
+) -> anyhow::Result<()> {
+    let digest = checksum(&json);
+    let (select, insert) = match processor {
+        Some(_) => (
+            format!(
+                "SELECT {value_column}, checksum FROM {table} WHERE space = ?1 AND epoch = ?2 AND processor = ?3"
+            ),
+            format!(
+                "INSERT INTO {table}(space, epoch, processor, {value_column}, checksum) VALUES (?1, ?2, ?3, ?4, ?5)"
+            ),
+        ),
+        None => (
+            format!(
+                "SELECT {value_column}, checksum FROM {table} WHERE space = ?1 AND epoch = ?2"
+            ),
+            format!(
+                "INSERT INTO {table}(space, epoch, {value_column}, checksum) VALUES (?1, ?2, ?3, ?4)"
+            ),
+        ),
+    };
+    let existing: Option<(Vec<u8>, String)> = match processor {
+        Some(processor) => connection
+            .query_row(&select, params![space.0, epoch.0, processor], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?,
+        None => connection
+            .query_row(&select, params![space.0, epoch.0], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?,
+    };
+    if let Some((existing_json, existing_checksum)) = existing {
+        anyhow::ensure!(
+            existing_json == json && existing_checksum == digest,
+            "conflicting recurrent edge"
+        );
+        return Ok(());
+    }
+    match processor {
+        Some(processor) => {
+            connection.execute(&insert, params![space.0, epoch.0, processor, json, digest])?;
+        }
+        None => {
+            connection.execute(&insert, params![space.0, epoch.0, json, digest])?;
+        }
+    }
+    Ok(())
 }

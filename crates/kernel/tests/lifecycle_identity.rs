@@ -56,6 +56,7 @@ fn operation_kinds_are_closed_versionable_discriminants() {
         OperationKind::CapabilityCall,
         OperationKind::MemoryConsolidation,
         OperationKind::SubAgent,
+        OperationKind::ConsciousCycle,
         OperationKind::ApprovedApply,
     ];
     for kind in kinds {

@@ -77,17 +77,19 @@ pub use types::vision;
 pub use types::workspace;
 
 pub use types::conscious_core::{
-    ConsciousContextProjection, ConsciousProcessor, ContextProjectionReceipt, ProcessorAck,
-    ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, StructuredSelfView,
-    MAX_PROCESSOR_ACKNOWLEDGEMENTS, MAX_PROCESSOR_RESPONSE_CANDIDATES, MAX_SELF_VIEW_ITEMS,
+    BroadcastIntegrationReceipt, ConsciousContextProjection, ConsciousProcessor,
+    ContextProjectionReceipt, ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId,
+    ProcessorResponse, StructuredSelfView, MAX_PROCESSOR_ACKNOWLEDGEMENTS,
+    MAX_PROCESSOR_RESPONSE_CANDIDATES, MAX_SELF_VIEW_ITEMS,
 };
 pub use types::workspace::{
     ActionProposalFrame, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, BroadcastEpoch,
-    CandidateScore, ContentId, GoalFrame, GovernedActionOutcomeFrame, PredictionErrorFrame,
-    PredictionFrame, RecalledExperienceFrame, SalienceVector, SelectionExplanation,
-    SelectionResult, ToolOutcomeFrame, VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast,
-    WorkspaceCandidate, WorkspaceContent, WorkspaceObservation, WorkspaceProvenance,
-    WorkspaceReflection, MAX_BROADCAST_RESPONSES, MAX_BROADCAST_WINNERS, WORKSPACE_SCHEMA_V1,
+    CandidateScore, CareConcernFrame, ContentId, GoalFrame, GovernedActionOutcomeFrame,
+    PredictionErrorFrame, PredictionFrame, RecalledExperienceFrame, SalienceVector,
+    SelectionExplanation, SelectionResult, ToolOutcomeFrame, VisibilityScope, WorkspaceAttribution,
+    WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent, WorkspaceObservation,
+    WorkspaceProvenance, WorkspaceReflection, MAX_BROADCAST_RESPONSES, MAX_BROADCAST_WINNERS,
+    WORKSPACE_SCHEMA_V1,
 };
 
 // Event modules

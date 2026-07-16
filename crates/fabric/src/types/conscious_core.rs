@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::dasein::{SelfVersion, Stimmung};
+use crate::dasein::{SelfTransitionReceipt, SelfVersion, Stimmung};
 use crate::{
     AgoraSpaceId, BroadcastEpoch, ContentId, MonoDeadline, ProcessId, WorkspaceBroadcast,
     WorkspaceCandidate,
@@ -93,15 +93,30 @@ pub struct ProcessorResponse {
 impl ProcessorResponse {
     pub fn validate(&self, context: &ProcessorContext) -> anyhow::Result<()> {
         context.validate()?;
-        self.processor.validate()?;
         anyhow::ensure!(
             self.source_epoch == context.source_epoch,
             "processor response epoch does not match its source broadcast"
         );
         anyhow::ensure!(
-            self.candidates.len() <= context.max_candidates
-                && self.candidates.len() <= MAX_PROCESSOR_RESPONSE_CANDIDATES,
+            self.candidates.len() <= context.max_candidates,
             "processor response candidate count exceeds budget"
+        );
+        self.validate_persisted(&context.space, context.source_epoch)
+    }
+
+    pub fn validate_persisted(
+        &self,
+        space: &AgoraSpaceId,
+        epoch: BroadcastEpoch,
+    ) -> anyhow::Result<()> {
+        self.processor.validate()?;
+        anyhow::ensure!(
+            self.source_epoch == epoch,
+            "processor response epoch does not match storage key"
+        );
+        anyhow::ensure!(
+            self.candidates.len() <= MAX_PROCESSOR_RESPONSE_CANDIDATES,
+            "processor response candidate count exceeds hard bound"
         );
         anyhow::ensure!(
             self.acknowledgements.len() <= MAX_PROCESSOR_ACKNOWLEDGEMENTS,
@@ -116,18 +131,58 @@ impl ProcessorResponse {
         for candidate in &self.candidates {
             candidate.validate()?;
             anyhow::ensure!(
-                candidate.space == context.space,
+                candidate.space == *space,
                 "processor candidate crosses workspace"
             );
-            let source_ref = format!("broadcast:{}:{}", context.space.0, context.source_epoch.0);
+            let source_ref = format!("broadcast:{}:{}", space.0, epoch.0);
             anyhow::ensure!(
                 candidate.provenance.source_refs.contains(&source_ref),
                 "processor candidate is missing source broadcast provenance"
+            );
+            anyhow::ensure!(
+                candidate
+                    .provenance
+                    .source_refs
+                    .contains(&format!("processor:{}", self.processor.0)),
+                "processor candidate is missing processor identity provenance"
             );
         }
         for acknowledgement in &self.acknowledgements {
             acknowledgement.validate()?;
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BroadcastIntegrationReceipt {
+    pub space: AgoraSpaceId,
+    pub epoch: BroadcastEpoch,
+    pub broadcast_checksum: String,
+    pub operation_id: crate::OperationId,
+    pub recurrence_depth: u16,
+    pub transition: SelfTransitionReceipt,
+}
+
+impl BroadcastIntegrationReceipt {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.space.0.trim().is_empty(),
+            "integration space is empty"
+        );
+        anyhow::ensure!(self.epoch.0 > 0, "integration epoch is zero");
+        anyhow::ensure!(
+            self.broadcast_checksum.len() == 64
+                && self
+                    .broadcast_checksum
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()),
+            "integration broadcast checksum is invalid"
+        );
+        anyhow::ensure!(
+            self.transition.current_version.0 == self.transition.previous_version.0 + 1,
+            "integration transition does not advance exactly once"
+        );
         Ok(())
     }
 }

@@ -81,6 +81,12 @@ pub struct WorkspaceReflection {
     pub confidence: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CareConcernFrame {
+    pub purpose: String,
+    pub urgency: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkspaceAttribution {
@@ -124,6 +130,7 @@ pub enum WorkspaceContent {
     PredictionError(PredictionErrorFrame),
     Goal(GoalFrame),
     Concern(SelfSignal),
+    CareConcern(CareConcernFrame),
     Plan(Plan),
     ActionProposal(ActionProposalFrame),
     ToolOutcome(ToolOutcomeFrame),
@@ -314,6 +321,12 @@ impl WorkspaceCandidate {
                 "goal is invalid"
             ),
             WorkspaceContent::Concern(_) => {}
+            WorkspaceContent::CareConcern(value) => anyhow::ensure!(
+                valid_text(&value.purpose)
+                    && value.urgency.is_finite()
+                    && (0.0..=1.0).contains(&value.urgency),
+                "care concern is invalid"
+            ),
             WorkspaceContent::Plan(value) => anyhow::ensure!(
                 !value.steps.is_empty() && value.steps.len() <= MAX_DEPENDENCIES,
                 "plan is empty or excessive"

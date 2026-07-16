@@ -415,6 +415,23 @@ impl CandidatePool {
     pub fn pending(&self) -> Vec<WorkspaceCandidate> {
         self.candidates.values().cloned().collect()
     }
+
+    /// Replace only the mutable salience projection for a still-pending
+    /// candidate. Content identity, provenance and deduplication fingerprints
+    /// remain unchanged.
+    pub fn update_salience(
+        &mut self,
+        id: ContentId,
+        salience: SalienceVector,
+    ) -> anyhow::Result<()> {
+        salience.validate()?;
+        let candidate = self
+            .candidates
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("candidate is no longer pending"))?;
+        candidate.salience = salience;
+        Ok(())
+    }
     pub fn len(&self) -> usize {
         self.candidates.len()
     }

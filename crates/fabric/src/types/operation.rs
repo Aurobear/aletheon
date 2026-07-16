@@ -44,6 +44,7 @@ pub enum OperationKind {
     CapabilityCall,
     MemoryConsolidation,
     SubAgent,
+    ConsciousCycle,
     ApprovedApply,
 }
 
