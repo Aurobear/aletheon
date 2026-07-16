@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mnemosyne::backends::gbrain::{
-    GbrainPage, GbrainSpool, RetryOutcome, RetryPolicy, SpoolError, SupplementalErrorCategory,
-    SupplementalMemoryTransport,
+    GbrainPage, GbrainSpool, RemoteMemoryReceipt, RetryOutcome, RetryPolicy, SpoolError,
+    SupplementalErrorCategory, SupplementalMemoryTransport,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -69,17 +69,21 @@ impl<T: SupplementalMemoryTransport> GbrainWorker<T> {
                 break;
             }
             let page = GbrainPage {
-                slug: item.slug,
-                content: item.content,
+                slug: item.slug.clone(),
+                content: item.content.clone(),
             };
             match self.transport.put_page(&page, cancel).await {
                 Ok(receipt) => {
-                    self.spool.acknowledge(
-                        &item.record_id,
-                        &self.worker_id,
-                        now_ms,
-                        receipt.as_deref(),
-                    )?;
+                    let receipt = RemoteMemoryReceipt {
+                        record_id: item.record_id.clone(),
+                        logical_page_id: item.logical_page_id.clone(),
+                        remote_id: receipt.unwrap_or_else(|| item.logical_page_id.clone()),
+                        content_hash: item.content_hash.clone(),
+                        operation: item.operation,
+                        schema_version: item.schema_version,
+                        synced_at_ms: now_ms,
+                    };
+                    self.spool.acknowledge(&item, &self.worker_id, &receipt)?;
                     report.delivered += 1;
                 }
                 Err(error)
