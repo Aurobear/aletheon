@@ -62,7 +62,11 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
-    pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value {
+    pub async fn handle(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: serde_json::Value,
+    ) -> serde_json::Value {
         let method = request["method"].as_str().unwrap_or("").to_string();
         let id = request
             .get("id")
@@ -135,14 +139,15 @@ impl RequestHandler {
         }
 
         match method.as_str() {
-            "chat" => self.handle_chat(id, request).await,
-            _ => self.handle_rpc(&method, id, request).await,
+            "chat" => self.handle_chat(connection, id, request).await,
+            _ => self.handle_rpc(connection, &method, id, request).await,
         }
     }
 
     /// Thin delegation to the macro-kernel turn orchestrator.
     pub(super) async fn handle_chat(
         &self,
+        _connection: &super::server::ConnectionContext,
         id: serde_json::Value,
         request: serde_json::Value,
     ) -> serde_json::Value {

@@ -22,6 +22,7 @@ impl RequestHandler {
     /// function defined in one of the `rpc_*` sub-modules.
     pub(super) async fn handle_rpc(
         &self,
+        _connection: &super::super::server::ConnectionContext,
         method: &str,
         id: serde_json::Value,
         request: serde_json::Value,

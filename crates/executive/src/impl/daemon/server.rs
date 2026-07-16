@@ -7,7 +7,11 @@ use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
 use fabric::debug::DebugEvent;
 use fabric::events::ui_event::ClientEvent;
-use fabric::{Clock, Timer};
+use fabric::protocol::client::{
+    negotiate_protocol_version, ClientCapabilities, ClientEvent as ProtocolClientEvent,
+    ClientMessage, ClientRequest, InitializedResult,
+};
+use fabric::{Clock, ConnectionId, LocalOsPrincipal, PrincipalId, Timer};
 use nix::unistd::{Gid, Uid, User};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -17,6 +21,197 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::handler::RequestHandler;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConnectionContext {
+    pub principal_id: PrincipalId,
+    pub os_principal: LocalOsPrincipal,
+    pub connection_id: ConnectionId,
+}
+
+impl ConnectionContext {
+    pub(crate) fn from_peer(os_principal: LocalOsPrincipal) -> Self {
+        Self {
+            principal_id: PrincipalId::local_uid(os_principal.uid),
+            os_principal,
+            connection_id: ConnectionId::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NegotiatedProtocol {
+    protocol_version: u16,
+    capabilities: ClientCapabilities,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ConnectionProtocolState {
+    New,
+    AwaitingInitialized {
+        negotiated: NegotiatedProtocol,
+    },
+    Ready {
+        negotiated: Option<NegotiatedProtocol>,
+    },
+}
+
+enum ProtocolAction {
+    InitializeResponse(NegotiatedProtocol),
+    Initialized,
+    Dispatch,
+}
+
+impl ConnectionProtocolState {
+    fn accept(&mut self, request: &ClientRequest) -> anyhow::Result<ProtocolAction> {
+        match (&mut *self, request) {
+            (Self::New, ClientRequest::Initialize(params)) => {
+                let negotiated = NegotiatedProtocol {
+                    protocol_version: negotiate_protocol_version(&params.protocol_versions)?,
+                    capabilities: params.capabilities.clone(),
+                };
+                *self = Self::AwaitingInitialized {
+                    negotiated: negotiated.clone(),
+                };
+                Ok(ProtocolAction::InitializeResponse(negotiated))
+            }
+            (Self::New, _) => anyhow::bail!("connection must initialize before requests"),
+            (Self::AwaitingInitialized { negotiated }, ClientRequest::Initialized) => {
+                let negotiated = negotiated.clone();
+                *self = Self::Ready {
+                    negotiated: Some(negotiated),
+                };
+                Ok(ProtocolAction::Initialized)
+            }
+            (Self::AwaitingInitialized { .. }, ClientRequest::Initialize(_)) => {
+                anyhow::bail!("connection initialization cannot be repeated")
+            }
+            (Self::AwaitingInitialized { .. }, _) => {
+                anyhow::bail!("connection must send initialized before requests")
+            }
+            (Self::Ready { .. }, ClientRequest::Initialize(_) | ClientRequest::Initialized) => {
+                anyhow::bail!("connection initialization cannot be repeated")
+            }
+            (
+                Self::Ready {
+                    negotiated: Some(_),
+                },
+                _,
+            ) => Ok(ProtocolAction::Dispatch),
+            (Self::Ready { negotiated: None }, _) => {
+                anyhow::bail!("legacy connections cannot send versioned requests")
+            }
+        }
+    }
+}
+
+/// Temporary M0-M2 bridge for the pre-versioned JSON-RPC client.
+///
+/// This adapter never handles a Fabric `ClientMessage`; it only marks a legacy
+/// JSON-RPC connection ready while preserving the identity authenticated by the
+/// Unix transport. M3 removes it with the legacy client protocol.
+struct LegacyClientHandshakeAdapter;
+
+impl LegacyClientHandshakeAdapter {
+    fn bind(state: &mut ConnectionProtocolState, request: &serde_json::Value) -> bool {
+        if !is_legacy_json_rpc(request) {
+            return false;
+        }
+        match state {
+            ConnectionProtocolState::New => {
+                *state = ConnectionProtocolState::Ready { negotiated: None };
+                true
+            }
+            ConnectionProtocolState::Ready { negotiated: None } => true,
+            ConnectionProtocolState::AwaitingInitialized { .. }
+            | ConnectionProtocolState::Ready {
+                negotiated: Some(_),
+            } => false,
+        }
+    }
+}
+
+fn is_legacy_json_rpc(request: &serde_json::Value) -> bool {
+    request.get("jsonrpc").and_then(|value| value.as_str()) == Some("2.0")
+        && request
+            .get("method")
+            .and_then(|value| value.as_str())
+            .is_some()
+        && !has_versioned_params(request)
+}
+
+fn has_versioned_params(request: &serde_json::Value) -> bool {
+    request.get("params").is_some_and(|params| {
+        params.get("protocol_version").is_some() && params.get("payload").is_some()
+    })
+}
+
+fn parse_versioned_request(request: &serde_json::Value) -> Option<anyhow::Result<ClientRequest>> {
+    if !has_versioned_params(request) {
+        return None;
+    }
+    Some(
+        serde_json::from_value::<ClientMessage<ClientRequest>>(request["params"].clone())
+            .map_err(anyhow::Error::from)
+            .and_then(|message| message.into_v1().map_err(anyhow::Error::from)),
+    )
+}
+
+fn protocol_error(
+    request_id: serde_json::Value,
+    error: impl std::fmt::Display,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": { "code": -32030, "message": error.to_string() }
+    })
+}
+
+fn initialize_response(
+    request_id: serde_json::Value,
+    connection: &ConnectionContext,
+    negotiated: NegotiatedProtocol,
+) -> serde_json::Value {
+    let result = InitializedResult {
+        protocol_version: negotiated.protocol_version,
+        server_capabilities: negotiated.capabilities,
+        connection_id: connection.connection_id.clone(),
+        principal_id: connection.principal_id.clone(),
+        os_principal: connection.os_principal,
+        runtime_version: env!("CARGO_PKG_VERSION").into(),
+    };
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": ClientMessage::v1(ProtocolClientEvent::InitializeResponse(result))
+    })
+}
+
+async fn dispatch_request(
+    handler: RequestHandler,
+    connection: ConnectionContext,
+    request: serde_json::Value,
+    request_id: serde_json::Value,
+    notify_tx: Option<mpsc::Sender<String>>,
+) -> serde_json::Value {
+    let task = tokio::spawn(async move { handler.handle(&connection, request).await });
+    match task.await {
+        Ok(response) => response,
+        Err(error) => {
+            let (response, terminal_events) = request_task_failure(request_id, error);
+            error!(message = %response["error"]["message"], "Request handler task failed");
+            if let Some(tx) = notify_tx {
+                for event in terminal_events {
+                    if let Ok(payload) = super::handler::format::event_to_json(&event) {
+                        let _ = tx.send(payload).await;
+                    }
+                }
+            }
+            response
+        }
+    }
+}
 
 fn request_task_failure(
     request_id: serde_json::Value,
@@ -98,10 +293,14 @@ impl UnixServer {
                 accept_result = self.listener.accept() => {
                     let (stream, _addr) = accept_result?;
                     // Verify peer credentials before accepting the connection.
-                    if let Err(e) = Self::check_peer_cred(&stream, self.owner_uid, self.group_gid) {
-                        warn!(error = %e, "Connection rejected by peer credential check");
-                        continue;
-                    }
+                    let peer = match Self::check_peer_cred(&stream, self.owner_uid, self.group_gid) {
+                        Ok(peer) => peer,
+                        Err(e) => {
+                            warn!(error = %e, "Connection rejected by peer credential check");
+                            continue;
+                        }
+                    };
+                    let connection = ConnectionContext::from_peer(peer);
                     let mut handler = self.handler.clone();
 
                     // Create a per-connection notify channel so each client receives
@@ -112,7 +311,7 @@ impl UnixServer {
                     handler.increment_connections();
 
                     self.connections.spawn(async move {
-                        if let Err(e) = Self::handle_connection(stream, handler, notify_rx).await {
+                        if let Err(e) = Self::handle_connection(stream, handler, notify_rx, connection).await {
                             error!(error = %e, "Connection error");
                         }
                     });
@@ -164,26 +363,36 @@ impl UnixServer {
         stream: &tokio::net::UnixStream,
         owner_uid: u32,
         group_gid: u32,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<LocalOsPrincipal> {
         let cred = stream.peer_cred()?;
         let peer_uid = cred.uid();
+        let peer_gid = cred.gid();
 
         // Allow root and the daemon owner.
         if peer_uid == 0 || peer_uid == owner_uid {
-            return Ok(());
+            return Ok(LocalOsPrincipal {
+                uid: peer_uid,
+                gid: peer_gid,
+            });
         }
 
         // Check if the peer belongs to the aletheon group.
         // First check primary group (fast path, no allocation).
-        if cred.gid() == group_gid {
-            return Ok(());
+        if peer_gid == group_gid {
+            return Ok(LocalOsPrincipal {
+                uid: peer_uid,
+                gid: peer_gid,
+            });
         }
         // Then check supplementary groups via nix.
         if let Some(user) = User::from_uid(Uid::from_raw(peer_uid))? {
             let c_name = CString::new(user.name)?;
             let groups = nix::unistd::getgrouplist(&c_name, Gid::from_raw(cred.gid()))?;
             if groups.contains(&Gid::from_raw(group_gid)) {
-                return Ok(());
+                return Ok(LocalOsPrincipal {
+                    uid: peer_uid,
+                    gid: peer_gid,
+                });
             }
         }
 
@@ -197,6 +406,7 @@ impl UnixServer {
         stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         handler: RequestHandler,
         mut notify_rx: mpsc::Receiver<String>,
+        connection: ConnectionContext,
     ) -> Result<()> {
         let (reader, mut writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);
@@ -209,6 +419,7 @@ impl UnixServer {
         // This allows the select! loop to continue forwarding notifications
         // while the handler is processing a long-running request (e.g. LLM API call).
         let (resp_tx, mut resp_rx) = mpsc::channel::<String>(1);
+        let mut protocol_state = ConnectionProtocolState::New;
 
         loop {
             tokio::select! {
@@ -233,29 +444,66 @@ impl UnixServer {
                         .get("id")
                         .cloned()
                         .unwrap_or(serde_json::Value::Null);
+
+                    if let Some(versioned) = parse_versioned_request(&request) {
+                        let response = match versioned.and_then(|request| protocol_state.accept(&request)) {
+                            Ok(ProtocolAction::InitializeResponse(negotiated)) => {
+                                initialize_response(request_id, &connection, negotiated)
+                            }
+                            Ok(ProtocolAction::Initialized) => serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "id": request_id,
+                                "result": { "status": "ready" }
+                            }),
+                            Ok(ProtocolAction::Dispatch) => {
+                                let handler = handler.clone();
+                                let notify_tx = handler.notify_tx.clone();
+                                let resp_tx = resp_tx.clone();
+                                let connection = connection.clone();
+                                tokio::spawn(async move {
+                                    let response = dispatch_request(
+                                        handler,
+                                        connection,
+                                        request,
+                                        request_id,
+                                        notify_tx,
+                                    )
+                                    .await;
+                                    let response_json = serde_json::to_string(&response)
+                                        .unwrap_or_default();
+                                    let _ = resp_tx.send(response_json).await;
+                                });
+                                continue;
+                            }
+                            Err(error) => protocol_error(request_id, error),
+                        };
+                        let response_json = serde_json::to_string(&response)?;
+                        resp_tx.send(response_json).await?;
+                        continue;
+                    }
+
+                    if !LegacyClientHandshakeAdapter::bind(&mut protocol_state, &request) {
+                        let response = protocol_error(
+                            request_id,
+                            "legacy and versioned requests cannot share a connection",
+                        );
+                        resp_tx.send(serde_json::to_string(&response)?).await?;
+                        continue;
+                    }
+
                     let handler = handler.clone();
                     let notify_tx = handler.notify_tx.clone();
                     let resp_tx = resp_tx.clone();
+                    let connection = connection.clone();
                     tokio::spawn(async move {
-                        let task = tokio::spawn(async move { handler.handle(request).await });
-                        let response = match task.await {
-                            Ok(response) => response,
-                            Err(error) => {
-                                let (response, terminal_events) =
-                                    request_task_failure(request_id, error);
-                                error!(message = %response["error"]["message"], "Request handler task failed");
-                                if let Some(tx) = notify_tx {
-                                    for event in terminal_events {
-                                        if let Ok(payload) =
-                                            super::handler::format::event_to_json(&event)
-                                        {
-                                            let _ = tx.send(payload).await;
-                                        }
-                                    }
-                                }
-                                response
-                            }
-                        };
+                        let response = dispatch_request(
+                            handler,
+                            connection,
+                            request,
+                            request_id,
+                            notify_tx,
+                        )
+                        .await;
                         let response_json = serde_json::to_string(&response)
                             .unwrap_or_default();
                         let _ = resp_tx.send(response_json).await;
@@ -318,6 +566,100 @@ impl UnixServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn capabilities() -> fabric::protocol::client::ClientCapabilities {
+        fabric::protocol::client::ClientCapabilities {
+            item_events: true,
+            cursors: true,
+        }
+    }
+
+    fn initialize() -> fabric::protocol::client::ClientRequest {
+        fabric::protocol::client::ClientRequest::Initialize(
+            fabric::protocol::client::InitializeParams {
+                client_version: "test-client".into(),
+                protocol_versions: vec![fabric::protocol::client::CLIENT_PROTOCOL_VERSION],
+                capabilities: capabilities(),
+            },
+        )
+    }
+
+    fn snapshot() -> fabric::protocol::client::ClientRequest {
+        fabric::protocol::client::ClientRequest::Snapshot(
+            fabric::protocol::client::SnapshotRequest {
+                session_id: fabric::SessionId("thread-a".into()),
+            },
+        )
+    }
+
+    #[test]
+    fn json_identity_cannot_replace_peer_identity() {
+        let peer = fabric::LocalOsPrincipal {
+            uid: 1001,
+            gid: 100,
+        };
+        let connection = ConnectionContext::from_peer(peer);
+        let request = serde_json::json!({"method":"chat","params":{"uid":0,"gid":0}});
+        assert_eq!(
+            connection.principal_id,
+            fabric::PrincipalId::local_uid(1001)
+        );
+        assert_eq!(connection.os_principal.uid, 1001);
+        assert_ne!(
+            request["params"]["uid"].as_u64(),
+            Some(u64::from(connection.os_principal.uid))
+        );
+    }
+
+    #[test]
+    fn connection_requires_initialize_then_initialized_exactly_once() {
+        let mut state = ConnectionProtocolState::New;
+        assert!(state.accept(&snapshot()).is_err());
+        state.accept(&initialize()).unwrap();
+        assert!(state.accept(&initialize()).is_err());
+        state
+            .accept(&fabric::protocol::client::ClientRequest::Initialized)
+            .unwrap();
+        assert!(matches!(
+            state,
+            ConnectionProtocolState::Ready {
+                negotiated: Some(_)
+            }
+        ));
+        assert!(state.accept(&initialize()).is_err());
+    }
+
+    #[test]
+    fn legacy_adapter_binds_identity_without_weakening_versioned_handshake() {
+        let legacy = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "status",
+            "params": {"uid": 0, "gid": 0}
+        });
+        let mut legacy_state = ConnectionProtocolState::New;
+        assert!(LegacyClientHandshakeAdapter::bind(
+            &mut legacy_state,
+            &legacy
+        ));
+        assert!(matches!(
+            legacy_state,
+            ConnectionProtocolState::Ready { negotiated: None }
+        ));
+
+        let versioned = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "initialize",
+            "params": fabric::protocol::client::ClientMessage::v1(initialize())
+        });
+        let mut versioned_state = ConnectionProtocolState::New;
+        assert!(!LegacyClientHandshakeAdapter::bind(
+            &mut versioned_state,
+            &versioned
+        ));
+        assert!(matches!(versioned_state, ConnectionProtocolState::New));
+    }
 
     #[test]
     fn request_task_failure_retains_id_and_finishes_client_turn() {

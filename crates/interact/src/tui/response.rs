@@ -372,6 +372,7 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
         return false;
     };
     let action = match event {
+        ProtocolEvent::InitializeResponse(_) => return true,
         ProtocolEvent::Snapshot(value) => UiAction::Snapshot(value),
         ProtocolEvent::Item(value) => UiAction::Item(value),
         ProtocolEvent::Approval(value) => UiAction::Approval(value),

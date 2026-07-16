@@ -7,6 +7,8 @@ pub use fabric::protocol::client::{
 
 pub fn request_to_json(request: ClientRequest, id: u64) -> serde_json::Value {
     let method = match request {
+        ClientRequest::Initialize(_) => "initialize",
+        ClientRequest::Initialized => "initialized",
         ClientRequest::Snapshot(_) => "session.snapshot",
         ClientRequest::Subscribe(_) => "session.subscribe",
     };
