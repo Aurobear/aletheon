@@ -17,6 +17,7 @@ fn candidate() -> WorkspaceCandidate {
             what: "disk pressure".into(),
             source: "kernel".into(),
             data: serde_json::json!({"percent": 90}),
+            attribution: fabric::WorkspaceAttribution::Environment,
         }),
         confidence: 0.9,
         salience: SalienceVector {

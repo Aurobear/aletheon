@@ -79,6 +79,13 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
                         },
                     ],
                     projection: None,
+                    context_projection: Some(fabric::ContextProjectionReceipt {
+                        space: fabric::AgoraSpaceId("session-a".into()),
+                        broadcast_epoch: Some(fabric::BroadcastEpoch(2)),
+                        workspace_version: Some(3),
+                        dasein_version: fabric::dasein::SelfVersion(4),
+                        content_ids: vec![fabric::ContentId(uuid::Uuid::from_u128(5))],
+                    }),
                 })
             },
         )
@@ -95,12 +102,21 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
         .load_items(&SessionId("success".into()), None)
         .await
         .unwrap();
-    assert_eq!(items.len(), 4);
+    assert_eq!(items.len(), 5);
     assert!(matches!(items[0].payload, ItemPayload::UserMessage { .. }));
-    assert!(matches!(items[1].payload, ItemPayload::ToolCall { .. }));
-    assert!(matches!(items[2].payload, ItemPayload::ToolResult { .. }));
     assert!(matches!(
-        items[3].payload,
+        items[1].payload,
+        ItemPayload::ContextProjection {
+            broadcast_epoch: Some(2),
+            workspace_version: Some(3),
+            dasein_version: 4,
+            ..
+        }
+    ));
+    assert!(matches!(items[2].payload, ItemPayload::ToolCall { .. }));
+    assert!(matches!(items[3].payload, ItemPayload::ToolResult { .. }));
+    assert!(matches!(
+        items[4].payload,
         ItemPayload::AssistantMessage { .. }
     ));
 }

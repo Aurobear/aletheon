@@ -132,6 +132,7 @@ impl TurnService {
                     result,
                     items: recording.take_items().await,
                     projection: None,
+                    context_projection: None,
                 })
             })
             .await?;

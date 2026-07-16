@@ -266,13 +266,19 @@ async fn timeout_error_empty_supplemental_and_local_fallback_are_non_blocking() 
 }
 
 #[test]
-fn turn_pipeline_has_only_the_unified_memory_recall_path() {
+fn turn_pipeline_routes_memory_recall_through_conscious_candidates() {
     let pipeline = include_str!("../src/service/turn_pipeline.rs");
     let context = include_str!("../src/service/context_assembler.rs");
+    let workspace = include_str!("../src/service/conscious_workspace.rs");
     assert!(pipeline.contains("context_assembler"));
     assert!(!pipeline.contains("inject_gbrain_recall"));
-    assert!(context.contains("recall_composite_context"));
-    assert!(context.contains("recall_service.as_ref()"));
+    assert!(!context.contains("recall_composite_context"));
+    assert!(!context.contains("recall_service"));
+    assert!(context.contains("latest_context"));
+    assert!(workspace.contains("ProcessorKind::Mnemosyne"));
+    assert!(workspace.contains("WorkspaceContent::RecalledExperience"));
+    assert!(workspace.contains("WorkspaceAttribution::ExternalMemory"));
+    assert!(workspace.contains(".recall("));
     assert!(!context.contains("GbrainMcpAdapter"));
     assert!(!context.contains("call_tool"));
 }

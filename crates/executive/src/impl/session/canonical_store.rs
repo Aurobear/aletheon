@@ -241,6 +241,7 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
                 is_error,
                 ..
             } => Some(Message::tool_result(call_id, content, *is_error)),
+            ItemPayload::ContextProjection { .. } => None,
         };
         if let Some(message) = message {
             messages.push(message);

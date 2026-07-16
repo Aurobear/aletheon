@@ -647,17 +647,31 @@ impl RequestHandler {
         let session_approvals = Arc::new(Mutex::new(HashMap::new()));
         let admin_session_approvals = session_approvals.clone();
         let memory_queue = Arc::new(Mutex::new(Vec::new()));
+        let dasein_handle = self_field
+            .lock()
+            .await
+            .dasein_handle()
+            .context("Dasein must be enabled for the recurrent conscious workspace")?;
+        let conscious_registry = Arc::new(
+            crate::service::conscious_workspace::ConsciousWorkspaceRegistry::production(
+                data_dir.join("conscious_workspace.db"),
+                Arc::new(
+                    crate::service::dasein_workspace_adapter::DaseinWorkspaceAdapter::new(
+                        dasein_handle,
+                        clock.clone(),
+                    ),
+                ),
+                kernel.clone(),
+                clock.clone(),
+                gbrain_runtime.memory_service.clone(),
+                skill_loader.clone(),
+            )?,
+        );
         let context_source = Arc::new(crate::service::context_assembler::ProductionContextSource {
             cached_prefix: cached_prefix.clone(),
-            memory_queue: memory_queue.clone(),
-            recall_service: gbrain_runtime.memory_service.clone(),
-            facts: fact_use_cases.clone(),
-            core_memory: core_memory.clone(),
             skill_loader: skill_loader.clone(),
             skill_router: skill_router.clone(),
-            self_field: self_field.clone(),
-            agora: domains.agora(),
-            clock: clock.clone(),
+            conscious: conscious_registry.clone(),
         });
         let context_assembler = Arc::new(crate::service::context_assembler::ContextAssembler::new(
             context_source,
@@ -738,6 +752,7 @@ impl RequestHandler {
                     capabilities: capability_service.clone(),
                     profiles,
                     clock: clock.clone(),
+                    conscious_actions: Some(conscious_registry.clone()),
                 },
             ));
             agent_runtimes.register(
@@ -943,7 +958,7 @@ impl RequestHandler {
                 canonical_sessions: session_service.clone(),
                 projection,
                 runtime: runtime_ports,
-                conscious_actions: None,
+                conscious_core: Some(conscious_registry),
             },
         ));
         let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(

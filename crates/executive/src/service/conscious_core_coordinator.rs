@@ -616,11 +616,8 @@ impl ConsciousCandidatePort for ConsciousCoreCoordinator {
             self.dasein.modulate_salience(&submission.candidate).await?;
         submission.candidate.validate()?;
         let id = submission.candidate.id;
-        let outcome = self
-            .pool
-            .lock()
-            .await
-            .admit(submission.candidate, self.clock.mono_now());
+        let mut pool = self.pool.lock().await;
+        let outcome = CandidatePool::admit(&mut pool, submission.candidate, self.clock.mono_now());
         let (status, detail) = match outcome {
             AdmissionOutcome::Accepted { .. } => (CandidateAdmissionStatus::Accepted, None),
             AdmissionOutcome::Duplicate { existing } => (
@@ -674,6 +671,7 @@ impl LatestConsciousContextPort for ConsciousCoreCoordinator {
             self_view,
         };
         projection.validate()?;
+        self.store.save_context_projection(&projection)?;
         Ok(projection)
     }
 }

@@ -116,6 +116,13 @@ pub enum ItemPayload {
         #[schemars(with = "Option<Uuid>")]
         audit_id: Option<AuditEventId>,
     },
+    ContextProjection {
+        space: String,
+        broadcast_epoch: Option<u64>,
+        workspace_version: Option<u64>,
+        dasein_version: u64,
+        content_ids: Vec<String>,
+    },
     SystemNotice {
         content: String,
     },

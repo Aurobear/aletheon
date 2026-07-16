@@ -5,7 +5,7 @@ use fabric::{AgentControlError, AgentControlErrorKind, AgentSpawnRequest};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 pub trait AgentAdmissionLease: Send {
-    fn settle(&mut self);
+    fn release_completed(&mut self);
     fn revoke(&mut self);
 }
 
@@ -64,7 +64,7 @@ struct BoundedAdmissionLease {
 }
 
 impl AgentAdmissionLease for BoundedAdmissionLease {
-    fn settle(&mut self) {
+    fn release_completed(&mut self) {
         self.permit.take();
     }
 

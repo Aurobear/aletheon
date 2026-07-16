@@ -93,6 +93,8 @@ pub struct NativeCognitRuntimeResources {
     pub capabilities: Arc<dyn CapabilityService>,
     pub profiles: Arc<AgentProfileRegistry>,
     pub clock: Arc<dyn Clock>,
+    pub conscious_actions:
+        Option<Arc<dyn crate::service::governed_capability::GovernedActionLoopResolver>>,
 }
 
 pub struct NativeCognitRuntime {
@@ -130,6 +132,19 @@ impl NativeCognitRuntime {
             .await
             .map_err(runtime_failure)?;
 
+        let action_loop = match &self.resources.conscious_actions {
+            Some(resolver) => Some(
+                resolver
+                    .resolve(
+                        input.workspace_id.clone(),
+                        input.handle.process_id,
+                        input.root_process_id,
+                    )
+                    .await
+                    .map_err(runtime_failure)?,
+            ),
+            None => None,
+        };
         let evidence = Arc::new(Mutex::new(Vec::new()));
         let services = NativeTurnServices {
             llm: MeteredLlm::new(resolved.llm),
@@ -156,7 +171,7 @@ impl NativeCognitRuntime {
                 sandbox: SandboxRequirement::NotRequired,
                 cancel: input.cancellation.clone(),
                 turn_count: 0,
-                action_loop: None,
+                action_loop,
             },
             cancellation: input.cancellation.clone(),
             evidence: evidence.clone(),

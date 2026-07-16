@@ -31,6 +31,7 @@ const ACTION_NAMESPACE: Uuid = Uuid::from_u128(0xd166_5f2f_f9d1_4e89_b0cf_9867_4
 pub struct ConsciousActionBridge {
     coordinator: Arc<ConsciousCoreCoordinator>,
     source: ProcessId,
+    outcome_source: ProcessId,
     root: ProcessId,
     clock: Arc<dyn Clock>,
     candidate_ttl: Duration,
@@ -48,6 +49,10 @@ impl ConsciousActionBridge {
         Ok(Self {
             coordinator,
             source,
+            outcome_source: ProcessId(Uuid::new_v5(
+                &ACTION_NAMESPACE,
+                format!("outcome-source:{}", source.0).as_bytes(),
+            )),
             root,
             clock,
             candidate_ttl,
@@ -198,7 +203,7 @@ impl GovernedActionLoop for ConsciousActionBridge {
             schema_version: WORKSPACE_SCHEMA_V1,
             id: Self::outcome_id(selected.candidate_id, &permit_id),
             space: self.coordinator.space().clone(),
-            source: self.source,
+            source: self.outcome_source,
             turn: None,
             content: WorkspaceContent::GovernedActionOutcome(GovernedActionOutcomeFrame {
                 action_id: selected.candidate_id,
@@ -211,7 +216,7 @@ impl GovernedActionLoop for ConsciousActionBridge {
             confidence: 1.0,
             salience: Self::max_salience(),
             provenance: WorkspaceProvenance {
-                producer: self.source,
+                producer: self.outcome_source,
                 operation: Some(selected.operation_id),
                 source_refs,
                 observed_at: self.clock.wall_now(),

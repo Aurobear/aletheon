@@ -1,8 +1,13 @@
 //! Deterministic, bounded turn context assembly.
 
+use crate::service::conscious_core_ports::LatestConsciousContextPort;
 use crate::service::daemon_turn::helpers::{bounded_text_history, build_request_messages};
 use async_trait::async_trait;
-use fabric::{AgoraOps, Clock, Message, TurnRequest};
+use fabric::{
+    AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, Message, TurnRequest,
+    WorkspaceContent,
+};
+use serde::Serialize;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -10,22 +15,21 @@ use tokio::sync::Mutex;
 const MAX_FRAGMENT_CHARS: usize = 16 * 1024;
 const MAX_INJECTED_CHARS: usize = 48 * 1024;
 const MAX_SYSTEM_PREFIX_CHARS: usize = 128 * 1024;
+const MAX_PROJECTED_ITEM_CHARS: usize = 128;
+const MAX_SELF_ITEM_CHARS: usize = 64;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct ContextFragments {
     pub system_prefix: String,
-    pub recall: String,
-    pub core_memory: String,
-    pub facts: String,
     pub skills: String,
-    pub dasein: String,
-    pub agora: String,
+    pub conscious: Option<ConsciousContextProjection>,
 }
 
 #[derive(Clone, Debug)]
 pub struct AssembledContext {
     pub messages: Vec<Message>,
     pub effective_user_message: String,
+    pub projection_receipt: Option<ContextProjectionReceipt>,
 }
 
 #[derive(Debug, Error)]
@@ -45,15 +49,9 @@ pub struct ContextAssembler {
 
 pub struct ProductionContextSource {
     pub cached_prefix: Arc<Mutex<String>>,
-    pub memory_queue: Arc<Mutex<Vec<String>>>,
-    pub recall_service: Arc<dyn mnemosyne::MemoryService>,
-    pub facts: Arc<dyn mnemosyne::FactUseCases>,
-    pub core_memory: Arc<Mutex<mnemosyne::CoreMemory>>,
     pub skill_loader: Arc<Mutex<corpus::SkillLoader>>,
     pub skill_router: Arc<Mutex<corpus::SkillRouter>>,
-    pub self_field: Arc<Mutex<dasein::SelfField>>,
-    pub agora: Arc<dyn AgoraOps>,
-    pub clock: Arc<dyn Clock>,
+    pub conscious: Arc<dyn LatestConsciousContextPort>,
 }
 
 #[async_trait]
@@ -63,61 +61,6 @@ impl ContextSource for ProductionContextSource {
             "{}\n\nCurrent working directory: {}\nTreat this as the user's current project. Do not scan unrelated host directories to guess a project.",
             self.cached_prefix.lock().await.clone(), request.working_dir.display()
         );
-        let updates = self.memory_queue.lock().await.drain(..).collect::<Vec<_>>();
-        let recall =
-            if request.input.trim().len() < 8 || request.input.trim_start().starts_with('/') {
-                String::new()
-            } else {
-                let normalized = request.input.to_ascii_lowercase();
-                let include_historical = ["historical", "history", "superseded", "历史", "旧决策"]
-                    .iter()
-                    .any(|marker| normalized.contains(marker));
-                crate::r#impl::hook_lifecycle::recall_inject::recall_composite_context(
-                    self.recall_service.as_ref(),
-                    mnemosyne::RecallRequest {
-                        session: request.session_id.clone(),
-                        query: request.input.clone(),
-                        max_items: 8,
-                        max_content_bytes: 16 * 1024,
-                        current_at: Some(fabric::wall_to_datetime(self.clock.wall_now())),
-                        include_historical,
-                    },
-                    std::time::Duration::from_millis(250),
-                    8,
-                    16 * 1024,
-                )
-                .await
-            };
-        let facts = self
-            .facts
-            .search(mnemosyne::SearchFactsRequest {
-                query: request.input.clone(),
-                scope: None,
-            })
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .take(4)
-            .map(|fact| format!("- {} (trust: {:.2})", fact.content, fact.trust_score))
-            .chain(updates.into_iter().map(|item| format!("- {item}")))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let core_memory = self
-            .core_memory
-            .lock()
-            .await
-            .blocks()
-            .iter()
-            .filter(|(_, block)| !block.read_only && !block.value.is_empty())
-            .flat_map(|(label, block)| {
-                block
-                    .value
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .map(move |line| format!("[core:{label}] {line}"))
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
         let skills = {
             let loader = self.skill_loader.lock().await;
             let keywords = loader
@@ -150,26 +93,18 @@ impl ContextSource for ProductionContextSource {
             .filter(|item| !item.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
-        let dasein = self
-            .self_field
-            .lock()
+        let conscious = self
+            .conscious
+            .latest_context(&AgoraSpaceId(request.session_id.clone()))
             .await
-            .dasein_prompt_injection()
-            .unwrap_or_default();
-        let agora = self
-            .agora
-            .snapshot(&request.session_id)
-            .await
-            .map(|value| value.to_string())
-            .unwrap_or_default();
+            .map_err(|error| ContextAssemblyError::Source(error.to_string()))?;
+        conscious
+            .validate()
+            .map_err(|error| ContextAssemblyError::Source(error.to_string()))?;
         Ok(ContextFragments {
             system_prefix,
-            recall,
-            core_memory,
-            facts,
             skills,
-            dasein,
-            agora,
+            conscious: Some(conscious),
         })
     }
 }
@@ -185,15 +120,23 @@ impl ContextAssembler {
         canonical_history: &[Message],
     ) -> Result<AssembledContext, ContextAssemblyError> {
         let fragments = self.source.load(request).await?;
+        let projection_receipt = fragments
+            .conscious
+            .as_ref()
+            .map(|projection| projection.receipt.clone());
+        let conscious = fragments
+            .conscious
+            .as_ref()
+            .map(render_conscious_projection)
+            .transpose()?;
         let mut effective = String::new();
         let mut remaining = MAX_INJECTED_CHARS;
         for (label, value) in [
-            ("recall", fragments.recall.as_str()),
-            ("core-memory", fragments.core_memory.as_str()),
-            ("facts", fragments.facts.as_str()),
+            (
+                "conscious-context",
+                conscious.as_deref().unwrap_or_default(),
+            ),
             ("skills", fragments.skills.as_str()),
-            ("dasein", fragments.dasein.as_str()),
-            ("agora", fragments.agora.as_str()),
         ] {
             append_fragment(&mut effective, label, value, &mut remaining);
         }
@@ -210,7 +153,100 @@ impl ContextAssembler {
         Ok(AssembledContext {
             messages,
             effective_user_message: effective,
+            projection_receipt,
         })
+    }
+}
+
+#[derive(Serialize)]
+struct ModelProjection<'a> {
+    receipt: &'a ContextProjectionReceipt,
+    self_view: ModelSelfView,
+    selected: Vec<ModelSelectedContent>,
+}
+
+#[derive(Serialize)]
+struct ModelSelfView {
+    version: u64,
+    mood: String,
+    concerns: Vec<String>,
+    projection: Option<String>,
+    protentions: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ModelSelectedContent {
+    id: String,
+    kind: &'static str,
+    content: String,
+}
+
+fn render_conscious_projection(
+    projection: &ConsciousContextProjection,
+) -> Result<String, ContextAssemblyError> {
+    projection
+        .validate()
+        .map_err(|error| ContextAssemblyError::Source(error.to_string()))?;
+    let self_view = ModelSelfView {
+        version: projection.self_view.version.0,
+        mood: format!("{:?}", projection.self_view.mood),
+        concerns: projection
+            .self_view
+            .concerns
+            .iter()
+            .map(|value| truncate(value, MAX_SELF_ITEM_CHARS))
+            .collect(),
+        projection: projection
+            .self_view
+            .projection
+            .as_deref()
+            .map(|value| truncate(value, MAX_SELF_ITEM_CHARS)),
+        protentions: projection
+            .self_view
+            .protentions
+            .iter()
+            .map(|value| truncate(value, MAX_SELF_ITEM_CHARS))
+            .collect(),
+    };
+    let selected = projection
+        .latest_broadcast
+        .iter()
+        .flat_map(|broadcast| &broadcast.selected)
+        .map(|candidate| ModelSelectedContent {
+            id: candidate.id.0.to_string(),
+            kind: content_kind(&candidate.content),
+            content: truncate(
+                &serde_json::to_string(&candidate.content).unwrap_or_default(),
+                MAX_PROJECTED_ITEM_CHARS,
+            ),
+        })
+        .collect();
+    serde_json::to_string(&ModelProjection {
+        receipt: &projection.receipt,
+        self_view,
+        selected,
+    })
+    .map_err(|error| ContextAssemblyError::Source(error.to_string()))
+}
+
+fn content_kind(content: &WorkspaceContent) -> &'static str {
+    match content {
+        WorkspaceContent::Observation(_) => "observation",
+        WorkspaceContent::RecalledExperience(_) => "recalled_experience",
+        WorkspaceContent::Evidence(_) => "evidence",
+        WorkspaceContent::Hypothesis(_) => "hypothesis",
+        WorkspaceContent::Prediction(_) => "prediction",
+        WorkspaceContent::PredictionError(_) => "prediction_error",
+        WorkspaceContent::Goal(_) => "goal",
+        WorkspaceContent::Concern(_) => "concern",
+        WorkspaceContent::CareConcern(_) => "care_concern",
+        WorkspaceContent::Plan(_) => "plan",
+        WorkspaceContent::ActionProposal(_) => "action_proposal",
+        WorkspaceContent::ToolOutcome(_) => "tool_outcome",
+        WorkspaceContent::GovernedActionOutcome(_) => "governed_action_outcome",
+        WorkspaceContent::AgentResult(_) => "agent_result",
+        WorkspaceContent::Reflection(_) => "reflection",
+        WorkspaceContent::Extension { .. } => "extension",
     }
 }
 

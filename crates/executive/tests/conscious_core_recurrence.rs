@@ -63,6 +63,7 @@ impl ConsciousProcessor for ResponseProcessor {
                         what: "processor response affects the next competition".into(),
                         source: self.id.0.clone(),
                         data: serde_json::json!({"source_epoch": broadcast.epoch.0}),
+                        attribution: fabric::WorkspaceAttribution::Cognit,
                     }),
                     confidence: 1.0,
                     salience: SalienceVector {
@@ -221,6 +222,7 @@ fn observation(id: u128, score: f32, expires_at: Option<MonoDeadline>) -> Candid
                 what: format!("observation-{id}"),
                 source: "environment".into(),
                 data: serde_json::json!({"event_id": id}),
+                attribution: fabric::WorkspaceAttribution::Environment,
             }),
             confidence: 1.0,
             salience: SalienceVector {

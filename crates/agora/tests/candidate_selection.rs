@@ -18,6 +18,7 @@ fn candidate(id: u128, source: u128, score: f32, created: u64) -> WorkspaceCandi
             what: format!("observation-{id}"),
             source: "fixture".into(),
             data: serde_json::json!({"id": id}),
+            attribution: fabric::WorkspaceAttribution::Environment,
         }),
         confidence: 1.0,
         salience: SalienceVector {

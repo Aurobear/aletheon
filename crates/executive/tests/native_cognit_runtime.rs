@@ -211,6 +211,7 @@ fn runtime(llm: Arc<ScriptedLlm>, capability: Arc<RecordingCapability>) -> Nativ
         capabilities: capability,
         profiles,
         clock,
+        conscious_actions: None,
     })
 }
 
@@ -461,6 +462,7 @@ async fn provider_failure_and_iteration_exhaustion_are_bounded_runtime_errors() 
         capabilities: Arc::new(RecordingCapability::default()),
         profiles,
         clock,
+        conscious_actions: None,
     });
     let error = runtime
         .launch(

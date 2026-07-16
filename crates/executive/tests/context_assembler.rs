@@ -1,7 +1,11 @@
 use executive::service::context_assembler::{
     ContextAssembler, ContextAssemblyError, ContextFragments, ContextSource,
 };
-use fabric::{Message, OperationId, ProcessId, TurnRequest};
+use fabric::dasein::{SelfVersion, Stimmung};
+use fabric::{
+    AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, Message, OperationId,
+    ProcessId, StructuredSelfView, TurnRequest,
+};
 use std::{path::PathBuf, sync::Arc};
 
 struct FixedSource(ContextFragments);
@@ -30,36 +34,45 @@ fn text(message: &Message) -> &str {
     }
 }
 
+fn projection() -> ConsciousContextProjection {
+    ConsciousContextProjection {
+        latest_broadcast: None,
+        self_view: StructuredSelfView {
+            version: SelfVersion(3),
+            mood: Stimmung::Gelassenheit,
+            concerns: vec!["finish the current task".into()],
+            projection: Some("verify the implementation".into()),
+            protentions: vec!["tests remain green".into()],
+        },
+        receipt: ContextProjectionReceipt {
+            space: AgoraSpaceId("session".into()),
+            broadcast_epoch: None,
+            workspace_version: None,
+            dasein_version: SelfVersion(3),
+            content_ids: vec![],
+        },
+    }
+}
+
 #[tokio::test]
 async fn fragments_have_one_deterministic_order_before_raw_input() {
     let assembler = ContextAssembler::new(Arc::new(FixedSource(ContextFragments {
         system_prefix: "system".into(),
-        recall: "R".into(),
-        core_memory: "C".into(),
-        facts: "F".into(),
         skills: "S".into(),
-        dasein: "D".into(),
-        agora: "A".into(),
+        conscious: Some(projection()),
     })));
     let assembled = assembler
         .assemble(&request("raw user"), &[Message::assistant("prior")])
         .await
         .unwrap();
-    let positions: Vec<_> = [
-        "<recall>",
-        "<core-memory>",
-        "<facts>",
-        "<skills>",
-        "<dasein>",
-        "<agora>",
-        "raw user",
-    ]
-    .into_iter()
-    .map(|part| assembled.effective_user_message.find(part).unwrap())
-    .collect();
+    let positions: Vec<_> = ["<conscious-context>", "<skills>", "raw user"]
+        .into_iter()
+        .map(|part| assembled.effective_user_message.find(part).unwrap())
+        .collect();
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
     assert_eq!(text(&assembled.messages[0]), "system");
     assert_eq!(text(&assembled.messages[1]), "prior");
+    assert_eq!(assembled.projection_receipt, Some(projection().receipt));
     assert_eq!(
         text(assembled.messages.last().unwrap()),
         assembled.effective_user_message
@@ -71,12 +84,8 @@ async fn fragments_and_history_are_bounded_and_utf8_safe() {
     let huge = "界".repeat(200_000);
     let assembler = ContextAssembler::new(Arc::new(FixedSource(ContextFragments {
         system_prefix: huge.clone(),
-        recall: huge.clone(),
-        core_memory: huge.clone(),
-        facts: huge.clone(),
-        skills: huge.clone(),
-        dasein: huge.clone(),
-        agora: huge,
+        skills: huge,
+        conscious: Some(projection()),
     })));
     let assembled = assembler
         .assemble(&request("raw"), &[Message::user("x".repeat(200_000))])

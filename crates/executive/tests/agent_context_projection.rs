@@ -144,6 +144,7 @@ fn candidate(
             what: "bounded child input".into(),
             source: "durable broadcast".into(),
             data: serde_json::json!({"trusted_as": "data"}),
+            attribution: fabric::WorkspaceAttribution::RootAgent { process: source },
         }),
         confidence: 1.0,
         salience: SalienceVector {

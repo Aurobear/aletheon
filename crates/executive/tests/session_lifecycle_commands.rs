@@ -45,6 +45,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
                     },
                     items: vec![],
                     projection: None,
+                    context_projection: None,
                 })
             },
         )
@@ -85,6 +86,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
                         result: cancelled_result(),
                         items: vec![],
                         projection: None,
+                        context_projection: None,
                     })
                 },
             )

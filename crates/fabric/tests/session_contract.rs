@@ -33,6 +33,13 @@ fn lifecycle_contract_round_trips_with_explicit_version_and_tags() {
             input: serde_json::json!({}),
         },
         item().payload,
+        ItemPayload::ContextProjection {
+            space: "session".into(),
+            broadcast_epoch: Some(2),
+            workspace_version: Some(3),
+            dasein_version: 4,
+            content_ids: vec![uuid::Uuid::from_u128(5).to_string()],
+        },
         ItemPayload::SystemNotice {
             content: "s".into(),
         },

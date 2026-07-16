@@ -51,8 +51,8 @@ pub struct TurnPipeline {
     pub(crate) post_turn_projection:
         Arc<dyn crate::service::post_turn_projection::PostTurnProjection>,
     pub(crate) runtime_ports: Arc<crate::service::turn_runtime_ports::TurnRuntimePorts>,
-    pub(crate) conscious_actions:
-        Option<Arc<dyn crate::service::governed_capability::GovernedActionLoopResolver>>,
+    pub(crate) conscious_core:
+        Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -67,8 +67,8 @@ pub(crate) struct TurnPipelineResources {
     pub(crate) canonical_sessions: Arc<crate::service::session_service::SessionService>,
     pub(crate) projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection>,
     pub(crate) runtime: Arc<crate::service::turn_runtime_ports::TurnRuntimePorts>,
-    pub(crate) conscious_actions:
-        Option<Arc<dyn crate::service::governed_capability::GovernedActionLoopResolver>>,
+    pub(crate) conscious_core:
+        Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
 }
 
 impl TurnPipeline {
@@ -85,7 +85,7 @@ impl TurnPipeline {
             canonical_sessions: resources.canonical_sessions,
             post_turn_projection: resources.projection,
             runtime_ports: resources.runtime,
-            conscious_actions: resources.conscious_actions,
+            conscious_core: resources.conscious_core,
         }
     }
 
@@ -204,6 +204,18 @@ impl TurnPipeline {
 
         let (sess_id, turn_count) = self.runtime_ports.sessions.begin_user(&message).await?;
 
+        if let Some(conscious) = &self.conscious_core {
+            conscious
+                .observe_turn(
+                    AgoraSpaceId(sess_id.clone()),
+                    main_pid,
+                    main_pid,
+                    operation_id,
+                    &message,
+                )
+                .await?;
+        }
+
         // Canonical Session/Turn/Item history is the only model replay source.
         let existing_messages = {
             let mut full_history = self
@@ -223,12 +235,14 @@ impl TurnPipeline {
         };
 
         let mut context_request = turn_request.clone();
+        context_request.session_id = sess_id.clone();
         context_request.input = effective_message;
-        let request_messages = self
+        let assembled_context = self
             .context_assembler
             .assemble(&context_request, &existing_messages)
-            .await?
-            .messages;
+            .await?;
+        let context_projection_receipt = assembled_context.projection_receipt;
+        let request_messages = assembled_context.messages;
 
         // LLM selection
         let llm = self.runtime_ports.models.select(&message);
@@ -277,7 +291,7 @@ impl TurnPipeline {
         let agora_for_events = agora.clone();
         let clock_for_agora = self.clock.clone();
 
-        let action_loop = match &self.conscious_actions {
+        let action_loop = match &self.conscious_core {
             Some(resolver) => Some(
                 resolver
                     .resolve(AgoraSpaceId(sess_id.clone()), main_pid, main_pid)
@@ -632,7 +646,8 @@ impl TurnPipeline {
                 "canonical_items": canonical_items,
                 "projection": {
                     "session_id": session_id_for_agora,
-                    "agora_start_version": agora_start_version
+                    "agora_start_version": agora_start_version,
+                    "conscious_context": context_projection_receipt
                 }
         }}))
     }

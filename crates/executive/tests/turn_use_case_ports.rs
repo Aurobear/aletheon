@@ -100,6 +100,7 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
                             agora_start_version: 0,
                         },
                     }),
+                    context_projection: None,
                 })
             }
         })

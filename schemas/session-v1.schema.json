@@ -200,6 +200,59 @@
             "data": {
               "type": "object",
               "properties": {
+                "broadcast_epoch": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "content_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "dasein_version": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "space": {
+                  "type": "string"
+                },
+                "workspace_version": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "space",
+                "dasein_version",
+                "content_ids"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "context_projection"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
                 "content": {
                   "type": "string"
                 }

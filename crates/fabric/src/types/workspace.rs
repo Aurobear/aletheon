@@ -45,6 +45,8 @@ pub struct WorkspaceObservation {
     pub what: String,
     pub source: String,
     pub data: serde_json::Value,
+    #[serde(default)]
+    pub attribution: WorkspaceAttribution,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionFrame {
@@ -87,14 +89,21 @@ pub struct CareConcernFrame {
     pub urgency: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkspaceAttribution {
     User,
+    #[default]
     Environment,
-    RootAgent { process: ProcessId },
-    ChildAgent { process: ProcessId },
-    ExternalMemory { provider: String },
+    RootAgent {
+        process: ProcessId,
+    },
+    ChildAgent {
+        process: ProcessId,
+    },
+    ExternalMemory {
+        provider: String,
+    },
     Dasein,
     Cognit,
     Metacog,
@@ -282,7 +291,9 @@ impl WorkspaceCandidate {
         let valid_text = |text: &str| !text.trim().is_empty() && text.len() <= MAX_TEXT_BYTES;
         match &self.content {
             WorkspaceContent::Observation(value) => anyhow::ensure!(
-                valid_text(&value.what) && valid_text(&value.source),
+                valid_text(&value.what)
+                    && valid_text(&value.source)
+                    && valid_attribution(&value.attribution),
                 "observation is incomplete"
             ),
             WorkspaceContent::RecalledExperience(value) => anyhow::ensure!(

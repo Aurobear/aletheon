@@ -18,6 +18,7 @@ pub struct TurnExecution {
     pub result: TurnResult,
     pub items: Vec<ItemPayload>,
     pub projection: Option<super::post_turn_projection::PostTurnDispatch>,
+    pub context_projection: Option<fabric::ContextProjectionReceipt>,
 }
 
 struct CompletedExecution {
@@ -189,7 +190,28 @@ impl TurnCoordinator {
                     result,
                     items,
                     projection,
+                    context_projection,
                 } = execution;
+                if let Some(receipt) = context_projection {
+                    receipt.validate()?;
+                    self.append(
+                        &session_id,
+                        turn_id,
+                        &mut sequence,
+                        ItemPayload::ContextProjection {
+                            space: receipt.space.0,
+                            broadcast_epoch: receipt.broadcast_epoch.map(|epoch| epoch.0),
+                            workspace_version: receipt.workspace_version,
+                            dasein_version: receipt.dasein_version.0,
+                            content_ids: receipt
+                                .content_ids
+                                .into_iter()
+                                .map(|id| id.0.to_string())
+                                .collect(),
+                        },
+                    )
+                    .await?;
+                }
                 for payload in items {
                     self.append(&session_id, turn_id, &mut sequence, payload)
                         .await?;

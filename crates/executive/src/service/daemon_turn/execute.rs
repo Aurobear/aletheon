@@ -141,6 +141,8 @@ impl DaemonTurnOrchestrator {
                             .unwrap_or(0),
                     },
                 };
+                let context_projection =
+                    serde_json::from_value(result["projection"]["conscious_context"].clone()).ok();
                 Ok(TurnExecution {
                     result: TurnResult {
                         output,
@@ -155,6 +157,7 @@ impl DaemonTurnOrchestrator {
                     },
                     items,
                     projection: Some(projection),
+                    context_projection,
                 })
             })
             .await;

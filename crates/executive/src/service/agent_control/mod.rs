@@ -761,7 +761,7 @@ async fn run_agent(
         tracing::error!(agent = ?agent, reason = ?exit.reason, "failed to persist terminal Agent state");
     }
     let _ = kernel.terminate_process(process, process_exit).await;
-    admission.settle();
+    admission.release_completed();
     live.remove(agent).await;
 }
 

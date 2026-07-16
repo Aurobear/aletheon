@@ -102,7 +102,7 @@ pub struct SelfField {
     loop_bridge: LoopBridge,
     hook_bridge: HookBridge,
     // DaseinModule (optional, opt-in via config)
-    dasein: Option<DaseinModule>,
+    dasein: Option<Arc<DaseinModule>>,
     dasein_event_tx: Option<tokio::sync::mpsc::Sender<DaseinEvent>>,
     /// Optional Runtime permission authority. When set, `review()` delegates
     /// the confirmation verdict to it instead of using the inline rule.
@@ -157,7 +157,7 @@ impl SelfField {
                 ledger,
             )
             .expect("SelfField Dasein configuration must be valid");
-            (Some(module), Some(tx))
+            (Some(Arc::new(module)), Some(tx))
         } else {
             (None, None)
         };
@@ -261,7 +261,12 @@ impl SelfField {
 
     /// Access the DaseinModule if enabled.
     pub fn dasein(&self) -> Option<&DaseinModule> {
-        self.dasein.as_ref()
+        self.dasein.as_deref()
+    }
+
+    /// Cloneable handle for Executive adapters that share the canonical state.
+    pub fn dasein_handle(&self) -> Option<Arc<DaseinModule>> {
+        self.dasein.clone()
     }
 
     /// Get DaseinContext for LLM injection.
