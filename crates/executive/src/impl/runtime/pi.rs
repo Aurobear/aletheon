@@ -1,6 +1,7 @@
 //! Fail-closed configuration and registration for the isolated Pi coding runtime.
 
-use crate::core::sub_agent::{SubAgentRuntime, SubAgentSpawner};
+use crate::core::runtime_registry::RuntimeRegistry;
+use crate::core::sub_agent::SubAgentRuntime;
 use crate::service::verification::CapabilityAuditSummary;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -23,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 pub const PI_CODER_RUNTIME_ID: &str = "pi-coder";
 
 pub fn register_pi_runtime(
-    spawner: &mut SubAgentSpawner,
+    registry: &mut RuntimeRegistry,
     config: &PiRuntimeConfig,
     sandbox: Option<Arc<dyn SandboxBackend>>,
     clock: Arc<dyn Clock>,
@@ -34,9 +35,7 @@ pub fn register_pi_runtime(
     let sandbox = sandbox.context("Pi runtime requires an available namespace sandbox")?;
     let runtime = PiRuntime::prepare(config, sandbox, clock)?
         .context("enabled Pi runtime did not produce a runtime")?;
-    spawner
-        .runtime_registry_mut()
-        .register(PiRuntime::runtime_id(), Arc::new(runtime))?;
+    registry.register(PiRuntime::runtime_id(), Arc::new(runtime))?;
     Ok(true)
 }
 
@@ -625,17 +624,15 @@ mod tests {
 
     #[test]
     fn disabled_configuration_does_not_require_a_sandbox() {
-        let mut spawner = SubAgentSpawner::new();
+        let mut registry = RuntimeRegistry::new();
         assert!(!register_pi_runtime(
-            &mut spawner,
+            &mut registry,
             &PiRuntimeConfig::default(),
             None,
             Arc::new(aletheon_kernel::chronos::TestClock::default()),
         )
         .unwrap());
-        assert!(!spawner
-            .runtime_registry()
-            .contains(&PiRuntime::runtime_id()));
+        assert!(!registry.contains(&PiRuntime::runtime_id()));
     }
 
     #[test]
@@ -693,16 +690,14 @@ mod tests {
         assert_eq!(PiRuntime::runtime_id(), RuntimeId("pi-coder".into()));
         assert!(!format!("{runtime:?}").contains("super-secret"));
 
-        let mut spawner = SubAgentSpawner::new();
+        let mut registry = RuntimeRegistry::new();
         assert!(register_pi_runtime(
-            &mut spawner,
+            &mut registry,
             &config,
             Some(sandbox(IsolationLevel::Namespace)),
             Arc::new(aletheon_kernel::chronos::TestClock::default()),
         )
         .unwrap());
-        assert!(spawner
-            .runtime_registry()
-            .contains(&PiRuntime::runtime_id()));
+        assert!(registry.contains(&PiRuntime::runtime_id()));
     }
 }

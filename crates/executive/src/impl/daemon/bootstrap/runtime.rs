@@ -108,12 +108,12 @@ use fabric::{Clock, LlmProvider};
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
 
-use crate::core::sub_agent::SubAgentSpawner;
+use crate::core::runtime_registry::RuntimeRegistry;
 use crate::r#impl::runtime::ProviderWorkerRuntime;
 use crate::service::CapabilityService;
 
 pub(crate) fn register_goal_runtimes(
-    spawner: &mut SubAgentSpawner,
+    registry: &mut RuntimeRegistry,
     config: &cognit::config::GoalRuntimeConfig,
     providers: &ProviderRegistry,
     tools: Vec<fabric::ToolDefinition>,
@@ -173,9 +173,7 @@ pub(crate) fn register_goal_runtimes(
 
     let mut registered = Vec::with_capacity(prepared.len());
     for (runtime_id, runtime) in prepared {
-        spawner
-            .runtime_registry_mut()
-            .register(runtime_id.clone(), runtime)?;
+        registry.register(runtime_id.clone(), runtime)?;
         registered.push(runtime_id);
     }
     Ok(registered)
@@ -233,29 +231,27 @@ mod goal_runtime_tests {
     fn register(
         config: GoalRuntimeConfig,
         app: AppConfig,
-    ) -> anyhow::Result<(SubAgentSpawner, Vec<fabric::RuntimeId>)> {
+    ) -> anyhow::Result<(RuntimeRegistry, Vec<fabric::RuntimeId>)> {
         let providers = ProviderRegistry::from_config(&app)?;
-        let mut spawner = SubAgentSpawner::new();
+        let mut registry = RuntimeRegistry::new();
         let ids = super::register_goal_runtimes(
-            &mut spawner,
+            &mut registry,
             &config,
             &providers,
             Vec::new(),
             Arc::new(NoopCapability),
             Arc::new(SystemClock::new()),
         )?;
-        Ok((spawner, ids))
+        Ok((registry, ids))
     }
 
     #[test]
     fn disabled_goal_runtime_registers_nothing() {
         let mut app = AppConfig::default();
         app.providers.push(provider("p"));
-        let (spawner, ids) = register(GoalRuntimeConfig::default(), app).unwrap();
+        let (registry, ids) = register(GoalRuntimeConfig::default(), app).unwrap();
         assert!(ids.is_empty());
-        assert!(!spawner
-            .runtime_registry()
-            .contains(&fabric::RuntimeId("deepseek-worker".into())));
+        assert!(!registry.contains(&fabric::RuntimeId("deepseek-worker".into())));
     }
 
     #[test]
@@ -292,10 +288,10 @@ mod goal_runtime_tests {
             worker: Some(route("deepseek-worker", "shared/worker-model")),
             reviewer: Some(route("escalation-reviewer", "shared/reviewer-model")),
         };
-        let (spawner, ids) = register(config, app).unwrap();
+        let (registry, ids) = register(config, app).unwrap();
         assert_eq!(ids.len(), 2);
         for id in ids {
-            assert!(spawner.runtime_registry().contains(&id));
+            assert!(registry.contains(&id));
         }
     }
 
@@ -309,7 +305,7 @@ mod goal_runtime_tests {
             worker: Some(route("deepseek-worker", "worker-provider/model")),
             reviewer: Some(route("escalation-reviewer", "review-provider/model")),
         };
-        let (spawner, ids) = register(config, app).unwrap();
+        let (registry, ids) = register(config, app).unwrap();
         assert_eq!(
             ids,
             vec![
@@ -317,8 +313,8 @@ mod goal_runtime_tests {
                 fabric::RuntimeId("escalation-reviewer".into())
             ]
         );
-        assert!(spawner.runtime_registry().contains(&ids[0]));
-        assert!(spawner.runtime_registry().contains(&ids[1]));
+        assert!(registry.contains(&ids[0]));
+        assert!(registry.contains(&ids[1]));
     }
 
     #[test]

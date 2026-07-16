@@ -799,7 +799,7 @@ impl RequestHandler {
         {
             let mut runtime = runtime.lock().await;
             let registered = super::runtime::register_goal_runtimes(
-                runtime.sub_agent_spawner_mut(),
+                runtime.compatibility_runtimes_mut(),
                 &goal_runtime,
                 registry,
                 corpus_group.tools.lock().await.definitions(),
@@ -810,10 +810,7 @@ impl RequestHandler {
                 info!(runtime_ids = ?registered, "Goal runtimes registered");
             }
             for runtime_id in &registered {
-                let compatibility = runtime
-                    .sub_agent_spawner()
-                    .runtime_registry()
-                    .resolve(runtime_id)?;
+                let compatibility = runtime.compatibility_runtimes().resolve(runtime_id)?;
                 agent_runtimes.register(
                     runtime_id.clone(),
                     Arc::new(
@@ -834,7 +831,7 @@ impl RequestHandler {
             let mut runtime = runtime.lock().await;
             let registered = pi_work_allowed
                 && register_pi_runtime(
-                    runtime.sub_agent_spawner_mut(),
+                    runtime.compatibility_runtimes_mut(),
                     &pi_runtime,
                     sandbox,
                     clock.clone(),
@@ -842,8 +839,7 @@ impl RequestHandler {
             if registered {
                 let runtime_id = crate::r#impl::runtime::PI_CODER_RUNTIME_ID;
                 let compatibility = runtime
-                    .sub_agent_spawner()
-                    .runtime_registry()
+                    .compatibility_runtimes()
                     .resolve(&fabric::RuntimeId(runtime_id.into()))?;
                 agent_runtimes.register(
                     fabric::RuntimeId(runtime_id.into()),
@@ -859,22 +855,10 @@ impl RequestHandler {
 
         let goal_runtime_registry = if goal_runtime.enabled {
             let runtime = runtime.lock().await;
-            Some(Arc::new(
-                runtime.sub_agent_spawner().runtime_registry().clone(),
-            ))
+            Some(Arc::new(runtime.compatibility_runtimes().clone()))
         } else {
             None
         };
-
-        // Repoint the sub-agent spawner at the shared opaque runtime so all
-        // agents use the same authoritative lifecycle state.
-        {
-            runtime
-                .lock()
-                .await
-                .sub_agent_spawner_mut()
-                .set_kernel(kernel.clone());
-        }
 
         // Clone clock for later daemon services.
         let clock_2 = clock.clone();
@@ -950,7 +934,7 @@ impl RequestHandler {
             "Agent restart recovery completed before spawn admission"
         );
         let agent_cleanup = crate::service::agent_control::AgentCleanupCoordinator::new(
-            agent_repository,
+            agent_repository.clone(),
             Arc::new(
                 crate::r#impl::runtime::worktree_recovery::VerifiedAgentWorktreeReclaimer::default(
                 ),
@@ -1181,6 +1165,7 @@ impl RequestHandler {
                 gbrain_worker: gbrain_worker_task.clone(),
                 goal_worker: goal_worker_task.clone(),
                 memory_admin: Some(memory_admin_use_cases),
+                agent_runs: Some(agent_repository),
             }),
         );
         let legacy_sessions: Arc<
@@ -1228,6 +1213,7 @@ impl RequestHandler {
                     telegram_task: telegram_task.clone(),
                     google_sync: google_sync.clone(),
                     goal_worker: goal_worker_task.clone(),
+                    agent_recovery: agent_recovery.clone(),
                 },
             ),
         );

@@ -41,15 +41,6 @@ impl RuntimeRegistry {
             .with_context(|| format!("runtime not registered: {}", id.0))
     }
 
-    /// Set the compatibility default runtime, replacing an earlier default.
-    pub(crate) fn set_default(&mut self, runtime: Arc<dyn SubAgentRuntime>) {
-        self.runtimes.insert(Self::default_id(), runtime);
-    }
-
-    pub fn default_id() -> RuntimeId {
-        RuntimeId("default".into())
-    }
-
     pub fn contains(&self, id: &RuntimeId) -> bool {
         self.runtimes.contains_key(id)
     }

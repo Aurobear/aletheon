@@ -30,5 +30,5 @@ pub use runtime_registry::RuntimeRegistry;
 pub(crate) use security_group::SecurityGroup;
 pub use session::{ContextState, Session, TuiSessionManager};
 pub(crate) use session_group::SessionGroup;
-pub use sub_agent::SubAgentSpawner;
+pub use sub_agent::{SubAgentExecutionContext, SubAgentRuntime};
 pub use verdict_handler::{DefaultVerdictHandler, Modifications};

@@ -81,6 +81,7 @@ pub struct ProductionHealthUseCases {
     telegram_task: Arc<Mutex<Option<Arc<tokio::task::JoinHandle<()>>>>>,
     google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
     goal_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
+    agent_recovery: crate::service::agent_control::AgentRecoveryReport,
 }
 
 pub struct ProductionHealthResources {
@@ -97,6 +98,7 @@ pub struct ProductionHealthResources {
     pub telegram_task: Arc<Mutex<Option<Arc<tokio::task::JoinHandle<()>>>>>,
     pub google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
     pub goal_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
+    pub agent_recovery: crate::service::agent_control::AgentRecoveryReport,
 }
 
 impl ProductionHealthUseCases {
@@ -115,6 +117,7 @@ impl ProductionHealthUseCases {
             telegram_task: resources.telegram_task,
             google_sync: resources.google_sync,
             goal_worker: resources.goal_worker,
+            agent_recovery: resources.agent_recovery,
         }
     }
 }
@@ -157,6 +160,17 @@ impl HealthUseCases for ProductionHealthUseCases {
     }
 
     async fn health(&self) -> RequestHealth {
+        let mut agent_recovery = if self.agent_recovery.ready() {
+            ComponentHealth::ready()
+        } else {
+            ComponentHealth::unready("agent_recovery_incomplete")
+        };
+        agent_recovery.count = Some(
+            self.agent_recovery
+                .unreconciled
+                .saturating_add(self.agent_recovery.recovery_failed) as u64,
+        );
+        self.registry.set("agent_recovery", agent_recovery);
         let minimum_free_bytes = env_u64("ALETHEON_MINIMUM_FREE_BYTES", 5 * 1024 * 1024 * 1024);
         let maximum_backup_age_secs = env_u64("ALETHEON_MAXIMUM_BACKUP_AGE_SECS", 36 * 60 * 60);
         let backup_required = std::env::var("ALETHEON_BACKUP_REQUIRED")

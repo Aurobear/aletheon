@@ -69,6 +69,21 @@ fn startup_recovery_and_shutdown_are_explicit() {
 }
 
 #[test]
+fn agent_recovery_health_exposes_only_sanitized_counts_and_blocks_readiness() {
+    let health = HealthRegistry::production_ready();
+    let mut recovering = ComponentHealth::unready("agent_recovery_incomplete");
+    recovering.count = Some(2);
+    health.set("agent_recovery", recovering);
+    let encoded = serde_json::to_string(&health.snapshot()).unwrap();
+    assert!(encoded.contains("agent_recovery_incomplete"));
+    assert!(encoded.contains("\"count\":2"));
+    assert_eq!(health.snapshot().readiness, "unready");
+    for forbidden in ["checkpoint:", "process:", "agent:", "/worktree/"] {
+        assert!(!encoded.contains(forbidden));
+    }
+}
+
+#[test]
 fn enabled_goal_worker_failure_is_required_unready() {
     let health = HealthRegistry::production_ready();
     health.set("goal_worker", ComponentHealth::unready("worker_stopped"));

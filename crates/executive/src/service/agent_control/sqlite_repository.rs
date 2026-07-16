@@ -296,6 +296,23 @@ impl AgentRunRepository for SqliteAgentRunRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
     }
 
+    async fn list_recent(&self, limit: usize) -> Result<Vec<AgentRunRecord>, AgentControlError> {
+        if limit == 0 || limit > MAX_LIST_ITEMS {
+            return Err(AgentControlError::invalid(
+                "Agent recent-run limit is invalid",
+            ));
+        }
+        let connection = self.connection.lock();
+        let sql = format!(
+            "SELECT {RUN_COLUMNS} FROM agent_runs ORDER BY created_at_ms DESC,agent_id LIMIT ?1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(persistence)?;
+        let rows = statement
+            .query_map([limit as i64], map_run_row)
+            .map_err(persistence)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
+    }
+
     async fn record_recovery(
         &self,
         agent: AgentId,

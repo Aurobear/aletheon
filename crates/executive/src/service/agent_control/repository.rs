@@ -118,6 +118,8 @@ pub trait AgentRunRepository: Send + Sync {
 
     async fn list_open(&self, limit: usize) -> Result<Vec<AgentRunRecord>, AgentControlError>;
 
+    async fn list_recent(&self, limit: usize) -> Result<Vec<AgentRunRecord>, AgentControlError>;
+
     async fn record_recovery(
         &self,
         agent: AgentId,

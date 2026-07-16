@@ -151,6 +151,7 @@ pub struct AdminResources {
     pub gbrain_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     pub goal_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     pub memory_admin: Option<Arc<dyn MemoryAdminUseCases>>,
+    pub agent_runs: Option<Arc<dyn crate::service::agent_control::AgentRunRepository>>,
 }
 
 pub type ToolCatalogFuture =
@@ -282,16 +283,19 @@ impl AdminUseCases for AdminService {
     }
 
     async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError> {
-        let runtime = self.resources.orchestrator.lock().await;
-        Ok(runtime
-            .sub_agent_spawner()
-            .list()
+        let Some(repository) = &self.resources.agent_runs else {
+            return Ok(Vec::new());
+        };
+        Ok(repository
+            .list_recent(MAX_ADMIN_ITEMS)
+            .await
+            .map_err(|error| AdminServiceError::Operation(error.to_string()))?
             .into_iter()
             .take(MAX_ADMIN_ITEMS)
-            .map(|agent| SubAgentSummary {
-                id: agent.id.clone(),
-                task: agent.task.clone(),
-                status: format!("{:?}", agent.status),
+            .map(|run| SubAgentSummary {
+                id: run.agent_id().0.to_string(),
+                task: run.request.task.clone(),
+                status: format!("{:?}", run.status()),
             })
             .collect())
     }

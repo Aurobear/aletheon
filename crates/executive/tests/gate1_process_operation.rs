@@ -15,7 +15,7 @@
 //! | Test | What it validates |
 //! |------|-------------------|
 //! | `main_agent_exists_in_process_table` | Spawn → inspect → state=Created |
-//! | `sub_agent_created_in_process_table` | SubAgentSpawner uses shared ProcessTable |
+//! | `sub_agent_created_in_process_table` | AgentControlService uses shared ProcessTable |
 //! | `every_turn_has_operation_id` | TurnService creates operation, state transitions |
 //! | `wait_on_operation_resolves_after_completion` | OperationTable::wait() unblocks on terminal state |
 //! | `cancel_propagates_to_operation_and_task_exits` | parent cancel → child cancelled |
@@ -115,49 +115,14 @@ async fn main_agent_exists_in_process_table() {
 // 2. Sub-agent created in process table via shared table
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
-async fn sub_agent_created_in_process_table() {
-    use aletheon_kernel::supervision::RestartPolicy;
-    use executive::core::SubAgentSpawner;
-
-    let kernel = test_kernel();
-    let clock = kernel.clock();
-    let mut spawner = SubAgentSpawner::with_kernel(kernel.clone(), clock);
-
-    // Spawn a main agent via the process table.
-    let main = kernel
-        .spawn_process(SpawnSpec {
-            namespace: fabric::NamespaceId("main-ns".into()),
-            ..SpawnSpec::default()
-        })
-        .await
-        .expect("main agent spawn");
-
-    kernel
-        .signal_process(main.id, ProcessSignal::Start)
-        .await
-        .expect("main agent start");
-
-    // Spawn a sub-agent through the spawner with a shared table.
-    let sub = spawner
-        .spawn_with_policy(
-            "sub-agent-1".into(),
-            "turn-1".into(),
-            RestartPolicy::RestartOnFailure { max_restarts: 1 },
-        )
-        .await
-        .expect("sub-agent spawn");
-
-    // The sub-agent is tracked in the SubAgentSpawner.
-    assert_eq!(spawner.list().len(), 1);
-    assert_eq!(spawner.state(&sub.id), Some(fabric::SubAgentState::Created));
-
-    // The main agent is still in the process table.
-    let main_snapshot = kernel
-        .inspect_process(main.id)
-        .await
-        .expect("main should exist");
-    assert_eq!(main_snapshot.state, ProcessState::Running);
+#[test]
+fn agent_control_is_the_only_subagent_process_owner() {
+    let compatibility = include_str!("../src/core/sub_agent.rs");
+    assert!(!compatibility.contains("struct SubAgentSpawner"));
+    assert!(!compatibility.contains("HashMap<"));
+    let authority = include_str!("../src/service/agent_control/mod.rs");
+    assert!(authority.contains(".spawn_process("));
+    assert!(authority.contains("repository.create"));
 }
 
 // ---------------------------------------------------------------------------

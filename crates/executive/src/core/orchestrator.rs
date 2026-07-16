@@ -1,7 +1,7 @@
 use crate::core::config::{ExecutiveConfig, GenomeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 use crate::core::mode_router::ModeRouter;
-use crate::core::sub_agent::SubAgentSpawner;
+use crate::core::runtime_registry::RuntimeRegistry;
 use anyhow::Result;
 use cognit::harness::interrupt::InterruptFlag;
 use fabric::body::{Action, ActionResult};
@@ -29,7 +29,7 @@ pub struct AletheonExecutive {
     genome_config: GenomeConfig,
     mode_router: ModeRouter,
     interrupt_flag: InterruptFlag,
-    sub_agent_spawner: SubAgentSpawner,
+    compatibility_runtimes: RuntimeRegistry,
 }
 
 impl AletheonExecutive {
@@ -43,7 +43,7 @@ impl AletheonExecutive {
             genome_config: GenomeConfig::default(),
             mode_router: ModeRouter::new(),
             interrupt_flag: InterruptFlag::new(),
-            sub_agent_spawner: SubAgentSpawner::new(),
+            compatibility_runtimes: RuntimeRegistry::new(),
         }
     }
 
@@ -193,13 +193,12 @@ impl AletheonExecutive {
         &self.interrupt_flag
     }
 
-    /// Reference to the sub-agent spawner.
-    pub fn sub_agent_spawner(&self) -> &SubAgentSpawner {
-        &self.sub_agent_spawner
+    /// Legacy runtime implementations only; owns no Agent run state.
+    pub fn compatibility_runtimes(&self) -> &RuntimeRegistry {
+        &self.compatibility_runtimes
     }
 
-    /// Mutable reference to the sub-agent spawner.
-    pub fn sub_agent_spawner_mut(&mut self) -> &mut SubAgentSpawner {
-        &mut self.sub_agent_spawner
+    pub fn compatibility_runtimes_mut(&mut self) -> &mut RuntimeRegistry {
+        &mut self.compatibility_runtimes
     }
 }

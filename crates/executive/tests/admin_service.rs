@@ -44,6 +44,7 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
         gbrain_worker: None,
         goal_worker: None,
         memory_admin: None,
+        agent_runs: None,
     });
     (service, cancellation, cached_prefix)
 }
@@ -81,6 +82,7 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         gbrain_worker: None,
         goal_worker: None,
         memory_admin: None,
+        agent_runs: None,
     });
     assert!(matches!(
         service.reload_skills().await,
@@ -136,6 +138,7 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         gbrain_worker: None,
         goal_worker: None,
         memory_admin: None,
+        agent_runs: None,
     });
 
     assert!(service

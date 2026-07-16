@@ -205,9 +205,9 @@ if rg -n '^pub (mod manager|use manager::InMemorySpaceManager)' crates/kernel/sr
   exit 1
 fi
 
-# G03 deletion gate: Executive owns the only production AgentControlPort
-# implementation. The retired spawner may remain only in its compatibility
-# owner and the two bootstrap/runtime registration adapters until G04/G05.
+# G03/G10 deletion gate: Executive owns the only production AgentControlPort
+# implementation. Compatibility runtimes are a registry only and may not own
+# lifecycle/run state.
 agent_control_impls=$(python3 - <<'PY'
 from pathlib import Path
 for path in Path("crates").rglob("*.rs"):
@@ -237,11 +237,15 @@ if rg -n '\.complete\(' crates/executive/src/impl/daemon/bootstrap \
   echo "architecture-check: Agent/bootstrap path owns a direct provider loop" >&2
   exit 1
 fi
-spawner_outside_compat=$(rg -l '\bSubAgentSpawner\b' crates/executive/src -g '*.rs' \
-  | grep -Ev '^crates/executive/src/(core/(mod|orchestrator|sub_agent)\.rs|impl/daemon/bootstrap/runtime\.rs|impl/runtime/pi\.rs)$' || true)
-if [[ -n "$spawner_outside_compat" ]]; then
-  echo "architecture-check: new SubAgentSpawner dependency escaped compatibility paths:" >&2
-  echo "$spawner_outside_compat" >&2
+spawner_state=$(rg -l '\bSubAgentSpawner\b' crates/executive/src -g '*.rs' || true)
+if [[ -n "$spawner_state" ]]; then
+  echo "architecture-check: retired SubAgentSpawner run authority remains:" >&2
+  echo "$spawner_state" >&2
+  exit 1
+fi
+if rg -n 'struct SubAgentSpawner|HashMap<String, *SubAgentEntry|KernelRuntime|OperationScope|SubAgentHandle' \
+  crates/executive/src/core/sub_agent.rs crates/executive/src/core/runtime_registry.rs; then
+  echo "architecture-check: compatibility runtime catalog owns Agent run state" >&2
   exit 1
 fi
 
@@ -273,6 +277,18 @@ fi
 # the compatibility semaphore constructor is restricted to focused tests.
 if rg -n 'BoundedAgentAdmission::new\(' crates/executive/src/impl/daemon/bootstrap -g '*.rs'; then
   echo "architecture-check: production Agent admission bypasses typed Kernel-backed config" >&2
+  exit 1
+fi
+
+# G10 recovery must reconcile durable metadata; it may never call the ordinary
+# launch/provider path, which would replay ambiguous work after a crash.
+if rg -n '\.launch\(|\.run_in_context\(|provider.*\.complete\(' \
+  crates/executive/src/service/agent_control/recovery.rs; then
+  echo "architecture-check: Agent recovery replays ordinary runtime/provider work" >&2
+  exit 1
+fi
+if ! rg -q 'reconcile_startup' crates/executive/src/impl/daemon/bootstrap/request.rs; then
+  echo "architecture-check: daemon startup skips durable Agent reconciliation" >&2
   exit 1
 fi
 
