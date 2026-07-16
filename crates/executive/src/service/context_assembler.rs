@@ -54,12 +54,20 @@ pub struct ProductionContextSource {
     pub conscious: Arc<dyn LatestConsciousContextPort>,
 }
 
+pub fn working_directory_policy_prompt(working_dir: &std::path::Path) -> String {
+    format!(
+        "Current working directory: {}\nTreat this as the user's current project. Do not scan unrelated host directories to guess a project. Mutation tools are confined to this directory by the configured sandbox/working-directory policy. Read-only errors for paths outside it do not establish host mount state because host mount state was not checked; do not change host mounts. Relaunch from the intended working directory or choose a path inside this directory.",
+        working_dir.display()
+    )
+}
+
 #[async_trait]
 impl ContextSource for ProductionContextSource {
     async fn load(&self, request: &TurnRequest) -> Result<ContextFragments, ContextAssemblyError> {
         let system_prefix = format!(
-            "{}\n\nCurrent working directory: {}\nTreat this as the user's current project. Do not scan unrelated host directories to guess a project.",
-            self.cached_prefix.lock().await.clone(), request.working_dir.display()
+            "{}\n\n{}",
+            self.cached_prefix.lock().await.clone(),
+            working_directory_policy_prompt(&request.working_dir)
         );
         let skills = {
             let loader = self.skill_loader.lock().await;

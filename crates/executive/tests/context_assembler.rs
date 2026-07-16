@@ -1,5 +1,6 @@
 use executive::service::context_assembler::{
-    ContextAssembler, ContextAssemblyError, ContextFragments, ContextSource,
+    working_directory_policy_prompt, ContextAssembler, ContextAssemblyError, ContextFragments,
+    ContextSource,
 };
 use fabric::dasein::{SelfVersion, Stimmung};
 use fabric::{
@@ -97,6 +98,21 @@ async fn fragments_and_history_are_bounded_and_utf8_safe() {
     assert!(assembled
         .effective_user_message
         .is_char_boundary(assembled.effective_user_message.len()));
+}
+
+#[test]
+fn working_directory_prompt_distinguishes_policy_from_host_mounts() {
+    let prompt = working_directory_policy_prompt(PathBuf::from("/workspace/project").as_path());
+    let lower = prompt.to_lowercase();
+
+    assert!(prompt.contains("Current working directory: /workspace/project"));
+    assert!(prompt.contains("configured sandbox/working-directory policy"));
+    assert!(lower.contains("host mount state was not checked"));
+    assert!(lower.contains("do not change host mounts"));
+    assert!(lower.contains("relaunch from the intended working directory"));
+    assert!(lower.contains("choose a path inside this directory"));
+    assert!(!lower.contains("sudo mount"));
+    assert!(!lower.contains("mount -o"));
 }
 
 #[test]

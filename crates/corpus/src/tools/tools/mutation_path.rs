@@ -35,7 +35,7 @@ pub fn validate_mutation_path(working_dir: &Path, requested: &Path) -> Result<Pa
     }
     if !resolved.starts_with(&root) {
         return Err(format!(
-            "mutation path '{}' is outside working directory '{}'",
+            "mutation path '{}' was denied by the configured sandbox/working-directory policy; the approved working directory is '{}'. Host mount state was not checked, so do not change host mounts. Relaunch from the intended working directory or choose a path inside the approved working directory.",
             resolved.display(),
             root.display()
         ));
@@ -85,6 +85,23 @@ mod tests {
         let (temp, root) = fixture();
         assert!(validate_mutation_path(&root, Path::new("../escape")).is_err());
         assert!(validate_mutation_path(&root, &temp.path().join("sibling")).is_err());
+    }
+
+    #[test]
+    fn outside_path_diagnostic_identifies_policy_and_safe_recovery() {
+        let (temp, root) = fixture();
+        let canonical_root = std::fs::canonicalize(&root).unwrap();
+        let error = validate_mutation_path(&root, &temp.path().join("sibling")).unwrap_err();
+        let lower = error.to_lowercase();
+
+        assert!(error.contains("configured sandbox/working-directory policy"));
+        assert!(error.contains(&canonical_root.display().to_string()));
+        assert!(lower.contains("host mount state was not checked"));
+        assert!(lower.contains("do not change host mounts"));
+        assert!(lower.contains("relaunch from the intended working directory"));
+        assert!(lower.contains("inside the approved working directory"));
+        assert!(!lower.contains("sudo mount"));
+        assert!(!lower.contains("mount -o"));
     }
 
     #[cfg(unix)]
