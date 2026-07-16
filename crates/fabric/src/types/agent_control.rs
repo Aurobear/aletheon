@@ -23,17 +23,14 @@ pub const AGENT_MESSAGE_SCHEMA_V1: u16 = 1;
 #[serde(transparent)]
 pub struct AgentTaskId(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum RuntimeResumability {
+    #[default]
     Never,
-    Checkpointed { reference: String },
-}
-
-impl Default for RuntimeResumability {
-    fn default() -> Self {
-        Self::Never
-    }
+    Checkpointed {
+        reference: String,
+    },
 }
 
 impl RuntimeResumability {
