@@ -6,6 +6,17 @@ default_model = "deepseek/deepseek-v4-pro"
 # 0 = no iteration cap (termination via LLM stop, circuit breaker, tool budget)
 max_iterations = 0
 
+[agent.admission]
+max_agents_per_root = 64
+max_running_agents = 16
+max_depth = 4
+max_queued_per_root = 32
+sibling_fairness_quantum = 1
+root_max_tokens = 2000000
+max_child_tokens = 200000
+max_storage_bytes = 4294967296
+max_storage_items = 128
+
 # At least one provider is required for the daemon to start.
 # Fill in api_key (or set it via your local override config), then run the daemon.
 [[providers]]

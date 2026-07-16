@@ -3,6 +3,7 @@
 //! These types were originally in the core crate, then moved to aletheon-runtime.
 //! Duplicated here to break the cyclic dependency (brain-core <-> runtime).
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -480,6 +481,78 @@ pub struct AgentConfig {
     pub compaction_threshold: usize,
     #[serde(default = "default_system_prompt")]
     pub system_prompt: String,
+    #[serde(default)]
+    pub admission: AgentAdmissionConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentAdmissionConfig {
+    pub max_agents_per_root: usize,
+    pub max_running_agents: usize,
+    pub max_depth: u16,
+    pub max_queued_per_root: usize,
+    pub sibling_fairness_quantum: usize,
+    pub root_max_tokens: u64,
+    pub root_max_cost_micro: Option<u64>,
+    pub max_child_tokens: u64,
+    pub max_child_cost_micro: Option<u64>,
+    pub max_storage_bytes: u64,
+    pub max_storage_items: u64,
+}
+
+impl Default for AgentAdmissionConfig {
+    fn default() -> Self {
+        Self {
+            max_agents_per_root: 64,
+            max_running_agents: 16,
+            max_depth: 4,
+            max_queued_per_root: 32,
+            sibling_fairness_quantum: 1,
+            root_max_tokens: 2_000_000,
+            root_max_cost_micro: None,
+            max_child_tokens: 200_000,
+            max_child_cost_micro: None,
+            max_storage_bytes: 4 * 1024 * 1024 * 1024,
+            max_storage_items: 128,
+        }
+    }
+}
+
+impl AgentAdmissionConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.max_agents_per_root > 0
+                && self.max_running_agents > 0
+                && self.max_depth > 0
+                && self.max_queued_per_root > 0
+                && self.sibling_fairness_quantum > 0
+                && self.root_max_tokens > 0
+                && self.max_child_tokens > 0
+                && self.max_storage_bytes > 0
+                && self.max_storage_items > 0,
+            "Agent admission bounds must be nonzero"
+        );
+        anyhow::ensure!(
+            self.max_running_agents <= self.max_agents_per_root
+                && self.max_queued_per_root <= self.max_agents_per_root,
+            "Agent running/queued bounds exceed the root tree bound"
+        );
+        anyhow::ensure!(
+            self.max_child_tokens <= self.root_max_tokens,
+            "Agent child token allowance exceeds root rollout allowance"
+        );
+        if let Some(child) = self.max_child_cost_micro {
+            let root = self
+                .root_max_cost_micro
+                .context("finite child cost allowance requires a finite root rollout allowance")?;
+            anyhow::ensure!(
+                child <= root,
+                "Agent child cost allowance exceeds root rollout allowance"
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Default for AgentConfig {
@@ -493,6 +566,7 @@ impl Default for AgentConfig {
             compaction_keep_recent: default_compaction_keep_recent(),
             compaction_threshold: default_compaction_threshold(),
             system_prompt: default_system_prompt(),
+            admission: AgentAdmissionConfig::default(),
         }
     }
 }
@@ -977,6 +1051,9 @@ impl AppConfig {
         }
         if !other.agent.compaction_enabled {
             self.agent.compaction_enabled = other.agent.compaction_enabled;
+        }
+        if other.agent.admission != AgentAdmissionConfig::default() {
+            self.agent.admission = other.agent.admission;
         }
 
         // Providers: merge by name, append new ones
