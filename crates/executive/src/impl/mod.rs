@@ -6,6 +6,7 @@ pub mod artifact;
 pub mod automation;
 pub mod channel;
 pub mod conscious;
+pub mod core_rpc;
 pub mod daemon;
 pub mod engine;
 pub mod events;
