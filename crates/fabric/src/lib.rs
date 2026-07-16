@@ -92,6 +92,10 @@ pub use types::conscious_core::{
     ProcessorResponse, StructuredSelfView, MAX_PROCESSOR_ACKNOWLEDGEMENTS,
     MAX_PROCESSOR_RESPONSE_CANDIDATES, MAX_SELF_VIEW_ITEMS,
 };
+pub use types::conscious_core_trace::{
+    AcceptanceEvidence, ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult,
+    CONSCIOUS_CORE_TRACE_SCHEMA_V1,
+};
 pub use types::workspace::{
     ActionProposalFrame, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, BroadcastEpoch,
     CandidateScore, CareConcernFrame, ContentId, GoalFrame, GovernedActionOutcomeFrame,

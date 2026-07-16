@@ -9,6 +9,7 @@ pub mod capability;
 pub mod channel;
 pub mod coding_job;
 pub mod conscious_core;
+pub mod conscious_core_trace;
 pub mod context;
 pub mod evidence;
 pub mod extension;

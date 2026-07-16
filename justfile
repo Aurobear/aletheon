@@ -53,6 +53,13 @@ architecture-check:
     bash tests/architecture_path_inventory.sh
     bash scripts/architecture-check.sh
 
+# Deterministic cross-domain causal, isolation, replay and ablation evidence.
+acceptance: architecture-check
+    python3 tools/acceptance_report.py --check
+    CARGO_INCREMENTAL=0 cargo test -j1 -p executive --test cross_domain_acceptance
+    CARGO_INCREMENTAL=0 cargo test -j1 -p executive --test functional_indicators
+    python3 tools/acceptance_report.py
+
 # ── 部署 ───────────────────────────────────────────────────────────────
 
 # 编译 release + 部署到系统
