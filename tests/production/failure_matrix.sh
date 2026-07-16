@@ -48,6 +48,7 @@ capture_sqlite_integrity /var/lib/aletheon "$artifacts/final-integrity.txt"
 jq -e '.projection_checksum_match == true and .state_checksum_match == true' \
   "$artifacts/v01-checksum-comparison.json" >/dev/null
 jq -n --arg completed_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg artifacts "$artifacts" \
-  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,ignored_cases:0}' \
+  --arg driver_sha256 "$(sha256sum "$driver" | cut -d' ' -f1)" \
+  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,external_failure_driver:"required_real_host_driver",driver_sha256:$driver_sha256,ignored_cases:0}' \
   >"$artifacts/operator-receipt.json"
 echo "failure matrix passed: $artifacts/operator-receipt.json"

@@ -2,8 +2,14 @@
 
 V02 is a fail-closed release gate. It does not use a mock daemon, temporary
 in-process coordinator, fake provider result, or a development-host service.
-The staged-host scripts refuse to run unless they find an explicitly marked,
-systemd-booted disposable VM/container.
+The staged-host scripts refuse to run unless virtualization detection confirms
+a systemd-booted disposable VM/container.
+
+Implementation of the gate is not completion evidence. Clean install, live
+workflow, injected failure, and rollback evidence remain unproven until a real
+disposable host run produces a passing operator receipt. In particular,
+`ALETHEON_PRODUCTION_FAILURE_DRIVER` is a mandatory externally supplied real
+host driver; this repository does not replace it with a fake implementation.
 
 ```
 V01 acceptance
@@ -74,6 +80,11 @@ The gate first invokes `just acceptance`; this prerequisite cannot be bypassed.
 It requires a clean `target/release-acceptance` directory and zero blocked or
 ignored cases. Default time bounds are 30 seconds for readiness, 120 seconds for
 ordinary TUI workflows, and 180 seconds for SubAgent/reconnect workflows.
+Installed-host and failure lanes write under a unique guest-local
+`/var/tmp/aletheon-release-acceptance.*` root. On success, failure, or BLOCKED,
+the gate copies those receipts and logs into `target/release-acceptance/guest`
+and records the original guest path without using the source checkout as the
+rollback staging area.
 
 ## Rollback decision
 
