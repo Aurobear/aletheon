@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn record_evidence_lowers_to_trace_and_roundtrips() {
+    async fn record_evidence_lowers_to_redacted_audit_metadata() {
         let spy = SpyAgora::default();
         let ev = Evidence::from_tool_result("c1", "bash", "exit 0", false);
         spy.record_evidence("s1", &ev).await.unwrap();
@@ -448,11 +448,11 @@ mod tests {
         assert_eq!(session, "s1");
         assert_eq!(kind, "evidence");
 
-        // Consumer half: the trace content deserializes back into Evidence.
-        let back: Evidence = serde_json::from_value(content).unwrap();
-        assert_eq!(back.id, "c1");
-        assert_eq!(back.source, "bash");
-        assert_eq!(back.weight, 1.0);
+        assert_eq!(content["id"], "c1");
+        assert_eq!(content["source"], "bash");
+        assert_eq!(content["weight"], 1.0);
+        assert_eq!(content["content_redacted"], true);
+        assert!(content.get("content").is_none());
     }
 
     fn permit_proposal() -> AgoraProposal {
