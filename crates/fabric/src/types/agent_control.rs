@@ -23,6 +23,45 @@ pub const AGENT_MESSAGE_SCHEMA_V1: u16 = 1;
 #[serde(transparent)]
 pub struct AgentTaskId(pub String);
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum RuntimeResumability {
+    Never,
+    Checkpointed { reference: String },
+}
+
+impl Default for RuntimeResumability {
+    fn default() -> Self {
+        Self::Never
+    }
+}
+
+impl RuntimeResumability {
+    pub fn validate(&self) -> Result<(), AgentControlError> {
+        if let Self::Checkpointed { reference } = self {
+            ensure_text(reference, 4096, "runtime checkpoint reference")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRecoveryDecision {
+    Interrupt,
+    Resume,
+    Finalize,
+    Reclaim,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRecoveryReceipt {
+    pub decision: AgentRecoveryDecision,
+    pub daemon_generation: String,
+    pub recovered_at_ms: i64,
+    pub idempotency_key: String,
+}
+
 /// Immutable receipt for workspace content explicitly made available to a
 /// child Agent. The triple is required so a content ID cannot be replayed from
 /// a different space or broadcast epoch.

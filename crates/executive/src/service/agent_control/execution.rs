@@ -195,8 +195,29 @@ pub struct AgentRuntimeInput {
     pub cancellation: CancellationToken,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentRecoveryRuntimeInput {
+    pub handle: AgentHandle,
+    pub request: AgentSpawnRequest,
+    pub checkpoint_reference: String,
+}
+
 #[async_trait]
 pub trait AgentRuntimeLauncher: Send + Sync {
+    fn resumability(&self) -> fabric::RuntimeResumability {
+        fabric::RuntimeResumability::Never
+    }
+
+    async fn resume_from_checkpoint(
+        &self,
+        _input: AgentRecoveryRuntimeInput,
+    ) -> Result<(), AgentControlError> {
+        Err(AgentControlError {
+            kind: AgentControlErrorKind::Runtime,
+            message: "runtime does not implement checkpoint resume".into(),
+        })
+    }
+
     async fn launch(
         &self,
         input: AgentRuntimeInput,

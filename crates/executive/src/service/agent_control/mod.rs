@@ -25,6 +25,7 @@ pub mod execution;
 pub mod live_runs;
 pub mod mailbox;
 pub mod memory;
+pub mod recovery;
 pub mod repository;
 pub mod sqlite_repository;
 
@@ -39,12 +40,17 @@ pub use context_fork::{
     AgentContextItem, AgentContextItemKind, AgentContextProjection, AgentContextProjectionBuilder,
 };
 pub use execution::{
-    AgentEventSink, AgentRuntimeEvent, AgentRuntimeInput, AgentRuntimeLauncher,
-    AgentRuntimeRegistry, CompatibilityRuntimeLauncher, NoopAgentEventSink, SpineAgentEventSink,
+    AgentEventSink, AgentRecoveryRuntimeInput, AgentRuntimeEvent, AgentRuntimeInput,
+    AgentRuntimeLauncher, AgentRuntimeRegistry, CompatibilityRuntimeLauncher, NoopAgentEventSink,
+    SpineAgentEventSink,
 };
 pub use live_runs::{LiveAgentRun, LiveAgentRuns};
 pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
 pub use memory::MemoryRecordingAgentEventSink;
+pub use recovery::{
+    AgentRecoveryCoordinator, AgentRecoveryObservation, AgentRecoveryReport,
+    MAX_STARTUP_RECOVERY_ROWS,
+};
 pub use repository::{agent_workspace_id, AgentMessageRecord, AgentRunRecord, AgentRunRepository};
 pub use sqlite_repository::SqliteAgentRunRepository;
 
@@ -633,6 +639,8 @@ impl AgentControlPort for AgentControlService {
             broadcast_refs: request.broadcast_refs.clone(),
             version: 0,
             retain_until_ms: created_at_ms.saturating_add(DEFAULT_RETENTION_MS),
+            resumability: launcher.resumability(),
+            recovery: None,
         };
         if let Err(error) = self.repository.create(&record).await {
             let _ = self

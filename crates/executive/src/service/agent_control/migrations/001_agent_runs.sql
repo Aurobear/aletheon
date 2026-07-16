@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     retain_until_ms INTEGER NOT NULL,
     workspace_id TEXT NOT NULL,
     root_process_id TEXT NOT NULL,
-    broadcast_refs_json TEXT NOT NULL DEFAULT '[]'
+    broadcast_refs_json TEXT NOT NULL DEFAULT '[]',
+    resumability_json TEXT NOT NULL DEFAULT '{"mode":"never"}',
+    recovery_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_root_status_created

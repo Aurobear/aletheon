@@ -56,6 +56,8 @@ fn run(root: AgentId) -> AgentRunRecord {
         request,
         version: 0,
         retain_until_ms: 10_000,
+        resumability: fabric::RuntimeResumability::Never,
+        recovery: None,
     }
 }
 

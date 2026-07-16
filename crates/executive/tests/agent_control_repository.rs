@@ -69,6 +69,8 @@ fn record(root: AgentId, parent: Option<AgentId>, created_at_ms: i64) -> AgentRu
         request,
         version: 0,
         retain_until_ms: created_at_ms + 60_000,
+        resumability: fabric::RuntimeResumability::Never,
+        recovery: None,
     }
 }
 

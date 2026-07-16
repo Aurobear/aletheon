@@ -5,8 +5,9 @@ use async_trait::async_trait;
 use fabric::types::agent_control::MAX_LIST_ITEMS;
 use fabric::{
     AgentBroadcastRef, AgentControlError, AgentControlErrorKind, AgentHandle, AgentId,
-    AgentMessageDeliveryState, AgentMessagePayload, AgentProfileId, AgentResult, AgentRunStatus,
-    AgentSnapshot, AgentSpawnRequest, AgoraSpaceId, OperationId, ProcessId, RuntimeId,
+    AgentMessageDeliveryState, AgentMessagePayload, AgentProfileId, AgentRecoveryReceipt,
+    AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId, OperationId,
+    ProcessId, RuntimeId, RuntimeResumability,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
@@ -20,7 +21,7 @@ const MESSAGE_MIGRATION: &str = include_str!("migrations/002_agent_messages.sql"
 const RUN_COLUMNS: &str = "agent_id, root_agent_id, parent_agent_id, process_id, operation_id, \
     runtime_id, profile_id, status, request_json, request_hash, result_json, created_at_ms, \
     started_at_ms, ended_at_ms, last_error, version, retain_until_ms, workspace_id, \
-    root_process_id, broadcast_refs_json";
+    root_process_id, broadcast_refs_json, resumability_json, recovery_json";
 
 #[derive(Clone)]
 pub struct SqliteAgentRunRepository {
@@ -116,8 +117,8 @@ impl AgentRunRepository for SqliteAgentRunRepository {
                 agent_id, root_agent_id, parent_agent_id, process_id, operation_id,
                 runtime_id, profile_id, status, request_json, request_hash, result_json,
                 created_at_ms, started_at_ms, ended_at_ms, last_error, version, retain_until_ms,
-                workspace_id, root_process_id, broadcast_refs_json
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, NULL, NULL, NULL, 0, ?12, ?13, ?14, ?15)",
+                workspace_id, root_process_id, broadcast_refs_json, resumability_json, recovery_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, NULL, NULL, NULL, 0, ?12, ?13, ?14, ?15, ?16, NULL)",
             params![
                 run.snapshot.handle.agent_id.0.to_string(),
                 run.snapshot.handle.root_agent_id.0.to_string(),
@@ -134,6 +135,7 @@ impl AgentRunRepository for SqliteAgentRunRepository {
                 run.workspace_id.0,
                 run.root_process_id.0.to_string(),
                 broadcast_refs_json,
+                serde_json::to_string(&run.resumability).map_err(persistence)?,
             ],
         );
         match inserted {
@@ -268,6 +270,114 @@ impl AgentRunRepository for SqliteAgentRunRepository {
                 .map_err(persistence)?,
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
+    }
+
+    async fn list_open(&self, limit: usize) -> Result<Vec<AgentRunRecord>, AgentControlError> {
+        if limit == 0 || limit > MAX_LIST_ITEMS {
+            return Err(AgentControlError::invalid(
+                "Agent recovery limit is invalid",
+            ));
+        }
+        let connection = self.connection.lock();
+        let sql = format!(
+            "SELECT {RUN_COLUMNS} FROM agent_runs WHERE status IN ('queued','running','waiting') ORDER BY created_at_ms,agent_id LIMIT ?1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(persistence)?;
+        let rows = statement
+            .query_map([limit as i64], map_run_row)
+            .map_err(persistence)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
+    }
+
+    async fn record_recovery(
+        &self,
+        agent: AgentId,
+        receipt: &AgentRecoveryReceipt,
+    ) -> Result<AgentRunRecord, AgentControlError> {
+        if receipt.daemon_generation.trim().is_empty() || receipt.idempotency_key.trim().is_empty()
+        {
+            return Err(AgentControlError::invalid(
+                "Agent recovery receipt is incomplete",
+            ));
+        }
+        let json = serde_json::to_string(receipt).map_err(persistence)?;
+        let connection = self.connection.lock();
+        let existing: Option<String> = connection
+            .query_row(
+                "SELECT recovery_json FROM agent_runs WHERE agent_id=?1",
+                [agent.0.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(persistence)?
+            .flatten();
+        if let Some(existing) = existing {
+            let stored: AgentRecoveryReceipt =
+                serde_json::from_str(&existing).map_err(persistence)?;
+            if stored == *receipt {
+                return query_one(&connection, agent);
+            }
+            return Err(control_error(
+                AgentControlErrorKind::Conflict,
+                "Agent run already has a different recovery decision",
+            ));
+        }
+        let changed = connection
+            .execute(
+                "UPDATE agent_runs SET recovery_json=?1,version=version+1 WHERE agent_id=?2",
+                params![json, agent.0.to_string()],
+            )
+            .map_err(persistence)?;
+        if changed != 1 {
+            return Err(control_error(
+                AgentControlErrorKind::NotFound,
+                "Agent run was not found",
+            ));
+        }
+        query_one(&connection, agent)
+    }
+
+    async fn compact_terminal(
+        &self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<AgentId>, AgentControlError> {
+        if limit == 0 || limit > MAX_LIST_ITEMS {
+            return Err(AgentControlError::invalid(
+                "Agent compaction limit is invalid",
+            ));
+        }
+        let mut connection = self.connection.lock();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(persistence)?;
+        let ids = {
+            let mut statement = transaction
+                .prepare("SELECT agent_id FROM agent_runs WHERE status IN ('succeeded','failed','cancelled','interrupted') AND retain_until_ms<=?1 ORDER BY retain_until_ms,agent_id LIMIT ?2")
+                .map_err(persistence)?;
+            let collected = statement
+                .query_map(params![now_ms, limit as i64], |row| row.get::<_, String>(0))
+                .map_err(persistence)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(persistence)?;
+            collected
+        };
+        let mut removed = Vec::new();
+        for value in ids {
+            let id = parse_agent(&value)?;
+            transaction
+                .execute("DELETE FROM agent_messages_v2 WHERE agent_id=?1", [&value])
+                .map_err(persistence)?;
+            transaction
+                .execute("DELETE FROM agent_run_messages WHERE agent_id=?1", [&value])
+                .map_err(persistence)?;
+            transaction
+                .execute("DELETE FROM agent_runs WHERE agent_id=?1", [&value])
+                .map_err(persistence)?;
+            removed.push(id);
+        }
+        transaction.commit().map_err(persistence)?;
+        Ok(removed)
     }
 
     async fn append_message(
@@ -504,6 +614,11 @@ fn map_run_row_fallible(row: &Row<'_>) -> Result<AgentRunRecord, AgentControlErr
             .map_err(persistence)?,
         version: column(row, 15)?,
         retain_until_ms: column(row, 16)?,
+        resumability: serde_json::from_str::<RuntimeResumability>(&column::<String>(row, 20)?)
+            .map_err(persistence)?,
+        recovery: column::<Option<String>>(row, 21)?
+            .map(|value| serde_json::from_str(&value).map_err(persistence))
+            .transpose()?,
     })
 }
 
@@ -537,6 +652,18 @@ fn ensure_workspace_columns(connection: &Connection) -> Result<(), AgentControlE
             .execute_batch(
                 "ALTER TABLE agent_runs ADD COLUMN broadcast_refs_json TEXT NOT NULL DEFAULT '[]';",
             )
+            .map_err(persistence)?;
+    }
+    if !columns.contains("resumability_json") {
+        connection
+            .execute_batch(
+                "ALTER TABLE agent_runs ADD COLUMN resumability_json TEXT NOT NULL DEFAULT '{\"mode\":\"never\"}';",
+            )
+            .map_err(persistence)?;
+    }
+    if !columns.contains("recovery_json") {
+        connection
+            .execute_batch("ALTER TABLE agent_runs ADD COLUMN recovery_json TEXT;")
             .map_err(persistence)?;
     }
     connection

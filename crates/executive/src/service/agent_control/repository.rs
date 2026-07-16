@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use fabric::{
     AgentBroadcastRef, AgentControlError, AgentId, AgentMessageDeliveryState, AgentMessagePayload,
-    AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId, BroadcastEpoch,
-    ProcessId, VisibilityScope, WorkspaceCandidate,
+    AgentRecoveryReceipt, AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest,
+    AgoraSpaceId, BroadcastEpoch, ProcessId, RuntimeResumability, VisibilityScope,
+    WorkspaceCandidate,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,6 +16,8 @@ pub struct AgentRunRecord {
     pub broadcast_refs: Vec<AgentBroadcastRef>,
     pub version: u64,
     pub retain_until_ms: i64,
+    pub resumability: RuntimeResumability,
+    pub recovery: Option<AgentRecoveryReceipt>,
 }
 
 impl AgentRunRecord {
@@ -92,6 +95,20 @@ pub trait AgentRunRepository: Send + Sync {
         status: Option<AgentRunStatus>,
         limit: usize,
     ) -> Result<Vec<AgentRunRecord>, AgentControlError>;
+
+    async fn list_open(&self, limit: usize) -> Result<Vec<AgentRunRecord>, AgentControlError>;
+
+    async fn record_recovery(
+        &self,
+        agent: AgentId,
+        receipt: &AgentRecoveryReceipt,
+    ) -> Result<AgentRunRecord, AgentControlError>;
+
+    async fn compact_terminal(
+        &self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<AgentId>, AgentControlError>;
 
     async fn append_message(
         &self,
