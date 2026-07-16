@@ -4,7 +4,7 @@ use fabric::SpineEvent;
 
 use crate::service::event_projection::{
     EventProjection, EventProjectionSink, ProjectionAdvanceReport, ProjectionFailure,
-    SqliteProjectionStore,
+    ProjectionLag, SqliteProjectionStore,
 };
 
 use super::{
@@ -36,12 +36,42 @@ impl DefaultEventProjectionSet {
         event: &SpineEvent,
         report: &mut ProjectionAdvanceReport,
     ) {
+        let descriptor = projection.descriptor();
+        let input_sequence = event.position.sequence.0;
         match self.store.advance(projection, std::slice::from_ref(event)) {
-            Ok((_, checkpoint)) => report.checkpoints.push(checkpoint),
-            Err(error) => report.failures.push(ProjectionFailure {
-                projection: projection.descriptor().name.into(),
-                error: error.to_string(),
-            }),
+            Ok((_, checkpoint)) => {
+                report.lags.push(ProjectionLag {
+                    projection: descriptor.name.into(),
+                    input_sequence,
+                    through_sequence: checkpoint.through_sequence,
+                    pending_events: input_sequence.saturating_sub(checkpoint.through_sequence),
+                });
+                report.checkpoints.push(checkpoint);
+            }
+            Err(error) => {
+                let through_sequence = self
+                    .store
+                    .checkpoint(descriptor.name, event.position.tree_id)
+                    .ok()
+                    .flatten()
+                    .map_or(0, |checkpoint| checkpoint.through_sequence);
+                report.lags.push(ProjectionLag {
+                    projection: descriptor.name.into(),
+                    input_sequence,
+                    through_sequence,
+                    pending_events: input_sequence.saturating_sub(through_sequence),
+                });
+                if let Ok(Some(poison)) = self
+                    .store
+                    .poison_for_tree(descriptor.name, event.position.tree_id)
+                {
+                    report.poisons.push(poison);
+                }
+                report.failures.push(ProjectionFailure {
+                    projection: descriptor.name.into(),
+                    error: error.to_string(),
+                });
+            }
         }
     }
 }

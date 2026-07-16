@@ -3,7 +3,9 @@ use executive::r#impl::events::{
     memory_job_projection::MemoryJobProjection, metrics_projection::MetricsProjection,
     session_projection::SessionProjection,
 };
-use executive::service::event_projection::{EventProjection, SqliteProjectionStore};
+use executive::service::event_projection::{
+    EventProjection, EventProjectionSink, SqliteProjectionStore,
+};
 use fabric::{
     EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity, EventPayload,
     EventPosition, EventTreeId, EventVisibility, ItemId, ItemPayload, ItemRecord, NamespaceId,
@@ -190,4 +192,36 @@ fn every_default_projection_has_a_distinct_descriptor() {
         .map(|descriptor| descriptor.name)
         .collect();
     assert_eq!(names.len(), descriptors.len());
+}
+
+#[test]
+fn default_projection_set_reports_lag_and_poison_without_stopping_peers() {
+    let tree = EventTreeId::new();
+    let malformed = event(
+        tree,
+        1,
+        SchemaId::TURN_EVENT_V1,
+        EventVisibility::ModelVisible,
+        EventPayload::Inline {
+            value: serde_json::json!({"malformed": true}),
+        },
+        None,
+    );
+    let projections = executive::r#impl::events::DefaultEventProjectionSet::in_memory();
+    let report = projections.project(&malformed);
+
+    assert!(!report.failures.is_empty());
+    assert_eq!(report.poisons.len(), report.failures.len());
+    assert!(report
+        .lags
+        .iter()
+        .filter(|lag| report
+            .failures
+            .iter()
+            .any(|failure| failure.projection == lag.projection))
+        .all(|lag| lag.pending_events == 1));
+    assert!(
+        !report.checkpoints.is_empty(),
+        "reducers that do not parse the malformed schema must still advance"
+    );
 }

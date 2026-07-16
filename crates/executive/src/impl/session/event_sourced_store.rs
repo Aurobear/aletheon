@@ -46,6 +46,24 @@ impl EventSourcedSessionStore {
     async fn append_and_materialize(&self, input: UnsequencedEvent) -> Result<SpineEvent> {
         let event = self.event_spine.append(input)?;
         let report = self.event_projections.project(&event);
+        for lag in report.lags.iter().filter(|lag| lag.pending_events > 0) {
+            tracing::warn!(
+                projection = %lag.projection,
+                input_sequence = lag.input_sequence,
+                through_sequence = lag.through_sequence,
+                pending_events = lag.pending_events,
+                "event projection is behind its input watermark"
+            );
+        }
+        for poison in &report.poisons {
+            tracing::warn!(
+                projection = %poison.projection,
+                event_id = %poison.event_id,
+                sequence = poison.sequence,
+                error = %poison.error,
+                "event projection poison recorded"
+            );
+        }
         let mut public_failure = None;
         for failure in report.failures {
             if failure.projection == "public-session" {

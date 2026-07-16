@@ -142,6 +142,21 @@ impl SpineAgentEventSink {
             payload: EventPayload::Inline { value: payload },
         })?;
         let report = self.projections.project(&event);
+        for lag in report.lags.iter().filter(|lag| lag.pending_events > 0) {
+            tracing::warn!(
+                projection = %lag.projection,
+                pending_events = lag.pending_events,
+                "Agent event projection is behind its input watermark"
+            );
+        }
+        for poison in &report.poisons {
+            tracing::warn!(
+                projection = %poison.projection,
+                event_id = %poison.event_id,
+                sequence = poison.sequence,
+                "Agent event projection poison recorded"
+            );
+        }
         for failure in report.failures {
             tracing::warn!(
                 projection = %failure.projection,

@@ -65,7 +65,17 @@ pub trait EventProjection {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectionAdvanceReport {
     pub checkpoints: Vec<ProjectionCheckpoint>,
+    pub lags: Vec<ProjectionLag>,
+    pub poisons: Vec<ProjectionPoison>,
     pub failures: Vec<ProjectionFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionLag {
+    pub projection: String,
+    pub input_sequence: u64,
+    pub through_sequence: u64,
+    pub pending_events: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -280,6 +290,58 @@ impl SqliteProjectionStore {
                 "SELECT projection,event_id,sequence,error FROM event_projection_poison
                  WHERE projection=?1 ORDER BY sequence DESC LIMIT 1",
                 params![projection],
+                |row| {
+                    Ok(ProjectionPoison {
+                        projection: row.get(0)?,
+                        event_id: row.get(1)?,
+                        sequence: row.get(2)?,
+                        error: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(anyhow::Error::from)
+            .map_err(ProjectionError::Storage)
+    }
+
+    pub fn checkpoint(
+        &self,
+        projection: &str,
+        tree_id: fabric::EventTreeId,
+    ) -> Result<Option<ProjectionCheckpoint>, ProjectionError> {
+        self.connection
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT version,through_sequence,checksum FROM event_projection_state
+                 WHERE projection=?1 AND tree_id=?2",
+                params![projection, tree_id.to_string()],
+                |row| {
+                    Ok(ProjectionCheckpoint {
+                        projection: projection.into(),
+                        version: row.get(0)?,
+                        through_sequence: row.get(1)?,
+                        checksum: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(anyhow::Error::from)
+            .map_err(ProjectionError::Storage)
+    }
+
+    pub fn poison_for_tree(
+        &self,
+        projection: &str,
+        tree_id: fabric::EventTreeId,
+    ) -> Result<Option<ProjectionPoison>, ProjectionError> {
+        self.connection
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT projection,event_id,sequence,error FROM event_projection_poison
+                 WHERE projection=?1 AND tree_id=?2",
+                params![projection, tree_id.to_string()],
                 |row| {
                     Ok(ProjectionPoison {
                         projection: row.get(0)?,
