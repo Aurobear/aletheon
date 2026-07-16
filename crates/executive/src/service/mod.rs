@@ -1,4 +1,5 @@
 pub mod admin_service;
+pub mod agent_control;
 pub mod approval_service;
 pub mod context_assembler;
 pub mod daemon_react;
