@@ -48,6 +48,7 @@ check: fmt test lint doc
 
 # 架构依赖、遗留路径和绕过调用只能减少，不能新增
 architecture-check:
+    cargo test -p executive --test layered_config_contract checked_in_schema_is_deterministic
     bash tests/architecture_check.sh
     bash tests/architecture_path_inventory.sh
     bash scripts/architecture-check.sh

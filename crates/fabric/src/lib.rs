@@ -56,6 +56,7 @@ pub use types::channel;
 pub use types::conscious_core;
 pub use types::context;
 pub use types::evidence;
+pub use types::extension;
 pub use types::external_event;
 pub use types::external_identity;
 pub use types::genome;
@@ -192,6 +193,10 @@ pub use types::coding_job::{
     WorkspaceBoundary,
 };
 pub use types::context::{Context, TraceState};
+pub use types::extension::{
+    ActivationConstraints, ExtensionCatalog, ExtensionContractError, ExtensionDescriptor,
+    ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
+};
 pub use types::external_event::{
     DriveFileMetadata, ExternalContentRef, ExternalEventDraft, ExternalEventEnvelope,
     ExternalEventError, ExternalEventId, ExternalObjectRef, GoogleEvent, MailChange,

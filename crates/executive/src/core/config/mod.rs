@@ -1,668 +1,285 @@
-//! Application and runtime configuration.
+//! Executive-owned application configuration.
+//!
+//! Domain crates define typed sub-configuration values. Only Executive discovers,
+//! merges, validates, and reports application layers.
 
 mod agent;
 mod genome;
 mod infra;
+mod provenance;
 mod provider;
+pub mod schema;
 
 pub use agent::{
     AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, ExecutiveConfig,
     HooksConfig, PerceptionConfig,
 };
+pub use cognit::config::{
+    AgentAdmissionConfig, BackupMode, CognitConfig, DeploymentBackupConfig, DeploymentConfig,
+    DeploymentHealthConfig, DeploymentIntegrationsConfig, DeploymentMode, DeploymentPathsConfig,
+    DeploymentQuotaConfig, DeploymentSecretFilesConfig, GbrainMemoryConfig, GoalRuntimeConfig,
+    PiRuntimeConfig, RoleRuntimeConfig,
+};
 pub use genome::GenomeConfig;
 pub use infra::{
     DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig, TelegramConfig,
 };
+pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
 
-use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
-/// Top-level application config (loaded from TOML).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+use anyhow::{Context, Result};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// The one application root schema. Its fields are typed domain inputs; it does
+/// not grant any domain permission to discover files or environment variables.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
-    #[serde(default)]
     pub agent: AgentConfig,
-    #[serde(default)]
     pub providers: Vec<ProviderConfig>,
-    #[serde(default)]
-    pub model_aliases: std::collections::HashMap<String, String>,
-    #[serde(default)]
+    pub model_aliases: HashMap<String, String>,
     pub model_routing: ModelRoutingConfig,
-    #[serde(default)]
     pub sandbox: SandboxConfig,
-    #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
-    #[serde(default)]
     pub plugins: PluginsConfig,
-    #[serde(default)]
     pub memory: MemoryConfig,
-    #[serde(default)]
     pub daemon: DaemonConfig,
-    #[serde(default)]
     pub hooks: HooksConfig,
-    #[serde(default)]
     pub perception: PerceptionConfig,
-    #[serde(default)]
     pub evolution: EvolutionSettings,
+    pub telegram: TelegramConfig,
+    pub goal_runtime: Option<GoalRuntimeConfig>,
+    pub pi_runtime: PiRuntimeConfig,
+    pub deployment: DeploymentConfig,
 }
 
 impl AppConfig {
-    /// Load config from a TOML file.
-    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config: AppConfig = toml::from_str(&content)?;
-        Ok(config)
+    pub fn cognit(&self) -> CognitConfig {
+        CognitConfig {
+            agent: self.agent.clone(),
+            providers: self.providers.clone(),
+            model_aliases: self.model_aliases.clone(),
+            model_routing: self.model_routing.clone(),
+        }
     }
 
-    /// Load from file if it exists, otherwise return default.
-    pub fn load_or_default(path: &Path) -> Self {
-        Self::from_file(path).unwrap_or_default()
+    /// Parse one explicit file strictly. The caller chooses how it participates
+    /// in application layering.
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("read config layer {}", path.display()))?;
+        toml::from_str(&text).with_context(|| format!("validate config layer {}", path.display()))
     }
 
-    /// Merge `other` into `self`. Fields in `other` that are non-default
-    /// override `self`. Lists are appended (providers merged by name).
+    /// Compatibility merge used by composition tests. It has the same structural
+    /// replacement semantics as application layers.
     pub fn merge(&mut self, other: AppConfig) {
-        // Agent: override non-default values
-        if other.agent.default_provider.is_some() {
-            self.agent.default_provider = other.agent.default_provider;
-        }
-        if other.agent.default_model.is_some() {
-            self.agent.default_model = other.agent.default_model;
-        }
-        if other.agent.max_iterations != AgentConfig::default().max_iterations {
-            self.agent.max_iterations = other.agent.max_iterations;
-        }
-        if other.agent.max_tokens != AgentConfig::default().max_tokens {
-            self.agent.max_tokens = other.agent.max_tokens;
-        }
-        if other.agent.compaction_keep_recent != AgentConfig::default().compaction_keep_recent {
-            self.agent.compaction_keep_recent = other.agent.compaction_keep_recent;
-        }
-        if other.agent.compaction_threshold != AgentConfig::default().compaction_threshold {
-            self.agent.compaction_threshold = other.agent.compaction_threshold;
-        }
+        let mut base = toml::Value::try_from(self.clone()).expect("AppConfig serializes to TOML");
+        let overlay = toml::Value::try_from(other).expect("AppConfig serializes to TOML");
+        merge_value(&mut base, overlay);
+        *self = base.try_into().expect("merged typed configs remain valid");
+    }
+}
 
-        // Providers: merge by name, append new ones
-        for other_provider in other.providers {
-            if let Some(existing) = self
-                .providers
-                .iter_mut()
-                .find(|p| p.name == other_provider.name)
-            {
-                *existing = other_provider;
-            } else {
-                self.providers.push(other_provider);
-            }
-        }
+#[derive(Debug, Clone)]
+pub struct ConfigLayer {
+    pub source: ConfigSource,
+    pub value: toml::Value,
+}
 
-        // Model aliases: merge (other wins)
-        for (key, value) in other.model_aliases {
-            self.model_aliases.insert(key, value);
-        }
-
-        // Model routing: override non-default values
-        if other.model_routing.default.is_some() {
-            self.model_routing.default = other.model_routing.default;
-        }
-        if other.model_routing.multimodal.is_some() {
-            self.model_routing.multimodal = other.model_routing.multimodal;
-        }
-        if other.model_routing.cheap.is_some() {
-            self.model_routing.cheap = other.model_routing.cheap;
-        }
-        if other.model_routing.reasoning.is_some() {
-            self.model_routing.reasoning = other.model_routing.reasoning;
-        }
-        if other.model_routing.auto_memory.is_some() {
-            self.model_routing.auto_memory = other.model_routing.auto_memory;
-        }
-
-        // Sandbox: override if non-default
-        if other.sandbox.preference != SandboxConfig::default().preference {
-            self.sandbox.preference = other.sandbox.preference;
-        }
-        if other.sandbox.bubblewrap_path.is_some() {
-            self.sandbox.bubblewrap_path = other.sandbox.bubblewrap_path;
-        }
-
-        // MCP servers: append (name dedup not enforced — user controls)
-        self.mcp_servers.extend(other.mcp_servers);
-
-        // Plugins: append directories
-        self.plugins.directories.extend(other.plugins.directories);
-
-        // Memory: override if non-default
-        if other.memory.backend != MemoryConfig::default().backend {
-            self.memory.backend = other.memory.backend;
-        }
-        if other.memory.data_dir != MemoryConfig::default().data_dir {
-            self.memory.data_dir = other.memory.data_dir;
-        }
-
-        // Daemon: override if non-default
-        if other.daemon.socket_path != DaemonConfig::default().socket_path {
-            self.daemon.socket_path = other.daemon.socket_path;
-        }
-        if other.daemon.log_level != DaemonConfig::default().log_level {
-            self.daemon.log_level = other.daemon.log_level;
-        }
-
-        // Hooks: append script paths (allow multiple config layers to add hooks)
-        self.hooks.pre_turn.extend(other.hooks.pre_turn);
-        self.hooks.post_tool.extend(other.hooks.post_tool);
-        self.hooks.on_session_end.extend(other.hooks.on_session_end);
-        self.hooks.pre_tool.extend(other.hooks.pre_tool);
+impl ConfigLayer {
+    pub fn from_toml(source: ConfigSource, text: &str) -> Result<Self> {
+        let value: toml::Value = toml::from_str(text)
+            .map_err(|error| anyhow::anyhow!("parse config layer {}: {error}", source.locator))?;
+        // Validate the layer against the typed root before it can affect lower layers.
+        let _: AppConfig = value.clone().try_into().map_err(|error| {
+            anyhow::anyhow!("validate config layer {}: {error}", source.locator)
+        })?;
+        Ok(Self { source, value })
     }
 
-    /// Load config with layer merging (low → high precedence):
-    /// - Layer 0: compiled defaults
-    /// - Layer 1: /etc/aletheon/config.toml   (system defaults)
-    /// - Layer 2: ~/.aletheon/config.toml     (user; authoritative for daily edits)
-    /// - Layer 3: `<project>/.aletheon/config.toml` (project-local)
-    pub fn load_layered(project_dir: Option<&Path>) -> Self {
-        let mut config = Self::default();
-
-        // Layer 1: system
-        let etc_path = Path::new("/etc/aletheon/config.toml");
-        if etc_path.exists() {
-            if let Ok(sys_config) = Self::from_file(etc_path) {
-                config.merge(sys_config);
-            }
+    pub fn from_path(kind: ConfigSourceKind, path: &Path) -> Result<Option<Self>> {
+        if !path.exists() {
+            return Ok(None);
         }
+        let source = ConfigSource::new(kind, path.display().to_string());
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("read config layer {}", path.display()))?;
+        Self::from_toml(source, &text).map(Some)
+    }
+}
 
-        // Layer 2: user global
-        let global_path = dirs::home_dir()
-            .map(|h| h.join(".aletheon/config.toml"))
-            .filter(|p| p.exists());
-        if let Some(path) = global_path {
-            if let Ok(user_config) = Self::from_file(&path) {
-                config.merge(user_config);
-            }
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    pub value: AppConfig,
+    pub provenance: ConfigProvenance,
+}
+
+impl LoadedConfig {
+    pub fn source(&self, path: &str) -> Option<&ConfigSource> {
+        self.provenance.source(path)
+    }
+
+    /// Render effective values for diagnostics while always masking secret-shaped leaves.
+    pub fn redacted_effective_values(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(&self.value).expect("AppConfig serializes");
+        provenance::redact_json(&mut value);
+        value
+    }
+}
+
+/// Deterministic loader used by tests, embedders, and the host composition root.
+pub fn merge_layers(layers: impl IntoIterator<Item = ConfigLayer>) -> Result<LoadedConfig> {
+    let defaults = AppConfig::default();
+    let mut merged = toml::Value::try_from(&defaults).context("serialize compiled defaults")?;
+    let mut provenance = ConfigProvenance::default();
+    provenance::record_leaves(&merged, "", &ConfigSource::defaults(), &mut provenance);
+
+    for layer in layers {
+        provenance::record_leaves(&layer.value, "", &layer.source, &mut provenance);
+        merge_value(&mut merged, layer.value);
+    }
+    let value = merged
+        .try_into::<AppConfig>()
+        .context("validate effective application config")?;
+    Ok(LoadedConfig { value, provenance })
+}
+
+/// Load defaults, system, user, project, environment, then CLI overrides.
+pub fn load_layered(
+    project_dir: Option<&Path>,
+    environment: impl IntoIterator<Item = (String, String)>,
+    cli: impl IntoIterator<Item = (String, String)>,
+) -> Result<LoadedConfig> {
+    let mut layers = Vec::new();
+    if let Some(layer) = ConfigLayer::from_path(
+        ConfigSourceKind::System,
+        Path::new("/etc/aletheon/config.toml"),
+    )? {
+        layers.push(layer);
+    }
+    if let Some(home) = dirs::home_dir() {
+        if let Some(layer) =
+            ConfigLayer::from_path(ConfigSourceKind::User, &home.join(".aletheon/config.toml"))?
+        {
+            layers.push(layer);
         }
+    }
+    if let Some(project) = project_dir {
+        if let Some(layer) = ConfigLayer::from_path(
+            ConfigSourceKind::Project,
+            &project.join(".aletheon/config.toml"),
+        )? {
+            layers.push(layer);
+        }
+    }
+    if let Some(layer) = override_layer(
+        ConfigSourceKind::Environment,
+        "environment:ALETHEON__",
+        environment.into_iter().filter_map(|(key, value)| {
+            key.strip_prefix("ALETHEON__")
+                .map(|path| (path.to_ascii_lowercase().replace("__", "."), value))
+        }),
+    )? {
+        layers.push(layer);
+    }
+    if let Some(layer) = override_layer(ConfigSourceKind::Cli, "cli", cli)? {
+        layers.push(layer);
+    }
+    merge_layers(layers)
+}
 
-        // Layer 3: project local
-        if let Some(dir) = project_dir {
-            let project_path = dir.join(".aletheon/config.toml");
-            if project_path.exists() {
-                if let Ok(project_config) = Self::from_file(&project_path) {
-                    config.merge(project_config);
+pub fn load_for_host(project_dir: Option<&Path>, explicit: Option<&Path>) -> Result<LoadedConfig> {
+    let mut loaded = load_layered(project_dir, std::env::vars(), std::iter::empty())?;
+    if let Some(path) = explicit {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("read explicit config {}", path.display()))?;
+        let layer = ConfigLayer::from_toml(
+            ConfigSource::new(ConfigSourceKind::Cli, path.display().to_string()),
+            &text,
+        )?;
+        // Preserve the regular layers and put the explicit file last.
+        let base = ConfigLayer {
+            source: ConfigSource::new(ConfigSourceKind::Project, "effective lower layers"),
+            value: toml::Value::try_from(&loaded.value)?,
+        };
+        loaded = merge_layers([base, layer])?;
+    }
+    Ok(loaded)
+}
+
+fn override_layer(
+    kind: ConfigSourceKind,
+    locator: &str,
+    values: impl IntoIterator<Item = (String, String)>,
+) -> Result<Option<ConfigLayer>> {
+    let mut root = toml::map::Map::new();
+    let mut any = false;
+    for (path, raw) in values {
+        any = true;
+        insert_path(&mut root, &path, parse_override(&raw)?)?;
+    }
+    if !any {
+        return Ok(None);
+    }
+    let source = ConfigSource::new(kind, locator);
+    let value = toml::Value::Table(root);
+    let _: AppConfig = value
+        .clone()
+        .try_into()
+        .with_context(|| format!("validate config layer {}", source.locator))?;
+    Ok(Some(ConfigLayer { source, value }))
+}
+
+fn parse_override(raw: &str) -> Result<toml::Value> {
+    let probe = format!("value = {raw}");
+    if let Ok(toml::Value::Table(mut table)) = toml::from_str::<toml::Value>(&probe) {
+        if let Some(value) = table.remove("value") {
+            return Ok(value);
+        }
+    }
+    Ok(toml::Value::String(raw.to_string()))
+}
+
+fn insert_path(
+    root: &mut toml::map::Map<String, toml::Value>,
+    path: &str,
+    value: toml::Value,
+) -> Result<()> {
+    let components: Vec<_> = path.split('.').filter(|part| !part.is_empty()).collect();
+    anyhow::ensure!(!components.is_empty(), "config override path is empty");
+    let mut table = root;
+    for component in &components[..components.len() - 1] {
+        let entry = table
+            .entry((*component).to_string())
+            .or_insert_with(|| toml::Value::Table(Default::default()));
+        table = entry
+            .as_table_mut()
+            .with_context(|| format!("config override path '{path}' crosses a non-table value"))?;
+    }
+    table.insert(components.last().unwrap().to_string(), value);
+    Ok(())
+}
+
+fn merge_value(base: &mut toml::Value, overlay: toml::Value) {
+    match (base, overlay) {
+        (toml::Value::Table(base), toml::Value::Table(overlay)) => {
+            for (key, value) in overlay {
+                match base.get_mut(&key) {
+                    Some(existing) => merge_value(existing, value),
+                    None => {
+                        base.insert(key, value);
+                    }
                 }
             }
         }
-
-        config
+        (base, overlay) => *base = overlay,
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_minimal_config() {
-        let toml = r#"
-[agent]
-default_provider = "mimo"
-default_model = "mimo-v2.5-pro"
-
-[[providers]]
-name = "mimo"
-base_url = "https://api.example.com"
-api_key = "sk-test"
-transport = "auto"
-models = ["mimo-v2.5-pro"]
-"#;
-        let config: AppConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.agent.default_provider.as_deref(), Some("mimo"));
-        assert_eq!(config.providers.len(), 1);
-        assert_eq!(config.providers[0].name, "mimo");
-    }
-
-    #[test]
-    fn test_parse_with_aliases() {
-        let toml = r#"
-[[providers]]
-name = "anthropic"
-base_url = "https://api.anthropic.com"
-transport = "anthropic"
-
-[model_aliases]
-sonnet = "anthropic/claude-sonnet-4-20250514"
-"#;
-        let config: AppConfig = toml::from_str(toml).unwrap();
-        assert_eq!(
-            config.model_aliases["sonnet"],
-            "anthropic/claude-sonnet-4-20250514"
-        );
-    }
-
-    #[test]
-    fn test_default_config() {
-        let config = AppConfig::default();
-        assert_eq!(config.agent.max_iterations, 0);
-        assert!(config.providers.is_empty());
-        assert_eq!(config.sandbox.preference, "auto");
-        assert_eq!(config.memory.backend, "sqlite");
-        assert_eq!(config.daemon.log_level, "info");
-    }
-
-    #[test]
-    fn test_runtime_config_default() {
-        let config = ExecutiveConfig::default();
-        assert_eq!(config.max_iterations, 50);
-        assert!(config.compaction_enabled);
-    }
-
-    #[test]
-    fn shipped_default_config_is_startable_shaped() {
-        // repo-root config/default.toml relative to this crate (crates/runtime)
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
-        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
-        let cfg: AppConfig = toml::from_str(&text).expect("default.toml must parse");
-        assert!(
-            !cfg.providers.is_empty(),
-            "default.toml must define >=1 provider"
-        );
-        let dp = cfg
-            .agent
-            .default_provider
-            .as_deref()
-            .expect("default.toml must set agent.default_provider");
-        assert!(
-            cfg.providers.iter().any(|p| p.name == dp),
-            "default_provider '{dp}' must match a [[providers]] name"
-        );
-    }
-
-    #[test]
-    fn test_parse_full_config_with_new_sections() {
-        let toml = r#"
-[agent]
-default_provider = "mimo"
-default_model = "mimo-v2.5-pro"
-
-[sandbox]
-preference = "require"
-bubblewrap_path = "/usr/bin/bwrap"
-
-[[mcp_servers]]
-name = "filesystem"
-transport = "stdio"
-command = "mcp-fs"
-
-[[mcp_servers]]
-name = "web"
-transport = "http"
-url = "http://localhost:8080"
-
-[plugins]
-directories = ["/opt/aletheon/plugins"]
-
-[memory]
-backend = "sqlite"
-data_dir = "/var/lib/aletheon/memory"
-
-[daemon]
-socket_path = "/run/aletheond/aletheond.sock"
-log_level = "debug"
-"#;
-        let config: AppConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.sandbox.preference, "require");
-        assert_eq!(
-            config.sandbox.bubblewrap_path.as_deref(),
-            Some("/usr/bin/bwrap")
-        );
-        assert_eq!(config.mcp_servers.len(), 2);
-        assert_eq!(config.mcp_servers[0].name, "filesystem");
-        assert_eq!(config.mcp_servers[1].transport, "http");
-        assert_eq!(config.plugins.directories, vec!["/opt/aletheon/plugins"]);
-        assert_eq!(config.memory.backend, "sqlite");
-        assert_eq!(config.daemon.log_level, "debug");
-    }
-
-    #[test]
-    fn test_merge_agent_overrides() {
-        let mut base = AppConfig::default();
-        let mut other = AppConfig::default();
-        other.agent.default_provider = Some("anthropic".to_string());
-        other.agent.default_model = Some("claude-sonnet-4-20250514".to_string());
-
-        base.merge(other);
-
-        assert_eq!(base.agent.default_provider.as_deref(), Some("anthropic"));
-        assert_eq!(
-            base.agent.default_model.as_deref(),
-            Some("claude-sonnet-4-20250514")
-        );
-    }
-
-    #[test]
-    fn test_merge_providers_by_name() {
-        let mut base = AppConfig::default();
-        base.providers.push(ProviderConfig {
-            name: "openai".to_string(),
-            base_url: "https://api.openai.com".to_string(),
-            api_key: String::new(),
-            transport: Transport::Openai,
-            models: vec!["gpt-4".to_string()],
-            max_context_length: None,
-            pricing: None,
-        });
-
-        let mut other = AppConfig::default();
-        other.providers.push(ProviderConfig {
-            name: "openai".to_string(),
-            base_url: "https://api.openai.com/v2".to_string(),
-            api_key: "sk-new".to_string(),
-            transport: Transport::Openai,
-            models: vec!["gpt-4o".to_string()],
-            max_context_length: None,
-            pricing: None,
-        });
-        other.providers.push(ProviderConfig {
-            name: "anthropic".to_string(),
-            base_url: "https://api.anthropic.com".to_string(),
-            api_key: String::new(),
-            transport: Transport::Anthropic,
-            models: vec![],
-            max_context_length: None,
-            pricing: None,
-        });
-
-        base.merge(other);
-
-        assert_eq!(base.providers.len(), 2);
-        assert_eq!(base.providers[0].base_url, "https://api.openai.com/v2");
-        assert_eq!(base.providers[1].name, "anthropic");
-    }
-
-    #[test]
-    fn test_merge_model_aliases() {
-        let mut base = AppConfig::default();
-        base.model_aliases
-            .insert("fast".to_string(), "gpt-3.5-turbo".to_string());
-
-        let mut other = AppConfig::default();
-        other
-            .model_aliases
-            .insert("fast".to_string(), "gpt-4o-mini".to_string());
-        other
-            .model_aliases
-            .insert("smart".to_string(), "gpt-4o".to_string());
-
-        base.merge(other);
-
-        assert_eq!(base.model_aliases["fast"], "gpt-4o-mini");
-        assert_eq!(base.model_aliases["smart"], "gpt-4o");
-    }
-
-    #[test]
-    fn test_merge_model_routing() {
-        let mut base = AppConfig::default();
-        base.model_routing.default = Some("base/default".to_string());
-        base.model_routing.cheap = Some("base/cheap".to_string());
-
-        let mut other = AppConfig::default();
-        other.model_routing.default = Some("other/default".to_string());
-        other.model_routing.multimodal = Some("other/multimodal".to_string());
-        other.model_routing.reasoning = Some("other/reasoning".to_string());
-
-        base.merge(other);
-
-        assert_eq!(base.model_routing.default.as_deref(), Some("other/default"));
-        assert_eq!(
-            base.model_routing.multimodal.as_deref(),
-            Some("other/multimodal")
-        );
-        assert_eq!(base.model_routing.cheap.as_deref(), Some("base/cheap"));
-        assert_eq!(
-            base.model_routing.reasoning.as_deref(),
-            Some("other/reasoning")
-        );
-        assert!(base.model_routing.auto_memory.is_none());
-    }
-
-    #[test]
-    fn test_merge_sandbox_and_daemon() {
-        let mut base = AppConfig::default();
-        let mut other = AppConfig::default();
-        other.sandbox.preference = "require".to_string();
-        other.daemon.log_level = "debug".to_string();
-
-        base.merge(other);
-
-        assert_eq!(base.sandbox.preference, "require");
-        assert_eq!(base.daemon.log_level, "debug");
-        assert_eq!(base.daemon.socket_path, "/run/aletheond/aletheond.sock");
-    }
-
-    #[test]
-    fn test_merge_mcp_servers_append() {
-        let mut base = AppConfig::default();
-        base.mcp_servers.push(McpServerConfig {
-            name: "fs".to_string(),
-            transport: "stdio".to_string(),
-            command: Some("mcp-fs".to_string()),
-            url: None,
-            bearer_token_env: None,
-        });
-
-        let mut other = AppConfig::default();
-        other.mcp_servers.push(McpServerConfig {
-            name: "web".to_string(),
-            transport: "http".to_string(),
-            command: None,
-            url: Some("http://localhost:8080".to_string()),
-            bearer_token_env: None,
-        });
-
-        base.merge(other);
-
-        assert_eq!(base.mcp_servers.len(), 2);
-        assert_eq!(base.mcp_servers[0].name, "fs");
-        assert_eq!(base.mcp_servers[1].name, "web");
-    }
-
-    #[test]
-    fn test_merge_plugins_directories_append() {
-        let mut base = AppConfig::default();
-        base.plugins.directories.push("/base/plugins".to_string());
-
-        let mut other = AppConfig::default();
-        other.plugins.directories.push("/other/plugins".to_string());
-
-        base.merge(other);
-
-        assert_eq!(base.plugins.directories.len(), 2);
-        assert_eq!(base.plugins.directories[0], "/base/plugins");
-        assert_eq!(base.plugins.directories[1], "/other/plugins");
-    }
-
-    #[test]
-    fn test_load_layered_global_only() {
-        let config = AppConfig::load_layered(None);
-        assert_eq!(config.agent.max_iterations, 0);
-    }
-
-    #[test]
-    fn test_load_layered_project_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project_dir = tmp.path();
-        let aletheon_dir = project_dir.join(".aletheon");
-        std::fs::create_dir_all(&aletheon_dir).unwrap();
-
-        let project_config = r#"
-[agent]
-default_provider = "project-provider"
-
-[sandbox]
-preference = "require"
-"#;
-        std::fs::write(aletheon_dir.join("config.toml"), project_config).unwrap();
-
-        let config = AppConfig::load_layered(Some(project_dir));
-        assert_eq!(
-            config.agent.default_provider.as_deref(),
-            Some("project-provider")
-        );
-        assert_eq!(config.sandbox.preference, "require");
-    }
-
-    #[test]
-    fn test_load_layered_no_project_config() {
-        let tmp = tempfile::tempdir().unwrap();
-        let config = AppConfig::load_layered(Some(tmp.path()));
-        assert_eq!(config.agent.max_iterations, 0);
-    }
-
-    #[test]
-    fn config_has_compaction_defaults() {
-        let config = ExecutiveConfig::default();
-        assert_eq!(config.tail_token_budget, 16_000);
-        assert_eq!(config.target_summary_chars, 2_000);
-        assert_eq!(config.context_window_tokens, 128_000);
-        assert!(config.compaction_enabled);
-    }
-
-    #[test]
-    fn test_hooks_config_default() {
-        let hooks = HooksConfig::default();
-        assert!(hooks.pre_turn.is_empty());
-        assert!(hooks.post_tool.is_empty());
-        assert!(hooks.on_session_end.is_empty());
-        assert!(hooks.pre_tool.is_empty());
-    }
-
-    #[test]
-    fn test_hooks_config_from_toml() {
-        let toml = r#"
-[hooks]
-pre_turn = ["~/.aletheon/hooks/pre_turn.sh"]
-post_tool = ["/usr/local/bin/post_tool.sh"]
-on_session_end = ["~/.aletheon/hooks/cleanup.sh"]
-pre_tool = []
-
-[[providers]]
-name = "test"
-base_url = "http://localhost"
-"#;
-        let config: AppConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.hooks.pre_turn, vec!["~/.aletheon/hooks/pre_turn.sh"]);
-        assert_eq!(config.hooks.post_tool, vec!["/usr/local/bin/post_tool.sh"]);
-        assert_eq!(
-            config.hooks.on_session_end,
-            vec!["~/.aletheon/hooks/cleanup.sh"]
-        );
-        assert!(config.hooks.pre_tool.is_empty());
-    }
-
-    #[test]
-    fn test_hooks_config_default_in_app_config() {
-        let toml = r#"
-[[providers]]
-name = "test"
-base_url = "http://localhost"
-"#;
-        let config: AppConfig = toml::from_str(toml).unwrap();
-        assert!(config.hooks.pre_turn.is_empty());
-        assert!(config.hooks.post_tool.is_empty());
-        assert!(config.hooks.on_session_end.is_empty());
-        assert!(config.hooks.pre_tool.is_empty());
-    }
-
-    #[test]
-    fn test_merge_hooks_append() {
-        let mut base = AppConfig::default();
-        base.hooks.pre_turn.push("/base/pre.sh".to_string());
-
-        let mut other = AppConfig::default();
-        other.hooks.pre_turn.push("/other/pre.sh".to_string());
-        other.hooks.on_session_end.push("/other/end.sh".to_string());
-
-        base.merge(other);
-
-        assert_eq!(base.hooks.pre_turn.len(), 2);
-        assert_eq!(base.hooks.pre_turn[0], "/base/pre.sh");
-        assert_eq!(base.hooks.pre_turn[1], "/other/pre.sh");
-        assert_eq!(base.hooks.on_session_end, vec!["/other/end.sh"]);
-    }
-
-    // ---- GenomeConfig tests ----
-
-    #[test]
-    fn test_care_weights_prompt_empty() {
-        let config = GenomeConfig::default();
-        assert_eq!(config.care_weights_prompt(), "");
-    }
-
-    #[test]
-    fn test_care_weights_prompt_with_values() {
-        let mut config = GenomeConfig::default();
-        config.care_weights.insert("safety".to_string(), 1.0);
-        config.care_weights.insert("helpfulness".to_string(), 0.8);
-        let prompt = config.care_weights_prompt();
-        assert!(prompt.contains("safety: 1.00"));
-        assert!(prompt.contains("helpfulness: 0.80"));
-    }
-
-    #[test]
-    fn test_genome_config_default_values() {
-        let config = GenomeConfig::default();
-        assert_eq!(config.reasoning_strategy, "plan-then-execute");
-        assert_eq!(config.impasse_threshold, 0.3);
-        assert_eq!(config.genome_version, "0.1.0");
-    }
-
-    #[test]
-    fn test_perception_config_default() {
-        let config = PerceptionConfig::default();
-        assert_eq!(config.watch_paths, vec!["/etc", "/var/log"]);
-        assert!(config.enable_journald);
-    }
-
-    #[test]
-    fn test_perception_config_from_toml() {
-        let toml = r#"
-[perception]
-watch_paths = ["/tmp", "/home/user/logs"]
-enable_journald = false
-"#;
-        let config: AppConfig = toml::from_str(toml).unwrap();
-        assert_eq!(
-            config.perception.watch_paths,
-            vec!["/tmp", "/home/user/logs"]
-        );
-        assert!(!config.perception.enable_journald);
-    }
-
-    #[test]
-    fn test_perception_config_default_in_app_config() {
-        let toml = r#"
-[[providers]]
-name = "test"
-base_url = "http://localhost"
-"#;
-        let config: AppConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.perception.watch_paths, vec!["/etc", "/var/log"]);
-        assert!(config.perception.enable_journald);
-        assert!(!config.perception.enabled, "perception disabled by default");
-    }
-
-    #[test]
-    fn hooks_merge_from_layers() {
-        let mut base = AppConfig::default();
-        let mut other = AppConfig::default();
-        other.hooks.pre_turn.push("/test/hook.sh".into());
-        let before = base.hooks.pre_turn.len();
-        base.merge(other);
-        assert!(
-            base.hooks.pre_turn.len() > before,
-            "hooks must merge across layers"
-        );
-    }
-}
+#[allow(dead_code)]
+fn _typed_path(_: PathBuf) {}

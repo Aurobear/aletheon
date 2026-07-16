@@ -1,5 +1,6 @@
 //! Core execution body — the minimal runtime for tool execution.
 
+pub mod catalog;
 pub mod core;
 pub mod drivers;
 pub mod hook;
@@ -9,11 +10,11 @@ pub mod skill;
 pub mod tools;
 
 // Re-export main types
+pub use catalog::ExtensionCatalog;
 pub use core::AletheonBodyRuntime;
 pub use service::{
     ActivatedCorpusExecutor, ActivationId, ActivationReceipt, ActivationRequest, CorpusError,
-    CorpusRetryDisposition, CorpusService, DefaultCorpusService, ExtensionCatalog,
-    ExtensionDescriptor, ExtensionGrant, ExtensionId, ExtensionKind, ExtensionSnapshot,
+    CorpusRetryDisposition, CorpusService, DefaultCorpusService, ExtensionGrant,
     GovernedInvocation,
 };
 
@@ -27,3 +28,7 @@ pub use hook::registry::HookRegistry;
 pub use skill::loader::SkillLoader;
 pub use skill::plugin::register_skill;
 pub use skill::router::SkillRouter;
+
+pub use fabric::{
+    ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
+};

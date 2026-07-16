@@ -728,7 +728,7 @@ impl RequestHandler {
             corpus::discover_tool_extensions(&corpus_group.tools)
                 .await?
                 .into_iter()
-                .map(|entry| entry.capability)
+                .flat_map(|entry| entry.capabilities)
                 .collect(),
         ));
         let domains = crate::core::DomainPorts::new(
@@ -756,6 +756,17 @@ impl RequestHandler {
                 approvals: security_group.session_approvals.clone(),
                 perf: debug_perf.clone(),
                 self_field: self_field.clone(),
+                extension_decisions: Arc::new(
+                    crate::service::extension_service::SpineExtensionDecisionSink::new(Arc::new(
+                        crate::r#impl::events::SqliteEventSpine::open(
+                            crate::r#impl::events::default_event_spine_path(),
+                        )
+                        .unwrap_or_else(|_| {
+                            crate::r#impl::events::SqliteEventSpine::open(":memory:")
+                                .expect("in-memory extension decision spine")
+                        }),
+                    )),
+                ),
             };
         let capability_service: Arc<dyn CapabilityService> = Arc::new(
             crate::r#impl::daemon::handler::tool_executor::ProductionCapabilityService::new(
@@ -967,7 +978,7 @@ impl RequestHandler {
         *granted_capabilities.write().await = corpus::discover_tool_extensions(&corpus_group.tools)
             .await?
             .into_iter()
-            .map(|entry| entry.capability)
+            .flat_map(|entry| entry.capabilities)
             .collect();
 
         let shared_notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>> = Arc::new(Mutex::new(None));

@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[test]
 fn config_accepts_nonzero_bounded_tree_budget_and_storage_limits() {
     AgentAdmissionConfig::default().validate().unwrap();
-    let parsed: cognit::config::AppConfig =
+    let parsed: executive::AppConfig =
         toml::from_str(include_str!("../../../config/default.toml")).unwrap();
     parsed.agent.admission.validate().unwrap();
 }

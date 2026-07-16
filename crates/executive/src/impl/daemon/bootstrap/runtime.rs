@@ -182,9 +182,8 @@ pub(crate) fn register_goal_runtimes(
 #[cfg(test)]
 mod goal_runtime_tests {
     use super::*;
-    use cognit::config::{
-        AppConfig, GoalRuntimeConfig, ProviderConfig, RoleRuntimeConfig, Transport,
-    };
+    use crate::core::config::AppConfig;
+    use cognit::config::{GoalRuntimeConfig, ProviderConfig, RoleRuntimeConfig, Transport};
 
     struct NoopCapability;
 
@@ -232,7 +231,7 @@ mod goal_runtime_tests {
         config: GoalRuntimeConfig,
         app: AppConfig,
     ) -> anyhow::Result<(RuntimeRegistry, Vec<fabric::RuntimeId>)> {
-        let providers = ProviderRegistry::from_config(&app)?;
+        let providers = ProviderRegistry::from_config(&app.cognit())?;
         let mut registry = RuntimeRegistry::new();
         let ids = super::register_goal_runtimes(
             &mut registry,
@@ -329,7 +328,7 @@ mod goal_runtime_tests {
         app.providers.push(provider("shared"));
         app.agent.default_provider = Some("shared".into());
         app.agent.default_model = Some("model".into());
-        let providers = ProviderRegistry::from_config(&app).unwrap();
+        let providers = ProviderRegistry::from_config(&app.cognit()).unwrap();
         let llm: Arc<dyn LlmProvider> = Arc::from(providers.resolve_and_create("").unwrap());
         let definitions = ["file_read", "grep"]
             .into_iter()

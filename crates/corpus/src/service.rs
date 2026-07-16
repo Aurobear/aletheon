@@ -6,120 +6,16 @@ use std::sync::Arc;
 use aletheon_kernel::capability::ToolExecutor;
 use async_trait::async_trait;
 use fabric::hook::{HookContext, HookResult};
-use fabric::types::admission::RiskLevel;
 use fabric::{
     AgentId, CapabilityId, CapabilityRequest, CapabilityResult, CapabilityScope, ExecutionPermit,
-    PrincipalId, Registry, Tool, ToolDefinition,
+    ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionSnapshot, PrincipalId, Registry,
+    Tool,
 };
 use thiserror::Error;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-/// Stable catalog identity. The value is deterministic: `<kind>:<local-name>`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExtensionId(String);
-
-impl ExtensionId {
-    pub fn new(kind: ExtensionKind, local_name: &str) -> Result<Self, CorpusError> {
-        let local_name = local_name.trim();
-        if local_name.is_empty()
-            || local_name
-                .chars()
-                .any(|character| character.is_control() || character == ':')
-        {
-            return Err(CorpusError::InvalidDescriptor(
-                "extension name must be non-empty and contain no controls or ':'".into(),
-            ));
-        }
-        Ok(Self(format!("{}:{local_name}", kind.as_str())))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ExtensionKind {
-    Tool,
-    Skill,
-    Hook,
-    Plugin,
-    Mcp,
-}
-
-impl ExtensionKind {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Tool => "tool",
-            Self::Skill => "skill",
-            Self::Hook => "hook",
-            Self::Plugin => "plugin",
-            Self::Mcp => "mcp",
-        }
-    }
-}
-
-/// Immutable metadata returned by catalog discovery.
-#[derive(Debug, Clone)]
-pub struct ExtensionDescriptor {
-    pub id: ExtensionId,
-    pub kind: ExtensionKind,
-    pub version: String,
-    pub description: String,
-    pub capability: CapabilityId,
-    pub risk: RiskLevel,
-    pub tool_definition: Option<ToolDefinition>,
-}
-
-impl ExtensionDescriptor {
-    pub fn new(
-        kind: ExtensionKind,
-        local_name: impl AsRef<str>,
-        version: impl Into<String>,
-        description: impl Into<String>,
-        capability: CapabilityId,
-        risk: RiskLevel,
-    ) -> Result<Self, CorpusError> {
-        let local_name = local_name.as_ref();
-        if capability.0.trim().is_empty() {
-            return Err(CorpusError::InvalidDescriptor(
-                "extension capability must be non-empty".into(),
-            ));
-        }
-        let version = version.into();
-        if version.trim().is_empty() {
-            return Err(CorpusError::InvalidDescriptor(
-                "extension version must be non-empty".into(),
-            ));
-        }
-        Ok(Self {
-            id: ExtensionId::new(kind, local_name)?,
-            kind,
-            version,
-            description: description.into(),
-            capability,
-            risk,
-            tool_definition: None,
-        })
-    }
-
-    pub fn with_tool_definition(mut self, definition: ToolDefinition) -> Result<Self, CorpusError> {
-        if definition.name != self.capability.0 {
-            return Err(CorpusError::InvalidDescriptor(format!(
-                "tool definition '{}' does not match capability '{}'",
-                definition.name, self.capability.0
-            )));
-        }
-        self.tool_definition = Some(definition);
-        Ok(self)
-    }
-
-    fn is_executable(&self) -> bool {
-        matches!(self.kind, ExtensionKind::Tool | ExtensionKind::Mcp)
-            && self.tool_definition.is_some()
-    }
-}
+use crate::catalog::ExtensionCatalog;
 
 /// Trusted, Executive-issued scope used for discovery and activation.
 #[derive(Debug, Clone)]
@@ -148,11 +44,6 @@ impl ExtensionGrant {
     fn allows(&self, capability: &CapabilityId) -> bool {
         self.capabilities.iter().any(|item| item == capability)
     }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ExtensionSnapshot {
-    pub entries: Vec<ExtensionDescriptor>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +86,14 @@ pub enum CorpusError {
     InvalidDescriptor(String),
     #[error("duplicate extension id: {0}")]
     DuplicateExtension(String),
+    #[error(
+        "capability '{capability}' is declared by incompatible extensions '{first}' and '{second}'"
+    )]
+    ConflictingCapability {
+        capability: String,
+        first: String,
+        second: String,
+    },
     #[error("invalid extension grant: {0}")]
     InvalidGrant(String),
     #[error("unknown extension: {0}")]
@@ -220,33 +119,6 @@ pub enum CorpusError {
 impl CorpusError {
     pub const fn retry_disposition(&self) -> CorpusRetryDisposition {
         CorpusRetryDisposition::Never
-    }
-}
-
-/// Deterministic catalog. Discovery never implies activation.
-#[derive(Debug, Clone, Default)]
-pub struct ExtensionCatalog {
-    entries: BTreeMap<ExtensionId, ExtensionDescriptor>,
-}
-
-impl ExtensionCatalog {
-    pub fn new(
-        descriptors: impl IntoIterator<Item = ExtensionDescriptor>,
-    ) -> Result<Self, CorpusError> {
-        let mut catalog = Self::default();
-        for descriptor in descriptors {
-            catalog.register(descriptor)?;
-        }
-        Ok(catalog)
-    }
-
-    pub fn register(&mut self, descriptor: ExtensionDescriptor) -> Result<(), CorpusError> {
-        let id = descriptor.id.clone();
-        if self.entries.contains_key(&id) {
-            return Err(CorpusError::DuplicateExtension(id.0));
-        }
-        self.entries.insert(id, descriptor);
-        Ok(())
     }
 }
 
@@ -315,7 +187,7 @@ impl DefaultCorpusService {
 
     async fn descriptors(&self) -> Result<BTreeMap<ExtensionId, ExtensionDescriptor>, CorpusError> {
         let descriptors = match &self.catalog {
-            CatalogBackend::Static(catalog) => return Ok(catalog.entries.clone()),
+            CatalogBackend::Static(catalog) => return Ok(catalog.entries().clone()),
             CatalogBackend::Runtime(registry) => crate::discover_tool_extensions(registry).await?,
         };
         Ok(descriptors
@@ -333,7 +205,12 @@ impl CorpusService for DefaultCorpusService {
         Ok(ExtensionSnapshot {
             entries: catalog
                 .values()
-                .filter(|descriptor| grant.allows(&descriptor.capability))
+                .filter(|descriptor| {
+                    descriptor
+                        .capabilities
+                        .iter()
+                        .all(|capability| grant.allows(capability))
+                })
                 .cloned()
                 .collect(),
         })
@@ -348,9 +225,13 @@ impl CorpusService for DefaultCorpusService {
         for id in &extensions {
             let descriptor = catalog
                 .get(id)
-                .ok_or_else(|| CorpusError::UnknownExtension(id.0.clone()))?;
-            if !request.grant.allows(&descriptor.capability) {
-                return Err(CorpusError::NotGranted(id.0.clone()));
+                .ok_or_else(|| CorpusError::UnknownExtension(id.as_str().to_string()))?;
+            if !descriptor
+                .capabilities
+                .iter()
+                .all(|capability| request.grant.allows(capability))
+            {
+                return Err(CorpusError::NotGranted(id.as_str().to_string()));
             }
         }
 
@@ -381,14 +262,18 @@ impl CorpusService for DefaultCorpusService {
             .cloned()
             .ok_or(CorpusError::ActivationNotFound)?;
         if !active.extensions.contains(&invocation.extension_id) {
-            return Err(CorpusError::NotActivated(invocation.extension_id.0));
+            return Err(CorpusError::NotActivated(
+                invocation.extension_id.as_str().to_string(),
+            ));
         }
         let catalog = self.descriptors().await?;
-        let descriptor = catalog
-            .get(&invocation.extension_id)
-            .ok_or_else(|| CorpusError::UnknownExtension(invocation.extension_id.0.clone()))?;
+        let descriptor = catalog.get(&invocation.extension_id).ok_or_else(|| {
+            CorpusError::UnknownExtension(invocation.extension_id.as_str().to_string())
+        })?;
         if !descriptor.is_executable() {
-            return Err(CorpusError::NotExecutable(invocation.extension_id.0));
+            return Err(CorpusError::NotExecutable(
+                invocation.extension_id.as_str().to_string(),
+            ));
         }
         validate_binding(&active.grant, &invocation.request)?;
         validate_scope(
@@ -396,8 +281,14 @@ impl CorpusService for DefaultCorpusService {
             &invocation.request.authority.requested_scope,
         )?;
         validate_scope(&active.grant.resources, &invocation.permit.granted_scope)?;
-        if descriptor.capability.0 != invocation.request.call.name
-            || invocation.permit.capability != descriptor.capability
+        if descriptor
+            .primary_capability()
+            .map(|value| value.0.as_str())
+            .unwrap_or_default()
+            != invocation.request.call.name
+            || descriptor
+                .primary_capability()
+                .is_none_or(|capability| invocation.permit.capability != *capability)
             || invocation.permit.operation_id != invocation.request.call.operation_id
             || invocation.permit.process_id != invocation.request.call.process_id
         {

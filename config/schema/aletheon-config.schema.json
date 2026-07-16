@@ -1,0 +1,1414 @@
+{
+  "$defs": {
+    "AgentAdmissionConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "max_agents_per_root": {
+          "default": 64,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_child_cost_micro": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_child_tokens": {
+          "default": 200000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_depth": {
+          "default": 4,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_queued_per_root": {
+          "default": 32,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_running_agents": {
+          "default": 16,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_storage_bytes": {
+          "default": 4294967296,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_storage_items": {
+          "default": 128,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "root_max_cost_micro": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "root_max_tokens": {
+          "default": 2000000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sibling_fairness_quantum": {
+          "default": 1,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "AgentConfig": {
+      "additionalProperties": false,
+      "description": "Agent-level settings.",
+      "properties": {
+        "admission": {
+          "$ref": "#/$defs/AgentAdmissionConfig",
+          "default": {
+            "max_agents_per_root": 64,
+            "max_child_cost_micro": null,
+            "max_child_tokens": 200000,
+            "max_depth": 4,
+            "max_queued_per_root": 32,
+            "max_running_agents": 16,
+            "max_storage_bytes": 4294967296,
+            "max_storage_items": 128,
+            "root_max_cost_micro": null,
+            "root_max_tokens": 2000000,
+            "sibling_fairness_quantum": 1
+          }
+        },
+        "compaction_enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "compaction_keep_recent": {
+          "default": 10,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "compaction_threshold": {
+          "default": 30,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "default_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_iterations": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_tokens": {
+          "default": 100000,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "system_prompt": {
+          "default": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "BackupMode": {
+      "enum": [
+        "disabled",
+        "local",
+        "encrypted_remote"
+      ],
+      "type": "string"
+    },
+    "DaemonConfig": {
+      "additionalProperties": false,
+      "description": "Daemon runtime settings.",
+      "properties": {
+        "log_level": {
+          "default": "info",
+          "type": "string"
+        },
+        "socket_path": {
+          "default": "/run/aletheond/aletheond.sock",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentBackupConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/BackupMode",
+          "default": "disabled"
+        },
+        "repository_file": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "backup": {
+          "$ref": "#/$defs/DeploymentBackupConfig",
+          "default": {
+            "mode": "disabled",
+            "repository_file": null
+          }
+        },
+        "health": {
+          "$ref": "#/$defs/DeploymentHealthConfig",
+          "default": {
+            "maximum_backup_age_secs": 129600,
+            "maximum_sync_lag_secs": 3600,
+            "minimum_free_bytes": 5368709120
+          }
+        },
+        "integrations": {
+          "$ref": "#/$defs/DeploymentIntegrationsConfig",
+          "default": {
+            "gbrain": false,
+            "google": false,
+            "telegram": false
+          }
+        },
+        "mode": {
+          "$ref": "#/$defs/DeploymentMode",
+          "default": "user"
+        },
+        "paths": {
+          "$ref": "#/$defs/DeploymentPathsConfig",
+          "default": {
+            "artifacts": "~/.aletheon/artifacts",
+            "audit": "~/.aletheon/audit",
+            "cache_root": "~/.cache/aletheon",
+            "config_root": "~/.aletheon",
+            "goals": "~/.aletheon/goals",
+            "mnemosyne": "~/.aletheon/memory",
+            "runtime_root": "/run/aletheon",
+            "secret_root": "~/.config/aletheon",
+            "sessions": "~/.aletheon/sessions",
+            "state": "~/.aletheon/state",
+            "state_root": "~/.aletheon",
+            "worktrees": "~/.aletheon/worktrees"
+          }
+        },
+        "quotas": {
+          "$ref": "#/$defs/DeploymentQuotaConfig",
+          "default": {
+            "artifacts_bytes": 21474836480,
+            "artifacts_items": 100000,
+            "artifacts_soft_bytes": 17179869184,
+            "audit_bytes": 5368709120,
+            "audit_items": 400000,
+            "audit_soft_bytes": 4294967296,
+            "gbrain_spool_bytes": 268435456,
+            "gbrain_spool_items": 10000,
+            "gbrain_spool_soft_bytes": 201326592,
+            "google_bytes": 5368709120,
+            "google_items": 500000,
+            "google_soft_bytes": 4294967296,
+            "minimum_free_bytes": 5368709120,
+            "sessions_bytes": 10737418240,
+            "sessions_items": 500000,
+            "sessions_soft_bytes": 8589934592,
+            "total_data_bytes": 107374182400,
+            "total_data_items": 2000000,
+            "total_data_soft_bytes": 91268055040,
+            "worktrees_bytes": 42949672960,
+            "worktrees_items": 10000,
+            "worktrees_soft_bytes": 34359738368
+          }
+        },
+        "secrets": {
+          "$ref": "#/$defs/DeploymentSecretFilesConfig",
+          "default": {
+            "backup_password": null,
+            "gbrain": null,
+            "google_vault_key": null,
+            "provider": null,
+            "telegram": null
+          }
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentHealthConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum_backup_age_secs": {
+          "default": 129600,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maximum_sync_lag_secs": {
+          "default": 3600,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minimum_free_bytes": {
+          "default": 5368709120,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentIntegrationsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "gbrain": {
+          "default": false,
+          "type": "boolean"
+        },
+        "google": {
+          "default": false,
+          "type": "boolean"
+        },
+        "telegram": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentMode": {
+      "enum": [
+        "development",
+        "user",
+        "production"
+      ],
+      "type": "string"
+    },
+    "DeploymentPathsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "default": "~/.aletheon/artifacts",
+          "type": "string"
+        },
+        "audit": {
+          "default": "~/.aletheon/audit",
+          "type": "string"
+        },
+        "cache_root": {
+          "default": "~/.cache/aletheon",
+          "type": "string"
+        },
+        "config_root": {
+          "default": "~/.aletheon",
+          "type": "string"
+        },
+        "goals": {
+          "default": "~/.aletheon/goals",
+          "type": "string"
+        },
+        "mnemosyne": {
+          "default": "~/.aletheon/memory",
+          "type": "string"
+        },
+        "runtime_root": {
+          "default": "/run/aletheon",
+          "type": "string"
+        },
+        "secret_root": {
+          "default": "~/.config/aletheon",
+          "type": "string"
+        },
+        "sessions": {
+          "default": "~/.aletheon/sessions",
+          "type": "string"
+        },
+        "state": {
+          "default": "~/.aletheon/state",
+          "type": "string"
+        },
+        "state_root": {
+          "default": "~/.aletheon",
+          "type": "string"
+        },
+        "worktrees": {
+          "default": "~/.aletheon/worktrees",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentQuotaConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts_bytes": {
+          "default": 21474836480,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "artifacts_items": {
+          "default": 100000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "artifacts_soft_bytes": {
+          "default": 17179869184,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "audit_bytes": {
+          "default": 5368709120,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "audit_items": {
+          "default": 400000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "audit_soft_bytes": {
+          "default": 4294967296,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gbrain_spool_bytes": {
+          "default": 268435456,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gbrain_spool_items": {
+          "default": 10000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gbrain_spool_soft_bytes": {
+          "default": 201326592,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "google_bytes": {
+          "default": 5368709120,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "google_items": {
+          "default": 500000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "google_soft_bytes": {
+          "default": 4294967296,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minimum_free_bytes": {
+          "default": 5368709120,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions_bytes": {
+          "default": 10737418240,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions_items": {
+          "default": 500000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions_soft_bytes": {
+          "default": 8589934592,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_data_bytes": {
+          "default": 107374182400,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_data_items": {
+          "default": 2000000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_data_soft_bytes": {
+          "default": 91268055040,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "worktrees_bytes": {
+          "default": 42949672960,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "worktrees_items": {
+          "default": 10000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "worktrees_soft_bytes": {
+          "default": 34359738368,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentSecretFilesConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "backup_password": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gbrain": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "google_vault_key": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "telegram": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "EvolutionSettings": {
+      "additionalProperties": false,
+      "description": "Self-evolution loop settings. Default OFF (HIGH-risk autonomy).",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Master switch for the self-evolution loop.\nWhen false (default), the loop is inert regardless of other settings.",
+          "type": "boolean"
+        },
+        "trigger_every_n_turns": {
+          "default": 10,
+          "description": "Trigger evolution every N turns.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "GbrainMemoryConfig": {
+      "additionalProperties": false,
+      "description": "Optional GBrain supplemental memory over the configured HTTP MCP server.",
+      "properties": {
+        "delivery_batch_size": {
+          "default": 20,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "legacy_outbox_dir": {
+          "default": "~/.aletheon/gbrain-outbox",
+          "type": "string"
+        },
+        "max_content_bytes": {
+          "default": 6000,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection_enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "read_sources": {
+          "default": [
+            "aletheon",
+            "general"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "recall_limit": {
+          "default": 4,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "request_timeout_ms": {
+          "default": 1200,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_initial_ms": {
+          "default": 1000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_max_age_secs": {
+          "default": 86400,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_max_attempts": {
+          "default": 12,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_max_ms": {
+          "default": 60000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_fixture": {
+          "default": "config/gbrain/tools-schema.json",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "v0.42.59.0",
+          "type": "string"
+        },
+        "server_name": {
+          "default": "gbrain",
+          "type": "string"
+        },
+        "spool_max_bytes": {
+          "default": 268435456,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spool_max_items": {
+          "default": 10000,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spool_path": {
+          "default": "~/.aletheon/memory/gbrain-spool.db",
+          "type": "string"
+        },
+        "write_source": {
+          "default": "aletheon",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "GoalRuntimeConfig": {
+      "additionalProperties": false,
+      "description": "Provider/model routing for durable Goal worker attempts.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Enables autonomous Goal attempts. Both worker and reviewer are required.",
+          "type": "boolean"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoleRuntimeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "worker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoleRuntimeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "HooksConfig": {
+      "additionalProperties": false,
+      "description": "Hook script configuration.\n\nEach field is a list of script paths to execute at the specified lifecycle point.\nPaths may use `~` for home directory expansion.",
+      "properties": {
+        "on_session_end": {
+          "default": [],
+          "description": "Scripts to run on session end (receives session_id + cwd as JSON on stdin).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "post_tool": {
+          "default": [],
+          "description": "Scripts to run after each tool call (receives tool name + result as JSON on stdin).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pre_tool": {
+          "default": [],
+          "description": "Scripts to run before each tool call (can block execution).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pre_turn": {
+          "default": [],
+          "description": "Scripts to run before each turn (receives user prompt as JSON on stdin).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "McpServerConfig": {
+      "additionalProperties": false,
+      "description": "MCP (Model Context Protocol) server configuration.",
+      "properties": {
+        "bearer_token_env": {
+          "default": null,
+          "description": "Environment variable containing the bearer token (never the token itself).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "default": null,
+          "description": "For stdio transport: command to run",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "transport": {
+          "default": "stdio",
+          "description": "\"stdio\", \"http\", or \"sse\"",
+          "type": "string"
+        },
+        "url": {
+          "default": null,
+          "description": "For http/sse transport: URL to connect to",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "MemoryConfig": {
+      "additionalProperties": false,
+      "description": "Memory backend configuration.",
+      "properties": {
+        "backend": {
+          "default": "sqlite",
+          "description": "\"sqlite\" or \"in_memory\"",
+          "type": "string"
+        },
+        "data_dir": {
+          "default": "~/.aletheon/memory",
+          "type": "string"
+        },
+        "gbrain": {
+          "$ref": "#/$defs/GbrainMemoryConfig",
+          "default": {
+            "delivery_batch_size": 20,
+            "enabled": false,
+            "legacy_outbox_dir": "~/.aletheon/gbrain-outbox",
+            "max_content_bytes": 6000,
+            "projection_enabled": false,
+            "read_sources": [
+              "aletheon",
+              "general"
+            ],
+            "recall_limit": 4,
+            "request_timeout_ms": 1200,
+            "retry_initial_ms": 1000,
+            "retry_max_age_secs": 86400,
+            "retry_max_attempts": 12,
+            "retry_max_ms": 60000,
+            "schema_fixture": "config/gbrain/tools-schema.json",
+            "schema_version": "v0.42.59.0",
+            "server_name": "gbrain",
+            "spool_max_bytes": 268435456,
+            "spool_max_items": 10000,
+            "spool_path": "~/.aletheon/memory/gbrain-spool.db",
+            "write_source": "aletheon"
+          },
+          "description": "Optional gbrain shared memory integration (disabled by default)."
+        }
+      },
+      "type": "object"
+    },
+    "ModelRoutingConfig": {
+      "additionalProperties": false,
+      "description": "Dynamic model routing — maps task types to model specs.",
+      "properties": {
+        "auto_memory": {
+          "description": "Model for AutoMemory fact extraction.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cheap": {
+          "description": "Cheap model for simple tasks, code reading, extraction.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default": {
+          "description": "Default model for general chat (e.g., \"mimo/mimo-v2.5-pro\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "multimodal": {
+          "description": "Model for multimodal inputs (images, audio).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reasoning": {
+          "description": "Model for complex reasoning tasks.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PerceptionConfig": {
+      "additionalProperties": false,
+      "description": "Perception subsystem configuration.",
+      "properties": {
+        "enable_journald": {
+          "default": true,
+          "description": "Whether to enable journald log monitoring.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Master switch. Off by default: the perception→behavior loop is not yet\nwired (see roadmap §T3). When false, no watchers are spawned.",
+          "type": "boolean"
+        },
+        "watch_paths": {
+          "default": [
+            "/etc",
+            "/var/log"
+          ],
+          "description": "Filesystem paths to watch with inotify.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "PiRuntimeConfig": {
+      "additionalProperties": false,
+      "description": "Fail-closed configuration for the isolated Pi coding runtime.",
+      "properties": {
+        "allowed_paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "executable": {
+          "default": "",
+          "type": "string"
+        },
+        "fixed_args": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forbidden_paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_output_bytes": {
+          "default": 1048576,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "network_enabled": {
+          "default": false,
+          "description": "Pi has no network access by default and initial M4 rejects enabling it.",
+          "type": "boolean"
+        },
+        "require_namespace_isolation": {
+          "default": true,
+          "type": "boolean"
+        },
+        "timeout_ms": {
+          "default": 1800000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "trusted_executable_dir": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worktree_base": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PluginsConfig": {
+      "additionalProperties": false,
+      "description": "Plugin directories.",
+      "properties": {
+        "directories": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "ProviderConfig": {
+      "additionalProperties": false,
+      "description": "Per-provider configuration.",
+      "properties": {
+        "api_key": {
+          "default": "",
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "max_context_length": {
+          "default": null,
+          "description": "Override the default max context length for this provider's models.\nIf not set, the provider uses its built-in default (128K for OpenAI, 200K for Anthropic).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "models": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pricing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderPricing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional static pricing for per-provider cost accounting. `None` = unpriced."
+        },
+        "transport": {
+          "$ref": "#/$defs/Transport",
+          "default": "auto"
+        }
+      },
+      "required": [
+        "name",
+        "base_url"
+      ],
+      "type": "object"
+    },
+    "ProviderPricing": {
+      "additionalProperties": false,
+      "description": "Optional static per-provider pricing (USD per 1K tokens) for cost accounting.",
+      "properties": {
+        "input_per_1k": {
+          "format": "double",
+          "type": "number"
+        },
+        "output_per_1k": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_per_1k",
+        "output_per_1k"
+      ],
+      "type": "object"
+    },
+    "RoleRuntimeConfig": {
+      "additionalProperties": false,
+      "description": "One cognitive role mapped to a stable runtime and strict model alias/spec.",
+      "properties": {
+        "allowed_tools": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_persisted_bytes": {
+          "default": 16384,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_steps": {
+          "default": 8,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_alias": {
+          "description": "A key from `[model_aliases]` or an explicit `provider/model` spec.",
+          "type": "string"
+        },
+        "runtime_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "runtime_id",
+        "model_alias"
+      ],
+      "type": "object"
+    },
+    "SandboxConfig": {
+      "additionalProperties": false,
+      "description": "Sandbox execution preference.",
+      "properties": {
+        "bubblewrap_path": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "preference": {
+          "default": "auto",
+          "description": "\"auto\", \"require\", or \"forbid\"",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "TelegramConfig": {
+      "additionalProperties": false,
+      "description": "Telegram bot configuration for owner-only control channel.\n\nThe config stores the environment-variable NAME, never the token value itself.\nThe runtime reads the token from that env var at startup.",
+      "properties": {
+        "bot_token_env": {
+          "description": "Environment variable name that holds the bot token.\nExample value: `\"ALETHEON_TELEGRAM_BOT_TOKEN\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "default": false,
+          "description": "Master switch. When false (default), the Telegram bot is not started.",
+          "type": "boolean"
+        },
+        "owner_user_id": {
+          "description": "Owner's Telegram user ID. Only messages from this user are accepted.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "poll_timeout_secs": {
+          "default": 10,
+          "description": "Polling timeout in seconds (clamped to 1–50).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Transport": {
+      "description": "Wire protocol between client and LLM server.",
+      "enum": [
+        "openai",
+        "anthropic",
+        "auto"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The one application root schema. Its fields are typed domain inputs; it does\nnot grant any domain permission to discover files or environment variables.",
+  "properties": {
+    "agent": {
+      "$ref": "#/$defs/AgentConfig",
+      "default": {
+        "admission": {
+          "max_agents_per_root": 64,
+          "max_child_cost_micro": null,
+          "max_child_tokens": 200000,
+          "max_depth": 4,
+          "max_queued_per_root": 32,
+          "max_running_agents": 16,
+          "max_storage_bytes": 4294967296,
+          "max_storage_items": 128,
+          "root_max_cost_micro": null,
+          "root_max_tokens": 2000000,
+          "sibling_fairness_quantum": 1
+        },
+        "compaction_enabled": true,
+        "compaction_keep_recent": 10,
+        "compaction_threshold": 30,
+        "default_model": null,
+        "default_provider": null,
+        "max_iterations": 0,
+        "max_tokens": 100000,
+        "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation."
+      }
+    },
+    "daemon": {
+      "$ref": "#/$defs/DaemonConfig",
+      "default": {
+        "log_level": "info",
+        "socket_path": "/run/aletheond/aletheond.sock"
+      }
+    },
+    "deployment": {
+      "$ref": "#/$defs/DeploymentConfig",
+      "default": {
+        "backup": {
+          "mode": "disabled",
+          "repository_file": null
+        },
+        "health": {
+          "maximum_backup_age_secs": 129600,
+          "maximum_sync_lag_secs": 3600,
+          "minimum_free_bytes": 5368709120
+        },
+        "integrations": {
+          "gbrain": false,
+          "google": false,
+          "telegram": false
+        },
+        "mode": "user",
+        "paths": {
+          "artifacts": "~/.aletheon/artifacts",
+          "audit": "~/.aletheon/audit",
+          "cache_root": "~/.cache/aletheon",
+          "config_root": "~/.aletheon",
+          "goals": "~/.aletheon/goals",
+          "mnemosyne": "~/.aletheon/memory",
+          "runtime_root": "/run/aletheon",
+          "secret_root": "~/.config/aletheon",
+          "sessions": "~/.aletheon/sessions",
+          "state": "~/.aletheon/state",
+          "state_root": "~/.aletheon",
+          "worktrees": "~/.aletheon/worktrees"
+        },
+        "quotas": {
+          "artifacts_bytes": 21474836480,
+          "artifacts_items": 100000,
+          "artifacts_soft_bytes": 17179869184,
+          "audit_bytes": 5368709120,
+          "audit_items": 400000,
+          "audit_soft_bytes": 4294967296,
+          "gbrain_spool_bytes": 268435456,
+          "gbrain_spool_items": 10000,
+          "gbrain_spool_soft_bytes": 201326592,
+          "google_bytes": 5368709120,
+          "google_items": 500000,
+          "google_soft_bytes": 4294967296,
+          "minimum_free_bytes": 5368709120,
+          "sessions_bytes": 10737418240,
+          "sessions_items": 500000,
+          "sessions_soft_bytes": 8589934592,
+          "total_data_bytes": 107374182400,
+          "total_data_items": 2000000,
+          "total_data_soft_bytes": 91268055040,
+          "worktrees_bytes": 42949672960,
+          "worktrees_items": 10000,
+          "worktrees_soft_bytes": 34359738368
+        },
+        "secrets": {
+          "backup_password": null,
+          "gbrain": null,
+          "google_vault_key": null,
+          "provider": null,
+          "telegram": null
+        }
+      }
+    },
+    "evolution": {
+      "$ref": "#/$defs/EvolutionSettings",
+      "default": {
+        "enabled": false,
+        "trigger_every_n_turns": 10
+      }
+    },
+    "goal_runtime": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GoalRuntimeConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "hooks": {
+      "$ref": "#/$defs/HooksConfig",
+      "default": {
+        "on_session_end": [],
+        "post_tool": [],
+        "pre_tool": [],
+        "pre_turn": []
+      }
+    },
+    "mcp_servers": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/McpServerConfig"
+      },
+      "type": "array"
+    },
+    "memory": {
+      "$ref": "#/$defs/MemoryConfig",
+      "default": {
+        "backend": "sqlite",
+        "data_dir": "~/.aletheon/memory",
+        "gbrain": {
+          "delivery_batch_size": 20,
+          "enabled": false,
+          "legacy_outbox_dir": "~/.aletheon/gbrain-outbox",
+          "max_content_bytes": 6000,
+          "projection_enabled": false,
+          "read_sources": [
+            "aletheon",
+            "general"
+          ],
+          "recall_limit": 4,
+          "request_timeout_ms": 1200,
+          "retry_initial_ms": 1000,
+          "retry_max_age_secs": 86400,
+          "retry_max_attempts": 12,
+          "retry_max_ms": 60000,
+          "schema_fixture": "config/gbrain/tools-schema.json",
+          "schema_version": "v0.42.59.0",
+          "server_name": "gbrain",
+          "spool_max_bytes": 268435456,
+          "spool_max_items": 10000,
+          "spool_path": "~/.aletheon/memory/gbrain-spool.db",
+          "write_source": "aletheon"
+        }
+      }
+    },
+    "model_aliases": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "model_routing": {
+      "$ref": "#/$defs/ModelRoutingConfig",
+      "default": {
+        "auto_memory": null,
+        "cheap": null,
+        "default": null,
+        "multimodal": null,
+        "reasoning": null
+      }
+    },
+    "perception": {
+      "$ref": "#/$defs/PerceptionConfig",
+      "default": {
+        "enable_journald": true,
+        "enabled": false,
+        "watch_paths": [
+          "/etc",
+          "/var/log"
+        ]
+      }
+    },
+    "pi_runtime": {
+      "$ref": "#/$defs/PiRuntimeConfig",
+      "default": {
+        "allowed_paths": [],
+        "enabled": false,
+        "executable": "",
+        "fixed_args": [],
+        "forbidden_paths": [],
+        "max_output_bytes": 1048576,
+        "network_enabled": false,
+        "require_namespace_isolation": true,
+        "timeout_ms": 1800000,
+        "trusted_executable_dir": null,
+        "worktree_base": ""
+      }
+    },
+    "plugins": {
+      "$ref": "#/$defs/PluginsConfig",
+      "default": {
+        "directories": []
+      }
+    },
+    "providers": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ProviderConfig"
+      },
+      "type": "array"
+    },
+    "sandbox": {
+      "$ref": "#/$defs/SandboxConfig",
+      "default": {
+        "bubblewrap_path": null,
+        "preference": "auto"
+      }
+    },
+    "telegram": {
+      "$ref": "#/$defs/TelegramConfig",
+      "default": {
+        "bot_token_env": null,
+        "enabled": false,
+        "owner_user_id": null,
+        "poll_timeout_secs": 10
+      }
+    }
+  },
+  "title": "AppConfig",
+  "type": "object"
+}

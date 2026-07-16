@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::llm::anthropic::AnthropicProvider;
 use super::llm::openai_provider::OpenAiProvider;
 use super::llm::LlmProvider;
-use crate::config::{AppConfig, ProviderConfig, Transport};
+use crate::config::{CognitConfig, ProviderConfig, Transport};
 
 /// Resolved transport after auto-detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,8 +37,8 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
-    /// Build registry from app config.
-    pub fn from_config(config: &AppConfig) -> anyhow::Result<Self> {
+    /// Build the registry from Executive's validated Cognit domain view.
+    pub fn from_config(config: &CognitConfig) -> anyhow::Result<Self> {
         let mut providers = HashMap::new();
         for p in &config.providers {
             providers.insert(p.name.clone(), p.clone());
@@ -204,7 +204,7 @@ impl ProviderRegistry {
 mod tests {
     use super::*;
 
-    fn make_config() -> AppConfig {
+    fn make_config() -> CognitConfig {
         let toml = r#"
 [agent]
 default_provider = "mimo"

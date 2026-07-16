@@ -52,15 +52,18 @@ pub async fn discover_tool_extensions(
             let tool = registry
                 .get(&definition.name)
                 .ok_or_else(|| CorpusError::InvalidDescriptor(definition.name.clone()))?;
-            ExtensionDescriptor::new(
+            let descriptor = ExtensionDescriptor::new(
                 ExtensionKind::Tool,
                 &definition.name,
                 env!("CARGO_PKG_VERSION"),
                 definition.description.clone(),
                 CapabilityId(definition.name.clone()),
                 permission_risk(tool.permission_level()),
-            )?
-            .with_tool_definition(definition)
+            )
+            .map_err(|error| CorpusError::InvalidDescriptor(error.to_string()))?;
+            descriptor
+                .with_tool_definition(definition)
+                .map_err(|error| CorpusError::InvalidDescriptor(error.to_string()))
         })
         .collect()
 }

@@ -11,6 +11,7 @@ pub mod daemon_turn;
 pub mod dasein_workspace_adapter;
 pub mod event_projection;
 pub mod exec_session;
+pub mod extension_service;
 pub mod goal_service;
 pub mod governed_capability;
 pub mod harness_factory;
@@ -30,6 +31,7 @@ pub use admin_service::{AdminService, AdminUseCases};
 pub use approval_service::{ApprovalService, ApprovalUseCases};
 pub use daemon_turn::DaemonTurnOrchestrator;
 pub use exec_session::ExecSessionBuilder;
+pub use extension_service::{ExtensionService, SessionExtensionPolicy};
 pub use goal_service::{GoalService, GoalUseCases};
 pub use governed_capability::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, CapabilityService,

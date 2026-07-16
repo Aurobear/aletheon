@@ -21,9 +21,7 @@ use tracing::info;
 
 use aletheon_kernel::capability::ToolExecutor;
 use corpus::security::storm_breaker::StormBreaker;
-use corpus::{
-    ActivatedCorpusExecutor, ActivationRequest, CorpusService, ExtensionGrant, ExtensionSnapshot,
-};
+use corpus::{ActivatedCorpusExecutor, CorpusService, ExtensionGrant, ExtensionSnapshot};
 use dasein::SelfField;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::kernel::debug_bus::PerfCounter;
@@ -50,6 +48,8 @@ pub(crate) struct CapabilityResources {
     pub(crate) approvals: Arc<Mutex<HashMap<String, bool>>>,
     pub(crate) perf: Arc<PerfCounter>,
     pub(crate) self_field: Arc<Mutex<SelfField>>,
+    pub(crate) extension_decisions:
+        Arc<dyn crate::service::extension_service::ExtensionDecisionSink>,
 }
 
 /// Executes a single tool through the full guarded/hooked pipeline for one turn.
@@ -377,25 +377,33 @@ pub(crate) async fn prepare_corpus(
         resources: fabric::CapabilityScope::default(),
     };
     let snapshot = resources.corpus.catalog(&grant).await?;
-    let activation = resources
-        .corpus
-        .activate(ActivationRequest {
-            grant,
-            extensions: snapshot
-                .entries
-                .iter()
-                .map(|entry| entry.id.clone())
-                .collect(),
-        })
-        .await?;
+    let activated = crate::service::ExtensionService::new(
+        resources.corpus.clone(),
+        resources.extension_decisions.clone(),
+    )
+    .activate(
+        grant,
+        snapshot
+            .entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect(),
+        &crate::service::SessionExtensionPolicy::default(),
+    )
+    .await?;
+    let snapshot = activated.snapshot;
     let risk_by_tool = snapshot
         .entries
         .iter()
-        .map(|entry| (entry.capability.0.clone(), entry.risk))
+        .filter_map(|entry| {
+            entry
+                .primary_capability()
+                .map(|capability| (capability.0.clone(), entry.risk))
+        })
         .collect();
     let executor = Arc::new(ActivatedCorpusExecutor::new(
         resources.corpus.clone(),
-        activation.id,
+        activated.receipt.id,
     ));
     Ok(PreparedCorpus {
         snapshot,

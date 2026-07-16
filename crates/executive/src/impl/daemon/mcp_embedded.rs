@@ -186,10 +186,12 @@ impl McpEmbedded {
             .catalog(grant)
             .await
             .map(|snapshot| {
-                snapshot
-                    .entries
-                    .iter()
-                    .any(|entry| entry.capability.0 == tool_name)
+                snapshot.entries.iter().any(|entry| {
+                    entry
+                        .capabilities
+                        .iter()
+                        .any(|capability| capability.0 == tool_name)
+                })
             })
             .unwrap_or(false);
         if !known {

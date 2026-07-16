@@ -12,6 +12,27 @@ path_actual=$(mktemp)
 trap 'rm -f "$actual" "$dep_actual" "$path_actual" "$actual.new" "$actual.stale" "$dep_actual.new" "$dep_actual.stale" "$path_actual.new" "$path_actual.stale"' EXIT
 cd "$ROOT"
 
+# Q01 deletion gates: application-layer discovery belongs only to Executive,
+# and only ExtensionService may translate discovery into Corpus activation.
+if rg -n '\b(AppConfig|load_layered)\b|ALETHEON__|/etc/aletheon/config\.toml' \
+  crates/cognit/src crates/corpus/src crates/mnemosyne/src crates/dasein/src \
+  crates/agora/src -g '*.rs'; then
+  echo "architecture-check: application config loading escaped Executive" >&2
+  exit 1
+fi
+extension_activation_outside_owner=$(rg -l '\bActivationRequest\b' \
+  crates/executive/src crates/bin/src -g '*.rs' \
+  | grep -v '^crates/executive/src/service/extension_service.rs$' || true)
+if [[ -n "$extension_activation_outside_owner" ]]; then
+  echo "architecture-check: extension activation bypasses Executive ExtensionService:" >&2
+  echo "$extension_activation_outside_owner" >&2
+  exit 1
+fi
+if [[ ! -s config/schema/aletheon-config.schema.json ]]; then
+  echo "architecture-check: checked-in application config schema is missing" >&2
+  exit 1
+fi
+
 normalize_rg() {
   local rule=$1
   awk -v rule="$rule" '{

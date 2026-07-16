@@ -11,6 +11,7 @@ pub mod coding_job;
 pub mod conscious_core;
 pub mod context;
 pub mod evidence;
+pub mod extension;
 pub mod external_event;
 pub mod external_identity;
 pub mod genome;

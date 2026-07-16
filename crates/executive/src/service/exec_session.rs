@@ -15,7 +15,6 @@ use tracing::info;
 
 use aletheon_kernel::chronos::SystemClock;
 use aletheon_kernel::KernelRuntime;
-use cognit::config::AppConfig;
 use cognit::harness::HarnessConfig;
 use cognit::r#impl::provider_registry::ProviderRegistry;
 use corpus::security::approval::{ApprovalGate, TerminalApprovalGate};
@@ -93,14 +92,14 @@ impl ExecSessionBuilder {
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
 
         // Load config
-        let app_config = if let Some(ref path) = self.config_path {
-            AppConfig::load_or_default(path)
-        } else {
-            AppConfig::load_layered(None)
-        };
+        let app_config = crate::core::config::load_for_host(
+            Some(&self.working_dir),
+            self.config_path.as_deref(),
+        )?
+        .value;
 
         // Build provider registry
-        let registry = ProviderRegistry::from_config(&app_config)?;
+        let registry = ProviderRegistry::from_config(&app_config.cognit())?;
 
         // Create LLM provider
         let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create(&self.model)?);
@@ -132,6 +131,8 @@ impl ExecSessionBuilder {
         );
 
         let session_id = uuid::Uuid::new_v4().to_string();
+        let event_db = crate::r#impl::events::default_event_spine_path();
+        let event_spine = Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?);
 
         let kernel = Arc::new(KernelRuntime::new());
 
@@ -153,21 +154,30 @@ impl ExecSessionBuilder {
             agent_id: None,
             capabilities: descriptors
                 .iter()
-                .map(|descriptor| descriptor.capability.clone())
+                .flat_map(|descriptor| descriptor.capabilities.clone())
                 .collect(),
             resources: Default::default(),
         };
         let snapshot = corpus.catalog(&grant).await?;
-        let activation = corpus
-            .activate(corpus::ActivationRequest {
-                grant,
-                extensions: snapshot
-                    .entries
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .collect(),
-            })
-            .await?;
+        let activated = crate::service::ExtensionService::new(
+            corpus.clone(),
+            Arc::new(
+                crate::service::extension_service::SpineExtensionDecisionSink::new(
+                    event_spine.clone(),
+                ),
+            ),
+        )
+        .activate(
+            grant,
+            snapshot
+                .entries
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect(),
+            &crate::service::SessionExtensionPolicy::default(),
+        )
+        .await?;
+        let snapshot = activated.snapshot;
         let tool_definitions = snapshot
             .entries
             .iter()
@@ -176,10 +186,17 @@ impl ExecSessionBuilder {
         let tool_risks = snapshot
             .entries
             .iter()
-            .map(|entry| (entry.capability.0.clone(), entry.risk))
+            .filter_map(|entry| {
+                entry
+                    .primary_capability()
+                    .map(|capability| (capability.0.clone(), entry.risk))
+            })
             .collect();
         info!(tool_count = tool_definitions.len(), "Tools registered");
-        let executor = Arc::new(corpus::ActivatedCorpusExecutor::new(corpus, activation.id));
+        let executor = Arc::new(corpus::ActivatedCorpusExecutor::new(
+            corpus,
+            activated.receipt.id,
+        ));
         let authority = Arc::new(RegistryAuthorityProvider::new(
             tool_risks,
             PrincipalId("exec".into()),
@@ -194,7 +211,6 @@ impl ExecSessionBuilder {
         if let Some(parent) = session_db.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let event_db = crate::r#impl::events::default_event_spine_path();
         let event_projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::open(
             crate::r#impl::events::default_event_projection_path(),
         )?);
@@ -202,7 +218,7 @@ impl ExecSessionBuilder {
             TurnCoordinator::with_event_spine(
                 kernel.clone(),
                 Arc::new(CanonicalSessionStore::open(session_db)?),
-                Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?),
+                event_spine,
             )
             .with_event_projections(event_projections),
         );

@@ -35,7 +35,7 @@ use dasein::r#impl::perception::PerceptionEvent;
 
 /// The agent runtime core — all agent-level state, host-independent.
 pub struct RuntimeCore {
-    pub app_config: cognit::config::AppConfig,
+    pub app_config: crate::core::config::AppConfig,
     pub registry: ProviderRegistry,
     pub daemon_config: DaemonConfig,
     pub event_bus: Arc<CommunicationBus>,
@@ -56,14 +56,11 @@ impl RuntimeCore {
     pub async fn bootstrap(config_path: Option<PathBuf>, enable_evolution: bool) -> Result<Self> {
         // ── AppConfig ───────────────────────────────────────────────
         // Layered base (defaults → /etc → user → project), then --config on top.
-        let mut app_config = cognit::config::AppConfig::load_layered(None);
-        if let Some(ref path) = config_path {
-            app_config.merge(cognit::config::AppConfig::load_or_default(path));
-        }
+        let app_config = crate::core::config::load_for_host(None, config_path.as_deref())?.value;
         tracing::info!(providers = %app_config.providers.len(), "Loaded config");
 
         // ── ProviderRegistry ────────────────────────────────────────
-        let registry = ProviderRegistry::from_config(&app_config)?;
+        let registry = ProviderRegistry::from_config(&app_config.cognit())?;
         let (default_provider_config, default_model) = registry.resolve("")?;
 
         // ── DaemonConfig ────────────────────────────────────────────
@@ -118,12 +115,7 @@ impl RuntimeCore {
             hooks: {
                 // Honor --config: hooks must come from the same file(s) as the
                 // main config, not always ~/.aletheon. (Fixes the hooks bug.)
-                let rt_config = if let Some(ref path) = config_path {
-                    crate::core::config::AppConfig::load_or_default(path)
-                } else {
-                    crate::core::config::AppConfig::load_layered(None)
-                };
-                rt_config.hooks
+                app_config.hooks.clone()
             },
             telegram: app_config.telegram.clone(),
             gbrain_memory: app_config.memory.gbrain.clone(),
