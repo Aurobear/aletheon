@@ -15,10 +15,11 @@ use async_trait::async_trait;
 use fabric::{
     AgoraSpaceId, Clock, ConsciousContextProjection, ConsciousProcessor, ContentId, MonoDeadline,
     PredictionFrame, ProcessId, ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId,
-    ProcessorResponse, RecalledExperienceFrame, SalienceVector, VisibilityScope,
-    WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
-    WorkspaceObservation, WorkspaceProvenance, WorkspaceReflection, WORKSPACE_SCHEMA_V1,
+    ProcessorResponse, SalienceVector, VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast,
+    WorkspaceCandidate, WorkspaceContent, WorkspaceObservation, WorkspaceProvenance,
+    WorkspaceReflection, WORKSPACE_SCHEMA_V1,
 };
+use mnemosyne::MemoryWorkspaceProjector;
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -460,29 +461,45 @@ impl ConsciousProcessor for DomainProcessor {
                     })
                     .await
                 {
-                    Ok(recall) => recall
-                        .items
-                        .into_iter()
-                        .take(context.max_candidates)
-                        .enumerate()
-                        .map(|(index, item)| {
-                            self.candidate(
-                                &broadcast,
-                                index,
-                                WorkspaceContent::RecalledExperience(RecalledExperienceFrame {
-                                    memory_id: item.metadata.record_id,
-                                    summary: truncate(&item.content, 2048),
-                                    trust: item.metadata.confidence.clamp(0.0, 1.0) as f32,
-                                    attribution: WorkspaceAttribution::ExternalMemory {
-                                        provider: nonempty_provider(
-                                            &item.metadata.provenance.source,
-                                        ),
-                                    },
-                                }),
-                                processor_salience(0.3, 0.6, 0.7),
-                            )
-                        })
-                        .collect(),
+                    Ok(recall) => match mnemosyne::DefaultMemoryWorkspaceProjector.project(
+                        &recall,
+                        mnemosyne::MemoryProjectionLimits {
+                            max_items: context.max_candidates.clamp(1, 8),
+                            ..Default::default()
+                        },
+                    ) {
+                        Ok(projection) => {
+                            if !projection.degraded_sources.is_empty() {
+                                health = ProcessorHealth::Degraded;
+                                detail = Some(format!(
+                                    "memory sources degraded: {}",
+                                    projection.degraded_sources.join(",")
+                                ));
+                            }
+                            match projection.to_candidates(&mnemosyne::MemoryCandidateContext {
+                                space: broadcast.space.clone(),
+                                source: self.source,
+                                source_epoch: broadcast.epoch,
+                                dependencies: broadcast.winner_ids.clone(),
+                                created_at: self.clock.mono_now(),
+                                ttl_ms: PROCESSOR_TTL.as_millis() as u64,
+                            }) {
+                                Ok(candidates) => candidates,
+                                Err(error) => {
+                                    health = ProcessorHealth::Degraded;
+                                    detail = Some(format!(
+                                        "memory candidate projection failed: {error}"
+                                    ));
+                                    vec![]
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            health = ProcessorHealth::Degraded;
+                            detail = Some(format!("bounded memory projection failed: {error}"));
+                            vec![]
+                        }
+                    },
                     Err(error) => {
                         health = ProcessorHealth::Degraded;
                         detail = Some(format!("bounded recall failed: {error}"));
@@ -595,14 +612,6 @@ fn broadcast_summary(broadcast: &WorkspaceBroadcast) -> String {
         format!("workspace epoch {}", broadcast.epoch.0)
     } else {
         truncate(&summary, mnemosyne::RecallRequest::MAX_QUERY_BYTES)
-    }
-}
-
-fn nonempty_provider(value: &str) -> String {
-    if value.trim().is_empty() {
-        "mnemosyne".into()
-    } else {
-        truncate(value, 512)
     }
 }
 

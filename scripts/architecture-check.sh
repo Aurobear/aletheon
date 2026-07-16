@@ -111,6 +111,42 @@ if violations:
     raise SystemExit("architecture-check: domain facade bypass:\n" + "\n".join(violations))
 PY
 
+# M04 deletion gate: recalled memory enters model context only after the
+# Mnemosyne projector and C01 selection. Legacy prompt renderers stay deleted.
+python3 - <<'PY'
+from pathlib import Path
+
+paths = [
+    Path("crates/executive/src/service/pre_turn.rs"),
+    Path("crates/executive/src/service/context_assembler.rs"),
+    Path("crates/executive/src/service/conscious_workspace.rs"),
+    Path("crates/executive/src/service/turn_pipeline.rs"),
+    Path("crates/executive/src/impl/daemon/prefix_builder.rs"),
+]
+paths.extend(Path("crates/cognit/src").rglob("*.rs"))
+forbidden = [
+    "prepare_composite_recall",
+    "render_recall_set",
+    "RecallInjector",
+    "inject_into_prompt",
+    "MemoryRequest::FormatForContext",
+    "<memory>\\n",
+    "mnemosyne::backends",
+    "mnemosyne::r#impl",
+]
+violations = []
+for path in paths:
+    production = path.read_text().split("#[cfg(test)]", 1)[0]
+    for needle in forbidden:
+        if needle in production:
+            violations.append(f"{path}: {needle}")
+workspace = Path("crates/executive/src/service/conscious_workspace.rs").read_text()
+if "DefaultMemoryWorkspaceProjector.project" not in workspace:
+    violations.append("conscious_workspace: missing Mnemosyne bounded projector")
+if violations:
+    raise SystemExit("architecture-check: memory workspace bypass:\n" + "\n".join(violations))
+PY
+
 # K02 deletion gate: cognitive domains receive Clock from Executive. Unit-test
 # modules may use TestClock, but no production prefix may mention SystemClock.
 python3 - <<'PY'

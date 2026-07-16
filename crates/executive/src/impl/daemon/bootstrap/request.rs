@@ -504,9 +504,7 @@ impl RequestHandler {
         let hook_registry = Arc::new(Mutex::new(hook_registry));
 
         // Cache-stable prefix
-        let cm = core_memory.lock().await;
-        let cached_prefix = PrefixBuilder::build(&config.system_prompt, skill_loader.skills(), &cm);
-        drop(cm);
+        let cached_prefix = PrefixBuilder::build(&config.system_prompt, skill_loader.skills());
         info!(len = cached_prefix.len(), "Cache-stable prefix built");
 
         // CommunicationBus
@@ -518,14 +516,6 @@ impl RequestHandler {
             let bus_clone = bus.clone();
             tokio::spawn(async move { sf_module.run(bus_clone).await });
         }
-        {
-            let mem_module = crate::r#impl::engine::modules::memory_module::MemoryModule::new(
-                core_memory.clone(),
-                Some(recall_memory.clone()),
-            );
-            let bus_clone = bus.clone();
-            tokio::spawn(async move { mem_module.run(bus_clone).await });
-        }
         let tools = Arc::new(Mutex::new(tools));
         {
             let body_module =
@@ -533,7 +523,7 @@ impl RequestHandler {
             let bus_clone = bus.clone();
             tokio::spawn(async move { body_module.run(bus_clone).await });
         }
-        info!("CommunicationBus created with SelfField, Memory, and Body module handlers");
+        info!("CommunicationBus created with SelfField and Body module handlers");
 
         // StormBreaker, CheckpointStore, SkillRouter, AgentLoader
         let storm_breaker = Arc::new(Mutex::new(StormBreaker::new(
@@ -635,7 +625,6 @@ impl RequestHandler {
             Arc::new(crate::service::GoalService::new(objective_store.clone()));
         let runtime = Arc::new(Mutex::new(runtime));
         let admin_runtime = runtime.clone();
-        let admin_core_memory = core_memory.clone();
         let admin_tools = tools.clone();
         let skill_loader = Arc::new(Mutex::new(skill_loader));
         let admin_skill_loader = skill_loader.clone();
@@ -1091,7 +1080,6 @@ impl RequestHandler {
                 orchestrator: admin_runtime,
                 skills: Arc::new(crate::service::admin_service::DefaultSkillAdmin::new(
                     admin_skill_loader,
-                    admin_core_memory,
                     admin_cached_prefix,
                     config.system_prompt.clone(),
                 )),

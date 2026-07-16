@@ -90,7 +90,6 @@ pub trait SkillAdminPort: Send + Sync {
 
 pub struct DefaultSkillAdmin {
     loader: Arc<Mutex<corpus::SkillLoader>>,
-    core_memory: Arc<Mutex<mnemosyne::CoreMemory>>,
     cached_prefix: Arc<Mutex<String>>,
     config_prompt: String,
 }
@@ -98,13 +97,11 @@ pub struct DefaultSkillAdmin {
 impl DefaultSkillAdmin {
     pub fn new(
         loader: Arc<Mutex<corpus::SkillLoader>>,
-        core_memory: Arc<Mutex<mnemosyne::CoreMemory>>,
         cached_prefix: Arc<Mutex<String>>,
         config_prompt: String,
     ) -> Self {
         Self {
             loader,
-            core_memory,
             cached_prefix,
             config_prompt,
         }
@@ -117,11 +114,9 @@ impl SkillAdminPort for DefaultSkillAdmin {
         let count = self.loader.lock().await.reload();
         let new_prefix = {
             let loader = self.loader.lock().await;
-            let core_memory = self.core_memory.lock().await;
             crate::r#impl::daemon::prefix_builder::PrefixBuilder::build(
                 &self.config_prompt,
                 loader.skills(),
-                &core_memory,
             )
         };
         *self.cached_prefix.lock().await = new_prefix;

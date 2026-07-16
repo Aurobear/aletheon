@@ -27,7 +27,6 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
     let cached_prefix = Arc::new(Mutex::new(String::new()));
     let skills = Arc::new(DefaultSkillAdmin::new(
         Arc::new(Mutex::new(corpus::SkillLoader::new(skills_dir))),
-        Arc::new(Mutex::new(mnemosyne::CoreMemory::new())),
         cached_prefix.clone(),
         "system prompt".into(),
     ));
@@ -123,7 +122,6 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
             Arc::new(Mutex::new(corpus::SkillLoader::new(
                 directory.path().to_path_buf(),
             ))),
-            Arc::new(Mutex::new(mnemosyne::CoreMemory::new())),
             Arc::new(Mutex::new(String::new())),
             String::new(),
         )),

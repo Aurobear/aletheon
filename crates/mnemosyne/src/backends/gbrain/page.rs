@@ -162,6 +162,7 @@ impl GbrainPage {
             metadata,
             temporal_state,
             authority: crate::model::MemoryAuthority::AletheonExternal,
+            scope: crate::model::MemoryScope::Global,
         })
     }
 }

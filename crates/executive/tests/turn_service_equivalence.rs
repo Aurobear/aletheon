@@ -223,8 +223,7 @@ use std::time::Duration;
 
 /// An LLM provider that sleeps before responding, used to simulate a
 /// long-running model call so that `tokio::time::timeout` in TurnService
-/// fires the deadline.  The sleep must happen inside `session.run_turn()`
-/// (not `recall`, which is called earlier in `PreTurnPipeline`).
+/// fires the deadline. The sleep must happen inside `session.run_turn()`.
 struct HangingLlm {
     hang_ms: u64,
 }

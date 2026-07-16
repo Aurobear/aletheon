@@ -200,8 +200,17 @@ impl MemoryService for CompositeMemoryService {
             supplemental.health.error_category,
             supplemental.health.queue_depth,
         );
+        let mut supplemental_items = supplemental.items;
+        for item in &mut supplemental_items {
+            item.scope = crate::MemoryScope::Session(request.session.clone());
+        }
+        let mut degraded_sources = local.degraded_sources;
+        if supplemental.health.degraded {
+            degraded_sources.push("gbrain".into());
+        }
         Ok(RecallSet {
-            items: crate::recall::merge_items([local.items, supplemental.items], &request),
+            items: crate::recall::merge_items([local.items, supplemental_items], &request),
+            degraded_sources,
         })
     }
 

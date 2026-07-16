@@ -5,57 +5,11 @@
 //! - Responses: `#[serde(tag = "result")]`
 
 pub mod body_module;
-pub mod memory_module;
 pub mod perception_module;
 pub mod self_field_module;
 
 use fabric::self_field::{Care, Identity, Intent, Verdict};
 use serde::{Deserialize, Serialize};
-
-// ---------------------------------------------------------------------------
-// Memory
-// ---------------------------------------------------------------------------
-
-/// Request to the Memory module.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "op")]
-pub enum MemoryRequest {
-    /// Format core memory blocks for LLM context injection.
-    FormatForContext,
-    /// Store a recall memory entry.
-    StoreRecall {
-        session_id: String,
-        entry_type: String,
-        content: String,
-        metadata: Option<String>,
-    },
-    /// Search recall memory by query.
-    SearchRecall { query: String, limit: usize },
-}
-
-/// Response from the Memory module.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "result")]
-pub enum MemoryResponse {
-    /// Formatted context string from core memory.
-    ContextFormatted { text: String },
-    /// Recall entry stored successfully.
-    RecallStored { id: i64 },
-    /// Recall search results.
-    RecallSearchResults { entries: Vec<RecallEntry> },
-    /// An error occurred.
-    Error { message: String },
-}
-
-/// Serializable recall entry (mirrors `MemoryEntry` without `rusqlite` dependency).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RecallEntry {
-    pub id: i64,
-    pub session_id: String,
-    pub entry_type: String,
-    pub content: String,
-    pub metadata: Option<String>,
-}
 
 // ---------------------------------------------------------------------------
 // Body

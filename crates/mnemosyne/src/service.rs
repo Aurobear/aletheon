@@ -113,12 +113,15 @@ pub struct RecallItem {
     pub temporal_state: TemporalState,
     #[serde(default)]
     pub authority: MemoryAuthority,
+    pub scope: MemoryScope,
 }
 
 /// Result of a recall query.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RecallSet {
     pub items: Vec<RecallItem>,
+    #[serde(default)]
+    pub degraded_sources: Vec<String>,
 }
 
 impl RecallSet {
@@ -171,6 +174,7 @@ impl RecallItem {
             metadata: record.metadata,
             temporal_state,
             authority: record.authority,
+            scope: record.scope,
         })
     }
 }
@@ -307,6 +311,7 @@ impl MemoryService for DefaultMemoryService {
         };
         let (messages, facts, reflections, core) = tokio::join!(messages, facts, reflections, core);
         let mut sources = Vec::with_capacity(4);
+        let mut degraded_sources = Vec::new();
         for (name, result) in [
             ("recall_memory", messages),
             ("fact_store", facts),
@@ -316,12 +321,14 @@ impl MemoryService for DefaultMemoryService {
             match result {
                 Ok(items) => sources.push(items),
                 Err(error) => {
-                    tracing::warn!(source = name, %error, "local memory recall source degraded")
+                    tracing::warn!(source = name, %error, "local memory recall source degraded");
+                    degraded_sources.push(name.to_string());
                 }
             }
         }
         Ok(RecallSet {
             items: crate::recall::merge_items(sources, &req),
+            degraded_sources,
         })
     }
 

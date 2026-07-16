@@ -1,11 +1,10 @@
 use corpus::skill::loader::LoadedSkill;
-use mnemosyne::CoreMemory;
 
 /// Builds a deterministic, cache-stable system prompt prefix.
 ///
 /// The prefix is assembled once at boot and never mutated mid-session.
-/// Memory changes ride user turns as `<memory-update>` XML blocks,
-/// so the prefix stays byte-stable across turns for maximum cache reuse.
+/// Selected memory arrives later as untrusted conscious-context data, so the
+/// prefix stays byte-stable across turns for maximum cache reuse.
 pub struct PrefixBuilder;
 
 const MAX_SKILL_DESCRIPTION_CHARS: usize = 512;
@@ -24,9 +23,10 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 
 impl PrefixBuilder {
     /// Build the prefix from its components.
-    /// Order is deterministic: base -> skills -> core memory.
+    /// Order is deterministic: base -> skills. Memory is selected through the
+    /// conscious workspace and never enters the system prefix directly.
     /// Same inputs always produce the same bytes.
-    pub fn build(config_prompt: &str, skills: &[LoadedSkill], core_memory: &CoreMemory) -> String {
+    pub fn build(config_prompt: &str, skills: &[LoadedSkill]) -> String {
         let mut prefix = String::with_capacity(4096);
 
         // 1. Base system prompt (most stable text — stays as cache prefix)
@@ -51,33 +51,25 @@ impl PrefixBuilder {
             }
         }
 
-        // 3. Core memory blocks (snapshot at boot time)
-        let memory_text = core_memory.inject_into_prompt();
-        if !memory_text.is_empty() {
-            prefix.push_str("\n\n");
-            prefix.push_str(&memory_text);
-        }
-
         prefix
     }
 
     /// Build the prefix with optional DaseinContext injection.
     ///
     /// When `dasein_context` is `Some`, the formatted existential state is
-    /// appended after core memory. This gives the LLM awareness of the
+    /// appended after skills. This gives the LLM awareness of the
     /// system's mood, temporal flow, involvement network, and care structure.
     ///
-    /// Note: DaseinContext is intentionally appended LAST (after core memory)
-    /// because it changes more frequently than skills or core memory.
+    /// Note: DaseinContext is intentionally appended LAST because it changes
+    /// more frequently than the configured prompt or skill index.
     /// If cache stability is critical, callers should inject dasein context
     /// into the user message instead via `<dasein-state>` blocks.
     pub fn build_with_dasein(
         config_prompt: &str,
         skills: &[LoadedSkill],
-        core_memory: &CoreMemory,
         dasein_context: Option<&str>,
     ) -> String {
-        let mut prefix = Self::build(config_prompt, skills, core_memory);
+        let mut prefix = Self::build(config_prompt, skills);
 
         if let Some(ctx) = dasein_context {
             if !ctx.is_empty() {
@@ -131,45 +123,37 @@ mod tests {
 
     #[test]
     fn deterministic_same_inputs() {
-        let mem = CoreMemory::with_defaults();
         let skills = vec![make_skill("git", "Use feature branches.")];
-        let p1 = PrefixBuilder::build("You are Aletheon.", &skills, &mem);
-        let p2 = PrefixBuilder::build("You are Aletheon.", &skills, &mem);
+        let p1 = PrefixBuilder::build("You are Aletheon.", &skills);
+        let p2 = PrefixBuilder::build("You are Aletheon.", &skills);
         assert_eq!(p1, p2);
     }
 
     #[test]
     fn different_base_changes_prefix() {
-        let mem = CoreMemory::with_defaults();
-        let p1 = PrefixBuilder::build("Prompt A.", &[], &mem);
-        let p2 = PrefixBuilder::build("Prompt B.", &[], &mem);
+        let p1 = PrefixBuilder::build("Prompt A.", &[]);
+        let p2 = PrefixBuilder::build("Prompt B.", &[]);
         assert_ne!(p1, p2);
     }
 
     #[test]
     fn skills_appended_after_base() {
-        let mem = CoreMemory::with_defaults();
         let skills = vec![make_skill("test", "content")];
-        let prefix = PrefixBuilder::build("Base.", &skills, &mem);
+        let prefix = PrefixBuilder::build("Base.", &skills);
         let base_pos = prefix.find("Base.").unwrap();
         let skills_pos = prefix.find("[Skills]").unwrap();
         assert!(base_pos < skills_pos);
     }
 
     #[test]
-    fn core_memory_after_skills() {
-        let mut mem = CoreMemory::with_defaults();
-        mem.append("system_state", "running").unwrap();
-        let skills = vec![make_skill("s", "c")];
-        let prefix = PrefixBuilder::build("Base.", &skills, &mem);
-        let skills_pos = prefix.find("[Skills]").unwrap();
-        let memory_pos = prefix.find("[Persona]").unwrap();
-        assert!(skills_pos < memory_pos);
+    fn core_memory_never_enters_system_prefix() {
+        let prefix = PrefixBuilder::build("Base.", &[]);
+        assert!(!prefix.contains("[Persona]"));
+        assert!(!prefix.contains("<memory"));
     }
 
     #[test]
     fn skills_index_uses_description_not_full_body() {
-        let mem = CoreMemory::with_defaults();
         let skill = LoadedSkill {
             name: "large".into(),
             description: "Short routing summary".into(),
@@ -177,7 +161,7 @@ mod tests {
             source: "test".into(),
         };
 
-        let prefix = PrefixBuilder::build("Base.", &[skill], &mem);
+        let prefix = PrefixBuilder::build("Base.", &[skill]);
 
         assert!(prefix.contains("Short routing summary"));
         assert!(!prefix.contains("FULL_BODY_SHOULD_NOT_BE_IN_PREFIX"));
@@ -186,7 +170,6 @@ mod tests {
 
     #[test]
     fn skills_index_has_total_budget() {
-        let mem = CoreMemory::with_defaults();
         let skills = (0..100)
             .map(|i| LoadedSkill {
                 name: format!("skill-{i}"),
@@ -196,7 +179,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let prefix = PrefixBuilder::build("Base.", &skills, &mem);
+        let prefix = PrefixBuilder::build("Base.", &skills);
 
         assert!(prefix.len() < 32 * 1024);
     }
@@ -215,9 +198,8 @@ mod tests {
 
     #[test]
     fn build_with_dasein_appends_context() {
-        let mem = CoreMemory::with_defaults();
         let dasein = "## Existential State\nMood: calm";
-        let prefix = PrefixBuilder::build_with_dasein("Base.", &[], &mem, Some(dasein));
+        let prefix = PrefixBuilder::build_with_dasein("Base.", &[], Some(dasein));
         assert!(prefix.contains("Base."));
         assert!(prefix.contains("## Existential State"));
         assert!(prefix.contains("Mood: calm"));
@@ -225,18 +207,16 @@ mod tests {
 
     #[test]
     fn build_with_dasein_none_is_same_as_build() {
-        let mem = CoreMemory::with_defaults();
         let skills = vec![make_skill("test", "content")];
-        let p1 = PrefixBuilder::build("Base.", &skills, &mem);
-        let p2 = PrefixBuilder::build_with_dasein("Base.", &skills, &mem, None);
+        let p1 = PrefixBuilder::build("Base.", &skills);
+        let p2 = PrefixBuilder::build_with_dasein("Base.", &skills, None);
         assert_eq!(p1, p2);
     }
 
     #[test]
     fn build_with_dasein_empty_is_same_as_build() {
-        let mem = CoreMemory::with_defaults();
-        let p1 = PrefixBuilder::build("Base.", &[], &mem);
-        let p2 = PrefixBuilder::build_with_dasein("Base.", &[], &mem, Some(""));
+        let p1 = PrefixBuilder::build("Base.", &[]);
+        let p2 = PrefixBuilder::build_with_dasein("Base.", &[], Some(""));
         assert_eq!(p1, p2);
     }
 }

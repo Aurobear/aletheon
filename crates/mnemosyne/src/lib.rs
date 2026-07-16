@@ -11,6 +11,7 @@ pub mod fact_service;
 pub mod r#impl;
 pub mod model;
 pub mod ops;
+pub mod projection;
 mod recall;
 pub mod service;
 
@@ -29,6 +30,10 @@ pub use fact_service::{
 pub use model::{
     MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProvenance, MemoryRecord, MemoryRecordId,
     MemoryScope, MemorySensitivity, MemoryStatus, ScopeAncestry, TemporalState,
+};
+pub use projection::{
+    DefaultMemoryWorkspaceProjector, MemoryCandidateContext, MemoryProjection,
+    MemoryProjectionLimits, MemoryWorkspaceProjector, ProjectedMemory,
 };
 pub use service::{
     DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryService, RecallItem, RecallRequest,

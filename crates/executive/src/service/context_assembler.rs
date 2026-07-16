@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 const MAX_FRAGMENT_CHARS: usize = 16 * 1024;
 const MAX_INJECTED_CHARS: usize = 48 * 1024;
 const MAX_SYSTEM_PREFIX_CHARS: usize = 128 * 1024;
-const MAX_PROJECTED_ITEM_CHARS: usize = 128;
+const MAX_PROJECTED_ITEM_CHARS: usize = 4 * 1024;
 const MAX_SELF_ITEM_CHARS: usize = 64;
 
 #[derive(Clone, Debug, Default)]

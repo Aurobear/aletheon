@@ -215,7 +215,27 @@ Engine.run_turn()
 
 ---
 
-## 6. 配置层次
+## 6. 记忆进入意识工作区
+
+召回内容始终作为带标签、不可信的数据候选处理。它不能直接进入 system
+指令，也不能绕过 Agora 的全局选择：
+
+```text
+MemoryService::recall
+  -> Mnemosyne MemoryWorkspaceProjector
+       (8 items / 16 KiB total / 2 KiB each)
+  -> private WorkspaceCandidate + record provenance
+  -> C01 Agora competition and durable broadcast
+  -> ConsciousContextProjection (selected candidates only)
+  -> ContextAssembler user-context data section
+  -> Cognit
+```
+
+广播保存候选的 memory record ID、candidate content ID、来源广播 epoch、作用域和
+来源信息，因此选择结果可重放、可审计。`ApprovedCore` 记录不进入普通记忆候选；
+宪制状态仅通过显式 Dasein/Core 策略投影进入上下文。
+
+## 7. 配置层次
 
 ```
 /etc/aletheon/config.toml     # 系统配置
@@ -231,7 +251,7 @@ Engine.run_turn()
 
 ---
 
-## 7. 演化路线
+## 8. 演化路线
 
 | 阶段 | 重点 | 状态 |
 |------|------|------|
@@ -247,7 +267,7 @@ Engine.run_turn()
 
 ---
 
-## 8. 参考来源
+## 9. 参考来源
 
 | 项目 | 借鉴内容 |
 |------|---------|

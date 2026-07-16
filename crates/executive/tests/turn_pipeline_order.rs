@@ -90,18 +90,16 @@ impl LlmProvider for ScriptedLlm {
 struct PipelineServices {
     events: Arc<Mutex<Vec<String>>>,
     llm: ScriptedLlm,
-    block_pre_turn: bool,
 }
 
 impl PipelineServices {
-    fn new(events: Arc<Mutex<Vec<String>>>, block_pre_turn: bool) -> Self {
+    fn new(events: Arc<Mutex<Vec<String>>>) -> Self {
         Self {
             llm: ScriptedLlm {
                 events: events.clone(),
                 calls: Mutex::new(0),
             },
             events,
-            block_pre_turn,
         }
     }
 }
@@ -109,11 +107,7 @@ impl PipelineServices {
 #[async_trait]
 impl TurnServices for PipelineServices {
     async fn recall(&self, _req: RecallRequest) -> anyhow::Result<RecallSet> {
-        self.events.lock().unwrap().push("pre:recall".into());
-        if self.block_pre_turn {
-            anyhow::bail!("blocked by pre-turn recall")
-        }
-        Ok(RecallSet::default())
+        anyhow::bail!("legacy turn recall must not be called")
     }
 
     async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
@@ -154,7 +148,7 @@ impl TurnServices for PipelineServices {
 #[tokio::test]
 async fn turn_pipeline_runs_pre_cognit_capability_in_order() {
     let events = Arc::new(Mutex::new(Vec::new()));
-    let services = Arc::new(PipelineServices::new(events.clone(), false));
+    let services = Arc::new(PipelineServices::new(events.clone()));
     let kernel = test_kernel();
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
@@ -170,14 +164,14 @@ async fn turn_pipeline_runs_pre_cognit_capability_in_order() {
     assert_eq!(result.output, "done: hi");
     assert_eq!(
         *events.lock().unwrap(),
-        vec!["pre:recall", "llm", "invoke:echo_tool:call_1", "llm"]
+        vec!["llm", "invoke:echo_tool:call_1", "llm"]
     );
 }
 
 #[tokio::test]
-async fn pre_turn_error_blocks_model_call() {
+async fn legacy_turn_recall_cannot_bypass_workspace_projection() {
     let events = Arc::new(Mutex::new(Vec::new()));
-    let services = Arc::new(PipelineServices::new(events.clone(), true));
+    let services = Arc::new(PipelineServices::new(events.clone()));
     let kernel = test_kernel();
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
@@ -185,11 +179,14 @@ async fn pre_turn_error_blocks_model_call() {
         .unwrap();
     let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel);
 
-    let err = turn_service
+    let result = turn_service
         .submit(request(process.id), &NoopTurnEventSink)
         .await
-        .expect_err("pre-turn error should abort submit");
+        .expect("legacy recall hook must not participate in prompt assembly");
 
-    assert!(err.to_string().contains("blocked by pre-turn recall"));
-    assert_eq!(*events.lock().unwrap(), vec!["pre:recall"]);
+    assert_eq!(result.output, "done: hi");
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec!["llm", "invoke:echo_tool:call_1", "llm"]
+    );
 }
