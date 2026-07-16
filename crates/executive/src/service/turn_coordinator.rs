@@ -6,8 +6,9 @@ use aletheon_kernel::KernelRuntime;
 use anyhow::{anyhow, Result};
 use fabric::{
     CancelReason, EventSpine, ItemId, ItemPayload, ItemRecord, MonoDeadline, OperationKind,
-    OperationManager, OperationRequest, SessionAppendStore, SessionId, SessionRecord,
-    SessionStatus, TurnId, TurnMetrics, TurnRequest, TurnResult, TurnStop, SESSION_SCHEMA_VERSION,
+    OperationManager, OperationRequest, PrincipalId, SessionAppendStore, SessionId, SessionRecord,
+    SessionStatus, ThreadId, TurnId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
+    SESSION_SCHEMA_VERSION,
 };
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -32,13 +33,32 @@ pub struct ActiveTurn {
     pub cancel: CancellationToken,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ActiveTurnKey {
+    pub principal_id: PrincipalId,
+    pub thread_id: ThreadId,
+}
+
+impl ActiveTurnKey {
+    pub fn from_context(context: &fabric::PrincipalContext) -> Self {
+        Self {
+            principal_id: context.principal_id.clone(),
+            thread_id: context.thread_id.clone(),
+        }
+    }
+
+    pub fn from_request(request: &TurnRequest) -> Self {
+        Self::from_context(&request.context)
+    }
+}
+
 pub struct TurnCoordinator {
     kernel: Arc<KernelRuntime>,
     clock: Arc<dyn fabric::Clock>,
     read_store: Arc<dyn SessionAppendStore>,
     store: Arc<dyn SessionAppendStore>,
     event_spine: Arc<dyn EventSpine>,
-    active: Arc<Mutex<HashMap<String, ActiveTurn>>>,
+    active: Arc<Mutex<HashMap<ActiveTurnKey, ActiveTurn>>>,
 }
 
 impl TurnCoordinator {
@@ -100,7 +120,7 @@ impl TurnCoordinator {
     pub fn store(&self) -> Arc<dyn SessionAppendStore> {
         self.store.clone()
     }
-    pub fn active_index(&self) -> Arc<Mutex<HashMap<String, ActiveTurn>>> {
+    pub fn active_index(&self) -> Arc<Mutex<HashMap<ActiveTurnKey, ActiveTurn>>> {
         self.active.clone()
     }
 
@@ -141,9 +161,11 @@ impl TurnCoordinator {
         let has_deadline = request.deadline.is_some();
         self.kernel.start_operation(operation.id).await?;
         request.operation_id = operation.id;
+        request.context.turn_id = Some(TurnId::new());
         let cancel = CancellationToken::new();
+        let active_key = ActiveTurnKey::from_request(&request);
         self.active.lock().await.insert(
-            request.session_id.clone(),
+            active_key.clone(),
             ActiveTurn {
                 operation_id: operation.id,
                 cancel: cancel.clone(),
@@ -153,7 +175,7 @@ impl TurnCoordinator {
         let outcome = self
             .run_started_turn(&request, cancel.clone(), runner)
             .await;
-        self.active.lock().await.remove(&request.session_id);
+        self.active.lock().await.remove(&active_key);
         match outcome {
             Ok(completed) => {
                 let terminal = match completed.result.stop {
@@ -207,7 +229,7 @@ impl TurnCoordinator {
         F: FnOnce(TurnRequest, CancellationToken) -> Fut,
         Fut: Future<Output = Result<TurnExecution>>,
     {
-        let session_id = SessionId(request.session_id.clone());
+        let session_id = SessionId(request.context.thread_id.0.clone());
         if self.store.load_session(&session_id).await?.is_none() {
             self.store
                 .create(SessionRecord {
@@ -219,7 +241,10 @@ impl TurnCoordinator {
                 })
                 .await?;
         }
-        let turn_id = TurnId::new();
+        let turn_id = request
+            .context
+            .turn_id
+            .ok_or_else(|| anyhow!("turn context is missing its authoritative turn id"))?;
         let mut sequence = self.next_sequence(&session_id).await?;
         self.append(
             &session_id,

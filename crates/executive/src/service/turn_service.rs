@@ -96,13 +96,13 @@ impl TurnService {
             .submit_with(request, &policy, move |request, cancel| async move {
                 let session_record = fabric::SessionRecord {
                     schema_version: fabric::SESSION_SCHEMA_VERSION,
-                    id: fabric::SessionId(request.session_id.clone()),
+                    id: fabric::SessionId(request.context.thread_id.0.clone()),
                     parent: None,
                     created_at_ms: 0,
                     status: fabric::SessionStatus::Active,
                 };
                 let mut history = history_store
-                    .load_items(&fabric::SessionId(request.session_id.clone()), None)
+                    .load_items(&fabric::SessionId(request.context.thread_id.0.clone()), None)
                     .await?;
                 if history.last().is_some_and(|item| {
                     matches!(&item.payload, ItemPayload::UserMessage { content } if content == &request.input)

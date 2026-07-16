@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::r#impl::session::canonical_store::project_messages;
 
-use super::turn_coordinator::ActiveTurn;
+use super::turn_coordinator::{ActiveTurn, ActiveTurnKey};
 
 pub struct ResumeResult {
     pub session: SessionRecord,
@@ -28,14 +28,14 @@ pub enum InterruptOutcome {
 
 pub struct SessionService {
     store: Arc<dyn SessionAppendStore>,
-    active: Arc<Mutex<std::collections::HashMap<String, ActiveTurn>>>,
+    active: Arc<Mutex<std::collections::HashMap<ActiveTurnKey, ActiveTurn>>>,
     interrupted: Mutex<HashSet<String>>,
 }
 
 impl SessionService {
     pub fn new(
         store: Arc<dyn SessionAppendStore>,
-        active: Arc<Mutex<std::collections::HashMap<String, ActiveTurn>>>,
+        active: Arc<Mutex<std::collections::HashMap<ActiveTurnKey, ActiveTurn>>>,
     ) -> Self {
         Self {
             store,
@@ -138,7 +138,15 @@ impl SessionService {
         if interrupted.contains(&session_id.0) {
             return Ok(InterruptOutcome::AlreadyTerminal);
         }
-        let active = self.active.lock().await.get(&session_id.0).cloned();
+        // Legacy session RPCs do not yet carry a principal. This compatibility
+        // lookup is removed when those RPCs move to PrincipalContext in M3.
+        let active = self
+            .active
+            .lock()
+            .await
+            .iter()
+            .find(|(key, _)| key.thread_id.0 == session_id.0)
+            .map(|(_, active)| active.clone());
         let Some(active) = active else {
             return Ok(InterruptOutcome::AlreadyTerminal);
         };

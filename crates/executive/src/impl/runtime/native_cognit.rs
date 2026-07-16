@@ -10,10 +10,12 @@ use async_trait::async_trait;
 use cognit::harness::config::HarnessConfig;
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentProfile, AgentProfileId, AgentResult,
-    AgentRunStatus, AttemptEvidence, AttemptUsage, CapabilityCall, CapabilityResult, Clock,
-    LlmProvider, Message, PrincipalId, ProcessId, RecallRequest, RecallSet, RuntimeId,
-    SandboxRequirement, SessionId, SessionRecord, SessionStatus, ToolDefinition, TurnEvent,
-    TurnEventSink, TurnRequest, TurnServices, TurnStop, SESSION_SCHEMA_VERSION,
+    AgentRunStatus, ApprovalPolicy, AttemptEvidence, AttemptUsage, CapabilityCall,
+    CapabilityResult, Clock, ConnectionId, LlmProvider, LocalOsPrincipal, Message,
+    PermissionProfileId, PrincipalContext, PrincipalId, ProcessId, RecallRequest, RecallSet,
+    RuntimeId, SandboxRequirement, SessionId, SessionRecord, SessionStatus, ThreadId,
+    ToolDefinition, TurnEvent, TurnEventSink, TurnRequest, TurnServices, TurnStop, WorkspacePolicy,
+    SESSION_SCHEMA_VERSION,
 };
 use parking_lot::RwLock;
 use tokio::sync::Mutex;
@@ -193,9 +195,11 @@ impl NativeCognitRuntime {
         let mut request = TurnRequest {
             operation_id: input.handle.operation_id,
             process_id: input.handle.process_id,
-            session_id: input.handle.agent_id.0.to_string(),
+            context: agent_principal_context(
+                input.handle.agent_id.0.to_string(),
+                services.execution.working_dir.clone(),
+            )?,
             input: input.request.task.clone(),
-            working_dir: services.execution.working_dir.clone(),
             model_policy: Some(resolved.profile.model.clone()),
             deadline: None,
         };
@@ -250,9 +254,11 @@ impl NativeCognitRuntime {
             request = TurnRequest {
                 operation_id: input.handle.operation_id,
                 process_id: input.handle.process_id,
-                session_id: input.handle.agent_id.0.to_string(),
+                context: agent_principal_context(
+                    input.handle.agent_id.0.to_string(),
+                    services.execution.working_dir.clone(),
+                )?,
                 input: next.content,
-                working_dir: services.execution.working_dir.clone(),
                 model_policy: Some(resolved.profile.model.clone()),
                 deadline: None,
             };
@@ -585,6 +591,27 @@ fn harness_config(profile: &AgentProfile, budget: &fabric::AgentBudget) -> Harne
         max_tool_calls: profile.max_tool_calls.min(budget.max_tool_calls) as usize,
         ..HarnessConfig::default()
     }
+}
+
+fn agent_principal_context(
+    agent_id: String,
+    working_dir: PathBuf,
+) -> Result<PrincipalContext, AgentControlError> {
+    let workspace =
+        WorkspacePolicy::from_resolved_roots(working_dir, Vec::new()).map_err(runtime_failure)?;
+    let uid = nix::unistd::Uid::effective().as_raw();
+    Ok(PrincipalContext::new(
+        PrincipalId::local_uid(uid),
+        LocalOsPrincipal {
+            uid,
+            gid: nix::unistd::Gid::effective().as_raw(),
+        },
+        ConnectionId::new(),
+        ThreadId(agent_id),
+        workspace,
+        PermissionProfileId::workspace_write(),
+        ApprovalPolicy::OnRequest,
+    ))
 }
 
 fn runtime_failure(error: impl std::fmt::Display) -> AgentControlError {

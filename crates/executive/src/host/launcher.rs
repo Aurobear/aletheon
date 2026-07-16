@@ -5,7 +5,11 @@ use std::sync::Arc;
 
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Result;
-use fabric::{NoopTurnEventSink, OperationId, ProcessId, TurnRequest};
+use fabric::{
+    ApprovalPolicy, ConnectionId, LocalOsPrincipal, NoopTurnEventSink, OperationId,
+    PermissionProfileId, PrincipalContext, PrincipalId, ProcessId, ThreadId, TurnRequest,
+    WorkspacePolicy,
+};
 use tracing::info;
 
 use super::RuntimeHost;
@@ -100,9 +104,24 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id: ProcessId::new(),
-                session_id: uuid::Uuid::new_v4().to_string(),
+                context: {
+                    let thread_id = uuid::Uuid::new_v4().to_string();
+                    let uid = nix::unistd::Uid::effective().as_raw();
+                    PrincipalContext::new(
+                        PrincipalId::local_uid(uid),
+                        LocalOsPrincipal {
+                            uid,
+                            gid: nix::unistd::Gid::effective().as_raw(),
+                        },
+                        ConnectionId::new(),
+                        ThreadId(thread_id),
+                        WorkspacePolicy::from_resolved_roots(working_dir.clone(), Vec::new())
+                            .map_err(anyhow::Error::msg)?,
+                        PermissionProfileId::workspace_write(),
+                        ApprovalPolicy::OnRequest,
+                    )
+                },
                 input: request.prompt,
-                working_dir,
                 model_policy: (!request.model.is_empty()).then_some(request.model),
                 deadline: None,
             },

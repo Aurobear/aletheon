@@ -15,8 +15,8 @@ use fabric::hook::{HookContext, HookPoint};
 use fabric::ui_event::InterruptReason;
 use fabric::{
     Clock, EvolutionLogEntry, ExternalIdentityState, ExternalScope, GrantState, OperationId,
-    OperationResult, PrincipalId, ProcessId, ReflectionEntry, ReflectionTrigger, SessionId,
-    LOCAL_OWNER_PRINCIPAL,
+    OperationResult, PrincipalContext, PrincipalId, ProcessId, ReflectionEntry, ReflectionTrigger,
+    SessionId, LOCAL_OWNER_PRINCIPAL,
 };
 use mnemosyne::episodic::EpisodicMemory;
 use serde::Serialize;
@@ -412,7 +412,7 @@ pub trait TurnUseCases: Send + Sync {
         &self,
         id: serde_json::Value,
         message: String,
-        cwd: PathBuf,
+        context: PrincipalContext,
     ) -> serde_json::Value;
     async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult>;
     async fn cancel(&self, id: OperationId) -> anyhow::Result<()>;
@@ -462,9 +462,9 @@ impl TurnUseCases for ProductionTurnUseCases {
         &self,
         id: serde_json::Value,
         message: String,
-        cwd: PathBuf,
+        context: PrincipalContext,
     ) -> serde_json::Value {
-        self.orchestrator.execute_turn(id, &message, cwd).await
+        self.orchestrator.execute_turn(id, &message, context).await
     }
     async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult> {
         self.orchestrator.wait_turn(id).await

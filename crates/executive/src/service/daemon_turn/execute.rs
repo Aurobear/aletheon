@@ -7,7 +7,7 @@ use super::orchestrator::DaemonTurnOrchestrator;
 
 use crate::service::turn_coordinator::TurnExecution;
 use crate::service::turn_policy::TurnPolicy;
-use fabric::{PrincipalId, TurnRequest, TurnResult, TurnStop};
+use fabric::{PrincipalContext, TurnRequest, TurnResult, TurnStop};
 use serde_json::json;
 use tracing::warn;
 
@@ -20,10 +20,9 @@ impl DaemonTurnOrchestrator {
         &self,
         id: serde_json::Value,
         message: &str,
-        working_dir: std::path::PathBuf,
+        context: PrincipalContext,
     ) -> serde_json::Value {
-        self.execute_turn_for_principal(id, message, None, working_dir)
-            .await
+        self.execute_turn_with_context(id, message, context).await
     }
 
     /// Execute a channel turn under an identity established by the channel
@@ -32,23 +31,16 @@ impl DaemonTurnOrchestrator {
         &self,
         id: serde_json::Value,
         message: &str,
-        principal: PrincipalId,
+        context: PrincipalContext,
     ) -> serde_json::Value {
-        self.execute_turn_for_principal(
-            id,
-            message,
-            Some(principal),
-            std::path::PathBuf::from("/var/lib/aletheon"),
-        )
-        .await
+        self.execute_turn_with_context(id, message, context).await
     }
 
-    async fn execute_turn_for_principal(
+    async fn execute_turn_with_context(
         &self,
         id: serde_json::Value,
         message: &str,
-        principal: Option<PrincipalId>,
-        working_dir: std::path::PathBuf,
+        context: PrincipalContext,
     ) -> serde_json::Value {
         // -- Kernel: register main agent --
         let main_pid = match self.ensure_main_agent().await {
@@ -59,16 +51,12 @@ impl DaemonTurnOrchestrator {
             }
         };
 
-        let session_id = self.default_session_id.lock().await.clone();
-        let principal = principal.unwrap_or_else(|| PrincipalId(session_id.clone()));
-
         // The coordinator replaces this placeholder with the authoritative Turn id.
         let turn_request = TurnRequest {
             operation_id: fabric::OperationId::default(),
             process_id: main_pid,
-            session_id: session_id.clone(),
+            context,
             input: message.to_string(),
-            working_dir,
             model_policy: None,
             deadline: None,
         };
@@ -76,6 +64,7 @@ impl DaemonTurnOrchestrator {
         let _turn_token = self.begin_turn_token().await;
         let pipeline = self.pipeline.clone();
         let rpc_id = id.clone();
+        let principal = turn_request.context.principal_id.clone();
         let policy = TurnPolicy::daemon();
         let coordinated = self
             .coordinator
@@ -125,7 +114,7 @@ impl DaemonTurnOrchestrator {
                     outcome: crate::service::post_turn_projection::PostTurnOutcome {
                         session_id: result["projection"]["session_id"]
                             .as_str()
-                            .unwrap_or(&request.session_id)
+                            .unwrap_or(&request.context.thread_id.0)
                             .to_string(),
                         input: request.input.clone(),
                         output: output.clone(),

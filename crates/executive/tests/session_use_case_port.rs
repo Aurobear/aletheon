@@ -9,7 +9,6 @@ use executive::service::legacy_session_service::{
     LegacySessionResources, LegacySessionService, LegacySessionUseCases,
 };
 use executive::service::session_service::SessionService;
-use executive::service::turn_coordinator::ActiveTurn;
 use fabric::{
     Clock, ContentBlock, LlmProvider, LlmResponse, LlmStream, Message, SessionAppendStore,
     SessionId, StopReason, ToolDefinition, Usage,
@@ -81,7 +80,7 @@ async fn service_with_history(
     )])));
     let canonical_store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(temp.path().join("canonical.db")).unwrap());
-    let active: Arc<Mutex<HashMap<String, ActiveTurn>>> = Arc::new(Mutex::new(HashMap::new()));
+    let active = Arc::new(Mutex::new(HashMap::new()));
     let canonical = Arc::new(SessionService::new(canonical_store, active));
     let service = LegacySessionService::new(LegacySessionResources {
         registry,

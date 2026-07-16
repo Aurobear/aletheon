@@ -4,7 +4,9 @@ use aletheon_kernel::KernelRuntime;
 use executive::r#impl::events::{EventReadFilter, SqliteEventSpine};
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::session_service::{InterruptOutcome, SessionService};
-use executive::service::turn_coordinator::{cancelled_result, TurnCoordinator, TurnExecution};
+use executive::service::turn_coordinator::{
+    cancelled_result, ActiveTurnKey, TurnCoordinator, TurnExecution,
+};
 use executive::service::turn_policy::TurnPolicy;
 use fabric::{SessionAppendStore, SessionId, TurnRequest};
 
@@ -12,9 +14,8 @@ fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
     TurnRequest {
         operation_id: fabric::OperationId::default(),
         process_id,
-        session_id: session.into(),
+        context: turn_request_support::context(session, std::env::temp_dir()),
         input: "hello".into(),
-        working_dir: std::env::temp_dir(),
         model_policy: None,
         deadline: None,
     }
@@ -95,10 +96,12 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
     );
 
     let running = coordinator.clone();
+    let active_request = request("active", process.id);
+    let active_key = ActiveTurnKey::from_context(&active_request.context);
     let task = tokio::spawn(async move {
         running
             .submit_with(
-                request("active", process.id),
+                active_request,
                 &TurnPolicy::daemon(),
                 |_request, cancel| async move {
                     cancel.cancelled().await;
@@ -117,7 +120,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
             .active_index()
             .lock()
             .await
-            .contains_key("active")
+            .contains_key(&active_key)
         {
             break;
         }
@@ -144,3 +147,4 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
         .unwrap();
     assert_eq!(items.len(), 2);
 }
+mod turn_request_support;

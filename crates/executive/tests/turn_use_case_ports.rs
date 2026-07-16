@@ -61,9 +61,8 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
     let request = TurnRequest {
         operation_id: OperationId::default(),
         process_id: process.id,
-        session_id: "projection-order".into(),
+        context: turn_request_support::context("projection-order", std::env::temp_dir()),
         input: "hello".into(),
-        working_dir: std::env::temp_dir(),
         model_policy: None,
         deadline: None,
     };
@@ -87,7 +86,7 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
                     projection: Some(PostTurnDispatch {
                         projector,
                         outcome: PostTurnOutcome {
-                            session_id: request.session_id,
+                            session_id: request.context.thread_id.0,
                             input: request.input,
                             output: "answer".into(),
                             turn: 1,
@@ -177,3 +176,4 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
         );
     }
 }
+mod turn_request_support;

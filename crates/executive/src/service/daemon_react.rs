@@ -55,7 +55,7 @@ where
     };
     let session_record = SessionRecord {
         schema_version: SESSION_SCHEMA_VERSION,
-        id: SessionId(request.session_id.clone()),
+        id: SessionId(request.context.thread_id.0.clone()),
         parent: None,
         created_at_ms: 0,
         status: SessionStatus::Active,

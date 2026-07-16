@@ -22,7 +22,6 @@ pub struct DaemonTurnResources {
 pub struct DaemonTurnOrchestrator {
     pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
-    pub(crate) default_session_id: Arc<Mutex<String>>,
     pub(crate) main_agent_process_id: Arc<Mutex<Option<ProcessId>>>,
     pub(crate) turn_token: Arc<Mutex<Option<CancellationToken>>>,
     pub(crate) pipeline: Arc<TurnPipeline>,
@@ -35,7 +34,6 @@ impl DaemonTurnOrchestrator {
         Self {
             kernel: resources.kernel,
             notify_tx: resources.notify,
-            default_session_id: resources.default_session_id,
             main_agent_process_id: resources.main_agent_process_id,
             turn_token: resources.turn_token,
             pipeline: resources.pipeline,

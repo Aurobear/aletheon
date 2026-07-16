@@ -67,7 +67,7 @@ impl ContextSource for ProductionContextSource {
         let system_prefix = format!(
             "{}\n\n{}",
             self.cached_prefix.lock().await.clone(),
-            working_directory_policy_prompt(&request.working_dir)
+            working_directory_policy_prompt(request.context.workspace.cwd())
         );
         let skills = {
             let loader = self.skill_loader.lock().await;
@@ -103,7 +103,7 @@ impl ContextSource for ProductionContextSource {
             .join("\n");
         let conscious = self
             .conscious
-            .latest_context(&AgoraSpaceId(request.session_id.clone()))
+            .latest_context(&AgoraSpaceId(request.context.thread_id.0.clone()))
             .await
             .map_err(|error| ContextAssemblyError::Source(error.to_string()))?;
         conscious

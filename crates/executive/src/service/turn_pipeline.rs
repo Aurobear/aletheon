@@ -125,8 +125,10 @@ impl TurnPipeline {
                 format!("User chat message: {}", &message[..end])
             },
         };
-        let sf_ctx =
-            fabric::Context::new(&turn_request.session_id, turn_request.working_dir.clone());
+        let sf_ctx = fabric::Context::new(
+            &turn_request.context.thread_id.0,
+            turn_request.context.workspace.cwd().to_path_buf(),
+        );
         let verdict = self
             .runtime_ports
             .self_policy
@@ -226,7 +228,7 @@ impl TurnPipeline {
         let existing_messages = {
             let mut full_history = self
                 .canonical_sessions
-                .resume(&fabric::SessionId(turn_request.session_id.clone()))
+                .resume(&fabric::SessionId(turn_request.context.thread_id.0.clone()))
                 .await?
                 .messages;
             if full_history.last().is_some_and(|last| {
@@ -241,7 +243,6 @@ impl TurnPipeline {
         };
 
         let mut context_request = turn_request.clone();
-        context_request.session_id = sess_id.clone();
         context_request.input = effective_message;
         let assembled_context = self
             .context_assembler
@@ -254,7 +255,7 @@ impl TurnPipeline {
         let llm = self.runtime_ports.models.select(&message);
 
         // -- Governed capability setup --
-        let working_dir = turn_request.working_dir.clone();
+        let working_dir = turn_request.context.workspace.cwd().to_path_buf();
 
         // Context Space seed — user turn input is private overlay data, not
         // shared Agora fact. Shared visibility requires an explicit proposal.

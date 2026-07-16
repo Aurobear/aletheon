@@ -23,6 +23,8 @@
 //! | `no_orphan_tasks_after_cancel_and_drain` | OperationScope drain → all tasks recorded |
 //! | `deadline_exceeded_sets_operation_to_cancelled` | Hanging LLM triggers tokio timeout → Cancelled |
 
+mod turn_request_support;
+
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::KernelRuntime;
@@ -155,9 +157,8 @@ async fn every_turn_has_operation_id() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id: handle.id,
-                session_id: "gate-1-turn".into(),
+                context: turn_request_support::context("gate-1-turn", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: None,
             },
@@ -437,9 +438,8 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id: process.id,
-                session_id: "deadline-gate1".into(),
+                context: turn_request_support::context("deadline-gate1", PathBuf::from(".")),
                 input: "should timeout".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(50)),
             },

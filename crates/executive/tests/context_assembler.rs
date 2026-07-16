@@ -21,9 +21,8 @@ fn request(input: &str) -> TurnRequest {
     TurnRequest {
         operation_id: OperationId::new(),
         process_id: ProcessId::new(),
-        session_id: "session".into(),
+        context: turn_request_support::context("session", PathBuf::from("/workspace")),
         input: input.into(),
-        working_dir: PathBuf::from("/workspace"),
         model_policy: None,
         deadline: None,
     }
@@ -138,3 +137,4 @@ fn turn_pipeline_has_one_context_assembly_route() {
     let daemon_modules = include_str!("../src/service/daemon_turn/mod.rs");
     assert!(!daemon_modules.contains("mod injection"));
 }
+mod turn_request_support;

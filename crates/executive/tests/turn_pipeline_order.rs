@@ -22,9 +22,8 @@ fn request(process_id: ProcessId) -> TurnRequest {
     TurnRequest {
         operation_id: OperationId::new(),
         process_id,
-        session_id: "pipeline".into(),
+        context: turn_request_support::context("pipeline", PathBuf::from(".")),
         input: "use tool".into(),
-        working_dir: PathBuf::from("."),
         model_policy: None,
         deadline: None,
     }
@@ -190,3 +189,4 @@ async fn legacy_turn_recall_cannot_bypass_workspace_projection() {
         vec!["llm", "invoke:echo_tool:call_1", "llm"]
     );
 }
+mod turn_request_support;

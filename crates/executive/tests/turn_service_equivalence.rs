@@ -36,9 +36,8 @@ async fn turn_service_submits_one_turn() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id,
-                session_id: "s1".into(),
+                context: turn_request_support::context("s1", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: None,
             },
@@ -195,9 +194,8 @@ async fn daemon_and_exec_turn_services_match_scripted_tool_order_and_output() {
     let make_request = |process_id| TurnRequest {
         operation_id: OperationId::new(),
         process_id,
-        session_id: "equiv".into(),
+        context: turn_request_support::context("equiv", PathBuf::from(".")),
         input: "same request".into(),
-        working_dir: PathBuf::from("."),
         model_policy: None,
         deadline: None,
     };
@@ -320,9 +318,8 @@ async fn deadline_timeout_returns_cancelled() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id,
-                session_id: "deadline".into(),
+                context: turn_request_support::context("deadline", PathBuf::from(".")),
                 input: "should timeout".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(100)),
             },
@@ -350,9 +347,8 @@ async fn no_deadline_completes_normally() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id,
-                session_id: "no-deadline".into(),
+                context: turn_request_support::context("no-deadline", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: None,
             },
@@ -378,9 +374,8 @@ async fn deadline_not_exceeded_completes_normally() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id,
-                session_id: "ample-deadline".into(),
+                context: turn_request_support::context("ample-deadline", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(60_000)),
             },
@@ -409,9 +404,8 @@ async fn clock_measures_elapsed_for_turn_metrics() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id,
-                session_id: "clock-measure".into(),
+                context: turn_request_support::context("clock-measure", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: None,
             },
@@ -454,9 +448,8 @@ async fn clock_deadline_short_returns_cancelled() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id,
-                session_id: "clock-deadline-short".into(),
+                context: turn_request_support::context("clock-deadline-short", PathBuf::from(".")),
                 input: "should timeout".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(1)),
             },
@@ -485,9 +478,8 @@ async fn clock_deadline_long_completes_normally() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id,
-                session_id: "clock-deadline-long".into(),
+                context: turn_request_support::context("clock-deadline-long", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(5000)),
             },
@@ -501,3 +493,4 @@ async fn clock_deadline_long_completes_normally() {
     // With TestClock not advanced, elapsed_ms is 0.
     assert_eq!(result.metrics.elapsed_ms, 0);
 }
+mod turn_request_support;

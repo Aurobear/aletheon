@@ -147,7 +147,7 @@ impl RequestHandler {
     /// Thin delegation to the macro-kernel turn orchestrator.
     pub(super) async fn handle_chat(
         &self,
-        _connection: &super::server::ConnectionContext,
+        connection: &super::server::ConnectionContext,
         id: serde_json::Value,
         request: serde_json::Value,
     ) -> serde_json::Value {
@@ -163,31 +163,66 @@ impl RequestHandler {
                     });
                 }
             };
-        if let Err(error) = self.select_workspace_session(&working_dir).await {
-            return serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32603, "message": error.to_string() }
-            });
-        }
+        let thread_id = match self.select_workspace_session(&working_dir).await {
+            Ok(thread_id) => thread_id,
+            Err(error) => {
+                return serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32603, "message": error.to_string() }
+                })
+            }
+        };
+        let workspace =
+            match fabric::WorkspacePolicy::from_resolved_roots(working_dir.clone(), Vec::new()) {
+                Ok(workspace) => workspace,
+                Err(error) => {
+                    return serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": error }
+                    })
+                }
+            };
+        let context = fabric::PrincipalContext::new(
+            connection.principal_id.clone(),
+            connection.os_principal,
+            connection.connection_id.clone(),
+            thread_id,
+            workspace,
+            fabric::PermissionProfileId::workspace_write(),
+            fabric::ApprovalPolicy::OnRequest,
+        );
         tracing::info!(message = %message, "Chat request received");
         self.ports
             .turn
-            .execute(id, message.to_owned(), working_dir)
+            .execute(id, message.to_owned(), context)
             .await
     }
 
     /// Keep local conversation history scoped to its canonical workspace.
     /// Without this, a TUI launched in one checkout inherits tool paths from
     /// the last TUI that happened to use the daemon's global default session.
-    async fn select_workspace_session(&self, working_dir: &Path) -> anyhow::Result<()> {
+    async fn select_workspace_session(
+        &self,
+        working_dir: &Path,
+    ) -> anyhow::Result<fabric::ThreadId> {
         let session_id = self
             .ports
             .sessions
             .route_workspace(working_dir.to_path_buf())
             .await?;
         tracing::info!(%session_id, cwd = %working_dir.display(), "Selected new workspace session");
-        Ok(())
+        Ok(LegacySessionThreadAdapter::thread_id(session_id))
+    }
+}
+
+/// M0 bridge from the legacy workspace/session router to explicit turn authority.
+struct LegacySessionThreadAdapter;
+
+impl LegacySessionThreadAdapter {
+    fn thread_id(session_id: String) -> fabric::ThreadId {
+        fabric::ThreadId(session_id)
     }
 }
 

@@ -34,9 +34,8 @@ fn request() -> TurnRequest {
     TurnRequest {
         operation_id: OperationId::new(),
         process_id: ProcessId::new(),
-        session_id: "session-1".into(),
+        context: turn_request_support::context("session-1", PathBuf::from("/workspace")),
         input: "current request".into(),
-        working_dir: PathBuf::from("/workspace"),
         model_policy: None,
         deadline: None,
     }
@@ -166,3 +165,4 @@ async fn only_selected_labelled_memory_enters_model_context_with_durable_lineage
         .iter()
         .any(|block| format!("{block:?}").contains("selected memory marker")));
 }
+mod turn_request_support;

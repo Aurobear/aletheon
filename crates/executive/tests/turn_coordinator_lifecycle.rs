@@ -17,9 +17,8 @@ fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
     TurnRequest {
         operation_id: fabric::OperationId::default(),
         process_id,
-        session_id: session.into(),
+        context: turn_request_support::context(session, std::env::temp_dir()),
         input: "hello".into(),
-        working_dir: std::env::temp_dir(),
         model_policy: None,
         deadline: None,
     }
@@ -264,3 +263,4 @@ async fn daemon_then_exec_restart_projects_prior_canonical_context() {
         "second mode must receive prior user+assistant context"
     );
 }
+mod turn_request_support;
