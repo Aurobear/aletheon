@@ -925,9 +925,9 @@ impl RequestHandler {
             crate::service::turn_coordinator::TurnCoordinator::with_event_spine(
                 kernel.clone(),
                 Arc::new(canonical_store),
-                canonical_event_spine,
+                canonical_event_spine.clone(),
             )
-            .with_event_projections(event_projections),
+            .with_event_projections(event_projections.clone()),
         );
         let session_service = Arc::new(crate::service::session_service::SessionService::new(
             coordinator.store(),
@@ -1019,7 +1019,8 @@ impl RequestHandler {
                 )?
                 .with_memory_projection(
                     crate::r#impl::memory_projection::MemoryProjection::new(
-                        memory_group.memory_service.clone(),
+                        canonical_event_spine.clone(),
+                        event_projections.clone(),
                     ),
                 ),
             ))

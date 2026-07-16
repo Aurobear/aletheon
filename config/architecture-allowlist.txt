@@ -12,7 +12,6 @@ core_systems_field|crates/executive/src/core/config/mod.rs| if other.memory.data
 core_systems_field|crates/executive/src/core/config/mod.rs| self.memory.backend = other.memory.backend;
 core_systems_field|crates/executive/src/core/config/mod.rs| self.memory.data_dir = other.memory.data_dir;
 core_systems_field|crates/executive/src/core/runtime_core.rs| gbrain_memory: app_config.memory.gbrain.clone(),
-core_systems_field|crates/executive/src/impl/memory_projection.rs| match self.memory.record(event).await {
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.runtime.clone(),
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::HookRegistry;

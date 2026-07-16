@@ -1,47 +1,19 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use async_trait::async_trait;
+use executive::r#impl::events::{
+    memory_job_projection::MemoryJobProjection, DefaultEventProjectionSet, EventReadFilter,
+    SqliteEventSpine,
+};
 use executive::r#impl::goal::{
     GoalApprovalOutcomeSummary, GoalCompletionSummary, GoalProjectionEvidence,
 };
 use executive::r#impl::memory_projection::{
     ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
 };
-use fabric::{ApprovalId, GoalId};
-use mnemosyne::service::MemoryScope;
-use mnemosyne::{
-    ExperienceEvent, ForgetPolicy, MemorySensitivity, MemoryService, RecallRequest, RecallSet,
-};
+use executive::service::event_projection::SqliteProjectionStore;
+use fabric::{ApprovalId, EventSpine, EventTreeId, GoalId, SpineEvent, UnsequencedEvent};
+use mnemosyne::MemorySensitivity;
 use uuid::Uuid;
-
-#[derive(Default)]
-struct CapturingMemory {
-    events: Mutex<Vec<ExperienceEvent>>,
-    fail: bool,
-}
-
-#[async_trait]
-impl MemoryService for CapturingMemory {
-    async fn record(&self, event: ExperienceEvent) -> anyhow::Result<()> {
-        if self.fail {
-            anyhow::bail!("credential=must-not-leak");
-        }
-        self.events.lock().unwrap().push(event);
-        Ok(())
-    }
-
-    async fn recall(&self, _: RecallRequest) -> anyhow::Result<RecallSet> {
-        Ok(RecallSet { items: vec![] })
-    }
-
-    async fn consolidate(&self, _: MemoryScope) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn forget(&self, _: ForgetPolicy) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
 
 fn summary(final_state: &str, approval_status: &str) -> GoalCompletionSummary {
     GoalCompletionSummary {
@@ -74,15 +46,40 @@ fn evidence() -> GoalProjectionEvidence {
     }
 }
 
+fn harness() -> (
+    MemoryProjection,
+    Arc<SqliteEventSpine>,
+    Arc<DefaultEventProjectionSet>,
+) {
+    let spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
+    let projections = Arc::new(DefaultEventProjectionSet::in_memory());
+    (
+        MemoryProjection::new(spine.clone(), projections.clone()),
+        spine,
+        projections,
+    )
+}
+
+fn read_source(spine: &SqliteEventSpine, source: &str) -> Vec<SpineEvent> {
+    spine
+        .read_tree(
+            EventTreeId::for_root_session(source),
+            EventReadFilter {
+                limit: 100,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+}
+
 #[tokio::test]
-async fn terminal_and_rejected_summaries_include_durable_evidence() {
+async fn terminal_and_rejected_summaries_queue_durable_source_evidence() {
     for (state, approval) in [
         ("completed", "approved"),
         ("failed", "approved"),
         ("awaiting_human", "rejected"),
     ] {
-        let memory = Arc::new(CapturingMemory::default());
-        let projection = MemoryProjection::new(memory.clone());
+        let (projection, spine, _) = harness();
         assert!(matches!(
             projection
                 .project_goal_summary(
@@ -91,27 +88,29 @@ async fn terminal_and_rejected_summaries_include_durable_evidence() {
                     MemorySensitivity::Internal,
                 )
                 .await,
-            ProjectionStatus::Recorded { .. }
+            ProjectionStatus::Queued { .. }
         ));
-        let events = memory.events.lock().unwrap();
-        let ExperienceEvent::GoalOutcome {
-            content, metadata, ..
-        } = &events[0]
-        else {
-            panic!("expected Goal outcome")
+        let events = read_source(&spine, "goal:42");
+        assert_eq!(events.len(), 1);
+        let fabric::EventPayload::Inline { value } = &events[0].payload else {
+            panic!("expected inline candidate source")
         };
-        assert!(content.contains("attempt_ids"));
-        assert!(content.contains("artifact_ids"));
-        assert!(content.contains("verification"));
-        assert_eq!(metadata.provenance.source_commit.as_deref(), Some("abc123"));
-        assert_eq!(metadata.provenance.principal.as_deref(), Some("owner"));
+        assert_eq!(value["kind"], "goal_outcome");
+        assert_eq!(value["content"]["source_commit"], "abc123");
+        assert!(value["content"]["attempt_ids"].is_array());
+        assert!(value["content"]["artifact_ids"].is_array());
+        assert!(value["content"]["verification"].is_array());
+
+        let reducer = SqliteProjectionStore::open(":memory:").unwrap();
+        let jobs = reducer.advance(&MemoryJobProjection, &events).unwrap().0;
+        assert_eq!(jobs.eligible.len(), 1);
+        assert_eq!(jobs.eligible[0].kind, "goal_outcome");
     }
 }
 
 #[tokio::test]
-async fn replayed_terminal_event_uses_the_same_record_id() {
-    let memory = Arc::new(CapturingMemory::default());
-    let projection = MemoryProjection::new(memory.clone());
+async fn replayed_terminal_event_has_one_stable_spine_identity() {
+    let (projection, spine, _) = harness();
     let first = projection
         .project_goal_summary(
             &summary("completed", "approved"),
@@ -127,21 +126,12 @@ async fn replayed_terminal_event_uses_the_same_record_id() {
         )
         .await;
     assert_eq!(first, second);
-    let events = memory.events.lock().unwrap();
-    let ids: Vec<_> = events
-        .iter()
-        .map(|event| match event {
-            ExperienceEvent::GoalOutcome { metadata, .. } => metadata.record_id.clone(),
-            _ => unreachable!(),
-        })
-        .collect();
-    assert_eq!(ids[0], ids[1]);
+    assert_eq!(read_source(&spine, "goal:42").len(), 1);
 }
 
 #[tokio::test]
-async fn revised_decision_preserves_supersedes_edge_and_stable_identity() {
-    let memory = Arc::new(CapturingMemory::default());
-    let projection = MemoryProjection::new(memory.clone());
+async fn revised_decision_preserves_supersedes_edge_in_candidate_source() {
+    let (projection, spine, _) = harness();
     let v1 = ApprovedArchitectureDecision {
         decision_id: "memory-boundary-v1".into(),
         approval_id: "approval-1".into(),
@@ -155,8 +145,11 @@ async fn revised_decision_preserves_supersedes_edge_and_stable_identity() {
         approved: true,
     };
     let first = projection.project_architecture_decision(&v1).await;
-    let ProjectionStatus::Recorded { record_id: old_id } = first else {
-        panic!("decision was not recorded")
+    let ProjectionStatus::Queued {
+        record_id: old_id, ..
+    } = first
+    else {
+        panic!("decision was not queued")
     };
     let mut v2 = v1.clone();
     v2.decision_id = "memory-boundary-v2".into();
@@ -165,18 +158,16 @@ async fn revised_decision_preserves_supersedes_edge_and_stable_identity() {
     v2.supersedes = Some(old_id.clone());
     projection.project_architecture_decision(&v2).await;
 
-    let events = memory.events.lock().unwrap();
-    let ExperienceEvent::ArchitectureDecision { metadata, .. } = &events[1] else {
-        panic!("expected decision")
+    let events = read_source(&spine, "decision:memory-boundary-v2");
+    let fabric::EventPayload::Inline { value } = &events[0].payload else {
+        panic!("expected inline candidate source")
     };
-    assert_eq!(metadata.supersedes.as_deref(), Some(old_id.as_str()));
-    assert_ne!(metadata.record_id, old_id);
+    assert_eq!(value["content"]["supersedes"], old_id);
 }
 
 #[tokio::test]
-async fn unapproved_and_sensitive_records_are_excluded() {
-    let memory = Arc::new(CapturingMemory::default());
-    let projection = MemoryProjection::new(memory.clone());
+async fn unapproved_and_sensitive_records_are_excluded_before_append() {
+    let (projection, spine, _) = harness();
     assert!(matches!(
         projection
             .project_goal_summary(
@@ -203,16 +194,23 @@ async fn unapproved_and_sensitive_records_are_excluded() {
         projection.project_architecture_decision(&decision).await,
         ProjectionStatus::Excluded { .. }
     ));
-    assert!(memory.events.lock().unwrap().is_empty());
+    assert_eq!(spine.metrics().accepted, 0);
+}
+
+struct FailingSpine;
+
+impl EventSpine for FailingSpine {
+    fn append(&self, _: UnsequencedEvent) -> anyhow::Result<SpineEvent> {
+        anyhow::bail!("credential=must-not-leak")
+    }
 }
 
 #[tokio::test]
-async fn memory_outage_is_sanitized_and_does_not_change_source_result() {
-    let memory = Arc::new(CapturingMemory {
-        events: Mutex::new(vec![]),
-        fail: true,
-    });
-    let projection = MemoryProjection::new(memory);
+async fn spine_outage_is_sanitized_and_does_not_change_source_result() {
+    let projection = MemoryProjection::new(
+        Arc::new(FailingSpine),
+        Arc::new(executive::service::event_projection::NoopEventProjectionSink),
+    );
     assert_eq!(
         projection
             .project_goal_summary(
@@ -226,5 +224,8 @@ async fn memory_outage_is_sanitized_and_does_not_change_source_result() {
     let health = projection.health();
     let health = health.lock().unwrap();
     assert!(health.degraded);
-    assert_eq!(health.last_error_category, Some("memory_record_failed"));
+    assert_eq!(
+        health.last_error_category,
+        Some("event_spine_append_failed")
+    );
 }

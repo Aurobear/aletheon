@@ -17,6 +17,12 @@ pub struct MemoryExtractionJob {
     pub kind: String,
 }
 
+#[derive(Deserialize)]
+struct ExplicitMemoryCandidate {
+    record_id: String,
+    kind: String,
+}
+
 pub struct MemoryJobProjection;
 
 impl EventProjection for MemoryJobProjection {
@@ -26,17 +32,33 @@ impl EventProjection for MemoryJobProjection {
         ProjectionDescriptor {
             name: "memory-jobs",
             version: 1,
-            accepted_schemas: &[fabric::SchemaId::TURN_EVENT_V1],
+            accepted_schemas: &[
+                fabric::SchemaId::TURN_EVENT_V1,
+                fabric::SchemaId::EVENT_MEMORY_CANDIDATE_V1,
+            ],
         }
     }
 
     fn apply(&self, state: &mut Self::State, event: &SpineEvent) -> Result<(), ProjectionError> {
-        if event.visibility != EventVisibility::ModelVisible {
-            return Ok(());
-        }
         let EventPayload::Inline { value } = &event.payload else {
             return Ok(());
         };
+        if event.schema.0 == fabric::SchemaId::EVENT_MEMORY_CANDIDATE_V1 {
+            let candidate: ExplicitMemoryCandidate = serde_json::from_value(value.clone())
+                .map_err(anyhow::Error::from)
+                .map_err(ProjectionError::Storage)?;
+            state.eligible.push(MemoryExtractionJob {
+                source_event_id: event.position.event_id.to_string(),
+                source_sequence: event.position.sequence.0,
+                session_id: event.identity.session_id.clone(),
+                item_id: candidate.record_id,
+                kind: candidate.kind,
+            });
+            return Ok(());
+        }
+        if event.visibility != EventVisibility::ModelVisible {
+            return Ok(());
+        }
         let item: ItemRecord = serde_json::from_value(value.clone())
             .map_err(anyhow::Error::from)
             .map_err(ProjectionError::Storage)?;
