@@ -726,6 +726,63 @@
       },
       "type": "object"
     },
+    "GrokHardeningConfig": {
+      "additionalProperties": false,
+      "description": "Toggles for the staged Grok-hardening mechanisms. Fail-closed on typos\n(`deny_unknown_fields`) so a misspelled flag never silently reads as off.",
+      "properties": {
+        "acp_adapter": {
+          "default": false,
+          "description": "G8 — ACP session-update adapter.",
+          "type": "boolean"
+        },
+        "checkpoint_rewind": {
+          "default": false,
+          "description": "G4 — workspace checkpoint / rewind.",
+          "type": "boolean"
+        },
+        "compaction_v2": {
+          "default": false,
+          "description": "C1 — compaction guardrails + strategy selection (maybe_compact_v2).",
+          "type": "boolean"
+        },
+        "folder_trust": {
+          "default": false,
+          "description": "G1 — folder trust gating of repo-executable config loading.",
+          "type": "boolean"
+        },
+        "lifecycle_hooks": {
+          "default": false,
+          "description": "G5 — typed lifecycle contributor / hook effects.",
+          "type": "boolean"
+        },
+        "memory_search": {
+          "default": false,
+          "description": "G7 — endpoint-scoped memory-search credentials.",
+          "type": "boolean"
+        },
+        "prompt_queue": {
+          "default": false,
+          "description": "G3 — prompt queue / interjection with optimistic concurrency.",
+          "type": "boolean"
+        },
+        "sandbox_profiles": {
+          "default": false,
+          "description": "S1 — layered sandbox profile enforcement.",
+          "type": "boolean"
+        },
+        "streaming_tools": {
+          "default": false,
+          "description": "G2 — streaming tool-execution progress events.",
+          "type": "boolean"
+        },
+        "subagent_settlement": {
+          "default": false,
+          "description": "G6 — subagent resource settlement state machine.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "HooksConfig": {
       "additionalProperties": false,
       "description": "Hook script configuration.\n\nEach field is a list of script paths to execute at the specified lifecycle point.\nPaths may use `~` for home directory expansion.",
@@ -1348,6 +1405,21 @@
         }
       ],
       "default": null
+    },
+    "grok_hardening": {
+      "$ref": "#/$defs/GrokHardeningConfig",
+      "default": {
+        "acp_adapter": false,
+        "checkpoint_rewind": false,
+        "compaction_v2": false,
+        "folder_trust": false,
+        "lifecycle_hooks": false,
+        "memory_search": false,
+        "prompt_queue": false,
+        "sandbox_profiles": false,
+        "streaming_tools": false,
+        "subagent_settlement": false
+      }
     },
     "hooks": {
       "$ref": "#/$defs/HooksConfig",

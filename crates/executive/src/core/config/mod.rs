@@ -5,6 +5,7 @@
 
 mod agent;
 mod genome;
+mod grok_hardening;
 mod infra;
 mod provenance;
 mod provider;
@@ -21,6 +22,7 @@ pub use cognit::config::{
     PiRuntimeConfig, RoleRuntimeConfig,
 };
 pub use genome::GenomeConfig;
+pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{
     DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig, TelegramConfig,
 };
@@ -55,6 +57,7 @@ pub struct AppConfig {
     pub goal_runtime: Option<GoalRuntimeConfig>,
     pub pi_runtime: PiRuntimeConfig,
     pub deployment: DeploymentConfig,
+    pub grok_hardening: GrokHardeningConfig,
 }
 
 impl AppConfig {
