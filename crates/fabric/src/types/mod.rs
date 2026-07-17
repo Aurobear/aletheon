@@ -46,3 +46,5 @@ pub mod space;
 pub mod time;
 
 pub mod workspace;
+
+pub mod workspace_trust;
