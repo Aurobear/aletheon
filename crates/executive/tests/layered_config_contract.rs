@@ -100,16 +100,26 @@ fn checked_in_schema_is_deterministic() {
 
 #[test]
 fn checked_in_leju_deepseek_uses_the_openai_transport() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/default.toml");
-    let config = AppConfig::from_file(&path).unwrap();
-    let provider = config
-        .providers
-        .iter()
-        .find(|provider| provider.name == "leju")
-        .expect("default LejuRobot provider must exist");
-    assert_eq!(provider.transport, Transport::Openai);
-    assert!(provider
-        .models
-        .iter()
-        .any(|model| model == "deepseek/deepseek-v4-pro"));
+    for relative_path in [
+        "../../config/default.toml",
+        "../../config/production.toml.example",
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
+        let config = AppConfig::from_file(&path).unwrap();
+        let provider = config
+            .providers
+            .iter()
+            .find(|provider| provider.name == "leju")
+            .unwrap_or_else(|| panic!("LejuRobot provider must exist in {}", path.display()));
+        assert_eq!(provider.transport, Transport::Openai);
+        assert!(provider
+            .models
+            .iter()
+            .any(|model| model == "deepseek/deepseek-v4-pro"));
+        assert_eq!(config.agent.default_provider.as_deref(), Some("leju"));
+        assert_eq!(
+            config.agent.default_model.as_deref(),
+            Some("deepseek/deepseek-v4-pro")
+        );
+    }
 }
