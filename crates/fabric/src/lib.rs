@@ -279,6 +279,10 @@ pub use types::tool::{
     AgentToolContext, ApprovalOwner, PendingApprovalKey, PermissionLevel as ToolPermissionLevel,
     ThreadGrantKey, Tool, ToolApprovalAuthority, ToolContext, ToolResult, ToolResultMeta,
 };
+pub use types::tool_stream::{
+    tool_event_channel, ToolEventSink, ToolExecutionError, ToolExecutionEvent, ToolNotification,
+    ToolNotificationKind, ToolProgress, TOOL_PROGRESS_CHANNEL_CAP,
+};
 pub use types::turn::{
     TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop, TurnTerminalStatus,
 };

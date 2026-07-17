@@ -33,6 +33,7 @@ pub mod resource;
 pub mod sandbox;
 pub mod session;
 pub mod tool;
+pub mod tool_stream;
 pub mod vision;
 
 pub mod operation;

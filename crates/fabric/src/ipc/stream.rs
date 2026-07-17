@@ -200,6 +200,17 @@ pub enum TurnEventV1 {
         is_error: bool,
         execution_time_ms: u64,
     },
+    /// Streaming tool progress (G2). Does not enter the model context by
+    /// default; clients may display it. Zero-to-many precede the single
+    /// authoritative `ToolResult` terminal for a given `call_id`.
+    ToolProgress {
+        name: String,
+        call_id: String,
+        /// "text" | "structured" | "resource_ref"
+        kind: String,
+        /// text chunk, structured JSON, or resource uri.
+        payload: serde_json::Value,
+    },
 
     // -- Bookkeeping --
     Usage {
