@@ -226,8 +226,7 @@ async fn review_priority(config: SelfFieldConfig) -> f64 {
     let ctx = test_ctx();
     let _verdict = sf.review(&intent, &ctx).await.unwrap();
     // Priority is 0.0 when no focus topic exists (e.g., baseline care is zero).
-    sf.attention()
-        .current_focus()
+    sf.current_attention_focus()
         .map(|f| f.priority)
         .unwrap_or(0.0)
 }

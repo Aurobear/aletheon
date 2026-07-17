@@ -1,8 +1,8 @@
 //! End-to-end integration test for the self-evolution persistence loop.
 //!
-//! Tests the complete cycle: create layers, mutate state, save to SQLite,
-//! load fresh layers from store, verify all state preserved. Then repeat
-//! a second cycle to verify accumulated evolution.
+//! Tests persistence of SelfField's constitutional/read-model layers. Lived
+//! self evolution is covered by the versioned Dasein transition/ledger tests;
+//! these legacy layers intentionally expose no public raw mutation setters.
 
 use chrono::Duration;
 use dasein::core::attention::AttentionLayer;
@@ -90,17 +90,12 @@ fn cycle1_attention_roundtrip() {
 }
 
 #[test]
-fn cycle1_care_weight_adjustment_roundtrip() {
+fn cycle1_constitutional_care_roundtrip() {
     let (_tmp, store) = temp_store();
 
     let care = CareLayer::new();
     // Default: safety=1.0, user_intent=0.8, efficiency=0.5, learning=0.3
     assert_eq!(care.weight_of("efficiency"), Some(0.5));
-
-    // Adjust efficiency weight upward
-    let result = care.adjust_weight("efficiency", 0.2);
-    assert_eq!(result, Some((0.5, 0.7)));
-    assert_eq!(care.weight_of("efficiency"), Some(0.7));
 
     care.save_to_store(&store).expect("save care");
 
@@ -108,9 +103,8 @@ fn cycle1_care_weight_adjustment_roundtrip() {
     let mut loaded = CareLayer::new(); // starts with defaults again
     loaded.load_from_store(&store).expect("load care");
 
-    // Verify the adjusted weight persisted
-    assert!(approx_eq(loaded.weight_of("efficiency").unwrap(), 0.7));
-    // Other defaults should also be present
+    // The immutable constitutional defaults survive restart.
+    assert!(approx_eq(loaded.weight_of("efficiency").unwrap(), 0.5));
     assert!(approx_eq(loaded.weight_of("safety").unwrap(), 1.0));
     assert!(approx_eq(loaded.weight_of("user_intent").unwrap(), 0.8));
     assert!(approx_eq(loaded.weight_of("learning").unwrap(), 0.3));
@@ -179,18 +173,10 @@ fn cycle1_identity_roundtrip() {
         test_clock(),
     );
 
-    // Apply a mutation to build history
-    identity.mutate(
-        None,
-        Some("enhanced runtime with persistence".to_string()),
-        Some("0.2.0".to_string()),
-        "added persistence layer",
-    );
-
     let current = identity.current();
     assert_eq!(current.name, "aletheon");
-    assert_eq!(current.version, "0.2.0");
-    assert_eq!(identity.mutation_count(), 1);
+    assert_eq!(current.version, "0.1.0");
+    assert_eq!(identity.mutation_count(), 0);
 
     identity.save_to_store(&store).expect("save identity");
 
@@ -202,16 +188,12 @@ fn cycle1_identity_roundtrip() {
     assert_eq!(loaded_current.name, "aletheon");
     assert_eq!(
         loaded_current.description,
-        "enhanced runtime with persistence"
+        "persistent self-evolving runtime"
     );
-    assert_eq!(loaded_current.version, "0.2.0");
-    assert!(loaded_current.last_mutation.is_some());
-    assert_eq!(loaded.mutation_count(), 1);
-
-    let history = loaded.history();
-    assert_eq!(history[0].identity.name, "aletheon");
-    assert_eq!(history[0].identity.version, "0.1.0");
-    assert_eq!(history[0].reason, "added persistence layer");
+    assert_eq!(loaded_current.version, "0.1.0");
+    assert!(loaded_current.last_mutation.is_none());
+    assert_eq!(loaded.mutation_count(), 0);
+    assert!(loaded.history().is_empty());
 }
 
 #[test]
@@ -311,10 +293,8 @@ fn full_e2e_two_cycles() {
     attention.attend("code_review", 0.9);
     attention.attend("refactoring", 0.5);
 
-    // -- Care: adjust efficiency weight --
+    // -- Care: immutable constitutional defaults --
     let care = CareLayer::new();
-    care.adjust_weight("efficiency", 0.2); // 0.5 -> 0.7
-    care.adjust_weight("learning", 0.15); // 0.3 -> 0.45
 
     // -- Boundary: add a rule (Deny, so we can relax it in cycle 2) --
     let mut boundary = BoundaryLayer::new();
@@ -380,8 +360,8 @@ fn full_e2e_two_cycles() {
     assert_eq!(attention2.all_topics().len(), 2);
     assert_eq!(attention2.current_focus().unwrap().topic, "code_review");
 
-    assert!(approx_eq(care2.weight_of("efficiency").unwrap(), 0.7));
-    assert!(approx_eq(care2.weight_of("learning").unwrap(), 0.45));
+    assert!(approx_eq(care2.weight_of("efficiency").unwrap(), 0.5));
+    assert!(approx_eq(care2.weight_of("learning").unwrap(), 0.3));
     assert!(approx_eq(care2.weight_of("safety").unwrap(), 1.0));
 
     assert_eq!(boundary2.rule_count(), 1);
@@ -420,10 +400,6 @@ fn full_e2e_two_cycles() {
     // -- Add new attention topic --
     attention2.attend("evolution_tracking", 0.7);
 
-    // -- Adjust care weights again --
-    care2.adjust_weight("learning", 0.1); // 0.45 -> 0.55
-    care2.adjust_weight("safety", -0.1); // 1.0 -> 0.9 (safety floor = 0.8)
-
     // -- Relax the deploy boundary rule --
     assert!(boundary2.relax_rule("deploy.*"));
     // It should now be Sandbox (already was, but let's also add a new rule)
@@ -436,14 +412,6 @@ fn full_e2e_two_cycles() {
         immutable: false,
     });
 
-    // -- Mutate identity --
-    identity2.mutate(
-        None,
-        Some("evolved persistent runtime".to_string()),
-        Some("0.2.0".to_string()),
-        "cycle 2 evolution",
-    );
-
     // -- Record another mutation review --
     mutation2.review(&MutationIntent {
         target: "boundary_rules".to_string(),
@@ -453,7 +421,7 @@ fn full_e2e_two_cycles() {
     });
 
     // -- Extend continuity --
-    continuity2.record("aletheon", "0.2.0", "cycle_2_complete");
+    continuity2.record("aletheon", "0.1.0", "cycle_2_complete");
 
     // -- Save everything again --
     narrative2.save_to_store(&store).unwrap();
@@ -503,11 +471,11 @@ fn full_e2e_two_cycles() {
     assert!(topic_names.contains(&"refactoring".to_string()));
     assert!(topic_names.contains(&"evolution_tracking".to_string()));
 
-    // -- Care: accumulated adjustments --
-    assert!(approx_eq(care3.weight_of("efficiency").unwrap(), 0.7)); // unchanged from cycle 1
-    assert!(approx_eq(care3.weight_of("learning").unwrap(), 0.55)); // 0.45 + 0.1
-    assert!(approx_eq(care3.weight_of("safety").unwrap(), 0.9)); // 1.0 - 0.1
-    assert!(approx_eq(care3.weight_of("user_intent").unwrap(), 0.8)); // default, never touched
+    // -- Care: constitutional defaults remain unchanged --
+    assert!(approx_eq(care3.weight_of("efficiency").unwrap(), 0.5));
+    assert!(approx_eq(care3.weight_of("learning").unwrap(), 0.3));
+    assert!(approx_eq(care3.weight_of("safety").unwrap(), 1.0));
+    assert!(approx_eq(care3.weight_of("user_intent").unwrap(), 0.8));
 
     // -- Boundary: 2 rules now --
     assert_eq!(boundary3.rule_count(), 2);
@@ -530,17 +498,12 @@ fn full_e2e_two_cycles() {
         Some(Verdict::RequireConfirmation { .. })
     ));
 
-    // -- Identity: evolved --
+    // -- Identity: constitutional identity remains unchanged --
     assert_eq!(identity3.current().name, "aletheon");
-    assert_eq!(identity3.current().version, "0.2.0");
-    assert_eq!(
-        identity3.current().description,
-        "evolved persistent runtime"
-    );
-    assert_eq!(identity3.mutation_count(), 1);
-    let history = identity3.history();
-    assert_eq!(history[0].identity.version, "0.1.0");
-    assert_eq!(history[0].reason, "cycle 2 evolution");
+    assert_eq!(identity3.current().version, "0.1.0");
+    assert_eq!(identity3.current().description, "persistent runtime");
+    assert_eq!(identity3.mutation_count(), 0);
+    assert!(identity3.history().is_empty());
 
     // -- Mutation: 2 records --
     assert_eq!(mutation3.records().len(), 2);
@@ -561,5 +524,5 @@ fn full_e2e_two_cycles() {
     assert_eq!(cont_records[0].event, "initialized");
     assert_eq!(cont_records[1].event, "cycle_1_complete");
     assert_eq!(cont_records[2].event, "cycle_2_complete");
-    assert_eq!(cont_records[2].identity_version, "0.2.0");
+    assert_eq!(cont_records[2].identity_version, "0.1.0");
 }

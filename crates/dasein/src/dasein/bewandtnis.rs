@@ -37,13 +37,14 @@ impl Bewandtnisganzheit {
     }
 
     /// Add an entity to the network.
-    pub fn add_entity(&self, node: BewandtnisNode) {
+    pub(crate) fn add_entity(&self, node: BewandtnisNode) {
         let mut nodes = self.nodes.write();
         nodes.insert(node.id.clone(), node);
     }
 
     /// Remove an entity from the network.
-    pub fn remove_entity(&self, id: &EntityId) -> Option<BewandtnisNode> {
+    #[cfg(test)]
+    pub(crate) fn remove_entity(&self, id: &EntityId) -> Option<BewandtnisNode> {
         let mut nodes = self.nodes.write();
         let mut edges = self.edges.write();
         edges.retain(|e| e.from != *id && e.to != *id);
@@ -51,7 +52,8 @@ impl Bewandtnisganzheit {
     }
 
     /// Add a relationship between entities.
-    pub fn add_edge(&self, edge: BewandtnisEdge) {
+    #[cfg(test)]
+    pub(crate) fn add_edge(&self, edge: BewandtnisEdge) {
         // Verify both endpoints exist
         let nodes = self.nodes.read();
         if nodes.contains_key(&edge.from) && nodes.contains_key(&edge.to) {
@@ -62,7 +64,8 @@ impl Bewandtnisganzheit {
     }
 
     /// Update the readiness state of an entity.
-    pub fn update_readiness(
+    #[cfg(test)]
+    pub(crate) fn update_readiness(
         &self,
         id: &EntityId,
         new_state: ReadinessState,
@@ -77,7 +80,7 @@ impl Bewandtnisganzheit {
     }
 
     /// Compare-and-set readiness for reducer transitions.
-    pub fn update_readiness_if(
+    pub(crate) fn update_readiness_if(
         &self,
         id: &EntityId,
         expected: &ReadinessState,
@@ -150,7 +153,8 @@ impl Bewandtnisganzheit {
     }
 
     /// Set the ultimate concern of the whole network.
-    pub fn set_ultimate_concern(&self, concern: Option<String>) {
+    #[cfg(test)]
+    pub(crate) fn set_ultimate_concern(&self, concern: Option<String>) {
         let mut uc = self.ultimate_concern.write();
         *uc = concern;
     }
@@ -185,7 +189,8 @@ impl Bewandtnisganzheit {
     }
 
     /// Adjust mood influence on the world.
-    pub fn adjust_for_mood(&self, mood: &Stimmung) {
+    #[cfg(test)]
+    pub(crate) fn adjust_for_mood(&self, mood: &Stimmung) {
         // In Angst, things that were transparent become noticed
         if let Stimmung::Angst { .. } = mood {
             let mut nodes = self.nodes.write();

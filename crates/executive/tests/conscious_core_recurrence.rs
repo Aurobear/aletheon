@@ -9,8 +9,6 @@ use agora::{
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
-use dasein::dasein::care_structure::Concern;
-use dasein::dasein::types::TemporalPosition;
 use executive::service::conscious_core_coordinator::{
     ConsciousCoreConfig, ConsciousCoreCoordinator,
 };
@@ -18,6 +16,10 @@ use executive::service::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, ConsciousCandidatePort,
 };
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use fabric::dasein::{
+    ExperienceProvenance, ExperienceSource, InterpretedExperience, SelfEventId,
+    SelfTransitionRequest, SelfVersion,
+};
 use fabric::{
     AgentId, AgentProfileId, AgoraSpaceId, ConsciousProcessor, ContentId,
     LatestConsciousContextPort, MonoDeadline, MonoTime, NamespaceId, PredictionFrame, ProcessId,
@@ -135,14 +137,26 @@ async fn fixture() -> Fixture {
         .unwrap()
         .id;
     let dasein = Arc::new(dasein::dasein::DaseinModule::new(clock.clone()).0);
-    dasein.care().add_concern(Concern {
-        id: "safety".into(),
-        purpose: "safety review".into(),
-        urgency: 0.9,
-        involvement_chain: vec![],
-        last_attended: TemporalPosition(0),
-        mood_tone: fabric::dasein::Stimmung::Gelassenheit,
-    });
+    dasein
+        .transition(SelfTransitionRequest {
+            event_id: SelfEventId::new(),
+            source: ExperienceSource::Runtime,
+            observed_at: WallTime(1_000),
+            content: InterpretedExperience::ConcernObserved {
+                id: "safety".into(),
+                purpose: "safety review".into(),
+                urgency: 0.9,
+            },
+            provenance: ExperienceProvenance {
+                producer: "conscious-core-recurrence-fixture".into(),
+                session_id: None,
+                turn_id: None,
+                source_ref: None,
+            },
+            expected_version: SelfVersion(0),
+        })
+        .await
+        .unwrap();
     let dasein_port = Arc::new(DaseinWorkspaceAdapter::new(dasein, clock));
     let store = Arc::new(SqliteBroadcastStore::open_in_memory().unwrap());
     let hub = Arc::new(BroadcastHub::new(BroadcastHubConfig::default(), store.clone()).unwrap());
@@ -282,8 +296,8 @@ async fn observation_selection_self_integration_and_processor_response_recur() {
         vec![ContentId(Uuid::from_u128(100))]
     );
     let transition = first.dasein_transition.as_ref().unwrap();
-    assert_eq!(transition.previous_version.0, 0);
-    assert_eq!(transition.current_version.0, 1);
+    assert_eq!(transition.previous_version.0, 1);
+    assert_eq!(transition.current_version.0, 2);
     assert_eq!(fixture.first_calls.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.second_calls.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -300,7 +314,7 @@ async fn observation_selection_self_integration_and_processor_response_recur() {
         .unwrap()
         .unwrap();
     assert_eq!(integration.transition.event_id, transition.event_id);
-    assert_eq!(integration.transition.current_version.0, 1);
+    assert_eq!(integration.transition.current_version.0, 2);
 
     let first_context = fixture
         .coordinator
@@ -326,7 +340,7 @@ async fn observation_selection_self_integration_and_processor_response_recur() {
         second_broadcast.winner_ids[0],
         ContentId(Uuid::from_u128(300))
     );
-    assert_eq!(second.dasein_transition.unwrap().current_version.0, 2);
+    assert_eq!(second.dasein_transition.unwrap().current_version.0, 3);
     assert_eq!(second_broadcast.epoch.0, first_broadcast.epoch.0 + 1);
 }
 

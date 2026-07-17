@@ -185,8 +185,7 @@ impl SelfStatusPort for SelfStatusAdapter {
             boundary_rules: self_field.boundary().rule_count(),
             boundary_immutable: self_field.boundary().immutable_rule_count(),
             attention_focus: self_field
-                .attention()
-                .current_focus()
+                .current_attention_focus()
                 .map(|focus| focus.topic)
                 .unwrap_or_default(),
         }

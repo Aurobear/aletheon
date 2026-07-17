@@ -1,5 +1,5 @@
 use super::bewandtnis::Bewandtnisganzheit;
-use super::care_structure::{CareAction, CareStructure};
+use super::care_structure::{CareAction, CareStructure, Concern};
 use super::ledger::SelfLedger;
 use super::self_model::{
     AssertionSource, MutableSelfModel, NegationReason, SelfAssertion, SelfPossibility,
@@ -305,6 +305,21 @@ impl DaseinStateEngine {
                     },
                 };
                 self.set_mood(next, &mut emitted);
+            }
+            InterpretedExperience::ConcernObserved {
+                id,
+                purpose,
+                urgency,
+            } => {
+                self.care.add_concern(Concern {
+                    id: id.clone(),
+                    purpose: purpose.clone(),
+                    urgency: *urgency,
+                    involvement_chain: Vec::new(),
+                    last_attended: self.temporality.current_position(),
+                    mood_tone: self.mood.read().clone(),
+                });
+                self.synthesize_mood(&mut emitted);
             }
             InterpretedExperience::KnowledgeAsserted {
                 assertions,

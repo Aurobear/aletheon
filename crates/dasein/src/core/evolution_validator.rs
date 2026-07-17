@@ -209,7 +209,8 @@ impl EvolutionValidator {
     /// Apply a batch of adjustments to SelfField, validating each one.
     ///
     /// Only Approved and Modified adjustments are applied.
-    pub fn apply_adjustments(
+    #[cfg(test)]
+    pub(crate) fn apply_adjustments(
         &self,
         adjustments: &[BehaviorAdjustment],
         self_field: &mut SelfField,
@@ -238,6 +239,7 @@ impl EvolutionValidator {
     }
 
     /// Apply a single (already validated) adjustment to SelfField.
+    #[cfg(test)]
     fn apply_single(&self, adjustment: &BehaviorAdjustment, self_field: &mut SelfField) {
         if adjustment.target.starts_with("care.") {
             let parts: Vec<&str> = adjustment.target.split('.').collect();
@@ -274,7 +276,7 @@ impl EvolutionValidator {
 
         let boundary_rule_count = self_field.boundary().rule_count();
 
-        let attention_focus = self_field.attention().all_topics();
+        let attention_focus = self_field.attention_topics();
 
         BaselineSnapshot {
             care_weights,
@@ -320,7 +322,8 @@ impl EvolutionValidator {
     ///
     /// Restores care weights and boundary rule count. Attention focus
     /// is not rolled back as it represents real-time state.
-    pub fn rollback(&self, baseline: &BaselineSnapshot, self_field: &mut SelfField) {
+    #[cfg(test)]
+    pub(crate) fn rollback(&self, baseline: &BaselineSnapshot, self_field: &mut SelfField) {
         // Restore care weights
         for (topic, target_weight) in &baseline.care_weights {
             if let Some(current_weight) = self_field.care().weight_of(topic) {

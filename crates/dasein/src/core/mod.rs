@@ -1,4 +1,4 @@
-//! SelfField — the main struct wiring all 8 internal layers.
+//! SelfField — constitutional policy facade and self-state read projection.
 //!
 //! Implements `SelfFieldOps` (the policy engine trait) and `Subsystem`
 //! (the lifecycle trait). The `review()` pipeline runs:
@@ -88,7 +88,12 @@ impl Default for SelfFieldConfig {
     }
 }
 
-/// SelfField — the policy engine implementing `SelfFieldOps`.
+/// Constitutional policy facade implementing `SelfFieldOps`.
+///
+/// Mutable lived, autobiographical and reflective state belongs to the
+/// versioned `DaseinModule` reducer. These legacy layers provide policy gates,
+/// audit projections and persisted configuration, not an alternate public
+/// self-mutation authority.
 pub struct SelfField {
     boundary: BoundaryLayer,
     identity: IdentityLayer,
@@ -190,8 +195,9 @@ impl SelfField {
         }
     }
 
-    /// Access the boundary layer (for configuring rules at runtime).
-    pub fn boundary_mut(&mut self) -> &mut BoundaryLayer {
+    /// Test-only access to legacy policy configuration.
+    #[cfg(test)]
+    pub(crate) fn boundary_mut(&mut self) -> &mut BoundaryLayer {
         &mut self.boundary
     }
 
@@ -217,21 +223,23 @@ impl SelfField {
         &self.care
     }
 
-    /// Access the care layer (mutable).
-    pub fn care_mut(&mut self) -> &CareLayer {
+    /// Test-only access for the legacy validator. Production state changes use
+    /// `DaseinModule::transition` and return a versioned receipt.
+    #[cfg(test)]
+    pub(crate) fn care_mut(&mut self) -> &CareLayer {
         // CareLayer uses interior mutability (RwLock), so &CareLayer suffices for mutation.
         // This method exists for API clarity when the caller intends to modify.
         &self.care
     }
 
-    /// Access the narrative layer.
-    pub fn narrative(&self) -> &NarrativeLayer {
-        &self.narrative
+    /// Read the current attention projection without exposing its mutators.
+    pub fn current_attention_focus(&self) -> Option<crate::core::attention::FocusTopic> {
+        self.attention.current_focus()
     }
 
-    /// Access the attention layer.
-    pub fn attention(&self) -> &AttentionLayer {
-        &self.attention
+    /// Read all current attention projections without exposing their mutators.
+    pub fn attention_topics(&self) -> Vec<crate::core::attention::FocusTopic> {
+        self.attention.all_topics()
     }
 
     /// Check for loops (called by Runtime during ReAct loop).
