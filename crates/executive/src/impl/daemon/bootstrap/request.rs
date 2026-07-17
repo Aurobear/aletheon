@@ -505,23 +505,7 @@ impl RequestHandler {
         let cached_prefix = PrefixBuilder::build(&config.system_prompt, skill_loader.skills());
         info!(len = cached_prefix.len(), "Cache-stable prefix built");
 
-        // CommunicationBus
-        let bus = Arc::new(CommunicationBus::new());
-        {
-            let sf_module = crate::r#impl::engine::modules::self_field_module::SelfFieldModule::new(
-                self_field.clone(),
-            );
-            let bus_clone = bus.clone();
-            tokio::spawn(async move { sf_module.run(bus_clone).await });
-        }
         let tools = Arc::new(Mutex::new(tools));
-        {
-            let body_module =
-                crate::r#impl::engine::modules::body_module::BodyModule::new(tools.clone());
-            let bus_clone = bus.clone();
-            tokio::spawn(async move { body_module.run(bus_clone).await });
-        }
-        info!("CommunicationBus created with SelfField and Body module handlers");
 
         // StormBreaker, CheckpointStore, SkillRouter, AgentLoader
         let storm_breaker = Arc::new(Mutex::new(StormBreaker::new(
