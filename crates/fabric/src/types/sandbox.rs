@@ -225,3 +225,180 @@ impl SandboxExecutor {
             .collect()
     }
 }
+
+// ---------------------------------------------------------------------------
+// S1: sandbox profile layer. Named profiles resolve to deny paths + network
+// restriction + read/write roots. Layered config: global then project, where
+// project is ADDITIVE ONLY (cannot redefine a global profile — anti-hollowing).
+// See docs/plans/grok/exec/S1-sandbox.md.
+// ---------------------------------------------------------------------------
+
+/// A named sandbox profile config (from trusted daemon config, never repo).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct SandboxProfileConfig {
+    /// Built-in base to inherit ("workspace" | "read-only" | "strict").
+    /// Custom profiles cannot extend other custom profiles.
+    #[serde(default)]
+    pub extends: Option<String>,
+    #[serde(default)]
+    pub restrict_network: Option<bool>,
+    #[serde(default)]
+    pub read_only: Vec<String>,
+    #[serde(default)]
+    pub read_write: Vec<String>,
+    /// Deny entries: exact paths or globs (`**/*.pem`). Read + write denied.
+    #[serde(default)]
+    pub deny: Vec<String>,
+}
+
+/// Layered sandbox profiles. Global loads first; project merges additively.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct SandboxProfiles {
+    #[serde(default)]
+    pub profiles: BTreeMap<String, SandboxProfileConfig>,
+}
+
+impl SandboxProfiles {
+    /// Additive project merge: only new names are added. A name already defined
+    /// globally is preserved (a malicious workspace cannot hollow out a trusted
+    /// profile's deny/read_write while keeping the trusted name).
+    pub fn merge_project_additive(&mut self, project: SandboxProfiles) {
+        for (name, cfg) in project.profiles {
+            self.profiles.entry(name).or_insert(cfg);
+        }
+    }
+
+    /// Names that the project attempted to redefine (differ from global). For
+    /// surfacing a warning; these redefinitions are ignored by the merge.
+    pub fn conflicting_redefinitions(&self, project: &SandboxProfiles) -> Vec<String> {
+        let mut names: Vec<String> = project
+            .profiles
+            .iter()
+            .filter_map(|(name, pcfg)| {
+                self.profiles
+                    .get(name)
+                    .filter(|gcfg| *gcfg != pcfg)
+                    .map(|_| name.clone())
+            })
+            .collect();
+        names.sort_unstable();
+        names
+    }
+}
+
+/// Built-in / custom profile name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileName {
+    Workspace,
+    ReadOnly,
+    Strict,
+    Off,
+    Custom(String),
+}
+
+impl std::str::FromStr for ProfileName {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "workspace" => Self::Workspace,
+            "read-only" | "readonly" => Self::ReadOnly,
+            "strict" => Self::Strict,
+            "off" | "none" => Self::Off,
+            other => Self::Custom(other.to_string()),
+        })
+    }
+}
+
+impl std::fmt::Display for ProfileName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Workspace => write!(f, "workspace"),
+            Self::ReadOnly => write!(f, "read-only"),
+            Self::Strict => write!(f, "strict"),
+            Self::Off => write!(f, "off"),
+            Self::Custom(name) => write!(f, "{name}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    fn cfg(restrict_network: bool, deny: &[&str]) -> SandboxProfileConfig {
+        SandboxProfileConfig {
+            extends: Some("workspace".to_string()),
+            restrict_network: Some(restrict_network),
+            read_only: vec![],
+            read_write: vec![],
+            deny: deny.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn project_cannot_redefine_global_profile() {
+        let mut global = SandboxProfiles::default();
+        global
+            .profiles
+            .insert("secure".to_string(), cfg(true, &["/home/u/.ssh"]));
+
+        let mut project = SandboxProfiles::default();
+        // Malicious hollow-out: same name, no deny, network on.
+        project
+            .profiles
+            .insert("secure".to_string(), cfg(false, &[]));
+        // A genuinely new project profile is allowed through.
+        project
+            .profiles
+            .insert("project-only".to_string(), cfg(true, &["./secrets"]));
+
+        global.merge_project_additive(project);
+
+        // Global "secure" preserved (deny intact, network still restricted).
+        let secure = &global.profiles["secure"];
+        assert_eq!(secure.deny, vec!["/home/u/.ssh".to_string()]);
+        assert_eq!(secure.restrict_network, Some(true));
+        // New project-only name accepted.
+        assert!(global.profiles.contains_key("project-only"));
+    }
+
+    #[test]
+    fn conflicting_redefinitions_reports_changed_names_only() {
+        let mut global = SandboxProfiles::default();
+        global.profiles.insert("a".to_string(), cfg(true, &["/x"]));
+        global
+            .profiles
+            .insert("same".to_string(), cfg(true, &["/y"]));
+
+        let mut project = SandboxProfiles::default();
+        project.profiles.insert("a".to_string(), cfg(false, &[])); // changed
+        project
+            .profiles
+            .insert("same".to_string(), cfg(true, &["/y"])); // identical
+        project
+            .profiles
+            .insert("new".to_string(), cfg(true, &["/z"])); // new
+
+        assert_eq!(global.conflicting_redefinitions(&project), vec!["a"]);
+    }
+
+    #[test]
+    fn profile_name_parse_and_display_roundtrip() {
+        for (s, expected) in [
+            ("workspace", ProfileName::Workspace),
+            ("read-only", ProfileName::ReadOnly),
+            ("readonly", ProfileName::ReadOnly),
+            ("strict", ProfileName::Strict),
+            ("off", ProfileName::Off),
+            ("none", ProfileName::Off),
+        ] {
+            assert_eq!(s.parse::<ProfileName>().unwrap(), expected);
+        }
+        assert_eq!(
+            "my-custom".parse::<ProfileName>().unwrap(),
+            ProfileName::Custom("my-custom".to_string())
+        );
+        assert_eq!(ProfileName::ReadOnly.to_string(), "read-only");
+        assert_eq!(ProfileName::Custom("x".into()).to_string(), "x");
+    }
+}

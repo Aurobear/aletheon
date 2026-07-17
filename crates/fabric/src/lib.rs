@@ -262,8 +262,9 @@ pub use types::process::{
 };
 pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
-    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
-    SandboxExecutor, SandboxPreference, SandboxResult,
+    IsolationLevel, ProfileName, SandboxBackend, SandboxCapabilities, SandboxCommand,
+    SandboxConfig, SandboxExecutor, SandboxPreference, SandboxProfileConfig, SandboxProfiles,
+    SandboxResult,
 };
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
