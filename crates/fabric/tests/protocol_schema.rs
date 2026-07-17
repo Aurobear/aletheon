@@ -1,7 +1,7 @@
 use fabric::protocol::client::{
     client_schema, negotiate_protocol_version, ClientCapabilities, ClientEvent, ClientMessage,
-    ClientRequest, EventCursor, EventSubscription, InitializeParams, InitializedResult,
-    SnapshotRequest, CLIENT_PROTOCOL_VERSION,
+    ClientRequest, ClientRpcRequest, EventCursor, EventSubscription, InitializeParams,
+    InitializedResult, SnapshotRequest, TransientApprovalDecision, CLIENT_PROTOCOL_VERSION,
 };
 use fabric::{
     ConnectionId, LocalOsPrincipal, PrincipalId, SessionId, TurnStop, TurnTerminalStatus,
@@ -135,4 +135,65 @@ fn internal_stops_map_to_one_external_terminal_status() {
         TurnTerminalStatus::from(TurnStop::Failed),
         TurnTerminalStatus::Failed
     );
+}
+
+#[test]
+fn daemon_compatibility_requests_own_method_and_parameter_names() {
+    let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+        "/tmp/project".into(),
+        vec!["/tmp/shared".into()],
+    )
+    .unwrap();
+    let chat = ClientRpcRequest::chat("hello", &workspace)
+        .to_json_rpc(Some(7))
+        .unwrap();
+    assert_eq!(chat["jsonrpc"], "2.0");
+    assert_eq!(chat["id"], 7);
+    assert_eq!(chat["method"], "chat");
+    assert_eq!(chat["params"]["message"], "hello");
+    assert_eq!(chat["params"]["working_dir"], "/tmp/project");
+
+    let resume = ClientRpcRequest::resume("session-1")
+        .to_json_rpc(Some(8))
+        .unwrap();
+    assert_eq!(resume["method"], "resume");
+    assert_eq!(resume["params"]["session_id"], "session-1");
+
+    let approval = ClientRpcRequest::approval_response(
+        "approval-1",
+        TransientApprovalDecision::ApproveForSession,
+    )
+    .to_json_rpc(None)
+    .unwrap();
+    assert!(approval["id"].is_null());
+    assert_eq!(approval["method"], "approval_response");
+    assert_eq!(approval["params"]["decision"], "approve_for_session");
+
+    for (request, expected_method) in [
+        (ClientRpcRequest::Clear, "clear"),
+        (ClientRpcRequest::Status, "status"),
+        (ClientRpcRequest::Reflect, "reflect"),
+        (ClientRpcRequest::ReflectNow, "reflect_now"),
+        (ClientRpcRequest::Evolution, "evolution"),
+        (ClientRpcRequest::Genome, "genome"),
+        (ClientRpcRequest::Sessions, "sessions"),
+        (ClientRpcRequest::Compact, "compact"),
+        (ClientRpcRequest::ModelList, "model_list"),
+        (ClientRpcRequest::PlanApprove, "plan_approve"),
+        (ClientRpcRequest::HooksList, "hooks_list"),
+    ] {
+        let request = request.to_json_rpc(Some(1)).unwrap();
+        assert_eq!(request["method"], expected_method);
+        assert!(request.get("params").is_none());
+    }
+
+    let mode = ClientRpcRequest::mode_switch(fabric::ui_event::CollaborationMode::Plan)
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(mode["params"]["mode"], "plan");
+
+    let interrupt = ClientRpcRequest::interrupt(fabric::ui_event::InterruptReason::UserCancelled)
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(interrupt["params"]["reason"], "user_cancelled");
 }

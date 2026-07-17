@@ -1,17 +1,165 @@
 //! Typed client bindings derived from the versioned Fabric protocol model.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    ui_event::{CollaborationMode, InterruptReason},
     AgentSnapshot, ApprovalSnapshot, ConnectionId, ItemRecord, LocalOsPrincipal, PrincipalId,
-    SessionId,
+    SessionId, WorkspacePolicy,
 };
 
 pub const CLIENT_PROTOCOL_VERSION: u16 = 1;
+pub const JSON_RPC_VERSION: &str = "2.0";
 const SUPPORTED_CLIENT_PROTOCOL_VERSIONS: &[u16] = &[CLIENT_PROTOCOL_VERSION];
+
+/// Typed compatibility requests for the daemon's line-delimited JSON-RPC
+/// transport. Method names and parameter field names live in Fabric rather
+/// than being re-created by each Interact entry point.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum ClientRpcRequest {
+    Chat(ChatParams),
+    Clear,
+    Status,
+    Reflect,
+    ReflectNow,
+    Evolution,
+    Genome,
+    Sessions,
+    Resume(ResumeParams),
+    Compact,
+    ModelList,
+    ModeSwitch(ModeSwitchParams),
+    PlanApprove,
+    Interrupt(InterruptParams),
+    HooksList,
+    ApprovalResponse(ApprovalResponseParams),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ChatParams {
+    pub message: String,
+    pub working_dir: PathBuf,
+    pub workspace_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ResumeParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ModeSwitchParams {
+    pub mode: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct InterruptParams {
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransientApprovalDecision {
+    Approve,
+    ApproveForSession,
+    Deny,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ApprovalResponseParams {
+    pub approval_id: String,
+    pub decision: TransientApprovalDecision,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct JsonRpcRequest {
+    jsonrpc: &'static str,
+    id: Option<u64>,
+    method: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<serde_json::Value>,
+}
+
+impl ClientRpcRequest {
+    pub fn chat(message: impl Into<String>, workspace: &WorkspacePolicy) -> Self {
+        Self::Chat(ChatParams {
+            message: message.into(),
+            working_dir: workspace.cwd().to_path_buf(),
+            workspace_roots: workspace.writable_roots().to_vec(),
+        })
+    }
+
+    pub fn resume(session_id: impl Into<SessionId>) -> Self {
+        Self::Resume(ResumeParams {
+            session_id: session_id.into(),
+        })
+    }
+
+    pub fn mode_switch(mode: CollaborationMode) -> Self {
+        Self::ModeSwitch(ModeSwitchParams {
+            mode: mode.display_name().to_owned(),
+        })
+    }
+
+    pub fn interrupt(reason: InterruptReason) -> Self {
+        let reason = match reason {
+            InterruptReason::UserCancelled => "user_cancelled",
+            InterruptReason::Timeout => "timeout",
+            InterruptReason::BudgetExceeded => "budget_exceeded",
+        };
+        Self::Interrupt(InterruptParams {
+            reason: reason.to_owned(),
+        })
+    }
+
+    pub fn approval_response(
+        approval_id: impl Into<String>,
+        decision: TransientApprovalDecision,
+    ) -> Self {
+        Self::ApprovalResponse(ApprovalResponseParams {
+            approval_id: approval_id.into(),
+            decision,
+        })
+    }
+
+    /// Serialize the typed request into the daemon's compatibility envelope.
+    /// An absent ID is reserved for client notifications such as approval
+    /// responses; it is encoded as JSON `null` to preserve the current wire
+    /// contract.
+    pub fn to_json_rpc(&self, id: Option<u64>) -> serde_json::Result<serde_json::Value> {
+        let (method, params) = match self {
+            Self::Chat(params) => ("chat", Some(serde_json::to_value(params)?)),
+            Self::Clear => ("clear", None),
+            Self::Status => ("status", None),
+            Self::Reflect => ("reflect", None),
+            Self::ReflectNow => ("reflect_now", None),
+            Self::Evolution => ("evolution", None),
+            Self::Genome => ("genome", None),
+            Self::Sessions => ("sessions", None),
+            Self::Resume(params) => ("resume", Some(serde_json::to_value(params)?)),
+            Self::Compact => ("compact", None),
+            Self::ModelList => ("model_list", None),
+            Self::ModeSwitch(params) => ("mode_switch", Some(serde_json::to_value(params)?)),
+            Self::PlanApprove => ("plan_approve", None),
+            Self::Interrupt(params) => ("interrupt", Some(serde_json::to_value(params)?)),
+            Self::HooksList => ("hooks_list", None),
+            Self::ApprovalResponse(params) => {
+                ("approval_response", Some(serde_json::to_value(params)?))
+            }
+        };
+        serde_json::to_value(JsonRpcRequest {
+            jsonrpc: JSON_RPC_VERSION,
+            id,
+            method,
+            params,
+        })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ClientCapabilities {
