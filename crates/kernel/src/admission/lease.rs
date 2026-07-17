@@ -10,7 +10,8 @@
 //! If a resource is already leased, new requests are denied with
 //! `AdmissionError::LeaseUnavailable`.
 
-use fabric::{AdmissionError, LeaseRequest, ResourceLeaseId};
+use async_trait::async_trait;
+use fabric::{AdmissionError, LeaseManager, LeaseRequest, ResourceLeaseId};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 
@@ -143,6 +144,33 @@ impl InMemoryResourceLeaseManager {
 impl Default for InMemoryResourceLeaseManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Boundary contract impl so the application layer can depend on
+/// `Arc<dyn LeaseManager>` instead of this concrete type. Each method delegates
+/// to the inherent implementation.
+#[async_trait]
+impl LeaseManager for InMemoryResourceLeaseManager {
+    async fn acquire(
+        &self,
+        principal: &str,
+        request: &LeaseRequest,
+        now_mono_ms: u64,
+    ) -> Result<ResourceLeaseId, AdmissionError> {
+        InMemoryResourceLeaseManager::acquire(self, principal, request, now_mono_ms).await
+    }
+
+    async fn release(&self, lease_id: ResourceLeaseId) {
+        InMemoryResourceLeaseManager::release(self, lease_id).await
+    }
+
+    async fn is_leased(&self, resource: &str, now_mono_ms: u64) -> bool {
+        InMemoryResourceLeaseManager::is_leased(self, resource, now_mono_ms).await
+    }
+
+    async fn active_count(&self, now_mono_ms: u64) -> usize {
+        InMemoryResourceLeaseManager::active_count(self, now_mono_ms).await
     }
 }
 

@@ -133,7 +133,7 @@ pub use policy::verifier;
 // These preserve the flat API surface so external consumers don't need to change.
 
 // Subsystem traits (from include/)
-pub use include::admission::{AdmissionController, BudgetController};
+pub use include::admission::{AdmissionController, BudgetController, LeaseManager};
 pub use include::agora::{
     AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, AgoraService, AgoraViewRequest,
     CommitReceipt, RejectReason, VersionConflict, WorkspaceCommitPermit,

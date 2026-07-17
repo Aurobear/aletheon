@@ -7,8 +7,8 @@
 
 use crate::types::admission::{
     AdmissionError, AdmissionRequest, BudgetRequest, BudgetReservationId, BudgetReservationReceipt,
-    BudgetScope, BudgetScopeId, BudgetScopeKind, ExecutionPermit, PermitId, RevokeReason,
-    UsageReport,
+    BudgetScope, BudgetScopeId, BudgetScopeKind, ExecutionPermit, LeaseRequest, PermitId,
+    ResourceLeaseId, RevokeReason, UsageReport,
 };
 use async_trait::async_trait;
 
@@ -89,4 +89,28 @@ pub trait BudgetController: Send + Sync {
 
     /// Count the reservations currently held open (for lifecycle inspection).
     async fn active_reservation_count(&self) -> usize;
+}
+
+/// Time-limited exclusive lease manager for named resources (e.g. "gpu",
+/// "sandbox-instance"). The application layer depends on this trait so it never
+/// binds to the concrete `InMemoryResourceLeaseManager`;
+/// `KernelRuntime::lease_manager()` returns `Arc<dyn LeaseManager>`.
+#[async_trait]
+pub trait LeaseManager: Send + Sync {
+    /// Acquire a lease on a resource, or fail if it is already held and unexpired.
+    async fn acquire(
+        &self,
+        principal: &str,
+        request: &LeaseRequest,
+        now_mono_ms: u64,
+    ) -> Result<ResourceLeaseId, AdmissionError>;
+
+    /// Release a held lease. Idempotent for unknown/expired ids.
+    async fn release(&self, lease_id: ResourceLeaseId);
+
+    /// Whether the named resource currently has an unexpired lease.
+    async fn is_leased(&self, resource: &str, now_mono_ms: u64) -> bool;
+
+    /// Count the leases currently active (unexpired) at the given time.
+    async fn active_count(&self, now_mono_ms: u64) -> usize;
 }
