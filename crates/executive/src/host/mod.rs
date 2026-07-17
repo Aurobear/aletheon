@@ -203,6 +203,7 @@ impl RuntimeHost for DaemonHost {
         // Any chat turn that was still running when the accept loop
         // ended gets its interrupt flag set and per-turn token cancelled.
         unix_server.handler().cancel_current_turn().await;
+        unix_server.handler().shutdown_runtime().await?;
 
         // ── Graceful shutdown: stop LlmPulse ────────────────────────
         if let Some((shutdown_tx, handle)) = pulse_handle {

@@ -300,6 +300,7 @@ pub struct AdminResources {
     pub google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
     pub gbrain_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     pub goal_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
+    pub runtime_shutdown: Arc<dyn Fn() -> RuntimeShutdownFuture + Send + Sync>,
     pub memory_admin: Option<Arc<dyn MemoryAdminUseCases>>,
     pub agent_runs: Option<Arc<dyn crate::service::agent_control::AgentRunRepository>>,
 }
@@ -307,6 +308,8 @@ pub struct AdminResources {
 pub type ToolCatalogFuture =
     Pin<Box<dyn Future<Output = Vec<fabric::ToolDefinition>> + Send + 'static>>;
 pub type HookCatalogFuture = Pin<Box<dyn Future<Output = Vec<HookDescriptor>> + Send + 'static>>;
+pub type RuntimeShutdownFuture =
+    Pin<Box<dyn Future<Output = Result<(), AdminServiceError>> + Send + 'static>>;
 
 pub struct AdminService {
     resources: AdminResources,
@@ -342,6 +345,7 @@ impl AdminUseCases for AdminService {
                 }
             }
         }
+        (self.resources.runtime_shutdown)().await?;
         Ok(())
     }
 

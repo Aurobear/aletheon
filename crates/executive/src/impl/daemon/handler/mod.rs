@@ -64,6 +64,15 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
+    /// Complete daemon-owned subsystem shutdown after transports stop accepting work.
+    pub async fn shutdown_runtime(&self) -> anyhow::Result<()> {
+        self.ports
+            .admin
+            .shutdown()
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+    }
+
     pub async fn handle(
         &self,
         connection: &super::server::ConnectionContext,

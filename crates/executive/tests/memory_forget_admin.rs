@@ -104,6 +104,7 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         google_sync: None,
         gbrain_worker: None,
         goal_worker: None,
+        runtime_shutdown: Arc::new(|| Box::pin(async { Ok(()) })),
         memory_admin: Some(memory_admin),
         agent_runs: None,
     });

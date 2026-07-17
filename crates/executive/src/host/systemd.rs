@@ -190,6 +190,8 @@ impl crate::host::RuntimeHost for SystemdHost {
 
         // ── Block until shutdown ────────────────────────────────────
         unix_server.run().await?;
+        unix_server.handler().cancel_current_turn().await;
+        unix_server.handler().shutdown_runtime().await?;
 
         // ── Graceful shutdown: stop LlmPulse ────────────────────────
         if let Some((shutdown_tx, handle)) = pulse_handle {

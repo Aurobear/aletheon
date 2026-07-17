@@ -1162,6 +1162,7 @@ impl RequestHandler {
         let goal_worker_task = goal_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
         let google_sync = google_sync.map(|handle| Arc::new(Mutex::new(Some(handle))));
         let gbrain_worker_task = gbrain_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
+        let self_field_shutdown = Arc::new(Mutex::new(Some(self_field.clone())));
 
         let approval_use_cases: Arc<dyn crate::service::ApprovalUseCases> =
             Arc::new(crate::service::ApprovalService::new(
@@ -1206,6 +1207,22 @@ impl RequestHandler {
                 google_sync: google_sync.clone(),
                 gbrain_worker: gbrain_worker_task.clone(),
                 goal_worker: goal_worker_task.clone(),
+                runtime_shutdown: Arc::new(move || {
+                    let self_field_shutdown = self_field_shutdown.clone();
+                    Box::pin(async move {
+                        let mut pending = self_field_shutdown.lock().await;
+                        let Some(self_field) = pending.as_ref() else {
+                            return Ok(());
+                        };
+                        self_field.lock().await.shutdown().await.map_err(|error| {
+                            crate::service::admin_service::AdminServiceError::Operation(
+                                error.to_string(),
+                            )
+                        })?;
+                        pending.take();
+                        Ok(())
+                    })
+                }),
                 memory_admin: Some(memory_admin_use_cases),
                 agent_runs: Some(agent_repository),
             }),

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use corpus::security::approval::ApprovalDecision;
@@ -14,6 +15,11 @@ use tokio::sync::{oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 
 struct FailingSkillAdmin;
+
+fn noop_runtime_shutdown(
+) -> Arc<dyn Fn() -> executive::service::admin_service::RuntimeShutdownFuture + Send + Sync> {
+    Arc::new(|| Box::pin(async { Ok(()) }))
+}
 
 #[async_trait::async_trait]
 impl SkillAdminPort for FailingSkillAdmin {
@@ -43,6 +49,7 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
         google_sync: None,
         gbrain_worker: None,
         goal_worker: None,
+        runtime_shutdown: noop_runtime_shutdown(),
         memory_admin: None,
         agent_runs: None,
     });
@@ -81,6 +88,7 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         google_sync: None,
         gbrain_worker: None,
         goal_worker: None,
+        runtime_shutdown: noop_runtime_shutdown(),
         memory_admin: None,
         agent_runs: None,
     });
@@ -115,6 +123,8 @@ async fn mode_interrupt_catalogs_and_lists_use_the_port() {
 async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
     let directory = tempdir().unwrap();
     let cancellation = CancellationToken::new();
+    let runtime_shutdowns = Arc::new(AtomicUsize::new(0));
+    let runtime_shutdowns_for_hook = runtime_shutdowns.clone();
     let (sender, receiver) = oneshot::channel();
     let pending = PendingApprovals::default();
     let session = ScopedApprovalCache::default();
@@ -150,6 +160,13 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         google_sync: None,
         gbrain_worker: None,
         goal_worker: None,
+        runtime_shutdown: Arc::new(move || {
+            let runtime_shutdowns = runtime_shutdowns_for_hook.clone();
+            Box::pin(async move {
+                runtime_shutdowns.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+        }),
         memory_admin: None,
         agent_runs: None,
     });
@@ -171,6 +188,7 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
     );
     service.shutdown().await.unwrap();
     assert!(cancellation.is_cancelled());
+    assert_eq!(runtime_shutdowns.load(Ordering::SeqCst), 1);
 }
 
 #[test]

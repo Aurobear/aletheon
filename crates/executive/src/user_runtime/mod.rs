@@ -220,6 +220,7 @@ impl UserRuntime {
         });
         server.run().await?;
         self.request_handler.cancel_current_turn().await;
+        self.request_handler.shutdown_runtime().await?;
         Ok(())
     }
 }
