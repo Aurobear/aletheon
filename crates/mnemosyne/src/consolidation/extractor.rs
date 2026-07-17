@@ -37,7 +37,11 @@ impl CandidateExtractor {
         for event in batch.events.iter().take(self.max_events) {
             if !matches!(
                 event.kind.as_str(),
-                "assistant_message" | "tool_result" | "goal_outcome" | "architecture_decision"
+                "assistant_message"
+                    | "tool_result"
+                    | "goal_outcome"
+                    | "architecture_decision"
+                    | "reflection"
             ) {
                 continue;
             }
@@ -54,6 +58,7 @@ impl CandidateExtractor {
             let kind = match event.kind.as_str() {
                 "goal_outcome" => MemoryKind::GoalOutcome,
                 "architecture_decision" => MemoryKind::ArchitectureDecision,
+                "reflection" => MemoryKind::Reflection,
                 "tool_result" => MemoryKind::ToolOutcome,
                 _ => MemoryKind::Reflection,
             };

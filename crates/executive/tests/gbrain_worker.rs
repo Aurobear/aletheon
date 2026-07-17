@@ -295,3 +295,22 @@ async fn retention_tombstone_outbox_is_projected_and_settled_asynchronously() {
         .contains("Tombstone"));
     assert!(retention.pending_remote_records(10).unwrap().is_empty());
 }
+
+#[test]
+fn executive_worker_only_schedules_mnemosyne_reconciliation() {
+    let source = include_str!("../src/impl/gbrain/worker.rs");
+    for forbidden in [
+        ".claim(",
+        ".acknowledge(",
+        ".retry(",
+        "RemoteMemoryReceipt",
+        "mark_remote_settled",
+        "DeadLettered",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "Executive retained GBrain memory-domain operation: {forbidden}"
+        );
+    }
+    assert!(source.contains("GbrainReconciliationService"));
+}

@@ -10,8 +10,8 @@ pub mod spool;
 pub use config::{validate_tools_list, GbrainBackendConfig, RetryPolicy, SpoolPolicy};
 pub use page::{GbrainPage, PAGE_SCHEMA_VERSION};
 pub use reconcile::{
-    GbrainReconciliation, ReconcileOperation, ReconcileOperationKind, RemoteMemoryReceipt,
-    RECONCILIATION_SCHEMA_VERSION,
+    GbrainReconciliation, GbrainReconciliationService, ReconcileOperation, ReconcileOperationKind,
+    ReconciliationDrainReport, RemoteMemoryReceipt, RECONCILIATION_SCHEMA_VERSION,
 };
 
 pub use spool::{

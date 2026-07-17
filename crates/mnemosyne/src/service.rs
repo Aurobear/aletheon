@@ -343,6 +343,92 @@ impl DefaultMemoryService {
         self.consolidation = Some(repository);
         self
     }
+
+    fn enqueue_for_consolidation(
+        &self,
+        event_id: &str,
+        kind: &str,
+        content: &str,
+        scope: &MemoryScope,
+    ) -> anyhow::Result<()> {
+        let Some(repository) = &self.consolidation else {
+            return Ok(());
+        };
+        let now_ms = self.clock.wall_now().0.max(0) as u64;
+        let (session_id, goal_id) = match scope {
+            MemoryScope::Session(session) => (session.clone(), None),
+            MemoryScope::Goal(goal) => (format!("goal:{goal}"), Some(goal.clone())),
+            _ => (format!("scope:{}", serde_json::to_string(scope)?), None),
+        };
+        repository.enqueue_experience(
+            &crate::consolidation::ExtractionJob {
+                idempotency_key: format!("experience:{event_id}"),
+                session_id: session_id.clone(),
+                goal_id,
+                ephemeral: session_id.starts_with("ephemeral:"),
+                memory_worker: session_id.starts_with("memory-worker:"),
+                completed_at_ms: Some(now_ms),
+                watermark: event_id.to_owned(),
+                created_at_ms: now_ms,
+            },
+            scope,
+            &crate::consolidation::CanonicalMemoryEvent {
+                event_id: event_id.to_owned(),
+                kind: kind.to_owned(),
+                content: content.to_owned(),
+            },
+        )?;
+        Ok(())
+    }
+
+    fn advance_consolidation(&self, requested: &MemoryScope, now_ms: u64) -> anyhow::Result<()> {
+        let Some(repository) = &self.consolidation else {
+            return Ok(());
+        };
+        let owner = format!("mnemosyne-consolidation:{}", std::process::id());
+        for _ in 0..32 {
+            let Some(lease) =
+                repository.claim_extraction(&owner, now_ms, 60_000, 30 * 24 * 60 * 60 * 1_000)?
+            else {
+                break;
+            };
+            let events = repository.extraction_events(&lease, 128)?;
+            let completion = crate::consolidation::CandidateExtractor::default().extract(
+                &crate::consolidation::ExtractionBatch {
+                    scope: lease.scope.clone(),
+                    events,
+                },
+            );
+            match completion {
+                Ok(completion) => repository.complete(&lease, completion, now_ms)?,
+                Err(error) if lease.attempts < 3 => repository.complete(
+                    &lease,
+                    crate::consolidation::ExtractionCompletion::RetryableFailure {
+                        error: error.to_string(),
+                        retry_at_ms: now_ms.saturating_add(1_000 * (1 << lease.attempts)),
+                    },
+                    now_ms,
+                )?,
+                Err(error) => repository.complete(
+                    &lease,
+                    crate::consolidation::ExtractionCompletion::PermanentFailure {
+                        error: error.to_string(),
+                    },
+                    now_ms,
+                )?,
+            }
+        }
+
+        let mut scopes = repository.pending_scopes(64)?;
+        scopes.push(requested.clone());
+        scopes.sort_by_key(|scope| serde_json::to_string(scope).unwrap_or_default());
+        scopes.dedup();
+        for scope in scopes {
+            crate::consolidation::ScopedConsolidator::new(repository)
+                .run(&scope, &owner, now_ms, None)?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -369,11 +455,13 @@ impl MemoryService for DefaultMemoryService {
                     Some(&serde_json::to_string(&metadata)?),
                 )?;
                 drop(rm);
+                let scope = MemoryScope::Session(session.clone());
+                self.enqueue_for_consolidation(&metadata.record_id, entry_type, &content, &scope)?;
                 if let Some(retention) = &self.retention {
                     let record = MemoryRecord {
                         id: MemoryRecordId(metadata.record_id.clone()),
                         kind: MemoryKind::Message,
-                        scope: MemoryScope::Session(session),
+                        scope,
                         content,
                         metadata,
                         status: MemoryStatus::Current,
@@ -435,6 +523,17 @@ impl MemoryService for DefaultMemoryService {
                 let episodic = self.episodic.lock().await;
                 episodic.store_reflection(&entry)?;
                 drop(episodic);
+                let extraction_kind = match kind {
+                    MemoryKind::ArchitectureDecision => "architecture_decision",
+                    MemoryKind::GoalOutcome => "goal_outcome",
+                    _ => "reflection",
+                };
+                self.enqueue_for_consolidation(
+                    &metadata.record_id,
+                    extraction_kind,
+                    &content,
+                    &scope,
+                )?;
                 if let Some(retention) = &self.retention {
                     retention.register(
                         &MemoryRecord {
@@ -527,12 +626,7 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
-        if let Some(repository) = &self.consolidation {
-            let now_ms = self.clock.wall_now().0.max(0) as u64;
-            let owner = format!("executive-memory-worker:{}", std::process::id());
-            crate::consolidation::ScopedConsolidator::new(repository)
-                .run(&scope, &owner, now_ms, None)?;
-        }
+        self.advance_consolidation(&scope, self.clock.wall_now().0.max(0) as u64)?;
         self.fact_store.lock().await.decay_stale()?;
         Ok(())
     }

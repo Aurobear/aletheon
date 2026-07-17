@@ -5,9 +5,13 @@ CREATE TABLE IF NOT EXISTS memory_extraction_jobs(
  goal_id TEXT, ephemeral INTEGER NOT NULL, memory_worker INTEGER NOT NULL,
  completed_at_ms INTEGER, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
  lease_owner TEXT, lease_until_ms INTEGER, retry_at_ms INTEGER NOT NULL DEFAULT 0,
- last_error TEXT, watermark TEXT, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL);
+ last_error TEXT, watermark TEXT, scope_json TEXT, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_memory_extraction_claim
  ON memory_extraction_jobs(status,retry_at_ms,completed_at_ms);
+CREATE TABLE IF NOT EXISTS memory_extraction_events(
+ job_id INTEGER NOT NULL REFERENCES memory_extraction_jobs(id),
+ event_id TEXT NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL,
+ PRIMARY KEY(job_id,event_id));
 CREATE TABLE IF NOT EXISTS memory_candidates(
  id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES memory_extraction_jobs(id),
  candidate_key TEXT NOT NULL UNIQUE, kind_json TEXT NOT NULL, claim TEXT NOT NULL,

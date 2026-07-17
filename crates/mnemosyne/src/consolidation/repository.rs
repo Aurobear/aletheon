@@ -4,6 +4,17 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::CanonicalMemoryEvent;
+
+type ExtractionClaimRow = (
+    i64,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    u32,
+);
 use crate::{MemoryKind, MemoryScope};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +58,7 @@ pub struct LeasedExtraction {
     pub session_id: String,
     pub goal_id: Option<String>,
     pub watermark: String,
+    pub scope: MemoryScope,
     pub attempts: u32,
     pub lease_owner: String,
     pub lease_until_ms: u64,
@@ -128,24 +140,79 @@ impl ConsolidationRepository {
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let c = Connection::open(path)?;
         c.execute_batch(super::migrations::SCHEMA)?;
+        let has_scope = c
+            .prepare("PRAGMA table_info(memory_extraction_jobs)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|column| column == "scope_json");
+        if !has_scope {
+            c.execute(
+                "ALTER TABLE memory_extraction_jobs ADD COLUMN scope_json TEXT",
+                [],
+            )?;
+        }
         Ok(Self {
             connection: Mutex::new(c),
         })
     }
     pub fn enqueue_extraction(&self, job: &ExtractionJob) -> anyhow::Result<i64> {
+        let scope = job
+            .goal_id
+            .as_ref()
+            .map(|goal| MemoryScope::Goal(goal.clone()))
+            .unwrap_or_else(|| MemoryScope::Session(job.session_id.clone()));
+        self.enqueue_job(job, &scope)
+    }
+
+    fn enqueue_job(&self, job: &ExtractionJob, scope: &MemoryScope) -> anyhow::Result<i64> {
         anyhow::ensure!(
             !job.idempotency_key.trim().is_empty()
                 && !job.session_id.trim().is_empty()
                 && !job.watermark.trim().is_empty(),
             "invalid extraction job"
         );
+        scope.validate()?;
         let c = self.connection.lock().unwrap();
-        c.execute("INSERT OR IGNORE INTO memory_extraction_jobs(idempotency_key,session_id,goal_id,ephemeral,memory_worker,completed_at_ms,status,watermark,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,'pending',?7,?8,?8)",params![job.idempotency_key,job.session_id,job.goal_id,job.ephemeral,job.memory_worker,job.completed_at_ms,job.watermark,job.created_at_ms])?;
+        c.execute("INSERT OR IGNORE INTO memory_extraction_jobs(idempotency_key,session_id,goal_id,ephemeral,memory_worker,completed_at_ms,status,watermark,scope_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,'pending',?7,?8,?9,?9)",params![job.idempotency_key,job.session_id,job.goal_id,job.ephemeral,job.memory_worker,job.completed_at_ms,job.watermark,serde_json::to_string(scope)?,job.created_at_ms])?;
         Ok(c.query_row(
             "SELECT id FROM memory_extraction_jobs WHERE idempotency_key=?1",
             [&job.idempotency_key],
             |r| r.get(0),
         )?)
+    }
+
+    /// Durably append one canonical experience and its restart-safe extraction job.
+    pub fn enqueue_experience(
+        &self,
+        job: &ExtractionJob,
+        scope: &MemoryScope,
+        event: &CanonicalMemoryEvent,
+    ) -> anyhow::Result<i64> {
+        anyhow::ensure!(
+            !event.event_id.trim().is_empty()
+                && !event.kind.trim().is_empty()
+                && !event.content.trim().is_empty(),
+            "invalid canonical memory event"
+        );
+        scope.validate()?;
+        let mut connection = self.connection.lock().unwrap();
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO memory_extraction_jobs(idempotency_key,session_id,goal_id,ephemeral,memory_worker,completed_at_ms,status,watermark,scope_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,'pending',?7,?8,?9,?9)",
+            params![job.idempotency_key,job.session_id,job.goal_id,job.ephemeral,job.memory_worker,job.completed_at_ms,job.watermark,serde_json::to_string(scope)?,job.created_at_ms],
+        )?;
+        let id: i64 = transaction.query_row(
+            "SELECT id FROM memory_extraction_jobs WHERE idempotency_key=?1",
+            [&job.idempotency_key],
+            |row| row.get(0),
+        )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO memory_extraction_events(job_id,event_id,kind,content) VALUES(?1,?2,?3,?4)",
+            params![id, event.event_id, event.kind, event.content],
+        )?;
+        transaction.commit()?;
+        Ok(id)
     }
     pub fn claim_extraction(
         &self,
@@ -160,8 +227,8 @@ impl ConsolidationRepository {
         );
         let mut c = self.connection.lock().unwrap();
         let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let row:Option<(i64,String,String,Option<String>,String,u32)>=tx.query_row("SELECT id,idempotency_key,session_id,goal_id,watermark,attempts FROM memory_extraction_jobs WHERE ephemeral=0 AND memory_worker=0 AND completed_at_ms IS NOT NULL AND completed_at_ms<=?1 AND completed_at_ms>=?2 AND ((status IN ('pending','retryable_failure') AND retry_at_ms<=?1) OR (status='leased' AND lease_until_ms<=?1)) ORDER BY completed_at_ms,id LIMIT 1",params![now_ms,now_ms.saturating_sub(max_age_ms)],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
-        let Some((id, key, session, goal, watermark, attempts)) = row else {
+        let row: Option<ExtractionClaimRow> = tx.query_row("SELECT id,idempotency_key,session_id,goal_id,watermark,scope_json,attempts FROM memory_extraction_jobs WHERE ephemeral=0 AND memory_worker=0 AND completed_at_ms IS NOT NULL AND completed_at_ms<=?1 AND completed_at_ms>=?2 AND ((status IN ('pending','retryable_failure') AND retry_at_ms<=?1) OR (status='leased' AND lease_until_ms<=?1)) ORDER BY completed_at_ms,id LIMIT 1",params![now_ms,now_ms.saturating_sub(max_age_ms)],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional()?;
+        let Some((id, key, session, goal, watermark, scope_json, attempts)) = row else {
             tx.commit()?;
             return Ok(None);
         };
@@ -172,16 +239,67 @@ impl ConsolidationRepository {
             return Ok(None);
         }
         tx.commit()?;
+        let scope = match scope_json {
+            Some(value) => serde_json::from_str(&value)?,
+            None => goal
+                .as_ref()
+                .map(|value| MemoryScope::Goal(value.clone()))
+                .unwrap_or_else(|| MemoryScope::Session(session.clone())),
+        };
         Ok(Some(LeasedExtraction {
             id,
             idempotency_key: key,
             session_id: session,
             goal_id: goal,
             watermark,
+            scope,
             attempts: attempts + 1,
             lease_owner: owner.into(),
             lease_until_ms: until,
         }))
+    }
+
+    pub fn extraction_events(
+        &self,
+        lease: &LeasedExtraction,
+        limit: usize,
+    ) -> anyhow::Result<Vec<CanonicalMemoryEvent>> {
+        anyhow::ensure!(limit > 0, "event limit must be positive");
+        let connection = self.connection.lock().unwrap();
+        let mut query = connection.prepare(
+            "SELECT event_id,kind,content FROM memory_extraction_events WHERE job_id=?1 ORDER BY event_id LIMIT ?2",
+        )?;
+        let rows = query
+            .query_map(params![lease.id, limit], |row| {
+                Ok(CanonicalMemoryEvent {
+                    event_id: row.get(0)?,
+                    kind: row.get(1)?,
+                    content: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn pending_scopes(&self, limit: usize) -> anyhow::Result<Vec<MemoryScope>> {
+        let connection = self.connection.lock().unwrap();
+        let mut query = connection.prepare(
+            "SELECT DISTINCT scope_json FROM memory_candidates WHERE decision IS NULL ORDER BY scope_json LIMIT ?1",
+        )?;
+        let rows = query
+            .query_map([limit], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .collect()
+    }
+
+    pub fn consolidated_record_count(&self) -> anyhow::Result<usize> {
+        Ok(self.connection.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM memory_records",
+            [],
+            |row| row.get(0),
+        )?)
     }
     pub fn complete(
         &self,
