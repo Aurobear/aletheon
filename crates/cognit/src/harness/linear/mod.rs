@@ -27,7 +27,7 @@ use fabric::body::Action;
 use fabric::message::Message;
 use fabric::policy::verifier::Verifier;
 use fabric::self_field::{Intent, IntentSource};
-use fabric::{Clock, ToolDefinition};
+use fabric::{Clock, CompactionStrategy, ToolDefinition};
 use std::sync::Arc;
 
 /// Thin wrapper to allow passing `&dyn LlmProvider` to generic functions
@@ -176,6 +176,56 @@ impl ReActLoop {
         )
     }
 
+    /// Proactive best-effort compaction. Routes to the guarded
+    /// `maybe_compact_v2` when `grok_hardening.compaction_v2` is set (a
+    /// degenerate summary or sampler failure then leaves the buffer unchanged,
+    /// logged), otherwise the legacy `maybe_compact`. Errors are swallowed: a
+    /// proactive pass must never fail the turn.
+    async fn run_proactive_compaction(&mut self, llm: &dyn LlmProvider) {
+        if self.config.compaction_v2 {
+            match self
+                .compressor
+                .maybe_compact_v2(&mut self.messages, llm, CompactionStrategy::TailKeep)
+                .await
+            {
+                Ok(outcome) => {
+                    if let Some(failure) = &outcome.failure {
+                        tracing::warn!(
+                            ?failure,
+                            "compaction_v2 skipped (fail-safe, context preserved)"
+                        );
+                    }
+                }
+                Err(e) => tracing::warn!("compaction_v2 error (context preserved): {e}"),
+            }
+        } else {
+            let _ = self.compressor.maybe_compact(&mut self.messages, llm).await;
+        }
+    }
+
+    /// Reactive compaction on a context-overflow error. Same v2/legacy routing
+    /// as the proactive path, but errors propagate so the caller can decide
+    /// whether the retried completion is still viable.
+    async fn run_reactive_compaction(&mut self, llm: &dyn LlmProvider) -> anyhow::Result<()> {
+        if self.config.compaction_v2 {
+            let outcome = self
+                .compressor
+                .maybe_compact_v2(&mut self.messages, llm, CompactionStrategy::TailKeep)
+                .await?;
+            if let Some(failure) = &outcome.failure {
+                tracing::warn!(
+                    ?failure,
+                    "compaction_v2 could not reduce context (fail-safe)"
+                );
+            }
+        } else {
+            self.compressor
+                .maybe_compact(&mut self.messages, llm)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Number of messages in the conversation buffer.
     pub fn message_count(&self) -> usize {
         self.messages.len()
@@ -313,9 +363,10 @@ mod tests {
     use crate::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
     use async_trait::async_trait;
     use fabric::message::{ContentBlock, Message};
+    use fabric::CompactionOutcome;
     use fabric::ToolDefinition;
     use std::pin::Pin;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     /// No-op compressor for tests that don't exercise compaction.
     struct NoopCompressor;
@@ -334,6 +385,99 @@ mod tests {
         ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>> {
             Box::pin(async { Ok(false) })
         }
+    }
+
+    /// Counts which compaction entry point the harness invoked, to prove the
+    /// `compaction_v2` flag routes correctly.
+    struct RecordingCompressor {
+        v2: Arc<AtomicUsize>,
+        legacy: Arc<AtomicUsize>,
+    }
+    impl CompactorTrait for RecordingCompressor {
+        fn maybe_compact<'a>(
+            &'a mut self,
+            _messages: &'a mut Vec<Message>,
+            _llm: &'a dyn LlmProvider,
+        ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>> {
+            self.legacy.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(false) })
+        }
+        fn force_compact<'a>(
+            &'a mut self,
+            _messages: &'a mut Vec<Message>,
+            _llm: &'a dyn LlmProvider,
+        ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>> {
+            Box::pin(async { Ok(false) })
+        }
+        fn maybe_compact_v2<'a>(
+            &'a mut self,
+            _messages: &'a mut Vec<Message>,
+            _llm: &'a dyn LlmProvider,
+            strategy: CompactionStrategy,
+        ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<CompactionOutcome>> + Send + 'a>>
+        {
+            self.v2.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                Ok(CompactionOutcome {
+                    strategy,
+                    applied: false,
+                    tokens_before: 0,
+                    tokens_after: 0,
+                    evicted: Vec::new(),
+                    failure: None,
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_v2_flag_routes_to_v2_path() {
+        let v2 = Arc::new(AtomicUsize::new(0));
+        let legacy = Arc::new(AtomicUsize::new(0));
+        let cfg = HarnessConfig {
+            compaction_v2: true,
+            ..Default::default()
+        };
+        let mut lp = ReActLoop::new(
+            cfg,
+            Box::new(RecordingCompressor {
+                v2: v2.clone(),
+                legacy: legacy.clone(),
+            }),
+        );
+        lp.run_proactive_compaction(&ScriptedLlm {
+            calls: Mutex::new(0),
+        })
+        .await;
+        assert_eq!(v2.load(Ordering::SeqCst), 1, "v2 path should be taken");
+        assert_eq!(legacy.load(Ordering::SeqCst), 0, "legacy must not run");
+    }
+
+    #[tokio::test]
+    async fn compaction_uses_legacy_path_when_flag_off() {
+        let v2 = Arc::new(AtomicUsize::new(0));
+        let legacy = Arc::new(AtomicUsize::new(0));
+        let cfg = HarnessConfig {
+            compaction_v2: false,
+            ..Default::default()
+        };
+        let mut lp = ReActLoop::new(
+            cfg,
+            Box::new(RecordingCompressor {
+                v2: v2.clone(),
+                legacy: legacy.clone(),
+            }),
+        );
+        lp.run_proactive_compaction(&ScriptedLlm {
+            calls: Mutex::new(0),
+        })
+        .await;
+        assert_eq!(
+            legacy.load(Ordering::SeqCst),
+            1,
+            "legacy path should be taken"
+        );
+        assert_eq!(v2.load(Ordering::SeqCst), 0, "v2 must not run");
     }
 
     struct ScriptedLlm {
