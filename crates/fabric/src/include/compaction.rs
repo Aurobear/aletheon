@@ -46,6 +46,34 @@ pub trait CompactorTrait: Send {
         messages: &'a mut Vec<Message>,
         llm: &'a dyn LlmProvider,
     ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>>;
+
+    /// Rich compaction with guardrails (C1). The default bridges to
+    /// `maybe_compact`, reporting a `TailKeep` outcome without eviction or
+    /// failure classification — implementors override this to apply
+    /// degenerate-summary detection, strategy selection and eviction. The
+    /// `strategy` argument is advisory; the default ignores it.
+    fn maybe_compact_v2<'a>(
+        &'a mut self,
+        messages: &'a mut Vec<Message>,
+        llm: &'a dyn LlmProvider,
+        strategy: CompactionStrategy,
+    ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<CompactionOutcome>> + Send + 'a>>
+    {
+        let _ = strategy;
+        Box::pin(async move {
+            let tokens_before: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
+            let applied = self.maybe_compact(messages, llm).await?;
+            let tokens_after: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
+            Ok(CompactionOutcome {
+                strategy: CompactionStrategy::TailKeep,
+                applied,
+                tokens_before,
+                tokens_after,
+                evicted: Vec::new(),
+                failure: None,
+            })
+        })
+    }
 }
 
 /// Pre-summarization tool output pruning (Hermes 3-pass pattern).
