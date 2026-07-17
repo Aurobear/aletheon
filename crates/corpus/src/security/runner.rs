@@ -15,7 +15,7 @@ use crate::sandbox::executor::create_default_executor;
 use crate::sandbox::{SandboxConfig, SandboxExecutor, SandboxPreference};
 use fabric::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
 use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use fabric::{PermissionBehavior, PermissionContext};
+use fabric::{PermissionBehavior, PermissionContext, ProfileName, SandboxProfiles, resolve_profile};
 
 #[derive(Debug)]
 pub enum ToolError {
@@ -69,6 +69,9 @@ pub struct ToolRunnerWithGuard {
     exec_policy: Option<ExecPolicy>,
     /// Injected clock for deterministic time in tests.
     clock: Arc<dyn Clock>,
+    /// S1 sandbox profiles from trusted daemon config. None = no profile layer
+    /// (flag off or not configured); legacy behavior preserved.
+    sandbox_profiles: Option<SandboxProfiles>,
 }
 
 impl ToolRunnerWithGuard {
@@ -85,6 +88,7 @@ impl ToolRunnerWithGuard {
             permission_ctx: PermissionContext::default(),
             exec_policy: None,
             clock,
+            sandbox_profiles: None,
         }
     }
 
@@ -120,6 +124,16 @@ impl ToolRunnerWithGuard {
     /// Set the permission context for mode/rule-based pre-approval.
     pub fn with_permission_context(mut self, ctx: PermissionContext) -> Self {
         self.permission_ctx = ctx;
+        self
+    }
+
+    /// Inject sandbox profiles for S1 profile-layer enforcement.
+    /// When set (and `grok_hardening.sandbox_profiles` is on in the executive
+    /// layer), the default profile is resolved before every `bash_exec` sandbox
+    /// invocation and the resulting policy is carried in `SandboxConfig.policy`.
+    /// `None` (the default) means no profile layer — byte-identical legacy.
+    pub fn with_sandbox_profiles(mut self, profiles: SandboxProfiles) -> Self {
+        self.sandbox_profiles = Some(profiles);
         self
     }
 
@@ -405,6 +419,38 @@ impl ToolRunnerWithGuard {
                 .effective_workspace_policy()
                 .map_err(|reason| ToolError::PolicyDenied { reason })?;
             let trusted_working_dir = workspace.cwd().to_string_lossy().to_string();
+
+            // S1 T13: resolve the default sandbox profile when profiles are
+            // configured. Errors are logged and profile stays None (fail-open
+            // for config errors — the backend still enforces base isolation).
+            let policy = self
+                .sandbox_profiles
+                .as_ref()
+                .and_then(|profiles| {
+                    let name: ProfileName =
+                        profiles.default_profile.as_str().parse().unwrap_or(ProfileName::Workspace);
+                    match resolve_profile(&name, &workspace, profiles) {
+                        Ok(p) => {
+                            tracing::debug!(
+                                profile = %p.name,
+                                restrict_network = p.restrict_network,
+                                deny_exact = p.deny_exact.len(),
+                                deny_globs = p.deny_globs.len(),
+                                "resolved sandbox profile"
+                            );
+                            Some(p)
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                profile = %name,
+                                error = %e,
+                                "failed to resolve sandbox profile; running without profile layer"
+                            );
+                            None
+                        }
+                    }
+                });
+
             let sandbox_config = SandboxConfig {
                 workspace,
                 environment: std::collections::BTreeMap::from([
@@ -412,7 +458,7 @@ impl ToolRunnerWithGuard {
                     ("GIT_CONFIG_KEY_0".to_string(), "safe.directory".to_string()),
                     ("GIT_CONFIG_VALUE_0".to_string(), trusted_working_dir),
                 ]),
-                policy: None,
+                policy,
             };
 
             match self

@@ -70,6 +70,7 @@ impl RequestHandler {
         goal_runtime: cognit::config::GoalRuntimeConfig,
         pi_runtime: cognit::config::PiRuntimeConfig,
         grok_hardening: crate::core::config::GrokHardeningConfig,
+        sandbox_profiles: fabric::SandboxProfiles,
         evolution_enabled: bool,
         event_bus: Option<Arc<CanonicalEventBus>>,
         cancel_token: CancellationToken,
@@ -422,7 +423,8 @@ impl RequestHandler {
         let (approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
         let tool_runner = Arc::new(Mutex::new(
             ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
-                .with_approval_gate(Arc::new(approval_gate)),
+                .with_approval_gate(Arc::new(approval_gate))
+                .with_sandbox_profiles(sandbox_profiles),
         ));
 
         let runtime_config = ExecutiveConfig {

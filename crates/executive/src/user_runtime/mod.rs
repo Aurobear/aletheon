@@ -28,6 +28,7 @@ pub struct UserRuntimeConfig {
     goal_runtime: cognit::config::GoalRuntimeConfig,
     pi_runtime: cognit::config::PiRuntimeConfig,
     grok_hardening: crate::core::config::GrokHardeningConfig,
+    sandbox_profiles: fabric::SandboxProfiles,
 }
 
 impl UserRuntimeConfig {
@@ -110,6 +111,7 @@ impl UserRuntimeConfig {
             goal_runtime: app.goal_runtime.unwrap_or_default(),
             pi_runtime: app.pi_runtime,
             grok_hardening: app.grok_hardening,
+            sandbox_profiles: app.sandbox_profiles,
         })
     }
 
@@ -161,6 +163,7 @@ impl UserRuntime {
             config.goal_runtime,
             config.pi_runtime,
             config.grok_hardening,
+            config.sandbox_profiles.clone(),
             config.request.enable_evolution,
             None,
             cancel.clone(),
