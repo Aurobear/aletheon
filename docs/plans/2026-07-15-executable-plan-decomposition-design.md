@@ -261,7 +261,9 @@ The decomposition is complete only when:
 > `docs/arch/2026-07-plan-completion-ledger.md` (see §9–12 and the retirement
 > commits). So "42 files exist" no longer holds on disk *by design* — the
 > criterion was met at decomposition time and the artifacts were then removed.
-> The one criterion still genuinely open is the last: **V02** must prove the
-> integrated production behavior; that remains blocked on external ops (a
-> disposable systemd host, authenticated Gmail ingress, and a real
-> failure-driver binary), not on any missing `crates/` code.
+> Within this decomposition document, the remaining completion criterion is
+> **V02** proving integrated production behavior. That criterion is blocked on
+> external ops (a disposable systemd host, authenticated Gmail ingress, and a
+> real failure-driver binary). This statement does **not** mark the parent
+> Architecture or Conscious Core plans complete: their remaining code gaps are
+> tracked independently by the active coverage matrix and code-reality updates.
