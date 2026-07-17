@@ -89,20 +89,42 @@ impl BubblewrapBackend {
             "--die-with-parent".into(),
             "--unshare-pid".into(),
             "--unshare-ipc".into(),
-            "--unshare-net".into(), // Default: no network
-            "--clearenv".into(),
         ];
 
-        let policy = FilesystemPolicy::from_workspace(&config.workspace);
-        append_mount_plan(&mut args, &policy);
+        // S1 D1-T5: network isolation is controlled by the resolved policy.
+        // Default to unshared; a policy with `restrict_network: false` explicitly
+        // opts out so the process can reach the network.
+        let restrict_network = config
+            .policy
+            .as_ref()
+            .map(|p| p.restrict_network)
+            .unwrap_or(true);
+        if restrict_network {
+            args.push("--unshare-net".into());
+        }
+        args.push("--clearenv".into());
 
-        // S1 T10: enforce the resolved sandbox profile's exact deny set.
-        // Later bwrap mounts override earlier ones, so this must come after the
-        // workspace mount plan. `None` policy = no extra args, byte-identical to
-        // the pre-profile path. Network is already `--unshare-net` above, so a
-        // profile's `restrict_network` can only be honored, never loosened.
+        // S1 D1-T5: filesystem mount plan. When the resolved policy specifies
+        // explicit `read_only_roots`, use those instead of the default
+        // workspace-driven `--ro-bind / /`. Additional `read_write_roots` from
+        // the policy are added as `--bind` mounts (skipping duplicates of
+        // workspace writable roots).
         if let Some(resolved) = &config.policy {
+            if !resolved.read_only_roots.is_empty() {
+                push_policy_fs_mounts(&mut args, resolved, &config.workspace);
+            } else {
+                // Policy exists but has empty read_only_roots → fall back to
+                // the workspace-driven mount plan (backward-compatible path).
+                let policy = FilesystemPolicy::from_workspace(&config.workspace);
+                append_mount_plan(&mut args, &policy);
+            }
+            // S1 T10: enforce the resolved sandbox profile's exact deny set.
+            // Later bwrap mounts override earlier ones, so this must come after
+            // the workspace mount plan.
             push_policy_denies(&mut args, resolved);
+        } else {
+            let policy = FilesystemPolicy::from_workspace(&config.workspace);
+            append_mount_plan(&mut args, &policy);
         }
 
         // Fresh devtmpfs and proc on top of the read-only root
@@ -132,6 +154,61 @@ impl BubblewrapBackend {
         args.extend(command_args.iter().cloned());
 
         args
+    }
+}
+
+/// Append bwrap args for the filesystem mount plan driven by a resolved policy's
+/// `read_only_roots` and `read_write_roots` (S1 D1-T5).
+///
+/// Each read-only root gets a `--ro-bind <root> <root>`. Each read-write root
+/// gets a `--bind <root> <root>` *unless* it is already a workspace writable
+/// root (those are handled separately by `append_mount_plan`).
+///
+/// Protected metadata directories (`.git`, `.aletheon`) inside writable roots
+/// are rebound read-only on top, matching the workspace-driven convention.
+fn push_policy_fs_mounts(
+    args: &mut Vec<String>,
+    policy: &fabric::ResolvedSandboxPolicy,
+    workspace: &fabric::WorkspacePolicy,
+) {
+    let workspace_writable: std::collections::HashSet<PathBuf> =
+        workspace.writable_roots().iter().cloned().collect();
+
+    // Mount read-only roots.
+    for root in &policy.read_only_roots {
+        args.push("--ro-bind".into());
+        args.push(root.to_string_lossy().into_owned());
+        args.push(root.to_string_lossy().into_owned());
+    }
+
+    // Mount read-write roots (skip duplicates of workspace writable roots).
+    for root in &policy.read_write_roots {
+        if workspace_writable.contains(root) {
+            continue;
+        }
+        args.push("--bind".into());
+        args.push(root.to_string_lossy().into_owned());
+        args.push(root.to_string_lossy().into_owned());
+    }
+
+    // Re-protect metadata inside every writable root (both policy-supplied and
+    // workspace-supplied).
+    let all_writable: std::collections::HashSet<PathBuf> = {
+        let mut set = workspace_writable;
+        for root in &policy.read_write_roots {
+            set.insert(root.clone());
+        }
+        set
+    };
+    for root in &all_writable {
+        for name in &[".git", ".aletheon"] {
+            let sub = root.join(name);
+            if sub.exists() {
+                args.push("--ro-bind".into());
+                args.push(sub.to_string_lossy().into_owned());
+                args.push(sub.to_string_lossy().into_owned());
+            }
+        }
     }
 }
 

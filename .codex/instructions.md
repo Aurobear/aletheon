@@ -36,8 +36,23 @@ exceed 2000 lines without a split plan.
 ## Test discipline
 
 - Kernel timeout/deadline tests use `VirtualClock` — no real `sleep`.
-- `cargo test --workspace` must pass before commit.
 - New behavior requires tests.
+
+### Test scope by phase
+
+Full `cargo test --workspace` is too slow for iterative development. Scale up with risk:
+
+| Phase | Scope | Command |
+|-------|-------|---------|
+| **Feature work** (per-commit) | Affected crate only | `cargo test -p <crate> --lib --no-fail-fast` |
+| **Cross-crate change** | Affected crates | `cargo test -p <crate1> -p <crate2> --lib --no-fail-fast` |
+| **New integration test** | Specific test file | `cargo test -p <crate> --test <name> --no-fail-fast` |
+| **Pre-PR to dev** | Affected crates all targets | `cargo test -p <crate> --all-targets --no-fail-fast` |
+| **Merge to dev** | Full workspace | `cargo test --workspace --no-fail-fast` (only on PR to dev) |
+
+**Do NOT run `cargo test --workspace` during feature-branch work.**
+Use `cargo check --workspace --all-targets` to verify cross-crate compatibility.
+Full workspace tests only at dev merge time.
 
 ## Phase constraints (current wiring window)
 

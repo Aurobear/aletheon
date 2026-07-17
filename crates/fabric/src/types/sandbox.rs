@@ -905,4 +905,101 @@ mod executor_tests {
             .unwrap();
         assert_eq!(result.exit_code, 0);
     }
+
+    // D1-T5: verify that a ResolvedSandboxPolicy on SandboxConfig reaches the backend.
+    #[tokio::test]
+    async fn policy_is_forwarded_to_backend() {
+        use std::sync::{Arc, Mutex};
+
+        struct CapturingMockBackend {
+            name: &'static str,
+            isolation: IsolationLevel,
+            network_isolation: bool,
+            /// Shared slot for the last config received by execute.
+            last_config: Arc<Mutex<Option<SandboxConfig>>>,
+        }
+
+        #[async_trait]
+        impl SandboxBackend for CapturingMockBackend {
+            fn name(&self) -> &str {
+                self.name
+            }
+            fn isolation_level(&self) -> IsolationLevel {
+                self.isolation
+            }
+            fn is_available(&self) -> bool {
+                true
+            }
+            fn capabilities(&self) -> SandboxCapabilities {
+                SandboxCapabilities {
+                    filesystem_isolation: true,
+                    network_isolation: self.network_isolation,
+                    resource_limits: false,
+                    seccomp_filter: false,
+                    limitations: vec![],
+                }
+            }
+            async fn execute(
+                &self,
+                _cmd: &str,
+                config: &SandboxConfig,
+                _timeout: Duration,
+            ) -> anyhow::Result<SandboxResult> {
+                *self.last_config.lock().unwrap() = Some(config.clone());
+                Ok(SandboxResult {
+                    stdout: "ran".into(),
+                    stderr: String::new(),
+                    exit_code: 0,
+                    backend_used: self.name.to_string(),
+                    isolation_level: self.isolation,
+                    elapsed_ms: 0,
+                })
+            }
+        }
+
+        let last_config = Arc::new(Mutex::new(None));
+        let backend = CapturingMockBackend {
+            name: "namespace",
+            isolation: IsolationLevel::Namespace,
+            network_isolation: true,
+            last_config: last_config.clone(),
+        };
+
+        let executor = SandboxExecutor::new(vec![Box::new(backend)], SandboxPreference::Require);
+
+        let policy = ResolvedSandboxPolicy {
+            name: "test-policy".into(),
+            read_only_roots: vec![PathBuf::from("/usr"), PathBuf::from("/lib")],
+            read_write_roots: vec![PathBuf::from("/data")],
+            deny_exact: vec![PathBuf::from("/tmp/secret.env")],
+            deny_globs: vec!["**/*.pem".into()],
+            restrict_network: true,
+        };
+
+        let config = SandboxConfig {
+            workspace: WorkspacePolicy::from_resolved_roots(PathBuf::from("/tmp"), vec![]).unwrap(),
+            environment: BTreeMap::new(),
+            policy: Some(policy.clone()),
+        };
+
+        executor
+            .run("echo hi", &config, Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        let captured = last_config.lock().unwrap();
+        let forwarded = captured
+            .as_ref()
+            .expect("backend should have captured a config")
+            .policy
+            .as_ref()
+            .expect("policy should be Some in the forwarded config");
+
+        assert_eq!(forwarded.name, "test-policy");
+        assert_eq!(forwarded.read_only_roots, policy.read_only_roots);
+        assert_eq!(forwarded.read_write_roots, policy.read_write_roots);
+        assert_eq!(forwarded.deny_exact, policy.deny_exact);
+        assert_eq!(forwarded.deny_globs, policy.deny_globs);
+        assert!(forwarded.restrict_network);
+    }
 }

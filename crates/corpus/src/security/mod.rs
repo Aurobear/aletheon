@@ -8,6 +8,7 @@ pub mod runner;
 pub mod sandbox;
 pub mod socket_approval;
 pub mod storm_breaker;
+pub mod strategy;
 
 // Shared security types — re-exported from fabric (single source of truth).
 // Both corpus and dasein share these types via fabric::security.

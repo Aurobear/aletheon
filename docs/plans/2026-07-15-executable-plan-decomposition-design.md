@@ -1,6 +1,6 @@
 # Executable Architecture Plan Decomposition Design
 
-> **Status:** Partial — most narrow implementation slices are recorded complete, but D01, F01, Q02 and V02 still have current acceptance gaps
+> **Status:** Partial — most narrow implementation slices are recorded complete, but F01, Q02 and V02 still have current acceptance gaps
 >
 > **Source baseline:** `65f74981`
 >
@@ -19,9 +19,9 @@ current branch gives this correction:
 
 | Slice | Current status | Current evidence |
 |---|---|---|
-| D01 | **Partial** | Configured temporality and an injected `SorgeTimer` seam exist at `crates/dasein/src/dasein/mod.rs:92-123`, but the production adapter still imports concrete `aletheon_kernel::chronos::SystemTimer` at `crates/dasein/src/dasein/sorge.rs:1-23`. |
-| F01 | **Partial** | `DomainPorts` retains facade objects, but Executive production services still carry concrete `SelfField`, `EpisodicMemory`, `ToolRunnerWithGuard` and related implementation state at `crates/executive/src/service/request_use_cases.rs:70-101` and `crates/executive/src/service/exec_session.rs:16-23`. |
-| Q02 | **Partial** | Interact is free of direct Corpus/Kernel dependencies and Bin is thin, but TUI paths still manually construct JSON-RPC payloads at `crates/interact/src/tui/app/submit.rs:107-119` and `crates/interact/src/tui/app/lifecycle.rs:252-269`. |
+| D01 | **Complete** | Configured temporality and injected timing remain at `crates/dasein/src/dasein/mod.rs:92-123`; the domain-local compatibility adapter now implements `SorgeTimer` without importing Kernel at `crates/dasein/src/dasein/sorge.rs:9-26`. The focused lifecycle suite passes (4 tests). |
+| F01 | **Partial** | Request health/reflection/turn services now retain typed ports, but concrete `ToolRunnerWithGuard`, `SelfField`, and `AletheonExecutive` ownership remains at `crates/executive/src/service/exec_session.rs:21-127` and `crates/executive/src/service/turn_runtime_ports.rs:105-128`. |
+| Q02 | **Partial** | Primary submit, lifecycle, keyboard, and single-message paths now use `fabric::protocol::client::ClientRpcRequest`; presentation-level memory, goal, workflow, and debug handlers still construct daemon envelopes under `crates/interact/src/tui/`. |
 | V02 | **Partial / external** | The installed-host lane exists, while live workflow, failure-driver and aggregate receipt items remain unchecked at `docs/plans/2026-07-15-v02-production-migration-scenarios.md:67-103,121-126`. |
 
 K01/K02 and the architecture plan's Phase 3 Kernel authority cleanup remain

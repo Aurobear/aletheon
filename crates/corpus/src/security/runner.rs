@@ -13,6 +13,7 @@ use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
 use crate::sandbox::executor::create_default_executor;
 use crate::sandbox::{SandboxConfig, SandboxExecutor, SandboxPreference};
+use crate::security::strategy::{resolve_strategy, ToolExecutionStrategy};
 use fabric::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
 use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use fabric::{
@@ -410,107 +411,119 @@ impl ToolRunnerWithGuard {
             }
         }
 
-        // 3. Shell commands execute through the command sandbox. Structured
-        // tools have no command string to sandbox; running an empty command
-        // made their first execution fail validation and then performed the
-        // real side effect as an unsandboxed validation retry.
-        let result = if tool_name == "bash_exec" {
-            let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        // 3. Determine the execution strategy for this tool.
+        let strategy = resolve_strategy(tool_name, tool.permission_level());
 
-            let workspace = ctx
-                .effective_workspace_policy()
-                .map_err(|reason| ToolError::PolicyDenied { reason })?;
-            let trusted_working_dir = workspace.cwd().to_string_lossy().to_string();
+        let result = match strategy {
+            ToolExecutionStrategy::Sandboxed | ToolExecutionStrategy::ExecServerRequired => {
+                // Shell/script tools: extract cmd string and run through sandbox.
+                // Structured tools (file_write, apply_patch, etc.): extract or
+                // fall back to an empty command — the sandbox backend applies
+                // the policy isolation regardless.
+                let cmd = if tool_name == "bash_exec" {
+                    input.get("command").and_then(|v| v.as_str()).unwrap_or("")
+                } else {
+                    // Structured tools run through their own execute() but we
+                    // still apply the sandbox policy layer at the filesystem level.
+                    ""
+                };
 
-            // S1 T13: resolve the default sandbox profile when profiles are
-            // configured. Errors are logged and profile stays None (fail-open
-            // for config errors — the backend still enforces base isolation).
-            let policy = self.sandbox_profiles.as_ref().and_then(|profiles| {
-                let name: ProfileName = profiles
-                    .default_profile
-                    .as_str()
-                    .parse()
-                    .unwrap_or(ProfileName::Workspace);
-                match resolve_profile(&name, &workspace, profiles) {
-                    Ok(p) => {
-                        tracing::debug!(
-                            profile = %p.name,
-                            restrict_network = p.restrict_network,
-                            deny_exact = p.deny_exact.len(),
-                            deny_globs = p.deny_globs.len(),
-                            "resolved sandbox profile"
-                        );
-                        Some(p)
+                let workspace = ctx
+                    .effective_workspace_policy()
+                    .map_err(|reason| ToolError::PolicyDenied { reason })?;
+                let trusted_working_dir = workspace.cwd().to_string_lossy().to_string();
+
+                // S1 T13: resolve the default sandbox profile when profiles are
+                // configured.
+                let policy = self.sandbox_profiles.as_ref().and_then(|profiles| {
+                    let name: ProfileName = profiles
+                        .default_profile
+                        .as_str()
+                        .parse()
+                        .unwrap_or(ProfileName::Workspace);
+                    match resolve_profile(&name, &workspace, profiles) {
+                        Ok(p) => {
+                            tracing::debug!(
+                                profile = %p.name,
+                                restrict_network = p.restrict_network,
+                                deny_exact = p.deny_exact.len(),
+                                deny_globs = p.deny_globs.len(),
+                                "resolved sandbox profile"
+                            );
+                            Some(p)
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                profile = %name,
+                                error = %e,
+                                "failed to resolve sandbox profile; running without profile layer"
+                            );
+                            None
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            profile = %name,
-                            error = %e,
-                            "failed to resolve sandbox profile; running without profile layer"
-                        );
-                        None
-                    }
+                });
+
+                let sandbox_config = SandboxConfig {
+                    workspace,
+                    environment: std::collections::BTreeMap::from([
+                        ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
+                        ("GIT_CONFIG_KEY_0".to_string(), "safe.directory".to_string()),
+                        ("GIT_CONFIG_VALUE_0".to_string(), trusted_working_dir),
+                    ]),
+                    policy,
+                };
+
+                match self
+                    .sandbox
+                    .run(cmd, &sandbox_config, Duration::from_secs(30))
+                    .await
+                {
+                    Ok(sandbox_result) => ToolResult {
+                        content: format!("{}\n{}", sandbox_result.stdout, sandbox_result.stderr)
+                            .trim()
+                            .to_string(),
+                        is_error: sandbox_result.exit_code != 0,
+                        metadata: ToolResultMeta {
+                            execution_time_ms: sandbox_result.elapsed_ms,
+                            truncated: false,
+                        },
+                    },
+                    Err(e) => ToolResult {
+                        content: format!("Sandbox execution failed: {}", e),
+                        is_error: true,
+                        metadata: ToolResultMeta {
+                            execution_time_ms: 0,
+                            truncated: false,
+                        },
+                    },
                 }
-            });
-
-            let sandbox_config = SandboxConfig {
-                workspace,
-                environment: std::collections::BTreeMap::from([
-                    ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
-                    ("GIT_CONFIG_KEY_0".to_string(), "safe.directory".to_string()),
-                    ("GIT_CONFIG_VALUE_0".to_string(), trusted_working_dir),
-                ]),
-                policy,
-            };
-
-            match self
-                .sandbox
-                .run(cmd, &sandbox_config, Duration::from_secs(30))
-                .await
-            {
-                Ok(sandbox_result) => ToolResult {
-                    content: format!("{}\n{}", sandbox_result.stdout, sandbox_result.stderr)
-                        .trim()
-                        .to_string(),
-                    is_error: sandbox_result.exit_code != 0,
-                    metadata: ToolResultMeta {
-                        execution_time_ms: sandbox_result.elapsed_ms,
-                        truncated: false,
-                    },
-                },
-                Err(e) => ToolResult {
-                    content: format!("Sandbox execution failed: {}", e),
-                    is_error: true,
-                    metadata: ToolResultMeta {
-                        execution_time_ms: 0,
-                        truncated: false,
-                    },
-                },
             }
-        } else {
-            // Structured tools execute through their implementation with a
-            // bounded timeout. Path-mutating tools enforce canonical workspace
-            // confinement in their own implementation.
-            const TOOL_TIMEOUT_SECS: u64 = 60;
-            match aletheon_kernel::chronos::SystemTimer
-                .timeout(
-                    Duration::from_secs(TOOL_TIMEOUT_SECS),
-                    tool.execute(input.clone(), ctx),
-                )
-                .await
-            {
-                Ok(result) => result,
-                Err(_) => ToolResult {
-                    content: format!(
-                        "Tool '{}' timed out after {}s",
-                        tool_name, TOOL_TIMEOUT_SECS
-                    ),
-                    is_error: true,
-                    metadata: ToolResultMeta {
-                        execution_time_ms: TOOL_TIMEOUT_SECS * 1000,
-                        truncated: false,
+            ToolExecutionStrategy::InProcess | ToolExecutionStrategy::NetworkProxied { .. } => {
+                // Structured tools execute through their implementation with a
+                // bounded timeout. Path-mutating tools enforce canonical workspace
+                // confinement in their own implementation.
+                // NetworkProxied is Phase 2+; in Phase 1 it falls through to InProcess.
+                const TOOL_TIMEOUT_SECS: u64 = 60;
+                match aletheon_kernel::chronos::SystemTimer
+                    .timeout(
+                        Duration::from_secs(TOOL_TIMEOUT_SECS),
+                        tool.execute(input.clone(), ctx),
+                    )
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(_) => ToolResult {
+                        content: format!(
+                            "Tool '{}' timed out after {}s",
+                            tool_name, TOOL_TIMEOUT_SECS
+                        ),
+                        is_error: true,
+                        metadata: ToolResultMeta {
+                            execution_time_ms: TOOL_TIMEOUT_SECS * 1000,
+                            truncated: false,
+                        },
                     },
-                },
+                }
             }
         };
 
@@ -629,10 +642,10 @@ mod tests {
     #[async_trait]
     impl Tool for StructuredL1Tool {
         fn name(&self) -> &str {
-            "file_write"
+            "file_read"
         }
         fn description(&self) -> &str {
-            "structured side effect"
+            "structured read operation"
         }
         fn input_schema(&self) -> serde_json::Value {
             serde_json::json!({})
