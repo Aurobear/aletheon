@@ -1,6 +1,6 @@
 # V02 Production Migration and Real Scenarios Implementation Plan
 
-> **Status:** Open — no passing disposable-host operator receipt has been retained
+> **Status:** Partial — the distinct-version installed-host lane passes; live workflow, failure-driver and aggregate operator receipts remain open
 
 **Goal:** Prove installation, migration, restart, rollback, bounded failure and real user workflows against the installed daemon before release.
 
@@ -44,10 +44,10 @@ rollback = "restore_matching_data_and_binary"
 **Create:** `scripts/verify-migration-matrix.sh`
 **Modify:** `docs/deployment/upgrade-rollback.md`
 
-- [ ] List source/target schema versions for event, Session, memory, Agent, Agora, Dasein and config state.
-- [ ] Define forward migration, mixed-version prohibition, backup requirement and rollback method per transition.
-- [ ] Verify every migration has a pre-migration fixture, reopen test and post-migration integrity query.
-- [ ] Reject binary-only rollback after incompatible data migration.
+- [x] List source/target schema versions for event, Session, memory, Agent, Agora, Dasein and config state.
+- [x] Define forward migration, mixed-version prohibition, backup requirement and rollback method per transition.
+- [x] Verify every migration has a pre-migration fixture, reopen test and post-migration integrity query.
+- [x] Reject binary-only rollback after incompatible data migration.
 
 Run: `scripts/verify-migration-matrix.sh`
 
@@ -57,10 +57,10 @@ Run: `scripts/verify-migration-matrix.sh`
 **Create:** `tests/production/install_upgrade_restart.sh`
 **Modify:** `scripts/verify-systemd.sh`
 
-- [ ] Stage real release binaries, config, credentials, systemd units and writable roots in a disposable VM/container namespace.
-- [ ] Run install, readiness, controlled restart, upgrade and matching data+binary rollback.
-- [ ] Verify ownership/modes, AF_UNIX exposure, health, journald output and graceful shutdown.
-- [ ] Preserve all receipts, logs and database integrity output as artifacts.
+- [x] Stage distinct baseline/candidate release binaries, config, credentials, systemd units and writable roots in a disposable systemd-nspawn namespace.
+- [x] Run install, readiness, controlled restart, forward upgrade, matching data+binary rollback and candidate reapplication.
+- [x] Verify ownership/modes, per-user AF_UNIX exposure, health, journald output and graceful shutdown.
+- [x] Preserve receipts, logs and database integrity output under `target/v02-final-candidate-evidence` (generated evidence, not committed source).
 
 Run: `tests/production/install_upgrade_restart.sh`
 
@@ -120,7 +120,7 @@ Inspect the staged diff, then commit with subject `test(release): gate installed
 
 ## Completion evidence
 
-- [ ] Clean install, upgrade, restart and matching rollback pass on the staged host.
+- [x] Clean install, distinct-version upgrade, restart, matching rollback and candidate reapplication pass on the staged host (`operator-receipt.json`, 2026-07-17T03:53:06Z).
 - [ ] Real project, Gmail, SubAgent and TUI scenarios produce durable verifiable results.
 - [ ] Failure injection leaves no silent loss, cross-scope leak or unrecoverable acknowledged work.
 - [ ] Physical crate splitting is evidence-driven rather than mandatory.
