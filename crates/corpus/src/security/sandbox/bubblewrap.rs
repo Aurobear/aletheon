@@ -96,6 +96,15 @@ impl BubblewrapBackend {
         let policy = FilesystemPolicy::from_workspace(&config.workspace);
         append_mount_plan(&mut args, &policy);
 
+        // S1 T10: enforce the resolved sandbox profile's exact deny set.
+        // Later bwrap mounts override earlier ones, so this must come after the
+        // workspace mount plan. `None` policy = no extra args, byte-identical to
+        // the pre-profile path. Network is already `--unshare-net` above, so a
+        // profile's `restrict_network` can only be honored, never loosened.
+        if let Some(resolved) = &config.policy {
+            push_policy_denies(&mut args, resolved);
+        }
+
         // Fresh devtmpfs and proc on top of the read-only root
         args.push("--dev".into());
         args.push("/dev".into());
@@ -123,6 +132,29 @@ impl BubblewrapBackend {
         args.extend(command_args.iter().cloned());
 
         args
+    }
+}
+
+/// Append bwrap args that mask a resolved profile's exact deny paths (S1 T10).
+///
+/// Files and symlinks are bound over with `/dev/null` (reads fail); directories
+/// get an empty `--tmpfs` overlay so their real contents are hidden. Paths that
+/// do not exist need no masking. `deny_globs` are left to the assembly layer,
+/// which expands them fail-closed before execution (T13).
+fn push_policy_denies(args: &mut Vec<String>, policy: &fabric::ResolvedSandboxPolicy) {
+    for path in &policy.deny_exact {
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) if meta.is_dir() => {
+                args.push("--tmpfs".into());
+                args.push(path.to_string_lossy().into_owned());
+            }
+            Ok(_) => {
+                args.push("--ro-bind".into());
+                args.push("/dev/null".into());
+                args.push(path.to_string_lossy().into_owned());
+            }
+            Err(_) => {}
+        }
     }
 }
 
@@ -287,5 +319,93 @@ mod tests {
             .position(|items| items[0] == "--ro-bind" && items[1] == git)
             .unwrap();
         assert!(protected > writable);
+    }
+
+    fn resolved_policy(deny_exact: Vec<PathBuf>) -> fabric::ResolvedSandboxPolicy {
+        fabric::ResolvedSandboxPolicy {
+            name: "test".into(),
+            read_only_roots: vec![PathBuf::from("/")],
+            read_write_roots: vec![],
+            deny_exact,
+            deny_globs: vec![],
+            restrict_network: true,
+        }
+    }
+
+    #[test]
+    fn deny_exact_file_is_masked_with_devnull() {
+        let temp = tempfile::tempdir().unwrap();
+        let secret = temp.path().join("id_rsa");
+        std::fs::write(&secret, b"KEY").unwrap();
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                temp.path().to_path_buf(),
+                vec![],
+            )
+            .unwrap(),
+            environment: Default::default(),
+            policy: Some(resolved_policy(vec![secret.clone()])),
+        };
+        let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
+        let secret_str = secret.to_string_lossy().into_owned();
+        assert!(
+            args.windows(3)
+                .any(|w| w[0] == "--ro-bind" && w[1] == "/dev/null" && w[2] == secret_str),
+            "expected deny file masked with /dev/null: {args:?}"
+        );
+    }
+
+    #[test]
+    fn deny_exact_directory_is_masked_with_tmpfs() {
+        let temp = tempfile::tempdir().unwrap();
+        let ssh = temp.path().join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                temp.path().to_path_buf(),
+                vec![],
+            )
+            .unwrap(),
+            environment: Default::default(),
+            policy: Some(resolved_policy(vec![ssh.clone()])),
+        };
+        let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
+        let ssh_str = ssh.to_string_lossy().into_owned();
+        assert!(
+            args.windows(2)
+                .any(|w| w[0] == "--tmpfs" && w[1] == ssh_str),
+            "expected deny directory hidden with tmpfs: {args:?}"
+        );
+    }
+
+    #[test]
+    fn none_policy_adds_no_deny_masks() {
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp/work".into(), vec![])
+                .unwrap(),
+            environment: Default::default(),
+            policy: None,
+        };
+        let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
+        // No profile → no /dev/null read-only masks and no tmpfs overlays.
+        assert_eq!(
+            args.windows(3)
+                .filter(|w| w[0] == "--ro-bind" && w[1] == "/dev/null")
+                .count(),
+            0
+        );
+        assert!(!args.iter().any(|a| a == "--tmpfs"));
     }
 }
