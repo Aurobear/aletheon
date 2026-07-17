@@ -111,7 +111,7 @@ fn unix_server_retains_peer_credential_gate() {
     assert!(server.contains("Connection rejected by peer credential check"));
     let script = include_str!("../../../scripts/aletheon-healthcheck.sh");
     assert!(script.contains("AF_UNIX"));
-    assert!(script.contains("'ready': 0, 'degraded': 1, 'unready': 2"));
+    assert!(script.contains("\"ready\": 0, \"degraded\": 1, \"unready\": 2"));
 }
 
 #[test]
