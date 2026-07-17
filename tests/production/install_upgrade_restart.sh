@@ -11,10 +11,19 @@ candidate=${ALETHEON_RELEASE_BINARY:-"$repo_root/target/release/aletheon"}
 [[ -x "$candidate" && ! -L "$candidate" ]] || {
   echo "BLOCKED: build and supply the real release binary with ALETHEON_RELEASE_BINARY" >&2; exit 78;
 }
+baseline=${ALETHEON_BASELINE_BINARY:-}
+[[ -n "$baseline" && -x "$baseline" && ! -L "$baseline" ]] || {
+  echo "BLOCKED: supply the previous released binary with ALETHEON_BASELINE_BINARY" >&2; exit 78;
+}
+baseline_sha256=$(sha256sum "$baseline" | cut -d' ' -f1)
+candidate_sha256=$(sha256sum "$candidate" | cut -d' ' -f1)
+[[ "$baseline_sha256" != "$candidate_sha256" ]] || {
+  echo "BLOCKED: baseline and candidate release binaries must be distinct" >&2; exit 78;
+}
 
 # The install script and checked-in units are the release assets under test. This
 # script is intentionally impossible to run on an ordinary development host.
-ALETHEON_BINARY="$candidate" ALETHEON_CONFIG="$repo_root/config/production.toml.example" \
+ALETHEON_BINARY="$baseline" ALETHEON_CONFIG="$repo_root/config/production.toml.example" \
   "$repo_root/scripts/install-systemd.sh" --no-enable
 prepare_installed_test_users
 start_installed_runtime
@@ -53,7 +62,8 @@ ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT="$backup" \
   ALETHEON_SCHEMA_VERSION="$(sha256sum "$repo_root/config/release/migration-matrix.toml" | cut -d' ' -f1)" \
   "$repo_root/scripts/backup-aletheon.sh"
 user_backup="$artifacts/pre-upgrade-user-state"
-sha256sum "$candidate" >"$artifacts/candidate.sha256"
+printf '%s  %s\n' "$baseline_sha256" "$baseline" >"$artifacts/baseline.sha256"
+printf '%s  %s\n' "$candidate_sha256" "$candidate" >"$artifacts/candidate.sha256"
 authorized_users="$artifacts/authorized-users.txt"
 installed_test_users >"$authorized_users"
 chmod 0600 "$authorized_users"
@@ -122,8 +132,9 @@ capture_installed_user_integrity "$artifacts/rollback-user-integrity.txt"
 install -d -m 0700 "$artifacts/final-journal"
 capture_installed_journal "$artifacts/final-journal"
 jq -n --arg completed_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg artifacts "$artifacts" --arg candidate_sha256 "$(cut -d' ' -f1 "$artifacts/candidate.sha256")" \
+  --arg artifacts "$artifacts" --arg baseline_sha256 "$baseline_sha256" \
+  --arg candidate_sha256 "$candidate_sha256" \
   --arg user_a "$ALETHEON_TEST_USER_A" --arg user_b "$ALETHEON_TEST_USER_B" \
-  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,candidate_sha256:$candidate_sha256,rollback:"matching_system_user_state_and_binary",system_unit:"aletheon-core.service",user_state_root:"$HOME/.local/state/aletheon",user_socket_activation:true,test_users:[$user_a,$user_b]}' \
+  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,baseline_sha256:$baseline_sha256,candidate_sha256:$candidate_sha256,distinct_release_upgrade:($baseline_sha256 != $candidate_sha256),rollback:"matching_system_user_state_and_binary",system_unit:"aletheon-core.service",user_state_root:"$HOME/.local/state/aletheon",user_socket_activation:true,test_users:[$user_a,$user_b]}' \
   >"$artifacts/operator-receipt.json"
 echo "installed-host release drill passed: $artifacts/operator-receipt.json"

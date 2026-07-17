@@ -202,7 +202,10 @@ assert_installed_boundaries() {
   if run_as_installed_user "$user_a" python3 - "$socket_b" <<'PY'
 import socket, sys
 client = socket.socket(socket.AF_UNIX)
-client.connect(sys.argv[1])
+try:
+    client.connect(sys.argv[1])
+except OSError:
+    raise SystemExit(1)
 PY
   then
     echo "cross-user private socket connection unexpectedly succeeded" >&2

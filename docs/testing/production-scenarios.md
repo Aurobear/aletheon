@@ -81,6 +81,8 @@ receipts. A mock driver cannot establish release evidence.
 Run `just release-acceptance` only inside the disposable host. Required inputs:
 
 - the real release executable (`ALETHEON_RELEASE_BINARY`);
+- the previous released executable (`ALETHEON_BASELINE_BINARY`), whose digest
+  must differ from the candidate;
 - a passing V01 JSON report (`ALETHEON_V01_ACCEPTANCE_REPORT` when non-default);
 - the production failure driver;
 - isolated production credentials for live-account cases;
