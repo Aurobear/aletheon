@@ -53,10 +53,10 @@ ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT="$backup" \
   ALETHEON_SCHEMA_VERSION="$(sha256sum "$repo_root/config/release/migration-matrix.toml" | cut -d' ' -f1)" \
   "$repo_root/scripts/backup-aletheon.sh"
 user_backup="$artifacts/pre-upgrade-user-state"
-# The user unit's StateDirectory=aletheon maps to ~/.local/state/aletheon.
-# Keep this snapshot matched to the machine backup and saved binary.
-backup_installed_user_state "$user_backup"
 sha256sum "$candidate" >"$artifacts/candidate.sha256"
+authorized_users="$artifacts/authorized-users.txt"
+installed_test_users >"$authorized_users"
+chmod 0600 "$authorized_users"
 cat >"$artifacts/upgrade-backup.sh" <<UPGRADE_BACKUP
 #!/usr/bin/env bash
 ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT='$artifacts/upgrade-script-backup' \\
@@ -64,29 +64,38 @@ ALETHEON_DATA_ROOT=/var/lib/aletheon ALETHEON_CONFIG_ROOT=/etc/aletheon \\
 '$repo_root/scripts/backup-aletheon.sh'
 UPGRADE_BACKUP
 chmod 0700 "$artifacts/upgrade-backup.sh"
-cat >"$artifacts/upgrade-systemctl.sh" <<UPGRADE_SYSTEMCTL
+cat >"$artifacts/upgrade-user-backup.sh" <<UPGRADE_USER_BACKUP
 #!/usr/bin/env bash
 set -euo pipefail
 source '$repo_root/tests/production/lib/installed_host.sh'
-case "\${1-}:\${2-}" in
-  stop:aletheon.service) stop_installed_runtime ;;
-  start:aletheon.service) start_installed_runtime ;;
-  *) echo "refusing unexpected upgrade systemctl request: \$*" >&2; exit 64 ;;
-esac
-UPGRADE_SYSTEMCTL
-cat >"$artifacts/upgrade-healthcheck.sh" <<UPGRADE_HEALTHCHECK
-#!/usr/bin/env bash
-set -euo pipefail
-source '$repo_root/tests/production/lib/installed_host.sh'
-assert_installed_readiness
-UPGRADE_HEALTHCHECK
-chmod 0700 "$artifacts/upgrade-systemctl.sh" "$artifacts/upgrade-healthcheck.sh"
+output=
+users_file=
+while ((\$#)); do
+  case "\$1" in
+    --output) output=\${2:-}; shift 2 ;;
+    --users-file) users_file=\${2:-}; shift 2 ;;
+    *) exit 64 ;;
+  esac
+done
+[[ -n "\$output" && -f "\$users_file" ]] || exit 64
+cmp -s "\$users_file" '$authorized_users' || {
+  echo 'upgrade passed an unexpected authorized-user manifest' >&2; exit 1;
+}
+backup_installed_user_state "\$output"
+users_json=\$(jq -R . "\$users_file" | jq -s .)
+jq -n --arg completed_utc "\$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg artifact_root "\$output" --argjson users "\$users_json" \
+  '{schema_version:1,status:"complete",rollback_required:true,completed_utc:\$completed_utc,artifact_root:\$artifact_root,users:\$users}' \
+  >"\$output/receipt.json"
+UPGRADE_USER_BACKUP
+chmod 0700 "$artifacts/upgrade-user-backup.sh"
 ALETHEON_BACKUP_COMMAND="$artifacts/upgrade-backup.sh" \
 ALETHEON_PREFLIGHT_COMMAND=/usr/libexec/aletheon/verify-systemd.sh \
-ALETHEON_HEALTHCHECK_COMMAND="$artifacts/upgrade-healthcheck.sh" \
-ALETHEON_SYSTEMCTL_COMMAND="$artifacts/upgrade-systemctl.sh" \
+ALETHEON_USER_BACKUP_ROOT="$user_backup" \
   /usr/libexec/aletheon/upgrade-aletheon.sh --binary "$candidate" \
-    --sha256-file "$artifacts/candidate.sha256" --config /etc/aletheon/config.toml
+    --sha256-file "$artifacts/candidate.sha256" --config /etc/aletheon/config.toml \
+    --authorized-users "$authorized_users" \
+    --user-backup-command "$artifacts/upgrade-user-backup.sh"
 assert_installed_readiness
 assert_installed_boundaries "$artifacts"
 cp -a /var/lib/aletheon/state/upgrades "$artifacts/upgrade-receipts"

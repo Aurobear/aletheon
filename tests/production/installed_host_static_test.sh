@@ -56,5 +56,12 @@ legacy_socket='/run/aletheon/'"aletheon.sock"
 grep -Fq 'aletheon-core.service' "${scoped_files[@]}"
 grep -Fq '/run/user/%s/aletheon/aletheon.sock' "${scoped_files[@]}"
 ! grep -Fq -- '--readiness --socket /run/aletheon/core.sock' "${scoped_files[@]}"
+# The installed upgrade drill must exercise the shipped multi-user defaults;
+# wrappers are not permitted to translate stale system-service assumptions.
+! grep -Fq 'ALETHEON_SYSTEMCTL_COMMAND=' "$repo_root/tests/production/install_upgrade_restart.sh"
+! grep -Fq 'ALETHEON_HEALTHCHECK_COMMAND=' "$repo_root/tests/production/install_upgrade_restart.sh"
+grep -Fq 'core_unit=${ALETHEON_CORE_UNIT:-aletheon-core.service}' "$repo_root/scripts/upgrade-aletheon.sh"
+grep -Fq -- '--authorized-users' "$repo_root/tests/production/install_upgrade_restart.sh"
+grep -Fq -- '--user-backup-command' "$repo_root/tests/production/install_upgrade_restart.sh"
 
 echo "installed-host static topology verification: pass"
