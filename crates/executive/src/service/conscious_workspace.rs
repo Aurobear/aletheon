@@ -13,11 +13,11 @@ use aletheon_kernel::KernelRuntime;
 use anyhow::Context;
 use async_trait::async_trait;
 use fabric::{
-    AgoraSpaceId, Clock, ConsciousContextProjection, ConsciousProcessor, ContentId, MonoDeadline,
-    PredictionFrame, ProcessId, ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId,
-    ProcessorResponse, SalienceVector, VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast,
-    WorkspaceCandidate, WorkspaceContent, WorkspaceObservation, WorkspaceProvenance,
-    WORKSPACE_SCHEMA_V1,
+    AgoraSpaceId, Clock, ConsciousContextProjection, ConsciousProcessor, ContentId,
+    LatestConsciousContextPort, MonoDeadline, PredictionFrame, ProcessId, ProcessorAck,
+    ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, SalienceVector,
+    VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate,
+    WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
@@ -31,7 +31,7 @@ use super::conscious_core_coordinator::{
 };
 use super::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, ConsciousCandidatePort,
-    ConsciousCycleReceipt, DaseinWorkspacePort, LatestConsciousContextPort,
+    ConsciousCycleReceipt, DaseinWorkspacePort,
 };
 use super::governed_capability::{GovernedActionLoop, GovernedActionLoopResolver};
 use crate::r#impl::conscious::{

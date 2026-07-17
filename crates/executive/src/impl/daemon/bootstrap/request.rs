@@ -103,10 +103,16 @@ impl RequestHandler {
 
         info!(session_id = %session_id, "Created new session");
 
+        // SelfField is constructed before the recurrent workspace registry.
+        // Inject a once-bound reader now and bind it after registry creation.
+        let conscious_context =
+            Arc::new(crate::service::conscious_context_slot::ConsciousContextSlot::default());
+
         // Create SelfField for genome reads and policy engine
         let self_field_config = SelfFieldConfig {
             db_path: Some(data_dir.join("self_field.db")),
             clock: Some(clock.clone()),
+            conscious_context: Some(conscious_context.clone()),
             ..Default::default()
         };
         let mut self_field = SelfField::new(self_field_config);
@@ -689,11 +695,12 @@ impl RequestHandler {
                 skill_loader.clone(),
             )?,
         );
+        conscious_context.bind(conscious_registry.clone())?;
         let context_source = Arc::new(crate::service::context_assembler::ProductionContextSource {
             cached_prefix: cached_prefix.clone(),
             skill_loader: skill_loader.clone(),
             skill_router: skill_router.clone(),
-            conscious: conscious_registry.clone(),
+            conscious: conscious_context.clone(),
         });
         let context_assembler = Arc::new(crate::service::context_assembler::ContextAssembler::new(
             context_source,

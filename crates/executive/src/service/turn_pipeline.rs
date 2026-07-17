@@ -111,6 +111,10 @@ impl TurnPipeline {
         scope_token: CancellationToken,
         principal: PrincipalId,
     ) -> anyhow::Result<serde_json::Value> {
+        // Resolve the authoritative runtime session before policy review. The
+        // read is non-mutating; denied turns still never call `begin_user`.
+        let (session_id, current_turn_count) = self.runtime_ports.sessions.current().await?;
+
         // -- SelfField review --
         let intent = Intent {
             action: "chat".to_string(),
@@ -126,7 +130,7 @@ impl TurnPipeline {
             },
         };
         let sf_ctx = fabric::Context::new(
-            &turn_request.context.thread_id.0,
+            &session_id,
             turn_request.context.workspace.cwd().to_path_buf(),
         );
         let verdict = self
@@ -171,12 +175,11 @@ impl TurnPipeline {
         let mut effective_message = String::new();
 
         // -- Configured pre_turn hook scripts --
-        let hook_session_id = self.runtime_ports.sessions.current().await?.0;
         effective_message.push_str(
             &self
                 .runtime_ports
                 .hooks
-                .run_pre_turn_script(&message, &hook_session_id)
+                .run_pre_turn_script(&message, &session_id)
                 .await,
         );
 
@@ -184,11 +187,10 @@ impl TurnPipeline {
 
         // -- PreTurn hooks --
         {
-            let (sess_id, turn_count) = self.runtime_ports.sessions.current().await?;
             let ctx = HookContext {
                 point: HookPoint::PreTurn,
-                session_id: sess_id,
-                turn_count,
+                session_id: session_id.clone(),
+                turn_count: current_turn_count,
                 tool_name: None,
                 tool_input: None,
                 tool_result: None,

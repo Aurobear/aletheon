@@ -14,10 +14,11 @@ use fabric::dasein::SelfTransitionReceipt;
 use fabric::{
     AgoraSpaceId, BroadcastEpoch, BroadcastIntegrationReceipt, CareConcernFrame, Clock,
     ConsciousContextProjection, ConsciousProcessor, ContentId, ContextProjectionReceipt, GoalFrame,
-    MonoDeadline, MonoTime, OperationKind, OperationRequest, PredictionErrorFrame, PredictionFrame,
-    ProcessId, ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, SalienceVector,
-    SchemaId, SelectionExplanation, SelectionResult, VisibilityScope, WorkspaceBroadcast,
-    WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
+    PredictionErrorFrame, PredictionFrame, ProcessId, ProcessorContext, ProcessorHealth,
+    ProcessorId, ProcessorResponse, SalienceVector, SchemaId, SelectionExplanation,
+    SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
+    WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use parking_lot::RwLock;
 use tokio::sync::{Mutex, Semaphore};
@@ -26,7 +27,7 @@ use tokio::task::JoinSet;
 use super::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, CandidateSubmissionReceipt,
     ConsciousCandidatePort, ConsciousCycleReceipt, DaseinIntegration, DaseinWorkspacePort,
-    LatestConsciousContextPort, ProcessorCycleStatus,
+    ProcessorCycleStatus,
 };
 
 #[derive(Debug, Clone)]

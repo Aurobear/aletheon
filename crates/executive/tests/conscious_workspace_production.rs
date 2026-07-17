@@ -4,15 +4,15 @@ use std::sync::Arc;
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
-use executive::service::conscious_core_ports::LatestConsciousContextPort;
 use executive::service::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use executive::service::governed_capability::{
     GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
 use fabric::{
-    AgentId, AgentProfileId, AgoraSpaceId, CapabilityCall, CapabilityResult, NamespaceId, PermitId,
-    SpawnSpec, UsageReport, WorkspaceAttribution, WorkspaceContent,
+    AgentId, AgentProfileId, AgoraSpaceId, CapabilityCall, CapabilityResult,
+    LatestConsciousContextPort, NamespaceId, PermitId, SpawnSpec, UsageReport,
+    WorkspaceAttribution, WorkspaceContent,
 };
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};
 use tempfile::tempdir;

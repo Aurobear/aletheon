@@ -9,14 +9,13 @@ use executive::service::agent_control::{
     AgentRuntimeEvent, AgentRuntimeInbox, AgentRuntimeInput, NoopAgentEventSink,
     SpineAgentEventSink,
 };
-use executive::service::conscious_core_ports::LatestConsciousContextPort;
 use executive::service::conscious_workspace::ConsciousWorkspaceRegistry;
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use fabric::{
     AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentHandle, AgentId,
     AgentProfileId, AgentResult, AgentRunStatus, AgentSpawnRequest, AgoraSpaceId, AttemptEvidence,
-    AttemptUsage, BroadcastEpoch, ContentId, NamespaceId, OperationId, ProcessId, RuntimeId,
-    SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceContent,
+    AttemptUsage, BroadcastEpoch, ContentId, LatestConsciousContextPort, NamespaceId, OperationId,
+    ProcessId, RuntimeId, SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceContent,
 };
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};
 use tempfile::tempdir;

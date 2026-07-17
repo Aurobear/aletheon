@@ -16,15 +16,14 @@ use executive::service::conscious_core_coordinator::{
 };
 use executive::service::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, ConsciousCandidatePort,
-    LatestConsciousContextPort,
 };
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use fabric::{
-    AgentId, AgentProfileId, AgoraSpaceId, ConsciousProcessor, ContentId, MonoDeadline, MonoTime,
-    NamespaceId, PredictionFrame, ProcessId, ProcessorAck, ProcessorContext, ProcessorHealth,
-    ProcessorId, ProcessorResponse, SalienceVector, SpawnSpec, VisibilityScope, WallTime,
-    WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent, WorkspaceObservation,
-    WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    AgentId, AgentProfileId, AgoraSpaceId, ConsciousProcessor, ContentId,
+    LatestConsciousContextPort, MonoDeadline, MonoTime, NamespaceId, PredictionFrame, ProcessId,
+    ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse,
+    SalienceVector, SpawnSpec, VisibilityScope, WallTime, WorkspaceBroadcast, WorkspaceCandidate,
+    WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use uuid::Uuid;
 

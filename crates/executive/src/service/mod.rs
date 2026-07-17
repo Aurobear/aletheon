@@ -2,6 +2,7 @@ pub mod admin_service;
 pub mod agent_control;
 pub mod approval_service;
 pub mod conscious_action;
+pub mod conscious_context_slot;
 pub mod conscious_core_coordinator;
 pub mod conscious_core_inspector;
 pub mod conscious_core_ports;
