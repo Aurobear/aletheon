@@ -20,6 +20,7 @@
 )]
 
 pub mod acix;
+pub mod acp;
 pub mod host;
 pub mod tui;
 
