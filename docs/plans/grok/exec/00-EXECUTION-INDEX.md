@@ -58,8 +58,9 @@
 | `daaf4d00` | **C1** `maybe_compact_v2` + `AdvancedCompressor` 实现：degenerate/short/sampler-error → 缓冲不变（fail-safe） | fabric + mnemosyne | 4 新（compressor 共 13） |
 | `8a2a1681` | **grok_hardening flag 面**：`AppConfig.grok_hardening`，10 个 flag 全默认关，`deny_unknown_fields` | executive config | 4 新 + schema 重生 |
 | `9bf0e502` | **C1 T11** harness 接线：`HarnessConfig.compaction_v2` 门控 4 个 loop 压缩点（关=旧行为逐字节等价） | cognit | 2 新路由测试 |
+| `4c49c9eb` | **C1 尾巴** executive 接线：`grok_hardening.compaction_v2` → `HarnessConfig`，跨主 turn（`ExecutiveConfig.compaction_v2` + `harness_config_from_executive`）与子 Agent（`NativeCognitRuntimeResources` + `native_cognit::harness_config`）两路，`RequestHandler::new` 加参、两入口传参 | executive | check 干净 / 4 flag 测试 / clippy 干净 |
 
-**状态**：fabric 契约层完成（S1 `resolve_profile` 补上最后缺口）。C1 机制 + harness 路由完成且测试通过。**剩余 C1 尾巴**：把 `grok_hardening.compaction_v2` 从 daemon 配置喂进 `HarnessConfig`（`RequestHandler::new` 加参 + `NativeCognitRuntimeResources.grok_hardening` + `native_cognit::harness_config`；`exec_session.rs:215` 另算）。需要跨 `runtime_core.rs:226` / `user_runtime/mod.rs:154` 两个入口统一 config 访问——config 接线活，未做。
+**状态**：fabric 契约层完成（S1 `resolve_profile` 补上最后缺口）。**C1 完成端到端**：fabric 机制 → mnemosyne 实现 → cognit harness 路由 → executive config 接线 → 两入口激活。`grok_hardening.compaction_v2 = true` 即让主 runtime 与子 Agent 都走 guarded `maybe_compact_v2`；关=逐字节旧行为。这是第一条从契约贯通到激活的 exec-plan 项。
 
 **尚未开始**（全部消费/接线，均 flag 门控、默认关）：S1 T8–T15（glob 展开 + backend 消费 + 装配）、D1/D2/D3 桥接、G1–G8 的 Executive consumer 层。这些是多会话工程量（见 §4 序列）。
 
