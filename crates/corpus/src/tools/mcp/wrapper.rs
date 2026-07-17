@@ -32,9 +32,9 @@ impl Tool for McpToolWrapper {
 
     fn permission_level(&self) -> PermissionLevel {
         match self.trust_level {
-            McpTrustLevel::LocalTrusted => PermissionLevel::L0,
+            McpTrustLevel::LocalTrusted => PermissionLevel::L1,
             McpTrustLevel::RemoteTrusted => PermissionLevel::L1,
-            McpTrustLevel::Untrusted => PermissionLevel::L2,
+            McpTrustLevel::Untrusted => PermissionLevel::L0,
         }
     }
 
