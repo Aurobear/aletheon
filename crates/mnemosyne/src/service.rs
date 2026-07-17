@@ -373,10 +373,14 @@ impl DefaultMemoryService {
         kind: &str,
         content: &str,
         scope: &MemoryScope,
+        completed: bool,
     ) -> anyhow::Result<()> {
         let Some(repository) = &self.consolidation else {
             return Ok(());
         };
+        if !matches!(scope, MemoryScope::Session(_) | MemoryScope::Goal(_)) {
+            return Ok(());
+        }
         let now_ms = self.clock.wall_now().0.max(0) as u64;
         let (session_id, goal_id) = match scope {
             MemoryScope::Session(session) => (session.clone(), None),
@@ -390,7 +394,7 @@ impl DefaultMemoryService {
                 goal_id,
                 ephemeral: session_id.starts_with("ephemeral:"),
                 memory_worker: session_id.starts_with("memory-worker:"),
-                completed_at_ms: Some(now_ms),
+                completed_at_ms: completed.then_some(now_ms),
                 watermark: event_id.to_owned(),
                 created_at_ms: now_ms,
             },
@@ -479,7 +483,13 @@ impl MemoryService for DefaultMemoryService {
                 )?;
                 drop(rm);
                 let scope = MemoryScope::Session(session.clone());
-                self.enqueue_for_consolidation(&metadata.record_id, entry_type, &content, &scope)?;
+                self.enqueue_for_consolidation(
+                    &metadata.record_id,
+                    entry_type,
+                    &content,
+                    &scope,
+                    false,
+                )?;
                 if let Some(retention) = &self.retention {
                     let record = MemoryRecord {
                         id: MemoryRecordId(metadata.record_id.clone()),
@@ -500,7 +510,7 @@ impl MemoryService for DefaultMemoryService {
             event @ (ExperienceEvent::Reflection { .. }
             | ExperienceEvent::ArchitectureDecision { .. }
             | ExperienceEvent::GoalOutcome { .. }) => {
-                let (content, metadata, kind, scope) = match event {
+                let (content, metadata, kind, scope, completed) = match event {
                     ExperienceEvent::Reflection { content, metadata } => {
                         let scope = metadata
                             .provenance
@@ -508,7 +518,7 @@ impl MemoryService for DefaultMemoryService {
                             .clone()
                             .map(MemoryScope::Principal)
                             .unwrap_or(MemoryScope::Global);
-                        (content, metadata, MemoryKind::Reflection, scope)
+                        (content, metadata, MemoryKind::Reflection, scope, false)
                     }
                     ExperienceEvent::ArchitectureDecision {
                         content, metadata, ..
@@ -517,6 +527,7 @@ impl MemoryService for DefaultMemoryService {
                         metadata,
                         MemoryKind::ArchitectureDecision,
                         MemoryScope::Global,
+                        false,
                     ),
                     ExperienceEvent::GoalOutcome {
                         goal_id,
@@ -528,6 +539,7 @@ impl MemoryService for DefaultMemoryService {
                         metadata,
                         MemoryKind::GoalOutcome,
                         MemoryScope::Goal(goal_id),
+                        true,
                     ),
                     ExperienceEvent::Message { .. } => unreachable!(),
                 };
@@ -557,6 +569,7 @@ impl MemoryService for DefaultMemoryService {
                     extraction_kind,
                     &content,
                     &scope,
+                    completed,
                 )?;
                 if let Some(retention) = &self.retention {
                     retention.register(
@@ -696,7 +709,16 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
-        self.advance_consolidation(&scope, self.clock.wall_now().0.max(0) as u64)?;
+        let now_ms = self.clock.wall_now().0.max(0) as u64;
+        if let Some(repository) = &self.consolidation {
+            if matches!(scope, MemoryScope::Session(_) | MemoryScope::Goal(_)) {
+                // A scoped consolidate request is the existing contract's explicit
+                // lifecycle boundary. Periodic Global consolidation cannot infer that
+                // an active Session or Goal has completed.
+                repository.complete_scope(&scope, now_ms)?;
+            }
+        }
+        self.advance_consolidation(&scope, now_ms)?;
         self.fact_store.lock().await.decay_stale()?;
         Ok(())
     }

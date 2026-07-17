@@ -54,6 +54,17 @@ async fn production_record_enqueues_extracts_and_consolidates_restart_idempotent
         repository.status("experience:event-production-1").unwrap(),
         ExtractionStatus::Pending
     );
+    assert!(repository
+        .claim_extraction("premature-worker", 0, 60_000, 60_000)
+        .unwrap()
+        .is_none());
+    service.consolidate(MemoryScope::Global).await.unwrap();
+    assert_eq!(
+        repository.status("experience:event-production-1").unwrap(),
+        ExtractionStatus::Pending,
+        "periodic global consolidation must not fabricate session completion"
+    );
+    assert_eq!(repository.consolidated_record_count().unwrap(), 0);
     service
         .consolidate(MemoryScope::Session("session-a".into()))
         .await

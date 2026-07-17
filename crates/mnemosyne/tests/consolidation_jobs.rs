@@ -94,3 +94,26 @@ fn active_ephemeral_memory_worker_and_stale_sessions_are_ineligible() {
         .unwrap()
         .is_none())
 }
+
+#[test]
+fn explicit_scope_completion_makes_only_that_session_eligible() {
+    let r = ConsolidationRepository::open(":memory:").unwrap();
+    let session_a = mnemosyne::MemoryScope::Session("a".into());
+    r.enqueue_extraction(&job("a", "a", None, false, false))
+        .unwrap();
+    r.enqueue_extraction(&job("b", "b", None, false, false))
+        .unwrap();
+
+    assert_eq!(r.complete_scope(&session_a, 100).unwrap(), 1);
+    let claimed = r
+        .claim_extraction("owner", 100, 10, 1_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.scope, session_a);
+    r.complete(&claimed, ExtractionCompletion::SucceededNoOutput, 101)
+        .unwrap();
+    assert!(r
+        .claim_extraction("owner", 102, 10, 1_000)
+        .unwrap()
+        .is_none());
+}

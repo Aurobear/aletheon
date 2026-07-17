@@ -16,7 +16,7 @@ type ExtractionClaimRow = (
     u32,
 );
 use crate::observability::{ConsolidationJobState, MemoryMetrics};
-use crate::{MemoryKind, MemoryScope};
+use crate::{MemoryKind, MemoryRecordId, MemoryScope};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -94,7 +94,7 @@ impl MemoryCandidate {
     pub fn new(
         kind: MemoryKind,
         claim: String,
-        source_event_ids: Vec<String>,
+        mut source_event_ids: Vec<String>,
         confidence: f64,
         proposed_scope: MemoryScope,
         valid_from_ms: Option<i64>,
@@ -111,6 +111,8 @@ impl MemoryCandidate {
                 && source_event_ids.iter().all(|v| !v.trim().is_empty()),
             "invalid candidate source events"
         );
+        source_event_ids.sort();
+        source_event_ids.dedup();
         anyhow::ensure!(
             confidence.is_finite() && (0.0..=1.0).contains(&confidence),
             "invalid candidate confidence"
@@ -145,6 +147,15 @@ pub struct ScopeLease {
     pub scope: MemoryScope,
     pub owner: String,
     pub lease_until_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ConsolidatedRecord {
+    pub id: MemoryRecordId,
+    pub kind: MemoryKind,
+    pub content: String,
+    pub source_event_ids: Vec<String>,
+    pub content_hash: String,
 }
 
 pub struct ConsolidationRepository {
@@ -281,6 +292,30 @@ impl ConsolidationRepository {
             self.refresh_job_metrics()?;
         }
         Ok(id)
+    }
+
+    /// Mark the currently queued extraction batch for one explicit Session or Goal
+    /// lifecycle as complete. Recording an event alone must never imply completion.
+    pub fn complete_scope(
+        &self,
+        scope: &MemoryScope,
+        completed_at_ms: u64,
+    ) -> anyhow::Result<usize> {
+        anyhow::ensure!(
+            matches!(scope, MemoryScope::Session(_) | MemoryScope::Goal(_)),
+            "only Session or Goal extraction scopes can be completed"
+        );
+        let scope_json = serde_json::to_string(scope)?;
+        let connection = self.connection.lock().unwrap();
+        let changed = connection.execute(
+            "UPDATE memory_extraction_jobs SET completed_at_ms=?1,updated_at_ms=?1 WHERE scope_json=?2 AND completed_at_ms IS NULL AND status='pending'",
+            params![completed_at_ms, scope_json],
+        )?;
+        drop(connection);
+        if changed > 0 {
+            self.refresh_job_metrics()?;
+        }
+        Ok(changed)
     }
     pub fn claim_extraction(
         &self,
@@ -489,6 +524,39 @@ impl ConsolidationRepository {
         })
         .collect()
     }
+
+    pub(crate) fn current_records(
+        &self,
+        scope: &MemoryScope,
+    ) -> anyhow::Result<Vec<ConsolidatedRecord>> {
+        let scope_json = serde_json::to_string(scope)?;
+        let connection = self.connection.lock().unwrap();
+        let mut query = connection.prepare(
+            "SELECT record_id,kind_json,content,source_event_ids_json,content_hash FROM memory_records WHERE scope_json=?1 AND status='current' ORDER BY record_id",
+        )?;
+        let records = query
+            .query_map([scope_json], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, kind, content, source_event_ids, content_hash) = row?;
+                Ok(ConsolidatedRecord {
+                    id: MemoryRecordId(id),
+                    kind: serde_json::from_str(&kind)?,
+                    content,
+                    source_event_ids: serde_json::from_str(&source_event_ids)?,
+                    content_hash,
+                })
+            })
+            .collect();
+        records
+    }
     pub fn commit_decisions(
         &self,
         lease: &ScopeLease,
@@ -525,8 +593,14 @@ impl ConsolidationRepository {
             .collect::<Result<Vec<_>, _>>()?;
         for (id, decision, record_id) in decisions {
             if let Some(record_id) = record_id {
+                if decision == "\"supersede\"" {
+                    tx.execute(
+                        "UPDATE memory_records SET status='superseded' WHERE status='current' AND (kind_json,scope_json,source_event_ids_json)=(SELECT kind_json,scope_json,source_event_ids_json FROM memory_candidates WHERE id=?1) AND content_hash<>(SELECT content_hash FROM memory_candidates WHERE id=?1)",
+                        [id],
+                    )?;
+                }
                 tx.execute(
-                    "INSERT OR IGNORE INTO memory_records(record_id,candidate_id,scope_json,kind_json,content,source_event_ids_json,content_hash,status,version,created_at_ms) SELECT ?1,id,scope_json,kind_json,claim,source_event_ids_json,content_hash,'current',1,?2 FROM memory_candidates WHERE id=?3 AND ?4 IN ('\"insert\"','\"supersede\"')",
+                    "INSERT OR IGNORE INTO memory_records(record_id,candidate_id,scope_json,kind_json,content,source_event_ids_json,content_hash,status,version,created_at_ms) SELECT ?1,c.id,c.scope_json,c.kind_json,c.claim,c.source_event_ids_json,c.content_hash,'current',COALESCE((SELECT MAX(r.version)+1 FROM memory_records r WHERE r.kind_json=c.kind_json AND r.scope_json=c.scope_json AND r.source_event_ids_json=c.source_event_ids_json),1),?2 FROM memory_candidates c WHERE c.id=?3 AND ?4 IN ('\"insert\"','\"supersede\"')",
                     params![record_id, now_ms, id, decision],
                 )?;
             }

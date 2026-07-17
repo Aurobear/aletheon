@@ -6,6 +6,17 @@ fn enqueue(
     kind: mnemosyne::MemoryKind,
     claim: &str,
 ) {
+    enqueue_with_source(r, key, scope, kind, claim, &format!("event-{key}"));
+}
+
+fn enqueue_with_source(
+    r: &ConsolidationRepository,
+    key: &str,
+    scope: mnemosyne::MemoryScope,
+    kind: mnemosyne::MemoryKind,
+    claim: &str,
+    source_event_id: &str,
+) {
     r.enqueue_extraction(&ExtractionJob {
         idempotency_key: key.into(),
         session_id: key.into(),
@@ -24,7 +35,7 @@ fn enqueue(
             candidates: vec![MemoryCandidate::new(
                 kind,
                 claim.into(),
-                vec![format!("event-{key}")],
+                vec![source_event_id.into()],
                 0.8,
                 scope,
                 None,
@@ -36,6 +47,56 @@ fn enqueue(
         21,
     )
     .unwrap()
+}
+
+#[test]
+fn corrected_candidate_supersedes_current_record_with_the_same_source_lineage() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("consolidation.db");
+    let r = ConsolidationRepository::open(&path).unwrap();
+    let scope = mnemosyne::MemoryScope::Session("corrected".into());
+    enqueue_with_source(
+        &r,
+        "old",
+        scope.clone(),
+        mnemosyne::MemoryKind::SemanticFact,
+        "deployment uses an unbounded worker",
+        "event-shared",
+    );
+    let first = ScopedConsolidator::new(&r)
+        .run(&scope, "worker", 30, None)
+        .unwrap();
+    assert_eq!(first.decisions[0].1, ConsolidationDecision::Insert);
+
+    enqueue_with_source(
+        &r,
+        "corrected",
+        scope.clone(),
+        mnemosyne::MemoryKind::SemanticFact,
+        "deployment uses a bounded worker",
+        "event-shared",
+    );
+    let corrected = ScopedConsolidator::new(&r)
+        .run(&scope, "worker", 40, None)
+        .unwrap();
+    assert_eq!(corrected.decisions[0].1, ConsolidationDecision::Supersede);
+
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let current: usize = connection
+        .query_row(
+            "SELECT COUNT(*) FROM memory_records WHERE status='current'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let superseded: usize = connection
+        .query_row(
+            "SELECT COUNT(*) FROM memory_records WHERE status='superseded'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((current, superseded), (1, 1));
 }
 #[test]
 fn scoped_decisions_are_leased_deterministic_and_replay_safe() {
