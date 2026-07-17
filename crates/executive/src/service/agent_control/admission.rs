@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use aletheon_kernel::admission::InMemoryBudgetController;
 use async_trait::async_trait;
+use fabric::BudgetController;
 use cognit::config::AgentAdmissionConfig;
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentId, AgentProfileId, AgentSpawnRequest,
@@ -91,7 +92,7 @@ struct AdmissionState {
 
 pub struct BoundedAgentAdmission {
     config: AgentAdmissionConfig,
-    budget: Arc<InMemoryBudgetController>,
+    budget: Arc<dyn BudgetController>,
     state: Arc<Mutex<AdmissionState>>,
     reservation_lock: tokio::sync::Mutex<()>,
     capacity_changed: Arc<tokio::sync::Notify>,
@@ -121,7 +122,7 @@ impl BoundedAgentAdmission {
 
     pub fn with_budget(
         config: AgentAdmissionConfig,
-        budget: Arc<InMemoryBudgetController>,
+        budget: Arc<dyn BudgetController>,
     ) -> Result<Self, AgentControlError> {
         config
             .validate()
@@ -364,7 +365,7 @@ enum LeasePhase {
 
 struct BoundedAdmissionLease {
     state: Arc<Mutex<AdmissionState>>,
-    budget: Arc<InMemoryBudgetController>,
+    budget: Arc<dyn BudgetController>,
     capacity_changed: Arc<tokio::sync::Notify>,
     root: AgentId,
     storage: AgentStorageRequest,
