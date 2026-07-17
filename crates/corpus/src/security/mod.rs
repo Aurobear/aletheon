@@ -2,6 +2,7 @@
 
 pub mod approval;
 pub mod credential_vault;
+pub mod escape_detector;
 pub mod exec_policy;
 pub mod permission_rules;
 pub mod runner;

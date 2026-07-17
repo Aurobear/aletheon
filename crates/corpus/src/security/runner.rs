@@ -473,6 +473,12 @@ impl ToolRunnerWithGuard {
                     policy,
                 };
 
+                // TODO(D1-T11): Insert ShellEscalationDetector scan here, gated
+                // behind grok_hardening.escape_detection (flag to be added).
+                //   let detector = ShellEscalationDetector::new(EscapePolicy::Block);
+                //   if let Err(detection) = detector.evaluate(cmd) { … }
+                // When the flag is off, no detection runs (equivalent to current).
+
                 match self
                     .sandbox
                     .run(cmd, &sandbox_config, Duration::from_secs(30))
