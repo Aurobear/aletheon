@@ -168,6 +168,7 @@ impl ProviderRegistry {
             ResolvedTransport::Anthropic => {
                 let mut provider = AnthropicProvider::new(&api_key, model)
                     .with_base_url(&config.base_url)
+                    .with_timeouts(self.provider_timeouts)
                     .with_max_tokens(self.max_tokens);
                 if let Some(ctx) = config.max_context_length {
                     provider = provider.with_max_context(ctx);
