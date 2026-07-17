@@ -180,12 +180,10 @@ impl ConsciousFieldReadout {
             .selected
             .iter()
             .filter_map(|w| match &w.content {
-                crate::WorkspaceContent::Concern(signal) => match signal {
-                    crate::dasein::SelfSignal::CareDecision { action, .. } => {
-                        Some(Self::care_action_weight(action.clone()))
-                    }
-                    _ => None,
-                },
+                crate::WorkspaceContent::Concern(crate::dasein::SelfSignal::CareDecision {
+                    action,
+                    ..
+                }) => Some(Self::care_action_weight(action.clone())),
                 _ => None,
             })
             .fold(0.0_f32, f32::max);
@@ -195,10 +193,10 @@ impl ConsciousFieldReadout {
             .selected
             .iter()
             .filter_map(|w| match &w.content {
-                crate::WorkspaceContent::Concern(signal) => match signal {
-                    crate::dasein::SelfSignal::CareDecision { action, .. } => Some(action.clone()),
-                    _ => None,
-                },
+                crate::WorkspaceContent::Concern(crate::dasein::SelfSignal::CareDecision {
+                    action,
+                    ..
+                }) => Some(action.clone()),
                 _ => None,
             })
             .next();

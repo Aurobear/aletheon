@@ -158,8 +158,16 @@ mod tests {
             reason: "blocked".to_string(),
         };
         // Allowed at input-gating phases.
-        assert!(validate_effects(LifecyclePhase::BeforeTurnInput, &[reject.clone()]).is_ok());
-        assert!(validate_effects(LifecyclePhase::BeforeToolBatch, &[reject.clone()]).is_ok());
+        assert!(validate_effects(
+            LifecyclePhase::BeforeTurnInput,
+            std::slice::from_ref(&reject)
+        )
+        .is_ok());
+        assert!(validate_effects(
+            LifecyclePhase::BeforeToolBatch,
+            std::slice::from_ref(&reject)
+        )
+        .is_ok());
         // Rejected elsewhere.
         assert_eq!(
             validate_effects(LifecyclePhase::AfterTurnTerminal, &[reject]),

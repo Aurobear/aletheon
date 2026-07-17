@@ -229,8 +229,8 @@ mod tests {
 
     #[test]
     fn bounds_are_sane() {
-        assert!(MAX_INTERJECTION_BYTES < MAX_PROMPT_BYTES);
-        assert!(MAX_QUEUE_LEN >= 8);
+        const { assert!(MAX_INTERJECTION_BYTES < MAX_PROMPT_BYTES) };
+        const { assert!(MAX_QUEUE_LEN >= 8) };
     }
 
     #[test]

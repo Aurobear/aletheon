@@ -406,6 +406,6 @@ mod guardrail_tests {
 
     #[test]
     fn min_summary_seed_chars_is_reasonable() {
-        assert!(MIN_SUMMARY_SEED_CHARS >= 100);
+        const { assert!(MIN_SUMMARY_SEED_CHARS >= 100) };
     }
 }

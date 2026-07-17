@@ -456,7 +456,11 @@ pub struct BtrfsRollbackBackend {
 impl BtrfsRollbackBackend {
     pub fn probe(clock: Arc<dyn fabric::Clock>) -> Option<Self> {
         // Check if btrfs tools are available
-        if which::which("btrfs").is_err() {
+        if std::process::Command::new("btrfs")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
             return None;
         }
 
@@ -586,7 +590,7 @@ impl RollbackBackend for BtrfsRollbackBackend {
                         .metadata()
                         .await?
                         .modified()
-                        .map(|t| chrono::DateTime::from(t))
+                        .map(chrono::DateTime::from)
                         .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
                 });
             }

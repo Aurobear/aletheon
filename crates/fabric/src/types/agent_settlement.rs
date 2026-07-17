@@ -110,6 +110,7 @@ pub struct ReparentContext {
 /// 2. parent authority covers it;
 /// 3. parent budget accepts remaining reservation;
 /// 4. (notification routes only) route is transferable.
+///
 /// Otherwise it must be killed/detached, with the reason recorded.
 pub fn can_reparent(decl: &BackgroundResourceDecl, ctx: &ReparentContext) -> Result<(), String> {
     if !decl.survive_child {
