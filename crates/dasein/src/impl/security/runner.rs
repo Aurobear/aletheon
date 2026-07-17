@@ -200,6 +200,7 @@ impl ToolRunnerWithGuard {
                 )
                 .map_err(|reason| ToolError::PolicyDenied { reason })?,
                 environment: std::collections::BTreeMap::new(),
+                policy: None,
             };
 
             match self

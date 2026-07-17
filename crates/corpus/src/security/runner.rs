@@ -412,6 +412,7 @@ impl ToolRunnerWithGuard {
                     ("GIT_CONFIG_KEY_0".to_string(), "safe.directory".to_string()),
                     ("GIT_CONFIG_VALUE_0".to_string(), trusted_working_dir),
                 ]),
+                policy: None,
             };
 
             match self

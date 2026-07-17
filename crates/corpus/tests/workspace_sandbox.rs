@@ -34,6 +34,7 @@ fn protected_mounts_follow_every_writable_bind_and_cwd_is_not_rebound() {
     let config = SandboxConfig {
         workspace,
         environment: Default::default(),
+        policy: None,
     };
     let args = BwrapBuilder::new(policy).build_args("true", &config);
 
@@ -67,6 +68,7 @@ async fn bubblewrap_enforces_workspace_and_protected_paths_when_available() {
         workspace: WorkspacePolicy::from_resolved_roots(project.clone(), vec![shared.clone()])
             .unwrap(),
         environment: Default::default(),
+        policy: None,
     };
 
     let probe = backend

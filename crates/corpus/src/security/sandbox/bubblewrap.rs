@@ -233,6 +233,7 @@ mod tests {
             )
             .unwrap(),
             environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+            policy: None,
         };
         let wrapped = backend
             .wrap_argv(
@@ -272,6 +273,7 @@ mod tests {
         let config = SandboxConfig {
             workspace: fabric::WorkspacePolicy::from_resolved_roots(work.clone(), vec![]).unwrap(),
             environment: Default::default(),
+            policy: None,
         };
         let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
         let working_dir = config.working_dir().to_string_lossy().into_owned();

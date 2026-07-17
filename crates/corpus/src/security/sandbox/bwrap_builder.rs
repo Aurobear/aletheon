@@ -171,6 +171,7 @@ mod tests {
             workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp/work".into(), vec![])
                 .unwrap(),
             environment: Default::default(),
+            policy: None,
         }
     }
 
@@ -280,6 +281,7 @@ mod tests {
             workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp/work".into(), vec![])
                 .unwrap(),
             environment: env,
+            policy: None,
         };
         let policy = FilesystemPolicy::new(FsDefault::ReadOnly);
         let builder = BwrapBuilder::new(policy);

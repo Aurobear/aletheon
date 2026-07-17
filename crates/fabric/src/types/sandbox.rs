@@ -29,6 +29,13 @@ pub struct SandboxConfig {
     /// Extra environment variables to set.
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
+    /// Resolved sandbox profile (S1). `None` = no profile layer (the
+    /// `grok_hardening.sandbox_profiles` flag is off, or no profile selected);
+    /// existing backends ignore `None`, so behavior is byte-identical to the
+    /// pre-profile path. Never serialized: it is derived per execution from
+    /// daemon-trusted config, not carried in persisted config.
+    #[serde(skip)]
+    pub policy: Option<ResolvedSandboxPolicy>,
 }
 
 impl SandboxConfig {
