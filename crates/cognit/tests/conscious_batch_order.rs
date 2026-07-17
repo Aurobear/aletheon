@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use cognit::harness::{
-    BatchPlanner, CognitiveSession, CognitiveSessionDependencies, CognitiveStreamEvent,
-    CognitiveStreamSink, HarnessConfig, LinearCognitiveSession,
+    BatchPlanner, CognitiveSession, CognitiveSessionDependencies, HarnessConfig,
+    LinearCognitiveSession,
 };
 use fabric::{
     CapabilityBatchPlan, CapabilityCall, CapabilityResult, ConsciousArbitrationMode, ContentBlock,
@@ -24,15 +24,6 @@ use tokio_util::sync::CancellationToken;
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
-
-fn dependencies() -> CognitiveSessionDependencies {
-    CognitiveSessionDependencies {
-        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
-        cancellation: CancellationToken::new(),
-        compactor: None,
-        batch_planner: None,
-    }
-}
 
 fn request() -> TurnRequest {
     let cwd = std::env::current_dir().unwrap();
@@ -66,100 +57,6 @@ impl InvocationLog {
     }
     fn take(&self) -> Vec<String> {
         std::mem::take(&mut *self.ids.lock().unwrap())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// scripted TurnServices that returns tool calls in provider order (a, b, c)
-// and records invocation order.
-// ---------------------------------------------------------------------------
-
-struct BatchOrderServices {
-    /// Desired call-id order the planner should emit.
-    planned_order: Vec<String>,
-    /// Arbitration mode for the batch plan.
-    mode: ConsciousArbitrationMode,
-    /// Whether the plan should be valid (exact permutation).
-    valid_plan: bool,
-    log: InvocationLog,
-}
-
-#[async_trait]
-impl TurnServices for BatchOrderServices {
-    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
-        Ok(Default::default())
-    }
-
-    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
-        Ok(Default::default())
-    }
-
-    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
-        Ok(Default::default())
-    }
-
-    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
-        self.log.push(&call.call_id);
-        CapabilityResult {
-            call_id: call.call_id,
-            output: format!("result_{}", call.name),
-            is_error: false,
-            usage: Default::default(),
-            audit_id: None,
-        }
-    }
-
-    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
-        None
-    }
-
-    fn tool_definitions(&self) -> Vec<ToolDefinition> {
-        vec![
-            ToolDefinition {
-                name: "tool_a".into(),
-                description: "tool a".into(),
-                input_schema: serde_json::json!({"type": "object"}),
-            },
-            ToolDefinition {
-                name: "tool_b".into(),
-                description: "tool b".into(),
-                input_schema: serde_json::json!({"type": "object"}),
-            },
-            ToolDefinition {
-                name: "tool_c".into(),
-                description: "tool c".into(),
-                input_schema: serde_json::json!({"type": "object"}),
-            },
-        ]
-    }
-
-    async fn plan_capability_batch(
-        &self,
-        calls: Vec<CapabilityCall>,
-    ) -> anyhow::Result<CapabilityBatchPlan> {
-        if self.valid_plan {
-            Ok(CapabilityBatchPlan {
-                mode: self.mode,
-                ordered_call_ids: self.planned_order.clone(),
-                decisions: calls
-                    .iter()
-                    .map(|c| fabric::CapabilityBatchDecision {
-                        call_id: c.call_id.clone(),
-                        decision: fabric::FieldDecisionKind::Reorder,
-                        reason: fabric::FieldDecisionReason::Selected,
-                        priority: 0.5,
-                        broadcast_epoch: None,
-                    })
-                    .collect(),
-            })
-        } else {
-            // Return a non-permutation to test the invalid-plan fallback.
-            Ok(CapabilityBatchPlan {
-                mode: ConsciousArbitrationMode::Enforce,
-                ordered_call_ids: vec!["tool_a".into(), "tool_a".into(), "tool_b".into()],
-                decisions: vec![],
-            })
-        }
     }
 }
 
@@ -232,16 +129,6 @@ impl LlmProvider for ThreeToolLlm {
     fn max_context_length(&self) -> usize {
         100_000
     }
-}
-
-// ---------------------------------------------------------------------------
-// streaming sink that discards events
-// ---------------------------------------------------------------------------
-
-struct DiscardSink;
-
-impl CognitiveStreamSink for DiscardSink {
-    fn emit(&self, _event: CognitiveStreamEvent) {}
 }
 
 // ---------------------------------------------------------------------------
