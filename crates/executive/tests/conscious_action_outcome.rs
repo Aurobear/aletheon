@@ -74,6 +74,7 @@ impl GovernedActionLoop for RejectSelection {
 
     async fn observe_modulation(
         &self,
+        _mode: fabric::ConsciousArbitrationMode,
         _call: &CapabilityCall,
         _modulation: &ActionModulationSnapshot,
     ) -> Result<()> {

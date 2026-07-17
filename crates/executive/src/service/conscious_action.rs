@@ -6,10 +6,11 @@ use std::time::Duration;
 use anyhow::Context;
 use async_trait::async_trait;
 use fabric::{
-    ActionProposalFrame, CapabilityCall, CapabilityResult, Clock, ConsciousFieldReadout, ContentId,
-    FieldDecisionKind, FieldDecisionReason, GovernedActionOutcomeFrame, LatestConsciousContextPort,
-    MonoDeadline, ProcessId, SalienceVector, VisibilityScope, WorkspaceAttribution,
-    WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    ActionProposalFrame, CapabilityCall, CapabilityResult, Clock, ConsciousFieldReadout,
+    ConsciousTraceEvent, ContentId, FieldDecisionKind, FieldDecisionReason,
+    GovernedActionOutcomeFrame, LatestConsciousContextPort, MonoDeadline, ProcessId,
+    SalienceVector, VisibilityScope, WorkspaceAttribution, WorkspaceCandidate, WorkspaceContent,
+    WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -242,10 +243,33 @@ impl GovernedActionLoop for ConsciousActionBridge {
 
     async fn observe_modulation(
         &self,
-        _call: &CapabilityCall,
+        mode: fabric::ConsciousArbitrationMode,
+        call: &CapabilityCall,
         modulation: &ActionModulationSnapshot,
     ) -> anyhow::Result<()> {
-        modulation.validate()
+        modulation.validate()?;
+        let event = ConsciousTraceEvent::FieldModulation {
+            mode,
+            decision: modulation.decision,
+            reason: modulation.reason,
+            operation_id: call.operation_id.0.to_string(),
+            call_id: call.call_id.clone(),
+            broadcast_epoch: Some(modulation.broadcast_epoch.0),
+            baseline: None,
+            effective: Some(f64::from(modulation.confidence)),
+            delta: None,
+            metric_ref: modulation.metric_ref.clone(),
+        };
+        self.coordinator.record_field_modulation(&event)?;
+        tracing::info!(
+            mode = ?mode,
+            decision = ?modulation.decision,
+            reason = ?modulation.reason,
+            epoch = modulation.broadcast_epoch.0,
+            metric_ref = %modulation.metric_ref,
+            "conscious action modulation observed"
+        );
+        Ok(())
     }
 
     async fn observe_outcome(

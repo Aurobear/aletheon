@@ -24,7 +24,10 @@ impl PermitId {
 
 impl Default for PermitId {
     fn default() -> Self {
-        Self::new()
+        // The default usage report represents work that never received an
+        // execution permit. Real permits must be created explicitly with
+        // `PermitId::new()`.
+        Self(Uuid::nil())
     }
 }
 

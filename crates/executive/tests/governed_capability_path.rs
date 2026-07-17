@@ -9,7 +9,8 @@ use executive::service::governed_capability::{
 use fabric::types::admission::RiskLevel;
 use fabric::{
     CapabilityAuthority, CapabilityCall, CapabilityInvoker, CapabilityRequest, CapabilityResult,
-    CapabilityScope, InvocationControl, PrincipalId, SandboxRequirement, UsageReport,
+    CapabilityScope, ConsciousArbitrationMode, InvocationControl, PrincipalId, SandboxRequirement,
+    UsageReport,
 };
 
 struct RecordingAuthority {
@@ -94,7 +95,8 @@ async fn authorization_precedes_inner_and_attaches_trusted_policy() {
             events: events.clone(),
             reject: false,
         }),
-    );
+    )
+    .with_arbitration_mode(ConsciousArbitrationMode::Enforce);
 
     let result = invoker.invoke(call()).await;
     assert!(!result.is_error);

@@ -13,9 +13,9 @@ use async_trait::async_trait;
 use fabric::dasein::SelfTransitionReceipt;
 use fabric::{
     AgoraSpaceId, BroadcastEpoch, BroadcastIntegrationReceipt, Clock, ConsciousContextProjection,
-    ConsciousFieldReadout, ConsciousProcessor, ContentId, ContextProjectionReceipt,
-    FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot, GoalFrame,
-    LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
+    ConsciousFieldReadout, ConsciousProcessor, ConsciousTraceEvent, ContentId,
+    ContextProjectionReceipt, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
+    GoalFrame, LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
     PredictionErrorFrame, PredictionFrame, ProcessId, ProcessorContext, ProcessorHealth,
     ProcessorId, ProcessorResponse, SalienceVector, SchemaId, SelectionExplanation,
     SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
@@ -165,6 +165,17 @@ impl ConsciousCoreCoordinator {
             .iter()
             .cloned()
             .collect()
+    }
+
+    /// Append pre-execution conscious modulation evidence to the workspace's
+    /// checksum-protected store.
+    pub fn record_field_modulation(&self, event: &ConsciousTraceEvent) -> anyhow::Result<()> {
+        self.store.save_field_modulation(&self.space, event)
+    }
+
+    /// Return durable modulation evidence for audit and acceptance projections.
+    pub fn field_modulations(&self) -> anyhow::Result<Vec<ConsciousTraceEvent>> {
+        self.store.field_modulations(&self.space)
     }
 
     #[allow(clippy::too_many_arguments)]

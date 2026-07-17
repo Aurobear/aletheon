@@ -12,10 +12,11 @@ use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, BroadcastEpoch, CapabilityAuthority, CapabilityCall, CapabilityInvoker,
-    CapabilityResult, CapabilityScope, ContentId, FieldDecisionKind, FieldDecisionReason,
-    InvocationControl, PrincipalId, ProcessId, SalienceVector, SandboxRequirement, UsageReport,
-    WorkspaceAttribution,
+    CapabilityResult, CapabilityScope, ConsciousArbitrationMode, ContentId, FieldDecisionKind,
+    FieldDecisionReason, InvocationControl, PrincipalId, ProcessId, SalienceVector,
+    SandboxRequirement, UsageReport, WorkspaceAttribution,
 };
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 /// Trusted execution context attached by Executive, never by model input.
@@ -141,6 +142,7 @@ pub trait GovernedActionLoop: Send + Sync {
 
     async fn observe_modulation(
         &self,
+        mode: ConsciousArbitrationMode,
         call: &CapabilityCall,
         modulation: &ActionModulationSnapshot,
     ) -> Result<()>;
@@ -168,6 +170,7 @@ pub struct GovernedCapabilityInvoker {
     inner: Arc<dyn CapabilityInvoker>,
     authority: Arc<dyn TurnAuthorityProvider>,
     action_loop: Option<Arc<dyn GovernedActionLoop>>,
+    arbitration_mode: ConsciousArbitrationMode,
 }
 
 impl GovernedCapabilityInvoker {
@@ -179,6 +182,7 @@ impl GovernedCapabilityInvoker {
             inner,
             authority,
             action_loop: None,
+            arbitration_mode: ConsciousArbitrationMode::Observe,
         }
     }
 
@@ -186,6 +190,21 @@ impl GovernedCapabilityInvoker {
         self.action_loop = Some(action_loop);
         self
     }
+
+    /// Select the conscious arbitration behavior for this trusted runtime.
+    /// Production composition remains observe-first until Task 8 threads config.
+    pub fn with_arbitration_mode(mut self, mode: ConsciousArbitrationMode) -> Self {
+        self.arbitration_mode = mode;
+        self
+    }
+}
+
+#[derive(Serialize)]
+struct ConsciousDeferredPayload {
+    code: &'static str,
+    retryable: bool,
+    reason: FieldDecisionReason,
+    epoch: u64,
 }
 
 #[async_trait]
@@ -210,8 +229,53 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                     modulation,
                 }) => {
                     if let Some(modulation) = modulation.as_ref() {
-                        if let Err(error) = action_loop.observe_modulation(&call, modulation).await
+                        if let Err(error) = action_loop
+                            .observe_modulation(self.arbitration_mode, &call, modulation)
+                            .await
                         {
+                            if self.arbitration_mode == ConsciousArbitrationMode::Enforce {
+                                return CapabilityResult {
+                                    call_id: call.call_id,
+                                    output: format!(
+                                        "capability action modulation observation failed: {error}"
+                                    ),
+                                    is_error: true,
+                                    usage: UsageReport::default(),
+                                    audit_id: None,
+                                };
+                            }
+                            tracing::warn!(
+                                error = %error,
+                                "conscious action modulation observation failed in observe mode"
+                            );
+                        }
+                    }
+                    Some(selected)
+                }
+                Ok(GovernedActionDecision::Defer {
+                    reason,
+                    retryable,
+                    mut modulation,
+                }) => {
+                    modulation.decision = match self.arbitration_mode {
+                        ConsciousArbitrationMode::Observe => FieldDecisionKind::WouldDefer,
+                        ConsciousArbitrationMode::Enforce => FieldDecisionKind::Defer,
+                    };
+                    modulation.reason = reason;
+                    if let Err(error) = modulation.validate() {
+                        return CapabilityResult {
+                            call_id: call.call_id,
+                            output: format!("capability action modulation is invalid: {error}"),
+                            is_error: true,
+                            usage: UsageReport::default(),
+                            audit_id: None,
+                        };
+                    }
+                    if let Err(error) = action_loop
+                        .observe_modulation(self.arbitration_mode, &call, &modulation)
+                        .await
+                    {
+                        if self.arbitration_mode == ConsciousArbitrationMode::Enforce {
                             return CapabilityResult {
                                 call_id: call.call_id,
                                 output: format!(
@@ -222,20 +286,24 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                                 audit_id: None,
                             };
                         }
+                        tracing::warn!(
+                            error = %error,
+                            "conscious would-defer observation failed in observe mode"
+                        );
                     }
-                    Some(selected)
-                }
-                Ok(GovernedActionDecision::Defer {
-                    reason: _,
-                    retryable: _,
-                    modulation,
-                }) => {
-                    if let Err(error) = action_loop.observe_modulation(&call, &modulation).await {
+                    if self.arbitration_mode == ConsciousArbitrationMode::Enforce {
+                        let payload = ConsciousDeferredPayload {
+                            code: "consciousness_deferred",
+                            retryable,
+                            reason,
+                            epoch: modulation.broadcast_epoch.0,
+                        };
+                        let output = serde_json::to_string(&payload).unwrap_or_else(|_| {
+                            r#"{"code":"consciousness_deferred","retryable":false,"reason":"serialization_error","epoch":0}"#.into()
+                        });
                         return CapabilityResult {
                             call_id: call.call_id,
-                            output: format!(
-                                "capability action modulation observation failed: {error}"
-                            ),
+                            output,
                             is_error: true,
                             usage: UsageReport::default(),
                             audit_id: None,
