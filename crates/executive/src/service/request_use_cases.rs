@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cognit::core::reflector::Reflector;
-use dasein::SelfField;
 use fabric::hook::{HookContext, HookPoint};
 use fabric::ui_event::InterruptReason;
 use fabric::{
@@ -18,7 +17,6 @@ use fabric::{
     OperationResult, PrincipalContext, PrincipalId, ProcessId, ReflectionEntry, ReflectionTrigger,
     SessionId, LOCAL_OWNER_PRINCIPAL,
 };
-use mnemosyne::episodic::EpisodicMemory;
 use serde::Serialize;
 use serde_json::json;
 use thiserror::Error;
@@ -26,7 +24,6 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::core::config::HooksConfig;
-use crate::core::orchestrator::AletheonExecutive;
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use crate::r#impl::external::GoogleIntegration;
 use crate::r#impl::health::{ComponentHealth, HealthRegistry, ProductionHealth};
@@ -53,6 +50,56 @@ pub struct CareWeight {
     pub weight: f64,
 }
 
+#[derive(Clone, Debug)]
+pub struct RuntimeStatus {
+    pub session_id: String,
+    pub iteration: usize,
+}
+
+#[async_trait]
+pub trait ExecutiveRuntimePort: Send + Sync {
+    async fn status(&self) -> RuntimeStatus;
+    async fn request_interrupt(&self, reason: InterruptReason);
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ReflectionStats {
+    pub reflection_count: usize,
+    pub evolution_count: usize,
+}
+
+#[async_trait]
+pub trait ReflectionMemoryPort: Send + Sync {
+    async fn stats(&self) -> ReflectionStats;
+    async fn recall_reflections(&self, limit: usize) -> anyhow::Result<Vec<ReflectionEntry>>;
+    async fn store_reflection(&self, entry: &ReflectionEntry) -> anyhow::Result<()>;
+    async fn recall_evolution_logs(&self, limit: usize) -> anyhow::Result<Vec<EvolutionLogEntry>>;
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SelfStatus {
+    pub care_weights: Vec<CareWeight>,
+    pub boundary_rules: usize,
+    pub boundary_immutable: usize,
+    pub attention_focus: String,
+}
+
+#[async_trait]
+pub trait SelfStatusPort: Send + Sync {
+    async fn status(&self) -> SelfStatus;
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SupplementalMemoryStatus {
+    pub enabled: bool,
+    pub degraded: bool,
+    pub queue_depth: usize,
+}
+
+pub trait SupplementalMemoryStatusPort: Send + Sync {
+    fn status(&self) -> SupplementalMemoryStatus;
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RequestHealth {
     #[serde(flatten)]
@@ -68,10 +115,10 @@ pub trait HealthUseCases: Send + Sync {
 }
 
 pub struct ProductionHealthUseCases {
-    executive: Arc<Mutex<AletheonExecutive>>,
-    episodic: Arc<Mutex<EpisodicMemory>>,
-    self_field: Arc<Mutex<SelfField>>,
-    supplemental: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
+    runtime_port: Arc<dyn ExecutiveRuntimePort>,
+    reflections: Arc<dyn ReflectionMemoryPort>,
+    self_status: Arc<dyn SelfStatusPort>,
+    supplemental: Arc<dyn SupplementalMemoryStatusPort>,
     data_root: PathBuf,
     registry: Arc<HealthRegistry>,
     clock: Arc<dyn Clock>,
@@ -85,10 +132,10 @@ pub struct ProductionHealthUseCases {
 }
 
 pub struct ProductionHealthResources {
-    pub executive: Arc<Mutex<AletheonExecutive>>,
-    pub episodic: Arc<Mutex<EpisodicMemory>>,
-    pub self_field: Arc<Mutex<SelfField>>,
-    pub supplemental: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
+    pub runtime_port: Arc<dyn ExecutiveRuntimePort>,
+    pub reflections: Arc<dyn ReflectionMemoryPort>,
+    pub self_status: Arc<dyn SelfStatusPort>,
+    pub supplemental: Arc<dyn SupplementalMemoryStatusPort>,
     pub data_root: PathBuf,
     pub registry: Arc<HealthRegistry>,
     pub clock: Arc<dyn Clock>,
@@ -104,9 +151,9 @@ pub struct ProductionHealthResources {
 impl ProductionHealthUseCases {
     pub fn new(resources: ProductionHealthResources) -> Self {
         Self {
-            executive: resources.executive,
-            episodic: resources.episodic,
-            self_field: resources.self_field,
+            runtime_port: resources.runtime_port,
+            reflections: resources.reflections,
+            self_status: resources.self_status,
             supplemental: resources.supplemental,
             data_root: resources.data_root,
             registry: resources.registry,
@@ -125,37 +172,18 @@ impl ProductionHealthUseCases {
 #[async_trait]
 impl HealthUseCases for ProductionHealthUseCases {
     async fn status(&self) -> anyhow::Result<RequestStatus> {
-        let runtime = self.executive.lock().await;
-        let session_id = runtime.config().session_id.clone();
-        let iteration = runtime.iteration();
-        drop(runtime);
-        let episodic = self.episodic.lock().await;
-        let reflection_count = episodic.reflection_count().unwrap_or(0);
-        let evolution_count = episodic.evolution_log_count().unwrap_or(0);
-        drop(episodic);
-        let self_field = self.self_field.lock().await;
-        let care_weights = self_field
-            .care()
-            .all_cares()
-            .into_iter()
-            .map(|care| CareWeight {
-                topic: care.topic,
-                weight: care.weight,
-            })
-            .collect();
+        let runtime = self.runtime_port.status().await;
+        let reflections = self.reflections.stats().await;
+        let self_status = self.self_status.status().await;
         Ok(RequestStatus {
-            session_id,
-            iteration,
-            reflection_count,
-            evolution_count,
-            care_weights,
-            boundary_rules: self_field.boundary().rule_count(),
-            boundary_immutable: self_field.boundary().immutable_rule_count(),
-            attention_focus: self_field
-                .attention()
-                .current_focus()
-                .map(|focus| focus.topic)
-                .unwrap_or_default(),
+            session_id: runtime.session_id,
+            iteration: runtime.iteration,
+            reflection_count: reflections.reflection_count,
+            evolution_count: reflections.evolution_count,
+            care_weights: self_status.care_weights,
+            boundary_rules: self_status.boundary_rules,
+            boundary_immutable: self_status.boundary_immutable,
+            attention_focus: self_status.attention_focus,
         })
     }
 
@@ -211,15 +239,15 @@ impl HealthUseCases for ProductionHealthUseCases {
                 None => ComponentHealth::disabled(),
             },
         );
-        let supplemental = self.supplemental.lock().unwrap().clone();
-        let mut supplemental_health = if !supplemental.supplemental_enabled {
+        let supplemental = self.supplemental.status();
+        let mut supplemental_health = if !supplemental.enabled {
             ComponentHealth::disabled()
         } else if supplemental.degraded {
             ComponentHealth::degraded("supplemental_memory")
         } else {
             ComponentHealth::ready()
         };
-        if supplemental.supplemental_enabled {
+        if supplemental.enabled {
             supplemental_health.count = Some(supplemental.queue_depth as u64);
         }
         self.registry.set("gbrain_spool", supplemental_health);
@@ -250,22 +278,22 @@ pub trait ReflectionUseCases: Send + Sync {
 }
 
 pub struct ProductionReflectionUseCases {
-    executive: Arc<Mutex<AletheonExecutive>>,
-    episodic: Arc<Mutex<EpisodicMemory>>,
+    runtime_port: Arc<dyn ExecutiveRuntimePort>,
+    reflections: Arc<dyn ReflectionMemoryPort>,
     metacog: Arc<dyn metacog::MetacogService>,
     reflector: Reflector,
 }
 
 impl ProductionReflectionUseCases {
     pub fn new(
-        executive: Arc<Mutex<AletheonExecutive>>,
-        episodic: Arc<Mutex<EpisodicMemory>>,
+        runtime_port: Arc<dyn ExecutiveRuntimePort>,
+        reflections: Arc<dyn ReflectionMemoryPort>,
         metacog: Arc<dyn metacog::MetacogService>,
         reflector: Reflector,
     ) -> Self {
         Self {
-            executive,
-            episodic,
+            runtime_port,
+            reflections,
             metacog,
             reflector,
         }
@@ -275,18 +303,15 @@ impl ProductionReflectionUseCases {
 #[async_trait]
 impl ReflectionUseCases for ProductionReflectionUseCases {
     async fn list(&self, limit: usize) -> anyhow::Result<Vec<ReflectionEntry>> {
-        self.episodic.lock().await.recall_reflections(limit)
+        self.reflections.recall_reflections(limit).await
     }
 
     async fn reflect_now(&self, turn: usize) -> anyhow::Result<ReflectionEntry> {
-        let runtime = self.executive.lock().await;
-        let session_id = runtime.config().session_id.clone();
-        let iteration = runtime.iteration();
-        drop(runtime);
-        let recent = self.episodic.lock().await.recall_reflections(5)?;
+        let runtime = self.runtime_port.status().await;
+        let recent = self.reflections.recall_reflections(5).await?;
         let mut what_worked = vec![
             format!("Session is active with {turn} turns"),
-            format!("Runtime iteration count: {iteration}"),
+            format!("Runtime iteration count: {}", runtime.iteration),
         ];
         let mut what_failed = Vec::new();
         let mut learned = Vec::new();
@@ -306,14 +331,17 @@ impl ReflectionUseCases for ProductionReflectionUseCases {
         }
         let succeeded = what_failed.is_empty() && turn > 0;
         let entry = self.reflector.reflect_conversation(
-            &format!("Session {session_id} after {turn} turns (iteration {iteration})"),
+            &format!(
+                "Session {} after {turn} turns (iteration {})",
+                runtime.session_id, runtime.iteration
+            ),
             ReflectionTrigger::Manual,
             succeeded,
             std::mem::take(&mut what_worked),
             what_failed,
             learned,
         );
-        self.episodic.lock().await.store_reflection(&entry)?;
+        self.reflections.store_reflection(&entry).await?;
         Ok(entry)
     }
 
@@ -323,7 +351,7 @@ impl ReflectionUseCases for ProductionReflectionUseCases {
     }
 
     async fn evolution(&self, limit: usize) -> anyhow::Result<Vec<EvolutionLogEntry>> {
-        self.episodic.lock().await.recall_evolution_logs(limit)
+        self.reflections.recall_evolution_logs(limit).await
     }
 }
 
@@ -435,7 +463,7 @@ pub trait TurnUseCases: Send + Sync {
 
 pub struct ProductionTurnUseCases {
     orchestrator: Arc<DaemonTurnOrchestrator>,
-    executive: Arc<Mutex<AletheonExecutive>>,
+    runtime_port: Arc<dyn ExecutiveRuntimePort>,
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     sessions: Arc<SessionService>,
 }
@@ -443,13 +471,13 @@ pub struct ProductionTurnUseCases {
 impl ProductionTurnUseCases {
     pub fn new(
         orchestrator: Arc<DaemonTurnOrchestrator>,
-        executive: Arc<Mutex<AletheonExecutive>>,
+        runtime_port: Arc<dyn ExecutiveRuntimePort>,
         cancel_token: Arc<Mutex<Option<CancellationToken>>>,
         sessions: Arc<SessionService>,
     ) -> Self {
         Self {
             orchestrator,
-            executive,
+            runtime_port,
             cancel_token,
             sessions,
         }
@@ -476,9 +504,9 @@ impl TurnUseCases for ProductionTurnUseCases {
         self.orchestrator.exit_process(id).await
     }
     async fn cancel_current(&self) {
-        let runtime = self.executive.lock().await;
-        runtime.interrupt_flag().request(InterruptReason::Timeout);
-        drop(runtime);
+        self.runtime_port
+            .request_interrupt(InterruptReason::Timeout)
+            .await;
         if let Some(token) = self.cancel_token.lock().await.take() {
             token.cancel();
         }

@@ -79,6 +79,35 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
 }
 
 #[test]
+fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
+    let source = production_source("src/service/request_use_cases.rs");
+    for contract in [
+        "Arc<dyn ExecutiveRuntimePort>",
+        "Arc<dyn ReflectionMemoryPort>",
+        "Arc<dyn SelfStatusPort>",
+        "Arc<dyn SupplementalMemoryStatusPort>",
+        "Arc<dyn metacog::MetacogService>",
+        "Arc<dyn corpus::CorpusService>",
+    ] {
+        assert!(
+            source.contains(contract),
+            "missing request port: {contract}"
+        );
+    }
+    for concrete in [
+        "AletheonExecutive",
+        "EpisodicMemory",
+        "SelfField",
+        "CompositeMemoryHealth",
+    ] {
+        assert!(
+            !source.contains(concrete),
+            "request use cases retained concrete domain state: {concrete}"
+        );
+    }
+}
+
+#[test]
 fn concrete_domain_construction_is_confined_to_composition_or_domain_tests() {
     let root = Path::new("src");
     let allowed = [

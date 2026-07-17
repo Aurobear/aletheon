@@ -3,15 +3,13 @@
 //! Contains the `RequestHandler::new()` constructor and setup-related methods
 //! (`set_notify_channel`, `create_notify_channel`, `tools`, `debug_handler`).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
 use fabric::Clock;
 use tokio_util::sync::CancellationToken;
-
 use super::super::model_router::{ModelRouter, TaskType};
 use super::super::prefix_builder::PrefixBuilder;
 use super::super::session_manager::SessionManager;
@@ -62,16 +60,7 @@ use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
-async fn initialize_self_field(self_field: &mut SelfField, data_dir: &Path) -> anyhow::Result<()> {
-    self_field
-        .init(&SubsystemContext {
-            name: "self_field".into(),
-            working_dir: data_dir.to_path_buf(),
-            config: serde_json::Value::Null,
-            bus: None,
-        })
-        .await
-}
+use super::request_ports::{initialize_self_field, RequestFacadePorts};
 
 impl RequestHandler {
     pub async fn new(
@@ -1253,6 +1242,12 @@ impl RequestHandler {
         let started_at = clock_2.mono_now();
         let health_registry = Arc::new(crate::r#impl::health::HealthRegistry::production_ready());
         let telegram_task = Arc::new(Mutex::new(None));
+        let request_facades = RequestFacadePorts::new(
+            runtime.clone(),
+            memory_group.episodic_memory.clone(),
+            self_field.clone(),
+            memory_group.supplemental_memory_health.clone(),
+        );
         let session_lifecycle: Arc<
             dyn crate::service::request_use_cases::SessionLifecycleUseCases,
         > = Arc::new(
@@ -1266,10 +1261,10 @@ impl RequestHandler {
         let health_use_cases: Arc<dyn crate::service::request_use_cases::HealthUseCases> = Arc::new(
             crate::service::request_use_cases::ProductionHealthUseCases::new(
                 crate::service::request_use_cases::ProductionHealthResources {
-                    executive: runtime.clone(),
-                    episodic: memory_group.episodic_memory.clone(),
-                    self_field: self_field.clone(),
-                    supplemental: memory_group.supplemental_memory_health.clone(),
+                    runtime_port: request_facades.runtime_port.clone(),
+                    reflections: request_facades.reflections.clone(),
+                    self_status: request_facades.self_status,
+                    supplemental: request_facades.supplemental,
                     data_root: data_dir.clone(),
                     registry: health_registry,
                     clock: clock.clone(),
@@ -1286,8 +1281,8 @@ impl RequestHandler {
         let reflection_use_cases: Arc<dyn crate::service::request_use_cases::ReflectionUseCases> =
             Arc::new(
                 crate::service::request_use_cases::ProductionReflectionUseCases::new(
-                    runtime.clone(),
-                    memory_group.episodic_memory.clone(),
+                    request_facades.runtime_port.clone(),
+                    request_facades.reflections,
                     domains.metacog(),
                     reflector.clone(),
                 ),
@@ -1309,7 +1304,7 @@ impl RequestHandler {
         let turn_use_cases: Arc<dyn crate::service::request_use_cases::TurnUseCases> = Arc::new(
             crate::service::request_use_cases::ProductionTurnUseCases::new(
                 turn_orchestrator.clone(),
-                runtime.clone(),
+                request_facades.runtime_port,
                 turn_token.clone(),
                 turn_orchestrator.session_service.clone(),
             ),

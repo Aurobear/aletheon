@@ -158,6 +158,32 @@ for name in files:
             violations.append(f"{name}: {needle}")
 if violations:
     raise SystemExit("architecture-check: domain facade bypass:\n" + "\n".join(violations))
+
+request_use_cases = Path("crates/executive/src/service/request_use_cases.rs")
+request_source = request_use_cases.read_text().split("#[cfg(test)]", 1)[0]
+required_request_ports = [
+    "Arc<dyn ExecutiveRuntimePort>",
+    "Arc<dyn ReflectionMemoryPort>",
+    "Arc<dyn SelfStatusPort>",
+    "Arc<dyn SupplementalMemoryStatusPort>",
+]
+missing = [port for port in required_request_ports if port not in request_source]
+concrete = [
+    name
+    for name in [
+        "AletheonExecutive",
+        "EpisodicMemory",
+        "SelfField",
+        "CompositeMemoryHealth",
+    ]
+    if name in request_source
+]
+if missing or concrete:
+    details = [*(f"missing request port: {port}" for port in missing)]
+    details.extend(f"concrete request state: {name}" for name in concrete)
+    raise SystemExit(
+        "architecture-check: request use-case authority:\n" + "\n".join(details)
+    )
 PY
 
 # M04 deletion gate: recalled memory enters model context only after the
