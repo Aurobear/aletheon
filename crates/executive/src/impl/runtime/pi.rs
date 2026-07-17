@@ -365,6 +365,7 @@ fn validate_fixed_args(args: &[String]) -> Result<()> {
         "--continue",
         "--resume",
         "--fork",
+        "--api-key",
     ] {
         if args.iter().any(|arg| arg == forbidden) {
             bail!("Pi runtime rejects unreviewed resource/session flag {forbidden}");
@@ -843,8 +844,7 @@ mod tests {
     fn namespace_sandbox_is_accepted_and_debug_is_secret_free() {
         let fixture = TempDir::new().unwrap();
         let mut config = enabled_config(&fixture);
-        config.fixed_args.push("--api-key".into());
-        config.fixed_args.push("super-secret".into());
+        config.package_version = "super-secret".into();
         let runtime = PiRuntime::prepare(
             &config,
             sandbox(IsolationLevel::Namespace),
@@ -864,5 +864,20 @@ mod tests {
         )
         .unwrap());
         assert!(registry.contains(&PiRuntime::runtime_id()));
+    }
+
+    #[test]
+    fn api_keys_are_rejected_from_process_arguments() {
+        let fixture = TempDir::new().unwrap();
+        let mut config = enabled_config(&fixture);
+        config.fixed_args.push("--api-key".into());
+        config.fixed_args.push("super-secret".into());
+        let error = PiRuntime::prepare(
+            &config,
+            sandbox(IsolationLevel::Namespace),
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("--api-key"));
     }
 }

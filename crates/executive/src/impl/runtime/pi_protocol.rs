@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const MAX_TOOL_EVENTS: usize = 128;
+const MAX_TOOL_EVIDENCE_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedPiOutput {
@@ -45,6 +46,7 @@ pub fn parse_job_jsonl(input: &str, expected_version: u32) -> Result<ParsedPiOut
     let mut ended = false;
     let mut final_text = None;
     let mut usage = AttemptUsage::default();
+    let mut message_usage_seen = false;
     let mut evidence = Vec::new();
 
     for (offset, raw) in records.enumerate() {
@@ -79,13 +81,20 @@ pub fn parse_job_jsonl(input: &str, expected_version: u32) -> Result<ParsedPiOut
                         if let Some(text) = message_text(message) {
                             final_text = Some(text);
                         }
-                        accumulate_usage(message.get("usage"), &mut usage);
+                        if message.get("usage").is_some() {
+                            accumulate_usage(message.get("usage"), &mut usage);
+                            message_usage_seen = true;
+                        }
                     }
                 }
             }
             "turn_end" => {
                 if let Some(message) = event.get("message") {
-                    accumulate_usage(message.get("usage"), &mut usage);
+                    // Pi repeats the terminal assistant message in `turn_end`.
+                    // Treat its usage as a fallback rather than double-counting it.
+                    if !message_usage_seen {
+                        accumulate_usage(message.get("usage"), &mut usage);
+                    }
                 }
             }
             "tool_execution_end" => {
@@ -98,14 +107,19 @@ pub fn parse_job_jsonl(input: &str, expected_version: u32) -> Result<ParsedPiOut
                     .get("isError")
                     .and_then(Value::as_bool)
                     .context("Pi tool_execution_end lacks isError")?;
-                evidence.push(AttemptEvidence {
-                    kind: "pi_tool_execution".into(),
-                    summary: format!(
-                        "Pi tool {tool_name} ({tool_call_id}) {}",
-                        if is_error { "failed" } else { "completed" }
-                    ),
-                    content: serde_json::to_string(event.get("result").unwrap_or(&Value::Null))?,
-                });
+                evidence.push(
+                    AttemptEvidence {
+                        kind: "pi_tool_execution".into(),
+                        summary: format!(
+                            "Pi tool {tool_name} ({tool_call_id}) {}",
+                            if is_error { "failed" } else { "completed" }
+                        ),
+                        content: serde_json::to_string(
+                            event.get("result").unwrap_or(&Value::Null),
+                        )?,
+                    }
+                    .bounded_for_persistence(MAX_TOOL_EVIDENCE_BYTES),
+                );
             }
             "turn_start"
             | "message_start"
@@ -238,6 +252,23 @@ mod tests {
         assert_eq!(parsed.usage.output_tokens, 7);
         assert_eq!(parsed.usage.cost_usd, Some(0.02));
         assert_eq!(parsed.evidence.len(), 1);
+    }
+
+    #[test]
+    fn does_not_double_count_usage_repeated_by_turn_end() {
+        let parsed = parse_job_jsonl(
+            &stream(&[
+                r#"{"type":"session","version":3,"id":"s1"}"#,
+                r#"{"type":"agent_start"}"#,
+                r#"{"type":"message_end","message":{"role":"assistant","content":"done","usage":{"inputTokens":11,"outputTokens":7}}}"#,
+                r#"{"type":"turn_end","message":{"role":"assistant","content":"done","usage":{"inputTokens":11,"outputTokens":7}}}"#,
+                r#"{"type":"agent_end","messages":[]}"#,
+            ]),
+            3,
+        )
+        .unwrap();
+        assert_eq!(parsed.usage.input_tokens, 11);
+        assert_eq!(parsed.usage.output_tokens, 7);
     }
 
     #[test]
