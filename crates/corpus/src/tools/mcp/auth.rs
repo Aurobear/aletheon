@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use fabric::Clock;
+use mnemosyne::credential::EmbeddingCredentialGrant;
 use serde::{Deserialize, Serialize};
 
 pub use super::token_store::{TokenEntry, TokenStore};
@@ -41,7 +42,11 @@ pub trait McpAuth: Send + Sync {
     /// Return HTTP headers to attach to MCP requests.
     ///
     /// For bearer/OAuth this is `{ "Authorization": "Bearer <token>" }`.
-    fn get_headers(&self) -> HashMap<String, String>;
+    ///
+    /// When `target_url` is `Some(url)` and the provider has endpoint-scoping
+    /// (e.g. a credential grant), the headers are only returned when the
+    /// specific URL is approved.
+    fn get_headers(&self, target_url: Option<&str>) -> HashMap<String, String>;
 
     /// Return `true` if the current credentials have expired.
     ///
@@ -64,9 +69,17 @@ pub trait McpAuth: Send + Sync {
 /// time (typically `MCP_BEARER_TOKEN`). The token is resolved lazily on
 /// each call to `header_value()` so that env changes at runtime are picked
 /// up without restarting.
-#[derive(Debug, Clone)]
+///
+/// When an `EmbeddingCredentialGrant` is set (via `with_endpoint_scoping`),
+/// the token is only returned for requests whose target URL is approved by
+/// the grant. Without a grant, the token is returned unconditionally
+/// (backward compatible).
+#[derive(Clone)]
 pub struct BearerTokenAuth {
     env_var: String,
+    grant: Option<EmbeddingCredentialGrant>,
+    /// Clock for checking grant expiry. `None` when no grant is set.
+    clock: Option<Arc<dyn Clock>>,
 }
 
 impl BearerTokenAuth {
@@ -74,12 +87,31 @@ impl BearerTokenAuth {
     pub fn new(env_var: impl Into<String>) -> Self {
         Self {
             env_var: env_var.into(),
+            grant: None,
+            clock: None,
         }
     }
 
     /// Create auth reading from the default `MCP_BEARER_TOKEN` env var.
     pub fn from_env() -> Self {
         Self::new("MCP_BEARER_TOKEN")
+    }
+
+    /// Create an auth helper with endpoint-scoping via a credential grant.
+    ///
+    /// The token is only returned for requests whose target URL is approved
+    /// by the grant. Without endpoint-scoping (i.e. no grant), the token is
+    /// returned unconditionally.
+    pub fn with_endpoint_scoping(
+        env_var: impl Into<String>,
+        grant: EmbeddingCredentialGrant,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            env_var: env_var.into(),
+            grant: Some(grant),
+            clock: Some(clock),
+        }
     }
 
     /// Read the token from the environment.
@@ -91,17 +123,61 @@ impl BearerTokenAuth {
 
     /// Return the full `Authorization: Bearer <token>` header value.
     ///
-    /// Returns `None` when no token is available.
+    /// When a credential grant is present and `target_url` is `Some`,
+    /// the grant must approve the URL (fail-closed). When no grant is
+    /// present, the token is returned unconditionally. When a grant is
+    /// present but `target_url` is `None`, returns `None` (cannot
+    /// verify without URL).
+    ///
+    /// **Deprecated-preferred**: Use `get_headers(target_url)` instead
+    /// (the `McpAuth` trait method), which gates the header on the
+    /// grant's endpoint-scoping check before exposing the token.
+    pub fn header_value_for(&self, target_url: Option<&str>) -> Option<String> {
+        let token = self.token()?;
+        match (&self.grant, &self.clock, target_url) {
+            // No grant → always allow (backward compatible).
+            (None, _, _) => Some(format!("Bearer {}", token)),
+            // Grant present but no URL → fail-closed.
+            (Some(_), _, None) => None,
+            // Grant present with URL → gate on approved_for.
+            (Some(grant), Some(clock), Some(url)) => {
+                let now = now_epoch_secs(&**clock);
+                if grant.approved_for(url, now) {
+                    Some(format!("Bearer {}", token))
+                } else {
+                    None
+                }
+            }
+            // Grant present but clock missing (should not happen).
+            (Some(_), None, Some(_)) => None,
+        }
+    }
+
+    /// Return the full `Authorization: Bearer <token>` header value
+    /// without scoping. Used where the transport does not know the
+    /// target URL (e.g. SSE long-poll setup).
     pub fn header_value(&self) -> Option<String> {
         self.token().map(|t| format!("Bearer {}", t))
     }
 }
 
+impl fmt::Debug for BearerTokenAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let has_token = self.token().is_some();
+        let has_grant = self.grant.is_some();
+        f.debug_struct("BearerTokenAuth")
+            .field("env_var", &self.env_var)
+            .field("has_token", &has_token)
+            .field("has_grant", &has_grant)
+            .finish()
+    }
+}
+
 #[async_trait::async_trait]
 impl McpAuth for BearerTokenAuth {
-    fn get_headers(&self) -> HashMap<String, String> {
+    fn get_headers(&self, target_url: Option<&str>) -> HashMap<String, String> {
         let mut headers = HashMap::new();
-        if let Some(val) = self.header_value() {
+        if let Some(val) = self.header_value_for(target_url) {
             headers.insert("Authorization".to_string(), val);
         }
         headers
@@ -349,7 +425,7 @@ impl McpOAuthProvider {
 
 #[async_trait::async_trait]
 impl McpAuth for McpOAuthProvider {
-    fn get_headers(&self) -> HashMap<String, String> {
+    fn get_headers(&self, _target_url: Option<&str>) -> HashMap<String, String> {
         let mut headers = HashMap::new();
         if let Some(entry) = self.token_store.get(&self.server_id) {
             if !self.is_expired() {
@@ -473,7 +549,7 @@ mod tests {
     async fn bearer_trait_get_headers_with_token() {
         std::env::set_var("TEST_BEARER_TRAIT", "abc123");
         let mut auth = BearerTokenAuth::new("TEST_BEARER_TRAIT");
-        let headers = auth.get_headers();
+        let headers = auth.get_headers(None);
         assert_eq!(
             headers.get("Authorization").map(|s| s.as_str()),
             Some("Bearer abc123")
@@ -487,7 +563,7 @@ mod tests {
     fn bearer_trait_get_headers_empty_when_no_token() {
         std::env::remove_var("TEST_BEARER_TRAIT_EMPTY");
         let auth = BearerTokenAuth::new("TEST_BEARER_TRAIT_EMPTY");
-        let headers = auth.get_headers();
+        let headers = auth.get_headers(None);
         assert!(headers.is_empty());
     }
 
@@ -761,7 +837,7 @@ mod tests {
             test_clock(),
         );
 
-        let headers = provider.get_headers();
+        let headers = provider.get_headers(None);
         assert_eq!(
             headers.get("Authorization").map(|s| s.as_str()),
             Some("Bearer my_access_token")
@@ -802,7 +878,7 @@ mod tests {
             test_clock(),
         );
 
-        let headers = provider.get_headers();
+        let headers = provider.get_headers(None);
         assert!(headers.is_empty());
     }
 

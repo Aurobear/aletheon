@@ -7,6 +7,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
 use super::auth::BearerTokenAuth;
+use super::auth::McpAuth;
 
 const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 
@@ -429,7 +430,8 @@ impl McpTransport {
             .json(body);
 
         if let Some(a) = auth {
-            if let Some(hv) = a.header_value() {
+            let headers = a.get_headers(Some(url));
+            if let Some(hv) = headers.get("Authorization") {
                 req = req.header("Authorization", hv);
             }
         }
@@ -502,7 +504,8 @@ impl McpTransport {
             .json(body);
 
         if let Some(a) = auth {
-            if let Some(hv) = a.header_value() {
+            let headers = a.get_headers(Some(url));
+            if let Some(hv) = headers.get("Authorization") {
                 req = req.header("Authorization", hv);
             }
         }

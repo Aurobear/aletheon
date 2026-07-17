@@ -9,6 +9,7 @@ description = "Core execution body — the minimal runtime for tool execution"
 [dependencies]
 fabric = { path = "../fabric" }
 aletheon-kernel = { path = "../kernel" }
+mnemosyne = { path = "../mnemosyne" }
 anyhow = "1"
 aes-gcm = { workspace = true }
 async-trait = "0.1"
