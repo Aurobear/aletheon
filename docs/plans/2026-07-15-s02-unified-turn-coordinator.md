@@ -1,5 +1,7 @@
 # S02 Unified Turn Coordinator Implementation Plan
 
+> **Status:** Blocked by Q02 — coordinator acceptance passes, aggregate architecture acceptance does not
+>
 > **For agentic workers:** Use `workflow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make daemon and CLI exec enter one `TurnCoordinator`, create a real `OperationKind::Turn`, use the governed invoker, and append identical canonical lifecycle items.

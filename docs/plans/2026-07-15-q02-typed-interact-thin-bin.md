@@ -1,5 +1,7 @@
 # Q02 Typed Interact and Thin Bin Implementation Plan
 
+> **Status:** Partial — Bin still directly depends on Fabric and the architecture gate is red
+
 **Goal:** Make Interact a typed reducer-driven protocol client and reduce Bin to host selection, argument parsing and startup.
 
 **Architecture:** Fabric protocol schemas generate typed client messages; Interact reduces snapshots/events into UI state, and Bin delegates startup without constructing domains.

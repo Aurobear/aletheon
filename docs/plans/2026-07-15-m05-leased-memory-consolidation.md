@@ -1,5 +1,7 @@
 # M05 Leased Memory Consolidation Implementation Plan
 
+> **Status:** Partial — production does not yet enqueue the extraction feed
+
 **Goal:** Replace the duplicate in-memory extraction paths with one restart-safe, leased two-stage consolidation pipeline.
 
 **Architecture:** Mnemosyne persists extraction jobs, candidates, scope leases and decisions in SQLite; one Executive-supervised worker advances the durable state machine.

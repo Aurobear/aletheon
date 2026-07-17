@@ -1,5 +1,7 @@
 # V02 Production Migration and Real Scenarios Implementation Plan
 
+> **Status:** Open — no passing disposable-host operator receipt has been retained
+
 **Goal:** Prove installation, migration, restart, rollback, bounded failure and real user workflows against the installed daemon before release.
 
 **Architecture:** A disposable installed host runs the actual release binary, systemd assets and data migrations; monitor scenarios validate durable effects and failure recovery before release approval.

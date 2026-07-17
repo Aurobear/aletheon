@@ -1,5 +1,7 @@
 # G08 Multi-Agent Admission and Hierarchical Budget Implementation Plan
 
+> **Status:** Partial — fair queued admission after capacity release is not implemented
+>
 > **For agentic workers:** Use `workflow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Bound Agent tree size, concurrency, depth, rollout usage, cost and storage before any child resources are created.

@@ -1,5 +1,7 @@
 # M06 GBrain Reconciliation Implementation Plan
 
+> **Status:** Partial — reconciliation receipt and retry ownership still leaks into Executive
+
 **Goal:** Keep GBrain supplemental and replaceable while making outbound replay and remote state reconciliation durable and idempotent.
 
 **Architecture:** Mnemosyne owns reconciliation and receipts while Executive only supervises a worker and the existing transport remains the sole GBrain protocol boundary.

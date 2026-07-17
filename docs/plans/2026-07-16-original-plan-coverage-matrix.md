@@ -1,116 +1,58 @@
-# Original Plans to Executable Work Coverage Matrix
+# Active Architecture Plan Status
 
-> **For agentic workers:** This is the traceability authority for the post-P0 implementation. A row is complete only when its executable plan, production code, focused tests, workspace tests and deletion gate are all evidenced.
+> **Status:** Active traceability authority
+>
+> **Audited:** 2026-07-17 against the current branch
 
-**Goal:** Preserve every required outcome from the four original plans while turning them into dependency-ordered, reviewable implementation slices.
-
-**Source plans:**
-
-- `docs/plans/2026-07-15-architecture-coupling-optimization-plan.md`
-- `docs/plans/2026-07-15-dasein-agora-conscious-core-plan.md`
-- `docs/plans/2026-07-15-mnemosyne-unified-memory-plan.md`
-- `docs/plans/2026-07-15-subagent-unified-harness-plan.md`
+Completed and superseded plans were removed from `docs/plans`; their outcomes
+and current code evidence are retained in
+`docs/arch/2026-07-plan-completion-ledger.md`. This file lists only work that
+still has an unmet acceptance condition.
 
 ## Status vocabulary
 
-| Status | Evidence required |
+| Status | Meaning |
 |---|---|
-| `done` | Merged code and tests satisfy the source acceptance criteria. |
-| `planned` | A dedicated executable plan exists with exact paths, TDD steps and deletion gates. |
-| `mapped` | An execution ID and dependency position exist, but the detailed plan is not yet written. |
-| `missing` | No executable owner exists; implementation must not start until corrected. |
+| `partial` | Substantial code exists, but at least one source acceptance item is unmet. |
+| `open` | The required production acceptance evidence has not been produced. |
+| `blocked-by` | This plan's own implementation is present, but its final aggregate gate depends on another active plan. |
 
-## Architecture plan coverage
+## Active plans
 
-| Original requirement | Source anchor | Executable owner | Current evidence | Status |
-|---|---|---|---|---|
-| Freeze dependency and bypass drift | `architecture-coupling-optimization-plan.md:937-956` | E01 | `scripts/architecture_check.py`, CI gate and shrink-only baseline | done |
-| One governed capability path | `architecture-coupling-optimization-plan.md:958-979` | E02, E03 | Corpus executor plus Executive governed invoker | done |
-| Canonical Session/Turn/Item lifecycle | `architecture-coupling-optimization-plan.md:981-1006` | S01, S02 | canonical store and shared `TurnCoordinator` | done |
-| Opaque Kernel runtime, exact transitions and parent/owner validation | `architecture-coupling-optimization-plan.md:1012-1017`, `:1027-1031` | K01 | Runtime: `crates/kernel/src/runtime.rs:18`; total matrices: `crates/fabric/src/types/process.rs:71`, `crates/fabric/src/types/operation.rs:61`; orphan/ownership tests: `crates/kernel/tests/lifecycle_integrity.rs:22`, `:31`, `:60`; opaque runtime/cleanup tests: `crates/kernel/tests/kernel_runtime.rs:7`, `:28`, `:47` | done |
-| Kernel becomes the sole lifecycle authority and Executive-local kernel is deleted | `architecture-coupling-optimization-plan.md:1013-1025`, `:1029-1032` | K02 | Opaque authority: `crates/kernel/src/runtime.rs:24-47`; private tables: `crates/kernel/src/process/mod.rs:4-6`, `crates/kernel/src/operation/mod.rs:3-6`, `crates/kernel/src/space/mod.rs:3-4`; split composition: `crates/executive/src/core/domain_ports.rs:6-18` and `crates/executive/src/impl/daemon/bootstrap/mod.rs:18-35`; deletion gates: `scripts/architecture-check.sh:74-124`; deterministic scenarios: `crates/executive/tests/kernel_lifecycle_scenarios.rs:145-260`, `crates/kernel/tests/terminal_cleanup.rs`, `crates/kernel/tests/hierarchical_budget.rs` | done |
-| Give request handlers only use-case ports and extract context/session/projection flows | `architecture-coupling-optimization-plan.md:1038-1054`, `:1058-1063` | X01 | `HandlerPorts`: `crates/executive/src/impl/daemon/handler/ports.rs:20`; request deletion gate: `crates/executive/tests/request_use_case_boundaries.rs:17`; workspace validation recorded in `2026-07-15-x01-executive-use-case-ports.md:146-161` | done |
-| Delete `CoreSystems` and split private lifecycle bootstrap | `architecture-coupling-optimization-plan.md:1055-1056`, `:1062-1063` | X02 | Private root: `crates/executive/src/impl/daemon/bootstrap/mod.rs:18-35`; thin handler init: `crates/executive/src/impl/daemon/handler/init.rs:1-41`; deletion/confinement gate: `crates/executive/tests/private_composition_root.rs:17-105`; workspace and architecture evidence: `2026-07-15-x02-private-composition-root.md` completion record | done |
-| Authoritative domain facades | `architecture-coupling-optimization-plan.md:1065-1115` | M01-M08, D01-D03, A01-A03, G01-G10, F01 | Dedicated detailed plans exist for every remaining memory, conscious-core, Agent and facade slice | planned |
-| Canonical event spine and deterministic projections | `architecture-coupling-optimization-plan.md:1117-1139` | R01, R02 | `2026-07-15-r01-canonical-event-spine.md`, `2026-07-15-r02-deterministic-event-projections.md` | planned |
-| Layered config, extension catalog, typed Interact client and thin Bin | `architecture-coupling-optimization-plan.md:1141-1160` | Q01, Q02 | `2026-07-15-q01-layered-config-extension-catalog.md`, `2026-07-15-q02-typed-interact-thin-bin.md` | planned |
-| Optional physical crate split only after stable boundaries | `architecture-coupling-optimization-plan.md:1162-1170` | V02 decision record | `2026-07-15-v02-production-migration-scenarios.md` records the evidence threshold and ADR step | planned |
-
-## Conscious-core coverage
-
-| Original requirement | Source anchor | Executable owner | Status |
+| Plan | Status | Remaining acceptance gap | Current evidence |
 |---|---|---|---|
-| Configured temporality and event-driven restartable Sorge lifecycle | `dasein-agora-conscious-core-plan.md:789-794`, `:803-804` | D01 | done |
-| Versioned Dasein reducer and complete structured event handling | `dasein-agora-conscious-core-plan.md:786-791`, `:799-803` | D02 | done |
-| Self ledger, checksums, replay and causal lineage | `dasein-agora-conscious-core-plan.md:786-804` | D03 | done |
-| Agora transaction and durability integrity | `dasein-agora-conscious-core-plan.md:811-814`, `:819-824` | A01 | done |
-| Typed workspace contents with provenance, visibility and lifecycle | `dasein-agora-conscious-core-plan.md:810`, `:824-825` | A02 | done |
-| Scoped Scratchpad integration and direct-mutation cleanup | `dasein-agora-conscious-core-plan.md:815-817` | F01 | planned |
-| Bounded typed competition, deterministic selection and ignition | `dasein-agora-conscious-core-plan.md:827-833`, `:836-843` | A02 | done |
-| Durable broadcast epochs, delivery and acknowledgements | `dasein-agora-conscious-core-plan.md:834-835`, `:844-845` | A03 | Durable store/coordinator: `crates/agora/src/broadcast/store.rs:18`, `crates/agora/src/broadcast/mod.rs:193`; replay test: `crates/agora/tests/broadcast_delivery.rs:84`; bounded visibility/terminal ACK test: `crates/agora/tests/broadcast_delivery.rs:220`; restart/finalization test: `crates/agora/tests/broadcast_delivery.rs:322`; non-leaking contract test: `crates/fabric/tests/workspace_broadcast_contract.rs:105` | done |
-| Dasein–Agora recurrent loop | `dasein-agora-conscious-core-plan.md:847-865` | C01 | planned |
-| Memory, Metacog, Corpus and child processors | `dasein-agora-conscious-core-plan.md:867-884` | C02 | planned |
-| Functional indicators and ablations | `dasein-agora-conscious-core-plan.md:703-747` | V01 | planned |
+| Architecture and coupling optimization | `partial` | Q02, G08, M05, M06 and V02 still prevent the definition of architectural completion. | Completion requires all authoritative facades and gates at `docs/plans/2026-07-15-architecture-coupling-optimization-plan.md` §15. |
+| Dasein–Agora conscious core | `partial` | Memory consolidation/reconciliation and aggregate indicator/release evidence remain incomplete. | Final cross-domain requirements are at `docs/plans/2026-07-15-dasein-agora-conscious-core-plan.md` §15. |
+| Executable plan decomposition | `partial` | The decomposition cannot close until Q02 and V02 close and this matrix has no active rows. | Terminal completion is tracked by this table. |
+| E01 architecture fitness baseline | `partial` | The production architecture gate is red because Bin directly depends on Fabric. | Rejection is encoded at `scripts/architecture-check.sh:37-50`; the edge is at `crates/bin/Cargo.toml:16-20`. |
+| G08 Agent admission and budgets | `partial` | Capacity exhaustion returns immediately; the required fair waiting queue and eventual admission are absent. | Immediate rejection: `crates/executive/src/service/agent_control/admission.rs:187-195`; current acceptance behavior: `crates/executive/tests/agent_admission.rs:79-118`. |
+| M05 leased memory consolidation | `partial` | The production path does not enqueue extraction, so experience-to-candidate consolidation is not closed. | Consolidation worker only supervises consolidation at `crates/executive/src/service/memory_consolidation_worker.rs:5-38`; repository lease machinery exists at `crates/mnemosyne/src/consolidation/repository.rs:124-175`. |
+| M06 GBrain reconciliation | `partial` | Executive still owns claim, receipt construction and retry/dead-letter settlement that belong behind Mnemosyne. | Ownership leak: `crates/executive/src/impl/gbrain/worker.rs:62-142`; intended domain operations: `crates/mnemosyne/src/backends/gbrain/reconcile.rs:9-115`. |
+| Mnemosyne unified memory | `partial` | M05, M06 and the plan's dedicated observability metrics remain incomplete. | Release criteria remain at `docs/plans/2026-07-15-mnemosyne-unified-memory-plan.md` §10. |
+| Q02 typed Interact/thin Bin | `partial` | Remove Bin's Fabric dependency/direct protocol knowledge and restore the architecture gate. | Forbidden edge: `crates/bin/Cargo.toml:16-20`; gate: `scripts/architecture-check.sh:37-50`. |
+| S02 unified turn coordinator | `blocked-by Q02` | Core lifecycle/equivalence tests pass, but its required repository architecture gate is red. | Coordinator acceptance: `crates/executive/tests/turn_coordinator_lifecycle.rs:41-166`; final gate requirement: `docs/plans/2026-07-15-s02-unified-turn-coordinator.md` §Compatibility deletion gate and completion evidence. |
+| SubAgent unified harness | `partial` | G08 remains partial; Pi still lacks pinned protocol/build identity, strict JSONL typed parsing and RPC lifecycle mapping. | Opaque Pi stdout handling: `crates/executive/src/impl/runtime/pi.rs:444-458`. |
+| V01 cross-domain acceptance | `blocked-by Q02` | Functional/ablation tests exist, but the aggregate acceptance command cannot pass while E01 is red. | Indicators: `crates/executive/tests/functional_indicators.rs:73-120`; deterministic acceptance: `crates/executive/tests/cross_domain_acceptance.rs:20-61`. |
+| V02 production migration scenarios | `open` | Run the disposable-host install/upgrade/restart/failure/rollback scenarios and retain a passing operator receipt. | Receipt requirement: `docs/testing/production-scenarios.md:8-12`; release harness: `scripts/release-acceptance.sh:111-155`. |
 
-## Mnemosyne coverage
-
-The former six-row decomposition compressed two independently testable source phases. They are restored as M07 and M08 so retention and child-memory isolation cannot disappear inside broad integration work.
-
-| Original phase | Source anchor | Executable owner | Status |
-|---|---|---|---|
-| M1 behavior baseline | `mnemosyne-unified-memory-plan.md:302-326` | M01 | done |
-| M2 canonical record and scope | `mnemosyne-unified-memory-plan.md:328-353` | M02 | done |
-| M3 unified local recall | `mnemosyne-unified-memory-plan.md:355-395` | M03 | done |
-| M4 bounded conscious-core projection | `mnemosyne-unified-memory-plan.md:397-451` | M04 | planned |
-| M5 leased extraction and consolidation | `mnemosyne-unified-memory-plan.md:453-502` | M05 | planned |
-| M6 GBrain reconciliation | `mnemosyne-unified-memory-plan.md:504-529` | M06 | planned |
-| M7 retention and forgetting | `mnemosyne-unified-memory-plan.md:531-549` | M07 | planned |
-| M8 multi-Agent isolation and promotion | `mnemosyne-unified-memory-plan.md:551-575` | M08 | planned |
-
-## SubAgent coverage
-
-The former seven-row decomposition combined mailbox, budgets, memory promotion and recovery. These have distinct authorities and failure modes, so the original ten phases are retained one-to-one as G01-G10.
-
-| Original phase | Source anchor | Executable owner | Status |
-|---|---|---|---|
-| A1 production baseline | `subagent-unified-harness-plan.md:402-426` | G01 | done |
-| A2 shared control contracts | `subagent-unified-harness-plan.md:428-451` | G02 | done |
-| A3 transactional control service | `subagent-unified-harness-plan.md:453-506` | G03 | planned |
-| A4 Native Cognit runtime | `subagent-unified-harness-plan.md:508-549` | G04 | planned |
-| A5 thin Agent tools | `subagent-unified-harness-plan.md:551-584` | G05 | planned |
-| A6 bounded context and Agora projection | `subagent-unified-harness-plan.md:586-619` | G06 | planned |
-| A7 live mailbox | `subagent-unified-harness-plan.md:621-640` | G07 | planned |
-| A8 admission and hierarchical budgets | `subagent-unified-harness-plan.md:642-662` | G08 | planned |
-| A9 memory isolation and result promotion | `subagent-unified-harness-plan.md:664-688` | G09 | planned |
-| A10 restart recovery and cleanup | `subagent-unified-harness-plan.md:690-708` | G10 | planned |
-
-## Corrected post-P0 execution order
+## Current execution order
 
 ```text
-S02 (done)
- |
- +--> M01 -> M02 -> M03 ------------------------------+
- +--> G01 -> G02 -> G03 -> G04 -> G05                 |
- +--> D01 -> D02 -> D03 ----+                         |
- +--> A01 -> A02 -> A03 ----+--> C01 --> M04 -> M05 -> M06 -> M07
- +--> K01 -> K02 -----------+     |       |                    |
- +--> X01 -> X02 -----------------+       +--> G09              |
- +--> R01 -> R02 -----------------+                            |
- +--> Q01 -> Q02 -----------------+                            |
-                                  +--> G06 -> G07 -> G08 -> G09 -> G10
-                                  +--> C02 <--------------------+
-                                           |
-                              F01 --------> V01 -> V02
+Q02 -> E01 -> S02 -> V01
+G08 --------------------+
+M05 -> M06 -------------+-> architecture/conscious/memory aggregate closure
+                         +-> V02 disposable-host acceptance
 ```
 
-M08 is implemented with G09 because both describe the same promotion boundary; both IDs remain in acceptance evidence. Optional physical crate splitting is decided—not automatically performed—at V02, exactly as required by the source.
+## Verification truth
+
+- Domain crate all-target tests audited for Mnemosyne, Agora, Dasein, Kernel and Executive pass.
+- Focused Q01, R01, R02, S01, X01, X02 and functional-indicator suites pass.
+- `bash tests/architecture_check.sh` passes its fixture/runtime boundary checks.
+- `bash scripts/architecture-check.sh` currently fails on the Bin-to-Fabric edge at `crates/bin/Cargo.toml:16-20`; this failure is intentionally retained as active E01/Q02 evidence.
 
 ## Completion rule
 
-The project is not complete merely because all rows have code. Completion requires:
-
-1. every `mapped` row becomes `planned`, then `done`;
-2. every original acceptance item has at least one deterministic test locator;
-3. compatibility adapters list and satisfy an explicit deletion gate;
-4. `cargo test --workspace` and architecture fitness checks pass;
-5. V02 proves installed-daemon behavior, restart, rollback and bounded failure scenarios.
+This program is complete only when every row above is closed, the production
+architecture gate passes, all deterministic suites pass, and V02 produces the
+required installed-host operator receipt.

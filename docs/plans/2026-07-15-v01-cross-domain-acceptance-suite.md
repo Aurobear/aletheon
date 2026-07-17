@@ -1,5 +1,7 @@
 # V01 Cross-Domain Acceptance Suite Implementation Plan
 
+> **Status:** Blocked by Q02 — deterministic indicators pass but the aggregate architecture gate is red
+
 **Goal:** Prove the integrated architecture with deterministic lifecycle, isolation, recurrence, replay and functional-indicator tests rather than isolated unit success.
 
 **Architecture:** A deterministic in-process harness composes real coordinators and file-backed repositories with fake external providers, then compares causal receipts and projection checksums across replay and ablations.

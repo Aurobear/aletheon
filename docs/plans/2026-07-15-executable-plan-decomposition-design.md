@@ -1,10 +1,15 @@
 # Executable Architecture Plan Decomposition Design
 
-> **Status:** Proposed decomposition approved in conversation
+> **Status:** In progress — terminal Q02 and V02 acceptance remains open
 >
 > **Source baseline:** `65f74981`
 >
 > **Purpose:** Convert the four architecture-scale proposals into small, ordered, independently verifiable implementation plans.
+
+Completed detailed-plan files named in the historical tables below were removed
+after code-and-test audit. Their current evidence is preserved in
+`docs/arch/2026-07-plan-completion-ledger.md`; only active gaps remain in
+`docs/plans/2026-07-16-original-plan-coverage-matrix.md`.
 
 ## 1. Source requirements
 

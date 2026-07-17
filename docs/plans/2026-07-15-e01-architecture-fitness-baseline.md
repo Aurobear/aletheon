@@ -1,5 +1,7 @@
 # E01 Architecture Fitness Baseline Implementation Plan
 
+> **Status:** Partial — the gate is implemented but currently rejects Bin's Fabric dependency
+>
 > **For agentic workers:** Use `workflow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make CI reject new dependency and execution-path bypasses while preserving the explicitly recorded legacy baseline.
