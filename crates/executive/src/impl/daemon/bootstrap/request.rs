@@ -18,8 +18,8 @@ use corpus::security::sandbox::executor::{create_default_executor, SandboxPrefer
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
+use fabric::CanonicalEventBus;
 use fabric::Clock;
-use fabric::CommunicationBus;
 use fabric::LlmProvider;
 use fabric::Registry;
 use fabric::Version;
@@ -70,7 +70,7 @@ impl RequestHandler {
         goal_runtime: cognit::config::GoalRuntimeConfig,
         pi_runtime: cognit::config::PiRuntimeConfig,
         evolution_enabled: bool,
-        event_bus: Option<Arc<CommunicationBus>>,
+        event_bus: Option<Arc<CanonicalEventBus>>,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
         let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(
@@ -114,7 +114,7 @@ impl RequestHandler {
         }
         let self_field = Arc::new(Mutex::new(self_field));
 
-        // Wire DaseinEventBridge to CommunicationBus if available
+        // Wire DaseinEventBridge to canonical events if available.
         if let Some(ref bus) = event_bus {
             let sf = self_field.lock().await;
             sf.wire_dasein_event_bridge(bus).await?;

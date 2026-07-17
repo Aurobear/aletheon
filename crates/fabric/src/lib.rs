@@ -303,7 +303,7 @@ pub use events::ui_event::{
 
 // IPC types (from ipc/)
 pub use ipc::bus::communication_bus::{BusConfig, CommunicationBus};
-pub use ipc::bus::kernel_bus::KernelEventBus;
+pub use ipc::bus::kernel_bus::{CanonicalEventBus, KernelEventBus};
 pub use ipc::envelope::{Endpoint, Envelope, EnvelopeId, ModuleId, Pattern, Payload, Target};
 pub use ipc::envelope_v2::{
     DeliveryPattern as EnvelopeV2Delivery, EnvelopeV2, MessageId, SchemaId,

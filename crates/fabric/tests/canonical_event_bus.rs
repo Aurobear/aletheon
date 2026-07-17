@@ -1,5 +1,5 @@
 use fabric::ipc::envelope_v2::Target;
-use fabric::{BusConfig, CommunicationBus, EnvelopeV2, EnvelopeV2Delivery, NamespaceId, SchemaId};
+use fabric::{CanonicalEventBus, EnvelopeV2, EnvelopeV2Delivery, NamespaceId, SchemaId};
 
 fn envelope(schema: &str, value: u64) -> EnvelopeV2 {
     EnvelopeV2::new(
@@ -14,10 +14,10 @@ fn envelope(schema: &str, value: u64) -> EnvelopeV2 {
 
 #[tokio::test]
 async fn canonical_delivery_is_schema_filtered() {
-    let bus = CommunicationBus::new();
-    let mut turns = bus.subscribe_envelope_v2(SchemaId(SchemaId::TURN_EVENT_V1.into()));
-    let mut signals = bus.subscribe_envelope_v2(SchemaId(SchemaId::PROCESS_SIGNAL_V1.into()));
-    bus.publish_envelope_v2(envelope(SchemaId::TURN_EVENT_V1, 1))
+    let bus = CanonicalEventBus::default();
+    let mut turns = bus.subscribe_channel(SchemaId(SchemaId::TURN_EVENT_V1.into()));
+    let mut signals = bus.subscribe_channel(SchemaId(SchemaId::PROCESS_SIGNAL_V1.into()));
+    bus.publish(envelope(SchemaId::TURN_EVENT_V1, 1))
         .await
         .unwrap();
 
@@ -27,23 +27,19 @@ async fn canonical_delivery_is_schema_filtered() {
 
 #[tokio::test]
 async fn unknown_schema_is_rejected_and_bounded_channels_report_lag() {
-    let bus = CommunicationBus::with_config(BusConfig {
-        log_capacity: 1,
-        mailbox_buffer: 1,
-        topic_buffer: 1,
-    });
+    let bus = CanonicalEventBus::new(1);
     assert!(bus
-        .publish_envelope_v2(envelope("aletheon.unknown/v9", 0))
+        .publish(envelope("aletheon.unknown/v9", 0))
         .await
         .unwrap_err()
         .to_string()
         .contains("unsupported schema"));
 
-    let mut receiver = bus.subscribe_envelope_v2(SchemaId(SchemaId::TURN_EVENT_V1.into()));
-    bus.publish_envelope_v2(envelope(SchemaId::TURN_EVENT_V1, 1))
+    let mut receiver = bus.subscribe_channel(SchemaId(SchemaId::TURN_EVENT_V1.into()));
+    bus.publish(envelope(SchemaId::TURN_EVENT_V1, 1))
         .await
         .unwrap();
-    bus.publish_envelope_v2(envelope(SchemaId::TURN_EVENT_V1, 2))
+    bus.publish(envelope(SchemaId::TURN_EVENT_V1, 2))
         .await
         .unwrap();
     assert!(matches!(

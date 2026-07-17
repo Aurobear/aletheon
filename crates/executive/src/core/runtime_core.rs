@@ -22,8 +22,8 @@ use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
 use fabric::evolution::LlmPurpose;
+use fabric::CanonicalEventBus;
 use fabric::Clock;
-use fabric::CommunicationBus;
 
 use aletheon_kernel::chronos::SystemClock;
 
@@ -38,7 +38,7 @@ pub struct RuntimeCore {
     pub app_config: crate::core::config::AppConfig,
     pub registry: ProviderRegistry,
     pub daemon_config: DaemonConfig,
-    pub event_bus: Arc<CommunicationBus>,
+    pub event_bus: Arc<CanonicalEventBus>,
     pub pulse_handle: Option<(watch::Sender<bool>, JoinHandle<()>)>,
     pub request_handler: RequestHandler,
     pub cancel_token: CancellationToken,
@@ -124,7 +124,7 @@ impl RuntimeCore {
         };
 
         // ── Event bus ───────────────────────────────────────────────
-        let bus: Arc<CommunicationBus> = Arc::new(CommunicationBus::new());
+        let bus = Arc::new(CanonicalEventBus::default());
 
         let cancel_token = CancellationToken::new();
 

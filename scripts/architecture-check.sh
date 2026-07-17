@@ -25,6 +25,11 @@ if rg -n '\b(?:EventJournal|SessionEvent)\b|impl/session/journal' \
   echo "architecture-check: Executive reintroduced a parallel Session event journal" >&2
   exit 1
 fi
+if rg -n '\bCommunicationBus\b' crates -g '*.rs' \
+  | grep -v '^crates/fabric/'; then
+  echo "architecture-check: production domains imported Fabric's legacy CommunicationBus" >&2
+  exit 1
+fi
 if rg -n '^\s*pub fn (?:care_mut|boundary_mut|narrative|attention|mutate|add_care|remove_care|adjust_weight|record_outcome|adjust_from_outcome|assert|negate|add_possibility|add_entity|remove_entity|add_edge|update_readiness|update_readiness_if|set_ultimate_concern|adjust_for_mood|add_concern|remove_concern|update_fallenness|update_projection|choose_projection|ingest|passive_synthesize|update_protentions_from_patterns)\b|^\s*pub rhythm:' \
   crates/dasein/src/core/mod.rs crates/dasein/src/core/care.rs \
   crates/dasein/src/core/identity.rs crates/dasein/src/dasein/self_model.rs \
