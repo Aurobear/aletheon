@@ -157,6 +157,22 @@ impl RuntimeHost for DaemonHost {
         let pid_file = self.pid_file;
         let clock = request_handler.clock();
 
+        // TODO(D1-T9): Spawn exec-server when grok_hardening.streaming_tools is enabled.
+        // The ExecServerClient lives in crate::impl::channel::exec_server_client.
+        //
+        // let _exec_server = if core.app_config.grok_hardening.streaming_tools {
+        //     use crate::impl::channel::exec_server_client::{ExecServerClient, ExecServerConfig};
+        //     let client = ExecServerClient::spawn(ExecServerConfig {
+        //         binary_path: core.app_config.exec_server_path.clone(),
+        //         shared_secret: core.app_config.exec_server_secret.clone(),
+        //         startup_timeout: std::time::Duration::from_secs(5),
+        //         request_timeout: std::time::Duration::from_secs(30),
+        //     }).await?;
+        //     Some(client)
+        // } else {
+        //     None
+        // };
+
         // ── MCP embedded server ─────────────────────────────────────
         let mcp_socket = socket
             .parent()

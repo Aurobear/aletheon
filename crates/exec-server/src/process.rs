@@ -1,4 +1,377 @@
 //! Process management for exec-server.
 //!
-//! Follow-up tasks will populate spawn, signal, and terminate logic.
-//! For now, this module is a placeholder stub.
+//! Handles spawning, reading output, signaling, and terminating managed processes.
+//! In-memory only — no persistence.
+
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+use tokio::io::{AsyncReadExt, BufReader};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
+use tokio::sync::Mutex;
+
+use crate::protocol::*;
+
+const MAX_HANDLES: usize = 128;
+const MAX_BUFFER_BYTES: u64 = 1_048_576; // 1 MB
+const TERMINATE_GRACE_MS: u64 = 500;
+const READ_TIMEOUT_MS: u64 = 10; // short timeout so RPC loop is responsive
+
+pub struct ProcessManager {
+    processes: Mutex<HashMap<String, ManagedProcess>>,
+}
+
+struct ManagedProcess {
+    child: Child,
+    handle_id: String,
+    start_time: Instant,
+    stdout: Option<BufReader<ChildStdout>>,
+    stderr: Option<BufReader<ChildStderr>>,
+    stdout_buf: Vec<u8>,
+    stderr_buf: Vec<u8>,
+    stdout_eof: bool,
+    stderr_eof: bool,
+    exited: bool,
+    max_output_bytes: u64,
+}
+
+impl ProcessManager {
+    pub fn new() -> Self {
+        ProcessManager {
+            processes: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub async fn spawn(&self, req: &StartProcessRequest) -> Result<ProcessHandle, RpcError> {
+        let mut procs = self.processes.lock().await;
+
+        if procs.len() >= MAX_HANDLES {
+            return Err(RpcError {
+                code: SPAWN_FAILED,
+                message: format!(
+                    "Maximum concurrent handles reached ({})",
+                    MAX_HANDLES
+                ),
+                data: None,
+            });
+        }
+
+        let mut cmd = Command::new(&req.command);
+        cmd.args(&req.args);
+
+        for (k, v) in &req.env {
+            cmd.env(k, v);
+        }
+
+        if let Some(ref wd) = req.working_dir {
+            cmd.current_dir(wd);
+        }
+
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd.stdin(std::process::Stdio::null());
+        cmd.kill_on_drop(true);
+
+        let mut child = cmd.spawn().map_err(|e| RpcError {
+            code: SPAWN_FAILED,
+            message: format!("Failed to spawn process '{}': {}", req.command, e),
+            data: None,
+        })?;
+
+        let pid = child.id().unwrap_or(0);
+        let handle_id = format!("proc_{}", pid);
+
+        let stdout = child.stdout.take().map(BufReader::new);
+        let stderr = child.stderr.take().map(BufReader::new);
+
+        let max_output_bytes = req.max_output_bytes.unwrap_or(MAX_BUFFER_BYTES);
+
+        procs.insert(
+            handle_id.clone(),
+            ManagedProcess {
+                child,
+                handle_id: handle_id.clone(),
+                start_time: Instant::now(),
+                stdout,
+                stderr,
+                stdout_buf: Vec::new(),
+                stderr_buf: Vec::new(),
+                stdout_eof: false,
+                stderr_eof: false,
+                exited: false,
+                max_output_bytes,
+            },
+        );
+
+        Ok(ProcessHandle {
+            pid,
+            handle_id,
+        })
+    }
+
+    pub async fn read(&self, handle_id: &str) -> Result<Vec<ReadChunk>, RpcError> {
+        let mut procs = self.processes.lock().await;
+        let proc = procs
+            .get_mut(handle_id)
+            .ok_or_else(|| RpcError {
+                code: PROCESS_NOT_FOUND,
+                message: format!("Process handle not found: {}", handle_id),
+                data: None,
+            })?;
+
+        let mut chunks = Vec::new();
+
+        // Read stdout
+        if !proc.stdout_eof {
+            let mut got_data = false;
+            let mut eof = false;
+
+            if let Some(ref mut reader) = proc.stdout {
+                let mut buf = [0u8; 8192];
+                let read_fut = reader.read(&mut buf);
+                match tokio::time::timeout(Duration::from_millis(READ_TIMEOUT_MS), read_fut).await
+                {
+                    Ok(Ok(0)) => {
+                        eof = true;
+                    }
+                    Ok(Ok(n)) => {
+                        let remaining =
+                            proc.max_output_bytes.saturating_sub(proc.stdout_buf.len() as u64);
+                        let take = (n as u64).min(remaining) as usize;
+                        if take > 0 {
+                            proc.stdout_buf.extend_from_slice(&buf[..take]);
+                        }
+                        got_data = true;
+                    }
+                    Ok(Err(_)) => {
+                        eof = true;
+                    }
+                    Err(_timeout) => {
+                        // No data available yet — that's fine
+                    }
+                }
+            } else {
+                eof = true;
+            }
+
+            if eof {
+                proc.stdout_eof = true;
+            }
+
+            if !proc.stdout_buf.is_empty() {
+                let data = String::from_utf8_lossy(&proc.stdout_buf).into_owned();
+                proc.stdout_buf.clear();
+                chunks.push(ReadChunk {
+                    data,
+                    stream: "stdout".into(),
+                    eof: proc.stdout_eof,
+                });
+            } else if proc.stdout_eof && (got_data || proc.start_time.elapsed() > Duration::ZERO) {
+                chunks.push(ReadChunk {
+                    data: String::new(),
+                    stream: "stdout".into(),
+                    eof: true,
+                });
+            }
+        }
+
+        // Read stderr
+        if !proc.stderr_eof {
+            let mut got_data = false;
+            let mut eof = false;
+
+            if let Some(ref mut reader) = proc.stderr {
+                let mut buf = [0u8; 8192];
+                let read_fut = reader.read(&mut buf);
+                match tokio::time::timeout(Duration::from_millis(READ_TIMEOUT_MS), read_fut).await
+                {
+                    Ok(Ok(0)) => {
+                        eof = true;
+                    }
+                    Ok(Ok(n)) => {
+                        let remaining =
+                            proc.max_output_bytes.saturating_sub(proc.stderr_buf.len() as u64);
+                        let take = (n as u64).min(remaining) as usize;
+                        if take > 0 {
+                            proc.stderr_buf.extend_from_slice(&buf[..take]);
+                        }
+                        got_data = true;
+                    }
+                    Ok(Err(_)) => {
+                        eof = true;
+                    }
+                    Err(_timeout) => {
+                        // No data available yet — that's fine
+                    }
+                }
+            } else {
+                eof = true;
+            }
+
+            if eof {
+                proc.stderr_eof = true;
+            }
+
+            if !proc.stderr_buf.is_empty() {
+                let data = String::from_utf8_lossy(&proc.stderr_buf).into_owned();
+                proc.stderr_buf.clear();
+                chunks.push(ReadChunk {
+                    data,
+                    stream: "stderr".into(),
+                    eof: proc.stderr_eof,
+                });
+            } else if proc.stderr_eof && got_data {
+                chunks.push(ReadChunk {
+                    data: String::new(),
+                    stream: "stderr".into(),
+                    eof: true,
+                });
+            }
+        }
+
+        // Try to reap if both streams are at EOF
+        if proc.stdout_eof && proc.stderr_eof && !proc.exited {
+            if let Ok(Some(_)) = proc.child.try_wait() {
+                proc.exited = true;
+            }
+        }
+
+        Ok(chunks)
+    }
+
+    pub async fn write_stdin(&self, handle_id: &str, data: &str) -> Result<(), RpcError> {
+        use tokio::io::AsyncWriteExt;
+
+        let mut procs = self.processes.lock().await;
+        let proc = procs
+            .get_mut(handle_id)
+            .ok_or_else(|| RpcError {
+                code: PROCESS_NOT_FOUND,
+                message: format!("Process handle not found: {}", handle_id),
+                data: None,
+            })?;
+
+        if let Some(ref mut stdin) = proc.child.stdin {
+            stdin
+                .write_all(data.as_bytes())
+                .await
+                .map_err(|e| RpcError {
+                    code: INTERNAL_ERROR,
+                    message: format!("Failed to write to process stdin: {}", e),
+                    data: None,
+                })?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn signal(&self, handle_id: &str, sig: i32) -> Result<(), RpcError> {
+        let mut procs = self.processes.lock().await;
+        let proc = procs
+            .get_mut(handle_id)
+            .ok_or_else(|| RpcError {
+                code: PROCESS_NOT_FOUND,
+                message: format!("Process handle not found: {}", handle_id),
+                data: None,
+            })?;
+
+        let pid = proc.child.id().unwrap_or(0);
+
+        #[cfg(unix)]
+        {
+            if pid > 0 {
+                unsafe {
+                    libc::kill(
+                        pid as i32,
+                        if sig == 9 {
+                            libc::SIGKILL
+                        } else {
+                            libc::SIGTERM
+                        },
+                    );
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = proc.child.start_kill();
+        }
+
+        Ok(())
+    }
+
+    pub async fn terminate(&self, handle_id: &str) -> Result<(), RpcError> {
+        let pid = {
+            let mut procs = self.processes.lock().await;
+            let proc = procs
+                .get_mut(handle_id)
+                .ok_or_else(|| RpcError {
+                    code: PROCESS_NOT_FOUND,
+                    message: format!("Process handle not found: {}", handle_id),
+                    data: None,
+                })?;
+
+            let pid = proc.child.id().unwrap_or(0);
+
+            #[cfg(unix)]
+            unsafe {
+                if pid > 0 {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = proc.child.start_kill();
+            }
+
+            pid
+        };
+
+        if pid > 0 {
+            tokio::time::sleep(Duration::from_millis(TERMINATE_GRACE_MS)).await;
+
+            let mut procs = self.processes.lock().await;
+            if let Some(proc) = procs.get_mut(handle_id) {
+                if !proc.exited {
+                    #[cfg(unix)]
+                    unsafe {
+                        libc::kill(pid as i32, libc::SIGKILL);
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = proc.child.kill().await;
+                    }
+                }
+            }
+        }
+
+        let mut procs = self.processes.lock().await;
+        procs.remove(handle_id);
+
+        Ok(())
+    }
+
+    /// Reap all exited processes and remove them from the registry.
+    pub async fn reap(&self) {
+        let mut procs = self.processes.lock().await;
+        procs.retain(|_id, proc| {
+            if proc.exited {
+                return false;
+            }
+            if let Ok(Some(_)) = proc.child.try_wait() {
+                proc.exited = true;
+                return false;
+            }
+            true
+        });
+    }
+
+    /// Kill all managed processes on shutdown.
+    pub async fn shutdown(&self) {
+        let mut procs = self.processes.lock().await;
+        for (_id, mut proc) in procs.drain() {
+            let _ = proc.child.start_kill();
+        }
+    }
+}
