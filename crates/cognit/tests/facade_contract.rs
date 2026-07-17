@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -13,12 +12,20 @@ use fabric::{
 use tokio_util::sync::CancellationToken;
 
 fn request() -> TurnRequest {
+    let cwd = std::env::current_dir().unwrap();
     TurnRequest {
         operation_id: OperationId::new(),
         process_id: ProcessId::new(),
-        session_id: "facade".into(),
+        context: fabric::PrincipalContext::new(
+            fabric::PrincipalId("test:facade".into()),
+            fabric::LocalOsPrincipal { uid: 0, gid: 0 },
+            fabric::ConnectionId::new(),
+            fabric::ThreadId("facade".into()),
+            fabric::WorkspacePolicy::from_resolved_roots(cwd, vec![]).unwrap(),
+            fabric::PermissionProfileId::workspace_write(),
+            fabric::ApprovalPolicy::OnRequest,
+        ),
         input: "test facade".into(),
-        working_dir: PathBuf::from("."),
         model_policy: None,
         deadline: None,
     }

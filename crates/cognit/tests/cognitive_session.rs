@@ -8,7 +8,6 @@ use fabric::{
     NoopTurnEventSink, OperationId, ProcessId, StopReason, StubTurnServices, ToolDefinition,
     TurnRequest, TurnServices, TurnStop, Usage,
 };
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -21,12 +20,20 @@ fn dependencies() -> CognitiveSessionDependencies {
 }
 
 fn request(input: &str) -> TurnRequest {
+    let cwd = std::env::current_dir().unwrap();
     TurnRequest {
         operation_id: OperationId::new(),
         process_id: ProcessId::new(),
-        session_id: "test".into(),
+        context: fabric::PrincipalContext::new(
+            fabric::PrincipalId("test:cognitive-session".into()),
+            fabric::LocalOsPrincipal { uid: 0, gid: 0 },
+            fabric::ConnectionId::new(),
+            fabric::ThreadId("test".into()),
+            fabric::WorkspacePolicy::from_resolved_roots(cwd, vec![]).unwrap(),
+            fabric::PermissionProfileId::workspace_write(),
+            fabric::ApprovalPolicy::OnRequest,
+        ),
         input: input.into(),
-        working_dir: PathBuf::from("."),
         model_policy: None,
         deadline: None,
     }
