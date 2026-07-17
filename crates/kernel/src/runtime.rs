@@ -14,7 +14,8 @@ use fabric::{
     AdmissionController, AdmissionError, AgentId, BudgetController, BudgetRequest,
     BudgetReservationReceipt, BudgetScopeId, BudgetScopeKind, CancelReason, Clock, ContextBinding,
     ContextSpace, ExitReason,
-    ExitStatus, OperationHandle, OperationId, OperationManager, OperationRecord, OperationRequest,
+    ExitStatus, LeaseManager, OperationHandle, OperationId, OperationManager, OperationRecord,
+    OperationRequest,
     OperationResult, OsProcessId, PermitId, ProcessHandle, ProcessId, ProcessIdentity,
     ProcessManager, ProcessSignal, ProcessSnapshot, SpaceId, SpawnSpec,
 };
@@ -207,7 +208,7 @@ impl KernelRuntime {
         self.budget.clone()
     }
 
-    pub fn lease_manager(&self) -> Arc<InMemoryResourceLeaseManager> {
+    pub fn lease_manager(&self) -> Arc<dyn LeaseManager> {
         self.leases.clone()
     }
 

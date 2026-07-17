@@ -505,9 +505,7 @@ impl TurnUseCases for ProductionTurnUseCases {
     }
 
     fn set_notify(&self, sender: tokio::sync::mpsc::Sender<String>) {
-        if let Ok(mut notify) = self.orchestrator.notify_tx().try_lock() {
-            *notify = Some(sender);
-        }
+        self.orchestrator.set_notify_sender(sender);
     }
 }
 
