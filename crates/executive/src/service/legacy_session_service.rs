@@ -107,6 +107,15 @@ impl LegacySessionService {
         )
         .await
         .map_err(operation_error)?;
+        let mut manager = manager;
+        if let Some(replay) = self
+            .canonical
+            .try_resume(&SessionId(session_id.to_owned()))
+            .await
+            .map_err(operation_error)?
+        {
+            manager.restore_messages(replay.messages);
+        }
         let manager = Arc::new(Mutex::new(manager));
         self.registry
             .lock()
@@ -270,14 +279,25 @@ impl LegacySessionUseCases for LegacySessionService {
         &self,
         session_id: String,
     ) -> Result<LegacySessionSnapshot, LegacySessionError> {
-        let recovered = SessionManager::recover(&self.data_dir, &session_id).await;
-        if recovered.is_none()
+        let canonical = self
+            .canonical
+            .try_resume(&SessionId(session_id.clone()))
+            .await
+            .map_err(operation_error)?;
+        if canonical.is_none()
             && SessionStore::new(&self.data_dir)
                 .and_then(|store| store.load(&session_id))
                 .map_err(operation_error)?
                 .is_none()
         {
             return Err(LegacySessionError::NotFound(session_id));
+        }
+        if let Some(replay) = canonical {
+            self.manager(&session_id)
+                .await?
+                .lock()
+                .await
+                .restore_messages(replay.messages);
         }
         let snapshot = self.snapshot(&session_id).await?;
         self.project(&snapshot).await?;

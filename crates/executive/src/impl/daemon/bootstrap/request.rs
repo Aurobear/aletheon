@@ -564,21 +564,6 @@ impl RequestHandler {
             goal_tracker: cognit::harness::linear::goal_tracker::GoalTracker::new(clock.clone()),
         }));
         let gw_started_at = clock.mono_now();
-        let session_gateway = Arc::new(SessionGateway::new(
-            param_registry.clone(),
-            debug_handler.clone(),
-            session_id.clone(),
-            gw_state.clone(),
-            initial_session.clone(),
-            gw_started_at,
-            runtime_config_snapshot.clone(),
-            core_memory.clone(),
-            recall_memory.clone(),
-            self_field.clone(),
-            llm.clone(),
-            clock.clone(),
-        ));
-
         let consolidation_repository =
             Arc::new(mnemosyne::consolidation::ConsolidationRepository::open(
                 data_dir.join("memory_consolidation.db"),
@@ -1010,6 +995,30 @@ impl RequestHandler {
         let session_service = Arc::new(crate::service::session_service::SessionService::new(
             coordinator.store(),
             coordinator.active_index(),
+        ));
+        if let Some(replay) = session_service
+            .try_resume(&fabric::SessionId(session_id.clone()))
+            .await?
+        {
+            initial_session
+                .lock()
+                .await
+                .restore_messages(replay.messages);
+        }
+        let session_gateway = Arc::new(SessionGateway::new(
+            param_registry.clone(),
+            debug_handler.clone(),
+            session_id.clone(),
+            gw_state.clone(),
+            initial_session.clone(),
+            session_service.clone(),
+            gw_started_at,
+            runtime_config_snapshot.clone(),
+            core_memory.clone(),
+            recall_memory.clone(),
+            self_field.clone(),
+            llm.clone(),
+            clock.clone(),
         ));
         let projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection> =
             Arc::new(

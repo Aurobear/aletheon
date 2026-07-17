@@ -45,18 +45,29 @@ impl SessionService {
     }
 
     pub async fn resume(&self, session_id: &SessionId) -> Result<ResumeResult> {
-        let session = self
-            .store
-            .load_session(session_id)
+        self.try_resume(session_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("session not found"))?;
+            .ok_or_else(|| anyhow::anyhow!("session not found"))
+    }
+
+    pub async fn try_resume(&self, session_id: &SessionId) -> Result<Option<ResumeResult>> {
+        let Some(session) = self.store.load_session(session_id).await? else {
+            return Ok(None);
+        };
         let items = self.store.load_items(session_id, None).await?;
         let next_sequence = items.last().map_or(1, |item| item.sequence + 1);
-        Ok(ResumeResult {
+        Ok(Some(ResumeResult {
             session,
             next_sequence,
             messages: project_messages(&items)?,
-        })
+        }))
+    }
+
+    pub async fn items(&self, session_id: &SessionId) -> Result<Vec<ItemRecord>> {
+        if self.store.load_session(session_id).await?.is_none() {
+            bail!("session not found");
+        }
+        self.store.load_items(session_id, None).await
     }
 
     /// Ensure a legacy session has a canonical Session/Turn/Item projection.

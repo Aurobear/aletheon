@@ -48,56 +48,35 @@ impl SessionGateway {
             .and_then(|v| v.as_u64())
             .map(|n| n as usize);
 
-        let sm = self.session_manager.lock().await;
-        let journal = sm.journal();
-
-        match journal.query(None, None, event_type, limit) {
+        let session_id = fabric::SessionId(self.session_manager.lock().await.session_id.clone());
+        match self.canonical_sessions.items(&session_id).await {
             Ok(entries) => {
-                let rendered: Vec<Value> = entries
-                    .iter()
-                    .map(|entry| {
-                        let event_type_str = match &entry.event {
-                            crate::r#impl::session::journal::SessionEvent::SessionCreated {
-                                ..
-                            } => "session_created",
-                            crate::r#impl::session::journal::SessionEvent::UserMessage {
-                                ..
-                            } => "user_message",
-                            crate::r#impl::session::journal::SessionEvent::AssistantMessage {
-                                ..
-                            } => "assistant_message",
-                            crate::r#impl::session::journal::SessionEvent::ToolUseBlock {
-                                ..
-                            } => "tool_use_block",
-                            crate::r#impl::session::journal::SessionEvent::ToolResultBlock {
-                                ..
-                            } => "tool_result_block",
-                            crate::r#impl::session::journal::SessionEvent::ToolCallStarted {
-                                ..
-                            } => "tool_call_started",
-                            crate::r#impl::session::journal::SessionEvent::ToolCallCompleted {
-                                ..
-                            } => "tool_call_completed",
-                            crate::r#impl::session::journal::SessionEvent::CheckpointBoundary {
-                                ..
-                            } => "checkpoint_boundary",
-                            crate::r#impl::session::journal::SessionEvent::Compacted { .. } => {
-                                "compacted"
-                            }
-                            crate::r#impl::session::journal::SessionEvent::Summary { .. } => {
-                                "summary"
-                            }
-                            crate::r#impl::session::journal::SessionEvent::SessionEnded {
-                                ..
-                            } => "session_ended",
+                let mut rendered: Vec<Value> = entries
+                    .into_iter()
+                    .filter_map(|entry| {
+                        let event_type_str = match &entry.payload {
+                            fabric::ItemPayload::UserMessage { .. } => "user_message",
+                            fabric::ItemPayload::AssistantMessage { .. } => "assistant_message",
+                            fabric::ItemPayload::ToolCall { .. } => "tool_call",
+                            fabric::ItemPayload::ToolResult { .. } => "tool_result",
+                            fabric::ItemPayload::ContextProjection { .. } => "context_projection",
+                            fabric::ItemPayload::SystemNotice { .. } => "system_notice",
                         };
+                        if event_type.is_some_and(|expected| expected != event_type_str) {
+                            return None;
+                        }
                         json!({
-                            "timestamp": fabric::wall_to_datetime(entry.timestamp).to_rfc3339(),
+                            "sequence": entry.sequence,
+                            "timestamp": fabric::wall_to_datetime(fabric::WallTime(entry.created_at_ms as i64)).to_rfc3339(),
                             "event_type": event_type_str,
-                            "event": entry.event,
+                            "item": entry,
                         })
+                        .into()
                     })
                     .collect();
+                if let Some(limit) = limit {
+                    rendered.truncate(limit);
+                }
 
                 json!({
                     "jsonrpc": "2.0",
