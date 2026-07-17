@@ -9,6 +9,7 @@ pub mod agent_scope;
 pub mod backends;
 pub mod composite_service;
 pub mod consolidation;
+pub mod credential;
 pub mod fact_service;
 pub mod r#impl;
 pub mod model;
