@@ -2,7 +2,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use cognit::{ChannelCognitiveStreamSink, CognitiveStreamEvent};
+use cognit::{CanonicalTurnEventSink, CognitiveStreamEvent};
 use fabric::{
     CapabilityCall, CapabilityResult, DaseinView, LlmProvider, Message, RecallRequest, RecallSet,
     SessionId, SessionRecord, SessionStatus, ToolDefinition, TurnRequest, TurnResult, TurnServices,
@@ -19,7 +19,7 @@ pub struct DaemonStreamingTurnContext<F> {
     pub llm: Arc<dyn LlmProvider>,
     pub tool_defs: Vec<ToolDefinition>,
     pub execute_tool: F,
-    pub event_sink: ChannelCognitiveStreamSink,
+    pub event_sink: CanonicalTurnEventSink,
     pub request_messages: Vec<Message>,
     pub dasein_context: Arc<dyn Fn() -> Option<String> + Send + Sync>,
     pub cancel_token: CancellationToken,

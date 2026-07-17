@@ -24,6 +24,24 @@ pub struct ChannelCognitiveStreamSink {
     tx: tokio::sync::mpsc::Sender<CognitiveStreamEvent>,
 }
 
+/// Production sink that writes Cognit lifecycle events directly onto the
+/// canonical Fabric turn stream.
+pub struct CanonicalTurnEventSink {
+    sender: fabric::ipc::TurnEventSender,
+}
+
+impl CanonicalTurnEventSink {
+    pub fn new(sender: fabric::ipc::TurnEventSender) -> Self {
+        Self { sender }
+    }
+}
+
+impl CognitiveStreamSink for CanonicalTurnEventSink {
+    fn emit(&self, event: CognitiveStreamEvent) {
+        let _ = self.sender.send(&event.into());
+    }
+}
+
 impl ChannelCognitiveStreamSink {
     pub fn new(tx: tokio::sync::mpsc::Sender<CognitiveStreamEvent>) -> Self {
         Self { tx }

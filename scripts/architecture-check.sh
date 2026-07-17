@@ -15,6 +15,11 @@ cd "$ROOT"
 # Q01 deletion gates: application-layer discovery belongs only to Executive,
 # and only ExtensionService may translate discovery into Corpus activation.
 if [[ ${ARCH_SKIP_DELETION_GATES:-0} != 1 ]]; then
+if rg -n '\bconvert_event_to_turn_event\b|mpsc::channel::<(?:cognit::)?(?:Event|CognitiveStreamEvent)>' \
+  crates/executive/src -g '*.rs'; then
+  echo "architecture-check: Executive reintroduced the Cognit event conversion bridge" >&2
+  exit 1
+fi
 if rg -n '\b(AppConfig|load_layered)\b|ALETHEON__|/etc/aletheon/config\.toml' \
   crates/cognit/src crates/corpus/src crates/mnemosyne/src crates/dasein/src \
   crates/agora/src -g '*.rs'; then

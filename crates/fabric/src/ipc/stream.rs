@@ -307,9 +307,10 @@ impl TurnEventSender {
             crate::types::process::NamespaceId("turn-events".into()),
             payload,
         );
-        self.tx
-            .try_send(envelope)
-            .map_err(|_| StreamSendError::ReceiverClosed)
+        self.tx.try_send(envelope).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => StreamSendError::Overflow,
+            mpsc::error::TrySendError::Closed(_) => StreamSendError::ReceiverClosed,
+        })
     }
 }
 

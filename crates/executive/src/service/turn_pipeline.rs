@@ -4,14 +4,12 @@
 //! and CLI exec paths share the same Pre/Cognit/Post turn pipeline.
 
 use crate::core::session_gateway::SessionGateway;
-use crate::service::daemon_react::{
-    submit_streaming_daemon_turn, DaemonCognitiveEvent as Event, DaemonStreamingTurnContext,
-};
+use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::service::daemon_turn::helpers::bounded_text_history;
 use crate::service::governed_capability::CapabilityExecutionContext;
 use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::KernelRuntime;
-use cognit::ChannelCognitiveStreamSink;
+use cognit::CanonicalTurnEventSink;
 use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::include::agora::{
@@ -359,23 +357,9 @@ impl TurnPipeline {
             }
         };
 
-        // Cognit streaming events are projected into the canonical turn stream.
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(64);
-        let event_sink = ChannelCognitiveStreamSink::new(event_tx.clone());
-        drop(event_tx);
-
         // Turn event stream — EnvelopeV2-typed channel for turn orchestration
         let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
-
-        // Bridge task: convert Event → TurnEventV1 → EnvelopeV2
-        let _bridge_task = tokio::spawn(async move {
-            while let Some(event) = event_rx.recv().await {
-                let turn_event = convert_event_to_turn_event(event);
-                if turn_sender.send(&turn_event).is_err() {
-                    break;
-                }
-            }
-        });
+        let event_sink = CanonicalTurnEventSink::new(turn_sender);
 
         let config = self.runtime_ports.config.config().await;
         let goal_message = message.to_string();
@@ -726,124 +710,6 @@ impl TerminalEventBuffer {
         }
         events.push(ClientEvent::TurnDone);
         events
-    }
-}
-
-// ---------------------------------------------------------------------------
-// TurnEventV1 conversion helpers (bridge from cognit::Event to fabric TurnEventV1)
-// ---------------------------------------------------------------------------
-
-/// Convert a `cognit::Event` into a `TurnEventV1` for EnvelopeV2 streaming.
-fn convert_event_to_turn_event(event: Event) -> TurnEventV1 {
-    match event {
-        Event::TurnStarted { iteration } => TurnEventV1::TurnStarted { iteration },
-        Event::TextDelta { delta } => TurnEventV1::TextDelta { delta },
-        Event::ToolCallStart { name, call_id } => TurnEventV1::ToolCallStart { name, call_id },
-        Event::ToolCallComplete {
-            call_id,
-            name,
-            args,
-        } => TurnEventV1::ToolCallComplete {
-            call_id,
-            name,
-            args,
-        },
-        Event::ToolResult {
-            name,
-            call_id,
-            result,
-        } => TurnEventV1::ToolResult {
-            name,
-            call_id,
-            content: result.content,
-            is_error: result.is_error,
-            execution_time_ms: result.execution_time_ms,
-        },
-        Event::Usage {
-            tokens_in,
-            tokens_out,
-            cache_hit_tokens,
-            cache_miss_tokens,
-        } => TurnEventV1::Usage {
-            tokens_in,
-            tokens_out,
-            cache_hit_tokens,
-            cache_miss_tokens,
-        },
-        Event::TurnDone { result } => TurnEventV1::TurnDone {
-            result: match result {
-                Ok(text) => Some(text),
-                Err(e) => Some(format!("error: {}", e)),
-            },
-        },
-        Event::Error { message } => TurnEventV1::Error { message },
-        Event::AwarenessChanged { level, context } => {
-            TurnEventV1::AwarenessChanged { level, context }
-        }
-        Event::ModeChanged { mode } => TurnEventV1::ModeChanged { mode },
-        Event::SubAgentStatusChanged {
-            agent_id,
-            status,
-            task,
-        } => TurnEventV1::SubAgentStatusChanged {
-            agent_id,
-            status,
-            task,
-        },
-        Event::PlanUpdate {
-            version,
-            plan,
-            critique,
-            ready_for_approval,
-        } => TurnEventV1::PlanUpdate {
-            version,
-            plan,
-            critique,
-            ready_for_approval,
-        },
-        Event::Interrupted { reason } => TurnEventV1::Interrupted { reason },
-        Event::ContextUpdate {
-            used_tokens,
-            max_tokens,
-        } => TurnEventV1::ContextUpdate {
-            used_tokens,
-            max_tokens,
-        },
-        Event::ModelSwitch { model_name } => TurnEventV1::ModelSwitch { model_name },
-        Event::GoalSet { goal, sub_goals } => TurnEventV1::GoalSet { goal, sub_goals },
-        Event::Reflection {
-            summary,
-            recommendation,
-        } => TurnEventV1::Reflection {
-            summary,
-            recommendation,
-        },
-        Event::BudgetExceeded { used, max } => TurnEventV1::BudgetExceeded { used, max },
-        Event::CircuitBreakerTripped { reason } => TurnEventV1::CircuitBreakerTripped { reason },
-        Event::CompactionTriggered {
-            used_tokens,
-            threshold,
-            reason,
-        } => TurnEventV1::CompactionTriggered {
-            used_tokens,
-            threshold,
-            reason,
-        },
-        Event::ApprovalRequest {
-            id,
-            tool,
-            args,
-            reason,
-        } => TurnEventV1::Approval {
-            id,
-            tool,
-            args,
-            reason,
-        },
-        // Internal-only events → Generic catch-all (no serialization needed)
-        _ => TurnEventV1::Generic {
-            payload: serde_json::Value::Null,
-        },
     }
 }
 
