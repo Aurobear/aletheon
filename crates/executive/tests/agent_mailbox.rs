@@ -17,6 +17,7 @@ fn run(root: AgentId) -> AgentRunRecord {
         parent_process_id: None,
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId("test".into()),
+        trusted_workspace: None,
         task: "mailbox test".into(),
         context: AgentContextFork::None,
         broadcast_refs: vec![],

@@ -21,6 +21,7 @@ fn request(
         parent_process_id: parent_process,
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId("test".into()),
+        trusted_workspace: None,
         task: "inspect the repository".into(),
         context: AgentContextFork::None,
         broadcast_refs: vec![],

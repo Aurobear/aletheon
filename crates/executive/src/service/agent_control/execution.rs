@@ -181,6 +181,9 @@ impl AgentEventSink for SpineAgentEventSink {
 #[derive(Debug, Clone)]
 pub struct AgentRuntimeInput {
     pub request: AgentSpawnRequest,
+    /// Workspace authority injected by the host capability boundary, never by
+    /// model JSON.
+    pub workspace: Option<fabric::WorkspacePolicy>,
     pub handle: AgentHandle,
     pub workspace_id: AgoraSpaceId,
     /// Root conscious workspace. Child-private candidates never use this

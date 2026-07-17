@@ -27,6 +27,7 @@ fn spawn_request() -> AgentSpawnRequest {
         parent_process_id: None,
         profile_id: AgentProfileId("reviewer".into()),
         runtime_id: RuntimeId("native-cognit".into()),
+        trusted_workspace: None,
         task: "review the implementation".into(),
         context: AgentContextFork::SelectedProjection {
             items: vec!["goal: preserve behavior".into()],

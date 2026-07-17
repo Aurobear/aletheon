@@ -37,4 +37,5 @@ raw_process|crates/executive/src/impl/approval/apply_coordinator.rs| let status 
 raw_process|crates/executive/src/impl/automation/script.rs| let mut cmd = tokio::process::Command::new("sh");
 raw_process|crates/executive/src/impl/daemon/handler/mod.rs| let spawn_result = tokio::process::Command::new(&path)
 raw_process|crates/executive/src/impl/plugin/runtime.rs| let mut cmd = tokio::process::Command::new(program);
+raw_process|crates/executive/src/impl/runtime/pi_rpc.rs|use tokio::process::Command;
 raw_process|crates/executive/src/service/turn_runtime_ports.rs| let spawned = tokio::process::Command::new(&path)

@@ -193,6 +193,11 @@ pub struct AgentSpawnRequest {
     pub parent_process_id: Option<ProcessId>,
     pub profile_id: AgentProfileId,
     pub runtime_id: RuntimeId,
+    /// Host-injected workspace authority. This field is deliberately absent
+    /// from serialized/model-visible requests and must be minted from the
+    /// authenticated ToolContext at the capability boundary.
+    #[serde(skip)]
+    pub trusted_workspace: Option<crate::WorkspacePolicy>,
     pub task: String,
     pub context: AgentContextFork,
     #[serde(default)]

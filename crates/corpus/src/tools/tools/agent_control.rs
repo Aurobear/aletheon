@@ -190,12 +190,17 @@ impl Tool for AgentControlTool {
         let result = match self.operation {
             AgentControlOperation::Spawn => match serde_json::from_value::<SpawnInput>(input) {
                 Ok(input) => {
+                    let trusted_workspace = match context.effective_workspace_policy() {
+                        Ok(workspace) => workspace,
+                        Err(_) => return error_json("invalid_trusted_workspace"),
+                    };
                     let request = AgentSpawnRequest {
                         root_agent_id: trusted.caller_root_agent_id,
                         parent_agent_id: Some(trusted.parent_agent_id),
                         parent_process_id: Some(trusted.parent_process_id),
                         profile_id: AgentProfileId(input.profile),
                         runtime_id: RuntimeId(input.runtime),
+                        trusted_workspace: Some(trusted_workspace),
                         task: input.task,
                         context: input.context,
                         broadcast_refs: vec![],

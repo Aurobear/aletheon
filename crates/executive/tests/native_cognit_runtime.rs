@@ -157,6 +157,7 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         parent_process_id: None,
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId("native-cognit".into()),
+        trusted_workspace: None,
         task: "perform the task".into(),
         context: AgentContextFork::SelectedProjection {
             items: vec!["reference context".into()],
@@ -173,6 +174,7 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         },
     };
     AgentRuntimeInput {
+        workspace: None,
         context: AgentContextProjection::from_fork(&request.context).unwrap(),
         memory_context: mnemosyne::AgentMemoryContext::verified(
             process,

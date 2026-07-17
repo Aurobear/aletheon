@@ -217,6 +217,120 @@ pub enum PiRpcCommand {
 }
 
 impl PiRpcCommand {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Prompt { id, .. }
+            | Self::Steer { id, .. }
+            | Self::FollowUp { id, .. }
+            | Self::Abort { id }
+            | Self::GetState { id } => id,
+        }
+    }
+
+    pub fn command_name(&self) -> &'static str {
+        match self {
+            Self::Prompt { .. } => "prompt",
+            Self::Steer { .. } => "steer",
+            Self::FollowUp { .. } => "follow_up",
+            Self::Abort { .. } => "abort",
+            Self::GetState { .. } => "get_state",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PiRpcRecord {
+    Response {
+        id: String,
+        command: String,
+        success: bool,
+        data: Option<Value>,
+        error: Option<String>,
+    },
+    Event(Value),
+}
+
+/// Parse exactly one LF-terminated Pi RPC record.
+///
+/// Unknown event types, CRLF, multiple records and privileged extension UI
+/// requests are rejected so protocol drift cannot silently gain authority.
+pub fn parse_rpc_record(record: &[u8]) -> Result<PiRpcRecord> {
+    if !record.ends_with(b"\n") || record[..record.len().saturating_sub(1)].contains(&b'\n') {
+        bail!("Pi RPC record is not exactly one LF-framed JSON object");
+    }
+    let payload = &record[..record.len() - 1];
+    if payload.contains(&b'\r') {
+        bail!("Pi RPC record uses unsupported CR framing");
+    }
+    let value: Value = serde_json::from_slice(payload).context("invalid Pi RPC JSON record")?;
+    let record_type = string_field(&value, "type")?;
+    if record_type == "response" {
+        return Ok(PiRpcRecord::Response {
+            id: string_field(&value, "id")?.to_owned(),
+            command: string_field(&value, "command")?.to_owned(),
+            success: value
+                .get("success")
+                .and_then(Value::as_bool)
+                .context("Pi RPC response lacks boolean success")?,
+            data: value.get("data").cloned(),
+            error: value
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        });
+    }
+    match record_type {
+        "agent_start"
+        | "agent_end"
+        | "agent_settled"
+        | "turn_start"
+        | "turn_end"
+        | "message_start"
+        | "message_update"
+        | "message_end"
+        | "tool_execution_start"
+        | "tool_execution_update"
+        | "tool_execution_end"
+        | "queue_update"
+        | "compaction_start"
+        | "compaction_end"
+        | "auto_retry_start"
+        | "auto_retry_end" => Ok(PiRpcRecord::Event(value)),
+        other => bail!("unsupported Pi RPC event type: {other}"),
+    }
+}
+
+pub fn validate_rpc_response(record: PiRpcRecord, command: &PiRpcCommand) -> Result<Option<Value>> {
+    let PiRpcRecord::Response {
+        id,
+        command: actual_command,
+        success,
+        data,
+        error,
+    } = record
+    else {
+        bail!("expected Pi RPC command response");
+    };
+    if id != command.id() || actual_command != command.command_name() {
+        bail!(
+            "Pi RPC response correlation drift: expected {}/{}, got {}/{}",
+            command.id(),
+            command.command_name(),
+            id,
+            actual_command
+        );
+    }
+    if !success {
+        bail!(
+            "Pi RPC command {} was rejected: {}",
+            command.command_name(),
+            error.unwrap_or_else(|| "unspecified error".into())
+        );
+    }
+    Ok(data)
+}
+
+impl PiRpcCommand {
     pub fn to_jsonl(&self) -> Result<String> {
         let encoded = serde_json::to_string(self)?;
         if encoded.contains(['\n', '\r']) {
@@ -306,5 +420,24 @@ mod tests {
             .unwrap(),
             "{\"type\":\"follow_up\",\"id\":\"1\",\"message\":\"later\"}\n"
         );
+    }
+
+    #[test]
+    fn rpc_parser_correlates_responses_and_rejects_privileged_or_non_lf_records() {
+        let command = PiRpcCommand::GetState { id: "s1".into() };
+        let record = parse_rpc_record(
+            b"{\"type\":\"response\",\"command\":\"get_state\",\"id\":\"s1\",\"success\":true,\"data\":{\"isStreaming\":false}}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            validate_rpc_response(record, &command).unwrap().unwrap()["isStreaming"],
+            false
+        );
+        assert!(parse_rpc_record(
+            b"{\"type\":\"extension_ui_request\",\"id\":\"x\",\"method\":\"confirm\"}\n"
+        )
+        .is_err());
+        assert!(parse_rpc_record(b"{\"type\":\"agent_start\"}\r\n").is_err());
+        assert!(parse_rpc_record(b"{\"type\":\"agent_start\"}").is_err());
     }
 }

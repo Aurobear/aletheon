@@ -36,6 +36,7 @@ fn run(status: AgentRunStatus, retain_until_ms: i64) -> AgentRunRecord {
         parent_process_id: None,
         profile_id: AgentProfileId("cleanup".into()),
         runtime_id: RuntimeId("native-cognit".into()),
+        trusted_workspace: None,
         task: "cleanup fixture".into(),
         context: AgentContextFork::None,
         broadcast_refs: vec![],

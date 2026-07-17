@@ -62,6 +62,7 @@ fn spawn(root: AgentId, parent: Option<AgentId>, profile: &str) -> AgentSpawnReq
         parent_process_id: parent.map(|_| fabric::ProcessId::new()),
         profile_id: AgentProfileId(profile.into()),
         runtime_id: RuntimeId("native-cognit".into()),
+        trusted_workspace: None,
         task: "bounded work".into(),
         context: AgentContextFork::None,
         broadcast_refs: vec![],

@@ -36,6 +36,7 @@ fn input() -> AgentRuntimeInput {
         parent_process_id: Some(root),
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId("native-cognit".into()),
+        trusted_workspace: None,
         task: "inspect the evidence".into(),
         context: AgentContextFork::SelectedProjection { items: vec![] },
         broadcast_refs: vec![AgentBroadcastRef {
@@ -54,6 +55,7 @@ fn input() -> AgentRuntimeInput {
         },
     };
     AgentRuntimeInput {
+        workspace: None,
         context: AgentContextProjection::from_fork(&request.context).unwrap(),
         memory_context: mnemosyne::AgentMemoryContext::verified(
             child,

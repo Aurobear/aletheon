@@ -45,8 +45,8 @@ use tracing::{info, warn};
 
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::goal::ObjectiveStore;
-use crate::r#impl::runtime::register_pi_runtime;
 use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
+use crate::r#impl::runtime::{pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime};
 use crate::service::inference_port::{InferencePort, PortLlmProvider};
 use crate::service::CapabilityService;
 use corpus::hook::builtin::audit_hook;
@@ -829,6 +829,19 @@ impl RequestHandler {
             let sandbox = corpus::security::sandbox::BubblewrapBackend::probe_async(clock.clone())
                 .await
                 .map(|backend| Arc::new(backend) as Arc<dyn fabric::sandbox::SandboxBackend>);
+            let pi_rpc = if pi_work_allowed {
+                match sandbox.clone() {
+                    Some(sandbox) => PiRpcRuntime::prepare(
+                        &pi_runtime,
+                        sandbox,
+                        clock.clone(),
+                        pi_rpc_environment_from_process(),
+                    )?,
+                    None => None,
+                }
+            } else {
+                None
+            };
             let mut runtime = runtime.lock().await;
             let registered = pi_work_allowed
                 && register_pi_runtime(
@@ -851,6 +864,10 @@ impl RequestHandler {
                     ),
                 )?;
                 info!(runtime_id = "pi-coder", "Pi coding runtime registered");
+            }
+            if let Some(pi_rpc) = pi_rpc {
+                agent_runtimes.register(PiRpcRuntime::runtime_id(), Arc::new(pi_rpc))?;
+                info!(runtime_id = "pi-rpc", "Pi resident RPC runtime registered");
             }
         }
 

@@ -106,6 +106,10 @@ impl Tool for AgentTool {
             parent_process_id: Some(trusted.parent_process_id),
             profile_id: profile.id.clone(),
             runtime_id: self.runtime_id.clone(),
+            trusted_workspace: match context.effective_workspace_policy() {
+                Ok(workspace) => Some(workspace),
+                Err(error) => return tool_error(&format!("Invalid Agent workspace: {error}")),
+            },
             task: prompt.to_string(),
             context: AgentContextFork::None,
             broadcast_refs: vec![],

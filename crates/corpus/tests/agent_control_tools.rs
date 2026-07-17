@@ -198,6 +198,13 @@ async fn spawn_injects_trusted_parent_and_rejects_forged_identity() {
     assert_eq!(request.parent_agent_id, Some(parent));
     assert_eq!(request.parent_process_id, Some(process));
     assert_eq!(request.runtime_id.0, "native-cognit");
+    assert_eq!(
+        request
+            .trusted_workspace
+            .as_ref()
+            .map(|policy| policy.cwd()),
+        Some(ctx.working_dir.as_path())
+    );
 
     let forged = serde_json::json!({
         "caller_root_agent_id":AgentId::new(),

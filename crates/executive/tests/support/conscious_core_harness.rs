@@ -240,6 +240,7 @@ fn agent_spawn_request(root: AgentId, parent: fabric::ProcessId, label: &str) ->
         parent_process_id: Some(parent),
         profile_id: AgentProfileId(format!("acceptance-{label}")),
         runtime_id: RuntimeId(ACCEPTANCE_RUNTIME.into()),
+        trusted_workspace: None,
         task: format!("bounded acceptance task {label}"),
         context: AgentContextFork::SelectedProjection {
             items: vec![format!("private context {label}")],

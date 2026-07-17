@@ -825,6 +825,7 @@ impl AgentControlPort for AgentControlService {
         let event_spine = self.event_spine.clone();
         let event_projections = self.event_projections.clone();
         let runtime_input = AgentRuntimeInput {
+            workspace: request.trusted_workspace.clone(),
             request,
             handle: handle.clone(),
             workspace_id,
