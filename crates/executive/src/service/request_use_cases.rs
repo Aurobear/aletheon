@@ -876,16 +876,25 @@ pub trait MemoryAdminUseCases: Send + Sync {
     ) -> anyhow::Result<mnemosyne::RetentionCompactionReport>;
 }
 
+pub trait RetentionAdminPort: Send + Sync {
+    fn compact(
+        &self,
+        owner: &str,
+        now_ms: i64,
+        policy: &mnemosyne::RetentionCompactionPolicy,
+    ) -> anyhow::Result<mnemosyne::RetentionCompactionReport>;
+}
+
 pub struct ProductionMemoryAdminUseCases {
     service: Arc<dyn mnemosyne::MemoryService>,
-    retention: Arc<mnemosyne::RetentionRepository>,
+    retention: Arc<dyn RetentionAdminPort>,
     authenticated_principal: String,
 }
 
 impl ProductionMemoryAdminUseCases {
     pub fn new(
         service: Arc<dyn mnemosyne::MemoryService>,
-        retention: Arc<mnemosyne::RetentionRepository>,
+        retention: Arc<dyn RetentionAdminPort>,
         authenticated_principal: impl Into<String>,
     ) -> Self {
         Self {
@@ -933,6 +942,6 @@ impl MemoryAdminUseCases for ProductionMemoryAdminUseCases {
             owner == self.authenticated_principal,
             "memory compaction owner is not authenticated"
         );
-        mnemosyne::RetentionCompactor::new(&self.retention).run(owner, now_ms, &policy)
+        self.retention.compact(owner, now_ms, &policy)
     }
 }

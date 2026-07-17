@@ -10,6 +10,7 @@ pub mod core_rpc;
 pub mod daemon;
 pub mod engine;
 pub mod events;
+pub(crate) mod exec_corpus;
 pub mod external;
 pub mod gbrain;
 pub mod goal;

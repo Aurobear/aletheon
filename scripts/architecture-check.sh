@@ -111,7 +111,7 @@ import re
 pattern = re.compile(r"mnemosyne::.*(?:Store|Database)|corpus::.*(?:Registry|Runner)")
 for path in Path("crates/executive/src").rglob("*.rs"):
     name = str(path)
-    if "/impl/daemon/bootstrap/" in name or name == "crates/executive/src/service/exec_session.rs":
+    if "/impl/daemon/bootstrap/" in name or name == "crates/executive/src/impl/exec_corpus.rs":
         continue
     production = path.read_text().split("#[cfg(test)]", 1)[0]
     for line in production.splitlines():
@@ -166,6 +166,7 @@ required_request_ports = [
     "Arc<dyn ReflectionMemoryPort>",
     "Arc<dyn SelfStatusPort>",
     "Arc<dyn SupplementalMemoryStatusPort>",
+    "Arc<dyn RetentionAdminPort>",
 ]
 missing = [port for port in required_request_ports if port not in request_source]
 concrete = [
@@ -175,6 +176,8 @@ concrete = [
         "EpisodicMemory",
         "SelfField",
         "CompositeMemoryHealth",
+        "RetentionRepository",
+        "RetentionCompactor",
     ]
     if name in request_source
 ]
@@ -199,6 +202,27 @@ if missing or concrete:
     details.extend(f"concrete turn state: {name}" for name in concrete)
     raise SystemExit(
         "architecture-check: turn runtime authority:\n" + "\n".join(details)
+    )
+
+exec_session = Path("crates/executive/src/service/exec_session.rs")
+exec_source = exec_session.read_text().split("#[cfg(test)]", 1)[0]
+if "compose_exec_corpus" not in exec_source:
+    raise SystemExit("architecture-check: exec session misses private Corpus composition")
+exec_concrete = [
+    name
+    for name in [
+        "ToolRunnerWithGuard",
+        "CorpusToolExecutor",
+        "DefaultCorpusService",
+        "HookRegistry",
+        "default_tool_registry",
+    ]
+    if name in exec_source
+]
+if exec_concrete:
+    raise SystemExit(
+        "architecture-check: exec session owns concrete Corpus runtime:\n"
+        + "\n".join(exec_concrete)
     )
 PY
 

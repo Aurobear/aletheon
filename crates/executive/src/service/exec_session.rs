@@ -16,17 +16,11 @@ use tracing::info;
 use aletheon_kernel::chronos::SystemClock;
 use aletheon_kernel::KernelRuntime;
 use cognit::harness::HarnessConfig;
-use corpus::security::approval::{ApprovalGate, TerminalApprovalGate};
-use corpus::security::audit::AuditLogger;
-use corpus::security::runner::ToolRunnerWithGuard;
-use corpus::security::sandbox::executor::SandboxPreference;
-use corpus::CorpusService;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AgoraOps, CapabilityCall, CapabilityResult, LlmProvider, Message, PrincipalId, ProcessId,
     RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices,
 };
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::r#impl::session::canonical_store::CanonicalSessionStore;
@@ -112,26 +106,21 @@ impl ExecSessionBuilder {
         let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(inference, model));
         info!(provider = llm.name(), model = %self.model, "LLM provider initialized");
 
-        // Create tool registry with default tools
-        let tool_registry = corpus::default_tool_registry();
-
-        // Guarded runner with terminal approval for risky (L2+) tools.
         let user_paths =
             fabric::paths::UserRuntimePaths::resolve(&fabric::paths::ProcessRuntimeEnvironment)?;
         user_paths.prepare()?;
         let audit_path = user_paths.state_root.join("exec-audit.jsonl");
-        let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
-        let sandbox_preference = SandboxPreference::from_str(&self.sandbox);
-        info!(preference = ?sandbox_preference, "sandbox configured");
         let clock = Arc::new(SystemClock::new());
-        let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
-            AuditLogger::new(audit_path)?,
-            sandbox_preference,
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let corpus_composition = crate::r#impl::exec_corpus::compose_exec_corpus(
+            audit_path,
+            &self.sandbox,
             clock.clone(),
+            session_id.clone(),
         )
-        .with_approval_gate(approval);
-        let turn_id = uuid::Uuid::new_v4().to_string();
-        runner.on_new_turn(&turn_id);
+        .await?;
+        let corpus = corpus_composition.service;
+        let grant = corpus_composition.grant;
 
         let system_prompt = format!(
             "You are Aletheon, an AI agent executing a task non-interactively. \
@@ -140,35 +129,12 @@ impl ExecSessionBuilder {
             working_dir.display()
         );
 
-        let session_id = uuid::Uuid::new_v4().to_string();
         let event_db = user_paths.state_root.join("exec-events.db");
         let event_spine = Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?);
 
         let kernel = Arc::new(KernelRuntime::new());
         let process = kernel.spawn_process(fabric::SpawnSpec::default()).await?;
 
-        let raw_executor = Arc::new(corpus::CorpusToolExecutor::new(
-            tool_registry.clone(),
-            Arc::new(Mutex::new(runner)),
-            clock.clone(),
-        ));
-        let corpus: Arc<dyn CorpusService> = Arc::new(corpus::DefaultCorpusService::from_runtime(
-            tool_registry.clone(),
-            raw_executor,
-            Arc::new(Mutex::new(corpus::HookRegistry::new(clock))),
-        ));
-        let descriptors = corpus::discover_tool_extensions(&tool_registry).await?;
-        let grant = corpus::ExtensionGrant {
-            grant_id: uuid::Uuid::new_v4().to_string(),
-            principal: PrincipalId("exec".into()),
-            session_id: session_id.clone(),
-            agent_id: None,
-            capabilities: descriptors
-                .iter()
-                .flat_map(|descriptor| descriptor.capabilities.clone())
-                .collect(),
-            resources: Default::default(),
-        };
         let snapshot = corpus.catalog(&grant).await?;
         let activated = crate::service::ExtensionService::new(
             corpus.clone(),

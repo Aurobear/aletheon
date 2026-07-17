@@ -86,6 +86,7 @@ fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
         "Arc<dyn ReflectionMemoryPort>",
         "Arc<dyn SelfStatusPort>",
         "Arc<dyn SupplementalMemoryStatusPort>",
+        "Arc<dyn RetentionAdminPort>",
         "Arc<dyn metacog::MetacogService>",
         "Arc<dyn corpus::CorpusService>",
     ] {
@@ -99,10 +100,33 @@ fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
         "EpisodicMemory",
         "SelfField",
         "CompositeMemoryHealth",
+        "RetentionRepository",
+        "RetentionCompactor",
     ] {
         assert!(
             !source.contains(concrete),
             "request use cases retained concrete domain state: {concrete}"
+        );
+    }
+}
+
+#[test]
+fn exec_session_crosses_private_corpus_composition() {
+    let source = production_source("src/service/exec_session.rs");
+    assert!(
+        source.contains("compose_exec_corpus"),
+        "exec session does not use private Corpus composition"
+    );
+    for concrete in [
+        "ToolRunnerWithGuard",
+        "CorpusToolExecutor",
+        "DefaultCorpusService",
+        "HookRegistry",
+        "default_tool_registry",
+    ] {
+        assert!(
+            !source.contains(concrete),
+            "exec session retained concrete Corpus ownership: {concrete}"
         );
     }
 }
@@ -131,7 +155,7 @@ fn concrete_domain_construction_is_confined_to_composition_or_domain_tests() {
     let root = Path::new("src");
     let allowed = [
         PathBuf::from("src/impl/daemon/bootstrap"),
-        PathBuf::from("src/service/exec_session.rs"),
+        PathBuf::from("src/impl/exec_corpus.rs"),
         PathBuf::from("src/service/harness_factory.rs"),
     ];
     let constructors = [

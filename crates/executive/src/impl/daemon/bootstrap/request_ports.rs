@@ -11,8 +11,9 @@ use fabric::{Subsystem, SubsystemContext};
 
 use crate::core::orchestrator::AletheonExecutive;
 use crate::service::request_use_cases::{
-    CareWeight, ExecutiveRuntimePort, ReflectionMemoryPort, ReflectionStats, RuntimeStatus,
-    SelfStatus, SelfStatusPort, SupplementalMemoryStatus, SupplementalMemoryStatusPort,
+    CareWeight, ExecutiveRuntimePort, ReflectionMemoryPort, ReflectionStats, RetentionAdminPort,
+    RuntimeStatus, SelfStatus, SelfStatusPort, SupplementalMemoryStatus,
+    SupplementalMemoryStatusPort,
 };
 use crate::service::turn_runtime_ports::{SelfPolicyPort, TurnConfigPort};
 
@@ -28,6 +29,12 @@ pub(super) async fn initialize_self_field(
             bus: None,
         })
         .await
+}
+
+pub(super) fn retention_admin_port(
+    repository: Arc<mnemosyne::RetentionRepository>,
+) -> Arc<dyn RetentionAdminPort> {
+    Arc::new(RetentionAdminAdapter { repository })
 }
 
 pub(super) struct RequestFacadePorts {
@@ -157,6 +164,21 @@ impl SelfStatusPort for SelfStatusAdapter {
 
 struct SupplementalMemoryStatusAdapter {
     health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
+}
+
+struct RetentionAdminAdapter {
+    repository: Arc<mnemosyne::RetentionRepository>,
+}
+
+impl RetentionAdminPort for RetentionAdminAdapter {
+    fn compact(
+        &self,
+        owner: &str,
+        now_ms: i64,
+        policy: &mnemosyne::RetentionCompactionPolicy,
+    ) -> anyhow::Result<mnemosyne::RetentionCompactionReport> {
+        mnemosyne::RetentionCompactor::new(&self.repository).run(owner, now_ms, policy)
+    }
 }
 
 impl SupplementalMemoryStatusPort for SupplementalMemoryStatusAdapter {

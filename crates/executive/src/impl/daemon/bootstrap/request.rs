@@ -57,7 +57,9 @@ use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
-use super::request_ports::{initialize_self_field, RequestFacadePorts, TurnRuntimeFacadePorts};
+use super::request_ports::{
+    initialize_self_field, retention_admin_port, RequestFacadePorts, TurnRuntimeFacadePorts,
+};
 
 impl RequestHandler {
     pub async fn new(
@@ -623,7 +625,7 @@ impl RequestHandler {
         > = Arc::new(
             crate::service::request_use_cases::ProductionMemoryAdminUseCases::new(
                 gbrain_runtime.memory_service.clone(),
-                retention_repository,
+                retention_admin_port(retention_repository),
                 fabric::LOCAL_OWNER_PRINCIPAL.to_string(),
             ),
         );
