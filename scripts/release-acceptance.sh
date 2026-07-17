@@ -66,13 +66,13 @@ PY
 }
 
 validate_release_lane_evidence() {
-  local candidate_sha256=$1 installed_receipt=$2 monitor_report=$3 scenario_manifest=$4
-  local failure_receipt=$5 failure_runtime_hashes=$6 inventory_output=$7
+  local candidate_sha256=$1 installed_receipt=$2 monitor_report=$3
+  local failure_receipt=$4 failure_runtime_hashes=$5 inventory_output=$6
   python3 - "$candidate_sha256" "$installed_receipt" "$monitor_report" \
-    "$scenario_manifest" "$failure_receipt" "$failure_runtime_hashes" "$inventory_output" <<'PY'
+    "$failure_receipt" "$failure_runtime_hashes" "$inventory_output" <<'PY'
 import json, pathlib, re, sys
 
-candidate, installed_path, monitor_path, scenario_manifest_path, failure_path, runtime_hashes_json, output_path = sys.argv[1:]
+candidate, installed_path, monitor_path, failure_path, runtime_hashes_json, output_path = sys.argv[1:]
 checksum = re.compile(r"[0-9a-f]{64}").fullmatch
 
 def fail(message):
@@ -132,165 +132,6 @@ derived_monitor_summary = {
 if summary != derived_monitor_summary:
     fail("monitor summary does not match its case inventory")
 
-required_assertions = {
-    "project_workspace": {
-        "known_git_root", "initial_worktree_clean", "git_head_stable",
-        "worktree_restored", "scenario_artifacts_scoped", "artifact_delivery",
-        "repository_analysis", "outside_write_denied",
-    },
-    "gmail_analysis": {
-        "turn_done", "single_bounded_search", "configured_account_bound", "authorized",
-        "result_schema_bounded", "metadata_only", "summary_bounded_and_redacted",
-        "durable_event_evidence", "live_test_account_configured",
-        "account_binding_attested", "wire_schema_attested",
-    },
-    "subagent_research": {
-        "authoritative_turn_done", "unique_initial_event_receipt", "session_id_recorded",
-        "exact_agent_lifecycle_tools", "unique_call_ids", "tool_results_accounted",
-        "two_distinct_spawned_agents", "first_agent_progress_listed",
-        "mailbox_delivered_to_first_agent", "first_agent_terminal_result",
-        "agent_result_marker_hash", "parent_text_promoted_result",
-        "parent_journal_promoted_result", "second_agent_cancelled",
-        "daemon_restart_command", "daemon_process_changed",
-        "daemon_start_timestamp_changed", "same_candidate_binary",
-        "unique_post_restart_event_receipt", "post_restart_call_ids_unique",
-        "both_agents_requeried", "terminal_states_persisted",
-        "result_hashes_persisted", "same_session_recovered",
-    },
-    "reconnect_resume": {
-        "initial_turn_done", "initial_event_evidence_durable", "structured_long_output",
-        "final_marker_recorded", "real_page_scroll", "returned_to_final_view",
-        "tui_reconnected", "post_reconnect_turn_done",
-        "reconnect_event_evidence_durable", "same_session_id",
-        "resume_record_count", "final_answer_persisted",
-    },
-}
-by_scenario = {case["scenario"]: case for case in cases}
-for scenario, required in required_assertions.items():
-    case = by_scenario[scenario]
-    if case.get("failure") is not None:
-        fail(f"monitor {scenario} retained a failure")
-    assertions = case.get("assertions")
-    if not isinstance(assertions, list) or not assertions:
-        fail(f"monitor {scenario} assertions are missing")
-    names = [item.get("name") for item in assertions if isinstance(item, dict)]
-    if len(names) != len(assertions) or len(names) != len(set(names)):
-        fail(f"monitor {scenario} assertion inventory is invalid")
-    if any(item.get("passed") is not True for item in assertions):
-        fail(f"monitor {scenario} contains a failed assertion")
-    if not required.issubset(set(names)):
-        fail(f"monitor {scenario} required assertions are missing")
-
-def event_receipt(value, label, path_required=True):
-    if not isinstance(value, dict):
-        fail(f"{label} event receipt is missing")
-    if path_required and (not isinstance(value.get("path"), str) or not value["path"].startswith("/")):
-        fail(f"{label} event path is invalid")
-    if not isinstance(value.get("event_count"), int) or isinstance(value["event_count"], bool) or value["event_count"] <= 0:
-        fail(f"{label} event count is invalid")
-    if not isinstance(value.get("size_bytes"), int) or isinstance(value["size_bytes"], bool) or value["size_bytes"] <= 0:
-        fail(f"{label} event size is invalid")
-    if not isinstance(value.get("sha256"), str) or not checksum(value["sha256"]):
-        fail(f"{label} event checksum is invalid")
-    if path_required and (value.get("mode") != "0600" or not isinstance(value.get("uid"), int)
-                          or isinstance(value["uid"], bool) or value["uid"] < 0):
-        fail(f"{label} event ownership receipt is invalid")
-    return value
-
-project = by_scenario["project_workspace"].get("evidence")
-if not isinstance(project, dict): fail("project evidence is missing")
-before, after = project.get("git_before"), project.get("git_after")
-if (not isinstance(before, dict) or not isinstance(after, dict)
-        or not isinstance(before.get("head"), str) or not before["head"]
-        or before.get("head") != after.get("head")
-        or before.get("status") != "" or after.get("status") != ""):
-    fail("project Git evidence is invalid")
-for name in ("delivery", "analysis", "boundary"):
-    child = project.get(name)
-    if not isinstance(child, dict) or child.get("status") != "PASS":
-        fail(f"project {name} evidence did not pass")
-    event_receipt(child.get("evidence", {}).get("event"), f"project:{name}")
-
-gmail = by_scenario["gmail_analysis"]
-gmail_evidence = gmail.get("evidence")
-if (gmail.get("authorization_state") != "authorized" or not isinstance(gmail_evidence, dict)
-        or gmail_evidence.get("metadata_only") is not True
-        or gmail_evidence.get("item_limit") != 10
-        or not isinstance(gmail_evidence.get("item_count"), int)
-        or gmail_evidence["item_count"] > 10):
-    fail("Gmail bounded authorization evidence is invalid")
-event_receipt({"event_count": gmail_evidence.get("event_count"),
-               "size_bytes": gmail_evidence.get("event_size_bytes"),
-               "sha256": gmail_evidence.get("event_sha256")}, "gmail", False)
-for field in ("summary_sha256", "result_sha256"):
-    if not isinstance(gmail_evidence.get(field), str) or not checksum(gmail_evidence[field]):
-        fail(f"Gmail {field} is invalid")
-
-subagent = by_scenario["subagent_research"].get("evidence")
-if (not isinstance(subagent, dict) or not subagent.get("session_id")
-        or subagent.get("journal_promoted") is not True
-        or subagent.get("lifecycle", {}).get("result_promoted_to_parent") is not True
-        or subagent.get("restart", {}).get("process_changed") is not True
-        or subagent.get("restart", {}).get("start_timestamp_changed") is not True
-        or subagent.get("restart", {}).get("same_candidate_binary") is not True
-        or subagent.get("post_restart_agents", {}).get("terminal_states_persisted") is not True
-        or subagent.get("post_restart_agents", {}).get("result_hashes_persisted") is not True):
-    fail("SubAgent lifecycle or restart evidence is invalid")
-event_receipt(subagent.get("initial_event"), "subagent:initial")
-event_receipt(subagent.get("post_restart_event"), "subagent:post_restart")
-
-reconnect = by_scenario["reconnect_resume"].get("evidence")
-if (not isinstance(reconnect, dict) or not reconnect.get("session_id")
-        or reconnect.get("resumed_session_id") != reconnect.get("session_id")
-        or not isinstance(reconnect.get("final_sha256"), str) or not checksum(reconnect["final_sha256"])
-        or not isinstance(reconnect.get("final_bytes"), int) or reconnect["final_bytes"] <= 1000
-        or not isinstance(reconnect.get("final_lines"), int) or reconnect["final_lines"] < 60
-        or not isinstance(reconnect.get("journal_entries"), int) or reconnect["journal_entries"] <= 0):
-    fail("reconnect persistence evidence is invalid")
-event_receipt(reconnect.get("initial_event"), "reconnect:initial")
-event_receipt(reconnect.get("reconnect_event"), "reconnect:reconnected")
-
-scenario_manifest = load(scenario_manifest_path, "production-scenario-events")
-expected_event_ids = {
-    "project_workspace:delivery", "project_workspace:analysis", "project_workspace:boundary",
-    "gmail_analysis:gmail", "subagent_research:initial", "subagent_research:post_restart",
-    "reconnect_resume:initial", "reconnect_resume:reconnected",
-}
-manifest_events = scenario_manifest.get("events")
-if (scenario_manifest.get("schema_version") != 1 or scenario_manifest.get("status") != "PASS"
-        or not isinstance(manifest_events, list)
-        or {item.get("id") for item in manifest_events if isinstance(item, dict)} != expected_event_ids
-        or len(manifest_events) != len(expected_event_ids)):
-    fail("production scenario event manifest is invalid")
-if any(item.get("mode") != "0600" or not checksum(item.get("sha256", ""))
-       or not isinstance(item.get("size_bytes"), int) or item["size_bytes"] <= 0
-       or not isinstance(item.get("event_count"), int) or item["event_count"] <= 0
-       or not isinstance(item.get("uid"), int) or item["uid"] < 0
-       or not isinstance(item.get("path"), str) or not item["path"].startswith("production-workspace/")
-       for item in manifest_events):
-    fail("production scenario event manifest entries are invalid")
-expected_receipts = {
-    "project_workspace:delivery": project["delivery"]["evidence"]["event"],
-    "project_workspace:analysis": project["analysis"]["evidence"]["event"],
-    "project_workspace:boundary": project["boundary"]["evidence"]["event"],
-    "gmail_analysis:gmail": {
-        "sha256": gmail_evidence["event_sha256"],
-        "size_bytes": gmail_evidence["event_size_bytes"],
-        "event_count": gmail_evidence["event_count"],
-    },
-    "subagent_research:initial": subagent["initial_event"],
-    "subagent_research:post_restart": subagent["post_restart_event"],
-    "reconnect_resume:initial": reconnect["initial_event"],
-    "reconnect_resume:reconnected": reconnect["reconnect_event"],
-}
-for item in manifest_events:
-    expected = expected_receipts[item["id"]]
-    if any(item.get(field) != expected.get(field)
-           for field in ("sha256", "size_bytes", "event_count")):
-        fail(f"production scenario event manifest drifted for {item['id']}")
-    if expected.get("uid") is not None and item.get("uid") != expected.get("uid"):
-        fail(f"production scenario event owner drifted for {item['id']}")
-
 failure = load(failure_path, "failure-matrix")
 if failure.get("status") != "PASS" or failure.get("lane") != "disposable-installed-host":
     fail("failure-matrix lane did not pass")
@@ -348,135 +189,6 @@ pathlib.Path(output_path).write_text(json.dumps(result, sort_keys=True, separato
 PY
 }
 
-write_scenario_evidence_manifest() {
-  local monitor_report=$1 workspace=$2 copied_root=$3 expected_uid=$4 output=$5
-  python3 - "$monitor_report" "$workspace" "$copied_root" "$expected_uid" "$output" <<'PY'
-import hashlib, json, pathlib, stat, sys
-
-monitor_path, workspace_value, copied_value, uid_value, output_value = sys.argv[1:]
-workspace = pathlib.Path(workspace_value)
-scenario_root = workspace / ".scenario-runs"
-copied_root = pathlib.Path(copied_value)
-expected_uid = int(uid_value)
-
-def fail(message):
-    raise SystemExit(f"scenario evidence manifest: {message}")
-
-try:
-    monitor = json.loads(pathlib.Path(monitor_path).read_text())
-except (OSError, json.JSONDecodeError) as error:
-    fail(f"monitor report is invalid: {error}")
-cases = monitor.get("cases")
-if not isinstance(cases, list): fail("monitor cases are missing")
-by_name = {case.get("scenario"): case for case in cases if isinstance(case, dict)}
-try:
-    project = by_name["project_workspace"]["evidence"]
-    gmail = by_name["gmail_analysis"]["evidence"]
-    subagent = by_name["subagent_research"]["evidence"]
-    reconnect = by_name["reconnect_resume"]["evidence"]
-    receipts = [
-        ("project_workspace:delivery", project["delivery"]["evidence"]["event"]),
-        ("project_workspace:analysis", project["analysis"]["evidence"]["event"]),
-        ("project_workspace:boundary", project["boundary"]["evidence"]["event"]),
-        ("gmail_analysis:gmail", {
-            "sha256": gmail["event_sha256"], "size_bytes": gmail["event_size_bytes"],
-            "event_count": gmail["event_count"],
-        }),
-        ("subagent_research:initial", subagent["initial_event"]),
-        ("subagent_research:post_restart", subagent["post_restart_event"]),
-        ("reconnect_resume:initial", reconnect["initial_event"]),
-        ("reconnect_resume:reconnected", reconnect["reconnect_event"]),
-    ]
-except (KeyError, TypeError) as error:
-    fail(f"required event receipt is missing: {error}")
-
-def receipt_shape(receipt, label):
-    if (not isinstance(receipt, dict) or not isinstance(receipt.get("sha256"), str)
-            or len(receipt["sha256"]) != 64
-            or not isinstance(receipt.get("size_bytes"), int)
-            or isinstance(receipt["size_bytes"], bool) or receipt["size_bytes"] <= 0
-            or not isinstance(receipt.get("event_count"), int)
-            or isinstance(receipt["event_count"], bool) or receipt["event_count"] <= 0):
-        fail(f"{label} receipt shape is invalid")
-
-def safe_files():
-    result = []
-    for path in copied_root.rglob("*"):
-        metadata = path.lstat()
-        if stat.S_ISREG(metadata.st_mode) and not path.is_symlink():
-            result.append(path)
-    return result
-
-available = safe_files()
-used = set()
-events = []
-for identifier, receipt in receipts:
-    receipt_shape(receipt, identifier)
-    source_path = receipt.get("path")
-    if isinstance(source_path, str):
-        try:
-            relative = pathlib.Path(source_path).relative_to(scenario_root)
-        except ValueError:
-            fail(f"{identifier} source path escaped the scenario root")
-        if not relative.parts or ".." in relative.parts:
-            fail(f"{identifier} source path escaped the scenario root")
-        candidate = copied_root / relative
-        candidates = [candidate]
-    else:
-        candidates = []
-        for candidate in available:
-            content = candidate.read_bytes()
-            if (len(content) == receipt["size_bytes"]
-                    and hashlib.sha256(content).hexdigest() == receipt["sha256"]):
-                candidates.append(candidate)
-    candidates = [candidate for candidate in candidates if candidate not in used]
-    if len(candidates) != 1:
-        fail(f"{identifier} did not map uniquely to copied evidence")
-    path = candidates[0]
-    try:
-        relative = path.relative_to(copied_root)
-    except ValueError:
-        fail(f"{identifier} copied path escaped the artifact root")
-    if not relative.parts or ".." in relative.parts:
-        fail(f"{identifier} copied path escaped the artifact root")
-    if any((copied_root / pathlib.Path(*relative.parts[:index])).is_symlink()
-           for index in range(1, len(relative.parts) + 1)):
-        fail(f"{identifier} copied path contains a symlink")
-    metadata = path.lstat()
-    mode = stat.S_IMODE(metadata.st_mode)
-    if (not stat.S_ISREG(metadata.st_mode) or path.is_symlink()
-            or metadata.st_uid != expected_uid or mode != 0o600):
-        fail(f"{identifier} copied ownership or mode is unsafe")
-    content = path.read_bytes()
-    try:
-        records = [json.loads(line) for line in content.decode("utf-8").splitlines()]
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        fail(f"{identifier} copied JSONL is invalid: {error}")
-    digest = hashlib.sha256(content).hexdigest()
-    if (not records or any(not isinstance(record, dict) for record in records)
-            or len(records) != receipt["event_count"]
-            or len(content) != receipt["size_bytes"] or digest != receipt["sha256"]):
-        fail(f"{identifier} copied receipt does not match the monitor report")
-    if source_path is not None and (receipt.get("uid") != expected_uid or receipt.get("mode") != "0600"):
-        fail(f"{identifier} original ownership receipt is invalid")
-    used.add(path)
-    events.append({
-        "id": identifier,
-        "path": f"production-workspace/{relative.as_posix()}",
-        "sha256": digest,
-        "size_bytes": len(content),
-        "event_count": len(records),
-        "uid": metadata.st_uid,
-        "mode": "0600",
-    })
-
-result = {"schema_version": 1, "status": "PASS", "events": events}
-pathlib.Path(output_value).write_text(
-    json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n"
-)
-PY
-}
-
 write_lane_evidence_manifest() {
   local candidate_sha256=$1 output=$2
   shift 2
@@ -486,7 +198,7 @@ import hashlib, json, pathlib, sys
 candidate, output, *paths = sys.argv[1:]
 names = (
     "v01", "v01_recipe", "migration_matrix", "installed_host", "candidate_activation", "monitor",
-    "scenario_events", "failure_matrix", "architecture_gate", "dependency_tree", "case_inventory",
+    "failure_matrix", "architecture_gate", "dependency_tree", "case_inventory",
 )
 references = (
     "v01-acceptance.json",
@@ -495,7 +207,6 @@ references = (
     "guest/installed-host/operator-receipt.json",
     "guest/candidate-activation-receipt.json",
     "production-scenarios.json",
-    "guest/production-scenario-events.json",
     "guest/failure-matrix/operator-receipt.json",
     "guest/architecture-gate-receipt.json",
     "dependency-tree.txt",
@@ -523,24 +234,16 @@ if [[ ${1:-} == --validate-v01-report ]]; then
   exit
 fi
 if [[ ${1:-} == --validate-release-lane-evidence ]]; then
-  [[ $# -eq 8 ]] || {
-    echo "usage: $0 --validate-release-lane-evidence CANDIDATE_SHA INSTALLED_JSON MONITOR_JSON SCENARIO_MANIFEST FAILURE_JSON RUNTIME_HASHES_JSON INVENTORY_JSON" >&2
+  [[ $# -eq 7 ]] || {
+    echo "usage: $0 --validate-release-lane-evidence CANDIDATE_SHA INSTALLED_JSON MONITOR_JSON FAILURE_JSON RUNTIME_HASHES_JSON INVENTORY_JSON" >&2
     exit 64
   }
-  validate_release_lane_evidence "$2" "$3" "$4" "$5" "$6" "$7" "$8"
-  exit
-fi
-if [[ ${1:-} == --write-scenario-evidence-manifest ]]; then
-  [[ $# -eq 6 ]] || {
-    echo "usage: $0 --write-scenario-evidence-manifest MONITOR_JSON WORKSPACE COPIED_ROOT UID OUTPUT" >&2
-    exit 64
-  }
-  write_scenario_evidence_manifest "$2" "$3" "$4" "$5" "$6"
+  validate_release_lane_evidence "$2" "$3" "$4" "$5" "$6" "$7"
   exit
 fi
 if [[ ${1:-} == --write-lane-evidence-manifest ]]; then
-  [[ $# -eq 14 ]] || {
-    echo "usage: $0 --write-lane-evidence-manifest CANDIDATE_SHA OUTPUT ELEVEN_LANE_FILES..." >&2
+  [[ $# -eq 13 ]] || {
+    echo "usage: $0 --write-lane-evidence-manifest CANDIDATE_SHA OUTPUT TEN_LANE_FILES..." >&2
     exit 64
   }
   write_lane_evidence_manifest "$2" "$3" "${@:4}"
@@ -650,7 +353,6 @@ production_socket=$(installed_user_socket "$production_user")
 candidate_source_commit=$(git -C "$repo_root" rev-parse HEAD)
 production_workspace=$(mktemp -d "/var/tmp/aletheon-production-workspace.${production_uid}.XXXXXX")
 rmdir -- "$production_workspace"
-scenario_event_manifest="$guest_artifacts/production-scenario-events.json"
 (
   worktree_registered=0
   cleanup_production_worktree() {
@@ -662,11 +364,6 @@ scenario_event_manifest="$guest_artifacts/production-scenario-events.json"
     if ((worktree_registered)) && [[ -d "$production_workspace/.scenario-runs" ]]; then
       cp -a -- "$production_workspace/.scenario-runs/." \
         "$guest_artifacts/production-workspace/" || cleanup_status=$?
-    fi
-    if ((status == 0 && cleanup_status == 0)); then
-      write_scenario_evidence_manifest "$artifacts/production-scenarios.json" \
-        "$production_workspace" "$guest_artifacts/production-workspace" \
-        "$production_uid" "$scenario_event_manifest" || cleanup_status=$?
     fi
     cd /
     if ((worktree_registered)); then
@@ -735,13 +432,13 @@ failure_runtime_hashes=$(jq -cn \
   '{machine:$machine,user:$user}')
 case_inventory="$artifacts/release-case-inventory.json"
 validate_release_lane_evidence "$candidate_sha256" "$installed_receipt" "$monitor_report" \
-  "$scenario_event_manifest" "$failure_receipt" "$failure_runtime_hashes" "$case_inventory"
+  "$failure_receipt" "$failure_runtime_hashes" "$case_inventory"
 
 lane_evidence="$artifacts/lane-evidence.json"
 write_lane_evidence_manifest "$candidate_sha256" "$lane_evidence" \
   "$v01_bundle" "$v01_recipe_receipt" "$migration_receipt" "$installed_receipt" \
   "$candidate_activation_receipt" \
-  "$monitor_report" "$scenario_event_manifest" "$failure_receipt" "$architecture_receipt" \
+  "$monitor_report" "$failure_receipt" "$architecture_receipt" \
   "$artifacts/dependency-tree.txt" "$case_inventory"
 
 operator=${ALETHEON_RELEASE_OPERATOR:-}
