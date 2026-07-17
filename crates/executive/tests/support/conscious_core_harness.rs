@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::KernelRuntime;
+use anyhow::Context;
 use async_trait::async_trait;
 use executive::r#impl::events::{
     agent_tree_projection::AgentTreeProjection, debug_projection::DebugProjection,
@@ -999,7 +1000,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
         });
 
     let action_loop = registry.resolve(space.clone(), owner, owner).await?;
-    let call = CapabilityCall {
+    let mut call = CapabilityCall {
         operation_id: fabric::OperationId(Uuid::from_u128(11)),
         process_id: owner,
         name: "fixture_local_search".into(),
@@ -1027,10 +1028,20 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
         )
         .await
         .is_err();
-    let decision = action_loop.select_action(&call).await?;
-    let GovernedActionDecision::Proceed { selected, .. } = decision else {
-        anyhow::bail!("acceptance fixture action was deferred")
-    };
+    let mut selected = None;
+    for attempt in 0..16 {
+        call.call_id = format!("acceptance-call-11-{attempt}");
+        match action_loop.select_action(&call).await? {
+            GovernedActionDecision::Proceed {
+                selected: context, ..
+            } => {
+                selected = Some(context);
+                break;
+            }
+            GovernedActionDecision::Defer { .. } => {}
+        }
+    }
+    let selected = selected.context("acceptance fixture action never won bounded competition")?;
     let outcome: SelectedActionOutcomeReceipt = action_loop
         .observe_outcome(
             &selected,

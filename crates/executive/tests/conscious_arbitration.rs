@@ -201,7 +201,7 @@ fn fixture(
 }
 
 #[tokio::test]
-async fn enforce_negate_defers_without_inner_call() {
+async fn ac_r3_1_enforce_negate_defers_without_inner_call() {
     let fixture = fixture(
         ConsciousArbitrationMode::Enforce,
         true,
@@ -259,7 +259,7 @@ async fn observe_defer_records_would_defer_and_executes() {
 }
 
 #[tokio::test]
-async fn authorization_denial_wins_before_conscious_selection() {
+async fn ac_r3_2_authorization_denial_wins_before_conscious_selection() {
     let fixture = fixture(
         ConsciousArbitrationMode::Enforce,
         false,
@@ -314,7 +314,7 @@ async fn modulation_failure_is_fail_closed_only_in_enforce() {
 }
 
 #[tokio::test]
-async fn empty_field_proceed_matches_legacy_execution() {
+async fn ac_r3_3_empty_field_proceed_matches_legacy_execution() {
     let fixture = fixture(
         ConsciousArbitrationMode::Enforce,
         true,
@@ -368,4 +368,46 @@ fn stable_priority_order_keeps_original_tie_order() {
             "low".to_string(),
         ]
     );
+}
+
+#[test]
+fn ac_f_3_modulation_trace_round_trips_all_causal_fields() {
+    let store = agora::SqliteBroadcastStore::open_in_memory().unwrap();
+    let space = fabric::AgoraSpaceId("acceptance-field-trace".into());
+    let event = fabric::ConsciousTraceEvent::FieldModulation {
+        mode: ConsciousArbitrationMode::Enforce,
+        decision: FieldDecisionKind::Defer,
+        reason: FieldDecisionReason::Negated,
+        operation_id: "operation-ac-f-3".into(),
+        call_id: "call-ac-f-3".into(),
+        broadcast_epoch: Some(17),
+        baseline: Some(0.4),
+        effective: Some(0.8),
+        delta: Some(0.4),
+        metric_ref: "metric-ac-f-3".into(),
+    };
+    store.save_field_modulation(&space, &event).unwrap();
+    let encoded = serde_json::to_vec(&store.field_modulations(&space).unwrap()).unwrap();
+    let decoded: Vec<fabric::ConsciousTraceEvent> = serde_json::from_slice(&encoded).unwrap();
+
+    let fabric::ConsciousTraceEvent::FieldModulation {
+        mode,
+        decision,
+        reason,
+        operation_id,
+        call_id,
+        broadcast_epoch,
+        metric_ref,
+        ..
+    } = &decoded[0]
+    else {
+        panic!("expected field modulation trace")
+    };
+    assert_eq!(*mode, ConsciousArbitrationMode::Enforce);
+    assert_eq!(*decision, FieldDecisionKind::Defer);
+    assert_eq!(*reason, FieldDecisionReason::Negated);
+    assert_eq!(operation_id, "operation-ac-f-3");
+    assert_eq!(call_id, "call-ac-f-3");
+    assert_eq!(*broadcast_epoch, Some(17));
+    assert_eq!(metric_ref, "metric-ac-f-3");
 }

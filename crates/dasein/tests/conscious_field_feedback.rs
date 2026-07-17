@@ -241,7 +241,7 @@ async fn review_priority_without_reader() -> f64 {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn higher_field_urgency_raises_attention_for_same_intent() {
+async fn ac_r2_1_higher_field_urgency_raises_attention_for_same_intent() {
     let low = review_priority(make_config(Some(StubMode::Broadcast(
         CareActionKind::Direct,
         0.10,
@@ -259,7 +259,7 @@ async fn higher_field_urgency_raises_attention_for_same_intent() {
 }
 
 #[tokio::test]
-async fn empty_and_error_equal_legacy_baseline() {
+async fn ac_r2_2_empty_and_error_equal_legacy_baseline() {
     let baseline = review_priority_without_reader().await;
     assert_eq!(
         review_priority(make_config(Some(StubMode::Empty))).await,

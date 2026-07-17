@@ -15,9 +15,9 @@ use executive::service::conscious_core_ports::{
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use fabric::{
     AgentId, AgentProfileId, AgoraSpaceId, Clock, ConsciousCoreTrace, ConsciousTraceEvent,
-    ContentId, IndicatorResult, NamespaceId, ProcessId, SalienceVector, SpawnSpec, VisibilityScope,
-    WorkspaceAttribution, WorkspaceCandidate, WorkspaceContent, WorkspaceObservation,
-    WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    ContentId, FieldMetricHistory, FieldMetricSnapshot, IndicatorResult, NamespaceId, ProcessId,
+    SalienceVector, SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceCandidate,
+    WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use support::conscious_core_harness::{run, run_ablation, AblationConfig};
 use uuid::Uuid;
@@ -85,6 +85,47 @@ fn metrics(trace: &ConsciousCoreTrace) -> Vec<IndicatorResult> {
         make("narrative_faithfulness", "no hidden reasoning or self-report field exists in trace schema", 1.0, 1.0),
         make("surprise", "prediction result uses structured surprised flag", trace.events.iter().any(|event| matches!(event, ConsciousTraceEvent::Prediction { .. })) as u8 as f64, 1.0),
     ]
+}
+
+fn urgency_snapshot(epoch: u64, urgency: f64, lineage: &str) -> FieldMetricSnapshot {
+    let mut snapshot = FieldMetricSnapshot::zero();
+    snapshot.broadcast_epoch = epoch;
+    snapshot.dasein_version = 1;
+    snapshot.salience[0] = urgency;
+    snapshot.trace_event_id = format!("{lineage}:{epoch}");
+    snapshot
+}
+
+#[test]
+fn ac_f_1_field_history_is_bounded_and_quiet_tail_converges() {
+    let history = FieldMetricHistory::from_snapshots(
+        (0..80).map(|epoch| urgency_snapshot(epoch, 0.25, "quiet")),
+    )
+    .unwrap();
+
+    assert_eq!(history.len(), fabric::MAX_FIELD_METRIC_HISTORY);
+    assert!(history
+        .entries()
+        .iter()
+        .all(FieldMetricSnapshot::is_bounded));
+    assert!(history.indicators().attractor_converged);
+}
+
+#[test]
+fn ac_f_2_lineage_reset_reduces_lagged_mutual_information() {
+    let continuous = FieldMetricHistory::from_snapshots(
+        (0..64).map(|epoch| urgency_snapshot(epoch, 0.1 + epoch as f64 * 0.01, "continuous")),
+    )
+    .unwrap();
+    let reset = FieldMetricHistory::from_snapshots((0..64).map(|epoch| {
+        let offset = if epoch < 32 { epoch } else { epoch - 32 };
+        urgency_snapshot(epoch, 0.1 + offset as f64 * 0.01, "reset")
+    }))
+    .unwrap();
+
+    let continuous_mi = continuous.lagged_mutual_information(1).unwrap();
+    let reset_mi = reset.lagged_mutual_information(1).unwrap();
+    assert!(continuous_mi > reset_mi, "{continuous_mi} <= {reset_mi}");
 }
 
 #[tokio::test]
