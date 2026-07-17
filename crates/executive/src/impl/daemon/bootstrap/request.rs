@@ -3,7 +3,7 @@
 //! Contains the `RequestHandler::new()` constructor and setup-related methods
 //! (`set_notify_channel`, `create_notify_channel`, `tools`, `debug_handler`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
@@ -62,6 +62,17 @@ use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
+async fn initialize_self_field(self_field: &mut SelfField, data_dir: &Path) -> anyhow::Result<()> {
+    self_field
+        .init(&SubsystemContext {
+            name: "self_field".into(),
+            working_dir: data_dir.to_path_buf(),
+            config: serde_json::Value::Null,
+            bus: None,
+        })
+        .await
+}
+
 impl RequestHandler {
     pub async fn new(
         config: &DaemonConfig,
@@ -98,14 +109,18 @@ impl RequestHandler {
             clock: Some(clock.clone()),
             ..Default::default()
         };
-        let self_field = Arc::new(Mutex::new(SelfField::new(self_field_config)));
+        let mut self_field = SelfField::new(self_field_config);
+
+        // SelfField owns the durable Dasein ledger. Restore its reducer version
+        // before any turn can submit a transition against the persisted ledger.
+        initialize_self_field(&mut self_field, &data_dir).await?;
 
         // Tier 2a: install the Runtime PermissionManager as the permission authority.
         {
             use crate::core::permission_manager::PermissionManager;
-            let mut sf = self_field.lock().await;
-            sf.set_permission_authority(std::sync::Arc::new(PermissionManager::new()));
+            self_field.set_permission_authority(std::sync::Arc::new(PermissionManager::new()));
         }
+        let self_field = Arc::new(Mutex::new(self_field));
 
         // Wire DaseinEventBridge to CommunicationBus if available
         if let Some(ref bus) = event_bus {
@@ -1408,5 +1423,59 @@ impl RequestHandler {
         }
 
         Ok(handler)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fabric::dasein::{OutcomeStatus, SelfVersion};
+
+    #[tokio::test]
+    async fn daemon_self_field_bootstrap_replays_before_new_transitions() {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("self_field.db");
+
+        let mut first = SelfField::new(SelfFieldConfig {
+            db_path: Some(database.clone()),
+            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0))),
+            ..Default::default()
+        });
+        initialize_self_field(&mut first, root.path())
+            .await
+            .unwrap();
+        first
+            .dasein()
+            .unwrap()
+            .record_outcome("first boot", OutcomeStatus::Succeeded, "daemon-bootstrap")
+            .await
+            .unwrap();
+        first.shutdown().await.unwrap();
+
+        let mut restarted = SelfField::new(SelfFieldConfig {
+            db_path: Some(database),
+            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(5_100, 0))),
+            ..Default::default()
+        });
+        initialize_self_field(&mut restarted, root.path())
+            .await
+            .unwrap();
+        assert!(matches!(
+            restarted.health().await,
+            fabric::SubsystemHealth::Healthy
+        ));
+        let dasein = restarted.dasein_handle().unwrap();
+        assert_eq!(dasein.self_version().await, SelfVersion(2));
+        let receipt = dasein
+            .record_outcome(
+                "first turn after restart",
+                OutcomeStatus::Succeeded,
+                "daemon-bootstrap",
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt.previous_version, SelfVersion(2));
+        assert_eq!(receipt.current_version, SelfVersion(3));
+        restarted.shutdown().await.unwrap();
     }
 }
