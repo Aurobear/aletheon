@@ -72,6 +72,11 @@ pub enum ClientRpcRequest {
     DebugTopology,
     DebugGraph,
     DebugLogSubscribe(DebugLogSubscribeParams),
+    SessionResume(ResumeParams),
+    SessionFork(SessionForkParams),
+    SessionInterrupt(SessionInterruptParams),
+    SessionReplay(SessionReplayParams),
+    HostComputer(ComputerHostParams),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -85,6 +90,32 @@ pub struct ChatParams {
 pub struct ResumeParams {
     #[schemars(with = "String")]
     pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SessionForkParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub through_sequence: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SessionInterruptParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SessionReplayParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub after_sequence: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ComputerHostParams {
+    pub operation: String,
+    pub arguments: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -479,6 +510,13 @@ impl ClientRpcRequest {
             Self::DebugLogSubscribe(params) => {
                 ("debug.log_subscribe", Some(serde_json::to_value(params)?))
             }
+            Self::SessionResume(params) => ("session.resume", Some(serde_json::to_value(params)?)),
+            Self::SessionFork(params) => ("session.fork", Some(serde_json::to_value(params)?)),
+            Self::SessionInterrupt(params) => {
+                ("session.interrupt", Some(serde_json::to_value(params)?))
+            }
+            Self::SessionReplay(params) => ("session.replay", Some(serde_json::to_value(params)?)),
+            Self::HostComputer(params) => ("host.computer", Some(serde_json::to_value(params)?)),
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
@@ -557,6 +595,39 @@ pub enum ClientRequest {
     Initialized,
     Snapshot(SnapshotRequest),
     Subscribe(EventSubscription),
+}
+
+impl ClientRequest {
+    pub fn to_json_rpc(&self, id: u64) -> serde_json::Result<serde_json::Value> {
+        let method = match self {
+            Self::Initialize(_) => "initialize",
+            Self::Initialized => "initialized",
+            Self::Snapshot(_) => "session.snapshot",
+            Self::Subscribe(_) => "session.subscribe",
+        };
+        serde_json::to_value(JsonRpcRequest {
+            jsonrpc: JSON_RPC_VERSION,
+            id: Some(id),
+            method,
+            params: Some(serde_json::to_value(ClientMessage::v1(self.clone()))?),
+        })
+    }
+}
+
+pub fn session_notification_to_json(
+    notification: &crate::SessionNotification,
+) -> serde_json::Result<serde_json::Value> {
+    #[derive(Serialize)]
+    struct JsonRpcNotification {
+        jsonrpc: &'static str,
+        method: &'static str,
+        params: serde_json::Value,
+    }
+    serde_json::to_value(JsonRpcNotification {
+        jsonrpc: JSON_RPC_VERSION,
+        method: "session.notification",
+        params: serde_json::to_value(notification)?,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

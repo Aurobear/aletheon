@@ -76,6 +76,11 @@ if rg -n '\b(aletheon_kernel|fabric|corpus|cognit|mnemosyne|dasein|agora|metacog
   echo "architecture-check: Bin owns domain or runtime construction" >&2
   exit 1
 fi
+if rg -n '"jsonrpc"\s*:' crates/interact/src -g '*.rs' \
+  -g '!tui/test_infra.rs'; then
+  echo "architecture-check: Interact manually constructs JSON-RPC envelopes" >&2
+  exit 1
+fi
 for required in \
   crates/fabric/src/protocol/client.rs \
   crates/interact/src/tui/reducer.rs \
