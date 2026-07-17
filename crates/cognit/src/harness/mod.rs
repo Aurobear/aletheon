@@ -16,7 +16,7 @@ pub mod session;
 
 pub use config::HarnessConfig;
 pub use linear as react_loop; // backward-compat: ReActLoop is the linear harness
-pub use linear::{CompactorTrait, ReActLoop};
+pub use linear::{BatchPlanner, CompactorTrait, ReActLoop};
 pub use session::{
     ChannelCognitiveStreamSink, CognitError, CognitErrorKind, CognitRetryDisposition,
     CognitiveSession, CognitiveSessionDependencies, CognitiveSessionFactory, CognitiveStreamEvent,

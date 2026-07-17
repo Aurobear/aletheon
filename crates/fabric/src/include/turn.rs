@@ -4,6 +4,7 @@ use crate::types::admission::{
     AuditEventId, BudgetRequest, CapabilityScope, LeaseRequest, PrincipalId, RiskLevel,
     SandboxRequirement, UsageReport,
 };
+use crate::types::conscious_arbitration::CapabilityBatchPlan;
 use crate::types::llm_types::{LlmProvider, ToolDefinition};
 use crate::types::local_authority::{ConnectionId, ThreadId, WorkspacePolicy};
 use crate::types::message::Message;
@@ -106,6 +107,13 @@ pub trait TurnServices: Send + Sync {
     async fn dasein_view(&self, process: ProcessId) -> Result<DaseinView>;
     async fn agora_view(&self, session_id: &str) -> Result<AgoraView>;
     async fn invoke(&self, call: CapabilityCall) -> CapabilityResult;
+
+    async fn plan_capability_batch(
+        &self,
+        calls: Vec<CapabilityCall>,
+    ) -> anyhow::Result<CapabilityBatchPlan> {
+        Ok(CapabilityBatchPlan::identity(&calls))
+    }
 
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {
         None

@@ -6,7 +6,7 @@ use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
 use crate::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
 use fabric::message::{ContentBlock, Message, Role};
-use fabric::ToolDefinition;
+use fabric::{CapabilityCall, CapabilityBatchPlan, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -198,7 +198,73 @@ impl ReActLoop {
             }
 
             // Has tool calls -> execute them
-            let content_blocks: Vec<ContentBlock> = tool_calls
+            // Collect into CapabilityCall slice so the batch planner can operate on them.
+            let calls: Vec<CapabilityCall> = tool_calls
+                .iter()
+                .map(|(id, name, input)| CapabilityCall {
+                    operation_id: fabric::OperationId::new(),
+                    process_id: fabric::ProcessId::new(),
+                    name: name.clone(),
+                    input: input.clone(),
+                    call_id: id.clone(),
+                    deadline: None,
+                })
+                .collect();
+
+            // Plan the batch order. Only apply the ordered permutation when
+            // the plan is Enforce and is a valid exact permutation; otherwise
+            // keep provider order (the order the LLM emitted).
+            let ordered_calls: Vec<&(String, String, serde_json::Value)> =
+                if let Some(ref planner) = self.batch_planner {
+                    let plan = match planner.plan(calls.clone()).await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!(error = %e, "batch planner failed, keeping provider order");
+                            CapabilityBatchPlan::identity(&calls)
+                        }
+                    };
+                    match plan.mode {
+                        ConsciousArbitrationMode::Enforce => {
+                            match plan.validate_against(&calls) {
+                                Ok(()) => {
+                                    let mut ordered = Vec::new();
+                                    for id in &plan.ordered_call_ids {
+                                        if let Some(tc) = tool_calls
+                                            .iter()
+                                            .find(|(tid, _, _)| tid == id)
+                                        {
+                                            ordered.push(tc);
+                                        }
+                                    }
+                                    if ordered.len() == tool_calls.len() {
+                                        ordered
+                                    } else {
+                                        warn!(
+                                            "batch plan applied but call count mismatch; fallback to provider order"
+                                        );
+                                        tool_calls.iter().collect()
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        error = %e,
+                                        mode = ?plan.mode,
+                                        "batch plan invalid; keeping provider order"
+                                    );
+                                    tool_calls.iter().collect()
+                                }
+                            }
+                        }
+                        ConsciousArbitrationMode::Observe => {
+                            // Observe mode: always keep provider order.
+                            tool_calls.iter().collect()
+                        }
+                    }
+                } else {
+                    tool_calls.iter().collect()
+                };
+
+            let content_blocks: Vec<ContentBlock> = ordered_calls
                 .iter()
                 .map(|(id, name, input)| ContentBlock::ToolUse {
                     id: id.clone(),
@@ -221,7 +287,7 @@ impl ReActLoop {
             // assistant(tool_use) message to be in ONE subsequent user message.
             let mut tool_result_blocks: Vec<ContentBlock> = Vec::new();
 
-            for (tool_index, (id, name, input)) in tool_calls.iter().enumerate() {
+            for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
                 // Defensive: skip tool calls with empty names — some
                 // OpenAI-compatible providers emit malformed tool-use blocks
                 // that would trip the circuit breaker.
@@ -262,7 +328,7 @@ impl ReActLoop {
                             content: std::mem::take(&mut tool_result_blocks),
                         });
                     }
-                    for (pending_id, pending_name, _) in tool_calls.iter().skip(tool_index) {
+                    for (pending_id, pending_name, _) in ordered_calls.iter().skip(tool_index) {
                         tool_result_blocks.push(ContentBlock::ToolResult {
                             tool_use_id: pending_id.clone(),
                             content: "Tool call skipped: per-turn tool budget exhausted"
@@ -313,7 +379,7 @@ impl ReActLoop {
                                 content: std::mem::take(&mut tool_result_blocks),
                             });
                         }
-                        for (pending_id, pending_name, _) in tool_calls.iter().skip(tool_index) {
+                        for (pending_id, pending_name, _) in ordered_calls.iter().skip(tool_index) {
                             let content =
                                 format!("Tool call skipped: circuit breaker tripped: {reason}");
                             tool_result_blocks.push(ContentBlock::ToolResult {
