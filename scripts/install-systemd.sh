@@ -73,6 +73,7 @@ systemd-analyze verify /usr/lib/systemd/user/aletheon.socket \
   /usr/lib/systemd/user/aletheon.service
 systemctl daemon-reload
 if ((enable)); then
+  systemctl disable --now aletheon.service
   systemctl enable --now aletheon-core.service
   systemctl --global enable aletheon.socket
   systemctl enable --now aletheon-backup.timer aletheon-cleanup.timer
