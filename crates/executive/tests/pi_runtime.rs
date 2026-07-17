@@ -12,6 +12,7 @@ use fabric::{
     AttemptId, CodingJobId, CodingJobReport, CodingJobSpec, CodingJobStatus, CodingNetworkPolicy,
     FailureClass, GoalId, WorkspaceBoundary,
 };
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -80,6 +81,24 @@ struct Fixture {
 }
 
 impl Fixture {
+    fn fixed_args() -> Vec<String> {
+        [
+            "--mode",
+            "json",
+            "--no-session",
+            "--no-context-files",
+            "--no-extensions",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-themes",
+            "--no-approve",
+            "--offline",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+    }
+
     fn new(script: &str) -> Self {
         let temp = TempDir::new().unwrap();
         let repository = temp.path().join("repo");
@@ -114,9 +133,16 @@ impl Fixture {
     }
 
     fn config(&self, output_cap: usize, timeout_ms: u64) -> PiRuntimeConfig {
+        let digest = format!(
+            "{:x}",
+            Sha256::digest(std::fs::read(&self.executable).unwrap())
+        );
         PiRuntimeConfig {
             enabled: true,
             executable: self.executable.clone(),
+            fixed_args: Self::fixed_args(),
+            package_version: "0.0.3-test".into(),
+            executable_sha256: digest,
             worktree_base: self.worktrees.clone(),
             timeout_ms,
             max_output_bytes: output_cap,
@@ -140,7 +166,7 @@ impl Fixture {
                 .unwrap(),
                 base_commit: self.base_commit.clone(),
                 command: self.executable.clone(),
-                args: vec![],
+                args: Self::fixed_args(),
                 timeout_ms,
                 output_cap_bytes: output_cap,
                 network_policy: CodingNetworkPolicy::Disabled,
@@ -196,7 +222,15 @@ fn report(evidence: &[fabric::AttemptEvidence]) -> CodingJobReport {
 #[tokio::test]
 async fn successful_attempt_isolated_from_main_and_returns_structured_report() {
     let fixture = Fixture::new(
-        "#!/bin/sh\ncat >/dev/null\nprintf 'pub fn value() -> u8 { 2 }\\n' > src/lib.rs\nprintf done\n",
+        r##"#!/bin/sh
+cat >/dev/null
+printf 'pub fn value() -> u8 { 2 }\n' > src/lib.rs
+printf '%s\n' \
+  '{"type":"session","version":3,"id":"fixture-session"}' \
+  '{"type":"agent_start"}' \
+  '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"inputTokens":11,"outputTokens":7}}}' \
+  '{"type":"agent_end","messages":[]}'
+"##,
     );
     let before = git_output(&fixture.repository, &["status", "--porcelain=v2"]);
     let request = fixture.request(4096, 5_000, "implement the change");
@@ -207,6 +241,13 @@ async fn successful_attempt_isolated_from_main_and_returns_structured_report() {
         .unwrap();
     let report = report(&result.evidence);
     assert_eq!(report.status, CodingJobStatus::Succeeded);
+    assert_eq!(result.output, "done");
+    assert_eq!(result.usage.input_tokens, 11);
+    assert_eq!(result.usage.output_tokens, 7);
+    assert!(result
+        .evidence
+        .iter()
+        .any(|item| item.kind == "pi_build_identity"));
     assert_eq!(report.changed_files.len(), 1);
     assert_eq!(report.changed_files[0].path, PathBuf::from("src/lib.rs"));
     assert!(report.diff_sha256.is_some());
@@ -342,18 +383,16 @@ async fn forbidden_path_and_symlink_escape_fail_after_execution() {
 }
 
 #[tokio::test]
-async fn output_is_bounded_and_unavailable_sandbox_fails_before_pi() {
+async fn truncated_json_stream_and_unavailable_sandbox_fail_closed() {
     let fixture =
         Fixture::new("#!/bin/sh\ni=0; while [ $i -lt 5000 ]; do printf x; i=$((i+1)); done\n");
     let request = fixture.request(128, 5_000, "large output");
-    let result = fixture
+    let error = fixture
         .runtime(128, 5_000)
         .run_attempt(&encoded(&request), CancellationToken::new())
         .await
-        .unwrap();
-    let report = report(&result.evidence);
-    assert!(report.stdout_truncated);
-    assert_eq!(report.stdout.len(), 128);
+        .unwrap_err();
+    assert_eq!(error.class, FailureClass::ArchitectureViolation);
 
     let error = PiRuntime::prepare(
         &fixture.config(128, 5_000),

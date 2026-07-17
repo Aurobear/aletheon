@@ -355,6 +355,15 @@ pub struct PiRuntimeConfig {
     pub trusted_executable_dir: Option<PathBuf>,
     #[serde(default)]
     pub fixed_args: Vec<String>,
+    /// Pinned upstream package version recorded in attempt evidence.
+    #[serde(default)]
+    pub package_version: String,
+    /// Lowercase SHA-256 of the trusted Pi executable.
+    #[serde(default)]
+    pub executable_sha256: String,
+    /// Expected Pi JSON session header version.
+    #[serde(default = "default_pi_json_protocol_version")]
+    pub json_protocol_version: u32,
     #[serde(default)]
     pub worktree_base: PathBuf,
     #[serde(default = "default_pi_timeout_ms")]
@@ -379,6 +388,9 @@ impl Default for PiRuntimeConfig {
             executable: PathBuf::new(),
             trusted_executable_dir: None,
             fixed_args: Vec::new(),
+            package_version: String::new(),
+            executable_sha256: String::new(),
+            json_protocol_version: default_pi_json_protocol_version(),
             worktree_base: PathBuf::new(),
             timeout_ms: default_pi_timeout_ms(),
             max_output_bytes: default_pi_max_output_bytes(),
@@ -397,6 +409,8 @@ impl fmt::Debug for PiRuntimeConfig {
             .field("executable", &self.executable)
             .field("trusted_executable_dir", &self.trusted_executable_dir)
             .field("fixed_arg_count", &self.fixed_args.len())
+            .field("package_version", &self.package_version)
+            .field("json_protocol_version", &self.json_protocol_version)
             .field("worktree_base", &self.worktree_base)
             .field("timeout_ms", &self.timeout_ms)
             .field("max_output_bytes", &self.max_output_bytes)
@@ -413,6 +427,10 @@ impl fmt::Debug for PiRuntimeConfig {
 
 fn default_pi_timeout_ms() -> u64 {
     30 * 60 * 1_000
+}
+
+fn default_pi_json_protocol_version() -> u32 {
+    3
 }
 
 fn default_pi_max_output_bytes() -> usize {

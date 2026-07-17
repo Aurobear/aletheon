@@ -1,5 +1,6 @@
 pub mod native_cognit;
 pub mod pi;
+pub mod pi_protocol;
 pub mod provider_worker;
 
 pub use native_cognit::{
