@@ -184,6 +184,22 @@ if missing or concrete:
     raise SystemExit(
         "architecture-check: request use-case authority:\n" + "\n".join(details)
     )
+
+turn_runtime = Path("crates/executive/src/service/turn_runtime_ports.rs")
+turn_source = turn_runtime.read_text().split("#[cfg(test)]", 1)[0]
+required_turn_ports = ["Arc<dyn SelfPolicyPort>", "Arc<dyn TurnConfigPort>"]
+missing = [port for port in required_turn_ports if port not in turn_source]
+concrete = [
+    name
+    for name in ["dasein::SelfField", "AletheonExecutive"]
+    if name in turn_source
+]
+if missing or concrete:
+    details = [*(f"missing turn port: {port}" for port in missing)]
+    details.extend(f"concrete turn state: {name}" for name in concrete)
+    raise SystemExit(
+        "architecture-check: turn runtime authority:\n" + "\n".join(details)
+    )
 PY
 
 # M04 deletion gate: recalled memory enters model context only after the

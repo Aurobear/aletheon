@@ -1,15 +1,5 @@
-//! Handler initialization and construction.
-//!
-//! Contains the `RequestHandler::new()` constructor and setup-related methods
-//! (`set_notify_channel`, `create_notify_channel`, `tools`, `debug_handler`).
+//! Handler initialization, construction, and setup-related methods.
 
-use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
-use aletheon_kernel::chronos::SystemClock;
-use anyhow::Context;
-use fabric::Clock;
-use tokio_util::sync::CancellationToken;
 use super::super::model_router::{ModelRouter, TaskType};
 use super::super::prefix_builder::PrefixBuilder;
 use super::super::session_manager::SessionManager;
@@ -19,6 +9,8 @@ use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::r#impl::daemon::handler::RequestHandler;
 use crate::session::store::SessionStore;
+use aletheon_kernel::chronos::SystemClock;
+use anyhow::Context;
 use cognit::core::reflector::Reflector;
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
@@ -26,6 +18,7 @@ use corpus::security::sandbox::executor::{create_default_executor, SandboxPrefer
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
+use fabric::Clock;
 use fabric::CommunicationBus;
 use fabric::LlmProvider;
 use fabric::Registry;
@@ -38,7 +31,11 @@ use mnemosyne::CoreMemory;
 use mnemosyne::RecallMemory;
 use serde_json::json;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
@@ -60,7 +57,7 @@ use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
-use super::request_ports::{initialize_self_field, RequestFacadePorts};
+use super::request_ports::{initialize_self_field, RequestFacadePorts, TurnRuntimeFacadePorts};
 
 impl RequestHandler {
     pub async fn new(
@@ -81,7 +78,6 @@ impl RequestHandler {
         info!(provider = llm.name(), "LLM provider initialized");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
 
-        // Create session and journal
         let session_id = uuid::Uuid::new_v4().to_string();
         let data_dir = PathBuf::from(&config.data_dir);
         let data_dir_for_telegram = data_dir.clone();
@@ -97,7 +93,6 @@ impl RequestHandler {
         let conscious_context =
             Arc::new(crate::service::conscious_context_slot::ConsciousContextSlot::default());
 
-        // Create SelfField for genome reads and policy engine
         let self_field_config = SelfFieldConfig {
             db_path: Some(data_dir.join("self_field.db")),
             clock: Some(clock.clone()),
@@ -123,7 +118,6 @@ impl RequestHandler {
             sf.wire_dasein_event_bridge(bus).await?;
         }
 
-        // Create memory instances
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
         let recall_db_path = data_dir.join("recall_memory.db");
         let recall_clock: Arc<dyn fabric::Clock> = Arc::new(SystemClock::new());
@@ -132,7 +126,6 @@ impl RequestHandler {
             recall_clock,
         )?));
 
-        // FactStore
         // Every durable user-runtime store is rooted in the injected state
         // directory. Never rediscover HOME or a machine deployment path here.
         let aletheon_dir = data_dir.clone();
@@ -144,7 +137,6 @@ impl RequestHandler {
             FactStore::open(&fact_root.join("fact_store.db")).context("opening fact store")?;
         let fact_store = Arc::new(Mutex::new(fact_store));
 
-        // ObjectiveStore
         let objective_root = data_dir.join("goals");
         std::fs::create_dir_all(&objective_root)?;
         let objective_db_path = objective_root.join("objectives.db");
@@ -1042,6 +1034,7 @@ impl RequestHandler {
                     },
                 ),
             );
+        let turn_runtime_facades = TurnRuntimeFacadePorts::new(runtime.clone(), self_field.clone());
         let runtime_ports = Arc::new(
             crate::service::turn_runtime_ports::TurnRuntimePorts::production(
                 crate::service::turn_runtime_ports::TurnRuntimeResources {
@@ -1050,7 +1043,7 @@ impl RequestHandler {
                     storm: security_group.storm_breaker.clone(),
                     model_router: model_router.clone(),
                     default_llm: llm.clone(),
-                    self_field: self_field.clone(),
+                    self_policy: turn_runtime_facades.self_policy,
                     approval_rx: security_group.approval_rx.clone(),
                     pending_approvals: security_group.pending_approvals.clone(),
                     capabilities: capability_resources,
@@ -1062,7 +1055,7 @@ impl RequestHandler {
                     context_window: session_group.context_window,
                     clock: clock.clone(),
                     memory: memory_group.memory_service.clone(),
-                    executive: runtime.clone(),
+                    config: turn_runtime_facades.config,
                     performance: debug_perf.clone(),
                 },
             ),

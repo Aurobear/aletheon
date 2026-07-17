@@ -108,6 +108,25 @@ fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
 }
 
 #[test]
+fn turn_runtime_resources_retain_only_typed_self_and_config_ports() {
+    let source = production_source("src/service/turn_runtime_ports.rs");
+    for contract in [
+        "Arc<dyn SelfPolicyPort>",
+        "Arc<dyn TurnConfigPort>",
+        "Arc<dyn corpus::CorpusService>",
+        "Arc<dyn mnemosyne::MemoryService>",
+    ] {
+        assert!(source.contains(contract), "missing turn port: {contract}");
+    }
+    for concrete in ["dasein::SelfField", "AletheonExecutive"] {
+        assert!(
+            !source.contains(concrete),
+            "turn runtime retained concrete domain state: {concrete}"
+        );
+    }
+}
+
+#[test]
 fn concrete_domain_construction_is_confined_to_composition_or_domain_tests() {
     let root = Path::new("src");
     let allowed = [

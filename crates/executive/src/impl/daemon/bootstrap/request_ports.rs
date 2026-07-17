@@ -14,6 +14,7 @@ use crate::service::request_use_cases::{
     CareWeight, ExecutiveRuntimePort, ReflectionMemoryPort, ReflectionStats, RuntimeStatus,
     SelfStatus, SelfStatusPort, SupplementalMemoryStatus, SupplementalMemoryStatusPort,
 };
+use crate::service::turn_runtime_ports::{SelfPolicyPort, TurnConfigPort};
 
 pub(super) async fn initialize_self_field(
     self_field: &mut SelfField,
@@ -49,6 +50,25 @@ impl RequestFacadePorts {
             self_status: Arc::new(SelfStatusAdapter { self_field }),
             supplemental: Arc::new(SupplementalMemoryStatusAdapter {
                 health: supplemental,
+            }),
+        }
+    }
+}
+
+pub(super) struct TurnRuntimeFacadePorts {
+    pub(super) self_policy: Arc<dyn SelfPolicyPort>,
+    pub(super) config: Arc<dyn TurnConfigPort>,
+}
+
+impl TurnRuntimeFacadePorts {
+    pub(super) fn new(
+        runtime: Arc<Mutex<AletheonExecutive>>,
+        self_field: Arc<Mutex<SelfField>>,
+    ) -> Self {
+        Self {
+            self_policy: Arc::new(SelfPolicyAdapter { field: self_field }),
+            config: Arc::new(TurnConfigAdapter {
+                config_source: runtime,
             }),
         }
     }
@@ -147,5 +167,61 @@ impl SupplementalMemoryStatusPort for SupplementalMemoryStatusAdapter {
             degraded: health.degraded,
             queue_depth: health.queue_depth,
         }
+    }
+}
+
+struct SelfPolicyAdapter {
+    field: Arc<Mutex<SelfField>>,
+}
+
+#[async_trait::async_trait]
+impl SelfPolicyPort for SelfPolicyAdapter {
+    async fn review(
+        &self,
+        intent: &fabric::Intent,
+        context: &fabric::Context,
+    ) -> anyhow::Result<fabric::Verdict> {
+        use fabric::SelfFieldOps;
+        self.field.lock().await.review(intent, context).await
+    }
+
+    async fn narrate(&self, event: &str, reason: &str) {
+        use fabric::SelfFieldOps;
+        let _ = self.field.lock().await.narrate(event, reason).await;
+    }
+
+    async fn coordinate(&self, turn: usize, output: &str, status: fabric::dasein::OutcomeStatus) {
+        let field = self.field.lock().await;
+        if let Some(dasein) = field.dasein() {
+            match dasein.record_outcome(output, status, "turn-pipeline").await {
+                Ok(receipt) => tracing::info!(
+                    turn,
+                    version = receipt.current_version.0,
+                    "Dasein outcome accepted"
+                ),
+                Err(error) => tracing::warn!(turn, %error, "Dasein outcome rejected"),
+            }
+        }
+    }
+
+    fn dasein_context_provider(&self) -> Arc<dyn Fn() -> Option<String> + Send + Sync> {
+        let field = self.field.clone();
+        Arc::new(move || {
+            field
+                .try_lock()
+                .ok()
+                .and_then(|field| field.dasein_prompt_injection())
+        })
+    }
+}
+
+struct TurnConfigAdapter {
+    config_source: Arc<Mutex<AletheonExecutive>>,
+}
+
+#[async_trait::async_trait]
+impl TurnConfigPort for TurnConfigAdapter {
+    async fn config(&self) -> crate::core::config::ExecutiveConfig {
+        self.config_source.lock().await.config().clone()
     }
 }

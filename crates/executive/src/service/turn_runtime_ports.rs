@@ -108,7 +108,7 @@ pub(crate) struct TurnRuntimeResources {
     pub(crate) storm: Arc<Mutex<corpus::security::storm_breaker::StormBreaker>>,
     pub(crate) model_router: Arc<ModelRouter>,
     pub(crate) default_llm: Arc<dyn LlmProvider>,
-    pub(crate) self_field: Arc<Mutex<dasein::SelfField>>,
+    pub(crate) self_policy: Arc<dyn SelfPolicyPort>,
     pub(crate) approval_rx:
         Arc<Mutex<mpsc::Receiver<corpus::security::socket_approval::PendingApproval>>>,
     pub(crate) pending_approvals: crate::service::admin_service::PendingApprovals,
@@ -123,7 +123,7 @@ pub(crate) struct TurnRuntimeResources {
     pub(crate) context_window: usize,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) memory: Arc<dyn mnemosyne::MemoryService>,
-    pub(crate) executive: Arc<Mutex<crate::core::orchestrator::AletheonExecutive>>,
+    pub(crate) config: Arc<dyn TurnConfigPort>,
     pub(crate) performance: Arc<fabric::kernel::debug_bus::PerfCounter>,
 }
 
@@ -147,9 +147,7 @@ impl TurnRuntimePorts {
                 router: resources.model_router,
                 default_llm: resources.default_llm.clone(),
             }),
-            self_policy: Arc::new(ProductionSelfPolicy {
-                field: resources.self_field,
-            }),
+            self_policy: resources.self_policy,
             approvals: Arc::new(ProductionTurnApprovals {
                 receiver: resources.approval_rx,
                 pending: resources.pending_approvals,
@@ -169,9 +167,7 @@ impl TurnRuntimePorts {
                 memory_service: resources.memory,
                 hooks,
             }),
-            config: Arc::new(ProductionTurnConfig {
-                config_source: resources.executive,
-            }),
+            config: resources.config,
             observability: Arc::new(ProductionTurnObservability {
                 performance: resources.performance,
             }),
@@ -280,47 +276,6 @@ impl ModelSelectionPort for ProductionModelSelection {
                 self.default_llm.clone()
             }
         }
-    }
-}
-
-struct ProductionSelfPolicy {
-    field: Arc<Mutex<dasein::SelfField>>,
-}
-
-#[async_trait]
-impl SelfPolicyPort for ProductionSelfPolicy {
-    async fn review(&self, intent: &fabric::Intent, context: &Context) -> anyhow::Result<Verdict> {
-        use fabric::SelfFieldOps;
-        self.field.lock().await.review(intent, context).await
-    }
-
-    async fn narrate(&self, event: &str, reason: &str) {
-        use fabric::SelfFieldOps;
-        let _ = self.field.lock().await.narrate(event, reason).await;
-    }
-
-    async fn coordinate(&self, turn: usize, output: &str, status: fabric::dasein::OutcomeStatus) {
-        let field = self.field.lock().await;
-        if let Some(dasein) = field.dasein() {
-            match dasein.record_outcome(output, status, "turn-pipeline").await {
-                Ok(receipt) => tracing::info!(
-                    turn,
-                    version = receipt.current_version.0,
-                    "Dasein outcome accepted"
-                ),
-                Err(error) => tracing::warn!(turn, %error, "Dasein outcome rejected"),
-            }
-        }
-    }
-
-    fn dasein_context_provider(&self) -> Arc<dyn Fn() -> Option<String> + Send + Sync> {
-        let field = self.field.clone();
-        Arc::new(move || {
-            field
-                .try_lock()
-                .ok()
-                .and_then(|field| field.dasein_prompt_injection())
-        })
     }
 }
 
@@ -457,17 +412,6 @@ impl TurnSessionStatePort for ProductionTurnSessions {
             manager.compact_if_needed(&*self.llm).await?;
         }
         Ok(manager.turn_count())
-    }
-}
-
-struct ProductionTurnConfig {
-    config_source: Arc<Mutex<crate::core::orchestrator::AletheonExecutive>>,
-}
-
-#[async_trait]
-impl TurnConfigPort for ProductionTurnConfig {
-    async fn config(&self) -> crate::core::config::ExecutiveConfig {
-        self.config_source.lock().await.config().clone()
     }
 }
 
