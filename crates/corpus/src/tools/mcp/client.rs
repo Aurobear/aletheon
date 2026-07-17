@@ -311,7 +311,7 @@ impl McpConnectionManager {
         Ok(())
     }
 
-    /// Get all tool wrappers from all connected servers.
+    /// Get all tool wrappers from all connected servers, subject to allowlist/denylist.
     pub fn get_all_tools(&self) -> Vec<McpToolWrapper> {
         let mut wrappers = Vec::new();
         for (server_name, client_arc) in &self.clients {
@@ -337,15 +337,45 @@ impl McpConnectionManager {
                         full
                     }
                 };
+
+                // Apply allowlist/denylist filtering
+                if !self.should_register_tool(&normalized_name) {
+                    continue;
+                }
+
                 wrappers.push(McpToolWrapper {
                     normalized_name,
                     mcp_tool: tool.clone(),
                     client: client_arc.clone(),
                     trust_level: client.trust_level,
+                    server_name: server_name.clone(),
+                    overrides: self.config.permission_overrides.clone(),
                 });
             }
         }
         wrappers
+    }
+
+    /// Determine whether a tool should be registered based on allowlist/denylist.
+    fn should_register_tool(&self, tool_name: &str) -> bool {
+        // Denylist takes precedence — prefix match
+        if self
+            .config
+            .tool_denylist
+            .iter()
+            .any(|d| tool_name == d || tool_name.starts_with(d))
+        {
+            return false;
+        }
+        // If allowlist is non-empty, tool must be in it — prefix match
+        if !self.config.tool_allowlist.is_empty() {
+            return self
+                .config
+                .tool_allowlist
+                .iter()
+                .any(|a| tool_name == a || tool_name.starts_with(a));
+        }
+        true
     }
 
     /// Get a reference to a specific client by server name.

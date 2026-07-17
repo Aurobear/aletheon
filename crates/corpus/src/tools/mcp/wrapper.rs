@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -14,6 +15,11 @@ pub struct McpToolWrapper {
     pub mcp_tool: McpTool,
     pub client: Arc<Mutex<McpClient>>,
     pub trust_level: McpTrustLevel,
+    /// The server this tool belongs to, used for permission override lookup.
+    pub server_name: String,
+    /// Per-server permission level overrides (server_name → PermissionLevel).
+    /// If the tool's server has an entry, it overrides the trust→permission mapping.
+    pub overrides: HashMap<String, PermissionLevel>,
 }
 
 #[async_trait]
@@ -31,6 +37,11 @@ impl Tool for McpToolWrapper {
     }
 
     fn permission_level(&self) -> PermissionLevel {
+        // Check for override first
+        if let Some(override_level) = self.overrides.get(&self.server_name) {
+            return *override_level;
+        }
+        // Fall back to trust-based mapping
         match self.trust_level {
             McpTrustLevel::LocalTrusted => PermissionLevel::L1,
             McpTrustLevel::RemoteTrusted => PermissionLevel::L1,
@@ -44,6 +55,8 @@ impl Tool for McpToolWrapper {
             mcp_tool: self.mcp_tool.clone(),
             client: self.client.clone(),
             trust_level: self.trust_level,
+            server_name: self.server_name.clone(),
+            overrides: self.overrides.clone(),
         })
     }
 

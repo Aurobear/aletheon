@@ -1,10 +1,30 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
+
+use crate::tools::PermissionLevel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpConfig {
     pub servers: Vec<McpServerConfig>,
     pub tool_name_prefix: bool,
     pub max_tool_name_length: usize,
+    /// Tool names that are explicitly allowed. If non-empty, only these tools
+    /// are registered — all others from MCP servers are silently skipped.
+    /// Empty = allow all (default for backward compatibility).
+    /// Supports prefix matching: "mcp.github." matches "mcp.github.list_repos".
+    #[serde(default)]
+    pub tool_allowlist: Vec<String>,
+    /// Tool names that are explicitly denied. Takes precedence over allowlist.
+    /// Denied tools are silently skipped during registration.
+    /// Supports prefix matching.
+    #[serde(default)]
+    pub tool_denylist: Vec<String>,
+    /// Per-server permission overrides. Key is server_name, value is
+    /// a PermissionLevel override (L0=ReadOnly, L1=Sandboxed, L2=SystemModify, L3=Destructive).
+    /// Overrides the default trust→permission mapping for specific tools.
+    #[serde(default)]
+    pub permission_overrides: HashMap<String, PermissionLevel>,
 }
 
 impl Default for McpConfig {
@@ -13,6 +33,9 @@ impl Default for McpConfig {
             servers: Vec::new(),
             tool_name_prefix: true,
             max_tool_name_length: 64,
+            tool_allowlist: Vec::new(),
+            tool_denylist: Vec::new(),
+            permission_overrides: HashMap::new(),
         }
     }
 }
