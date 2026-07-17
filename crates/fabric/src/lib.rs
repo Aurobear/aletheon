@@ -267,6 +267,7 @@ pub use types::sandbox::{
     SandboxPreference, SandboxProfileConfig, SandboxProfiles, SandboxResult, DENY_GLOB_MAX_DEPTH,
     DENY_GLOB_MAX_ENTRIES, DENY_GLOB_MAX_MATCHES,
 };
+pub use types::sandbox_glob::expand_deny_globs;
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
     SessionForkedEvent, SessionNotification, SessionProtocolV1, SessionRecord, SessionStatus,

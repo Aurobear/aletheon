@@ -34,6 +34,7 @@ pub mod permission;
 pub mod prompt_queue;
 pub mod resource;
 pub mod sandbox;
+pub mod sandbox_glob;
 pub mod session;
 pub mod tool;
 pub mod tool_stream;
