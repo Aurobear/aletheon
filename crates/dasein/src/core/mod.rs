@@ -5,7 +5,6 @@
 //! Boundary -> Care -> Permissions -> Narrative -> Verdict.
 
 pub mod attention;
-pub mod attention_modulation;
 pub mod awareness_growth;
 pub mod boundary;
 pub mod care;
@@ -428,31 +427,6 @@ impl fabric::SelfFieldOps for SelfField {
 
         // 4. Care scoring
         let care_score = self.care.score_action(&intent.description);
-
-        // 4b. R2a (ObserveOnly): read the DaseinModule care state and record what
-        // the attention care-score *would* become if the two selves were coupled
-        // (module -> layer read). This does not change the verdict or the actual
-        // attention — it only emits a structured receipt + metric so the coupling
-        // can be validated before it is ever enforced.
-        if let Some(dasein) = &self.dasein {
-            let care_action = dasein.care().determine_action();
-            let urgent_concerns = dasein.care().urgent_concerns(0.7).len();
-            let would_be = attention_modulation::would_be_care_score(
-                care_score,
-                &care_action,
-                urgent_concerns,
-            );
-            let care_action_label = attention_modulation::care_action_label(&care_action);
-            info!(
-                target: "conscious.self_field_modulation",
-                action = %intent.action,
-                keyword_care_score = care_score,
-                would_be_care_score = would_be,
-                care_action = care_action_label,
-                urgent_concerns,
-                "SelfField Dasein modulation (observe-only)"
-            );
-        }
 
         // 5. Permission check -- delegate to the Runtime authority if installed,
         //    otherwise fall back to the historical inline rule (behavior-preserving).
