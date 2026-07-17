@@ -377,6 +377,7 @@ mod tests {
             version: SelfVersion(1),
             mood: Stimmung::Gelassenheit,
             concerns: vec![],
+            care_concerns: vec![],
             projection: None,
             protentions: vec![],
         };

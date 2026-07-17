@@ -83,7 +83,7 @@ pub struct WorkspaceReflection {
     pub confidence: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CareConcernFrame {
     pub purpose: String,
     pub urgency: f32,

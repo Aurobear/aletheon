@@ -46,6 +46,7 @@ fn self_view() -> StructuredSelfView {
         version: SelfVersion(4),
         mood: Stimmung::Gelassenheit,
         concerns: vec![],
+        care_concerns: vec![],
         projection: None,
         protentions: vec![],
     }

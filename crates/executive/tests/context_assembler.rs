@@ -41,6 +41,7 @@ fn projection() -> ConsciousContextProjection {
             version: SelfVersion(3),
             mood: Stimmung::Gelassenheit,
             concerns: vec!["finish the current task".into()],
+            care_concerns: vec![],
             projection: Some("verify the implementation".into()),
             protentions: vec!["tests remain green".into()],
         },

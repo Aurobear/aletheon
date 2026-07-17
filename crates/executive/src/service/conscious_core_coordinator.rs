@@ -12,10 +12,10 @@ use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use fabric::dasein::SelfTransitionReceipt;
 use fabric::{
-    AgoraSpaceId, BroadcastEpoch, BroadcastIntegrationReceipt, CareConcernFrame, Clock,
-    ConsciousContextProjection, ConsciousFieldReadout, ConsciousProcessor, ContentId,
-    ContextProjectionReceipt, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
-    GoalFrame, LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
+    AgoraSpaceId, BroadcastEpoch, BroadcastIntegrationReceipt, Clock, ConsciousContextProjection,
+    ConsciousFieldReadout, ConsciousProcessor, ContentId, ContextProjectionReceipt,
+    FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot, GoalFrame,
+    LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
     PredictionErrorFrame, PredictionFrame, ProcessId, ProcessorContext, ProcessorHealth,
     ProcessorId, ProcessorResponse, SalienceVector, SchemaId, SelectionExplanation,
     SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
@@ -469,12 +469,14 @@ impl ConsciousCoreCoordinator {
             .cloned()
             .map(WorkspaceContent::Concern)
             .collect::<Vec<_>>();
-        contents.extend(integration.self_view.concerns.iter().map(|purpose| {
-            WorkspaceContent::CareConcern(CareConcernFrame {
-                purpose: purpose.clone(),
-                urgency: 0.7,
-            })
-        }));
+        contents.extend(
+            integration
+                .self_view
+                .care_concerns
+                .iter()
+                .cloned()
+                .map(WorkspaceContent::CareConcern),
+        );
         if let Some(projection) = &integration.self_view.projection {
             contents.push(WorkspaceContent::Goal(GoalFrame {
                 id: format!("dasein-projection-v{}", integration.self_view.version.0),
