@@ -223,10 +223,7 @@ pub enum SelfSignal {
     /// The care structure decided what to do during scheduled reflection.
     /// Flows into Agora as a candidate so "care" has a behavioral effect
     /// (conscious-core plan R1: close the `determine_action` dead-code gap).
-    CareDecision {
-        action: CareActionKind,
-        rationale: String,
-    },
+    CareDecision { action: CareActionKind, rationale: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
