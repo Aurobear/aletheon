@@ -34,8 +34,10 @@ pub enum ClientRpcRequest {
     ModelList,
     ModeSwitch(ModeSwitchParams),
     PlanApprove,
+    Cancel,
     Interrupt(InterruptParams),
     HooksList,
+    DaemonShutdown,
     ApprovalResponse(ApprovalResponseParams),
 }
 
@@ -68,6 +70,16 @@ pub enum TransientApprovalDecision {
     Approve,
     ApproveForSession,
     Deny,
+}
+
+impl TransientApprovalDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::ApproveForSession => "approve_for_session",
+            Self::Deny => "deny",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -146,8 +158,10 @@ impl ClientRpcRequest {
             Self::ModelList => ("model_list", None),
             Self::ModeSwitch(params) => ("mode_switch", Some(serde_json::to_value(params)?)),
             Self::PlanApprove => ("plan_approve", None),
+            Self::Cancel => ("cancel", None),
             Self::Interrupt(params) => ("interrupt", Some(serde_json::to_value(params)?)),
             Self::HooksList => ("hooks_list", None),
+            Self::DaemonShutdown => ("daemon.shutdown", None),
             Self::ApprovalResponse(params) => {
                 ("approval_response", Some(serde_json::to_value(params)?))
             }

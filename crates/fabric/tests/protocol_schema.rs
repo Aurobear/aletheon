@@ -180,7 +180,9 @@ fn daemon_compatibility_requests_own_method_and_parameter_names() {
         (ClientRpcRequest::Compact, "compact"),
         (ClientRpcRequest::ModelList, "model_list"),
         (ClientRpcRequest::PlanApprove, "plan_approve"),
+        (ClientRpcRequest::Cancel, "cancel"),
         (ClientRpcRequest::HooksList, "hooks_list"),
+        (ClientRpcRequest::DaemonShutdown, "daemon.shutdown"),
     ] {
         let request = request.to_json_rpc(Some(1)).unwrap();
         assert_eq!(request["method"], expected_method);

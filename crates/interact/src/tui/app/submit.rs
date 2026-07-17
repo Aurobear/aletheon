@@ -10,7 +10,7 @@ use super::super::chat::{ChatWidget, Role as ChatRole};
 use super::super::command::{looks_like_command, parse_command, BuiltinCommand, CommandType};
 use super::super::App;
 
-async fn write_request(app: &mut App, request: ClientRpcRequest) {
+pub(super) async fn write_request(app: &mut App, request: ClientRpcRequest) {
     let request = request
         .to_json_rpc(Some(1))
         .expect("typed client request serializes");

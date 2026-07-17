@@ -3,8 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::super::approval_dialog::{ApprovalDialog, DialogDecision};
 use super::super::chat::{ChatWidget, Role as ChatRole};
 use super::super::App;
-use super::submit::submit_message;
+use super::submit::{submit_message, write_request};
 
+use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
 use fabric::ui_event::CollaborationMode;
 
 pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
@@ -53,20 +54,16 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         if let KeyCode::Char(c) = key.code {
             if let Some(decision) = ApprovalDialog::key_to_decision(c) {
                 let dialog = app.pending_approval.take().unwrap();
-                let decision_str = match decision {
-                    DialogDecision::Approve => "approve",
-                    DialogDecision::ApproveForSession => "approve_for_session",
-                    DialogDecision::Deny => "deny",
-                };
-                let resp = serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": null,
-                    "method": "approval_response",
-                    "params": {
-                        "approval_id": dialog.approval_id,
-                        "decision": decision_str,
+                let decision = match decision {
+                    DialogDecision::Approve => TransientApprovalDecision::Approve,
+                    DialogDecision::ApproveForSession => {
+                        TransientApprovalDecision::ApproveForSession
                     }
-                });
+                    DialogDecision::Deny => TransientApprovalDecision::Deny,
+                };
+                let resp = ClientRpcRequest::approval_response(dialog.approval_id, decision)
+                    .to_json_rpc(None)
+                    .expect("typed approval response serializes");
                 use tokio::io::AsyncWriteExt;
                 let payload = serde_json::to_string(&resp).unwrap_or_default();
                 let framed = format!("{}\n", payload);
@@ -74,7 +71,11 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 let _ = app.stream.flush().await;
                 app.chat.add_text(
                     ChatRole::System,
-                    format!("Approval: {} ({})", decision_str, dialog.action_summary),
+                    format!(
+                        "Approval: {} ({})",
+                        decision.as_str(),
+                        dialog.action_summary
+                    ),
                 );
                 return;
             }
@@ -92,11 +93,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         // If streaming, send cancel to daemon
         if app.streaming {
-            let msg = serde_json::json!({"jsonrpc": "2.0", "method": "cancel", "id": 1});
-            let framed = format!("{}\n", msg);
-            use tokio::io::AsyncWriteExt;
-            let _ = app.stream.write_all(framed.as_bytes()).await;
-            let _ = app.stream.flush().await;
+            write_request(app, ClientRpcRequest::Cancel).await;
             return;
         }
         if app.input_buf.is_empty() {
@@ -172,12 +169,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             .position(|m| *m == app.app_state.mode)
             .unwrap_or(0);
         let next = modes[(current + 1) % modes.len()];
-        let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": next.display_name()}});
-        let payload = serde_json::to_string(&msg).unwrap_or_default();
-        use tokio::io::AsyncWriteExt;
-        let framed = format!("{}\n", payload);
-        let _ = app.stream.write_all(framed.as_bytes()).await;
-        let _ = app.stream.flush().await;
+        write_request(app, ClientRpcRequest::mode_switch(next)).await;
         app.chat.add_text(
             ChatRole::System,
             format!("Switching to {} mode", next.display_name()),
@@ -188,18 +180,15 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
     // Ctrl+P: toggle plan mode
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
         let target = if app.app_state.mode == CollaborationMode::Plan {
-            "default"
+            CollaborationMode::Default
         } else {
-            "plan"
+            CollaborationMode::Plan
         };
-        let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": target}});
-        let payload = serde_json::to_string(&msg).unwrap_or_default();
-        use tokio::io::AsyncWriteExt;
-        let framed = format!("{}\n", payload);
-        let _ = app.stream.write_all(framed.as_bytes()).await;
-        let _ = app.stream.flush().await;
-        app.chat
-            .add_text(ChatRole::System, format!("Switching to {} mode", target));
+        write_request(app, ClientRpcRequest::mode_switch(target)).await;
+        app.chat.add_text(
+            ChatRole::System,
+            format!("Switching to {} mode", target.display_name()),
+        );
         return;
     }
 
