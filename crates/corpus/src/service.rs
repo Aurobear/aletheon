@@ -158,7 +158,10 @@ pub struct DefaultCorpusService {
 
 enum CatalogBackend {
     Static(ExtensionCatalog),
-    Runtime(Arc<tokio::sync::Mutex<crate::ToolRegistry>>),
+    Runtime {
+        tools: Arc<tokio::sync::Mutex<crate::ToolRegistry>>,
+        extensions: ExtensionCatalog,
+    },
 }
 
 impl DefaultCorpusService {
@@ -177,8 +180,22 @@ impl DefaultCorpusService {
         executor: Arc<dyn ToolExecutor>,
         hooks: Arc<tokio::sync::Mutex<crate::HookRegistry>>,
     ) -> Self {
+        Self::from_runtime_with_extensions(registry, executor, hooks, ExtensionCatalog::default())
+    }
+
+    /// Build the production adapter with non-tool extensions indexed beside
+    /// the live tool registry. Discovery remains separate from activation.
+    pub fn from_runtime_with_extensions(
+        registry: Arc<tokio::sync::Mutex<crate::ToolRegistry>>,
+        executor: Arc<dyn ToolExecutor>,
+        hooks: Arc<tokio::sync::Mutex<crate::HookRegistry>>,
+        extensions: ExtensionCatalog,
+    ) -> Self {
         Self {
-            catalog: CatalogBackend::Runtime(registry),
+            catalog: CatalogBackend::Runtime {
+                tools: registry,
+                extensions,
+            },
             executor,
             hooks: Some(hooks),
             activations: RwLock::new(HashMap::new()),
@@ -186,14 +203,20 @@ impl DefaultCorpusService {
     }
 
     async fn descriptors(&self) -> Result<BTreeMap<ExtensionId, ExtensionDescriptor>, CorpusError> {
-        let descriptors = match &self.catalog {
-            CatalogBackend::Static(catalog) => return Ok(catalog.entries().clone()),
-            CatalogBackend::Runtime(registry) => crate::discover_tool_extensions(registry).await?,
-        };
-        Ok(descriptors
-            .into_iter()
-            .map(|descriptor| (descriptor.id.clone(), descriptor))
-            .collect())
+        match &self.catalog {
+            CatalogBackend::Static(catalog) => Ok(catalog.entries().clone()),
+            CatalogBackend::Runtime { tools, extensions } => {
+                let mut catalog = extensions.clone().into_entries();
+                for descriptor in crate::discover_tool_extensions(tools).await? {
+                    if catalog.insert(descriptor.id.clone(), descriptor).is_some() {
+                        return Err(CorpusError::DuplicateExtension(
+                            "runtime tool conflicts with a supplemental extension".into(),
+                        ));
+                    }
+                }
+                Ok(catalog)
+            }
+        }
     }
 }
 
@@ -303,7 +326,7 @@ impl CorpusService for DefaultCorpusService {
     async fn register_tool(&self, tool: Arc<dyn Tool>) -> Result<(), CorpusError> {
         match &self.catalog {
             CatalogBackend::Static(_) => Err(CorpusError::ReadOnlyCatalog),
-            CatalogBackend::Runtime(registry) => registry
+            CatalogBackend::Runtime { tools, .. } => tools
                 .lock()
                 .await
                 .register(tool)

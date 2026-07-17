@@ -499,6 +499,8 @@ impl RequestHandler {
             register_skill(plugin, &mut tools, &mut hook_registry);
         }
         super::turn_runtime::register_configured_hooks(&mut hook_registry, &config.hooks);
+        let runtime_extensions =
+            super::extensions::index_runtime_extensions(&skill_loader, &hook_registry)?;
         let hook_registry = Arc::new(Mutex::new(hook_registry));
 
         // Cache-stable prefix
@@ -683,11 +685,20 @@ impl RequestHandler {
             clock.clone(),
         ));
         let corpus: Arc<dyn corpus::CorpusService> =
-            Arc::new(corpus::DefaultCorpusService::from_runtime(
+            Arc::new(corpus::DefaultCorpusService::from_runtime_with_extensions(
                 corpus_group.tools.clone(),
                 corpus_executor,
                 corpus_group.hook_registry.clone(),
+                runtime_extensions.catalog,
             ));
+        let extension_decisions = super::extensions::activate_runtime_extensions(
+            corpus.clone(),
+            runtime_extensions.ids,
+            runtime_extensions.capabilities,
+            &data_dir,
+            &session_id,
+        )
+        .await?;
         let granted_capabilities = Arc::new(tokio::sync::RwLock::new(
             corpus::discover_tool_extensions(&corpus_group.tools)
                 .await?
@@ -720,17 +731,7 @@ impl RequestHandler {
                 approvals: security_group.session_approvals.clone(),
                 perf: debug_perf.clone(),
                 self_field: self_field.clone(),
-                extension_decisions: Arc::new(
-                    crate::service::extension_service::SpineExtensionDecisionSink::new(Arc::new(
-                        crate::r#impl::events::SqliteEventSpine::open(
-                            data_dir.join("extension-events.db"),
-                        )
-                        .unwrap_or_else(|_| {
-                            crate::r#impl::events::SqliteEventSpine::open(":memory:")
-                                .expect("in-memory extension decision spine")
-                        }),
-                    )),
-                ),
+                extension_decisions,
             };
         let capability_service: Arc<dyn CapabilityService> = Arc::new(
             crate::r#impl::daemon::handler::tool_executor::ProductionCapabilityService::new(

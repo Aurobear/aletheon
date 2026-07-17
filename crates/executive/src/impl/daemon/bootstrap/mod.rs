@@ -4,6 +4,7 @@
 //! know the concrete implementations behind the request and turn ports.
 
 mod channels;
+mod extensions;
 mod google;
 mod request;
 mod request_ports;
