@@ -239,6 +239,14 @@
 批次 4 (研究/后续): Phase F — 把 care_score 升级为连续 concern 场 + 吸引子动力学（§2/§6 的完全体，工作量与风险大，单独立项）
 ```
 
+**里程碑文件（已按批次拆分）**
+- 批次 1 → [`2026-07-17-conscious-core-r1-care-decision-detailed-plan.md`](./2026-07-17-conscious-core-r1-care-decision-detailed-plan.md)
+- 批次 2 → [`2026-07-17-conscious-core-r2-one-field-detailed-plan.md`](./2026-07-17-conscious-core-r2-one-field-detailed-plan.md)
+- 批次 3 → [`2026-07-17-conscious-core-r3-arbitration-and-metrics-detailed-plan.md`](./2026-07-17-conscious-core-r3-arbitration-and-metrics-detailed-plan.md)
+- 批次 4 → [`2026-07-17-conscious-core-phase-f-continuous-field-detailed-plan.md`](./2026-07-17-conscious-core-phase-f-continuous-field-detailed-plan.md)
+
+本文是总设计（哲学锚定 + 信号流 + 验收 + 不变量）；上面 4 份是逐批可执行拆分（触及文件、任务分解、依赖）。
+
 **跨批不变量（每批都必须守住）**
 1. 意识核心未点火时，全系统行为与本设计落地前**逐字节/逐行为一致**（降级安全）。
 2. R1 不改变 `SelfLedger` 的 checksum chain 与 replay 确定性。
