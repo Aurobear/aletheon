@@ -1,6 +1,6 @@
 # Aletheon Conscious System: Dasein–Agora Core, Mnemosyne Continuity and SubAgent Cognition
 
-> **Status:** Blocked by V02 — M05, M06 and V01 pass; live production acceptance remains active
+> **Status:** Partially implemented — Phase 3/4 are code-complete; Phase 0/1/2/5 remain partial; V02 live production acceptance remains active
 >
 > **Target branch:** `dev`
 >
@@ -9,6 +9,23 @@
 > **Scope:** Dasein, Agora and their integration with Executive, Cognit, Mnemosyne, Corpus, Metacog and Kernel
 >
 > **Design intent:** make Dasein and Agora the recurrent core, Mnemosyne its cross-time continuity substrate, and SubAgents its bounded parallel cognitive processors
+
+## Current Code-Reality Status (2026-07-18)
+
+| Phase | Status | Current evidence / remaining boundary |
+|---|---|---|
+| Phase 0 — source baseline | **Partial** | The functional/phenomenal boundary is documented, but parts of the historical source description below are stale relative to the emitted `CareDecision` path at `crates/dasein/src/dasein/reducer.rs:408-427`. |
+| Phase 1 — Dasein state engine | **Partial** | Reducer, ledger, replay and causal continuity exist, but public layer mutation surfaces remain, including `crates/dasein/src/core/care.rs:101-111` and `crates/dasein/src/core/identity.rs:55`. |
+| Phase 2 — typed Agora/integrity | **Partial** | Typed transactions and bound permits exist, while legacy direct `publish`/`update` surfaces remain at `crates/agora/src/ops/mod.rs:143-152`. |
+| Phase 3 — competition/broadcast | **Code-complete** | Deterministic selection is implemented at `crates/agora/src/competition/mod.rs:237-340`; bounded delivery and acknowledgements are implemented at `crates/agora/src/broadcast/mod.rs:94-197`. |
+| Phase 4 — recurrent loop | **Code-complete** | Selection, Dasein integration, recurrent candidates/processors and durable projection are composed at `crates/executive/src/service/conscious_core_coordinator.rs:288-375`. |
+| Phase 5 — memory/metacog/agents | **Partial** | Domain processors are registered at `crates/executive/src/service/conscious_workspace.rs:176-257`, but the Dasein processor still emits no response candidates at `crates/executive/src/service/conscious_workspace.rs:460-488`, and production R2/R3 field metrics are not yet wired. |
+
+These labels describe current code shape only. They do not claim that the
+targeted suites, strict Clippy, formatting, architecture gates, workspace
+regression, or V02 production migration have passed on this worktree. The
+older analysis below is retained as requirement and design history; when it
+conflicts with this table, use this dated status plus the cited current code.
 
 ## Code-Reality Update (2026-07-17)
 

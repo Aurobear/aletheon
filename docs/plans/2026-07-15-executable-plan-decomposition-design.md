@@ -1,6 +1,6 @@
 # Executable Architecture Plan Decomposition Design
 
-> **Status:** Blocked by V02 — all implementation slices are closed; live workflow, failure and aggregate receipts remain open
+> **Status:** Partial — most narrow implementation slices are recorded complete, but D01, F01, Q02 and V02 still have current acceptance gaps
 >
 > **Source baseline:** `65f74981`
 >
@@ -10,6 +10,25 @@ Completed detailed-plan files named in the historical tables below were removed
 after code-and-test audit. Their current evidence is preserved in
 `docs/arch/2026-07-plan-completion-ledger.md`; only active gaps remain in
 `docs/plans/2026-07-16-original-plan-coverage-matrix.md`.
+
+## Current Status Reconciliation (2026-07-18)
+
+The retired slice ledger records historical implementation progress; it does
+not by itself prove the broader source-plan acceptance criteria. Re-grepping the
+current branch gives this correction:
+
+| Slice | Current status | Current evidence |
+|---|---|---|
+| D01 | **Partial** | Configured temporality and an injected `SorgeTimer` seam exist at `crates/dasein/src/dasein/mod.rs:92-123`, but the production adapter still imports concrete `aletheon_kernel::chronos::SystemTimer` at `crates/dasein/src/dasein/sorge.rs:1-23`. |
+| F01 | **Partial** | `DomainPorts` retains facade objects, but Executive production services still carry concrete `SelfField`, `EpisodicMemory`, `ToolRunnerWithGuard` and related implementation state at `crates/executive/src/service/request_use_cases.rs:70-101` and `crates/executive/src/service/exec_session.rs:16-23`. |
+| Q02 | **Partial** | Interact is free of direct Corpus/Kernel dependencies and Bin is thin, but TUI paths still manually construct JSON-RPC payloads at `crates/interact/src/tui/app/submit.rs:107-119` and `crates/interact/src/tui/app/lifecycle.rs:252-269`. |
+| V02 | **Partial / external** | The installed-host lane exists, while live workflow, failure-driver and aggregate receipt items remain unchecked at `docs/plans/2026-07-15-v02-production-migration-scenarios.md:67-103,121-126`. |
+
+K01/K02 and the architecture plan's Phase 3 Kernel authority cleanup remain
+complete in current code. The parent architecture phases are not all closed:
+Phases 0, 1, 2, 4, 5, 6 and 7 remain partial. Therefore the historical
+statement that all implementation slices were closed must not be used to mark
+the Architecture or this decomposition complete.
 
 ## 1. Source requirements
 

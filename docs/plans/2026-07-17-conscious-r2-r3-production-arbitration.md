@@ -1,5 +1,25 @@
 # Conscious-Core R2/R3 Production Arbitration Implementation Plan
 
+> **Current status (2026-07-18):** Tasks 1/2/5 are complete in code; Tasks 3/4 are partial; Tasks 6-9 are missing.
+>
+> **Validation boundary:** This is a code-reality classification only. It does not claim that the current worktree passes targeted tests, strict Clippy, formatting, architecture gates, workspace regression, or V02 production migration.
+
+| Task | Status | Current evidence / remaining boundary |
+|---|---|---|
+| Task 1 | **Complete in code** | Fabric contracts: `crates/fabric/src/types/conscious_arbitration.rs:30-364`. |
+| Task 2 | **Complete in code** | R2 monotonic feedback and exact fallback: `crates/dasein/src/core/mod.rs:394-417`. |
+| Task 3 | **Partial** | Slot exists at `crates/executive/src/service/conscious_context_slot.rs:13-38`; production binding and real-session-before-review ordering remain incomplete at `crates/executive/src/service/turn_pipeline.rs:114-180`. |
+| Task 4 | **Partial** | Metrics and typed trace exist at `crates/fabric/src/types/conscious_field_metrics.rs:30-360` and `crates/fabric/src/types/conscious_core_trace.rs:58-69`; production coordinator recording and acceptance coverage remain incomplete. |
+| Task 5 | **Complete in code** | Identity-default service and validated Cognit batch ordering: `crates/fabric/src/include/turn.rs:104-116`, `crates/cognit/src/harness/linear/step.rs:135-198`. |
+| Task 6 | **Missing** | Production action salience remains constant at `crates/executive/src/service/conscious_action.rs:88-127`, and concern urgency remains fixed at `crates/executive/src/service/conscious_core_coordinator.rs:395-416`. |
+| Task 7 | **Missing** | `GovernedActionLoop` still returns only `SelectedActionContext`, and the inner invoker is always called after selection at `crates/executive/src/service/governed_capability.rs:86-96,148-172`. |
+| Task 8 | **Missing** | No production arbitration-mode configuration or workspace-backed priority planner is composed. |
+| Task 9 | **Missing** | Cross-domain acceptance, strict checks, workspace regression, and plan reconciliation have not been established for the current worktree. |
+
+The task checkboxes below remain unchanged so they continue to represent the
+prescribed execution and validation history rather than being inferred from a
+read-only source audit.
+
 > **For agentic workers:** Use `workflow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the R2 field-feedback loop and deliver observe-first R3 production arbitration, stable same-turn reorder, no-side-effect soft defer, and bounded field metrics without weakening the safety pipeline.

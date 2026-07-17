@@ -1,11 +1,27 @@
 # Conscious-Core R2/R3 Production Arbitration Design
 
-> **Status:** Approved design; implementation not started
+> **Status:** Partially implemented — Tasks 1/2/5 complete, Tasks 3/4 partial, Tasks 6-9 missing
 > **Date:** 2026-07-17
 > **Source requirements:**
 > - R2 field feedback and fallback: `docs/plans/deepseek/2026-07-17-conscious-core-r2-one-field-detailed-plan.md:13-25`
 > - R3 arbitration, metrics, and acceptance: `docs/plans/deepseek/2026-07-17-conscious-core-r3-arbitration-and-metrics-detailed-plan.md:15-39`
 > - Cross-batch invariants and rollout: `docs/plans/deepseek/2026-07-17-conscious-core-engineering-plan.md:233-258`
+
+## Current Code-Reality Status (2026-07-18)
+
+| Implementation task | Status | Current evidence / remaining boundary |
+|---|---|---|
+| Task 1 — Fabric contracts | **Complete in code** | The port, arbitration modes, field readout and exact-order plan surface are defined at `crates/fabric/src/types/conscious_arbitration.rs:30-364`. |
+| Task 2 — R2 reader/fallback | **Complete in code** | `SelfField` applies bounded monotonic modulation with exact degraded fallback at `crates/dasein/src/core/mod.rs:394-417`. |
+| Task 3 — production reader/session | **Partial** | The once-bound slot exists at `crates/executive/src/service/conscious_context_slot.rs:13-38`, but production binding and the pre-review real-session ordering are not complete; review still constructs context from thread identity at `crates/executive/src/service/turn_pipeline.rs:114-136`. |
+| Task 4 — metrics/trace | **Partial** | The bounded metric engine and typed trace variant exist at `crates/fabric/src/types/conscious_field_metrics.rs:30-360` and `crates/fabric/src/types/conscious_core_trace.rs:58-69`; the coordinator does not yet record production metric snapshots. |
+| Task 5 — batch planning | **Complete in code** | `TurnServices` has an identity default at `crates/fabric/src/include/turn.rs:104-116`, and Cognit applies only a valid Enforce permutation at `crates/cognit/src/harness/linear/step.rs:135-198`. |
+| Tasks 6-9 — production arbitration/acceptance | **Missing** | Action proposals still use maximum salience at `crates/executive/src/service/conscious_action.rs:88-127`; the coordinator still projects concern urgency as `0.7` at `crates/executive/src/service/conscious_core_coordinator.rs:395-416`; governed capability execution has no typed defer branch at `crates/executive/src/service/governed_capability.rs:133-190`. |
+
+This status is a source audit, not a validation result. No current-worktree
+test, strict Clippy, formatting, architecture, workspace, or production
+migration pass is asserted here. The approved design below remains the target
+for all partial and missing tasks.
 
 ## 1. Decision summary
 

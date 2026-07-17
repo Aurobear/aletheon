@@ -1,6 +1,6 @@
 # Aletheon Architecture and Coupling Optimization Plan
 
-> **Status:** Blocked by V02 — architecture slices pass; live production acceptance remains indexed in `2026-07-16-original-plan-coverage-matrix.md`
+> **Status:** Partial — Phase 3 is complete; Phases 0, 1, 2, 4, 5, 6 and 7 still have code-level acceptance gaps, and V02 production evidence also remains open
 >
 > **Target branch:** `dev`
 >
@@ -12,7 +12,35 @@
 >
 > **Execution rule:** change one vertical slice at a time. Keep the current daemon path operational until its replacement passes equivalent lifecycle, capability, persistence, and protocol tests.
 
-## Code-Reality Update (2026-07-17)
+## Current Code-Reality Reconciliation (2026-07-18)
+
+The current branch does **not** support the previous conclusion that this plan is
+blocked only by V02. The phase status is:
+
+| Phase | Current status | Current evidence |
+|---|---|---|
+| 0 — architecture drift gates | **Partial** | Shrink-only gates exist at `scripts/architecture-check.sh:445-481`, but this document and the active status index still contained stale completion claims. |
+| 1 — governed capability path | **Partial** | The governed tool path exists at `crates/executive/src/service/governed_capability.rs:103-215`, while production hook/plugin/host process effects still exist outside that boundary. |
+| 2 — Session/Turn/Item lifecycle | **Partial** | `TurnCoordinator` creates `OperationKind::Turn` at `crates/executive/src/service/turn_coordinator.rs:140-164`, but Interact still constructs JSON-RPC fields manually at `crates/interact/src/tui/app/submit.rs:107-119`. |
+| 3 — Kernel authority cleanup | **Complete** | `KernelRuntime` is the opaque lifecycle handle and returns trait handles at `crates/kernel/src/runtime.rs:182-211`; the Executive-local kernel remains deleted and gated by `scripts/architecture-check.sh:236-256`. |
+| 4 — Executive use-case boundaries | **Partial** | `TurnRuntimeResources` and request use-case resources still carry concrete cross-domain state and locks at `crates/executive/src/service/turn_runtime_ports.rs:105-128` and `crates/executive/src/service/request_use_cases.rs:70-101`. |
+| 5 — authoritative domain facades | **Partial** | Executive production services still import concrete domain implementations, Dasein still uses a concrete Kernel timer, and legacy `AgoraOps` remains in `DomainPorts`. |
+| 6 — event spine and projections | **Partial** | The append-only spine exists, but legacy `Envelope` transport and overlapping session/debug event models remain. |
+| 7 — configuration/extensions/Interact | **Partial** | Config, thin Bin and reducer boundaries exist, but Corpus still exposes parallel hook/skill module trees and Interact still has manual protocol construction. |
+| 8 — optional crate split | **Optional / not started** | This remains evidence-driven and is not a substitute for the open Phase 0–7 acceptance gaps. |
+
+V02 remains independently partial because live workflow, injected-failure and
+aggregate operator receipts are external production evidence. It is not the
+only blocker for this source plan's definition of completion.
+
+The 2026-07-17 snapshot below is retained as investigation history. Two claims
+in it have since been superseded: `KernelRuntime` now returns trait handles
+(`crates/kernel/src/runtime.rs:190-211`), and `DaemonTurnOrchestrator` now sets
+the notification sender without returning its mutex
+(`crates/executive/src/service/daemon_turn/orchestrator.rs:45-50`). Its
+`TurnRuntimeResources` coupling finding remains current.
+
+## Historical Code-Reality Update (2026-07-17)
 
 Code-level verification reveals that Executive coupling is significantly worse than this document describes. Several claims about current state, achieved boundaries, and module responsibility are inaccurate or misleading. This section documents the discrepancies. The plan sections below remain unchanged as the aspirational target.
 
