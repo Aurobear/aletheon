@@ -5,7 +5,6 @@ pub struct McpConfig {
     pub servers: Vec<McpServerConfig>,
     pub tool_name_prefix: bool,
     pub max_tool_name_length: usize,
-    pub health_check_interval_sec: u64,
 }
 
 impl Default for McpConfig {
@@ -14,7 +13,6 @@ impl Default for McpConfig {
             servers: Vec::new(),
             tool_name_prefix: true,
             max_tool_name_length: 64,
-            health_check_interval_sec: 30,
         }
     }
 }
