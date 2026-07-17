@@ -51,8 +51,8 @@
 | 计划 | 主题 | 状态 |
 |------|------|------|
 | [conscious-core-engineering-plan](./2026-07-17-conscious-core-engineering-plan.md) | **自我意识工程化**：把 Dasein→Agora 闭环从「观察-提交」升级为「care 改变行为」，并纳入 SelfField（R1–R4，Field-not-Mechanism，锚定 active-inference）。已按批次拆分为 4 份里程碑详单：[R1](./2026-07-17-conscious-core-r1-care-decision-detailed-plan.md) · [R2](./2026-07-17-conscious-core-r2-one-field-detailed-plan.md) · [R3+度量](./2026-07-17-conscious-core-r3-arbitration-and-metrics-detailed-plan.md) · [Phase F](./2026-07-17-conscious-core-phase-f-continuous-field-detailed-plan.md) | 设计 only |
-| [platform-driver-hardware-control-plan](./2026-07-17-platform-driver-hardware-control-plan.md) | **多平台适配 + 实际硬件控制**：现有为桌面 HAL，硬件控制需从零建 effector/fieldbus 栈 + RT 回路 | 设计 only |
-| [kernel-application-layer-separation-plan](./2026-07-17-kernel-application-layer-separation-plan.md) | **内核/应用层分离**：kernel 已是干净机制层，剩「封边」——只经 fabric trait 交互 + CI 锁定 | 设计 only |
+| [platform-driver-hardware-control-plan](./2026-07-17-platform-driver-hardware-control-plan.md) | **多平台适配 + 实际硬件控制**：现有为桌面 HAL，硬件控制需从零建 effector/fieldbus 栈 + RT 回路。已拆分：[B0](./2026-07-17-platform-b0-contract-and-sim-detailed-plan.md) · [B1-B2](./2026-07-17-platform-b1-b2-bus-and-rt-loop-detailed-plan.md) · [B3](./2026-07-17-platform-b3-fieldbus-failsafe-detailed-plan.md) · [A线](./2026-07-17-platform-a-os-multiplatform-detailed-plan.md) | 设计 only |
+| [kernel-application-layer-separation-plan](./2026-07-17-kernel-application-layer-separation-plan.md) | **内核/应用层分离**：kernel 已是干净机制层，剩「封边」——只经 fabric trait 交互 + CI 锁定。已拆分：[K1-K2](./2026-07-17-kernel-k1-k2-fabric-traits-detailed-plan.md) · [K3-K4](./2026-07-17-kernel-k3-k4-facade-and-ci-detailed-plan.md) · [K5](./2026-07-17-kernel-k5-aggregate-handle-detailed-plan.md) | 设计 only |
 
 ---
 

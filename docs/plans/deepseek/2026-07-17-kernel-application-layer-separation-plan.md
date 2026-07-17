@@ -106,6 +106,11 @@
 批次 3:  K5        应用侧聚合句柄收口（可选，单独评审）
 ```
 
+**里程碑文件（已拆分）** —— 本文是总设计；下列为逐里程碑可执行详单（触及文件、任务分解、验收、依赖）：
+- 批次 1 → [`2026-07-17-kernel-k1-k2-fabric-traits-detailed-plan.md`](./2026-07-17-kernel-k1-k2-fabric-traits-detailed-plan.md)
+- 批次 2 → [`2026-07-17-kernel-k3-k4-facade-and-ci-detailed-plan.md`](./2026-07-17-kernel-k3-k4-facade-and-ci-detailed-plan.md)
+- 批次 3 → [`2026-07-17-kernel-k5-aggregate-handle-detailed-plan.md`](./2026-07-17-kernel-k5-aggregate-handle-detailed-plan.md)
+
 **不变量**
 1. 依赖图保持无环、kernel 不依赖应用 crate。
 2. 每步后全量测试（2,766）绿；行为不变（纯类型/边界重构）。
