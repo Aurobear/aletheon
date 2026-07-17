@@ -2,8 +2,25 @@ mod support {
     pub mod conscious_core_harness;
 }
 
-use fabric::{ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult};
+use std::sync::Arc;
+
+use aletheon_kernel::chronos::TestClock;
+use aletheon_kernel::KernelRuntime;
+use executive::service::conscious_core_coordinator::{
+    ConsciousCoreConfig, ConsciousCoreCoordinator,
+};
+use executive::service::conscious_core_ports::{
+    CandidateCause, CandidateSubmission, ConsciousCandidatePort,
+};
+use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use fabric::{
+    AgentId, AgentProfileId, AgoraSpaceId, Clock, ConsciousCoreTrace, ConsciousTraceEvent,
+    ContentId, IndicatorResult, NamespaceId, ProcessId, SalienceVector, SpawnSpec, VisibilityScope,
+    WorkspaceAttribution, WorkspaceCandidate, WorkspaceContent, WorkspaceObservation,
+    WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+};
 use support::conscious_core_harness::{run, run_ablation, AblationConfig};
+use uuid::Uuid;
 
 fn write_functional_evidence(name: &str, value: &serde_json::Value) {
     let output =
@@ -155,4 +172,104 @@ async fn workspace_recurrence_and_dasein_ablations_reduce_target_metrics() {
             }
         }),
     );
+}
+
+#[tokio::test]
+async fn completed_production_broadcast_records_content_free_field_metrics() {
+    const PRIVATE_INPUT: &str = "private prompt and tool input must not enter metrics";
+    let clock = Arc::new(TestClock::new(1_700_000_000_000, 100));
+    let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
+    let owner = kernel
+        .spawn_process(SpawnSpec {
+            agent_id: AgentId(Uuid::from_u128(9_001)),
+            parent: None,
+            profile: AgentProfileId("field-metric-acceptance".into()),
+            namespace: NamespaceId("field-metric-acceptance".into()),
+            initial_operation: None,
+            deadline: None,
+        })
+        .await
+        .unwrap()
+        .id;
+    let space = AgoraSpaceId("session:field-metric-acceptance".into());
+    let store = Arc::new(agora::SqliteBroadcastStore::open_in_memory().unwrap());
+    let hub = Arc::new(
+        agora::BroadcastHub::new(agora::BroadcastHubConfig::default(), store.clone()).unwrap(),
+    );
+    let broadcast = Arc::new(agora::BroadcastCoordinator::new(store.clone(), hub));
+    let dasein = Arc::new(dasein::dasein::DaseinModule::new(clock.clone()).0);
+    let dasein = Arc::new(DaseinWorkspaceAdapter::new(dasein, clock.clone()));
+    let coordinator = ConsciousCoreCoordinator::new(
+        space.clone(),
+        agora::CandidatePoolConfig::default(),
+        broadcast,
+        store,
+        dasein,
+        ProcessId(Uuid::from_u128(9_002)),
+        kernel,
+        ConsciousCoreConfig::default(),
+    )
+    .unwrap();
+    let now = clock.mono_now();
+    coordinator
+        .submit_candidate(CandidateSubmission {
+            candidate: WorkspaceCandidate {
+                schema_version: WORKSPACE_SCHEMA_V1,
+                id: ContentId(Uuid::from_u128(9_003)),
+                space,
+                source: owner,
+                turn: None,
+                content: WorkspaceContent::Observation(WorkspaceObservation {
+                    what: PRIVATE_INPUT.into(),
+                    source: "acceptance".into(),
+                    data: serde_json::json!({"tool_input": PRIVATE_INPUT}),
+                    attribution: WorkspaceAttribution::Environment,
+                }),
+                confidence: 1.0,
+                salience: SalienceVector {
+                    urgency: 0.9,
+                    goal_relevance: 0.8,
+                    self_relevance: 0.7,
+                    novelty: 0.6,
+                    confidence: 1.0,
+                    prediction_error: 0.5,
+                    affect_intensity: 0.4,
+                    social_relevance: 0.3,
+                },
+                provenance: WorkspaceProvenance {
+                    producer: owner,
+                    operation: None,
+                    source_refs: vec!["acceptance:field-metric".into()],
+                    observed_at: clock.wall_now(),
+                },
+                visibility: VisibilityScope::Session,
+                dependencies: vec![],
+                created_at: now,
+                expires_at: None,
+            },
+            cause: CandidateCause::ExternalObservation {
+                event_ref: "acceptance:field-metric".into(),
+            },
+        })
+        .await
+        .unwrap();
+
+    assert!(coordinator.field_metric_snapshots().is_empty());
+    let receipt = coordinator.run_cycle(owner, 0).await.unwrap();
+    assert!(receipt.broadcast.is_some());
+    let snapshots = coordinator.field_metric_snapshots();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(
+        snapshots[0].broadcast_epoch,
+        receipt.broadcast.unwrap().epoch.0
+    );
+    assert!(snapshots[0].is_bounded());
+    assert!(snapshots[0]
+        .trace_event_id
+        .starts_with("broadcast:session:field-metric-acceptance:"));
+    let encoded = serde_json::to_string(&snapshots).unwrap();
+    assert!(!encoded.contains(PRIVATE_INPUT));
+    let indicators = coordinator.field_metric_indicators();
+    assert!(!indicators.attractor_converged);
+    assert!(indicators.lagged_mutual_information.is_none());
 }

@@ -13,8 +13,9 @@ use async_trait::async_trait;
 use fabric::dasein::SelfTransitionReceipt;
 use fabric::{
     AgoraSpaceId, BroadcastEpoch, BroadcastIntegrationReceipt, CareConcernFrame, Clock,
-    ConsciousContextProjection, ConsciousProcessor, ContentId, ContextProjectionReceipt, GoalFrame,
-    LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
+    ConsciousContextProjection, ConsciousFieldReadout, ConsciousProcessor, ContentId,
+    ContextProjectionReceipt, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
+    GoalFrame, LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
     PredictionErrorFrame, PredictionFrame, ProcessId, ProcessorContext, ProcessorHealth,
     ProcessorId, ProcessorResponse, SalienceVector, SchemaId, SelectionExplanation,
     SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
@@ -119,6 +120,7 @@ pub struct ConsciousCoreCoordinator {
     processors: RwLock<BTreeMap<String, RegisteredProcessor>>,
     next_workspace_version: Mutex<u64>,
     predictions: Mutex<HashMap<ContentId, PredictionFrame>>,
+    field_metrics: RwLock<FieldMetricHistory>,
     cycle: Mutex<()>,
 }
 
@@ -146,6 +148,23 @@ impl ConsciousCoreCoordinator {
                         && entry.broadcast.winner_ids.contains(&candidate.id)
                 })
             }))
+    }
+
+    /// Return the current content-free field indicators without exposing the
+    /// coordinator's mutable history.
+    pub fn field_metric_indicators(&self) -> FieldMetricIndicators {
+        self.field_metrics.read().indicators()
+    }
+
+    /// Return a read-only copy of the bounded numeric snapshots for audit and
+    /// acceptance evidence.
+    pub fn field_metric_snapshots(&self) -> Vec<FieldMetricSnapshot> {
+        self.field_metrics
+            .read()
+            .entries()
+            .iter()
+            .cloned()
+            .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -178,6 +197,7 @@ impl ConsciousCoreCoordinator {
             processors: RwLock::new(BTreeMap::new()),
             next_workspace_version: Mutex::new(next_workspace_version),
             predictions: Mutex::new(HashMap::new()),
+            field_metrics: RwLock::new(FieldMetricHistory::default()),
             cycle: Mutex::new(()),
         })
     }
@@ -364,6 +384,7 @@ impl ConsciousCoreCoordinator {
         };
         projection.validate()?;
         self.store.save_context_projection(&projection)?;
+        self.record_field_metric(&projection, &durable_integration.broadcast_checksum)?;
 
         Ok(ConsciousCycleReceipt {
             operation_id,
@@ -373,6 +394,45 @@ impl ConsciousCoreCoordinator {
             dasein_transition: Some(integration.transition),
             processors,
         })
+    }
+
+    fn record_field_metric(
+        &self,
+        projection: &ConsciousContextProjection,
+        broadcast_checksum: &str,
+    ) -> anyhow::Result<()> {
+        let readout = ConsciousFieldReadout::from_projection(projection)?
+            .ok_or_else(|| anyhow::anyhow!("completed broadcast has no field readout"))?;
+        let broadcast = projection
+            .latest_broadcast
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("completed projection has no broadcast"))?;
+        let protention_salience = broadcast
+            .selected
+            .iter()
+            .filter(|candidate| matches!(&candidate.content, WorkspaceContent::Prediction(_)))
+            .max_by(|left, right| {
+                left.salience
+                    .confidence
+                    .partial_cmp(&right.salience.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|candidate| salience_values(candidate.salience))
+            .unwrap_or([0.0; 8]);
+        let snapshot = FieldMetricSnapshot {
+            broadcast_epoch: broadcast.epoch.0,
+            dasein_version: projection.self_view.version.0,
+            salience: salience_values(readout.salience),
+            care_action: readout.care_action,
+            concern_urgency: f64::from(readout.concern_urgency),
+            update_delta: 0.0,
+            protention_salience,
+            trace_event_id: format!(
+                "broadcast:{}:{}:{broadcast_checksum}",
+                self.space.0, broadcast.epoch.0
+            ),
+        };
+        self.field_metrics.write().push(snapshot)
     }
 
     async fn remodulate_pending(&self) -> anyhow::Result<()> {
@@ -871,6 +931,10 @@ fn baseline_salience(confidence: f32) -> SalienceVector {
         affect_intensity: 0.0,
         social_relevance: 0.0,
     }
+}
+
+fn salience_values(salience: SalienceVector) -> [f64; 8] {
+    salience.values().map(f64::from)
 }
 
 fn deterministic_content_id(material: &str) -> ContentId {
