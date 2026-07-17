@@ -11,7 +11,9 @@ fi
 grep -q '^ListenStream=%t/aletheon/aletheon.sock$' config/aletheon.user.socket
 grep -q '^DirectoryMode=0700$' config/aletheon.user.socket
 grep -q '^SocketMode=0600$' config/aletheon.user.socket
-grep -q '^RuntimeDirectoryMode=0700$' config/aletheon.user.service
+if grep -q '^RuntimeDirectory=' config/aletheon.user.service; then
+  echo 'user service competes with socket activation for runtime-directory ownership' >&2; exit 1
+fi
 if grep -Eq 'ReadWritePaths=.*(/home|/tmp)' config/aletheon-core.service; then
   echo 'core unit grants a user or temporary writable root' >&2; exit 1
 fi

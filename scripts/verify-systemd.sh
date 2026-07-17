@@ -80,12 +80,15 @@ case "$mode" in
     stage_unit "$socket_unit" "$staged_socket"
     systemd-analyze verify "$staged_socket" "$staged_service"
     for contract in \
-      '^ExecStart=.* daemon$' '^RuntimeDirectory=aletheon$' \
-      '^RuntimeDirectoryMode=0700$' '^NoNewPrivileges=yes$' '^LimitCORE=0$'; do
+      '^ExecStart=.* daemon$' '^NoNewPrivileges=yes$' '^LimitCORE=0$'; do
       require_contract "$staged_service" "$contract" 'user unit verification'
     done
     if grep -Eq '^(User|Group)=' "$staged_service"; then
       echo 'user unit verification: a user-manager service must not switch identity' >&2
+      exit 1
+    fi
+    if grep -Eq '^RuntimeDirectory=' "$staged_service"; then
+      echo 'user unit verification: socket unit must exclusively own the runtime directory' >&2
       exit 1
     fi
     if grep -Eq '(/etc/aletheon/credentials|/var/lib/aletheon|/var/cache/aletheon)' "$staged_service"; then

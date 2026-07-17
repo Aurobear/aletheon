@@ -57,7 +57,9 @@ sudo loginctl enable-linger USER
 The private socket is `%t/aletheon/aletheon.sock`, normally
 `/run/user/$UID/aletheon/aletheon.sock`. It is owned by that user with mode
 0600. The daemon adopts the socket-activation descriptor and starts only when a
-client connects.
+client connects. The socket unit exclusively owns the runtime directory; the
+service must not declare the same `RuntimeDirectory`, otherwise a service
+restart can unlink the still-active listener.
 
 ## Security and credentials
 
@@ -103,8 +105,10 @@ sudo systemctl restart aletheon-core.service
 sudo systemctl status aletheon-core.service --no-pager
 sudo journalctl -u aletheon-core.service -n 200 --no-pager
 
-# Run these as the authorized user.
-systemctl --user restart aletheon.socket
+# Run these as the authorized user. Stop the activated service before cycling
+# its listener, then let the next client connection start the service again.
+systemctl --user stop aletheon.service aletheon.socket
+systemctl --user start aletheon.socket
 systemctl --user status aletheon.socket aletheon.service --no-pager
 journalctl --user -u aletheon.service -n 200 --no-pager
 scripts/verify-systemd.sh --readiness \

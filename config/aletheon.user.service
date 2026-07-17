@@ -8,8 +8,6 @@ ExecStart=%h/.local/bin/aletheon daemon
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
-RuntimeDirectory=aletheon
-RuntimeDirectoryMode=0700
 StateDirectory=aletheon
 CacheDirectory=aletheon
 

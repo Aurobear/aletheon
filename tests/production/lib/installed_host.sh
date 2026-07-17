@@ -130,7 +130,7 @@ restart_installed_runtime() {
   local user
   systemctl restart aletheon-core.service
   while IFS= read -r user; do
-    run_as_installed_user "$user" systemctl --user restart aletheon.service
+    run_as_installed_user "$user" systemctl --user stop aletheon.service aletheon.socket
     run_as_installed_user "$user" systemctl --user start aletheon.socket
   done < <(installed_test_users)
 }
