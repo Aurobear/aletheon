@@ -63,6 +63,9 @@ pub struct SelfFieldConfig {
     pub dasein_decay_rate: f64,
     /// Clock supplied by the application composition root.
     pub clock: Option<Arc<dyn fabric::Clock>>,
+    /// Optional conscious context reader (R2 field feedback).
+    /// When None (legacy), the field is ignored.
+    pub conscious_context: Option<Arc<dyn fabric::LatestConsciousContextPort>>,
 }
 
 impl Default for SelfFieldConfig {
@@ -80,6 +83,7 @@ impl Default for SelfFieldConfig {
             dasein_retention_depth: 50,
             dasein_decay_rate: 0.8,
             clock: None,
+            conscious_context: None,
         }
     }
 }
@@ -111,6 +115,8 @@ pub struct SelfField {
     /// Clock for deterministic time in sub-modules.
     #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
+    /// Optional conscious context reader for R2 field feedback. None means legacy mode.
+    conscious_context: Option<Arc<dyn fabric::LatestConsciousContextPort>>,
 }
 
 impl SelfField {
@@ -180,6 +186,7 @@ impl SelfField {
             permission_authority: None,
             dasein_event_tx,
             clock,
+            conscious_context: config.conscious_context,
         }
     }
 
@@ -384,6 +391,32 @@ impl Subsystem for SelfField {
     }
 }
 
+impl SelfField {
+    /// Compute the effective care score, modulating the baseline with the
+    /// conscious field readout when available.
+    ///
+    /// When the reader is absent, errors, or returns an empty projection,
+    /// the baseline score is returned unchanged (exact fallback).
+    async fn effective_care_score(&self, baseline: f64, ctx: &fabric::Context) -> f64 {
+        let Some(reader) = &self.conscious_context else {
+            return baseline;
+        };
+        let Ok(projection) = reader
+            .latest_context(&fabric::AgoraSpaceId(ctx.session_id.clone()))
+            .await
+        else {
+            tracing::warn!(session_id = %ctx.session_id, "conscious read failed; using baseline care");
+            return baseline;
+        };
+        let Ok(Some(readout)) =
+            fabric::ConsciousFieldReadout::from_projection(&projection)
+        else {
+            return baseline;
+        };
+        (baseline + (1.0 - baseline) * 0.25 * f64::from(readout.precision)).clamp(0.0, 1.0)
+    }
+}
+
 #[async_trait]
 impl fabric::SelfFieldOps for SelfField {
     /// Core review pipeline: Hook -> Policy -> Boundary -> Care -> Permissions -> Narrative -> Verdict.
@@ -425,8 +458,9 @@ impl fabric::SelfFieldOps for SelfField {
             return Ok(verdict);
         }
 
-        // 4. Care scoring
-        let care_score = self.care.score_action(&intent.description);
+        // 4. Care scoring — baseline from keywords, then modulate with conscious field.
+        let baseline_care = self.care.score_action(&intent.description);
+        let care_score = self.effective_care_score(baseline_care, ctx).await;
 
         // 5. Permission check -- delegate to the Runtime authority if installed,
         //    otherwise fall back to the historical inline rule (behavior-preserving).
