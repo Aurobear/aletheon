@@ -31,6 +31,7 @@ if grep -q 'systemctl --user enable aletheon.service' setup.sh; then
 fi
 grep -q 'config/aletheon-core.service' scripts/install-systemd.sh
 grep -q 'systemctl disable --now aletheon.service' scripts/install-systemd.sh
+grep -q 'systemctl restart aletheon-core.service' scripts/install-systemd.sh
 grep -q 'systemctl --global enable aletheon.socket' scripts/install-systemd.sh
 if grep -q 'systemd-analyze --user verify' scripts/install-systemd.sh; then
   echo 'root installer depends on an unavailable user systemd manager' >&2; exit 1
