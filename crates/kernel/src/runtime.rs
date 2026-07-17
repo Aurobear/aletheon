@@ -186,7 +186,7 @@ impl KernelRuntime {
         self.admission.clone()
     }
 
-    pub fn mailbox_service(&self) -> Arc<InProcessMailboxService> {
+    pub fn mailbox_service(&self) -> Arc<dyn MailboxService> {
         self.mailboxes.clone()
     }
 
