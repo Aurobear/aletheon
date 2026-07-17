@@ -63,10 +63,12 @@
 | `50b17e7f` | **S1 T9** `SandboxConfig.policy: Option<ResolvedSandboxPolicy>`（`#[serde(skip)]`，per-exec 派生不持久）；11 处构造点全 `policy: None`（等价旧行为） | fabric + corpus + dasein + executive | check 干净 |
 | `d5edc0cb` | **S1 T10** bubblewrap backend 消费 `policy.deny_exact`：文件→`--ro-bind /dev/null`，目录→空 `--tmpfs`；排在 mount plan 之后（后 mount 覆盖）；net 恒 `--unshare-net`（restrict_network 只收紧）；None=严格 no-op。**首个真正施加的 S1 enforcement** | corpus | 2 新 + 3 回归 |
 | `b95e2ff8` | **S1 T11** `SandboxExecutor::run` 网络一致性：`restrict_network` × backend 缺 `network_isolation`——Require 时 fail-closed（同 noop 守卫姿态），否则告警降级不静默放网；None 跳过（等价旧行为） | fabric | 4 新 |
+| `26936382` | **S1 T12a** `SandboxProfiles.default_profile` + `JsonSchema` 派生；`AppConfig.sandbox_profiles` 从 daemon 可信 config 加载 | fabric + executive | fabric 25 全走 + executive check 干净 |
+| `b2b065dd` | **S1 T13** `ToolRunnerWithGuard.with_sandbox_profiles` builder，bash_exec 执行前 `resolve_profile` 填 `policy`；daemon+user 两路接线 `sandbox_profiles`；None=旧行为 | corpus + executive | corpus 10 全走 + executive check 干净 |
 
-**状态**：fabric 契约层完成（S1 `resolve_profile` 补上最后缺口）。**C1 完成端到端**：fabric 机制 → mnemosyne 实现 → cognit harness 路由 → executive config 接线 → 两入口激活。`grok_hardening.compaction_v2 = true` 即让主 runtime 与子 Agent 都走 guarded `maybe_compact_v2`；关=逐字节旧行为。这是第一条从契约贯通到激活的 exec-plan 项。
+**状态**：S1 端到端完成。`grok_hardening.sandbox_profiles = true` + 配置中声明 profiles → `resolve_profile` → `SandboxConfig.policy` → bubblewrap 施加 deny + network；关=逐字节旧行为。C1+S1 两条从契约贯通到激活。
 
-**尚未开始**（全部消费/接线，均 flag 门控、默认关）：S1 T8–T15（glob 展开 + backend 消费 + 装配）、D1/D2/D3 桥接、G1–G8 的 Executive consumer 层。这些是多会话工程量（见 §4 序列）。
+**尚未开始**：S1 T14（事件）、T15（收尾）；D1/D2/D3 桥接；G1–G8 Executive consumer 层。这些是多会话工程量（见 §4 序列）。
 
 ## 2. 合并映射：Grok fabric × DeepSeek OUTSTANDING
 
