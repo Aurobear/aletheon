@@ -7,11 +7,9 @@
 //!   -m `msg`      Send single message to daemon
 //!   version      Print version + git commit
 
-use aletheon_bin::endpoint::{resolve_client_socket, resolve_daemon_socket};
 use aletheon_bin::workspace::WorkspaceArgs;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use fabric::paths::ProcessRuntimeEnvironment;
 use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -121,28 +119,6 @@ async fn main() -> Result<()> {
     {
         anyhow::bail!("aletheon core does not accept workspace authority");
     }
-    let workspace = match (&cli.command, &cli.message) {
-        (Some(Commands::Exec { sandbox, .. }), _) => {
-            let process_cwd = std::env::current_dir()
-                .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
-            let profile = if matches!(sandbox.as_str(), "danger-full-access") {
-                fabric::PermissionProfileId::danger_full_access()
-            } else {
-                fabric::PermissionProfileId::workspace_write()
-            };
-            Some(cli.workspace.resolve(&process_cwd, &profile)?)
-        }
-        (None, _) => {
-            let process_cwd = std::env::current_dir()
-                .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
-            Some(cli.workspace.resolve(
-                &process_cwd,
-                &fabric::PermissionProfileId::workspace_write(),
-            )?)
-        }
-        _ => None,
-    };
-
     match (&cli.command, &cli.message) {
         // Subcommand-driven paths
         (Some(Commands::Core { config, socket }), _) => {
@@ -165,15 +141,11 @@ async fn main() -> Result<()> {
             _,
         ) => {
             init_tracing("aletheon::daemon");
-            let socket = resolve_daemon_socket(
-                socket.clone(),
-                cli.socket.clone(),
-                &ProcessRuntimeEnvironment,
-            )?;
             executive::host::launcher::run_daemon(executive::host::launcher::DaemonLaunch {
                 config: config.clone(),
                 env: env.clone(),
-                socket,
+                command_socket: socket.clone(),
+                parent_socket: cli.socket.clone(),
                 container: container.clone(),
                 image: image.clone(),
                 enable_evolution: *enable_evolution,
@@ -198,7 +170,7 @@ async fn main() -> Result<()> {
                     model: model.clone(),
                     max_turns: *max_turns,
                     sandbox: sandbox.clone(),
-                    workspace: workspace.clone().expect("exec workspace was resolved"),
+                    workspace: cli.workspace.executive_launch(),
                     config: config.clone(),
                     json: output == "json",
                 })
@@ -221,17 +193,16 @@ async fn main() -> Result<()> {
         }
         // -m flag: single message to daemon
         (None, Some(msg)) => {
-            let workspace = workspace.expect("message workspace was resolved");
-            std::env::set_current_dir(workspace.cwd())?;
-            let socket = resolve_client_socket(cli.socket.clone(), &ProcessRuntimeEnvironment)?;
-            interact::cli::single_message(&socket, msg).await
+            interact::host::run_single_message(interact::host::MessageLaunch {
+                socket: cli.socket.clone(),
+                workspace: cli.workspace.interact_launch(),
+                message: msg.clone(),
+            })
+            .await
         }
         // No subcommand, no -m: TUI mode. The unified binary owns argument
         // parsing, so pass instrumentation through instead of parsing twice.
         (None, None) => {
-            let workspace = workspace.expect("TUI workspace was resolved");
-            std::env::set_current_dir(workspace.cwd())?;
-            let socket = resolve_client_socket(cli.socket.clone(), &ProcessRuntimeEnvironment)?;
             let config = interact::tui::TestConfig {
                 test_input: cli.test_input,
                 record_frames: cli.record_frames,
@@ -239,7 +210,14 @@ async fn main() -> Result<()> {
                 auto_submit: cli.auto_submit,
                 test_timeout: cli.test_timeout,
             };
-            interact::tui::run_with_config(socket.to_string_lossy().as_ref(), config).await
+            interact::host::run_tui(
+                interact::host::TuiLaunch {
+                    socket: cli.socket.clone(),
+                    workspace: cli.workspace.interact_launch(),
+                },
+                config,
+            )
+            .await
         }
     }
 }

@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use aletheon_bin::workspace::WorkspaceArgs;
 use clap::{Parser, Subcommand};
-use fabric::PermissionProfileId;
 
 #[derive(Debug, Parser)]
 struct CliFixture {
@@ -43,17 +42,15 @@ fn global_workspace_options_are_accepted_after_a_subcommand() {
 }
 
 #[test]
-fn cli_paths_use_the_shared_workspace_resolver() {
+fn cli_paths_delegate_as_an_explicit_host_request() {
     let args = WorkspaceArgs {
         cwd: Some(PathBuf::from("/tmp")),
         add_dirs: vec![PathBuf::from("/var/tmp")],
     };
-    let policy = args
-        .resolve(
-            std::path::Path::new("/tmp"),
-            &PermissionProfileId::workspace_write(),
-        )
-        .unwrap();
-    assert_eq!(policy.cwd(), std::path::Path::new("/tmp"));
-    assert_eq!(policy.writable_roots().len(), 2);
+    let executive = args.executive_launch();
+    let interact = args.interact_launch();
+    assert_eq!(executive.cwd, Some(PathBuf::from("/tmp")));
+    assert_eq!(executive.add_dirs, vec![PathBuf::from("/var/tmp")]);
+    assert_eq!(interact.cwd, executive.cwd);
+    assert_eq!(interact.add_dirs, executive.add_dirs);
 }

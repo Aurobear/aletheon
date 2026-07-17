@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use fabric::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, NoopTurnEventSink, OperationId,
-    PermissionProfileId, PrincipalContext, PrincipalId, ThreadId, TurnRequest, WorkspacePolicy,
+    PermissionProfileId, PrincipalContext, PrincipalId, ThreadId, TurnRequest,
 };
 use tracing::info;
 
@@ -35,10 +35,20 @@ pub async fn run_core(request: CoreLaunch) -> Result<()> {
 pub struct DaemonLaunch {
     pub config: Option<PathBuf>,
     pub env: Option<PathBuf>,
-    pub socket: PathBuf,
+    pub command_socket: Option<PathBuf>,
+    pub parent_socket: Option<PathBuf>,
     pub container: Option<String>,
     pub image: String,
     pub enable_evolution: bool,
+}
+
+fn select_daemon_socket(
+    command: Option<PathBuf>,
+    parent: Option<PathBuf>,
+    environment: Option<PathBuf>,
+    default: PathBuf,
+) -> PathBuf {
+    command.or(parent).or(environment).unwrap_or(default)
 }
 
 pub async fn run_daemon(request: DaemonLaunch) -> Result<()> {
@@ -53,10 +63,18 @@ pub async fn run_daemon(request: DaemonLaunch) -> Result<()> {
     }
     let paths =
         fabric::paths::UserRuntimePaths::resolve(&fabric::paths::ProcessRuntimeEnvironment)?;
+    let socket = select_daemon_socket(
+        request.command_socket,
+        request.parent_socket,
+        std::env::var_os("ALETHEON_SOCKET")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from),
+        paths.socket_path(),
+    );
     let config = UserRuntimeConfig::load(
         request.config.as_deref(),
         paths,
-        request.socket,
+        socket,
         request.enable_evolution,
     )?;
     let core_socket = std::env::var_os("ALETHEON_CORE_SOCKET")
@@ -72,9 +90,15 @@ pub struct ExecLaunch {
     pub model: String,
     pub max_turns: usize,
     pub sandbox: String,
-    pub workspace: WorkspacePolicy,
+    pub workspace: WorkspaceLaunch,
     pub config: Option<PathBuf>,
     pub json: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspaceLaunch {
+    pub cwd: Option<PathBuf>,
+    pub add_dirs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +108,17 @@ pub struct ExecHostOutcome {
 }
 
 pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
-    let working_dir = request.workspace.cwd().to_path_buf();
+    let process_cwd = std::env::current_dir()
+        .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
+    let profile = if request.sandbox == "danger-full-access" {
+        PermissionProfileId::danger_full_access()
+    } else {
+        PermissionProfileId::workspace_write()
+    };
+    let workspace =
+        fabric::WorkspaceSelection::new(request.workspace.cwd, request.workspace.add_dirs)
+            .resolve_with_profile(&process_cwd, &profile)?;
+    let working_dir = workspace.cwd().to_path_buf();
     let mut builder = ExecSessionBuilder::new(working_dir.clone())
         .with_model(request.model.clone())
         .with_max_turns(request.max_turns)
@@ -114,7 +148,7 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
                         },
                         ConnectionId::new(),
                         ThreadId(thread_id),
-                        request.workspace.clone(),
+                        workspace.clone(),
                         PermissionProfileId::workspace_write(),
                         ApprovalPolicy::OnRequest,
                     )
@@ -144,4 +178,40 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
         result.output
     };
     Ok(ExecHostOutcome { success, rendered })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_daemon_socket;
+
+    #[test]
+    fn daemon_endpoint_precedence_is_command_parent_environment_default() {
+        let path = |value: &str| Some(value.into());
+        assert_eq!(
+            select_daemon_socket(
+                path("/command"),
+                path("/parent"),
+                path("/environment"),
+                "/default".into(),
+            ),
+            std::path::PathBuf::from("/command")
+        );
+        assert_eq!(
+            select_daemon_socket(
+                None,
+                path("/parent"),
+                path("/environment"),
+                "/default".into(),
+            ),
+            std::path::PathBuf::from("/parent")
+        );
+        assert_eq!(
+            select_daemon_socket(None, None, path("/environment"), "/default".into()),
+            std::path::PathBuf::from("/environment")
+        );
+        assert_eq!(
+            select_daemon_socket(None, None, None, "/default".into()),
+            std::path::PathBuf::from("/default")
+        );
+    }
 }

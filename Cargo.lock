@@ -89,7 +89,6 @@ dependencies = [
  "async-trait",
  "clap",
  "executive",
- "fabric",
  "futures",
  "interact",
  "libc",

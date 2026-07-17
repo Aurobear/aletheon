@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use executive::r#impl::core_rpc::{CorePeerPolicy, CoreRpcServer};
 use executive::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
-use fabric::{ContentBlock, LlmResponse, LlmStream, StopReason, StreamChunk, Usage};
+use executive::{
+    ContentBlock, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk, Usage,
+};
 use futures::stream;
 use tempfile::TempDir;
 use tokio::process::Command;
@@ -41,7 +43,7 @@ struct CoreHarness {
     socket: PathBuf,
     cancel: CancellationToken,
     task: tokio::task::JoinHandle<anyhow::Result<()>>,
-    peers: mpsc::Receiver<fabric::LocalOsPrincipal>,
+    peers: mpsc::Receiver<LocalOsPrincipal>,
 }
 
 impl CoreHarness {
@@ -70,7 +72,7 @@ impl CoreHarness {
         }
     }
 
-    async fn next_peer(&mut self) -> fabric::LocalOsPrincipal {
+    async fn next_peer(&mut self) -> LocalOsPrincipal {
         tokio::time::timeout(std::time::Duration::from_secs(5), self.peers.recv())
             .await
             .expect("core peer observation timed out")

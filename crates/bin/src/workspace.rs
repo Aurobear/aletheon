@@ -1,7 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::Args;
-use fabric::{PermissionProfileId, WorkspacePolicy, WorkspaceResolveError, WorkspaceSelection};
 
 /// Global workspace selection shared by interactive and non-interactive modes.
 #[derive(Args, Clone, Debug, Default, Eq, PartialEq)]
@@ -16,12 +15,17 @@ pub struct WorkspaceArgs {
 }
 
 impl WorkspaceArgs {
-    pub fn resolve(
-        &self,
-        process_cwd: &Path,
-        profile: &PermissionProfileId,
-    ) -> Result<WorkspacePolicy, WorkspaceResolveError> {
-        WorkspaceSelection::new(self.cwd.clone(), self.add_dirs.clone())
-            .resolve_with_profile(process_cwd, profile)
+    pub fn executive_launch(&self) -> executive::host::launcher::WorkspaceLaunch {
+        executive::host::launcher::WorkspaceLaunch {
+            cwd: self.cwd.clone(),
+            add_dirs: self.add_dirs.clone(),
+        }
+    }
+
+    pub fn interact_launch(&self) -> interact::host::WorkspaceLaunch {
+        interact::host::WorkspaceLaunch {
+            cwd: self.cwd.clone(),
+            add_dirs: self.add_dirs.clone(),
+        }
     }
 }

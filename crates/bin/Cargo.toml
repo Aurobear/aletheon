@@ -16,7 +16,6 @@ integration-tests = []
 [dependencies]
 executive = { path = "../executive" }
 interact = { path = "../interact" }
-fabric = { path = "../fabric" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 clap = { version = "4", features = ["derive"] }

@@ -20,6 +20,7 @@
 )]
 
 pub mod acix;
+pub mod host;
 pub mod tui;
 
 /// Backward compatibility: cli module is now tui::cli
