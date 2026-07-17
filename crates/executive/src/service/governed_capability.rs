@@ -85,7 +85,11 @@ pub struct SelectedActionOutcomeReceipt {
 
 #[async_trait]
 pub trait GovernedActionLoop: Send + Sync {
-    async fn select_action(&self, call: &CapabilityCall) -> Result<SelectedActionContext>;
+    async fn select_action(
+        &self,
+        call: &CapabilityCall,
+        risk: RiskLevel,
+    ) -> Result<SelectedActionContext>;
 
     async fn observe_outcome(
         &self,
@@ -146,7 +150,10 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
             }
         };
         let selected = if let Some(action_loop) = &self.action_loop {
-            match action_loop.select_action(&call).await {
+            match action_loop
+                .select_action(&call, authorized.authority.risk)
+                .await
+            {
                 Ok(selected) => Some(selected),
                 Err(error) => {
                     return CapabilityResult {

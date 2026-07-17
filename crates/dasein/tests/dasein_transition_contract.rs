@@ -2,8 +2,8 @@ use dasein::dasein::self_model::{AssertionSource, SelfAssertion};
 use dasein::dasein::types::{BewandtnisNode, EntityId, ReadinessState, TemporalPosition};
 use dasein::dasein::DaseinModule;
 use fabric::dasein::{
-    ExperienceProvenance, ExperienceSource, InterpretedExperience, OutcomeStatus, SelfEventId,
-    SelfSignal, SelfTransitionRequest, SelfVersion, Stimmung, TemporalEventKind,
+    CareActionKind, ExperienceProvenance, ExperienceSource, InterpretedExperience, OutcomeStatus,
+    SelfEventId, SelfSignal, SelfTransitionRequest, SelfVersion, Stimmung, TemporalEventKind,
 };
 use fabric::WallTime;
 use std::sync::Arc;
@@ -167,6 +167,41 @@ async fn reducer_explicitly_handles_reflective_variants() {
         .possibilities
         .iter()
         .any(|possibility| possibility.content == "adaptive identity"));
+}
+
+#[tokio::test]
+async fn scheduled_reflection_emits_care_decision() {
+    // R1 (conscious-core plan): CareStructure::determine_action() must be
+    // consumed in the production reflection path and emitted as a signal, not
+    // computed and discarded. The emitted signal is what flows into Agora as a
+    // candidate, giving "care" a behavioral effect.
+    let module = module();
+    let receipt = module
+        .transition(request(
+            SelfEventId::new(),
+            0,
+            InterpretedExperience::ScheduledReflection,
+        ))
+        .await
+        .unwrap();
+
+    let care_decision = receipt
+        .emitted
+        .iter()
+        .find(|signal| matches!(signal, SelfSignal::CareDecision { .. }));
+    assert!(
+        care_decision.is_some(),
+        "scheduled reflection must emit a CareDecision, got {:?}",
+        receipt.emitted
+    );
+    // With no urgent concerns or chosen projection, the default care action is Wait.
+    assert!(matches!(
+        care_decision.unwrap(),
+        SelfSignal::CareDecision {
+            action: CareActionKind::Wait,
+            ..
+        }
+    ));
 }
 
 #[tokio::test]

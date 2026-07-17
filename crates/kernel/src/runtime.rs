@@ -11,11 +11,12 @@ use crate::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
 use fabric::ipc::envelope_v2::Target;
 use fabric::ipc::mailbox::{InProcessMailboxService, Mailbox, MailboxService};
 use fabric::{
-    AdmissionController, AdmissionError, AgentId, BudgetRequest, BudgetReservationReceipt,
-    BudgetScopeId, BudgetScopeKind, CancelReason, Clock, ContextBinding, ContextSpace, ExitReason,
-    ExitStatus, OperationHandle, OperationId, OperationManager, OperationRecord, OperationRequest,
-    OperationResult, OsProcessId, PermitId, ProcessHandle, ProcessId, ProcessIdentity,
-    ProcessManager, ProcessSignal, ProcessSnapshot, SpaceId, SpawnSpec,
+    AdmissionController, AdmissionError, AgentId, BudgetController, BudgetRequest,
+    BudgetReservationReceipt, BudgetScopeId, BudgetScopeKind, CancelReason, Clock, ContextBinding,
+    ContextSpace, ExitReason, ExitStatus, LeaseManager, OperationHandle, OperationId,
+    OperationManager, OperationRecord, OperationRequest, OperationResult, OsProcessId, PermitId,
+    ProcessHandle, ProcessId, ProcessIdentity, ProcessManager, ProcessSignal, ProcessSnapshot,
+    SpaceId, SpawnSpec,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -186,7 +187,7 @@ impl KernelRuntime {
         self.admission.clone()
     }
 
-    pub fn mailbox_service(&self) -> Arc<InProcessMailboxService> {
+    pub fn mailbox_service(&self) -> Arc<dyn MailboxService> {
         self.mailboxes.clone()
     }
 
@@ -202,11 +203,11 @@ impl KernelRuntime {
         Ok(())
     }
 
-    pub fn budget_controller(&self) -> Arc<InMemoryBudgetController> {
+    pub fn budget_controller(&self) -> Arc<dyn BudgetController> {
         self.budget.clone()
     }
 
-    pub fn lease_manager(&self) -> Arc<InMemoryResourceLeaseManager> {
+    pub fn lease_manager(&self) -> Arc<dyn LeaseManager> {
         self.leases.clone()
     }
 

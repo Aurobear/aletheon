@@ -133,7 +133,7 @@ pub use policy::verifier;
 // These preserve the flat API surface so external consumers don't need to change.
 
 // Subsystem traits (from include/)
-pub use include::admission::AdmissionController;
+pub use include::admission::{AdmissionController, BudgetController, LeaseManager};
 pub use include::agora::{
     AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, AgoraService, AgoraViewRequest,
     CommitReceipt, RejectReason, VersionConflict, WorkspaceCommitPermit,
@@ -176,7 +176,8 @@ pub use types::admission::{
     AdmissionError, AdmissionRequest, AuditEventId, BudgetRequest, BudgetReservationId,
     BudgetReservationReceipt, BudgetScope, BudgetScopeId, BudgetScopeKind, CapabilityId,
     CapabilityScope, ExecutionPermit, LeaseRequest, PermitId, PrincipalId, ResourceLeaseId,
-    RevokeReason, SandboxDecision, SandboxRequirement, UsageReport, BUDGET_SCOPE_SCHEMA_VERSION,
+    RevokeReason, RiskLevel, SandboxDecision, SandboxRequirement, UsageReport,
+    BUDGET_SCOPE_SCHEMA_VERSION,
 };
 pub use types::agent::Pid;
 pub use types::agent_control::{

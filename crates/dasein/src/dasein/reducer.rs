@@ -1,5 +1,5 @@
 use super::bewandtnis::Bewandtnisganzheit;
-use super::care_structure::CareStructure;
+use super::care_structure::{CareAction, CareStructure};
 use super::ledger::SelfLedger;
 use super::self_model::{
     AssertionSource, MutableSelfModel, NegationReason, SelfAssertion, SelfPossibility,
@@ -8,9 +8,9 @@ use super::temporality::{ExperientialContent, TemporalStream};
 use super::types::BewandtnisNode;
 use super::types::{EntityId, ReadinessState as InternalReadinessState};
 use fabric::dasein::{
-    DaseinEvent, ExperienceProvenance, ExperienceSource, InterpretedExperience, NarrativeEntryId,
-    OutcomeStatus, SelfEventId, SelfSignal, SelfTransitionReceipt, SelfTransitionRequest,
-    SelfVersion, Stimmung, TemporalEventKind,
+    CareActionKind, DaseinEvent, ExperienceProvenance, ExperienceSource, InterpretedExperience,
+    NarrativeEntryId, OutcomeStatus, SelfEventId, SelfSignal, SelfTransitionReceipt,
+    SelfTransitionRequest, SelfVersion, Stimmung, TemporalEventKind,
 };
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
@@ -414,6 +414,17 @@ impl DaseinStateEngine {
                     .write()
                     .adapt(&self.mood.read(), urgent_count);
                 emitted.push(SelfSignal::ReflectionCompleted);
+                // R1 (conscious-core plan): consume the care structure's
+                // decision so it has a behavioral effect. The decision flows
+                // through `emitted` -> WorkspaceContent::Concern -> Agora
+                // competition, instead of being computed and discarded.
+                let (action, rationale) = match self.care.determine_action() {
+                    CareAction::Deliberate(r) => (CareActionKind::Deliberate, r),
+                    CareAction::Direct(r) => (CareActionKind::Direct, r),
+                    CareAction::Wait(r) => (CareActionKind::Wait, r),
+                    CareAction::Negate(r) => (CareActionKind::Negate, r),
+                };
+                emitted.push(SelfSignal::CareDecision { action, rationale });
             }
         }
         emitted

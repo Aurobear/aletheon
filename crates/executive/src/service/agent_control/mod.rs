@@ -7,7 +7,7 @@ use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
-use fabric::ipc::mailbox::{InProcessMailbox, Mailbox, MailboxService};
+use fabric::ipc::mailbox::{InProcessMailbox, Mailbox};
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
     AgentId, AgentListRequest, AgentMessageDeliveryState, AgentMessagePayload, AgentRunStatus,

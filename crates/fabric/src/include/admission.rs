@@ -6,7 +6,9 @@
 //! `settle()`.
 
 use crate::types::admission::{
-    AdmissionError, AdmissionRequest, ExecutionPermit, PermitId, RevokeReason, UsageReport,
+    AdmissionError, AdmissionRequest, BudgetRequest, BudgetReservationId, BudgetReservationReceipt,
+    BudgetScope, BudgetScopeId, BudgetScopeKind, ExecutionPermit, LeaseRequest, PermitId,
+    ResourceLeaseId, RevokeReason, UsageReport,
 };
 use async_trait::async_trait;
 
@@ -43,4 +45,72 @@ pub trait AdmissionController: Send + Sync {
     /// Idempotent: revoking an already-settled permit is a no-op.
     async fn revoke(&self, permit_id: PermitId, reason: RevokeReason)
         -> Result<(), AdmissionError>;
+}
+
+/// Hierarchical monetary budget controller.
+///
+/// This is the boundary contract the application layer depends on so it never
+/// binds to a concrete `InMemoryBudgetController` (coupling-optimization plan:
+/// no concrete kernel type crosses the domain boundary). The kernel provides
+/// the implementation; `KernelRuntime::budget_controller()` returns
+/// `Arc<dyn BudgetController>`.
+#[async_trait]
+pub trait BudgetController: Send + Sync {
+    /// Create a root budget scope (one tree per rollout) and return its id.
+    async fn create_root(&self, owner: String, limit: BudgetRequest) -> BudgetScopeId;
+
+    /// Atomically allocate a child scope from its direct parent, holding
+    /// capacity in the parent until the child is settled or revoked.
+    async fn reserve_child(
+        &self,
+        parent: BudgetScopeId,
+        kind: BudgetScopeKind,
+        owner: String,
+        request: BudgetRequest,
+    ) -> Result<BudgetReservationReceipt, AdmissionError>;
+
+    /// Close a leaf reservation and return its unused capacity to the parent,
+    /// charging the reported usage.
+    async fn settle_reservation(
+        &self,
+        reservation: BudgetReservationId,
+        usage: &UsageReport,
+    ) -> Result<(), AdmissionError>;
+
+    /// Close a reservation, returning unused capacity to its parent. Repeating
+    /// the call on an already-closed reservation is a successful no-op.
+    async fn revoke_reservation(
+        &self,
+        reservation: BudgetReservationId,
+    ) -> Result<(), AdmissionError>;
+
+    /// Read a budget scope's current view, if it exists.
+    async fn scope(&self, id: BudgetScopeId) -> Option<BudgetScope>;
+
+    /// Count the reservations currently held open (for lifecycle inspection).
+    async fn active_reservation_count(&self) -> usize;
+}
+
+/// Time-limited exclusive lease manager for named resources (e.g. "gpu",
+/// "sandbox-instance"). The application layer depends on this trait so it never
+/// binds to the concrete `InMemoryResourceLeaseManager`;
+/// `KernelRuntime::lease_manager()` returns `Arc<dyn LeaseManager>`.
+#[async_trait]
+pub trait LeaseManager: Send + Sync {
+    /// Acquire a lease on a resource, or fail if it is already held and unexpired.
+    async fn acquire(
+        &self,
+        principal: &str,
+        request: &LeaseRequest,
+        now_mono_ms: u64,
+    ) -> Result<ResourceLeaseId, AdmissionError>;
+
+    /// Release a held lease. Idempotent for unknown/expired ids.
+    async fn release(&self, lease_id: ResourceLeaseId);
+
+    /// Whether the named resource currently has an unexpired lease.
+    async fn is_leased(&self, resource: &str, now_mono_ms: u64) -> bool;
+
+    /// Count the leases currently active (unexpired) at the given time.
+    async fn active_count(&self, now_mono_ms: u64) -> usize;
 }

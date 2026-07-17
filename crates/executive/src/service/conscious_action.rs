@@ -5,11 +5,12 @@ use std::time::Duration;
 
 use anyhow::Context;
 use async_trait::async_trait;
+use fabric::dasein::{CareActionKind, SelfSignal};
 use fabric::{
-    ActionProposalFrame, CapabilityCall, CapabilityResult, Clock, ContentId,
-    GovernedActionOutcomeFrame, MonoDeadline, ProcessId, SalienceVector, VisibilityScope,
-    WorkspaceAttribution, WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance,
-    WORKSPACE_SCHEMA_V1,
+    ActionProposalFrame, CapabilityCall, CapabilityResult, Clock, ConsciousContextProjection,
+    ContentId, GovernedActionOutcomeFrame, MonoDeadline, ProcessId, RiskLevel, SalienceVector,
+    VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate,
+    WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -17,7 +18,9 @@ use uuid::Uuid;
 use super::conscious_core_coordinator::ConsciousCoreCoordinator;
 use super::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, ConsciousCandidatePort,
+    LatestConsciousContextPort,
 };
+use super::conscious_modulation::{recommend, ModulationMode, ModulationReceipt};
 use super::governed_capability::{
     GovernedActionLoop, SelectedActionContext, SelectedActionOutcomeReceipt,
 };
@@ -104,11 +107,96 @@ impl ConsciousActionBridge {
             self.candidate_ttl.as_millis().min(u128::from(u64::MAX)) as u64,
         )
     }
+
+    /// R3a ObserveOnly: record what the conscious core would recommend for this
+    /// governed action (proceed / reorder / defer / veto) and emit a structured
+    /// receipt plus metric. Best-effort and infallible — it never affects whether
+    /// or how the action executes.
+    async fn observe_modulation(
+        &self,
+        call: &CapabilityCall,
+        risk: RiskLevel,
+        broadcast: &WorkspaceBroadcast,
+        action_id: ContentId,
+    ) {
+        let care_decision = self
+            .coordinator
+            .latest_context(self.coordinator.space())
+            .await
+            .ok()
+            .as_ref()
+            .and_then(latest_care_decision);
+        let (self_relevance, urgency) = dasein_intensity(broadcast, action_id);
+        let (recommendation, rationale) = recommend(risk, care_decision, self_relevance, urgency);
+        let receipt = ModulationReceipt {
+            mode: ModulationMode::ObserveOnly,
+            tool: call.name.clone(),
+            call_id: call.call_id.clone(),
+            risk_prior: risk,
+            care_decision,
+            self_relevance,
+            urgency,
+            recommendation,
+            rationale,
+        };
+        tracing::info!(
+            target: "conscious.modulation",
+            tool = %receipt.tool,
+            call_id = %receipt.call_id,
+            risk_prior = ?receipt.risk_prior,
+            care = ?receipt.care_decision,
+            self_relevance = receipt.self_relevance,
+            urgency = receipt.urgency,
+            recommendation = ?receipt.recommendation,
+            modulating = receipt.recommendation.is_modulating(),
+            rationale = %receipt.rationale,
+            "conscious modulation (observe-only)"
+        );
+    }
+}
+
+/// Extract the most recent Dasein care decision expressed in the latest
+/// broadcast, if any. `CareDecision` signals flow into the workspace as
+/// `Concern` content (conscious-core plan R1).
+fn latest_care_decision(projection: &ConsciousContextProjection) -> Option<CareActionKind> {
+    let broadcast = projection.latest_broadcast.as_ref()?;
+    broadcast
+        .contents
+        .iter()
+        .rev()
+        .find_map(|content| match content {
+            WorkspaceContent::Concern(SelfSignal::CareDecision { action, .. }) => Some(*action),
+            _ => None,
+        })
+}
+
+/// Aggregate the current conscious state's intensity from the selected
+/// candidates other than the action itself: the maximum self-relevance and
+/// urgency across the ignited Dasein concerns. Returns `(0.0, 0.0)` when no
+/// other content is present.
+fn dasein_intensity(broadcast: &WorkspaceBroadcast, action_id: ContentId) -> (f32, f32) {
+    broadcast
+        .selected
+        .iter()
+        .filter(|candidate| candidate.id != action_id)
+        .fold(
+            (0.0_f32, 0.0_f32),
+            |(self_relevance, urgency), candidate| {
+                (
+                    self_relevance.max(candidate.salience.self_relevance),
+                    urgency.max(candidate.salience.urgency),
+                )
+            },
+        )
 }
 
 #[async_trait]
 impl GovernedActionLoop for ConsciousActionBridge {
-    async fn select_action(&self, call: &CapabilityCall) -> anyhow::Result<SelectedActionContext> {
+    async fn select_action(
+        &self,
+        call: &CapabilityCall,
+        risk: RiskLevel,
+    ) -> anyhow::Result<SelectedActionContext> {
         let now = self.clock.mono_now();
         let event_ref = format!("action-call:{}:{}", call.operation_id.0, call.call_id);
         let candidate = WorkspaceCandidate {
@@ -160,6 +248,12 @@ impl GovernedActionLoop for ConsciousActionBridge {
             broadcast.winner_ids.contains(&candidate_id),
             "governed action was not selected"
         );
+        // R3a (ObserveOnly): observe what the conscious core would recommend for
+        // this action and record a structured receipt + metric. This never
+        // changes execution — the action proceeds exactly as before. Real
+        // defer/reorder (R3b) is gated on R2 and a validated distribution.
+        self.observe_modulation(call, risk, &broadcast, candidate_id)
+            .await;
         Ok(SelectedActionContext {
             candidate_id,
             broadcast_epoch: broadcast.epoch,

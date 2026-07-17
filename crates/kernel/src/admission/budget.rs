@@ -7,9 +7,10 @@
 //! principal-based admission API by creating and closing a complete temporary
 //! hierarchy for each permit.
 
+use async_trait::async_trait;
 use fabric::{
-    AdmissionError, BudgetRequest, BudgetReservationId, BudgetReservationReceipt, BudgetScope,
-    BudgetScopeId, BudgetScopeKind, OperationId, PermitId, UsageReport,
+    AdmissionError, BudgetController, BudgetRequest, BudgetReservationId, BudgetReservationReceipt,
+    BudgetScope, BudgetScopeId, BudgetScopeKind, OperationId, PermitId, UsageReport,
     BUDGET_SCOPE_SCHEMA_VERSION,
 };
 use std::collections::HashMap;
@@ -481,6 +482,49 @@ impl InMemoryBudgetController {
 impl Default for InMemoryBudgetController {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Boundary contract impl so the application layer can depend on
+/// `Arc<dyn BudgetController>` instead of this concrete type. Each method
+/// delegates to the inherent implementation.
+#[async_trait]
+impl BudgetController for InMemoryBudgetController {
+    async fn create_root(&self, owner: String, limit: BudgetRequest) -> BudgetScopeId {
+        InMemoryBudgetController::create_root(self, owner, limit).await
+    }
+
+    async fn reserve_child(
+        &self,
+        parent: BudgetScopeId,
+        kind: BudgetScopeKind,
+        owner: String,
+        request: BudgetRequest,
+    ) -> Result<BudgetReservationReceipt, AdmissionError> {
+        InMemoryBudgetController::reserve_child(self, parent, kind, owner, request).await
+    }
+
+    async fn settle_reservation(
+        &self,
+        reservation: BudgetReservationId,
+        usage: &UsageReport,
+    ) -> Result<(), AdmissionError> {
+        InMemoryBudgetController::settle_reservation(self, reservation, usage).await
+    }
+
+    async fn revoke_reservation(
+        &self,
+        reservation: BudgetReservationId,
+    ) -> Result<(), AdmissionError> {
+        InMemoryBudgetController::revoke_reservation(self, reservation).await
+    }
+
+    async fn scope(&self, id: BudgetScopeId) -> Option<BudgetScope> {
+        InMemoryBudgetController::scope(self, id).await
+    }
+
+    async fn active_reservation_count(&self) -> usize {
+        InMemoryBudgetController::active_reservation_count(self).await
     }
 }
 
