@@ -100,6 +100,8 @@ pub struct NativeCognitRuntimeResources {
     pub conscious_actions:
         Option<Arc<dyn crate::service::governed_capability::GovernedActionLoopResolver>>,
     pub conscious_candidates: Option<Arc<dyn AgentCandidateSubmissionPort>>,
+    /// Staged hardening flags; `compaction_v2` selects the guarded compactor.
+    pub grok_hardening: crate::core::config::GrokHardeningConfig,
 }
 
 pub struct NativeCognitRuntime {
@@ -122,7 +124,11 @@ impl NativeCognitRuntime {
     ) -> Result<AgentResult, AgentControlError> {
         let resolved = self.resources.profiles.resolve(&input.request.profile_id)?;
         validate_requested_tools(&input.request.allowed_tools, &resolved.profile)?;
-        let config = harness_config(&resolved.profile, &input.request.budget);
+        let config = harness_config(
+            &resolved.profile,
+            &input.request.budget,
+            self.resources.grok_hardening.compaction_v2,
+        );
         let session_record = SessionRecord {
             schema_version: SESSION_SCHEMA_VERSION,
             id: SessionId(input.handle.agent_id.0.to_string()),
@@ -593,11 +599,16 @@ fn labelled_context(input: &AgentRuntimeInput) -> Option<String> {
     Some(output)
 }
 
-fn harness_config(profile: &AgentProfile, budget: &fabric::AgentBudget) -> HarnessConfig {
+fn harness_config(
+    profile: &AgentProfile,
+    budget: &fabric::AgentBudget,
+    compaction_v2: bool,
+) -> HarnessConfig {
     HarnessConfig {
         max_iterations: profile.max_iterations,
         context_window_tokens: profile.max_input_tokens.min(budget.max_input_tokens) as usize,
         max_tool_calls: profile.max_tool_calls.min(budget.max_tool_calls) as usize,
+        compaction_v2,
         ..HarnessConfig::default()
     }
 }

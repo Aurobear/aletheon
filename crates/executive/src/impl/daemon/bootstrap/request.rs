@@ -69,6 +69,7 @@ impl RequestHandler {
         model_aliases: HashMap<String, String>,
         goal_runtime: cognit::config::GoalRuntimeConfig,
         pi_runtime: cognit::config::PiRuntimeConfig,
+        grok_hardening: crate::core::config::GrokHardeningConfig,
         evolution_enabled: bool,
         event_bus: Option<Arc<CanonicalEventBus>>,
         cancel_token: CancellationToken,
@@ -428,6 +429,7 @@ impl RequestHandler {
             session_id: session_id.clone(),
             context_window_tokens: context_window,
             conscious_arbitration_mode: config.conscious_arbitration_mode,
+            compaction_v2: grok_hardening.compaction_v2,
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
@@ -762,6 +764,7 @@ impl RequestHandler {
                     clock: clock.clone(),
                     conscious_actions: Some(conscious_registry.clone()),
                     conscious_candidates: Some(conscious_registry.clone()),
+                    grok_hardening: grok_hardening.clone(),
                 },
             ));
             agent_runtimes.register(

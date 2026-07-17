@@ -126,6 +126,7 @@ pub fn harness_config_from_executive(config: &ExecutiveConfig) -> HarnessConfig 
     HarnessConfig {
         max_iterations: config.max_iterations,
         compaction_enabled: config.compaction_enabled,
+        compaction_v2: config.compaction_v2,
         tail_token_budget: config.tail_token_budget,
         target_summary_chars: config.target_summary_chars,
         context_window_tokens: config.context_window_tokens,

@@ -22,6 +22,11 @@ pub struct ExecutiveConfig {
     pub session_id: String,
     pub learning_enabled: bool,
     pub compaction_enabled: bool,
+    /// Grok C1: route the main turn compactor through the guarded
+    /// `maybe_compact_v2` path. Defaults off (byte-identical legacy behavior);
+    /// fed from `grok_hardening.compaction_v2` at handler construction.
+    #[serde(default)]
+    pub compaction_v2: bool,
     pub tail_token_budget: usize,
     pub target_summary_chars: usize,
     pub context_window_tokens: usize,
@@ -45,6 +50,7 @@ impl Default for ExecutiveConfig {
             session_id: uuid::Uuid::new_v4().to_string(),
             learning_enabled: true,
             compaction_enabled: true,
+            compaction_v2: false,
             tail_token_budget: 16_000,
             target_summary_chars: 2_000,
             context_window_tokens: 128_000,
