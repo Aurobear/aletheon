@@ -42,8 +42,14 @@ impl DaemonTurnOrchestrator {
         }
     }
 
-    pub fn notify_tx(&self) -> &Arc<Mutex<Option<mpsc::Sender<String>>>> {
-        &self.notify_tx
+    /// Best-effort install of the turn-notification sender. Uses `try_lock` to
+    /// avoid blocking; a contended lock silently skips, matching prior behavior.
+    /// Encapsulates the notifier so the bare `Arc<Mutex<..>>` no longer crosses
+    /// the orchestrator's public boundary (coupling-optimization plan).
+    pub fn set_notify_sender(&self, sender: mpsc::Sender<String>) {
+        if let Ok(mut notify) = self.notify_tx.try_lock() {
+            *notify = Some(sender);
+        }
     }
 
     // ── Public kernel API — wait / cancel / exit (PR-3) ──────────────────
