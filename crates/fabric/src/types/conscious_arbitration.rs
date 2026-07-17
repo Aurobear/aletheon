@@ -14,9 +14,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::dasein::CareActionKind;
-use crate::{
-    AgoraSpaceId, BroadcastEpoch, ConsciousContextProjection, SalienceVector,
-};
+use crate::{AgoraSpaceId, BroadcastEpoch, ConsciousContextProjection, SalienceVector};
 
 // ---------------------------------------------------------------------------
 // Context read port (moved from Executive → Fabric)
@@ -198,9 +196,7 @@ impl ConsciousFieldReadout {
             .iter()
             .filter_map(|w| match &w.content {
                 crate::WorkspaceContent::Concern(signal) => match signal {
-                    crate::dasein::SelfSignal::CareDecision { action, .. } => {
-                        Some(action.clone())
-                    }
+                    crate::dasein::SelfSignal::CareDecision { action, .. } => Some(action.clone()),
                     _ => None,
                 },
                 _ => None,
@@ -426,7 +422,11 @@ mod tests {
         // This creates a projection that fails validate() because the receipt
         // has broadcast_epoch but latest_broadcast is None.
         let result = ConsciousFieldReadout::from_projection(&proj);
-        assert!(result.is_err(), "invalid projection should be Err, got {:?}", result);
+        assert!(
+            result.is_err(),
+            "invalid projection should be Err, got {:?}",
+            result
+        );
     }
 
     // ---- batch plan tests ----
@@ -540,7 +540,10 @@ mod tests {
         };
         let reordered = plan.apply_to(&calls).unwrap();
         assert_eq!(
-            reordered.iter().map(|c| c.call_id.as_str()).collect::<Vec<_>>(),
+            reordered
+                .iter()
+                .map(|c| c.call_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["c", "a", "b"]
         );
     }
@@ -563,17 +566,26 @@ mod tests {
             ConsciousArbitrationMode::parse_env("enforce"),
             Some(ConsciousArbitrationMode::Enforce)
         );
-        assert_eq!(ConsciousArbitrationMode::parse_env("  OBSERVE  "), Some(ConsciousArbitrationMode::Observe));
+        assert_eq!(
+            ConsciousArbitrationMode::parse_env("  OBSERVE  "),
+            Some(ConsciousArbitrationMode::Observe)
+        );
         assert_eq!(ConsciousArbitrationMode::parse_env("garbage"), None);
     }
 
     #[test]
     fn care_action_weights_are_correct() {
         // Verify the design.md §5.2 weight table.
-        assert_eq!(ConsciousFieldReadout::care_action_weight(CareActionKind::Direct), 0.25);
+        assert_eq!(
+            ConsciousFieldReadout::care_action_weight(CareActionKind::Direct),
+            0.25
+        );
         assert!(ConsciousFieldReadout::care_action_weight(CareActionKind::Deliberate) > 0.25);
         assert!(ConsciousFieldReadout::care_action_weight(CareActionKind::Wait) > 0.60);
-        assert_eq!(ConsciousFieldReadout::care_action_weight(CareActionKind::Negate), 1.00);
+        assert_eq!(
+            ConsciousFieldReadout::care_action_weight(CareActionKind::Negate),
+            1.00
+        );
     }
 
     #[test]

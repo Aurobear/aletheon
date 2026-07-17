@@ -5,17 +5,17 @@
 //! - preserves exact fallback when the reader is absent, errors, or empty.
 
 use async_trait::async_trait;
+use dasein::core::SelfFieldConfig;
 use fabric::conscious_arbitration::LatestConsciousContextPort;
+use fabric::dasein::Stimmung;
 use fabric::dasein::{CareActionKind, SelfSignal, SelfVersion};
+use fabric::workspace::{CareConcernFrame, SelectionExplanation};
 use fabric::{
     AgoraSpaceId, BroadcastEpoch, ConsciousContextProjection, ContentId, Context,
     ContextProjectionReceipt, Intent, IntentSource, MonoTime, ProcessId, SalienceVector,
-    SelfFieldOps, StructuredSelfView, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate,
-    WorkspaceContent, WorkspaceProvenance, Verdict,
+    SelfFieldOps, StructuredSelfView, Verdict, VisibilityScope, WorkspaceBroadcast,
+    WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance,
 };
-use fabric::workspace::{CareConcernFrame, SelectionExplanation};
-use fabric::dasein::Stimmung;
-use dasein::core::SelfFieldConfig;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -199,8 +199,7 @@ fn make_config(port_mode: Option<StubMode>) -> SelfFieldConfig {
     SelfFieldConfig {
         clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
         conscious_context: port_mode.map(|m| {
-            Arc::new(StubConsciousContextPort::new(m))
-                as Arc<dyn LatestConsciousContextPort>
+            Arc::new(StubConsciousContextPort::new(m)) as Arc<dyn LatestConsciousContextPort>
         }),
         ..SelfFieldConfig::default()
     }
@@ -225,7 +224,10 @@ async fn review_priority(config: SelfFieldConfig) -> f64 {
     let ctx = test_ctx();
     let _verdict = sf.review(&intent, &ctx).await.unwrap();
     // Priority is 0.0 when no focus topic exists (e.g., baseline care is zero).
-    sf.attention().current_focus().map(|f| f.priority).unwrap_or(0.0)
+    sf.attention()
+        .current_focus()
+        .map(|f| f.priority)
+        .unwrap_or(0.0)
 }
 
 async fn review_priority_without_reader() -> f64 {
@@ -274,7 +276,10 @@ async fn no_reader_equals_legacy_baseline() {
     let baseline = review_priority_without_reader().await;
     // None reader is the same as review_priority_without_reader
     let also_baseline = review_priority(make_config(None)).await;
-    assert_eq!(also_baseline, baseline, "None reader must produce baseline priority");
+    assert_eq!(
+        also_baseline, baseline,
+        "None reader must produce baseline priority"
+    );
 }
 
 #[tokio::test]

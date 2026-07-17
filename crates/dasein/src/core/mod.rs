@@ -408,9 +408,7 @@ impl SelfField {
             tracing::warn!(session_id = %ctx.session_id, "conscious read failed; using baseline care");
             return baseline;
         };
-        let Ok(Some(readout)) =
-            fabric::ConsciousFieldReadout::from_projection(&projection)
-        else {
+        let Ok(Some(readout)) = fabric::ConsciousFieldReadout::from_projection(&projection) else {
             return baseline;
         };
         (baseline + (1.0 - baseline) * 0.25 * f64::from(readout.precision)).clamp(0.0, 1.0)

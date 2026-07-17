@@ -94,7 +94,9 @@ impl FieldMetricSnapshot {
 
     /// Return true when all eight salience dimensions are finite and in [0, 1].
     pub fn is_bounded(&self) -> bool {
-        self.salience.iter().all(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0)
+        self.salience
+            .iter()
+            .all(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0)
     }
 }
 
@@ -345,12 +347,7 @@ impl FieldMetricHistory {
             .sum::<f64>()
             .sqrt();
 
-        let norm_a: f64 = last
-            .salience
-            .iter()
-            .map(|v| v * v)
-            .sum::<f64>()
-            .sqrt();
+        let norm_a: f64 = last.salience.iter().map(|v| v * v).sum::<f64>().sqrt();
 
         if norm_p == 0.0 || norm_a == 0.0 {
             return None;
@@ -455,10 +452,8 @@ mod tests {
 
     #[test]
     fn lineage_reset_reduces_lagged_mutual_information() {
-        let continuous =
-            FieldMetricHistory::from_snapshots(continuous_fixture()).unwrap();
-        let reset =
-            FieldMetricHistory::from_snapshots(reset_fixture()).unwrap();
+        let continuous = FieldMetricHistory::from_snapshots(continuous_fixture()).unwrap();
+        let reset = FieldMetricHistory::from_snapshots(reset_fixture()).unwrap();
 
         let cont_mi = continuous.lagged_mutual_information(1).unwrap();
         let reset_mi = reset.lagged_mutual_information(1).unwrap();
@@ -486,9 +481,7 @@ mod tests {
     #[test]
     fn indicators_single_entry() {
         let mut history = FieldMetricHistory::default();
-        history
-            .push(snapshot_with_urgency(0.5))
-            .unwrap();
+        history.push(snapshot_with_urgency(0.5)).unwrap();
         let ind = history.indicators();
         // Single entry -> no convergence, no MI (need 2 entries), no alignment.
         assert!(!ind.attractor_converged);
@@ -546,7 +539,9 @@ mod tests {
     fn history_bounds_at_64() {
         let mut history = FieldMetricHistory::default();
         for i in 0..100 {
-            history.push(snapshot_with_urgency(i as f64 / 100.0)).unwrap();
+            history
+                .push(snapshot_with_urgency(i as f64 / 100.0))
+                .unwrap();
         }
         assert_eq!(history.len(), 64);
         // The first 36 entries should be evicted; the 37th (index 36) is now front.

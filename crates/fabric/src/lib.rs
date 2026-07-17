@@ -87,6 +87,10 @@ pub use types::workspace;
 pub use protocol::conscious_core::{
     CandidateDisposition, ConsciousCoreSnapshot, InspectorProcessorAck,
 };
+pub use types::conscious_arbitration::{
+    CapabilityBatchDecision, CapabilityBatchPlan, ConsciousArbitrationMode, ConsciousFieldReadout,
+    FieldDecisionKind, FieldDecisionReason, LatestConsciousContextPort,
+};
 pub use types::conscious_core::{
     BroadcastIntegrationReceipt, ConsciousContextProjection, ConsciousProcessor,
     ContextProjectionReceipt, ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId,
@@ -98,13 +102,8 @@ pub use types::conscious_core_trace::{
     CONSCIOUS_CORE_TRACE_SCHEMA_V1,
 };
 pub use types::conscious_field_metrics::{
-    FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot, quantize,
+    quantize, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
     MAX_FIELD_METRIC_HISTORY, QUIET_CONVERGENCE_WINDOW,
-};
-pub use types::conscious_arbitration::{
-    CapabilityBatchDecision, CapabilityBatchPlan, ConsciousArbitrationMode,
-    ConsciousFieldReadout, FieldDecisionKind, FieldDecisionReason,
-    LatestConsciousContextPort,
 };
 pub use types::workspace::{
     ActionProposalFrame, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, BroadcastEpoch,
