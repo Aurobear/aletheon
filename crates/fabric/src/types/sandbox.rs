@@ -1,5 +1,6 @@
 //! Sandbox trait and types.
 
+use crate::WorkspacePolicy;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -321,6 +322,158 @@ impl std::fmt::Display for ProfileName {
     }
 }
 
+/// A resolved execution policy. Fed to a backend, which applies it per its
+/// capabilities. `resolve_profile` produces this; the backend consumes it.
+///
+/// `read_only_roots` containing the filesystem root (`/`) means "read the whole
+/// disk" (the `workspace`/`read-only` default). `deny_exact`/`deny_globs` are
+/// always enforced on top and win over any readable root — credential paths are
+/// merged into `deny_exact` for every profile (fail-closed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedSandboxPolicy {
+    pub name: String,
+    pub read_only_roots: Vec<PathBuf>,
+    pub read_write_roots: Vec<PathBuf>,
+    /// Exact deny paths. Canonicalization (which touches the FS) happens in the
+    /// backend-application phase, not in the pure `resolve_profile`.
+    pub deny_exact: Vec<PathBuf>,
+    /// Deny globs (e.g. `**/*.pem`). Expanded best-effort by the backend with
+    /// the bounds below; carried verbatim through resolution.
+    pub deny_globs: Vec<String>,
+    pub restrict_network: bool,
+}
+
+/// Deny-glob expansion caps (fail-closed on overflow). Consumed by the backend
+/// FS-walk phase (`sandbox_glob`), defined here alongside the policy they bound.
+pub const DENY_GLOB_MAX_DEPTH: usize = 8;
+pub const DENY_GLOB_MAX_MATCHES: usize = 4096;
+pub const DENY_GLOB_MAX_ENTRIES: usize = 256;
+
+/// Read-only system roots granted by the `strict` profile so that programs can
+/// still be located and dynamically linked. Nothing here is writable.
+const STRICT_SYSTEM_READ_ROOTS: &[&str] = &["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc"];
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ProfileResolveError {
+    #[error("custom profile '{0}' not found")]
+    NotFound(String),
+    #[error("custom profile cannot extend another custom profile")]
+    ExtendsCustom,
+    #[error("'off' is not a valid base profile")]
+    ExtendsOff,
+    #[error("deny glob expansion exceeded caps (fail-closed)")]
+    GlobOverflow,
+}
+
+/// A deny entry is a glob if it carries any wildcard metacharacter; otherwise it
+/// is treated as an exact path.
+fn deny_is_glob(entry: &str) -> bool {
+    entry.contains('*') || entry.contains('?') || entry.contains('[')
+}
+
+fn split_deny(deny: &[String], exact: &mut Vec<PathBuf>, globs: &mut Vec<String>) {
+    for entry in deny {
+        if deny_is_glob(entry) {
+            globs.push(entry.clone());
+        } else {
+            exact.push(PathBuf::from(entry));
+        }
+    }
+}
+
+/// Resolve a `ProfileName` + trusted config into a `ResolvedSandboxPolicy`.
+///
+/// Pure (no FS access): glob entries are carried verbatim into `deny_globs` for
+/// later bounded expansion. Credential paths from the workspace's protected-path
+/// policy are merged into `deny_exact` for **every** profile — a profile can
+/// never grant access to a credential path.
+pub fn resolve_profile(
+    name: &ProfileName,
+    workspace: &WorkspacePolicy,
+    profiles: &SandboxProfiles,
+) -> Result<ResolvedSandboxPolicy, ProfileResolveError> {
+    let mut policy = match name {
+        // "off": no added restriction (credentials are still denied below).
+        ProfileName::Off => ResolvedSandboxPolicy {
+            name: "off".to_string(),
+            read_only_roots: vec![PathBuf::from("/")],
+            read_write_roots: workspace.writable_roots().to_vec(),
+            deny_exact: Vec::new(),
+            deny_globs: Vec::new(),
+            restrict_network: false,
+        },
+        // "workspace": read the whole disk, write only the declared roots.
+        ProfileName::Workspace => ResolvedSandboxPolicy {
+            name: "workspace".to_string(),
+            read_only_roots: vec![PathBuf::from("/")],
+            read_write_roots: workspace.writable_roots().to_vec(),
+            deny_exact: Vec::new(),
+            deny_globs: Vec::new(),
+            restrict_network: false,
+        },
+        // "read-only": read anything, write nothing, no network.
+        ProfileName::ReadOnly => ResolvedSandboxPolicy {
+            name: "read-only".to_string(),
+            read_only_roots: vec![PathBuf::from("/")],
+            read_write_roots: Vec::new(),
+            deny_exact: Vec::new(),
+            deny_globs: Vec::new(),
+            restrict_network: true,
+        },
+        // "strict": read only system roots + the workspace, write declared roots,
+        // no network.
+        ProfileName::Strict => {
+            let mut read_only_roots: Vec<PathBuf> =
+                STRICT_SYSTEM_READ_ROOTS.iter().map(PathBuf::from).collect();
+            read_only_roots.push(workspace.cwd().to_path_buf());
+            ResolvedSandboxPolicy {
+                name: "strict".to_string(),
+                read_only_roots,
+                read_write_roots: workspace.writable_roots().to_vec(),
+                deny_exact: Vec::new(),
+                deny_globs: Vec::new(),
+                restrict_network: true,
+            }
+        }
+        // custom: resolve the built-in base, then layer the overrides.
+        ProfileName::Custom(cname) => {
+            let cfg = profiles
+                .profiles
+                .get(cname)
+                .ok_or_else(|| ProfileResolveError::NotFound(cname.clone()))?;
+            let base_name = match cfg.extends.as_deref() {
+                None => ProfileName::Workspace,
+                // FromStr for ProfileName is Infallible.
+                Some(base) => match base.parse::<ProfileName>().unwrap() {
+                    ProfileName::Custom(_) => return Err(ProfileResolveError::ExtendsCustom),
+                    ProfileName::Off => return Err(ProfileResolveError::ExtendsOff),
+                    resolved => resolved,
+                },
+            };
+            let mut base = resolve_profile(&base_name, workspace, profiles)?;
+            base.name = cname.clone();
+            base.read_only_roots
+                .extend(cfg.read_only.iter().map(PathBuf::from));
+            base.read_write_roots
+                .extend(cfg.read_write.iter().map(PathBuf::from));
+            split_deny(&cfg.deny, &mut base.deny_exact, &mut base.deny_globs);
+            if let Some(net) = cfg.restrict_network {
+                base.restrict_network = net;
+            }
+            base
+        }
+    };
+
+    // Credential paths are ALWAYS denied, no matter the profile (fail-closed).
+    for cred in workspace.protected_paths().credential_paths() {
+        if !policy.deny_exact.contains(cred) {
+            policy.deny_exact.push(cred.clone());
+        }
+    }
+
+    Ok(policy)
+}
+
 #[cfg(test)]
 mod profile_tests {
     use super::*;
@@ -400,5 +553,154 @@ mod profile_tests {
         );
         assert_eq!(ProfileName::ReadOnly.to_string(), "read-only");
         assert_eq!(ProfileName::Custom("x".into()).to_string(), "x");
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+    use crate::types::local_authority::ProtectedPathPolicy;
+
+    fn ws() -> WorkspacePolicy {
+        WorkspacePolicy::from_resolved_roots(PathBuf::from("/home/u/proj"), vec![]).unwrap()
+    }
+
+    fn custom(name: &str, cfg: SandboxProfileConfig) -> SandboxProfiles {
+        let mut p = SandboxProfiles::default();
+        p.profiles.insert(name.to_string(), cfg);
+        p
+    }
+
+    // T2
+    #[test]
+    fn workspace_reads_all_writes_declared_roots() {
+        let policy =
+            resolve_profile(&ProfileName::Workspace, &ws(), &SandboxProfiles::default()).unwrap();
+        assert_eq!(policy.read_only_roots, vec![PathBuf::from("/")]);
+        assert_eq!(policy.read_write_roots, vec![PathBuf::from("/home/u/proj")]);
+        assert!(!policy.restrict_network);
+        assert!(policy.deny_exact.is_empty());
+    }
+
+    // T3
+    #[test]
+    fn read_only_restricts_network_and_forbids_writes() {
+        let policy =
+            resolve_profile(&ProfileName::ReadOnly, &ws(), &SandboxProfiles::default()).unwrap();
+        assert_eq!(policy.read_only_roots, vec![PathBuf::from("/")]);
+        assert!(policy.read_write_roots.is_empty());
+        assert!(policy.restrict_network);
+    }
+
+    // T4
+    #[test]
+    fn strict_whitelists_system_plus_workspace_and_restricts_network() {
+        let policy =
+            resolve_profile(&ProfileName::Strict, &ws(), &SandboxProfiles::default()).unwrap();
+        assert!(policy.read_only_roots.contains(&PathBuf::from("/usr")));
+        assert!(policy
+            .read_only_roots
+            .contains(&PathBuf::from("/home/u/proj")));
+        // The whole disk is NOT readable under strict.
+        assert!(!policy.read_only_roots.contains(&PathBuf::from("/")));
+        assert_eq!(policy.read_write_roots, vec![PathBuf::from("/home/u/proj")]);
+        assert!(policy.restrict_network);
+    }
+
+    // T5
+    #[test]
+    fn custom_extends_workspace_layers_overrides() {
+        let profiles = custom(
+            "devbox",
+            SandboxProfileConfig {
+                extends: Some("workspace".to_string()),
+                restrict_network: Some(true),
+                read_only: vec![],
+                read_write: vec!["/data".to_string()],
+                deny: vec!["/home/u/.ssh".to_string(), "**/*.pem".to_string()],
+            },
+        );
+        let policy =
+            resolve_profile(&ProfileName::Custom("devbox".into()), &ws(), &profiles).unwrap();
+        assert_eq!(policy.name, "devbox");
+        // Inherited workspace write root plus the custom addition.
+        assert!(policy
+            .read_write_roots
+            .contains(&PathBuf::from("/home/u/proj")));
+        assert!(policy.read_write_roots.contains(&PathBuf::from("/data")));
+        // Network override applied.
+        assert!(policy.restrict_network);
+        // Deny split into exact vs glob.
+        assert!(policy.deny_exact.contains(&PathBuf::from("/home/u/.ssh")));
+        assert_eq!(policy.deny_globs, vec!["**/*.pem".to_string()]);
+    }
+
+    // T6
+    #[test]
+    fn custom_error_branches() {
+        // not found
+        assert_eq!(
+            resolve_profile(
+                &ProfileName::Custom("ghost".into()),
+                &ws(),
+                &SandboxProfiles::default()
+            ),
+            Err(ProfileResolveError::NotFound("ghost".to_string()))
+        );
+        // extends another custom
+        let extends_custom = custom(
+            "bad",
+            SandboxProfileConfig {
+                extends: Some("other-custom".to_string()),
+                restrict_network: None,
+                read_only: vec![],
+                read_write: vec![],
+                deny: vec![],
+            },
+        );
+        assert_eq!(
+            resolve_profile(&ProfileName::Custom("bad".into()), &ws(), &extends_custom),
+            Err(ProfileResolveError::ExtendsCustom)
+        );
+        // extends off
+        let extends_off = custom(
+            "bad2",
+            SandboxProfileConfig {
+                extends: Some("off".to_string()),
+                restrict_network: None,
+                read_only: vec![],
+                read_write: vec![],
+                deny: vec![],
+            },
+        );
+        assert_eq!(
+            resolve_profile(&ProfileName::Custom("bad2".into()), &ws(), &extends_off),
+            Err(ProfileResolveError::ExtendsOff)
+        );
+    }
+
+    // T7 — credentials are denied for every profile, even permissive ones.
+    #[test]
+    fn credentials_always_denied() {
+        let protected =
+            ProtectedPathPolicy::new(vec![PathBuf::from("/tmp/aletheon-test-cred.json")]).unwrap();
+        let workspace = WorkspacePolicy::from_resolved_roots(PathBuf::from("/tmp"), vec![])
+            .unwrap()
+            .with_protected_paths(protected);
+        for name in [
+            ProfileName::Workspace,
+            ProfileName::ReadOnly,
+            ProfileName::Strict,
+            ProfileName::Off,
+        ] {
+            let policy = resolve_profile(&name, &workspace, &SandboxProfiles::default()).unwrap();
+            assert!(
+                policy
+                    .deny_exact
+                    .iter()
+                    .any(|p| p.ends_with("aletheon-test-cred.json")),
+                "profile {name} must deny the credential path"
+            );
+        }
     }
 }

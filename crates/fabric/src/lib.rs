@@ -262,9 +262,10 @@ pub use types::process::{
 };
 pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
-    IsolationLevel, ProfileName, SandboxBackend, SandboxCapabilities, SandboxCommand,
-    SandboxConfig, SandboxExecutor, SandboxPreference, SandboxProfileConfig, SandboxProfiles,
-    SandboxResult,
+    resolve_profile, IsolationLevel, ProfileName, ProfileResolveError, ResolvedSandboxPolicy,
+    SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig, SandboxExecutor,
+    SandboxPreference, SandboxProfileConfig, SandboxProfiles, SandboxResult, DENY_GLOB_MAX_DEPTH,
+    DENY_GLOB_MAX_ENTRIES, DENY_GLOB_MAX_MATCHES,
 };
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
