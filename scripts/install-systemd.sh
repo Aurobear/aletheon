@@ -69,7 +69,7 @@ systemd-analyze verify /etc/systemd/system/aletheon.service
 systemd-analyze verify /etc/systemd/system/aletheon-core.service
 systemd-analyze verify /etc/systemd/system/aletheon-backup.service
 systemd-analyze verify /etc/systemd/system/aletheon-cleanup.service
-systemd-analyze --user verify /usr/lib/systemd/user/aletheon.socket \
+systemd-analyze verify /usr/lib/systemd/user/aletheon.socket \
   /usr/lib/systemd/user/aletheon.service
 systemctl daemon-reload
 if ((enable)); then
