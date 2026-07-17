@@ -10,6 +10,15 @@ SHM files are never copied independently. This covers Goals, attempts,
 approvals, channel/outbox state, Google cursors/projections, Mnemosyne and GBrain
 spool state, artifacts, worktrees, audit data, and local configuration.
 
+That machine timer does not cover socket-activated user daemons. Their
+systemd-managed durable root is `$HOME/.local/state/aletheon` (from the user
+unit's `StateDirectory=aletheon`). A complete split-runtime migration backup
+therefore consists of the machine snapshot plus a separately protected,
+user-owned snapshot of that path for every enrolled account. Do not substitute
+`$HOME/.local/share/aletheon`; it is not the unit's state directory. Per-user
+cache under `$HOME/.cache/aletheon` and sockets under `/run/user/$UID` are
+reconstructed rather than restored.
+
 The manifest records UTC creation time, host ID, Aletheon/schema versions,
 components, file sizes and SHA-256 hashes, and the Restic data snapshot ID. A
 second small Restic snapshot stores the completed manifest as the receipt.
@@ -44,7 +53,9 @@ snapshot. Monitor readiness `backup` age against 36 hours.
 Restore only into a new empty staging root:
 
 ```sh
-sudo systemctl stop aletheon
+sudo systemctl stop aletheon-core.service
+# As each enrolled user (or through an audited root-run user-manager helper):
+systemctl --user stop aletheon.socket aletheon.service
 sudo env ALETHEON_RESTORE_TARGET=/var/lib/aletheon.restore \
   ALETHEON_RESTORE_CONFIG_TARGET=/etc/aletheon.restore \
   ALETHEON_RESTORE_SNAPSHOT=latest /usr/libexec/aletheon/restore-aletheon.sh
@@ -58,6 +69,13 @@ the old root to a timestamped rollback directory, atomically place the staged
 root, then start Aletheon and wait for readiness. Never run an older binary on a
 newer schema without restoring its matching pre-upgrade snapshot.
 
+For a split-runtime restore, keep the core and every affected user socket and
+service stopped. Restore each matching user snapshot into an empty
+`$HOME/.local/state/aletheon`, preserve its original UID/GID and restrictive
+modes, run SQLite integrity checks there, then start the core followed by user
+socket activation. Never combine restored machine state with migrated user
+state, or vice versa.
+
 ## Release drills
 
 For every release, back up while a Goal is active and while a WAL transaction is
@@ -68,3 +86,7 @@ rollback to the untouched pre-restore root. Record snapshot IDs, elapsed time,
 size, RPO, and RTO in the release evidence bundle. Use
 `ALETHEON_BACKUP_MODE=staging` only for the local consistency smoke test; it is
 not an encrypted production backup.
+
+The installed-host release drill names two explicit disposable users and
+retains machine and per-user integrity output before and after install,
+restart, upgrade, and matching rollback.

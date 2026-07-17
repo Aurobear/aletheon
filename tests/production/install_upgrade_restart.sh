@@ -53,6 +53,8 @@ ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT="$backup" \
   ALETHEON_SCHEMA_VERSION="$(sha256sum "$repo_root/config/release/migration-matrix.toml" | cut -d' ' -f1)" \
   "$repo_root/scripts/backup-aletheon.sh"
 user_backup="$artifacts/pre-upgrade-user-state"
+# The user unit's StateDirectory=aletheon maps to ~/.local/state/aletheon.
+# Keep this snapshot matched to the machine backup and saved binary.
 backup_installed_user_state "$user_backup"
 sha256sum "$candidate" >"$artifacts/candidate.sha256"
 cat >"$artifacts/upgrade-backup.sh" <<UPGRADE_BACKUP
@@ -113,6 +115,6 @@ capture_installed_journal "$artifacts/final-journal"
 jq -n --arg completed_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg artifacts "$artifacts" --arg candidate_sha256 "$(cut -d' ' -f1 "$artifacts/candidate.sha256")" \
   --arg user_a "$ALETHEON_TEST_USER_A" --arg user_b "$ALETHEON_TEST_USER_B" \
-  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,candidate_sha256:$candidate_sha256,rollback:"matching_data_and_binary",system_unit:"aletheon-core.service",user_socket_activation:true,test_users:[$user_a,$user_b]}' \
+  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,candidate_sha256:$candidate_sha256,rollback:"matching_system_user_state_and_binary",system_unit:"aletheon-core.service",user_state_root:"$HOME/.local/state/aletheon",user_socket_activation:true,test_users:[$user_a,$user_b]}' \
   >"$artifacts/operator-receipt.json"
 echo "installed-host release drill passed: $artifacts/operator-receipt.json"

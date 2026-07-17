@@ -68,6 +68,13 @@ read/write access only to `/run/aletheon`, `/var/lib/aletheon`, and
 `ExecStart`, or `Environment=`. User integration credentials and user runtime
 state remain in that user's authority domain.
 
+For the checked-in user unit, systemd expands `StateDirectory=aletheon` to
+`$XDG_STATE_HOME/aletheon`, normally `$HOME/.local/state/aletheon`. It expands
+`CacheDirectory=aletheon` to `$XDG_CACHE_HOME/aletheon`, normally
+`$HOME/.cache/aletheon`. Do not treat `$HOME/.local/share/aletheon` as the
+managed state directory. The private socket remains below `$XDG_RUNTIME_DIR`
+and is not durable state.
+
 Pi/bubblewrap requires user and mount namespaces, so `RestrictNamespaces` is
 intentionally not set on the relevant runtime. `NoNewPrivileges`, filesystem
 protection, and the application sandbox remain active. Re-run Pi
@@ -76,7 +83,10 @@ namespace/worktree tests after changing hardening directives.
 The system backup and cleanup timers cover only machine-scoped core state below
 `/var/lib/aletheon` and `/var/cache/aletheon`. They do **not** back up or delete
 systemd-managed per-user state/cache directories. Per-user data needs a
-separate user-owned retention and backup policy.
+separate user-owned retention and backup policy. A matching per-user backup
+must capture `$HOME/.local/state/aletheon` for every enrolled principal; cache
+and runtime socket directories are reconstructible and are not authoritative
+rollback inputs.
 
 ## Validation and recovery
 

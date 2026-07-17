@@ -57,6 +57,18 @@ installed_user_socket() {
   printf '/run/user/%s/aletheon/aletheon.sock\n' "$(installed_user_uid "$1")"
 }
 
+installed_user_state_root_from_home() {
+  local home=$1
+  [[ "$home" == /* && "$home" != / ]] || {
+    echo "refusing unsafe user-state home" >&2; return 78;
+  }
+  printf '%s/.local/state/aletheon\n' "${home%/}"
+}
+
+installed_user_state_root() {
+  installed_user_state_root_from_home "$(installed_user_home "$1")"
+}
+
 run_as_installed_user() {
   local user=$1 uid home
   shift
@@ -209,12 +221,11 @@ capture_installed_journal() {
 }
 
 backup_installed_user_state() {
-  local output=$1 user uid home state target
+  local output=$1 user uid state target
   install -d -m 0700 "$output"
   while IFS= read -r user; do
     uid=$(installed_user_uid "$user")
-    home=$(installed_user_home "$user")
-    state="$home/.local/share/aletheon"
+    state=$(installed_user_state_root "$user")
     [[ -d "$state" && ! -L "$state" ]] || {
       echo "user state root is unavailable for $user" >&2; return 1;
     }
@@ -227,24 +238,22 @@ backup_installed_user_state() {
 }
 
 archive_installed_user_state() {
-  local output=$1 user uid home state
+  local output=$1 user uid state
   install -d -m 0700 "$output"
   while IFS= read -r user; do
     uid=$(installed_user_uid "$user")
-    home=$(installed_user_home "$user")
-    state="$home/.local/share/aletheon"
+    state=$(installed_user_state_root "$user")
     [[ -d "$state" && ! -L "$state" ]] || continue
     mv -- "$state" "$output/$uid"
   done < <(installed_test_users)
 }
 
 restore_installed_user_state() {
-  local source=$1 user uid home parent state
+  local source=$1 user uid state parent
   while IFS= read -r user; do
     uid=$(installed_user_uid "$user")
-    home=$(installed_user_home "$user")
-    parent="$home/.local/share"
-    state="$parent/aletheon"
+    state=$(installed_user_state_root "$user")
+    parent=${state%/aletheon}
     [[ ! -e "$state" && -d "$source/$uid/state" && ! -L "$source/$uid/state" ]] || {
       echo "refusing unsafe user-state restore for $user" >&2; return 1;
     }
@@ -254,15 +263,23 @@ restore_installed_user_state() {
 }
 
 capture_installed_user_integrity() {
-  local output=$1 user uid home
+  local output=$1 user uid state
   : >"$output"
   while IFS= read -r user; do
     uid=$(installed_user_uid "$user")
-    home=$(installed_user_home "$user")
+    state=$(installed_user_state_root "$user")
     printf 'user=%s uid=%s\n' "$user" "$uid" >>"$output"
-    capture_sqlite_integrity "$home/.local/share/aletheon" "$output.$uid"
+    capture_sqlite_integrity "$state" "$output.$uid"
     cat "$output.$uid" >>"$output"
   done < <(installed_test_users)
+}
+
+installed_host_user_state_static_test() {
+  [[ $(installed_user_state_root_from_home /home/v02-user) == \
+    /home/v02-user/.local/state/aletheon ]]
+  local legacy='.local/'"share/aletheon"
+  ! grep -F "$legacy" "${BASH_SOURCE[0]}"
+  echo "installed-host user-state path verification: pass"
 }
 
 capture_sqlite_integrity() {
@@ -277,3 +294,10 @@ capture_sqlite_integrity() {
   ((count > 0)) || { echo "no SQLite databases found below $root" >&2; return 1; }
   ! grep -v $'\tok$' "$output" | grep -q .
 }
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  case "${1-}" in
+    --static-test) installed_host_user_state_static_test ;;
+    *) echo "usage: $0 --static-test" >&2; exit 64 ;;
+  esac
+fi
