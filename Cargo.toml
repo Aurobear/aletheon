@@ -12,6 +12,7 @@ members = [
     "crates/metacog",
     "crates/kernel",
     "crates/executive",
+    "crates/exec-server",
     "examples/basic-agent",
     "examples/self-evolution-loop",
 ]

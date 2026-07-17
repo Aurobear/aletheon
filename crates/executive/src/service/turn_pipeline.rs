@@ -812,8 +812,8 @@ fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
         }),
         TurnEventV1::CompactionTriggered { .. } => Some(ClientEvent::CompactionTriggered),
         // TextDeltaStop, Approval, Generic, ToolProgress → no client-facing event
-        // via this legacy converter. ToolProgress is bridged separately in the
-        // streaming-tool integration phase (G2).
+        // via this legacy converter. ToolProgress is bridged separately via
+        // tool_stream_bridge (G2), gated behind grok_hardening.streaming_tools.
         TurnEventV1::TextDeltaStop
         | TurnEventV1::Approval { .. }
         | TurnEventV1::Generic { .. }

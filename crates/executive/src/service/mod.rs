@@ -26,6 +26,7 @@ pub mod pre_turn;
 pub mod session_service;
 pub mod thread_authority;
 pub mod turn_coordinator;
+pub mod tool_stream_bridge;
 pub mod turn_pipeline;
 pub mod turn_policy;
 pub mod turn_service;
