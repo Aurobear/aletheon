@@ -346,4 +346,8 @@ pub use primitives::{
 };
 
 // Compaction (shared context-compaction interface + pruning helpers)
-pub use include::compaction::{prune_tool_outputs, truncate_utf8_bytes, CompactorTrait};
+pub use include::compaction::{
+    is_degenerate_summary, prune_tool_outputs, safe_tail_cut, truncate_utf8_bytes,
+    CompactionFailure, CompactionOutcome, CompactionStrategy, CompactorTrait,
+    MIN_SUMMARY_SEED_CHARS,
+};
