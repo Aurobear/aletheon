@@ -3,6 +3,7 @@
 use crate::WorkspacePolicy;
 use anyhow::Result;
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -263,7 +264,7 @@ impl SandboxExecutor {
 // ---------------------------------------------------------------------------
 
 /// A named sandbox profile config (from trusted daemon config, never repo).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct SandboxProfileConfig {
     /// Built-in base to inherit ("workspace" | "read-only" | "strict").
     /// Custom profiles cannot extend other custom profiles.
@@ -281,10 +282,29 @@ pub struct SandboxProfileConfig {
 }
 
 /// Layered sandbox profiles. Global loads first; project merges additively.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct SandboxProfiles {
+    /// Which profile to apply by default (used when `grok_hardening.sandbox_profiles`
+    /// is on). Must be a known profile name or built-in ("workspace", "strict",
+    /// "read-only", "off"). "workspace" = safe default (read all, write workspace
+    /// roots + credential deny).
+    #[serde(default = "default_profile_name")]
+    pub default_profile: String,
     #[serde(default)]
     pub profiles: BTreeMap<String, SandboxProfileConfig>,
+}
+
+fn default_profile_name() -> String {
+    "workspace".to_string()
+}
+
+impl Default for SandboxProfiles {
+    fn default() -> Self {
+        Self {
+            default_profile: "workspace".to_string(),
+            profiles: BTreeMap::new(),
+        }
+    }
 }
 
 impl SandboxProfiles {

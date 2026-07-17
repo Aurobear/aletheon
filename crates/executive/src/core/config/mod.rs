@@ -58,6 +58,9 @@ pub struct AppConfig {
     pub pi_runtime: PiRuntimeConfig,
     pub deployment: DeploymentConfig,
     pub grok_hardening: GrokHardeningConfig,
+    /// S1 sandbox profiles (from trusted daemon config, never from repo).
+    #[serde(default)]
+    pub sandbox_profiles: fabric::SandboxProfiles,
 }
 
 impl AppConfig {
