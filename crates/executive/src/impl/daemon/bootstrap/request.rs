@@ -421,11 +421,13 @@ impl RequestHandler {
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
         let (approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
-        let tool_runner = Arc::new(Mutex::new(
+        let mut runner =
             ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
-                .with_approval_gate(Arc::new(approval_gate))
-                .with_sandbox_profiles(sandbox_profiles),
-        ));
+                .with_approval_gate(Arc::new(approval_gate));
+        if grok_hardening.sandbox_profiles {
+            runner = runner.with_sandbox_profiles(sandbox_profiles);
+        }
+        let tool_runner = Arc::new(Mutex::new(runner));
 
         let runtime_config = ExecutiveConfig {
             session_id: session_id.clone(),
