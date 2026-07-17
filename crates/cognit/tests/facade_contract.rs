@@ -36,6 +36,7 @@ fn dependencies(cancel: CancellationToken) -> CognitiveSessionDependencies {
         clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
         cancellation: cancel,
         compactor: None,
+        batch_planner: None,
     }
 }
 

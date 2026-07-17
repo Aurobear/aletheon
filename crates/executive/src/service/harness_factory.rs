@@ -52,6 +52,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 clock: self.clock.clone(),
                 cancellation,
                 compactor: Some(compactor(&self.config)),
+                batch_planner: None,
             },
         )))
     }
@@ -70,6 +71,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 clock: self.clock.clone(),
                 cancellation,
                 compactor: Some(compactor),
+                batch_planner: None,
             },
         )))
     }

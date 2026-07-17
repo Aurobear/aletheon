@@ -64,6 +64,19 @@ impl LlmProvider for DynLlmRef<'_> {
 /// on the same abstract contract without depending on each other.
 pub use fabric::CompactorTrait;
 
+/// Async trait for planning capability batch execution order.
+///
+/// The planner receives the complete set of tool calls the LLM requested in
+/// one iteration and returns a validated plan. Cognit applies the plan only
+/// when the mode is `Enforce` and the plan is a valid exact permutation.
+#[async_trait]
+pub trait BatchPlanner: Send + Sync {
+    async fn plan(
+        &self,
+        calls: Vec<fabric::CapabilityCall>,
+    ) -> anyhow::Result<fabric::CapabilityBatchPlan>;
+}
+
 /// Marker injected into user messages when plan mode is active.
 /// Shared between `ReActLoop` and `Controller` to keep them in sync.
 pub const PLAN_MODE_MARKER: &str = "[PLAN MODE ACTIVE]";
@@ -105,6 +118,9 @@ pub struct ReActLoop {
     max_verify_attempts: usize,
     /// Optional Dasein context provider — called each turn to inject SelfField state.
     dasein_ctx_provider: Option<Box<dyn Fn() -> Option<String> + Send + Sync>>,
+    /// Optional batch planner — called before each tool-execution batch to
+    /// reorder calls according to conscious arbitration policy.
+    batch_planner: Option<Arc<dyn BatchPlanner>>,
     /// Clock for deterministic time (mono/wall).
     clock: Arc<dyn Clock>,
 }
@@ -146,6 +162,7 @@ impl ReActLoop {
             verify_attempts: 0,
             max_verify_attempts: 2,
             dasein_ctx_provider: None,
+            batch_planner: None,
             clock,
         }
     }
@@ -273,6 +290,11 @@ impl ReActLoop {
     /// Get the current goal context for LLM prompting.
     pub fn get_goal_context(&self) -> String {
         self.goal_tracker.get_context()
+    }
+
+    /// Set the batch planner for conscious arbitration.
+    pub fn set_batch_planner(&mut self, planner: Arc<dyn BatchPlanner>) {
+        self.batch_planner = Some(planner);
     }
 }
 

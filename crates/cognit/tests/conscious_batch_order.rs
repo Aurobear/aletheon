@@ -15,9 +15,9 @@ use cognit::harness::{
     CognitiveStreamSink, HarnessConfig, LinearCognitiveSession,
 };
 use fabric::{
-    CapabilityBatchPlan, CapabilityCall, CapabilityResult, ConsciousArbitrationMode,
-    ContentBlock, LlmProvider, LlmResponse, LlmStream, NoopTurnEventSink, OperationId,
-    ProcessId, StopReason, ToolDefinition, TurnRequest, TurnServices, Usage,
+    CapabilityBatchPlan, CapabilityCall, CapabilityResult, ConsciousArbitrationMode, ContentBlock,
+    LlmProvider, LlmResponse, LlmStream, NoopTurnEventSink, OperationId, ProcessId, StopReason,
+    ToolDefinition, TurnRequest, TurnServices, Usage,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -267,10 +267,7 @@ async fn run_with_plan(
 
     #[async_trait]
     impl BatchPlanner for ServicesBatchPlanner {
-        async fn plan(
-            &self,
-            calls: Vec<CapabilityCall>,
-        ) -> anyhow::Result<CapabilityBatchPlan> {
+        async fn plan(&self, calls: Vec<CapabilityCall>) -> anyhow::Result<CapabilityBatchPlan> {
             if self.valid_plan {
                 Ok(CapabilityBatchPlan {
                     mode: self.mode,
@@ -289,11 +286,7 @@ async fn run_with_plan(
             } else {
                 Ok(CapabilityBatchPlan {
                     mode: ConsciousArbitrationMode::Enforce,
-                    ordered_call_ids: vec![
-                        "tool_a".into(),
-                        "tool_a".into(),
-                        "tool_b".into(),
-                    ],
+                    ordered_call_ids: vec!["tool_a".into(), "tool_a".into(), "tool_b".into()],
                     decisions: vec![],
                 })
             }
@@ -314,22 +307,13 @@ async fn run_with_plan(
 
     #[async_trait]
     impl TurnServices for SharedServices {
-        async fn recall(
-            &self,
-            _req: fabric::RecallRequest,
-        ) -> anyhow::Result<fabric::RecallSet> {
+        async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
             Ok(Default::default())
         }
-        async fn dasein_view(
-            &self,
-            _process: ProcessId,
-        ) -> anyhow::Result<fabric::DaseinView> {
+        async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
             Ok(Default::default())
         }
-        async fn agora_view(
-            &self,
-            _session_id: &str,
-        ) -> anyhow::Result<fabric::AgoraView> {
+        async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
             Ok(Default::default())
         }
         async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {

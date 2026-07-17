@@ -5,8 +5,8 @@ use crate::harness::linear::DynLlmRef;
 use crate::harness::linear::{BatchPlanner, CompactorTrait, ReActLoop};
 use async_trait::async_trait;
 use fabric::{
-    CapabilityCall, Message, TurnEvent, TurnEventSink,
-    TurnMetrics as FabricTurnMetrics, TurnRequest, TurnResult, TurnServices, TurnStop,
+    CapabilityCall, Message, TurnEvent, TurnEventSink, TurnMetrics as FabricTurnMetrics,
+    TurnRequest, TurnResult, TurnServices, TurnStop,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -178,8 +178,6 @@ impl CognitiveSessionFactory for DefaultCognitiveSessionFactory {
 pub struct LinearCognitiveSession {
     inner: ReActLoop,
     cancellation: CancellationToken,
-    /// Batch planner wired through TurnServices per call.
-    batch_planner: Option<Arc<dyn BatchPlanner>>,
 }
 
 impl LinearCognitiveSession {
@@ -187,15 +185,13 @@ impl LinearCognitiveSession {
         let compactor = dependencies
             .compactor
             .unwrap_or_else(|| Box::new(NoopCompressor));
-        let mut inner =
-            ReActLoop::new_with_clock(config, compactor, dependencies.clock);
+        let mut inner = ReActLoop::new_with_clock(config, compactor, dependencies.clock);
         if let Some(planner) = dependencies.batch_planner.as_ref() {
             inner.set_batch_planner(Arc::clone(planner));
         }
         Self {
             inner,
             cancellation: dependencies.cancellation,
-            batch_planner: dependencies.batch_planner,
         }
     }
 
@@ -207,7 +203,6 @@ impl LinearCognitiveSession {
         Self {
             inner,
             cancellation,
-            batch_planner: None,
         }
     }
 }

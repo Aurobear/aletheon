@@ -6,7 +6,7 @@ use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
 use crate::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
 use fabric::message::{ContentBlock, Message, Role};
-use fabric::{CapabilityCall, CapabilityBatchPlan, ConsciousArbitrationMode, ToolDefinition};
+use fabric::{CapabilityBatchPlan, CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -214,55 +214,52 @@ impl ReActLoop {
             // Plan the batch order. Only apply the ordered permutation when
             // the plan is Enforce and is a valid exact permutation; otherwise
             // keep provider order (the order the LLM emitted).
-            let ordered_calls: Vec<&(String, String, serde_json::Value)> =
-                if let Some(ref planner) = self.batch_planner {
-                    let plan = match planner.plan(calls.clone()).await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            warn!(error = %e, "batch planner failed, keeping provider order");
-                            CapabilityBatchPlan::identity(&calls)
-                        }
-                    };
-                    match plan.mode {
-                        ConsciousArbitrationMode::Enforce => {
-                            match plan.validate_against(&calls) {
-                                Ok(()) => {
-                                    let mut ordered = Vec::new();
-                                    for id in &plan.ordered_call_ids {
-                                        if let Some(tc) = tool_calls
-                                            .iter()
-                                            .find(|(tid, _, _)| tid == id)
-                                        {
-                                            ordered.push(tc);
-                                        }
-                                    }
-                                    if ordered.len() == tool_calls.len() {
-                                        ordered
-                                    } else {
-                                        warn!(
-                                            "batch plan applied but call count mismatch; fallback to provider order"
-                                        );
-                                        tool_calls.iter().collect()
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        error = %e,
-                                        mode = ?plan.mode,
-                                        "batch plan invalid; keeping provider order"
-                                    );
-                                    tool_calls.iter().collect()
+            let ordered_calls: Vec<&(String, String, serde_json::Value)> = if let Some(
+                ref planner,
+            ) = self.batch_planner
+            {
+                let plan = match planner.plan(calls.clone()).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!(error = %e, "batch planner failed, keeping provider order");
+                        CapabilityBatchPlan::identity(&calls)
+                    }
+                };
+                match plan.mode {
+                    ConsciousArbitrationMode::Enforce => match plan.validate_against(&calls) {
+                        Ok(()) => {
+                            let mut ordered = Vec::new();
+                            for id in &plan.ordered_call_ids {
+                                if let Some(tc) = tool_calls.iter().find(|(tid, _, _)| tid == id) {
+                                    ordered.push(tc);
                                 }
                             }
+                            if ordered.len() == tool_calls.len() {
+                                ordered
+                            } else {
+                                warn!(
+                                            "batch plan applied but call count mismatch; fallback to provider order"
+                                        );
+                                tool_calls.iter().collect()
+                            }
                         }
-                        ConsciousArbitrationMode::Observe => {
-                            // Observe mode: always keep provider order.
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                mode = ?plan.mode,
+                                "batch plan invalid; keeping provider order"
+                            );
                             tool_calls.iter().collect()
                         }
+                    },
+                    ConsciousArbitrationMode::Observe => {
+                        // Observe mode: always keep provider order.
+                        tool_calls.iter().collect()
                     }
-                } else {
-                    tool_calls.iter().collect()
-                };
+                }
+            } else {
+                tool_calls.iter().collect()
+            };
 
             let content_blocks: Vec<ContentBlock> = ordered_calls
                 .iter()
