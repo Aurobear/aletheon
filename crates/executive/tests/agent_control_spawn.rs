@@ -8,7 +8,7 @@ use executive::service::agent_control::AgentRuntimeLauncher;
 use fabric::{AgentControlErrorKind, AgentId, AgentRunStatus, AgentWaitRequest, RuntimeId};
 
 #[tokio::test]
-async fn runtime_resolution_and_capacity_fail_before_process_creation() {
+async fn runtime_resolution_and_admission_timeout_fail_before_process_creation() {
     let launcher = TestLauncher::blocked();
     let fixture = fixture(1, launcher.clone());
     let unknown_root = AgentId::new();
@@ -30,12 +30,10 @@ async fn runtime_resolution_and_capacity_fail_before_process_creation() {
         .unwrap();
     launcher.wait_started().await;
     let rejected_root = AgentId::new();
-    let error = fixture
-        .port
-        .spawn(spawn_request(rejected_root, None))
-        .await
-        .unwrap_err();
-    assert_eq!(error.kind, AgentControlErrorKind::Capacity);
+    let mut rejected = spawn_request(rejected_root, None);
+    rejected.budget.max_elapsed_ms = 20;
+    let error = fixture.port.spawn(rejected).await.unwrap_err();
+    assert_eq!(error.kind, AgentControlErrorKind::Timeout);
     assert!(fixture
         .kernel
         .identity_for_agent(rejected_root)

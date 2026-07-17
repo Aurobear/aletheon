@@ -3,9 +3,11 @@ use executive::service::agent_control::{
     AgentAdmissionPort, AgentAdmissionRequest, AgentStorageRequest, BoundedAgentAdmission,
 };
 use fabric::{
-    AgentBudget, AgentContextFork, AgentId, AgentProfileId, AgentSpawnRequest, RuntimeId,
+    AgentBudget, AgentContextFork, AgentControlErrorKind, AgentId, AgentProfileId,
+    AgentSpawnRequest, RuntimeId,
 };
 use std::sync::Arc;
+use std::time::Duration;
 
 #[test]
 fn config_accepts_nonzero_bounded_tree_budget_and_storage_limits() {
@@ -75,12 +77,25 @@ fn spawn(root: AgentId, parent: Option<AgentId>, profile: &str) -> AgentSpawnReq
     }
 }
 
+async fn wait_for_resident(admission: &BoundedAgentAdmission, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if admission.metrics().resident_agents == expected {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("admission metrics did not reach expected resident count");
+}
+
 #[tokio::test]
-async fn reservation_is_atomic_under_concurrent_sibling_contention() {
+async fn reservation_is_atomic_and_fifo_under_concurrent_sibling_contention() {
     let config = AgentAdmissionConfig {
-        max_agents_per_root: 2,
+        max_agents_per_root: 3,
         max_running_agents: 1,
-        max_queued_per_root: 2,
+        max_queued_per_root: 3,
         ..AgentAdmissionConfig::default()
     };
     let admission = Arc::new(
@@ -91,30 +106,180 @@ async fn reservation_is_atomic_under_concurrent_sibling_contention() {
         .unwrap(),
     );
     let root = AgentId::new();
-    let left_request = spawn(root, Some(root), "worker");
-    let right_request = spawn(root, Some(root), "worker");
-    let (left, right) = tokio::join!(
-        admission.reserve(AgentAdmissionRequest {
-            spawn: &left_request,
-            depth: 1,
-            parent_profile: None,
-            storage: AgentStorageRequest::default(),
-        }),
-        admission.reserve(AgentAdmissionRequest {
-            spawn: &right_request,
-            depth: 1,
-            parent_profile: None,
-            storage: AgentStorageRequest::default(),
-        })
+    let first_request = spawn(root, Some(root), "worker");
+    let mut first = admission
+        .reserve(AgentAdmissionRequest::new(
+            &first_request,
+            1,
+            None,
+            AgentStorageRequest::default(),
+        ))
+        .await
+        .unwrap();
+
+    let second_admission = admission.clone();
+    let mut second = tokio::spawn(async move {
+        let request = spawn(root, Some(root), "worker");
+        second_admission
+            .reserve(AgentAdmissionRequest::new(
+                &request,
+                1,
+                None,
+                AgentStorageRequest::default(),
+            ))
+            .await
+    });
+    wait_for_resident(&admission, 2).await;
+
+    let third_admission = admission.clone();
+    let mut third = tokio::spawn(async move {
+        let request = spawn(root, Some(root), "worker");
+        third_admission
+            .reserve(AgentAdmissionRequest::new(
+                &request,
+                1,
+                None,
+                AgentStorageRequest::default(),
+            ))
+            .await
+    });
+    wait_for_resident(&admission, 3).await;
+    assert_eq!(admission.available_permits(), 0);
+    assert!(!second.is_finished());
+    assert!(!third.is_finished());
+
+    first.revoke().await.unwrap();
+    let mut second_lease = tokio::time::timeout(Duration::from_secs(1), &mut second)
+        .await
+        .expect("second sibling was not admitted after release")
+        .unwrap()
+        .unwrap();
+    assert!(!third.is_finished(), "third sibling bypassed FIFO order");
+
+    second_lease.revoke().await.unwrap();
+    let mut third_lease = tokio::time::timeout(Duration::from_secs(1), &mut third)
+        .await
+        .expect("third sibling was not admitted after release")
+        .unwrap()
+        .unwrap();
+    third_lease.revoke().await.unwrap();
+    assert_eq!(admission.metrics().resident_agents, 0);
+}
+
+#[tokio::test]
+async fn cancelled_waiter_releases_topology_and_does_not_block_fifo() {
+    // Constrain execution separately while retaining room for queued siblings.
+    let config = AgentAdmissionConfig {
+        max_agents_per_root: 3,
+        max_running_agents: 1,
+        max_queued_per_root: 3,
+        ..AgentAdmissionConfig::default()
+    };
+    let admission = Arc::new(
+        BoundedAgentAdmission::with_budget(
+            config,
+            Arc::new(aletheon_kernel::admission::InMemoryBudgetController::new()),
+        )
+        .unwrap(),
     );
-    assert_eq!(
-        [left.is_ok(), right.is_ok()]
-            .into_iter()
-            .filter(|ok| *ok)
-            .count(),
-        1
-    );
-    assert_eq!(admission.metrics().queued_agents, 1);
+    let root = AgentId::new();
+    let first_request = spawn(root, Some(root), "worker");
+    let mut first = admission
+        .reserve(AgentAdmissionRequest::new(
+            &first_request,
+            1,
+            None,
+            AgentStorageRequest::default(),
+        ))
+        .await
+        .unwrap();
+
+    let cancelled_admission = admission.clone();
+    let cancelled = tokio::spawn(async move {
+        let request = spawn(root, Some(root), "worker");
+        cancelled_admission
+            .reserve(AgentAdmissionRequest::new(
+                &request,
+                1,
+                None,
+                AgentStorageRequest::default(),
+            ))
+            .await
+    });
+    wait_for_resident(&admission, 2).await;
+    cancelled.abort();
+    assert!(matches!(cancelled.await, Err(error) if error.is_cancelled()));
+    wait_for_resident(&admission, 1).await;
+
+    let next_admission = admission.clone();
+    let next = tokio::spawn(async move {
+        let request = spawn(root, Some(root), "worker");
+        next_admission
+            .reserve(AgentAdmissionRequest::new(
+                &request,
+                1,
+                None,
+                AgentStorageRequest::default(),
+            ))
+            .await
+    });
+    wait_for_resident(&admission, 2).await;
+    first.revoke().await.unwrap();
+    let mut next_lease = tokio::time::timeout(Duration::from_secs(1), next)
+        .await
+        .expect("successor remained blocked behind cancelled waiter")
+        .unwrap()
+        .unwrap();
+    next_lease.revoke().await.unwrap();
+    assert_eq!(admission.metrics().resident_agents, 0);
+}
+
+#[tokio::test]
+async fn timed_out_waiter_releases_every_reserved_counter() {
+    let config = AgentAdmissionConfig {
+        max_agents_per_root: 2,
+        max_running_agents: 1,
+        max_queued_per_root: 2,
+        ..AgentAdmissionConfig::default()
+    };
+    let admission = BoundedAgentAdmission::with_budget(
+        config,
+        Arc::new(aletheon_kernel::admission::InMemoryBudgetController::new()),
+    )
+    .unwrap();
+    let root = AgentId::new();
+    let first_request = spawn(root, Some(root), "worker");
+    let mut first = admission
+        .reserve(AgentAdmissionRequest::new(
+            &first_request,
+            1,
+            None,
+            AgentStorageRequest::default(),
+        ))
+        .await
+        .unwrap();
+    let mut timed_request = spawn(root, Some(root), "worker");
+    timed_request.budget.max_elapsed_ms = 20;
+    let error = admission
+        .reserve(AgentAdmissionRequest::new(
+            &timed_request,
+            1,
+            None,
+            AgentStorageRequest {
+                bytes: 64,
+                items: 1,
+            },
+        ))
+        .await
+        .err()
+        .expect("waiter should time out while the execution slot is occupied");
+    assert_eq!(error.kind, AgentControlErrorKind::Timeout);
+    let metrics = admission.metrics();
+    assert_eq!(metrics.resident_agents, 1);
+    assert_eq!(metrics.queued_agents, 1);
+    assert_eq!(metrics.reserved_storage_bytes, 0);
+    assert_eq!(metrics.reserved_storage_items, 0);
+    first.revoke().await.unwrap();
 }
 
 #[tokio::test]

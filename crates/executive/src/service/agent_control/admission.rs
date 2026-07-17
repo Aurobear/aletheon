@@ -1,7 +1,8 @@
 //! Root-scoped Agent topology, rollout-budget, role, and storage admission.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
 use aletheon_kernel::admission::InMemoryBudgetController;
 use async_trait::async_trait;
@@ -84,6 +85,8 @@ struct RootAdmissionState {
 struct AdmissionState {
     roots: HashMap<AgentId, RootAdmissionState>,
     running_slots: usize,
+    waiters: VecDeque<u64>,
+    next_waiter: u64,
 }
 
 pub struct BoundedAgentAdmission {
@@ -91,6 +94,7 @@ pub struct BoundedAgentAdmission {
     budget: Arc<InMemoryBudgetController>,
     state: Arc<Mutex<AdmissionState>>,
     reservation_lock: tokio::sync::Mutex<()>,
+    capacity_changed: Arc<tokio::sync::Notify>,
 }
 
 impl std::fmt::Debug for BoundedAgentAdmission {
@@ -127,6 +131,7 @@ impl BoundedAgentAdmission {
             budget,
             state: Arc::new(Mutex::new(AdmissionState::default())),
             reservation_lock: tokio::sync::Mutex::new(()),
+            capacity_changed: Arc::new(tokio::sync::Notify::new()),
         })
     }
 
@@ -179,14 +184,10 @@ impl AgentAdmissionPort for BoundedAgentAdmission {
         &self,
         request: AgentAdmissionRequest<'_>,
     ) -> Result<Box<dyn AgentAdmissionLease>, AgentControlError> {
-        let _reservation_guard = self.reservation_lock.lock().await;
         self.validate_policy(&request)?;
         let root = request.spawn.root_agent_id;
-        let (root_scope, ticket) = {
+        let (waiter_id, ticket) = {
             let mut state = self.state.lock();
-            if state.running_slots >= self.config.max_running_agents {
-                return Err(capacity("Agent global running capacity is exhausted"));
-            }
             let root_state = state.roots.entry(root).or_default();
             if root_state.resident >= self.config.max_agents_per_root {
                 return Err(capacity("Agent root tree capacity is exhausted"));
@@ -213,10 +214,73 @@ impl AgentAdmissionPort for BoundedAgentAdmission {
             root_state.next_ticket = root_state
                 .next_ticket
                 .saturating_add(self.config.sibling_fairness_quantum as u64);
-            let budget_scope = root_state.budget_scope;
-            state.running_slots += 1;
-            (budget_scope, ticket)
+            let waiter_id = state.next_waiter;
+            state.next_waiter = state.next_waiter.saturating_add(1);
+            state.waiters.push_back(waiter_id);
+            (waiter_id, ticket)
         };
+
+        let mut pending = PendingAdmission::new(
+            self.state.clone(),
+            self.capacity_changed.clone(),
+            waiter_id,
+            root,
+            request.storage,
+        );
+        let wait_timeout = Duration::from_millis(request.spawn.budget.max_elapsed_ms);
+        let timeout = tokio::time::sleep(wait_timeout);
+        tokio::pin!(timeout);
+
+        loop {
+            // Register before checking capacity so a release cannot be missed between
+            // the state check and awaiting the notification.
+            let capacity_changed = self.capacity_changed.notified();
+            tokio::pin!(capacity_changed);
+            capacity_changed.as_mut().enable();
+            let reservation_guard = tokio::select! {
+                () = &mut timeout => {
+                    return Err(timeout_error("Agent admission wait timed out"));
+                }
+                guard = self.reservation_lock.lock() => guard,
+            };
+            let admitted = {
+                let mut state = self.state.lock();
+                if state.waiters.front() == Some(&waiter_id)
+                    && state.running_slots < self.config.max_running_agents
+                {
+                    state.waiters.pop_front();
+                    state.running_slots += 1;
+                    true
+                } else {
+                    false
+                }
+            };
+            if admitted {
+                pending.mark_admitted();
+                break;
+            }
+            drop(reservation_guard);
+
+            tokio::select! {
+                () = &mut timeout => {
+                    return Err(timeout_error("Agent admission wait timed out"));
+                }
+                () = &mut capacity_changed => {}
+            }
+        }
+
+        let _reservation_guard = tokio::select! {
+            () = &mut timeout => {
+                return Err(timeout_error("Agent admission wait timed out"));
+            }
+            guard = self.reservation_lock.lock() => guard,
+        };
+        let root_scope = self
+            .state
+            .lock()
+            .roots
+            .get(&root)
+            .and_then(|root| root.budget_scope);
 
         let root_scope = match root_scope {
             Some(scope) => scope,
@@ -258,13 +322,14 @@ impl AgentAdmissionPort for BoundedAgentAdmission {
         let reservation = match reservation {
             Ok(reservation) => reservation,
             Err(_) => {
-                release_topology(&self.state, root, request.storage, LeasePhase::Queued);
                 return Err(capacity("Agent root rollout budget is exhausted"));
             }
         };
+        pending.disarm();
         Ok(Box::new(BoundedAdmissionLease {
             state: self.state.clone(),
             budget: self.budget.clone(),
+            capacity_changed: self.capacity_changed.clone(),
             root,
             storage: request.storage,
             reservation: Some(reservation.reservation_id),
@@ -300,6 +365,7 @@ enum LeasePhase {
 struct BoundedAdmissionLease {
     state: Arc<Mutex<AdmissionState>>,
     budget: Arc<InMemoryBudgetController>,
+    capacity_changed: Arc<tokio::sync::Notify>,
     root: AgentId,
     storage: AgentStorageRequest,
     reservation: Option<BudgetReservationId>,
@@ -342,7 +408,13 @@ impl AgentAdmissionLease for BoundedAdmissionLease {
             .await
             .map_err(|error| conflict(format!("Agent budget settlement failed: {error}")))?;
         self.reservation = None;
-        release_topology(&self.state, self.root, self.storage, self.phase);
+        release_topology(
+            &self.state,
+            &self.capacity_changed,
+            self.root,
+            self.storage,
+            self.phase,
+        );
         self.phase = LeasePhase::Closed;
         Ok(())
     }
@@ -357,7 +429,13 @@ impl AgentAdmissionLease for BoundedAdmissionLease {
                 .await
                 .map_err(|error| conflict(format!("Agent budget revoke failed: {error}")))?;
         }
-        release_topology(&self.state, self.root, self.storage, self.phase);
+        release_topology(
+            &self.state,
+            &self.capacity_changed,
+            self.root,
+            self.storage,
+            self.phase,
+        );
         self.phase = LeasePhase::Closed;
         Ok(())
     }
@@ -368,7 +446,13 @@ impl Drop for BoundedAdmissionLease {
         if self.phase == LeasePhase::Closed {
             return;
         }
-        release_topology(&self.state, self.root, self.storage, self.phase);
+        release_topology(
+            &self.state,
+            &self.capacity_changed,
+            self.root,
+            self.storage,
+            self.phase,
+        );
         self.phase = LeasePhase::Closed;
         if let Some(reservation) = self.reservation.take() {
             let budget = self.budget.clone();
@@ -383,6 +467,7 @@ impl Drop for BoundedAdmissionLease {
 
 fn release_topology(
     state: &Arc<Mutex<AdmissionState>>,
+    capacity_changed: &tokio::sync::Notify,
     root_id: AgentId,
     storage: AgentStorageRequest,
     phase: LeasePhase,
@@ -399,6 +484,74 @@ fn release_topology(
         root.storage_items = root.storage_items.saturating_sub(storage.items);
     }
     state.running_slots = state.running_slots.saturating_sub(1);
+    drop(state);
+    capacity_changed.notify_waiters();
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingPhase {
+    Waiting,
+    Admitted,
+    Closed,
+}
+
+struct PendingAdmission {
+    state: Arc<Mutex<AdmissionState>>,
+    capacity_changed: Arc<tokio::sync::Notify>,
+    waiter_id: u64,
+    root: AgentId,
+    storage: AgentStorageRequest,
+    phase: PendingPhase,
+}
+
+impl PendingAdmission {
+    fn new(
+        state: Arc<Mutex<AdmissionState>>,
+        capacity_changed: Arc<tokio::sync::Notify>,
+        waiter_id: u64,
+        root: AgentId,
+        storage: AgentStorageRequest,
+    ) -> Self {
+        Self {
+            state,
+            capacity_changed,
+            waiter_id,
+            root,
+            storage,
+            phase: PendingPhase::Waiting,
+        }
+    }
+
+    fn mark_admitted(&mut self) {
+        self.phase = PendingPhase::Admitted;
+    }
+
+    fn disarm(&mut self) {
+        self.phase = PendingPhase::Closed;
+    }
+}
+
+impl Drop for PendingAdmission {
+    fn drop(&mut self) {
+        if self.phase == PendingPhase::Closed {
+            return;
+        }
+        let mut state = self.state.lock();
+        if self.phase == PendingPhase::Waiting {
+            state.waiters.retain(|waiter| *waiter != self.waiter_id);
+        } else {
+            state.running_slots = state.running_slots.saturating_sub(1);
+        }
+        if let Some(root) = state.roots.get_mut(&self.root) {
+            root.resident = root.resident.saturating_sub(1);
+            root.queued = root.queued.saturating_sub(1);
+            root.storage_bytes = root.storage_bytes.saturating_sub(self.storage.bytes);
+            root.storage_items = root.storage_items.saturating_sub(self.storage.items);
+        }
+        drop(state);
+        self.capacity_changed.notify_waiters();
+        self.phase = PendingPhase::Closed;
+    }
 }
 
 fn cost_micro(cost_usd: Option<f64>) -> Result<Option<u64>, AgentControlError> {
@@ -438,6 +591,13 @@ fn capacity(message: impl Into<String>) -> AgentControlError {
 fn conflict(message: impl Into<String>) -> AgentControlError {
     AgentControlError {
         kind: AgentControlErrorKind::Conflict,
+        message: message.into(),
+    }
+}
+
+fn timeout_error(message: impl Into<String>) -> AgentControlError {
+    AgentControlError {
+        kind: AgentControlErrorKind::Timeout,
         message: message.into(),
     }
 }
