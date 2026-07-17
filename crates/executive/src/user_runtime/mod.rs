@@ -37,6 +37,10 @@ impl UserRuntimeConfig {
         enable_evolution: bool,
     ) -> anyhow::Result<Self> {
         let app = crate::core::config::load_for_host(None, config_path)?.value;
+        let crate::core::config::AppConfig {
+            memory: crate::core::config::MemoryConfig { gbrain, .. },
+            ..
+        } = &app;
         let mut deployment = app.deployment.clone();
         deployment.mode = cognit::config::DeploymentMode::User;
         deployment.paths.state_root = paths.state_root.clone();
@@ -90,7 +94,7 @@ impl UserRuntimeConfig {
                 .collect(),
             hooks: app.hooks.clone(),
             telegram: app.telegram.clone(),
-            gbrain_memory: app.memory.gbrain.clone(),
+            gbrain_memory: gbrain.clone(),
             deployment,
             agent_admission: app.agent.admission.clone(),
         };

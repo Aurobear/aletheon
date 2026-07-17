@@ -108,10 +108,13 @@ impl SystemCoreRuntime {
         // machine/user configuration layers plus an explicit operator file, but
         // never configuration from the caller's current workspace.
         let app_config = crate::core::config::load_for_host(None, config_path)?.value;
-        if app_config.telegram.enabled
-            || app_config.memory.gbrain.enabled
-            || !app_config.mcp_servers.is_empty()
-        {
+        let crate::core::config::AppConfig {
+            telegram,
+            memory: crate::core::config::MemoryConfig { gbrain, .. },
+            mcp_servers,
+            ..
+        } = &app_config;
+        if telegram.enabled || gbrain.enabled || !mcp_servers.is_empty() {
             anyhow::bail!("system core configuration contains user-scoped integration credentials");
         }
         let registry = Arc::new(ProviderRegistry::from_config(&app_config.cognit())?);
