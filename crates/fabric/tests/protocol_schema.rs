@@ -287,3 +287,83 @@ fn memory_goal_and_workflow_requests_preserve_legacy_wire_fields() {
         assert_eq!(wire["params"], serde_json::json!({}));
     }
 }
+
+#[test]
+fn debug_requests_preserve_methods_and_typed_parameter_shapes() {
+    for (request, method) in [
+        (ClientRpcRequest::DebugTopics, "debug.topics"),
+        (ClientRpcRequest::DebugNodeInfo, "debug.node_info"),
+        (ClientRpcRequest::DebugPerf, "debug.perf"),
+        (ClientRpcRequest::DebugTraceStop, "debug.trace_stop"),
+        (ClientRpcRequest::DebugTraceStatus, "debug.trace_status"),
+        (ClientRpcRequest::DebugHealth, "debug.health"),
+        (ClientRpcRequest::DebugNodes, "debug.nodes"),
+        (ClientRpcRequest::DebugParamList, "debug.param_list"),
+        (ClientRpcRequest::DebugTopology, "debug.topology"),
+        (ClientRpcRequest::DebugGraph, "debug.graph"),
+    ] {
+        let wire = request.to_json_rpc(Some(1)).unwrap();
+        assert_eq!(wire["jsonrpc"], "2.0");
+        assert_eq!(wire["method"], method);
+        assert_eq!(wire["params"], serde_json::json!({}));
+    }
+
+    let subscribe =
+        ClientRpcRequest::debug_subscribe(Some("info".into()), Some("runtime".into()), None)
+            .to_json_rpc(Some(1))
+            .unwrap();
+    assert_eq!(subscribe["method"], "debug.subscribe");
+    assert_eq!(subscribe["params"]["level"], "info");
+    assert_eq!(subscribe["params"]["module"], "runtime");
+    assert!(subscribe["params"].get("tracepoint").is_none());
+
+    let hz = ClientRpcRequest::debug_subscribe(None, None, Some("turn.done".into()))
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(hz["params"], serde_json::json!({"tracepoint":"turn.done"}));
+
+    let start = ClientRpcRequest::debug_bag_start(
+        "debug",
+        Some("/tmp/trace.bag".into()),
+        Some("executive".into()),
+    )
+    .to_json_rpc(Some(1))
+    .unwrap();
+    assert_eq!(start["method"], "debug.bag_start");
+    assert_eq!(start["params"]["level"], "debug");
+    assert_eq!(start["params"]["path"], "/tmp/trace.bag");
+    assert_eq!(start["params"]["module"], "executive");
+
+    let stop = ClientRpcRequest::debug_bag_stop("recording-1")
+        .to_json_rpc(Some(2))
+        .unwrap();
+    assert_eq!(stop["id"], 2);
+    assert_eq!(stop["method"], "debug.bag_stop");
+    assert_eq!(stop["params"]["recording_id"], "recording-1");
+
+    let replay = ClientRpcRequest::debug_bag_replay("/tmp/trace.bag", 2.5)
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(replay["method"], "debug.bag_replay");
+    assert_eq!(replay["params"]["path"], "/tmp/trace.bag");
+    assert_eq!(replay["params"]["speed"], 2.5);
+
+    let trace = ClientRpcRequest::debug_trace_start("trace", None)
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(trace["method"], "debug.trace_start");
+    assert_eq!(trace["params"], serde_json::json!({"level":"trace"}));
+
+    let param = ClientRpcRequest::debug_param_get("agent.max_iterations")
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(param["method"], "debug.param_get");
+    assert_eq!(param["params"]["key"], "agent.max_iterations");
+
+    let logs = ClientRpcRequest::debug_log_subscribe("warn", Some("kernel".into()))
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(logs["method"], "debug.log_subscribe");
+    assert_eq!(logs["params"]["level"], "warn");
+    assert_eq!(logs["params"]["module"], "kernel");
+}

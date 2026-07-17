@@ -15,6 +15,7 @@
 use crate::tui::host_time::ClientTimer;
 use anyhow::{Context, Result};
 use clap::Subcommand;
+use fabric::protocol::client::ClientRpcRequest;
 use fabric::{Clock, Timer};
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -255,12 +256,7 @@ pub async fn run(socket: &std::path::Path, cmd: DebugCommand) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn topic_list(socket: &std::path::Path) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.topics",
-        "params": {}
-    });
+    let request = ClientRpcRequest::DebugTopics.to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
     let topics = response["result"]["topics"]
@@ -300,20 +296,9 @@ async fn topic_echo(
     level: String,
     tracepoint: Option<String>,
 ) -> Result<()> {
-    let mut params = serde_json::json!({ "level": level });
-    if let Some(m) = &module {
-        params["module"] = serde_json::json!(m);
-    }
-    if let Some(t) = &tracepoint {
-        params["tracepoint"] = serde_json::json!(t);
-    }
-
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.subscribe",
-        "params": params
-    });
+    let request =
+        ClientRpcRequest::debug_subscribe(Some(level.clone()), module.clone(), tracepoint.clone())
+            .to_json_rpc(Some(1))?;
 
     // Connect and subscribe
     let mut stream = UnixStream::connect(socket).await?;
@@ -414,12 +399,7 @@ fn print_event(event: &serde_json::Value) {
 // ---------------------------------------------------------------------------
 
 async fn node_info(socket: &std::path::Path) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.node_info",
-        "params": {}
-    });
+    let request = ClientRpcRequest::DebugNodeInfo.to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
     let info = &response["result"]["node_info"];
@@ -465,20 +445,12 @@ async fn bag_record(
     module: Option<String>,
     level: String,
 ) -> Result<()> {
-    let mut params = serde_json::json!({ "level": level });
-    if let Some(path) = &output {
-        params["path"] = serde_json::json!(path.to_string_lossy());
-    }
-    if let Some(m) = &module {
-        params["module"] = serde_json::json!(m);
-    }
-
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.bag_start",
-        "params": params
-    });
+    let request = ClientRpcRequest::debug_bag_start(
+        level,
+        output.map(|path| path.to_string_lossy().into_owned()),
+        module,
+    )
+    .to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
     let recording_id = response["result"]["recording_id"]
@@ -495,12 +467,7 @@ async fn bag_record(
 
     println!("\nStopping recording...");
 
-    let stop_request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "debug.bag_stop",
-        "params": { "recording_id": recording_id }
-    });
+    let stop_request = ClientRpcRequest::debug_bag_stop(recording_id).to_json_rpc(Some(2))?;
 
     let stop_response = send_rpc(socket, &stop_request).await?;
 
@@ -526,15 +493,8 @@ async fn bag_record(
 // ---------------------------------------------------------------------------
 
 async fn bag_play(socket: &std::path::Path, path: PathBuf, speed: f64) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.bag_replay",
-        "params": {
-            "path": path.to_string_lossy(),
-            "speed": speed,
-        }
-    });
+    let request = ClientRpcRequest::debug_bag_replay(path.to_string_lossy().into_owned(), speed)
+        .to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -618,12 +578,7 @@ async fn bag_info(path: PathBuf) -> Result<()> {
 
 async fn perf_stats(socket: &std::path::Path, interval: Option<u64>) -> Result<()> {
     loop {
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "debug.perf",
-            "params": {}
-        });
+        let request = ClientRpcRequest::DebugPerf.to_json_rpc(Some(1))?;
 
         let response = send_rpc(socket, &request).await?;
         let perf = &response["result"]["perf"];
@@ -682,17 +637,7 @@ async fn trace_start(
     module: Option<String>,
     level: String,
 ) -> Result<()> {
-    let mut params = serde_json::json!({ "level": level });
-    if let Some(m) = &module {
-        params["module"] = serde_json::json!(m);
-    }
-
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.trace_start",
-        "params": params
-    });
+    let request = ClientRpcRequest::debug_trace_start(level, module).to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -720,12 +665,7 @@ async fn trace_start(
 }
 
 async fn trace_stop(socket: &std::path::Path) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.trace_stop",
-        "params": {}
-    });
+    let request = ClientRpcRequest::DebugTraceStop.to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -741,12 +681,7 @@ async fn trace_stop(socket: &std::path::Path) -> Result<()> {
 }
 
 async fn trace_status(socket: &std::path::Path) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.trace_status",
-        "params": {}
-    });
+    let request = ClientRpcRequest::DebugTraceStatus.to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -778,12 +713,7 @@ async fn trace_status(socket: &std::path::Path) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.health",
-        "params": {}
-    });
+    let request = ClientRpcRequest::DebugHealth.to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -859,12 +789,7 @@ async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn nodes_list(socket: &std::path::Path) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.nodes",
-        "params": {}
-    });
+    let request = ClientRpcRequest::DebugNodes.to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -902,12 +827,7 @@ async fn nodes_list(socket: &std::path::Path) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn param_get(socket: &std::path::Path, key: &str) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.param_get",
-        "params": { "key": key }
-    });
+    let request = ClientRpcRequest::debug_param_get(key).to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -924,12 +844,7 @@ async fn param_get(socket: &std::path::Path, key: &str) -> Result<()> {
 }
 
 async fn param_list(socket: &std::path::Path) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.param_list",
-        "params": {}
-    });
+    let request = ClientRpcRequest::DebugParamList.to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -954,12 +869,7 @@ async fn param_list(socket: &std::path::Path) -> Result<()> {
 }
 
 async fn param_dump(socket: &std::path::Path) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.param_list",
-        "params": {}
-    });
+    let request = ClientRpcRequest::DebugParamList.to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -981,14 +891,8 @@ async fn param_dump(socket: &std::path::Path) -> Result<()> {
 
 async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) -> Result<()> {
     // Subscribe to the specific tracepoint
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.subscribe",
-        "params": {
-            "tracepoint": tracepoint
-        }
-    });
+    let request = ClientRpcRequest::debug_subscribe(None, None, Some(tracepoint.into()))
+        .to_json_rpc(Some(1))?;
 
     let mut stream = UnixStream::connect(socket)
         .await
@@ -1060,12 +964,7 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
 async fn show_graph(socket: &std::path::Path, format: &str) -> Result<()> {
     if format == "dot" {
         // Get DOT format from topology endpoint
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "debug.topology",
-            "params": {}
-        });
+        let request = ClientRpcRequest::DebugTopology.to_json_rpc(Some(1))?;
 
         let response = send_rpc(socket, &request).await?;
 
@@ -1080,12 +979,7 @@ async fn show_graph(socket: &std::path::Path, format: &str) -> Result<()> {
         println!("{}", dot);
     } else {
         // Get graph data and render as ASCII
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "debug.graph",
-            "params": {}
-        });
+        let request = ClientRpcRequest::DebugGraph.to_json_rpc(Some(1))?;
 
         let response = send_rpc(socket, &request).await?;
 
@@ -1148,17 +1042,7 @@ async fn log_stream(
     grep: Option<String>,
 ) -> Result<()> {
     // Subscribe to log events
-    let mut params = serde_json::json!({ "level": level });
-    if let Some(m) = &module {
-        params["module"] = serde_json::json!(m);
-    }
-
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "debug.log_subscribe",
-        "params": params
-    });
+    let request = ClientRpcRequest::debug_log_subscribe(level, module).to_json_rpc(Some(1))?;
 
     let mut stream = UnixStream::connect(socket)
         .await

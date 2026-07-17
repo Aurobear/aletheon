@@ -19,7 +19,7 @@ const SUPPORTED_CLIENT_PROTOCOL_VERSIONS: &[u16] = &[CLIENT_PROTOCOL_VERSION];
 /// Typed compatibility requests for the daemon's line-delimited JSON-RPC
 /// transport. Method names and parameter field names live in Fabric rather
 /// than being re-created by each Interact entry point.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub enum ClientRpcRequest {
     Chat(ChatParams),
     Clear,
@@ -55,6 +55,23 @@ pub enum ClientRpcRequest {
     WorkflowList,
     WorkflowDelete(NameParams),
     WorkflowRun(NameParams),
+    DebugTopics,
+    DebugSubscribe(DebugSubscribeParams),
+    DebugNodeInfo,
+    DebugBagStart(DebugBagStartParams),
+    DebugBagStop(DebugBagStopParams),
+    DebugBagReplay(DebugBagReplayParams),
+    DebugPerf,
+    DebugTraceStart(DebugTraceStartParams),
+    DebugTraceStop,
+    DebugTraceStatus,
+    DebugHealth,
+    DebugNodes,
+    DebugParamGet(DebugParamGetParams),
+    DebugParamList,
+    DebugTopology,
+    DebugGraph,
+    DebugLogSubscribe(DebugLogSubscribeParams),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -157,6 +174,55 @@ pub struct WorkflowSaveParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct NameParams {
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugSubscribeParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracepoint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugBagStartParams {
+    pub level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugBagStopParams {
+    pub recording_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct DebugBagReplayParams {
+    pub path: String,
+    pub speed: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugTraceStartParams {
+    pub level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugParamGetParams {
+    pub key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugLogSubscribeParams {
+    pub level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -286,6 +352,61 @@ impl ClientRpcRequest {
         Self::WorkflowRun(NameParams { name: name.into() })
     }
 
+    pub fn debug_subscribe(
+        level: Option<String>,
+        module: Option<String>,
+        tracepoint: Option<String>,
+    ) -> Self {
+        Self::DebugSubscribe(DebugSubscribeParams {
+            level,
+            module,
+            tracepoint,
+        })
+    }
+
+    pub fn debug_bag_start(
+        level: impl Into<String>,
+        path: Option<String>,
+        module: Option<String>,
+    ) -> Self {
+        Self::DebugBagStart(DebugBagStartParams {
+            level: level.into(),
+            path,
+            module,
+        })
+    }
+
+    pub fn debug_bag_stop(recording_id: impl Into<String>) -> Self {
+        Self::DebugBagStop(DebugBagStopParams {
+            recording_id: recording_id.into(),
+        })
+    }
+
+    pub fn debug_bag_replay(path: impl Into<String>, speed: f64) -> Self {
+        Self::DebugBagReplay(DebugBagReplayParams {
+            path: path.into(),
+            speed,
+        })
+    }
+
+    pub fn debug_trace_start(level: impl Into<String>, module: Option<String>) -> Self {
+        Self::DebugTraceStart(DebugTraceStartParams {
+            level: level.into(),
+            module,
+        })
+    }
+
+    pub fn debug_param_get(key: impl Into<String>) -> Self {
+        Self::DebugParamGet(DebugParamGetParams { key: key.into() })
+    }
+
+    pub fn debug_log_subscribe(level: impl Into<String>, module: Option<String>) -> Self {
+        Self::DebugLogSubscribe(DebugLogSubscribeParams {
+            level: level.into(),
+            module,
+        })
+    }
+
     /// Serialize the typed request into the daemon's compatibility envelope.
     /// An absent ID is reserved for client notifications such as approval
     /// responses; it is encoded as JSON `null` to preserve the current wire
@@ -333,6 +454,31 @@ impl ClientRpcRequest {
                 ("workflow.delete", Some(serde_json::to_value(params)?))
             }
             Self::WorkflowRun(params) => ("workflow.run", Some(serde_json::to_value(params)?)),
+            Self::DebugTopics => empty_params("debug.topics")?,
+            Self::DebugSubscribe(params) => {
+                ("debug.subscribe", Some(serde_json::to_value(params)?))
+            }
+            Self::DebugNodeInfo => empty_params("debug.node_info")?,
+            Self::DebugBagStart(params) => ("debug.bag_start", Some(serde_json::to_value(params)?)),
+            Self::DebugBagStop(params) => ("debug.bag_stop", Some(serde_json::to_value(params)?)),
+            Self::DebugBagReplay(params) => {
+                ("debug.bag_replay", Some(serde_json::to_value(params)?))
+            }
+            Self::DebugPerf => empty_params("debug.perf")?,
+            Self::DebugTraceStart(params) => {
+                ("debug.trace_start", Some(serde_json::to_value(params)?))
+            }
+            Self::DebugTraceStop => empty_params("debug.trace_stop")?,
+            Self::DebugTraceStatus => empty_params("debug.trace_status")?,
+            Self::DebugHealth => empty_params("debug.health")?,
+            Self::DebugNodes => empty_params("debug.nodes")?,
+            Self::DebugParamGet(params) => ("debug.param_get", Some(serde_json::to_value(params)?)),
+            Self::DebugParamList => empty_params("debug.param_list")?,
+            Self::DebugTopology => empty_params("debug.topology")?,
+            Self::DebugGraph => empty_params("debug.graph")?,
+            Self::DebugLogSubscribe(params) => {
+                ("debug.log_subscribe", Some(serde_json::to_value(params)?))
+            }
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
@@ -341,6 +487,12 @@ impl ClientRpcRequest {
             params,
         })
     }
+}
+
+fn empty_params(
+    method: &'static str,
+) -> serde_json::Result<(&'static str, Option<serde_json::Value>)> {
+    Ok((method, Some(serde_json::to_value(EmptyParams {})?)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
