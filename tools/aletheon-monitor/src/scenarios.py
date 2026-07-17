@@ -168,43 +168,169 @@ async def workspace_boundary(source_root: str, timeout: float = 120.0) -> dict:
     }
 
 
-async def gmail_read(source_root: str, timeout: float = 120.0) -> dict:
+_GMAIL_MAX_ITEMS = 10
+_GMAIL_MAX_SUMMARY_BYTES = 16 * 1024
+_GMAIL_AUTH_ERRORS = {
+    "google_unauthorized_account",
+    "google_scope_denied",
+    "google_credential_unavailable",
+    "google_reauthorization_required",
+}
+_GMAIL_RAW_KEYS = {
+    "body", "body_text", "raw_body", "rawbody", "raw_payload", "rawpayload",
+}
+_GMAIL_FRAME_RAW_MARKERS = _GMAIL_RAW_KEYS - {"body"}
+
+
+def _event_params(event: dict) -> dict:
+    value = event.get("params", {})
+    return value if isinstance(value, dict) else {}
+
+
+def _json_value(value: object) -> object | None:
+    if not isinstance(value, str):
+        return value if isinstance(value, (dict, list)) else None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return None
+
+
+def _contains_raw_gmail_content(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            str(key).replace("-", "_").lower() in _GMAIL_RAW_KEYS
+            or _contains_raw_gmail_content(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_raw_gmail_content(item) for item in value)
+    return False
+
+
+def _safe_gmail_evidence(
+    events: list[dict], frame: str, account: str, turn_done: bool
+) -> dict:
+    calls: dict[str, dict] = {}
+    duplicate_ids = False
+    forbidden_read = False
+    for event in events:
+        params = _event_params(event)
+        call_id = params.get("call_id")
+        tool = params.get("tool")
+        if event.get("type") == "tool_call_start":
+            if tool == "google_gmail_read":
+                forbidden_read = True
+            if tool != "google_gmail_search" or not isinstance(call_id, str) or not call_id:
+                continue
+            if call_id in calls:
+                duplicate_ids = True
+                continue
+            calls[call_id] = {"args": params.get("args"), "result": None}
+        elif event.get("type") == "tool_call_complete" and call_id in calls:
+            if tool == "google_gmail_search":
+                calls[call_id]["args"] = params.get("args")
+        elif event.get("type") == "tool_call_result" and call_id in calls:
+            if tool == "google_gmail_search":
+                calls[call_id]["result"] = params
+
+    state = "degraded"
+    reason = "gmail_evidence_incomplete"
+    item_count = 0
+    bound = False
+    result_schema_valid = False
+    no_raw_content = not forbidden_read
+    call = next(iter(calls.values()), None) if len(calls) == 1 and not duplicate_ids else None
+    if call is not None:
+        args = _json_value(call.get("args"))
+        bound = (
+            isinstance(args, dict)
+            and args.get("account") == account
+            and args.get("query") == "newer_than:7d"
+            and isinstance(args.get("page_size"), int)
+            and not isinstance(args.get("page_size"), bool)
+            and 1 <= args["page_size"] <= _GMAIL_MAX_ITEMS
+            and not args.get("page_token")
+        )
+        result = call.get("result")
+        if isinstance(result, dict):
+            output = result.get("output")
+            output_text = output if isinstance(output, str) else ""
+            authorization_error = next(
+                (token for token in _GMAIL_AUTH_ERRORS if token in output_text), None
+            )
+            if result.get("is_error") is True and authorization_error:
+                state, reason = "unauthorized", authorization_error
+            elif result.get("is_error") is True:
+                state, reason = "degraded", "gmail_provider_degraded"
+            else:
+                value = _json_value(output)
+                if isinstance(value, dict) and value.get("ok") is True and "result" in value:
+                    value = value["result"]
+                if isinstance(value, dict):
+                    messages = value.get("messages")
+                    item_count = len(messages) if isinstance(messages, list) else -1
+                    no_raw_content = no_raw_content and not _contains_raw_gmail_content(value)
+                    result_schema_valid = (
+                        isinstance(messages, list)
+                        and 0 <= item_count <= _GMAIL_MAX_ITEMS
+                        and all(isinstance(message, dict) for message in messages)
+                    )
+                    if bound and result_schema_valid and no_raw_content:
+                        state, reason = "authorized", None
+
+    summary_bytes = len(frame.encode("utf-8"))
+    summary_safe = (
+        0 < summary_bytes <= _GMAIL_MAX_SUMMARY_BYTES
+        and not any(marker in frame.casefold() for marker in _GMAIL_FRAME_RAW_MARKERS)
+    )
+    if not turn_done and state == "authorized":
+        state, reason = "degraded", "gmail_turn_incomplete"
+    if not summary_safe and state == "authorized":
+        state, reason = "degraded", "gmail_summary_unsafe"
+    assertions = [
+        {"name": "turn_done", "passed": turn_done},
+        {"name": "single_bounded_search", "passed": call is not None},
+        {"name": "configured_account_bound", "passed": bound},
+        {"name": "authorized", "passed": state == "authorized"},
+        {"name": "result_schema_bounded", "passed": result_schema_valid},
+        {"name": "metadata_only", "passed": no_raw_content},
+        {"name": "summary_bounded_and_redacted", "passed": summary_safe},
+    ]
+    status = "PASS" if state == "authorized" and all(item["passed"] for item in assertions) else "FAIL"
+    return {
+        "status": status,
+        "authorization_state": state,
+        "assertions": assertions,
+        "evidence": {
+            "schema_version": 1,
+            "account_binding": "configured_test_account",
+            "configured_account_bound": bound,
+            "search_call_count": len(calls),
+            "result_count": sum(call["result"] is not None for call in calls.values()),
+            "item_count": max(item_count, 0),
+            "item_limit": _GMAIL_MAX_ITEMS,
+            "summary_bytes": summary_bytes,
+            "summary_limit_bytes": _GMAIL_MAX_SUMMARY_BYTES,
+            "summary_sha256": hashlib.sha256(frame.encode("utf-8")).hexdigest(),
+            "metadata_only": no_raw_content,
+        },
+        "failure": reason,
+    }
+
+
+async def gmail_read(source_root: str, account: str, timeout: float = 120.0) -> dict:
     completed = await _tui_task(
         Path(source_root).resolve(),
-        "使用 google_gmail_search 查询 me 最近7天邮件（newer_than:7d，最多10封），只汇总主题和发送人。",
+        f"使用 google_gmail_search 查询绑定账号 {account}，参数严格为 newer_than:7d 和 page_size=10。"
+        "只汇总最多10项主题和发送人，不输出账号、正文、snippet 或原始工具结果。",
         timeout,
     )
     frame = completed.get("frame", "")
     events = _events(completed.get("event_path"))
-    gmail_ids = {
-        e.get("params", {}).get("call_id")
-        for e in events
-        if e.get("type") == "tool_call_start"
-        and e.get("params", {}).get("tool") == "google_gmail_search"
-    }
-    gmail_results = [
-        e
-        for e in events
-        if e.get("type") == "tool_call_result"
-        and e.get("params", {}).get("call_id") in gmail_ids
-    ]
-    unauthorized = "google_unauthorized_account" in frame
-    assertions = [
-        {"name": "turn_done", "passed": completed.get("turn_done") is True},
-        {"name": "gmail_tool_result", "passed": bool(gmail_results)},
-        {"name": "authorized", "passed": not unauthorized},
-        {"name": "summary_visible", "passed": len(frame) > 400},
-        {
-            "name": "no_previous_analysis_context",
-            "passed": "tree-sitter" not in frame and "设计哲学" not in frame,
-        },
-    ]
-    return {
-        "status": "PASS" if all(a["passed"] for a in assertions) else "FAIL",
-        "assertions": assertions,
-        "evidence": {"frame": frame, "events": len(events)},
-        "failure": None,
-    }
+    return _safe_gmail_evidence(
+        events, frame, account, completed.get("turn_done") is True
+    )
 
 
 async def run(name: str, source_root: str) -> dict:
@@ -216,7 +342,12 @@ async def run(name: str, source_root: str) -> dict:
     elif name == "workspace_boundary":
         result.update(await workspace_boundary(source_root))
     elif name == "gmail_read":
-        result.update(await gmail_read(source_root))
+        account = os.environ.get("ALETHEON_PRODUCTION_GMAIL_ACCOUNT", "").strip()
+        if not account:
+            result.update({"status": "BLOCKED", "authorization_state": "degraded",
+                           "failure": "gmail_test_account_not_configured"})
+        else:
+            result.update(await gmail_read(source_root, account))
     else:
         result.update({"status": "BLOCKED", "failure": f"unknown scenario: {name}"})
     return result
