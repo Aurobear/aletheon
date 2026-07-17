@@ -213,6 +213,7 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
 
         let outcome = loop {
             tokio::select! {
+                biased;
                 _ = input.cancellation.cancelled() => {
                     next_id += 1;
                     let abort = PiRpcCommand::Abort { id: command_id(input.handle.agent_id, next_id) };
@@ -220,24 +221,6 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
                     break Err(terminal_error("Pi RPC Agent cancelled"));
                 }
                 _ = &mut deadline => break Err(runtime_error("Pi RPC Agent exceeded its elapsed-time budget")),
-                status = child.wait() => {
-                    let status = status.map_err(|error| runtime_error(format!("waiting for Pi RPC process: {error}")))?;
-                    break Err(runtime_error(format!("Pi RPC process exited before settlement: {status}")));
-                }
-                message = input.inbox.recv(), if pending.is_none() && !state.settled => {
-                    let Some(message) = message else { continue };
-                    if message.kind != AgentMessageKind::Input {
-                        break Err(runtime_error("Pi RPC inbox accepts only Agent input messages"));
-                    }
-                    next_id += 1;
-                    let command = if message.start_turn {
-                        PiRpcCommand::FollowUp { id: command_id(input.handle.agent_id, next_id), message: message.content }
-                    } else {
-                        PiRpcCommand::Steer { id: command_id(input.handle.agent_id, next_id), message: message.content }
-                    };
-                    write_command(&mut stdin, &command).await?;
-                    pending = Some(command);
-                }
                 record = read_record(&mut stdout, self.config.max_output_bytes) => {
                     let record = record?;
                     match record {
@@ -269,6 +252,24 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
                             }
                         }
                     }
+                }
+                status = child.wait() => {
+                    let status = status.map_err(|error| runtime_error(format!("waiting for Pi RPC process: {error}")))?;
+                    break Err(runtime_error(format!("Pi RPC process exited before settlement: {status}")));
+                }
+                message = input.inbox.recv(), if pending.is_none() && !state.settled => {
+                    let Some(message) = message else { continue };
+                    if message.kind != AgentMessageKind::Input {
+                        break Err(runtime_error("Pi RPC inbox accepts only Agent input messages"));
+                    }
+                    next_id += 1;
+                    let command = if message.start_turn {
+                        PiRpcCommand::FollowUp { id: command_id(input.handle.agent_id, next_id), message: message.content }
+                    } else {
+                        PiRpcCommand::Steer { id: command_id(input.handle.agent_id, next_id), message: message.content }
+                    };
+                    write_command(&mut stdin, &command).await?;
+                    pending = Some(command);
                 }
             }
         };
