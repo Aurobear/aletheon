@@ -182,7 +182,6 @@ fn daemon_compatibility_requests_own_method_and_parameter_names() {
         (ClientRpcRequest::PlanApprove, "plan_approve"),
         (ClientRpcRequest::Cancel, "cancel"),
         (ClientRpcRequest::HooksList, "hooks_list"),
-        (ClientRpcRequest::DaemonShutdown, "daemon.shutdown"),
     ] {
         let request = request.to_json_rpc(Some(1)).unwrap();
         assert_eq!(request["method"], expected_method);
@@ -198,4 +197,93 @@ fn daemon_compatibility_requests_own_method_and_parameter_names() {
         .to_json_rpc(Some(1))
         .unwrap();
     assert_eq!(interrupt["params"]["reason"], "user_cancelled");
+}
+
+#[test]
+fn memory_goal_and_workflow_requests_preserve_legacy_wire_fields() {
+    let add = ClientRpcRequest::memory_add("remember", "project", "architecture")
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(add["method"], "memory.add");
+    assert_eq!(add["params"]["content"], "remember");
+    assert_eq!(add["params"]["scope"], "project");
+    assert_eq!(add["params"]["subject"], "architecture");
+
+    let list = ClientRpcRequest::memory_list(None, true)
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(list["method"], "memory.list");
+    assert!(list["params"]["scope"].is_null());
+    assert_eq!(list["params"]["all"], true);
+
+    let search = ClientRpcRequest::memory_search("typed", Some("session".into()))
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(search["method"], "memory.search");
+    assert_eq!(search["params"]["query"], "typed");
+    assert_eq!(search["params"]["scope"], "session");
+
+    for (request, method) in [
+        (ClientRpcRequest::memory_show(7), "memory.show"),
+        (ClientRpcRequest::memory_pin(7), "memory.pin"),
+        (ClientRpcRequest::memory_unpin(7), "memory.unpin"),
+        (ClientRpcRequest::goal_show(7), "goal.show"),
+    ] {
+        let wire = request.to_json_rpc(Some(1)).unwrap();
+        assert_eq!(wire["method"], method);
+        assert_eq!(wire["params"]["id"], 7);
+    }
+
+    let forget = ClientRpcRequest::memory_forget(8, true)
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(forget["method"], "memory.forget");
+    assert_eq!(forget["params"]["id"], 8);
+    assert_eq!(forget["params"]["hard"], true);
+
+    let goal_set = ClientRpcRequest::goal_set("ship", "session")
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(goal_set["method"], "goal.set");
+    assert_eq!(goal_set["params"]["description"], "ship");
+    assert_eq!(goal_set["params"]["scope"], "session");
+
+    let goal_status =
+        ClientRpcRequest::goal_status(Some(9), Some("completed".into()), Some("active".into()))
+            .to_json_rpc(Some(1))
+            .unwrap();
+    assert_eq!(goal_status["method"], "goal.status");
+    assert_eq!(goal_status["params"]["id"], 9);
+    assert_eq!(goal_status["params"]["status"], "completed");
+    assert_eq!(goal_status["params"]["filter"], "active");
+
+    let workflow_save =
+        ClientRpcRequest::workflow_save("release", serde_json::json!({"steps": ["check", "ship"]}))
+            .to_json_rpc(Some(1))
+            .unwrap();
+    assert_eq!(workflow_save["method"], "workflow.save");
+    assert_eq!(workflow_save["params"]["name"], "release");
+    assert_eq!(workflow_save["params"]["def"]["steps"][0], "check");
+
+    for (request, method) in [
+        (ClientRpcRequest::workflow_load("release"), "workflow.load"),
+        (
+            ClientRpcRequest::workflow_delete("release"),
+            "workflow.delete",
+        ),
+        (ClientRpcRequest::workflow_run("release"), "workflow.run"),
+    ] {
+        let wire = request.to_json_rpc(Some(1)).unwrap();
+        assert_eq!(wire["method"], method);
+        assert_eq!(wire["params"]["name"], "release");
+    }
+
+    for request in [
+        ClientRpcRequest::GoalResume,
+        ClientRpcRequest::WorkflowList,
+        ClientRpcRequest::DaemonShutdown,
+    ] {
+        let wire = request.to_json_rpc(Some(1)).unwrap();
+        assert_eq!(wire["params"], serde_json::json!({}));
+    }
 }

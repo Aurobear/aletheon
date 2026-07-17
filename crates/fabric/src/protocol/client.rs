@@ -39,6 +39,22 @@ pub enum ClientRpcRequest {
     HooksList,
     DaemonShutdown,
     ApprovalResponse(ApprovalResponseParams),
+    MemoryAdd(MemoryAddParams),
+    MemoryList(MemoryListParams),
+    MemorySearch(MemorySearchParams),
+    MemoryShow(NumericIdParams),
+    MemoryForget(MemoryForgetParams),
+    MemoryPin(NumericIdParams),
+    MemoryUnpin(NumericIdParams),
+    GoalSet(GoalSetParams),
+    GoalShow(NumericIdParams),
+    GoalStatus(GoalStatusParams),
+    GoalResume,
+    WorkflowSave(WorkflowSaveParams),
+    WorkflowLoad(NameParams),
+    WorkflowList,
+    WorkflowDelete(NameParams),
+    WorkflowRun(NameParams),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -88,6 +104,61 @@ pub struct ApprovalResponseParams {
     pub decision: TransientApprovalDecision,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MemoryAddParams {
+    pub content: String,
+    pub scope: String,
+    pub subject: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MemoryListParams {
+    pub scope: Option<String>,
+    pub all: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MemorySearchParams {
+    pub query: String,
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct NumericIdParams {
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MemoryForgetParams {
+    pub id: i64,
+    pub hard: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct GoalSetParams {
+    pub description: String,
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct GoalStatusParams {
+    pub id: Option<i64>,
+    pub status: Option<String>,
+    pub filter: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct WorkflowSaveParams {
+    pub name: String,
+    #[schemars(with = "serde_json::Value")]
+    pub def: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct NameParams {
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct JsonRpcRequest {
     jsonrpc: &'static str,
@@ -96,6 +167,9 @@ struct JsonRpcRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     params: Option<serde_json::Value>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+struct EmptyParams {}
 
 impl ClientRpcRequest {
     pub fn chat(message: impl Into<String>, workspace: &WorkspacePolicy) -> Self {
@@ -139,6 +213,79 @@ impl ClientRpcRequest {
         })
     }
 
+    pub fn memory_add(
+        content: impl Into<String>,
+        scope: impl Into<String>,
+        subject: impl Into<String>,
+    ) -> Self {
+        Self::MemoryAdd(MemoryAddParams {
+            content: content.into(),
+            scope: scope.into(),
+            subject: subject.into(),
+        })
+    }
+
+    pub fn memory_list(scope: Option<String>, all: bool) -> Self {
+        Self::MemoryList(MemoryListParams { scope, all })
+    }
+
+    pub fn memory_search(query: impl Into<String>, scope: Option<String>) -> Self {
+        Self::MemorySearch(MemorySearchParams {
+            query: query.into(),
+            scope,
+        })
+    }
+
+    pub fn memory_show(id: i64) -> Self {
+        Self::MemoryShow(NumericIdParams { id })
+    }
+
+    pub fn memory_forget(id: i64, hard: bool) -> Self {
+        Self::MemoryForget(MemoryForgetParams { id, hard })
+    }
+
+    pub fn memory_pin(id: i64) -> Self {
+        Self::MemoryPin(NumericIdParams { id })
+    }
+
+    pub fn memory_unpin(id: i64) -> Self {
+        Self::MemoryUnpin(NumericIdParams { id })
+    }
+
+    pub fn goal_set(description: impl Into<String>, scope: impl Into<String>) -> Self {
+        Self::GoalSet(GoalSetParams {
+            description: description.into(),
+            scope: scope.into(),
+        })
+    }
+
+    pub fn goal_status(id: Option<i64>, status: Option<String>, filter: Option<String>) -> Self {
+        Self::GoalStatus(GoalStatusParams { id, status, filter })
+    }
+
+    pub fn goal_show(id: i64) -> Self {
+        Self::GoalShow(NumericIdParams { id })
+    }
+
+    pub fn workflow_save(name: impl Into<String>, def: serde_json::Value) -> Self {
+        Self::WorkflowSave(WorkflowSaveParams {
+            name: name.into(),
+            def,
+        })
+    }
+
+    pub fn workflow_load(name: impl Into<String>) -> Self {
+        Self::WorkflowLoad(NameParams { name: name.into() })
+    }
+
+    pub fn workflow_delete(name: impl Into<String>) -> Self {
+        Self::WorkflowDelete(NameParams { name: name.into() })
+    }
+
+    pub fn workflow_run(name: impl Into<String>) -> Self {
+        Self::WorkflowRun(NameParams { name: name.into() })
+    }
+
     /// Serialize the typed request into the daemon's compatibility envelope.
     /// An absent ID is reserved for client notifications such as approval
     /// responses; it is encoded as JSON `null` to preserve the current wire
@@ -161,10 +308,31 @@ impl ClientRpcRequest {
             Self::Cancel => ("cancel", None),
             Self::Interrupt(params) => ("interrupt", Some(serde_json::to_value(params)?)),
             Self::HooksList => ("hooks_list", None),
-            Self::DaemonShutdown => ("daemon.shutdown", None),
+            Self::DaemonShutdown => (
+                "daemon.shutdown",
+                Some(serde_json::to_value(EmptyParams {})?),
+            ),
             Self::ApprovalResponse(params) => {
                 ("approval_response", Some(serde_json::to_value(params)?))
             }
+            Self::MemoryAdd(params) => ("memory.add", Some(serde_json::to_value(params)?)),
+            Self::MemoryList(params) => ("memory.list", Some(serde_json::to_value(params)?)),
+            Self::MemorySearch(params) => ("memory.search", Some(serde_json::to_value(params)?)),
+            Self::MemoryShow(params) => ("memory.show", Some(serde_json::to_value(params)?)),
+            Self::MemoryForget(params) => ("memory.forget", Some(serde_json::to_value(params)?)),
+            Self::MemoryPin(params) => ("memory.pin", Some(serde_json::to_value(params)?)),
+            Self::MemoryUnpin(params) => ("memory.unpin", Some(serde_json::to_value(params)?)),
+            Self::GoalSet(params) => ("goal.set", Some(serde_json::to_value(params)?)),
+            Self::GoalShow(params) => ("goal.show", Some(serde_json::to_value(params)?)),
+            Self::GoalStatus(params) => ("goal.status", Some(serde_json::to_value(params)?)),
+            Self::GoalResume => ("goal.resume", Some(serde_json::to_value(EmptyParams {})?)),
+            Self::WorkflowSave(params) => ("workflow.save", Some(serde_json::to_value(params)?)),
+            Self::WorkflowLoad(params) => ("workflow.load", Some(serde_json::to_value(params)?)),
+            Self::WorkflowList => ("workflow.list", Some(serde_json::to_value(EmptyParams {})?)),
+            Self::WorkflowDelete(params) => {
+                ("workflow.delete", Some(serde_json::to_value(params)?))
+            }
+            Self::WorkflowRun(params) => ("workflow.run", Some(serde_json::to_value(params)?)),
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,

@@ -287,35 +287,17 @@ async fn memory_cmd(socket: &PathBuf, action: MemoryAction) -> Result<()> {
             text,
             scope,
             subject,
-        } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.add",
-            "params": { "content": text, "scope": scope, "subject": subject }
-        }),
-        MemoryAction::List { scope, all } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.list",
-            "params": { "scope": scope, "all": all }
-        }),
-        MemoryAction::Search { query, scope } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.search",
-            "params": { "query": query, "scope": scope }
-        }),
-        MemoryAction::Show { id } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.show",
-            "params": { "id": id }
-        }),
-        MemoryAction::Forget { id, hard } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.forget",
-            "params": { "id": id, "hard": hard }
-        }),
-        MemoryAction::Pin { id } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.pin",
-            "params": { "id": id }
-        }),
-        MemoryAction::Unpin { id } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.unpin",
-            "params": { "id": id }
-        }),
-    };
+        } => ClientRpcRequest::memory_add(text, scope, subject),
+        MemoryAction::List { scope, all } => ClientRpcRequest::memory_list(scope.clone(), *all),
+        MemoryAction::Search { query, scope } => {
+            ClientRpcRequest::memory_search(query, scope.clone())
+        }
+        MemoryAction::Show { id } => ClientRpcRequest::memory_show(*id),
+        MemoryAction::Forget { id, hard } => ClientRpcRequest::memory_forget(*id, *hard),
+        MemoryAction::Pin { id } => ClientRpcRequest::memory_pin(*id),
+        MemoryAction::Unpin { id } => ClientRpcRequest::memory_unpin(*id),
+    }
+    .to_json_rpc(Some(1))?;
 
     let resp = super::rpc_client::send_rpc(socket, &req).await?;
 
