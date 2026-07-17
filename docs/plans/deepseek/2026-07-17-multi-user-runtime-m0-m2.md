@@ -1,5 +1,7 @@
 # Multi-User Runtime M0-M2 Implementation Plan
 
+> **STATUS: COMPLETE (2026-07-17 code-level re-check).** M0–M2 已在代码中实现：`PrincipalContext`/`WorkspacePolicy`/`ApprovalOwner` 贯穿 fabric/cognit/corpus/executive；`system_core_runtime.rs`、`user_runtime/`、`impl/core_rpc/{client,server,protocol}.rs`、`InferencePort`/`RegistryInferencePort`、`WorkspaceSelection`、`UserRuntimePaths`、`InitializeParams` 均存在；`aletheon core`/`daemon` 子命令与 3 个 systemd unit 已就位；零 `Bear-ws`/`LOCAL_WORKSPACE_ROOT` 残留。本文档作为历史记录保留（checkbox 未回填）。**剩余工作是 M3–M5**（explicit-thread 协议切换、durable recovery、doctor 诊断），见姊妹设计文档 `2026-07-17-codex-inspired-multi-user-runtime-design.md`。
+
 > **For agentic workers:** Use `workflow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make Aletheon launch from any accessible directory while isolating each Linux user's runtime, state, approvals, workspace authority, and tool execution behind an authenticated system-core boundary.
