@@ -1027,9 +1027,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
         )
         .await
         .is_err();
-    let selected = action_loop
-        .select_action(&call, fabric::RiskLevel::ReadOnly)
-        .await?;
+    let selected = action_loop.select_action(&call).await?;
     let outcome: SelectedActionOutcomeReceipt = action_loop
         .observe_outcome(
             &selected,

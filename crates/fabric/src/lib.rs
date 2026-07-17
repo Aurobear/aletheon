@@ -176,8 +176,7 @@ pub use types::admission::{
     AdmissionError, AdmissionRequest, AuditEventId, BudgetRequest, BudgetReservationId,
     BudgetReservationReceipt, BudgetScope, BudgetScopeId, BudgetScopeKind, CapabilityId,
     CapabilityScope, ExecutionPermit, LeaseRequest, PermitId, PrincipalId, ResourceLeaseId,
-    RevokeReason, RiskLevel, SandboxDecision, SandboxRequirement, UsageReport,
-    BUDGET_SCOPE_SCHEMA_VERSION,
+    RevokeReason, SandboxDecision, SandboxRequirement, UsageReport, BUDGET_SCOPE_SCHEMA_VERSION,
 };
 pub use types::agent::Pid;
 pub use types::agent_control::{

@@ -152,10 +152,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         call_id: "gmail-11".into(),
         deadline: None,
     };
-    let selected = action_loop
-        .select_action(&call, fabric::RiskLevel::ReadOnly)
-        .await
-        .unwrap();
+    let selected = action_loop.select_action(&call).await.unwrap();
     let outcome: SelectedActionOutcomeReceipt = action_loop
         .observe_outcome(
             &selected,
@@ -203,10 +200,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         call_id: "child-20".into(),
         deadline: None,
     };
-    let child_action = child_loop
-        .select_action(&child_call, fabric::RiskLevel::ReadOnly)
-        .await
-        .unwrap();
+    let child_action = child_loop.select_action(&child_call).await.unwrap();
     let child_outcome = child_loop
         .observe_outcome(
             &child_action,

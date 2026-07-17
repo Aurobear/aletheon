@@ -197,7 +197,7 @@ impl InterpretedExperience {
 /// decision. The concrete `CareAction` type lives in the `dasein` crate (which
 /// depends on `fabric`, not the reverse), so the reducer maps it into this
 /// dependency-free representation when emitting a [`SelfSignal::CareDecision`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CareActionKind {
     /// Deep deliberation needed — spawn a ReAct loop.

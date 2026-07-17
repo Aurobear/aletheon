@@ -67,11 +67,7 @@ struct RejectSelection;
 
 #[async_trait]
 impl GovernedActionLoop for RejectSelection {
-    async fn select_action(
-        &self,
-        _call: &CapabilityCall,
-        _risk: fabric::RiskLevel,
-    ) -> Result<SelectedActionContext> {
+    async fn select_action(&self, _call: &CapabilityCall) -> Result<SelectedActionContext> {
         anyhow::bail!("not selected")
     }
 
@@ -278,10 +274,7 @@ async fn forged_stale_and_cross_process_outcomes_cannot_create_a_broadcast() {
     )
     .unwrap();
     let capability_call = call(fixture.owner);
-    let selected = bridge
-        .select_action(&capability_call, fabric::RiskLevel::ReadOnly)
-        .await
-        .unwrap();
+    let selected = bridge.select_action(&capability_call).await.unwrap();
     let result = CapabilityResult {
         call_id: capability_call.call_id.clone(),
         output: "must remain uncommitted".into(),
