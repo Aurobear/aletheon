@@ -515,7 +515,7 @@ impl UnixServer {
                     // its own events independently (shared channels would cause events
                     // to be consumed by whichever connection reads first).
                     let (notify_tx, notify_rx) = mpsc::channel::<String>(64);
-                    handler.set_notify_channel(notify_tx);
+                    handler.set_notify_channel(notify_tx).await;
                     handler.increment_connections();
 
                     self.connections.spawn(async move {

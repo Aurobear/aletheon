@@ -477,8 +477,8 @@ impl TurnPipeline {
                     }
                     // Forward event to TUI client
                     if !is_terminal {
-                        let guard = notify_tx.lock().await;
-                        if let Some(ref tx) = *guard {
+                        let sender = notify_tx.lock().await.clone();
+                        if let Some(tx) = sender {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
                                 if let Ok(json_str) = event_to_json(&client_event) {
                                     if tx.send(json_str).await.is_err() {
@@ -502,8 +502,8 @@ impl TurnPipeline {
                         }
                     });
                     {
-                        let guard = notify_tx.lock().await;
-                        if let Some(ref tx) = *guard {
+                        let sender = notify_tx.lock().await.clone();
+                        if let Some(tx) = sender {
                             if tx.send(notification.to_string()).await.is_err() {
                                 warn!("Failed to send approval_request notification — client disconnected?");
                             }
@@ -523,8 +523,8 @@ impl TurnPipeline {
                 Some(Ok(event)) => {
                     let is_terminal = terminal_events.observe(&event);
                     if !is_terminal {
-                        let guard = notify_tx.lock().await;
-                        if let Some(ref tx) = *guard {
+                        let sender = notify_tx.lock().await.clone();
+                        if let Some(tx) = sender {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
                                 if let Ok(json_str) = event_to_json(&client_event) {
                                     if tx.send(json_str).await.is_err() {
@@ -552,8 +552,8 @@ impl TurnPipeline {
         let turn_error = text.as_ref().err().map(ToString::to_string);
         let normalized_terminal_events = terminal_events.into_client_events(turn_error);
         {
-            let guard = notify_tx.lock().await;
-            if let Some(ref tx) = *guard {
+            let sender = notify_tx.lock().await.clone();
+            if let Some(tx) = sender {
                 for event in normalized_terminal_events {
                     let Ok(json_str) = event_to_json(&event) else {
                         warn!("Unable to serialize terminal turn event");

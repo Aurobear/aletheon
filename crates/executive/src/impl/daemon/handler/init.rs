@@ -32,14 +32,14 @@ impl RequestHandler {
         self.ports.transport.clock.clone()
     }
 
-    pub fn set_notify_channel(&mut self, tx: mpsc::Sender<String>) {
+    pub async fn set_notify_channel(&mut self, tx: mpsc::Sender<String>) {
         self.notify_tx = Some(tx.clone());
-        self.ports.turn.set_notify(tx);
+        self.ports.turn.set_notify(tx).await;
     }
 
-    pub fn create_notify_channel(&mut self) -> mpsc::Receiver<String> {
+    pub async fn create_notify_channel(&mut self) -> mpsc::Receiver<String> {
         let (tx, rx) = mpsc::channel(64);
-        self.set_notify_channel(tx);
+        self.set_notify_channel(tx).await;
         rx
     }
 }

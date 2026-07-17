@@ -2,7 +2,6 @@ use aletheon_kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
-use fabric::ipc::mailbox::MailboxService;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     BudgetRequest, CapabilityAuthority, CapabilityCall, CapabilityInvoker, CapabilityRequest,

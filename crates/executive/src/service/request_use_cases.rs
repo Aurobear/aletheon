@@ -430,7 +430,7 @@ pub trait TurnUseCases: Send + Sync {
         id: SessionId,
         after: Option<u64>,
     ) -> anyhow::Result<Vec<fabric::Message>>;
-    fn set_notify(&self, sender: tokio::sync::mpsc::Sender<String>);
+    async fn set_notify(&self, sender: tokio::sync::mpsc::Sender<String>);
 }
 
 pub struct ProductionTurnUseCases {
@@ -504,8 +504,8 @@ impl TurnUseCases for ProductionTurnUseCases {
         self.sessions.replay(&id, after).await
     }
 
-    fn set_notify(&self, sender: tokio::sync::mpsc::Sender<String>) {
-        self.orchestrator.set_notify_sender(sender);
+    async fn set_notify(&self, sender: tokio::sync::mpsc::Sender<String>) {
+        self.orchestrator.set_notify_sender(sender).await;
     }
 }
 

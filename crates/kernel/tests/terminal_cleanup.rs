@@ -1,7 +1,7 @@
 use aletheon_kernel::supervision::{RestartDecision, RestartPolicy};
 use aletheon_kernel::{KernelRuntime, LifecycleFaultInjector};
 use fabric::ipc::envelope_v2::Target;
-use fabric::ipc::mailbox::{InProcessMailbox, MailboxService};
+use fabric::ipc::mailbox::InProcessMailbox;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionRequest, BudgetRequest, CapabilityId, CapabilityScope, ExitReason, LeaseRequest,
