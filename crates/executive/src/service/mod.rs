@@ -6,6 +6,7 @@ pub mod conscious_context_slot;
 pub mod conscious_core_coordinator;
 pub mod conscious_core_inspector;
 pub mod conscious_core_ports;
+pub mod conscious_field;
 pub mod conscious_workspace;
 pub mod context_assembler;
 pub mod daemon_react;

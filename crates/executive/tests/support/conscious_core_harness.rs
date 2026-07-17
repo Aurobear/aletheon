@@ -21,7 +21,7 @@ use executive::service::conscious_workspace::{ConsciousTurnPort, ConsciousWorksp
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use executive::service::event_projection::{EventProjection, SqliteProjectionStore};
 use executive::service::governed_capability::{
-    GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
+    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
 use fabric::{
     AcceptanceEvidence, AgentBudget, AgentContextFork, AgentControlError, AgentControlPort,
@@ -1027,7 +1027,10 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
         )
         .await
         .is_err();
-    let selected = action_loop.select_action(&call).await?;
+    let decision = action_loop.select_action(&call).await?;
+    let GovernedActionDecision::Proceed { selected, .. } = decision else {
+        anyhow::bail!("acceptance fixture action was deferred")
+    };
     let outcome: SelectedActionOutcomeReceipt = action_loop
         .observe_outcome(
             &selected,

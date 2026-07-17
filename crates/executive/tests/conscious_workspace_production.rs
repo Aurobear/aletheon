@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use executive::service::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use executive::service::governed_capability::{
-    GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
+    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
 use fabric::{
     AgentId, AgentProfileId, AgoraSpaceId, CapabilityCall, CapabilityResult,
@@ -152,7 +152,10 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         call_id: "gmail-11".into(),
         deadline: None,
     };
-    let selected = action_loop.select_action(&call).await.unwrap();
+    let decision = action_loop.select_action(&call).await.unwrap();
+    let GovernedActionDecision::Proceed { selected, .. } = decision else {
+        panic!("legacy empty field must proceed")
+    };
     let outcome: SelectedActionOutcomeReceipt = action_loop
         .observe_outcome(
             &selected,
@@ -200,7 +203,14 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         call_id: "child-20".into(),
         deadline: None,
     };
-    let child_action = child_loop.select_action(&child_call).await.unwrap();
+    let child_decision = child_loop.select_action(&child_call).await.unwrap();
+    let GovernedActionDecision::Proceed {
+        selected: child_action,
+        ..
+    } = child_decision
+    else {
+        panic!("legacy empty child field must proceed")
+    };
     let child_outcome = child_loop
         .observe_outcome(
             &child_action,

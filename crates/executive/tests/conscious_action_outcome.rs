@@ -15,8 +15,9 @@ use executive::service::conscious_core_coordinator::{
 };
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use executive::service::governed_capability::{
-    AuthorizedInvocation, GovernedActionLoop, GovernedCapabilityInvoker, SelectedActionContext,
-    SelectedActionOutcomeReceipt, TurnAuthorityProvider, TurnCapabilityInvoker,
+    ActionModulationSnapshot, AuthorizedInvocation, GovernedActionDecision, GovernedActionLoop,
+    GovernedCapabilityInvoker, SelectedActionContext, SelectedActionOutcomeReceipt,
+    TurnAuthorityProvider, TurnCapabilityInvoker,
 };
 use fabric::types::admission::RiskLevel;
 use fabric::{
@@ -67,8 +68,16 @@ struct RejectSelection;
 
 #[async_trait]
 impl GovernedActionLoop for RejectSelection {
-    async fn select_action(&self, _call: &CapabilityCall) -> Result<SelectedActionContext> {
+    async fn select_action(&self, _call: &CapabilityCall) -> Result<GovernedActionDecision> {
         anyhow::bail!("not selected")
+    }
+
+    async fn observe_modulation(
+        &self,
+        _call: &CapabilityCall,
+        _modulation: &ActionModulationSnapshot,
+    ) -> Result<()> {
+        Ok(())
     }
 
     async fn observe_outcome(
@@ -274,7 +283,10 @@ async fn forged_stale_and_cross_process_outcomes_cannot_create_a_broadcast() {
     )
     .unwrap();
     let capability_call = call(fixture.owner);
-    let selected = bridge.select_action(&capability_call).await.unwrap();
+    let decision = bridge.select_action(&capability_call).await.unwrap();
+    let GovernedActionDecision::Proceed { selected, .. } = decision else {
+        panic!("legacy empty field must proceed")
+    };
     let result = CapabilityResult {
         call_id: capability_call.call_id.clone(),
         output: "must remain uncommitted".into(),

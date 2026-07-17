@@ -12,8 +12,9 @@ use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, BroadcastEpoch, CapabilityAuthority, CapabilityCall, CapabilityInvoker,
-    CapabilityResult, CapabilityScope, ContentId, InvocationControl, PrincipalId, ProcessId,
-    SandboxRequirement, UsageReport, WorkspaceAttribution,
+    CapabilityResult, CapabilityScope, ContentId, FieldDecisionKind, FieldDecisionReason,
+    InvocationControl, PrincipalId, ProcessId, SalienceVector, SandboxRequirement, UsageReport,
+    WorkspaceAttribution,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -67,13 +68,64 @@ pub struct AuthorizedInvocation {
     pub control: InvocationControl,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedActionContext {
     pub candidate_id: ContentId,
     pub broadcast_epoch: BroadcastEpoch,
     pub operation_id: fabric::OperationId,
     pub source_process: ProcessId,
     pub attribution: WorkspaceAttribution,
+}
+
+/// Bounded pre-execution evidence for a conscious action decision.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionModulationSnapshot {
+    pub decision: FieldDecisionKind,
+    pub reason: FieldDecisionReason,
+    pub broadcast_epoch: BroadcastEpoch,
+    pub confidence: f32,
+    pub salience: SalienceVector,
+    pub metric_ref: String,
+}
+
+impl ActionModulationSnapshot {
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.confidence.is_finite() && (0.0..=1.0).contains(&self.confidence),
+            "action modulation confidence must be finite and in [0,1]"
+        );
+        self.salience.validate()?;
+        anyhow::ensure!(
+            matches!(
+                (self.decision, self.reason),
+                (FieldDecisionKind::Proceed, FieldDecisionReason::Selected)
+                    | (FieldDecisionKind::Reorder, FieldDecisionReason::Selected)
+                    | (
+                        FieldDecisionKind::WouldDefer | FieldDecisionKind::Defer,
+                        FieldDecisionReason::Negated | FieldDecisionReason::LostCompetition
+                    )
+            ),
+            "action modulation decision and reason are inconsistent"
+        );
+        anyhow::ensure!(
+            !self.metric_ref.trim().is_empty() && self.metric_ref.len() <= 32 * 1024,
+            "action modulation metric reference is invalid"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GovernedActionDecision {
+    Proceed {
+        selected: SelectedActionContext,
+        modulation: Option<ActionModulationSnapshot>,
+    },
+    Defer {
+        reason: FieldDecisionReason,
+        retryable: bool,
+        modulation: ActionModulationSnapshot,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +137,13 @@ pub struct SelectedActionOutcomeReceipt {
 
 #[async_trait]
 pub trait GovernedActionLoop: Send + Sync {
-    async fn select_action(&self, call: &CapabilityCall) -> Result<SelectedActionContext>;
+    async fn select_action(&self, call: &CapabilityCall) -> Result<GovernedActionDecision>;
+
+    async fn observe_modulation(
+        &self,
+        call: &CapabilityCall,
+        modulation: &ActionModulationSnapshot,
+    ) -> Result<()>;
 
     async fn observe_outcome(
         &self,
@@ -147,7 +205,44 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
         };
         let selected = if let Some(action_loop) = &self.action_loop {
             match action_loop.select_action(&call).await {
-                Ok(selected) => Some(selected),
+                Ok(GovernedActionDecision::Proceed {
+                    selected,
+                    modulation,
+                }) => {
+                    if let Some(modulation) = modulation.as_ref() {
+                        if let Err(error) = action_loop.observe_modulation(&call, modulation).await
+                        {
+                            return CapabilityResult {
+                                call_id: call.call_id,
+                                output: format!(
+                                    "capability action modulation observation failed: {error}"
+                                ),
+                                is_error: true,
+                                usage: UsageReport::default(),
+                                audit_id: None,
+                            };
+                        }
+                    }
+                    Some(selected)
+                }
+                Ok(GovernedActionDecision::Defer {
+                    reason: _,
+                    retryable: _,
+                    modulation,
+                }) => {
+                    if let Err(error) = action_loop.observe_modulation(&call, &modulation).await {
+                        return CapabilityResult {
+                            call_id: call.call_id,
+                            output: format!(
+                                "capability action modulation observation failed: {error}"
+                            ),
+                            is_error: true,
+                            usage: UsageReport::default(),
+                            audit_id: None,
+                        };
+                    }
+                    None
+                }
                 Err(error) => {
                     return CapabilityResult {
                         call_id: call.call_id,

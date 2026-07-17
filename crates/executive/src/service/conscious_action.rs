@@ -6,10 +6,10 @@ use std::time::Duration;
 use anyhow::Context;
 use async_trait::async_trait;
 use fabric::{
-    ActionProposalFrame, CapabilityCall, CapabilityResult, Clock, ContentId,
-    GovernedActionOutcomeFrame, MonoDeadline, ProcessId, SalienceVector, VisibilityScope,
-    WorkspaceAttribution, WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance,
-    WORKSPACE_SCHEMA_V1,
+    ActionProposalFrame, CapabilityCall, CapabilityResult, Clock, ConsciousFieldReadout, ContentId,
+    FieldDecisionKind, FieldDecisionReason, GovernedActionOutcomeFrame, LatestConsciousContextPort,
+    MonoDeadline, ProcessId, SalienceVector, VisibilityScope, WorkspaceAttribution,
+    WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -18,8 +18,10 @@ use super::conscious_core_coordinator::ConsciousCoreCoordinator;
 use super::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, ConsciousCandidatePort,
 };
+use super::conscious_field::{proposal_salience, should_defer};
 use super::governed_capability::{
-    GovernedActionLoop, SelectedActionContext, SelectedActionOutcomeReceipt,
+    ActionModulationSnapshot, GovernedActionDecision, GovernedActionLoop, SelectedActionContext,
+    SelectedActionOutcomeReceipt,
 };
 
 const ACTION_NAMESPACE: Uuid = Uuid::from_u128(0xd166_5f2f_f9d1_4e89_b0cf_9867_4c09_3101);
@@ -85,7 +87,7 @@ impl ConsciousActionBridge {
         ))
     }
 
-    fn max_salience() -> SalienceVector {
+    fn legacy_salience() -> SalienceVector {
         SalienceVector {
             urgency: 1.0,
             goal_relevance: 1.0,
@@ -104,11 +106,39 @@ impl ConsciousActionBridge {
             self.candidate_ttl.as_millis().min(u128::from(u64::MAX)) as u64,
         )
     }
+
+    fn metric_ref(&self, epoch: fabric::BroadcastEpoch) -> String {
+        self.coordinator
+            .field_metric_snapshots()
+            .into_iter()
+            .rev()
+            .find(|snapshot| snapshot.broadcast_epoch == epoch.0)
+            .map(|snapshot| snapshot.trace_event_id)
+            .filter(|reference| !reference.trim().is_empty())
+            .unwrap_or_else(|| format!("broadcast:{}:{}", self.coordinator.space().0, epoch.0))
+    }
 }
 
 #[async_trait]
 impl GovernedActionLoop for ConsciousActionBridge {
-    async fn select_action(&self, call: &CapabilityCall) -> anyhow::Result<SelectedActionContext> {
+    async fn select_action(&self, call: &CapabilityCall) -> anyhow::Result<GovernedActionDecision> {
+        let readout = match self
+            .coordinator
+            .latest_context(self.coordinator.space())
+            .await
+        {
+            Ok(projection) => ConsciousFieldReadout::from_projection(&projection)
+                .ok()
+                .flatten(),
+            Err(error) => {
+                tracing::warn!(error = %error, "conscious action field read failed; using legacy proposal");
+                None
+            }
+        };
+        let (confidence, salience) = readout
+            .as_ref()
+            .map(proposal_salience)
+            .unwrap_or((1.0, Self::legacy_salience()));
         let now = self.clock.mono_now();
         let event_ref = format!("action-call:{}:{}", call.operation_id.0, call.call_id);
         let candidate = WorkspaceCandidate {
@@ -122,8 +152,8 @@ impl GovernedActionLoop for ConsciousActionBridge {
                 summary: format!("invoke governed capability {}", call.name),
                 risk: 0.5,
             }),
-            confidence: 1.0,
-            salience: Self::max_salience(),
+            confidence,
+            salience,
             provenance: WorkspaceProvenance {
                 producer: self.source,
                 operation: Some(call.operation_id),
@@ -155,18 +185,67 @@ impl GovernedActionLoop for ConsciousActionBridge {
             receipt.status
         );
         let cycle = self.coordinator.run_cycle(self.source, 0).await?;
-        let broadcast = cycle.broadcast.context("governed action did not ignite")?;
-        anyhow::ensure!(
-            broadcast.winner_ids.contains(&candidate_id),
-            "governed action was not selected"
-        );
-        Ok(SelectedActionContext {
-            candidate_id,
-            broadcast_epoch: broadcast.epoch,
-            operation_id: call.operation_id,
-            source_process: self.source,
-            attribution: self.attribution(),
-        })
+        let selected = cycle
+            .broadcast
+            .as_ref()
+            .is_some_and(|broadcast| broadcast.winner_ids.contains(&candidate_id));
+        let Some(readout) = readout else {
+            let broadcast = cycle.broadcast.context("governed action did not ignite")?;
+            anyhow::ensure!(selected, "governed action was not selected");
+            return Ok(GovernedActionDecision::Proceed {
+                selected: SelectedActionContext {
+                    candidate_id,
+                    broadcast_epoch: broadcast.epoch,
+                    operation_id: call.operation_id,
+                    source_process: self.source,
+                    attribution: self.attribution(),
+                },
+                modulation: None,
+            });
+        };
+        let reason = should_defer(&readout, selected);
+        let modulation = ActionModulationSnapshot {
+            decision: if reason.is_some() {
+                FieldDecisionKind::Defer
+            } else {
+                FieldDecisionKind::Proceed
+            },
+            reason: reason.unwrap_or(FieldDecisionReason::Selected),
+            broadcast_epoch: readout.epoch,
+            confidence,
+            salience,
+            metric_ref: self.metric_ref(readout.epoch),
+        };
+        modulation.validate()?;
+        if let Some(reason) = reason {
+            Ok(GovernedActionDecision::Defer {
+                reason,
+                retryable: true,
+                modulation,
+            })
+        } else {
+            let broadcast = cycle
+                .broadcast
+                .context("selected governed action has no broadcast")?;
+            Ok(GovernedActionDecision::Proceed {
+                selected: SelectedActionContext {
+                    candidate_id,
+                    broadcast_epoch: broadcast.epoch,
+                    operation_id: call.operation_id,
+                    source_process: self.source,
+                    attribution: self.attribution(),
+                },
+                modulation: Some(modulation),
+            })
+        }
+    }
+
+    async fn observe_modulation(
+        &self,
+        _call: &CapabilityCall,
+        modulation: &ActionModulationSnapshot,
+    ) -> anyhow::Result<()> {
+        modulation.validate()
     }
 
     async fn observe_outcome(
@@ -245,7 +324,7 @@ impl GovernedActionLoop for ConsciousActionBridge {
                 attribution: selected.attribution.clone(),
             }),
             confidence: 1.0,
-            salience: Self::max_salience(),
+            salience: Self::legacy_salience(),
             provenance: WorkspaceProvenance {
                 producer: self.outcome_source,
                 operation: Some(selected.operation_id),
