@@ -17,6 +17,10 @@ if grep -Eq 'ReadWritePaths=.*(/home|/tmp)' config/aletheon-core.service; then
 fi
 grep -q 'ExecStart=.*aletheon core' config/aletheon-core.service
 grep -q 'ExecStart=.*aletheon daemon' config/aletheon.user.service
+grep -q '^EnvironmentFile=-/etc/aletheon/credentials/provider.env$' config/aletheon-core.service
+if grep -q '^EnvironmentFile=-%d/provider.env$' config/aletheon-core.service; then
+  echo 'core provider environment depends on a credential path unavailable during environment loading' >&2; exit 1
+fi
 
 # The legacy system unit is core-only, and installation enables the private
 # socket rather than keeping every user's runtime resident.

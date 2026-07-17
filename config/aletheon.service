@@ -29,8 +29,7 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=aletheon-core
 
-LoadCredential=provider.env:/etc/aletheon/credentials/provider.env
-EnvironmentFile=-%d/provider.env
+EnvironmentFile=-/etc/aletheon/credentials/provider.env
 Environment=ALETHEON_DATA_ROOT=/var/lib/aletheon
 
 NoNewPrivileges=yes

@@ -28,8 +28,7 @@ SyslogIdentifier=aletheon-core
 
 # Only machine-scoped provider credentials are available to the core. User
 # integration credentials remain in the per-user runtime.
-LoadCredential=provider.env:/etc/aletheon/credentials/provider.env
-EnvironmentFile=-%d/provider.env
+EnvironmentFile=-/etc/aletheon/credentials/provider.env
 Environment=ALETHEON_DATA_ROOT=/var/lib/aletheon
 
 NoNewPrivileges=yes
