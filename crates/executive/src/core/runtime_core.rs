@@ -86,32 +86,7 @@ impl RuntimeCore {
             conscious_arbitration_mode: crate::r#impl::daemon::conscious_arbitration_mode_from_env(
             )?,
             enable_evolution,
-            mcp_servers: app_config
-                .mcp_servers
-                .iter()
-                .map(|s| corpus::tools::mcp::config::McpServerConfig {
-                    name: s.name.clone(),
-                    transport: match s.transport.as_str() {
-                        "stdio" => corpus::tools::mcp::config::McpTransportConfig::Stdio {
-                            command: s.command.clone().unwrap_or_default(),
-                            args: Vec::new(),
-                        },
-                        "http" => corpus::tools::mcp::config::McpTransportConfig::StreamableHttp {
-                            url: s.url.clone().unwrap_or_default(),
-                        },
-                        "sse" => corpus::tools::mcp::config::McpTransportConfig::Sse {
-                            url: s.url.clone().unwrap_or_default(),
-                        },
-                        _ => corpus::tools::mcp::config::McpTransportConfig::Stdio {
-                            command: s.command.clone().unwrap_or_default(),
-                            args: Vec::new(),
-                        },
-                    },
-                    trust: corpus::tools::mcp::config::McpTrustLevel::LocalTrusted,
-                    enabled: true,
-                    bearer_token_env: s.bearer_token_env.clone(),
-                })
-                .collect(),
+            mcp_servers: super::mcp_config::convert_mcp_servers(&app_config.mcp_servers),
             hooks: {
                 // Honor --config: hooks must come from the same file(s) as the
                 // main config, not always ~/.aletheon. (Fixes the hooks bug.)

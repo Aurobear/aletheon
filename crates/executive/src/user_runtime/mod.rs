@@ -74,28 +74,7 @@ impl UserRuntimeConfig {
             conscious_arbitration_mode: crate::r#impl::daemon::conscious_arbitration_mode_from_env(
             )?,
             enable_evolution,
-            mcp_servers: app
-                .mcp_servers
-                .iter()
-                .map(|server| corpus::tools::mcp::config::McpServerConfig {
-                    name: server.name.clone(),
-                    transport: match server.transport.as_str() {
-                        "http" => corpus::tools::mcp::config::McpTransportConfig::StreamableHttp {
-                            url: server.url.clone().unwrap_or_default(),
-                        },
-                        "sse" => corpus::tools::mcp::config::McpTransportConfig::Sse {
-                            url: server.url.clone().unwrap_or_default(),
-                        },
-                        _ => corpus::tools::mcp::config::McpTransportConfig::Stdio {
-                            command: server.command.clone().unwrap_or_default(),
-                            args: Vec::new(),
-                        },
-                    },
-                    trust: corpus::tools::mcp::config::McpTrustLevel::LocalTrusted,
-                    enabled: true,
-                    bearer_token_env: server.bearer_token_env.clone(),
-                })
-                .collect(),
+            mcp_servers: crate::core::mcp_config::convert_mcp_servers(&app.mcp_servers),
             hooks: app.hooks.clone(),
             telegram: app.telegram.clone(),
             gbrain_memory: gbrain.clone(),
