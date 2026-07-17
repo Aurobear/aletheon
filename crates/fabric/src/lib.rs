@@ -97,6 +97,10 @@ pub use types::conscious_core_trace::{
     AcceptanceEvidence, ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult,
     CONSCIOUS_CORE_TRACE_SCHEMA_V1,
 };
+pub use types::conscious_field_metrics::{
+    FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot, quantize,
+    MAX_FIELD_METRIC_HISTORY, QUIET_CONVERGENCE_WINDOW,
+};
 pub use types::conscious_arbitration::{
     CapabilityBatchDecision, CapabilityBatchPlan, ConsciousArbitrationMode,
     ConsciousFieldReadout, FieldDecisionKind, FieldDecisionReason,
