@@ -13,6 +13,15 @@ def _git(root: Path, *args: str) -> str:
     ).strip()
 
 
+def _scenario_entries(root: Path) -> set[str]:
+    scenario_root = root / ".scenario-runs"
+    if not scenario_root.exists():
+        return set()
+    if scenario_root.is_symlink() or not scenario_root.is_dir():
+        raise RuntimeError("scenario artifact root is unsafe")
+    return {entry.name for entry in scenario_root.iterdir()}
+
+
 async def run(source_root: str, timeout: float = 120.0) -> dict:
     started = time.monotonic()
     root = Path(source_root).resolve()
@@ -26,27 +35,36 @@ async def run(source_root: str, timeout: float = 120.0) -> dict:
         return {"scenario": "project_workspace", "status": "FAIL",
                 "failure": "production workspace is missing or unsafe", "assertions": []}
     workspace = workspace.resolve()
+    if workspace != root:
+        return {"scenario": "project_workspace", "status": "FAIL",
+                "failure": "source root and production workspace must be the same worktree",
+                "assertions": [{"name": "single_project_worktree", "passed": False}]}
     metadata = workspace.stat()
     if metadata.st_uid != os.geteuid() or not os.access(workspace, os.W_OK | os.X_OK):
         return {"scenario": "project_workspace", "status": "FAIL",
                 "failure": "production workspace is not owned and writable by the runtime user",
                 "assertions": []}
-    before = {"root": _git(root, "rev-parse", "--show-toplevel"),
-              "head": _git(root, "rev-parse", "HEAD"),
-              "status": _git(root, "status", "--porcelain=v1")}
+    before = {"root": _git(workspace, "rev-parse", "--show-toplevel"),
+              "head": _git(workspace, "rev-parse", "HEAD"),
+              "status": _git(workspace, "status", "--porcelain=v1")}
+    initial_entries = _scenario_entries(workspace)
     delivery = await base.artifact_delivery(str(workspace), timeout)
-    analysis = await base.repository_analysis(str(root), timeout)
+    analysis = await base.repository_analysis(str(workspace), timeout)
     boundary = await base.workspace_boundary(str(workspace), timeout)
-    after = {"root": _git(root, "rev-parse", "--show-toplevel"),
-             "head": _git(root, "rev-parse", "HEAD"),
-             "status": _git(root, "status", "--porcelain=v1")}
-    before_lines = set(before["status"].splitlines())
-    new_status = set(after["status"].splitlines()) - before_lines
+    after = {"root": _git(workspace, "rev-parse", "--show-toplevel"),
+             "head": _git(workspace, "rev-parse", "HEAD"),
+             "status": _git(workspace, "status", "--porcelain=v1")}
+    final_entries = _scenario_entries(workspace)
+    created_entries = final_entries - initial_entries
     assertions = [
-        {"name": "known_git_root", "passed": Path(before["root"]).resolve() == root},
+        {"name": "known_git_root",
+         "passed": Path(before["root"]).resolve() == workspace
+         and Path(after["root"]).resolve() == workspace},
+        {"name": "initial_worktree_clean", "passed": before["status"] == ""},
         {"name": "git_head_stable", "passed": before["head"] == after["head"]},
-        {"name": "workspace_status_accounted",
-         "passed": not new_status},
+        {"name": "worktree_restored", "passed": before["status"] == after["status"]},
+        {"name": "scenario_artifacts_scoped",
+         "passed": bool(created_entries) and initial_entries <= final_entries},
         {"name": "artifact_delivery", "passed": delivery.get("status") == "PASS"},
         {"name": "repository_analysis", "passed": analysis.get("status") == "PASS"},
         {"name": "outside_write_denied", "passed": boundary.get("status") == "PASS"},
@@ -55,4 +73,6 @@ async def run(source_root: str, timeout: float = 120.0) -> dict:
             "assertions": assertions, "duration_ms": round((time.monotonic()-started)*1000),
             "evidence": {"git_before": before, "git_after": after,
                          "workspace": str(workspace),
+                         "created_scenario_entries": sorted(created_entries),
+                         "cleanup_owner": "aggregate-release-gate",
                          "delivery": delivery, "analysis": analysis, "boundary": boundary}}

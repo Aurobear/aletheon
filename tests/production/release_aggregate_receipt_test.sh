@@ -92,4 +92,18 @@ if "$repo_root/scripts/release-acceptance.sh" --validate-release-lane-evidence \
   exit 1
 fi
 
+release_script="$repo_root/scripts/release-acceptance.sh"
+grep -F 'git -C "$repo_root" worktree add --detach "$production_workspace" "$candidate_source_commit"' \
+  "$release_script" >/dev/null
+grep -F 'chown -R "$production_uid:$production_gid" "$production_workspace"' \
+  "$release_script" >/dev/null
+grep -F 'scenario --suite production --source-root "$production_workspace"' \
+  "$release_script" >/dev/null
+grep -F 'git -C "$repo_root" worktree remove --force "$production_workspace"' \
+  "$release_script" >/dev/null
+if grep -F 'rm -rf -- "$production_workspace"' "$release_script" >/dev/null; then
+  echo "release gate bypasses git worktree cleanup" >&2
+  exit 1
+fi
+
 echo "aggregate release evidence validation: pass"

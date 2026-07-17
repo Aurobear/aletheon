@@ -350,23 +350,62 @@ esac
 production_uid=$(installed_user_uid "$production_user")
 production_gid=$(id -g "$production_user")
 production_socket=$(installed_user_socket "$production_user")
+candidate_source_commit=$(git -C "$repo_root" rev-parse HEAD)
 production_workspace=$(mktemp -d "/var/tmp/aletheon-production-workspace.${production_uid}.XXXXXX")
-chown "$production_uid:$production_gid" "$production_workspace"
+rmdir -- "$production_workspace"
+git -C "$repo_root" worktree add --detach "$production_workspace" "$candidate_source_commit"
+chown -R "$production_uid:$production_gid" "$production_workspace"
 chmod 0700 "$production_workspace"
+[[ $(stat -c '%u:%g' "$production_workspace") == "$production_uid:$production_gid" ]] || {
+  echo "production worktree is not owned by the admitted user" >&2; exit 1;
+}
+[[ $(git -c "safe.directory=$production_workspace" -C "$production_workspace" rev-parse HEAD) == "$candidate_source_commit" ]] || {
+  echo "production worktree is not bound to the candidate source commit" >&2; exit 1;
+}
 printf '%s\n' "$production_workspace" >"$guest_artifacts/production-workspace-path.txt"
+jq -n --arg path "$production_workspace" --arg source_commit "$candidate_source_commit" \
+  --arg user "$production_user" --argjson uid "$production_uid" --argjson gid "$production_gid" \
+  '{schema_version:1,status:"PASS",path:$path,source_commit:$source_commit,
+    admitted_user:$user,uid:$uid,gid:$gid,detached:true}' \
+  >"$guest_artifacts/production-worktree-receipt.json"
 (
-  cd "$repo_root/tools/aletheon-monitor"
-  python3 -m pytest -q tests
+  cleanup_production_worktree() {
+    local status=$? cleanup_status=0
+    trap - EXIT
+    set +e
+    install -d -m 0700 "$guest_artifacts/production-workspace"
+    if [[ -d "$production_workspace/.scenario-runs" ]]; then
+      cp -a -- "$production_workspace/.scenario-runs/." \
+        "$guest_artifacts/production-workspace/" || cleanup_status=$?
+    fi
+    cd /
+    git -C "$repo_root" worktree remove --force "$production_workspace" || cleanup_status=$?
+    git -C "$repo_root" worktree prune || cleanup_status=$?
+    if ((status == 0 && cleanup_status != 0)); then status=$cleanup_status; fi
+    exit "$status"
+  }
+  trap cleanup_production_worktree EXIT
+  cd "$production_workspace/tools/aletheon-monitor"
+  PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q tests
   run_as_installed_user "$production_user" env \
     ALETHEON_SOCKET="$production_socket" \
     ALETHEON_PRODUCTION_WORKSPACE="$production_workspace" \
     ALETHEON_PRODUCTION_GMAIL_ACCOUNT="${ALETHEON_PRODUCTION_GMAIL_ACCOUNT:-}" \
-    python3 -m src.__main__ scenario --suite production --source-root "$repo_root" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    python3 -m src.__main__ scenario --suite production --source-root "$production_workspace" \
     | tee "$artifacts/production-scenarios.json"
+  jq -e --arg source_commit "$candidate_source_commit" --arg workspace "$production_workspace" '
+    .preflight.source_commit == $source_commit and .preflight.source_root == $workspace and
+    ([.cases[] | select(.scenario == "project_workspace")] | length) == 1 and
+    ([.cases[] | select(.scenario == "project_workspace")][0] as $project |
+      $project.status == "PASS" and
+      $project.evidence.workspace == $workspace and
+      $project.evidence.git_before.head == $source_commit and
+      $project.evidence.git_after.head == $source_commit and
+      $project.evidence.git_before.status == "" and
+      $project.evidence.git_after.status == "")
+  ' "$artifacts/production-scenarios.json" >/dev/null
 )
-install -d -m 0700 "$guest_artifacts/production-workspace"
-cp -a -- "$production_workspace/." "$guest_artifacts/production-workspace/"
-rm -rf -- "$production_workspace"
 ALETHEON_RELEASE_ARTIFACTS="$guest_artifacts" ALETHEON_V01_ACCEPTANCE_REPORT="$v01_report" \
   ALETHEON_V01_RECIPE_RECEIPT="$v01_recipe_receipt" \
   "$repo_root/tests/production/failure_matrix.sh"
