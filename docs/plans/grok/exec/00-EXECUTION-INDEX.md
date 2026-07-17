@@ -59,6 +59,10 @@
 | `8a2a1681` | **grok_hardening flag 面**：`AppConfig.grok_hardening`，10 个 flag 全默认关，`deny_unknown_fields` | executive config | 4 新 + schema 重生 |
 | `9bf0e502` | **C1 T11** harness 接线：`HarnessConfig.compaction_v2` 门控 4 个 loop 压缩点（关=旧行为逐字节等价） | cognit | 2 新路由测试 |
 | `4c49c9eb` | **C1 尾巴** executive 接线：`grok_hardening.compaction_v2` → `HarnessConfig`，跨主 turn（`ExecutiveConfig.compaction_v2` + `harness_config_from_executive`）与子 Agent（`NativeCognitRuntimeResources` + `native_cognit::harness_config`）两路，`RequestHandler::new` 加参、两入口传参 | executive | check 干净 / 4 flag 测试 / clippy 干净 |
+| `72690c68` | **S1 T8** `sandbox_glob::expand_deny_globs`：无依赖 深度受限遍历 + `**`/`*`/`?` 匹配；三上限（entries/depth/matches）均 fail-closed → `GlobOverflow`；非 glob/缺失 root 跳过，symlink 目录不下降 | fabric | 9 新 |
+| `50b17e7f` | **S1 T9** `SandboxConfig.policy: Option<ResolvedSandboxPolicy>`（`#[serde(skip)]`，per-exec 派生不持久）；11 处构造点全 `policy: None`（等价旧行为） | fabric + corpus + dasein + executive | check 干净 |
+| `d5edc0cb` | **S1 T10** bubblewrap backend 消费 `policy.deny_exact`：文件→`--ro-bind /dev/null`，目录→空 `--tmpfs`；排在 mount plan 之后（后 mount 覆盖）；net 恒 `--unshare-net`（restrict_network 只收紧）；None=严格 no-op。**首个真正施加的 S1 enforcement** | corpus | 2 新 + 3 回归 |
+| `b95e2ff8` | **S1 T11** `SandboxExecutor::run` 网络一致性：`restrict_network` × backend 缺 `network_isolation`——Require 时 fail-closed（同 noop 守卫姿态），否则告警降级不静默放网；None 跳过（等价旧行为） | fabric | 4 新 |
 
 **状态**：fabric 契约层完成（S1 `resolve_profile` 补上最后缺口）。**C1 完成端到端**：fabric 机制 → mnemosyne 实现 → cognit harness 路由 → executive config 接线 → 两入口激活。`grok_hardening.compaction_v2 = true` 即让主 runtime 与子 Agent 都走 guarded `maybe_compact_v2`；关=逐字节旧行为。这是第一条从契约贯通到激活的 exec-plan 项。
 
