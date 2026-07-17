@@ -1,6 +1,6 @@
 # Aletheon Conscious System: Dasein–Agora Core, Mnemosyne Continuity and SubAgent Cognition
 
-> **Status:** In progress — M05, M06 and aggregate V01/V02 acceptance remain active
+> **Status:** Blocked by V02 — M05, M06 and V01 pass; live production acceptance remains active
 >
 > **Target branch:** `dev`
 >

@@ -1,6 +1,6 @@
 # Executable Architecture Plan Decomposition Design
 
-> **Status:** Blocked by V02 — all implementation slices are closed; the installed-production receipt remains open
+> **Status:** Blocked by V02 — all implementation slices are closed; live workflow, failure and aggregate receipts remain open
 >
 > **Source baseline:** `65f74981`
 >

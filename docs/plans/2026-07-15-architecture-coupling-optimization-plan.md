@@ -1,6 +1,6 @@
 # Aletheon Architecture and Coupling Optimization Plan
 
-> **Status:** In progress — active gaps are indexed in `2026-07-16-original-plan-coverage-matrix.md`
+> **Status:** Blocked by V02 — architecture slices pass; live production acceptance remains indexed in `2026-07-16-original-plan-coverage-matrix.md`
 >
 > **Target branch:** `dev`
 >
