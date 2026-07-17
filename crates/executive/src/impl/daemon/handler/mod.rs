@@ -14,6 +14,8 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::core::config::GrokHardeningConfig;
+
 #[derive(Clone)]
 pub struct RequestHandler {
     /// Narrow application use cases available to protocol handlers.
@@ -24,6 +26,8 @@ pub struct RequestHandler {
     pub(crate) active_connections: Arc<AtomicUsize>,
     /// User-state-root-scoped immutable thread authority records.
     pub(crate) thread_authority: Arc<crate::service::thread_authority::ThreadAuthorityStore>,
+    /// Feature flags for Grok-hardening mechanisms (folder_trust, etc.).
+    pub(crate) grok_hardening: GrokHardeningConfig,
 }
 
 impl RequestHandler {
@@ -161,6 +165,19 @@ impl RequestHandler {
                 "id": id,
                 "error": { "code": -32602, "message": error.to_string() }
             });
+        }
+        // G1 workspace trust gate — folder_trust gate
+        if self.grok_hardening.folder_trust {
+            // TODO(D2-M3-T4): Call WorkspaceTrustResolver::evaluate() here
+            // once ConfigDiscoverer and TrustStore are implemented.
+            // See G1-folder-trust.md §6 T12-T20.
+            // WorkspaceIdentity { canonical_path, repo_fingerprint } can be
+            // constructed from workspace.cwd() which is already available.
+            tracing::debug!(
+                principal = %context.principal_id.0,
+                workspace = %context.workspace.cwd().display(),
+                "folder_trust flag on — trust gate not yet implemented"
+            );
         }
         tracing::info!(message = %message, "Chat request received");
         self.ports

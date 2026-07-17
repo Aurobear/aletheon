@@ -15,6 +15,7 @@ mod turn_runtime;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
+use crate::core::config::GrokHardeningConfig;
 use crate::r#impl::daemon::handler::ports::HandlerPorts;
 use crate::r#impl::daemon::handler::RequestHandler;
 
@@ -26,6 +27,7 @@ pub(super) struct DaemonComposition {
     request: Arc<HandlerPorts>,
     active_connections: Arc<AtomicUsize>,
     thread_authority: Arc<crate::service::thread_authority::ThreadAuthorityStore>,
+    grok_hardening: GrokHardeningConfig,
 }
 
 impl DaemonComposition {
@@ -35,6 +37,7 @@ impl DaemonComposition {
             notify_tx: None,
             active_connections: self.active_connections,
             thread_authority: self.thread_authority,
+            grok_hardening: self.grok_hardening,
         }
     }
 }

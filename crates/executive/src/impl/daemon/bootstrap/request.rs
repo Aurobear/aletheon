@@ -1341,6 +1341,7 @@ impl RequestHandler {
                     data_dir.join("thread-authority"),
                 ),
             ),
+            grok_hardening,
         };
         let handler = composition.into_handler();
 

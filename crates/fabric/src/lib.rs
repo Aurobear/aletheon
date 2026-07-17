@@ -83,6 +83,7 @@ pub use types::session;
 pub use types::tool;
 pub use types::vision;
 pub use types::workspace;
+pub use types::workspace_trust;
 
 pub use protocol::conscious_core::{
     CandidateDisposition, ConsciousCoreSnapshot, InspectorProcessorAck,
