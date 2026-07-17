@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Pin C collation so `sort` (line ~158) and `comm` (compare_maximum) agree
+# regardless of the caller's locale. The committed baselines under config/ are
+# C-sorted; without this, an ambient UTF-8 locale makes `comm` reject the
+# C-sorted baseline as "not in sorted order" and abort the gate under `set -e`,
+# silently disabling all architecture enforcement.
+export LC_ALL=C
+
 ROOT=${ARCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 ALLOW="$ROOT/config/architecture-allowlist.txt"
 DEPS="$ROOT/config/architecture-dependencies.txt"
