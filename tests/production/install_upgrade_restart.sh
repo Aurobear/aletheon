@@ -131,10 +131,37 @@ capture_sqlite_integrity /var/lib/aletheon "$artifacts/rollback-integrity.txt"
 capture_installed_user_integrity "$artifacts/rollback-user-integrity.txt"
 install -d -m 0700 "$artifacts/final-journal"
 capture_installed_journal "$artifacts/final-journal"
+
+# The rollback drill must not leave the aggregate production scenarios running
+# against the baseline release. Reapply the candidate from the matching restored
+# baseline state and prove that the installed executable is the requested build.
+cat >"$artifacts/final-upgrade-backup.sh" <<FINAL_UPGRADE_BACKUP
+#!/usr/bin/env bash
+ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT='$artifacts/final-upgrade-script-backup' \
+ALETHEON_DATA_ROOT=/var/lib/aletheon ALETHEON_CONFIG_ROOT=/etc/aletheon \
+'$repo_root/scripts/backup-aletheon.sh'
+FINAL_UPGRADE_BACKUP
+chmod 0700 "$artifacts/final-upgrade-backup.sh"
+final_user_backup="$artifacts/final-upgrade-user-state"
+ALETHEON_BACKUP_COMMAND="$artifacts/final-upgrade-backup.sh" \
+ALETHEON_PREFLIGHT_COMMAND=/usr/libexec/aletheon/verify-systemd.sh \
+ALETHEON_USER_BACKUP_ROOT="$final_user_backup" \
+  /usr/libexec/aletheon/upgrade-aletheon.sh --binary "$candidate" \
+    --sha256-file "$artifacts/candidate.sha256" --config /etc/aletheon/config.toml \
+    --authorized-users "$authorized_users" \
+    --user-backup-command "$artifacts/upgrade-user-backup.sh"
+[[ $(sha256sum /usr/bin/aletheon | cut -d' ' -f1) == "$candidate_sha256" ]] || {
+  echo "final installed executable does not match the candidate" >&2; exit 1;
+}
+assert_installed_readiness
+assert_installed_boundaries "$artifacts"
+capture_sqlite_integrity /var/lib/aletheon "$artifacts/final-candidate-integrity.txt"
+capture_installed_user_integrity "$artifacts/final-candidate-user-integrity.txt"
+
 jq -n --arg completed_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg artifacts "$artifacts" --arg baseline_sha256 "$baseline_sha256" \
   --arg candidate_sha256 "$candidate_sha256" \
   --arg user_a "$ALETHEON_TEST_USER_A" --arg user_b "$ALETHEON_TEST_USER_B" \
-  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,baseline_sha256:$baseline_sha256,candidate_sha256:$candidate_sha256,distinct_release_upgrade:($baseline_sha256 != $candidate_sha256),rollback:"matching_system_user_state_and_binary",system_unit:"aletheon-core.service",user_state_root:"$HOME/.local/state/aletheon",user_socket_activation:true,test_users:[$user_a,$user_b]}' \
+  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,baseline_sha256:$baseline_sha256,candidate_sha256:$candidate_sha256,active_binary_sha256:$candidate_sha256,distinct_release_upgrade:($baseline_sha256 != $candidate_sha256),rollback:"matching_system_user_state_and_binary",post_rollback_candidate_reapplied:true,system_unit:"aletheon-core.service",user_state_root:"$HOME/.local/state/aletheon",user_socket_activation:true,test_users:[$user_a,$user_b]}' \
   >"$artifacts/operator-receipt.json"
 echo "installed-host release drill passed: $artifacts/operator-receipt.json"
