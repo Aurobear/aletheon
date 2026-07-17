@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use executive::core::config::{merge_layers, schema, ConfigLayer, ConfigSource, ConfigSourceKind};
+use executive::core::config::{
+    merge_layers, schema, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind, Transport,
+};
 
 fn layer(kind: ConfigSourceKind, locator: &str, text: &str) -> ConfigLayer {
     ConfigLayer::from_toml(ConfigSource::new(kind, locator), text).unwrap()
@@ -94,4 +96,20 @@ fn checked_in_schema_is_deterministic() {
     let checked_in = std::fs::read_to_string(path).unwrap();
     assert_eq!(checked_in, generated);
     assert!(!checked_in.contains("top-secret"));
+}
+
+#[test]
+fn checked_in_leju_deepseek_uses_the_openai_transport() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/default.toml");
+    let config = AppConfig::from_file(&path).unwrap();
+    let provider = config
+        .providers
+        .iter()
+        .find(|provider| provider.name == "leju")
+        .expect("default LejuRobot provider must exist");
+    assert_eq!(provider.transport, Transport::Openai);
+    assert!(provider
+        .models
+        .iter()
+        .any(|model| model == "deepseek/deepseek-v4-pro"));
 }

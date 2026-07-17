@@ -29,7 +29,7 @@ max_storage_items = 128
 name = "leju"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
-transport = "anthropic"
+transport = "openai"
 models = ["deepseek/deepseek-v4-pro"]
 
 [sandbox]
