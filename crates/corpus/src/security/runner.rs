@@ -15,7 +15,9 @@ use crate::sandbox::executor::create_default_executor;
 use crate::sandbox::{SandboxConfig, SandboxExecutor, SandboxPreference};
 use fabric::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
 use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use fabric::{PermissionBehavior, PermissionContext, ProfileName, SandboxProfiles, resolve_profile};
+use fabric::{
+    resolve_profile, PermissionBehavior, PermissionContext, ProfileName, SandboxProfiles,
+};
 
 #[derive(Debug)]
 pub enum ToolError {
@@ -423,33 +425,33 @@ impl ToolRunnerWithGuard {
             // S1 T13: resolve the default sandbox profile when profiles are
             // configured. Errors are logged and profile stays None (fail-open
             // for config errors — the backend still enforces base isolation).
-            let policy = self
-                .sandbox_profiles
-                .as_ref()
-                .and_then(|profiles| {
-                    let name: ProfileName =
-                        profiles.default_profile.as_str().parse().unwrap_or(ProfileName::Workspace);
-                    match resolve_profile(&name, &workspace, profiles) {
-                        Ok(p) => {
-                            tracing::debug!(
-                                profile = %p.name,
-                                restrict_network = p.restrict_network,
-                                deny_exact = p.deny_exact.len(),
-                                deny_globs = p.deny_globs.len(),
-                                "resolved sandbox profile"
-                            );
-                            Some(p)
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                profile = %name,
-                                error = %e,
-                                "failed to resolve sandbox profile; running without profile layer"
-                            );
-                            None
-                        }
+            let policy = self.sandbox_profiles.as_ref().and_then(|profiles| {
+                let name: ProfileName = profiles
+                    .default_profile
+                    .as_str()
+                    .parse()
+                    .unwrap_or(ProfileName::Workspace);
+                match resolve_profile(&name, &workspace, profiles) {
+                    Ok(p) => {
+                        tracing::debug!(
+                            profile = %p.name,
+                            restrict_network = p.restrict_network,
+                            deny_exact = p.deny_exact.len(),
+                            deny_globs = p.deny_globs.len(),
+                            "resolved sandbox profile"
+                        );
+                        Some(p)
                     }
-                });
+                    Err(e) => {
+                        tracing::warn!(
+                            profile = %name,
+                            error = %e,
+                            "failed to resolve sandbox profile; running without profile layer"
+                        );
+                        None
+                    }
+                }
+            });
 
             let sandbox_config = SandboxConfig {
                 workspace,
