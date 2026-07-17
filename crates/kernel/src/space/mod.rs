@@ -1,4 +1,4 @@
 //! ContextSpace kernel module — in-memory space manager.
 
-pub mod manager;
-pub use manager::InMemorySpaceManager;
+pub(crate) mod manager;
+pub(crate) use manager::InMemorySpaceManager;

@@ -36,7 +36,7 @@ impl RequestHandler {
             }
         };
 
-        match self.turn_orchestrator.wait_turn(operation_id).await {
+        match self.ports.turn.wait(operation_id).await {
             Ok(result) => {
                 info!(?operation_id, state = ?result.state, "turn.wait completed");
                 json!({
@@ -91,7 +91,7 @@ impl RequestHandler {
             }
         };
 
-        match self.turn_orchestrator.cancel_turn(operation_id).await {
+        match self.ports.turn.cancel(operation_id).await {
             Ok(()) => {
                 info!(?operation_id, "turn.cancel succeeded");
                 json!({
@@ -116,7 +116,7 @@ impl RequestHandler {
     /// JSON-RPC params:
     ///   process_id: string (UUID) — the process to terminate.
     ///
-    /// Delegates to the kernel ProcessTable. The process transitions through
+    /// Delegates to the kernel runtime. The process transitions through
     /// Stopping → Exited/Failed, and in-flight operations are cancelled via
     /// parent-cancel propagation in the operation tree.
     pub(super) async fn handle_turn_exit(
@@ -143,7 +143,7 @@ impl RequestHandler {
             }
         };
 
-        match self.turn_orchestrator.exit_process(process_id).await {
+        match self.ports.turn.exit(process_id).await {
             Ok(()) => {
                 info!(?process_id, "turn.exit succeeded");
                 json!({

@@ -35,7 +35,7 @@ use dasein::r#impl::perception::PerceptionEvent;
 
 /// The agent runtime core — all agent-level state, host-independent.
 pub struct RuntimeCore {
-    pub app_config: cognit::config::AppConfig,
+    pub app_config: crate::core::config::AppConfig,
     pub registry: ProviderRegistry,
     pub daemon_config: DaemonConfig,
     pub event_bus: Arc<CommunicationBus>,
@@ -56,20 +56,15 @@ impl RuntimeCore {
     pub async fn bootstrap(config_path: Option<PathBuf>, enable_evolution: bool) -> Result<Self> {
         // ── AppConfig ───────────────────────────────────────────────
         // Layered base (defaults → /etc → user → project), then --config on top.
-        let mut app_config = cognit::config::AppConfig::load_layered(None);
-        if let Some(ref path) = config_path {
-            app_config.merge(cognit::config::AppConfig::load_or_default(path));
-        }
+        let app_config = crate::core::config::load_for_host(None, config_path.as_deref())?.value;
         tracing::info!(providers = %app_config.providers.len(), "Loaded config");
 
         // ── ProviderRegistry ────────────────────────────────────────
-        let registry = ProviderRegistry::from_config(&app_config)?;
+        let registry = ProviderRegistry::from_config(&app_config.cognit())?;
         let (default_provider_config, default_model) = registry.resolve("")?;
 
         // ── DaemonConfig ────────────────────────────────────────────
         let config = DaemonConfig {
-            api_key: default_provider_config.api_key.clone(),
-            api_url: default_provider_config.base_url.clone(),
             model: default_model.clone(),
             working_dir: std::env::var("AGENT_WORKING_DIR").unwrap_or_else(|_| "/tmp".to_string()),
             data_dir: std::env::var("AGENT_DATA_DIR").unwrap_or_else(|_| {
@@ -118,16 +113,12 @@ impl RuntimeCore {
             hooks: {
                 // Honor --config: hooks must come from the same file(s) as the
                 // main config, not always ~/.aletheon. (Fixes the hooks bug.)
-                let rt_config = if let Some(ref path) = config_path {
-                    crate::core::config::AppConfig::load_or_default(path)
-                } else {
-                    crate::core::config::AppConfig::load_layered(None)
-                };
-                rt_config.hooks
+                app_config.hooks.clone()
             },
             telegram: app_config.telegram.clone(),
             gbrain_memory: app_config.memory.gbrain.clone(),
             deployment: app_config.deployment.clone(),
+            agent_admission: app_config.agent.admission.clone(),
         };
 
         // ── Event bus ───────────────────────────────────────────────
@@ -166,14 +157,15 @@ impl RuntimeCore {
                     .collect(),
             };
 
-            match LlmScheduler::new(&scheduler_config) {
+            let scheduler_clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
+            match LlmScheduler::new(&scheduler_config, scheduler_clock.clone()) {
                 Ok(scheduler) => {
                     let scheduler = Arc::new(scheduler);
                     let pulse = LlmPulse::new(
                         scheduler,
                         bus.clone(),
                         PulseConfig::default(),
-                        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                        scheduler_clock,
                     );
                     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -231,8 +223,11 @@ impl RuntimeCore {
         info!("Creating request handler...");
         let request_handler = RequestHandler::new(
             &config,
-            &registry,
+            Arc::new(crate::core::RegistryInferencePort::new(Arc::new(
+                registry.clone(),
+            ))),
             app_config.model_routing.clone(),
+            app_config.model_aliases.clone(),
             app_config.goal_runtime.clone().unwrap_or_default(),
             app_config.pi_runtime.clone(),
             config.enable_evolution,

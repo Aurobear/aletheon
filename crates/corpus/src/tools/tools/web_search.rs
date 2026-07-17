@@ -178,6 +178,8 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
                     clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -205,6 +207,8 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
                     clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),

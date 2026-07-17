@@ -64,8 +64,9 @@ impl HookBridge {
     }
 }
 
+#[cfg(test)]
 impl Default for HookBridge {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
     }
 }

@@ -237,7 +237,22 @@ impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
             .execute_authenticated_turn(
                 serde_json::Value::String(correlation_id.to_string()),
                 message,
-                PrincipalId(principal.to_owned()),
+                fabric::PrincipalContext::new(
+                    PrincipalId::local_uid(nix::unistd::Uid::effective().as_raw()),
+                    fabric::LocalOsPrincipal {
+                        uid: nix::unistd::Uid::effective().as_raw(),
+                        gid: nix::unistd::Gid::effective().as_raw(),
+                    },
+                    fabric::ConnectionId::new(),
+                    fabric::ThreadId(principal.to_owned()),
+                    fabric::WorkspacePolicy::from_resolved_roots(
+                        std::path::PathBuf::from("/var/lib/aletheon"),
+                        Vec::new(),
+                    )
+                    .map_err(anyhow::Error::msg)?,
+                    fabric::PermissionProfileId::workspace_write(),
+                    fabric::ApprovalPolicy::OnRequest,
+                ),
             )
             .await;
 

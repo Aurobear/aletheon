@@ -3,8 +3,8 @@
 //! Extracted from the former inline `execute_tool` closure (previously in chat.rs, now deleted)
 //! (RFC-018 D5 seam 3 / issue #4). Runs one tool through the full pipeline:
 //! PreTool hook → OnMemoryRecall hook → session-approval check → SelfField
-//! review → registry lookup → `ExecutionPermit`-guarded
-//! `ToolRunnerWithGuard::run` → PerfCounter → StormBreaker → PostTool hook,
+//! review → scoped Corpus activation → `ExecutionPermit`-guarded invocation →
+//! PerfCounter → StormBreaker → PostTool hook,
 //! returning `(content, is_error)`.
 //!
 //! Behaviour is identical to the previous closure; this only gives the pipeline
@@ -16,41 +16,58 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
-use corpus::security::runner::ToolRunnerWithGuard;
+use aletheon_kernel::capability::ToolExecutor;
 use corpus::security::storm_breaker::StormBreaker;
-use corpus::tools::tools::ToolRegistry;
-use corpus::HookRegistry;
+use corpus::{ActivatedCorpusExecutor, CorpusService, ExtensionGrant, ExtensionSnapshot};
 use dasein::SelfField;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 use fabric::kernel::debug_bus::PerfCounter;
-use fabric::types::admission::ExecutionPermit;
+use fabric::types::admission::{ExecutionPermit, UsageReport};
 use fabric::types::operation::{OperationId, ProcessId};
-use fabric::{Context as AbiContext, Intent, IntentSource, PrincipalId, SelfFieldOps, Verdict};
+use fabric::{
+    AgentProfileId, AuditEventId, CapabilityCall, CapabilityRequest, CapabilityResult,
+    Context as AbiContext, ExitReason, Intent, IntentSource, NamespaceId, OperationKind,
+    OperationRequest, ProcessSignal, SelfFieldOps, SpawnSpec, Verdict,
+};
 
-use crate::core::core_systems::CoreSystems;
+use crate::service::admin_service::ScopedApprovalCache;
+use crate::service::{
+    CapabilityExecutionContext, CapabilityRuntimeFactory, CapabilityService,
+    RegistryAuthorityProvider,
+};
+
+#[derive(Clone)]
+pub(crate) struct CapabilityResources {
+    pub(crate) kernel: Arc<aletheon_kernel::KernelRuntime>,
+    pub(crate) corpus: Arc<dyn CorpusService>,
+    pub(crate) capabilities: Arc<RwLock<Vec<fabric::CapabilityId>>>,
+    pub(crate) storm: Arc<Mutex<StormBreaker>>,
+    pub(crate) memory_queue: Arc<Mutex<Vec<String>>>,
+    pub(crate) approvals: ScopedApprovalCache,
+    pub(crate) perf: Arc<PerfCounter>,
+    pub(crate) self_field: Arc<Mutex<SelfField>>,
+    pub(crate) extension_decisions:
+        Arc<dyn crate::service::extension_service::ExtensionDecisionSink>,
+}
 
 /// Executes a single tool through the full guarded/hooked pipeline for one turn.
 ///
 /// Holds the same subsystem handles the former `execute_tool` closure captured;
 /// cheap to wrap in `Arc` and clone per tool call.
 pub(crate) struct TurnToolExecutor {
-    tool_runner: Arc<Mutex<ToolRunnerWithGuard>>,
-    tools: Arc<Mutex<ToolRegistry>>,
-    hook_registry: Arc<Mutex<HookRegistry>>,
+    inner: Arc<dyn ToolExecutor>,
+    corpus: Arc<dyn CorpusService>,
     storm_breaker: Arc<Mutex<StormBreaker>>,
     memory_queue: Arc<Mutex<Vec<String>>>,
-    session_approvals: Arc<Mutex<HashMap<String, bool>>>,
+    session_approvals: ScopedApprovalCache,
     debug_perf: Arc<PerfCounter>,
     self_field: Arc<Mutex<SelfField>>,
     working_dir: PathBuf,
     session_id: String,
-    principal: PrincipalId,
     turn_count: usize,
-    /// Stable unique key used by the loop detector for this turn only.
-    turn_id: String,
     /// Kernel operation id for this turn (used by admission controller).
     operation_id: OperationId,
     /// Kernel process id for the main agent (used by admission controller).
@@ -60,28 +77,25 @@ pub(crate) struct TurnToolExecutor {
 impl TurnToolExecutor {
     /// Build an executor for one turn, cloning the needed subsystem handles.
     pub(crate) fn new(
-        subsystems: &CoreSystems,
+        resources: &CapabilityResources,
+        inner: Arc<dyn ToolExecutor>,
         session_id: String,
-        principal: PrincipalId,
         turn_count: usize,
         working_dir: PathBuf,
         operation_id: OperationId,
         process_id: ProcessId,
     ) -> Self {
         Self {
-            tool_runner: subsystems.security.tool_runner.clone(),
-            tools: subsystems.corpus.tools.clone(),
-            hook_registry: subsystems.corpus.hook_registry.clone(),
-            storm_breaker: subsystems.security.storm_breaker.clone(),
-            memory_queue: subsystems.session.memory_queue.clone(),
-            session_approvals: subsystems.security.session_approvals.clone(),
-            debug_perf: subsystems.debug_perf.clone(),
-            self_field: subsystems.self_field.clone(),
+            inner,
+            corpus: resources.corpus.clone(),
+            storm_breaker: resources.storm.clone(),
+            memory_queue: resources.memory_queue.clone(),
+            session_approvals: resources.approvals.clone(),
+            debug_perf: resources.perf.clone(),
+            self_field: resources.self_field.clone(),
             working_dir,
             session_id,
-            principal,
             turn_count,
-            turn_id: operation_id.0.to_string(),
             operation_id,
             process_id,
         }
@@ -105,30 +119,30 @@ impl TurnToolExecutor {
     ///
     /// No `ExecutionPermit` means no side-effecting tool execution.
     /// Returns `(content, is_error)`.`
-    pub(crate) async fn execute(
+    async fn execute(
         &self,
+        request: &CapabilityRequest,
         permit: &ExecutionPermit,
-        _id: &str,
-        name: &str,
-        input: &serde_json::Value,
-    ) -> (String, bool) {
+    ) -> CapabilityResult {
+        let name = &request.call.name;
+        let input = &request.call.input;
         if permit.operation_id != self.operation_id
             || permit.process_id != self.process_id
-            || permit.capability.0 != name
+            || permit.capability.0 != *name
         {
-            return (
+            return self.error_result(
+                request,
+                permit,
                 format!("admission permit does not match tool '{name}'"),
-                true,
             );
         }
 
         // Rebind captured handles/values so the pipeline body below is identical
         // to the former `execute_tool` closure.
-        let hook_registry_arc = &self.hook_registry;
+        let corpus = &self.corpus;
         let session_approvals_arc = &self.session_approvals;
         let self_field_arc = &self.self_field;
-        let tools_arc = &self.tools;
-        let runner = &self.tool_runner;
+        let inner = &self.inner;
         let debug_perf = &self.debug_perf;
         let storm_breaker_arc = &self.storm_breaker;
         let memory_queue_arc = &self.memory_queue;
@@ -136,13 +150,10 @@ impl TurnToolExecutor {
         let input = input.clone();
         let working_dir = self.working_dir.clone();
         let session_id = self.session_id.clone();
-        let principal = self.principal.clone();
         let turn_count = self.turn_count;
-        let turn_id = self.turn_id.clone();
 
         // --- PreTool hook ---
         {
-            let hr = hook_registry_arc.lock().await;
             let ctx = HookContext {
                 point: HookPoint::PreTool,
                 session_id: session_id.clone(),
@@ -153,14 +164,13 @@ impl TurnToolExecutor {
                 message: None,
                 metadata: HashMap::new(),
             };
-            if let HookResult::Block { reason } = hr.execute(&ctx).await {
-                return (format!("Blocked by hook: {}", reason), true);
+            if let HookResult::Block { reason } = corpus.execute_hook(&ctx).await {
+                return self.error_result(request, permit, format!("Blocked by hook: {reason}"));
             }
         }
 
         // --- OnMemoryRecall hook (when memory_search tool is invoked) ---
         if name == "memory_search" {
-            let hr = hook_registry_arc.lock().await;
             let ctx = HookContext {
                 point: HookPoint::OnMemoryRecall,
                 session_id: session_id.clone(),
@@ -171,16 +181,20 @@ impl TurnToolExecutor {
                 message: None,
                 metadata: HashMap::new(),
             };
-            hr.execute(&ctx).await;
+            corpus.execute_hook(&ctx).await;
         }
 
         // --- Check session approvals (auto-approve if "always" was used) ---
         {
-            let approvals = session_approvals_arc.lock().await;
-            if let Some(&approved) = approvals.get(&name) {
-                if approved {
-                    info!(tool = %name, "Auto-approving tool from session approval cache");
-                }
+            if session_approvals_arc
+                .is_allowed(
+                    &request.authority.principal,
+                    &request.authority.thread_id,
+                    &name,
+                )
+                .await
+            {
+                info!(tool = %name, "Auto-approving tool from scoped thread approval cache");
             }
         }
 
@@ -199,36 +213,26 @@ impl TurnToolExecutor {
                     let _ = sf
                         .narrate("tool_blocked", &format!("{}: {}", name, reason))
                         .await;
-                    return (format!("Tool blocked by SelfField: {}", reason), true);
+                    return self.error_result(
+                        request,
+                        permit,
+                        format!("Tool blocked by SelfField: {reason}"),
+                    );
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        tool = %name,
-                        "SelfField review error, proceeding"
+                    return self.error_result(
+                        request,
+                        permit,
+                        format!("SelfField review failed: {e}"),
                     );
                 }
                 _ => {}
             }
         }
 
-        let tool = {
-            let reg = tools_arc.lock().await;
-            reg.get(&name).cloned()
-        };
-        let exec_ctx = fabric::tool::ToolContext {
-            working_dir,
-            session_id: principal.0,
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-        };
-        let (content, is_error) = match tool {
-            Some(t) => {
-                let mut r = runner.lock().await;
-                let res = r.run(t.as_ref(), input.clone(), &exec_ctx, &turn_id).await;
-                (res.content, res.is_error)
-            }
-            None => (format!("Unknown tool: {}", name), true),
-        };
+        let mut result = inner.execute_with_permit(request, permit).await;
+        let content = result.output.clone();
+        let is_error = result.is_error;
 
         // --- PerfCounter: record tool call and errors ---
         debug_perf.record_tool_call(&name).await;
@@ -247,7 +251,6 @@ impl TurnToolExecutor {
 
         // --- PostTool hook ---
         {
-            let hr = hook_registry_arc.lock().await;
             let ctx = HookContext {
                 point: HookPoint::PostTool,
                 session_id,
@@ -262,10 +265,261 @@ impl TurnToolExecutor {
                 message: None,
                 metadata: HashMap::new(),
             };
-            hr.execute(&ctx).await;
+            corpus.execute_hook(&ctx).await;
         }
 
         // tool_call_result is emitted via EventSink in ReActLoop (single source of truth).
-        (content, is_error)
+        result.output = content;
+        result.is_error = is_error;
+        result
+    }
+
+    fn error_result(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+        output: String,
+    ) -> CapabilityResult {
+        CapabilityResult {
+            call_id: request.call.call_id.clone(),
+            output,
+            is_error: true,
+            usage: UsageReport {
+                permit_id: permit.id,
+                exit_code: Some(1),
+                ..Default::default()
+            },
+            audit_id: Some(AuditEventId::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolExecutor for TurnToolExecutor {
+    async fn execute_with_permit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+    ) -> CapabilityResult {
+        self.execute(request, permit).await
+    }
+}
+
+/// Executive composition adapter for every non-turn capability caller.
+pub(crate) struct ProductionCapabilityService {
+    resources: CapabilityResources,
+}
+
+impl ProductionCapabilityService {
+    pub(crate) fn new(resources: CapabilityResources) -> Self {
+        Self { resources }
+    }
+
+    async fn invoke_existing(
+        resources: &CapabilityResources,
+        context: CapabilityExecutionContext,
+        call: CapabilityCall,
+    ) -> CapabilityResult {
+        let prepared = match prepare_corpus(resources, &context).await {
+            Ok(prepared) => prepared,
+            Err(error) => return Self::unavailable(&call, error.to_string()),
+        };
+        let executor = Arc::new(TurnToolExecutor::new(
+            resources,
+            prepared.executor,
+            context.session_id.clone(),
+            context.turn_count,
+            context.workspace.cwd().to_path_buf(),
+            context.operation_id,
+            context.process_id,
+        ));
+        let authority_working_dir = context.workspace.cwd().to_path_buf();
+        let authority = Arc::new(
+            RegistryAuthorityProvider::new(
+                prepared.risk_by_tool,
+                context.principal,
+                context.connection_id,
+                context.thread_id,
+                context.turn_id,
+                context.workspace,
+                context.session_id,
+                authority_working_dir,
+                context.sandbox,
+                context.cancel,
+            )
+            .with_agent_context(context.agent),
+        );
+        CapabilityRuntimeFactory::build(resources.kernel.admission(), executor, authority)
+            .invoke(call)
+            .await
+    }
+
+    fn unavailable(call: &CapabilityCall, message: impl Into<String>) -> CapabilityResult {
+        CapabilityResult {
+            call_id: call.call_id.clone(),
+            output: message.into(),
+            is_error: true,
+            usage: UsageReport::default(),
+            audit_id: None,
+        }
+    }
+}
+
+pub(crate) struct PreparedCorpus {
+    pub(crate) snapshot: ExtensionSnapshot,
+    pub(crate) risk_by_tool: HashMap<String, fabric::types::admission::RiskLevel>,
+    pub(crate) executor: Arc<dyn ToolExecutor>,
+}
+
+pub(crate) async fn prepare_corpus(
+    resources: &CapabilityResources,
+    context: &CapabilityExecutionContext,
+) -> anyhow::Result<PreparedCorpus> {
+    let grant = ExtensionGrant {
+        grant_id: uuid::Uuid::new_v4().to_string(),
+        principal: context.principal.clone(),
+        session_id: context.session_id.clone(),
+        agent_id: context
+            .agent
+            .as_ref()
+            .map(|agent| agent.caller_root_agent_id),
+        capabilities: resources.capabilities.read().await.clone(),
+        resources: fabric::CapabilityScope::default(),
+    };
+    let snapshot = resources.corpus.catalog(&grant).await?;
+    let activated = crate::service::ExtensionService::new(
+        resources.corpus.clone(),
+        resources.extension_decisions.clone(),
+    )
+    .activate(
+        grant,
+        snapshot
+            .entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect(),
+        &crate::service::SessionExtensionPolicy::default(),
+    )
+    .await?;
+    let snapshot = activated.snapshot;
+    let risk_by_tool = snapshot
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .primary_capability()
+                .map(|capability| (capability.0.clone(), entry.risk))
+        })
+        .collect();
+    let executor = Arc::new(ActivatedCorpusExecutor::new(
+        resources.corpus.clone(),
+        activated.receipt.id,
+    ));
+    Ok(PreparedCorpus {
+        snapshot,
+        risk_by_tool,
+        executor,
+    })
+}
+
+#[async_trait::async_trait]
+impl CapabilityService for ProductionCapabilityService {
+    async fn invoke(
+        &self,
+        context: Option<CapabilityExecutionContext>,
+        mut call: CapabilityCall,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> CapabilityResult {
+        if let Some(mut context) = context {
+            context.cancel = cancel;
+            call.process_id = context.process_id;
+            call.operation_id = context.operation_id;
+            return Self::invoke_existing(&self.resources, context, call).await;
+        }
+
+        // External/provider callers without a parent lifecycle receive a
+        // bounded transient lifecycle owned and settled entirely here.
+        let kernel = &self.resources.kernel;
+        let process = match kernel
+            .spawn_process(SpawnSpec {
+                profile: AgentProfileId("capability-client".into()),
+                namespace: NamespaceId("external-capability".into()),
+                initial_operation: None,
+                ..SpawnSpec::default()
+            })
+            .await
+        {
+            Ok(process) => process,
+            Err(error) => return Self::unavailable(&call, format!("kernel spawn failed: {error}")),
+        };
+        if let Err(error) = kernel
+            .signal_process(process.id, ProcessSignal::Start)
+            .await
+        {
+            let _ = kernel
+                .terminate_process(process.id, ExitReason::Failed(error.to_string()))
+                .await;
+            return Self::unavailable(&call, format!("kernel start failed: {error}"));
+        }
+        let operation = match kernel
+            .submit_operation(OperationRequest {
+                owner: process.id,
+                parent: None,
+                kind: OperationKind::CapabilityCall,
+                deadline: None,
+            })
+            .await
+        {
+            Ok(operation) => operation,
+            Err(error) => {
+                let _ = kernel
+                    .terminate_process(process.id, ExitReason::Failed(error.to_string()))
+                    .await;
+                return Self::unavailable(&call, format!("operation submit failed: {error}"));
+            }
+        };
+        if let Err(error) = kernel.start_operation(operation.id).await {
+            let _ = kernel
+                .terminate_process(process.id, ExitReason::Failed(error.to_string()))
+                .await;
+            return Self::unavailable(&call, format!("operation start failed: {error}"));
+        }
+        call.process_id = process.id;
+        call.operation_id = operation.id;
+        let context = CapabilityExecutionContext {
+            agent: None,
+            process_id: process.id,
+            operation_id: operation.id,
+            principal: fabric::PrincipalId("external-capability".into()),
+            connection_id: fabric::ConnectionId::new(),
+            thread_id: fabric::ThreadId("external-capability".into()),
+            turn_id: fabric::TurnId::new(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/tmp")),
+                Vec::new(),
+            )
+            .expect("external capability workspace is absolute"),
+            session_id: "external-capability".into(),
+            working_dir: std::env::current_dir().unwrap_or_default(),
+            sandbox: fabric::SandboxRequirement::NotRequired,
+            cancel,
+            turn_count: 0,
+            action_loop: None,
+        };
+        let result = Self::invoke_existing(&self.resources, context, call).await;
+        if result.is_error {
+            let _ = kernel
+                .fail_operation(operation.id, result.output.clone())
+                .await;
+        } else {
+            let _ = kernel.succeed_operation(operation.id).await;
+        }
+        let exit = if result.is_error {
+            ExitReason::Failed("capability failed".into())
+        } else {
+            ExitReason::Completed
+        };
+        let _ = kernel.terminate_process(process.id, exit).await;
+        result
     }
 }

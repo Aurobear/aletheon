@@ -12,6 +12,8 @@ aletheon-kernel = { path = "../kernel" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"
+sha2 = { workspace = true }
+thiserror = "2"
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }

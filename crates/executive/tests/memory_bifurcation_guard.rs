@@ -27,9 +27,9 @@ fn daemon_never_wires_a_memory_router_into_the_runtime() {
         memory_group.contains("EpisodicMemory"),
         "EpisodicMemory remains the daemon's reflection store (grouped in MemoryGroup, Option A)"
     );
-    let core_systems = include_str!("../src/core/core_systems.rs");
+    let bootstrap = include_str!("../src/impl/daemon/bootstrap/request.rs");
     assert!(
-        core_systems.contains("MemoryGroup"),
-        "MemoryGroup is referenced in CoreSystems"
+        bootstrap.contains("let memory_group = crate::core::MemoryGroup"),
+        "MemoryGroup remains bootstrap-owned"
     );
 }

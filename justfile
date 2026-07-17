@@ -46,6 +46,20 @@ doc:
 check: fmt test lint doc
     @echo "=== ALL CHECKS PASSED ==="
 
+# 架构依赖、遗留路径和绕过调用只能减少，不能新增
+architecture-check:
+    cargo test -p executive --test layered_config_contract checked_in_schema_is_deterministic
+    bash tests/architecture_check.sh
+    bash tests/architecture_path_inventory.sh
+    bash scripts/architecture-check.sh
+
+# Deterministic cross-domain causal, isolation, replay and ablation evidence.
+acceptance: architecture-check
+    python3 tools/acceptance_report.py --check
+    CARGO_INCREMENTAL=0 cargo test -j1 -p executive --test cross_domain_acceptance
+    CARGO_INCREMENTAL=0 cargo test -j1 -p executive --test functional_indicators
+    python3 tools/acceptance_report.py
+
 # ── 部署 ───────────────────────────────────────────────────────────────
 
 # 编译 release + 部署到系统
@@ -69,3 +83,9 @@ setup-sccache:
         echo 'rustc-wrapper = "sccache"' >> .cargo/config.toml; \
     fi
     @echo "sccache configured in .cargo/config.toml"
+
+# V02: installed-host production migration, scenario, failure and rollback gate.
+# This invokes V01 through scripts/release-acceptance.sh and fails closed when
+# the disposable host, release binary, live credentials or operator are absent.
+release-acceptance:
+    bash scripts/release-acceptance.sh

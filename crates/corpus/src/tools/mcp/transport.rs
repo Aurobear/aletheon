@@ -117,9 +117,7 @@ impl ToolNameConfig {
 }
 
 fn truncate_to(mut s: String, max_len: usize) -> String {
-    if s.len() > max_len {
-        s.truncate(max_len);
-    }
+    fabric::truncate_utf8_bytes(&mut s, max_len);
     s
 }
 
@@ -635,6 +633,20 @@ mod tests {
 
         let name = config.normalize("my_server", "very_long_tool_name", &mut seen);
         assert!(name.len() <= 10);
+    }
+
+    #[test]
+    fn test_tool_name_truncation_is_utf8_safe() {
+        let config = ToolNameConfig {
+            enable_prefix: false,
+            max_length: 10,
+            collision_strategy: CollisionStrategy::FirstWins,
+        };
+        let mut seen = std::collections::HashSet::new();
+
+        let name = config.normalize("server", "中文🙂中文🙂", &mut seen);
+        assert!(name.len() <= 10);
+        assert!(name.is_char_boundary(name.len()));
     }
 
     #[test]

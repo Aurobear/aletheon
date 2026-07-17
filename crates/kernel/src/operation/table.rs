@@ -43,10 +43,12 @@ impl OperationTable {
         id: OperationId,
         req: OperationRequest,
     ) -> anyhow::Result<OperationHandle> {
+        let parent = req.parent;
+        let owner = req.owner;
         let record = OperationRecord {
             id,
             owner: req.owner,
-            parent: req.parent,
+            parent,
             kind: req.kind,
             state: OperationState::Submitted,
             submitted_at: self.clock.mono_now(),
@@ -58,6 +60,20 @@ impl OperationTable {
             if records.contains_key(&id) {
                 anyhow::bail!("operation {:?} is already registered", id);
             }
+            if let Some(parent) = parent {
+                let parent_record = &records
+                    .get(&parent)
+                    .ok_or_else(|| anyhow::anyhow!("unknown parent operation: {parent:?}"))?
+                    .record;
+                anyhow::ensure!(
+                    parent_record.owner == owner,
+                    "operation parent belongs to a different process"
+                );
+                anyhow::ensure!(
+                    !parent_record.state.is_terminal(),
+                    "operation parent is terminal"
+                );
+            }
             records.insert(
                 id,
                 OperationRuntime {
@@ -66,7 +82,7 @@ impl OperationTable {
                 },
             );
         }
-        if let Some(parent) = req.parent {
+        if let Some(parent) = parent {
             let mut children = self.children.lock().await;
             children.entry(parent).or_default().push(id);
         }
@@ -124,9 +140,11 @@ impl OperationTable {
             let runtime = records
                 .get_mut(&id)
                 .ok_or_else(|| anyhow::anyhow!("unknown operation: {:?}", id))?;
-            if runtime.record.state.is_terminal() {
-                anyhow::bail!("operation {:?} is already terminal", id);
-            }
+            let from = runtime.record.state;
+            anyhow::ensure!(
+                from.can_transition_to(state),
+                "illegal operation transition {from:?} -> {state:?}"
+            );
             runtime.record.state = state;
             runtime.record.exit = exit;
             runtime.notify.clone()
@@ -148,15 +166,40 @@ impl OperationTable {
         ordered
     }
 
+    pub(crate) async fn ids_for_owner(&self, owner: fabric::ProcessId) -> Vec<OperationId> {
+        self.records
+            .lock()
+            .await
+            .values()
+            .filter_map(|runtime| (runtime.record.owner == owner).then_some(runtime.record.id))
+            .collect()
+    }
+
     async fn cancel_one(&self, id: OperationId, reason: CancelReason) -> anyhow::Result<()> {
         let notify = {
             let mut records = self.records.lock().await;
             let runtime = records
                 .get_mut(&id)
                 .ok_or_else(|| anyhow::anyhow!("unknown operation: {:?}", id))?;
-            if runtime.record.state.is_terminal() {
+            let from = runtime.record.state;
+            if from.is_terminal() {
                 return Ok(());
             }
+            if from != OperationState::Cancelling {
+                anyhow::ensure!(
+                    from.can_transition_to(OperationState::Cancelling),
+                    "illegal operation transition {from:?} -> Cancelling"
+                );
+                runtime.record.state = OperationState::Cancelling;
+            }
+            anyhow::ensure!(
+                runtime
+                    .record
+                    .state
+                    .can_transition_to(OperationState::Cancelled),
+                "illegal operation transition {:?} -> Cancelled",
+                runtime.record.state
+            );
             runtime.record.state = OperationState::Cancelled;
             runtime.record.exit = Some(OperationExitReason::Cancelled(reason));
             runtime.notify.clone()

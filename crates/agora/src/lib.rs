@@ -1,12 +1,14 @@
 //! # Aletheon Agora
 //!
-//! The shared cognitive workspace (RFC-014). Session-isolated, in-memory.
-//! Holds working memory: blackboard, attention, task graph, scratchpad, and
-//! reasoning trace. Never persistent by itself — persists via snapshot →
-//! Mnemosyne, orchestrated by the executive layer.
+//! The shared cognitive workspace (RFC-014). Mutable working state remains
+//! session-isolated and in-memory; accepted workspace commits and broadcast
+//! epochs are durably logged for integrity and replay. Long-term content
+//! retention still belongs to Mnemosyne.
 
 pub mod attention;
 pub mod blackboard;
+pub mod broadcast;
+pub mod competition;
 pub mod ops;
 pub mod persistence;
 pub mod scratchpad;
@@ -16,6 +18,14 @@ pub mod workspace;
 
 pub use attention::Attention;
 pub use blackboard::Blackboard;
+pub use broadcast::{
+    BroadcastCoordinator, BroadcastHub, BroadcastHubConfig, BroadcastProcessor, BroadcastReplay,
+    ProcessorRegistration, SqliteBroadcastStore,
+};
+pub use competition::{
+    AdmissionMetrics, AdmissionOutcome, CandidatePool, CandidatePoolConfig, SelectionMetrics,
+    SelectionPolicy,
+};
 pub use ops::AgoraRegistry;
 pub use persistence::{AgoraPersistence, InMemoryCommitLog};
 pub use scratchpad::{RetentionPolicy, Scratchpad, ScratchpadEntry};

@@ -5,23 +5,54 @@
 //! Cognitive backends (MemoryRouter + semantic/procedural/self) are behind the
 //! off-by-default `cognitive-memory` feature (M-H Option A).
 
+pub mod agent_scope;
 pub mod backends;
 pub mod composite_service;
+pub mod consolidation;
+pub mod fact_service;
 pub mod r#impl;
+pub mod model;
+pub mod observability;
 pub mod ops;
+pub mod projection;
+pub mod promotion;
+mod recall;
+pub mod retention;
 pub mod service;
 
+pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
 };
+pub use fact_service::{
+    AddFactRequest, DefaultFactUseCases, FactServiceError, FactUseCases, FactView,
+    ListFactsRequest, SearchFactsRequest,
+};
+pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision};
 
 // MemoryService facade (docs/arch §11). NOTE: `MemoryScope` from `service` is
 // intentionally not re-exported here — it would collide with the existing
 // multi-agent `MemoryScope` re-exported below (`r#impl::core_memory::scope`).
 // Reach the facade's scope type via `mnemosyne::service::MemoryScope`.
+pub use model::{
+    MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProvenance, MemoryRecord, MemoryRecordId,
+    MemoryScope, MemorySensitivity, MemoryStatus, ScopeAncestry, TemporalState,
+};
+pub use observability::{
+    CandidateDecisionLabel, ConsolidationJobState, GbrainDegradedCategory, LatencySamples,
+    MemoryKindLabel, MemoryMetrics, MemoryMetricsSnapshot, MemoryScopeLabel, RecallOmittedReason,
+    RecallSourceLabel, TombstoneDestination,
+};
+pub use projection::{
+    DefaultMemoryWorkspaceProjector, MemoryCandidateContext, MemoryProjection,
+    MemoryProjectionLimits, MemoryWorkspaceProjector, ProjectedMemory,
+};
+pub use retention::{
+    RetentionCompactionPolicy, RetentionCompactionReport, RetentionCompactor, RetentionRepository,
+};
 pub use service::{
-    DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryMetadata, MemoryProvenance,
-    MemorySensitivity, MemoryService, RecallItem, RecallRequest, RecallSet, TemporalState,
+    DefaultMemoryService, ExperienceEvent, ForgetAuthority, ForgetPolicy, ForgetReceipt,
+    ForgetSelector, MemoryService, RecallItem, RecallRequest, RecallSet,
 };
 
 // Always-available exports
@@ -59,10 +90,8 @@ pub use ops::router;
 pub use r#impl::auto_memory::AutoMemory;
 pub use r#impl::compaction::CompactionManager;
 pub use r#impl::compressor::AdvancedCompressor;
-pub use r#impl::core_memory::scope::MemoryScope;
 pub use r#impl::core_memory::{CoreMemory, MemoryBlock};
 pub use r#impl::fact_store::FactStore;
-pub use r#impl::pipeline::memory_pipeline::MemoryPipeline;
 pub use r#impl::recall_memory::RecallMemory;
 pub use r#impl::tools as memory_tools;
 

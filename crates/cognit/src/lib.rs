@@ -39,9 +39,11 @@ pub use bridge::llm::LlmBridge;
 
 // Re-export harness components
 pub use harness::config::HarnessConfig;
-pub use harness::linear as react_loop;
-pub use harness::linear::{ReActLoop, TurnMetrics};
-pub use harness::{build_harness, HarnessKind};
+pub use harness::{
+    ChannelCognitiveStreamSink, CognitError, CognitErrorKind, CognitRetryDisposition,
+    CognitiveSession, CognitiveSessionDependencies, CognitiveSessionFactory, CognitiveStreamEvent,
+    CognitiveStreamSink, DefaultCognitiveSessionFactory, HarnessKind,
+};
 pub use r#impl::inference;
 pub use r#impl::learning;
 pub use r#impl::llm;

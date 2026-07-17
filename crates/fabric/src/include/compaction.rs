@@ -19,6 +19,18 @@ use std::pin::Pin;
 use crate::message::{ContentBlock, Message};
 use crate::LlmProvider;
 
+/// Truncate a string to a byte budget without splitting a UTF-8 code point.
+pub fn truncate_utf8_bytes(value: &mut String, max_bytes: usize) {
+    if value.len() <= max_bytes {
+        return;
+    }
+    let mut boundary = max_bytes.min(value.len());
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    value.truncate(boundary);
+}
+
 /// Trait for context compaction into the message buffer.
 /// Shared interface: lets cognitive harnesses depend on an abstract
 /// compaction strategy without depending on a concrete memory crate.
@@ -116,8 +128,8 @@ fn truncate_tool_call_args(messages: &mut [Message]) {
                         if let serde_json::Value::String(s) = value {
                             if s.len() > 200 {
                                 let original_len = s.len();
-                                s.truncate(200);
-                                s.push_str(&format!("... [truncated from {} chars]", original_len));
+                                truncate_utf8_bytes(s, 200);
+                                s.push_str(&format!("... [truncated from {} bytes]", original_len));
                             }
                         }
                     }
@@ -169,5 +181,38 @@ mod tests {
             assert!(cmd.len() < 500);
             assert!(cmd.contains("truncated"));
         }
+    }
+
+    #[test]
+    fn truncate_tool_call_args_is_utf8_safe() {
+        let original = format!("{}{}", "中".repeat(67), "🙂".repeat(20));
+        let mut messages = vec![Message {
+            role: crate::Role::Assistant,
+            content: vec![ContentBlock::ToolUse {
+                id: "test".to_string(),
+                name: "bash_exec".to_string(),
+                input: serde_json::json!({ "command": original }),
+            }],
+        }];
+
+        truncate_tool_call_args(&mut messages);
+
+        let ContentBlock::ToolUse { input, .. } = &messages[0].content[0] else {
+            panic!("expected tool use");
+        };
+        let command = input["command"].as_str().unwrap();
+        let prefix = command.split("... [truncated").next().unwrap();
+        assert!(prefix.len() <= 200);
+        assert!(prefix.is_char_boundary(prefix.len()));
+        assert!(command.contains("truncated from 281 bytes"));
+    }
+
+    #[test]
+    fn truncate_utf8_bytes_preserves_under_budget_values() {
+        let mut value = "中文🙂".to_string();
+        let original = value.clone();
+        let budget = value.len();
+        truncate_utf8_bytes(&mut value, budget);
+        assert_eq!(value, original);
     }
 }

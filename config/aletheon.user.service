@@ -1,5 +1,5 @@
 [Unit]
-Description=Aletheon AI Agent Daemon (User)
+Description=Aletheon per-user runtime
 After=network.target
 
 [Service]
@@ -8,7 +8,10 @@ ExecStart=%h/.local/bin/aletheon daemon
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
-RuntimeDirectory=aletheon
+StateDirectory=aletheon
+CacheDirectory=aletheon
 
-[Install]
-WantedBy=default.target
+# The runtime deliberately retains the invoking user's filesystem authority.
+# Per-turn WorkspacePolicy and bubblewrap narrow that authority dynamically.
+NoNewPrivileges=yes
+LimitCORE=0

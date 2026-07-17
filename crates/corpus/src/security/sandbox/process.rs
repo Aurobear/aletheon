@@ -63,8 +63,8 @@ impl SandboxBackend for ProcessBackend {
                 tokio::process::Command::new("bash")
                     .arg("-c")
                     .arg(cmd)
-                    .current_dir(&config.working_dir)
-                    .envs(&config.env_vars)
+                    .current_dir(config.working_dir())
+                    .envs(&config.environment)
                     .output()
                     .await
             })

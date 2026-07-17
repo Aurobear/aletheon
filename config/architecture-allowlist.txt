@@ -1,0 +1,41 @@
+core_systems_field|crates/executive/src/core/runtime_core.rs| gbrain_memory: app_config.memory.gbrain.clone(),
+core_systems_field|crates/executive/src/impl/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
+core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.runtime.clone(),
+executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::HookRegistry;
+executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::tools::tools::ToolRegistry;
+executive_store_import|crates/executive/src/core/security_group.rs|use corpus::security::runner::ToolRunnerWithGuard;
+executive_store_import|crates/executive/src/impl/engine/modules/body_module.rs|use corpus::tools::tools::ToolRegistry;
+executive_store_import|crates/executive/src/impl/hook_lifecycle/session_distiller.rs|use mnemosyne::FactStore;
+executive_store_import|crates/executive/src/service/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {
+executive_store_import|crates/executive/src/service/verification/command.rs|use corpus::tools::subagent::{CommandOutput, CommandRequest, CommandRunner};
+legacy_event|crates/executive/src/impl/engine/modules/body_module.rs| let resp_envelope = Envelope::response(&envelope, serialize_response(&response));
+legacy_event|crates/executive/src/impl/engine/modules/body_module.rs|use fabric::envelope::*;
+legacy_event|crates/executive/src/impl/engine/modules/body_module.rs|use fabric::envelope::Payload;
+legacy_event|crates/executive/src/impl/engine/modules/perception_module.rs| let envelope = Envelope::publish(
+legacy_event|crates/executive/src/impl/engine/modules/perception_module.rs|use fabric::envelope::*;
+legacy_event|crates/executive/src/impl/engine/modules/perception_module.rs|use fabric::envelope::Payload;
+legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs| let resp_envelope = Envelope::response(&envelope, serialize_response(&response));
+legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs|use fabric::envelope::*;
+legacy_event|crates/executive/src/impl/engine/modules/self_field_module.rs|use fabric::envelope::Payload;
+legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::publish(source, topic, Payload::Json(value))
+legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::request(source, target, Payload::Json(value), timeout)
+legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::response(request, Payload::Json(value))
+legacy_event|crates/fabric/src/ipc/transport/unix_socket_transport.rs| let envelope = Envelope::fire_and_forget(
+legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::new(
+legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::new(source, self.target, Pattern::FireAndForget, self.payload)
+legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::request(source, self.target, self.payload, self.timeout)
+raw_process|crates/dasein/src/impl/hook/dispatcher.rs|use tokio::process::Command;
+raw_process|crates/dasein/src/impl/perception/sources/journald_source.rs| let mut child = match tokio::process::Command::new("journalctl")
+raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let _ = tokio::process::Command::new("systemctl")
+raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let output = tokio::process::Command::new("btrfs")
+raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let output = tokio::process::Command::new("cp")
+raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let output = tokio::process::Command::new("systemctl")
+raw_process|crates/executive/src/host/container.rs| let _ = tokio::process::Command::new(&self.runtime_cmd)
+raw_process|crates/executive/src/host/container.rs| let mut cmd = tokio::process::Command::new(&self.runtime_cmd);
+raw_process|crates/executive/src/host/container.rs| let output = tokio::process::Command::new(cmd)
+raw_process|crates/executive/src/impl/approval/apply_coordinator.rs| let status = tokio::process::Command::new("git")
+raw_process|crates/executive/src/impl/automation/script.rs| let mut cmd = tokio::process::Command::new("sh");
+raw_process|crates/executive/src/impl/daemon/handler/mod.rs| let spawn_result = tokio::process::Command::new(&path)
+raw_process|crates/executive/src/impl/plugin/runtime.rs| let mut cmd = tokio::process::Command::new(program);
+raw_process|crates/executive/src/impl/runtime/pi_rpc.rs|use tokio::process::Command;
+raw_process|crates/executive/src/service/turn_runtime_ports.rs| let spawned = tokio::process::Command::new(&path)

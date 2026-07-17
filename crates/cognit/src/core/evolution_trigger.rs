@@ -224,11 +224,12 @@ impl EvolutionTrigger {
     }
 }
 
+#[cfg(test)]
 impl Default for EvolutionTrigger {
     fn default() -> Self {
         Self::new(
             EvolutionTriggerConfig::default(),
-            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
         )
     }
 }

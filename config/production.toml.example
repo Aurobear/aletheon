@@ -1,6 +1,19 @@
 # Production overlay. Copy to /etc/aletheon/config.toml as root (0640,
 # root:aletheon). Secret fields are file references only; never put values here.
 
+[agent]
+default_provider = "leju"
+default_model = "deepseek/deepseek-v4-pro"
+
+# The service loads LEJU_API_KEY from deployment.secrets.provider through its
+# EnvironmentFile. Keep the credential out of this checked-in configuration.
+[[providers]]
+name = "leju"
+base_url = "https://aiapi.lejurobot.com"
+api_key = ""
+transport = "openai"
+models = ["deepseek/deepseek-v4-pro"]
+
 [memory]
 backend = "sqlite"
 data_dir = "/var/lib/aletheon/mnemosyne"

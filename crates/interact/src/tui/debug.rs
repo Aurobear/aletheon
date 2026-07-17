@@ -12,7 +12,7 @@
 //!
 //! Design: `docs/plans/2026-06-19-aletheon-debug-system-design.md` (Layer 3).
 
-use aletheon_kernel::chronos::SystemTimer;
+use crate::tui::host_time::ClientTimer;
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use fabric::{Clock, Timer};
@@ -660,7 +660,7 @@ async fn perf_stats(socket: &std::path::Path, interval: Option<u64>) -> Result<(
             Some(secs) => {
                 println!();
                 println!("Refreshing in {}s (Ctrl+C to stop)...", secs);
-                SystemTimer
+                ClientTimer
                     .sleep(std::time::Duration::from_secs(secs))
                     .await;
                 // Clear screen
@@ -1012,7 +1012,7 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
     println!();
 
     // Count events in the window
-    let clock = std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new());
+    let clock = std::sync::Arc::new(crate::tui::host_time::ClientClock::new());
     let start = clock.mono_now();
     let mut count: u64 = 0;
     let mut last_report = clock.mono_now();
@@ -1021,7 +1021,7 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
     let mut line = String::new();
     loop {
         line.clear();
-        match SystemTimer
+        match ClientTimer
             .timeout(
                 std::time::Duration::from_millis(100),
                 reader.read_line(&mut line),

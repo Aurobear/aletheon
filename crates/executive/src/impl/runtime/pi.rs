@@ -1,6 +1,7 @@
 //! Fail-closed configuration and registration for the isolated Pi coding runtime.
 
-use crate::core::sub_agent::{SubAgentRuntime, SubAgentSpawner};
+use crate::core::runtime_registry::RuntimeRegistry;
+use crate::core::sub_agent::SubAgentRuntime;
 use crate::service::verification::CapabilityAuditSummary;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -15,6 +16,9 @@ use fabric::{
     CodingNetworkPolicy, FailureClass, RuntimeFailure, RuntimeId, RuntimeResult,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::fs::File;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 pub const PI_CODER_RUNTIME_ID: &str = "pi-coder";
 
 pub fn register_pi_runtime(
-    spawner: &mut SubAgentSpawner,
+    registry: &mut RuntimeRegistry,
     config: &PiRuntimeConfig,
     sandbox: Option<Arc<dyn SandboxBackend>>,
     clock: Arc<dyn Clock>,
@@ -34,9 +38,7 @@ pub fn register_pi_runtime(
     let sandbox = sandbox.context("Pi runtime requires an available namespace sandbox")?;
     let runtime = PiRuntime::prepare(config, sandbox, clock)?
         .context("enabled Pi runtime did not produce a runtime")?;
-    spawner
-        .runtime_registry_mut()
-        .register(PiRuntime::runtime_id(), Arc::new(runtime))?;
+    registry.register(PiRuntime::runtime_id(), Arc::new(runtime))?;
     Ok(true)
 }
 
@@ -44,6 +46,9 @@ pub fn register_pi_runtime(
 pub struct ResolvedPiConfig {
     pub executable: PathBuf,
     pub fixed_args: Vec<String>,
+    pub package_version: String,
+    pub executable_sha256: String,
+    pub json_protocol_version: u32,
     pub worktree_base: PathBuf,
     pub timeout_ms: u64,
     pub max_output_bytes: usize,
@@ -101,6 +106,25 @@ impl PiRuntime {
         validate_sandbox(sandbox.as_ref())?;
 
         let executable = resolve_executable(config)?;
+        let executable_sha256 = sha256_file(&executable)?;
+        if config.package_version.trim().is_empty() {
+            bail!("Pi runtime package_version must pin the reviewed upstream release");
+        }
+        if config.executable_sha256.len() != 64
+            || !config
+                .executable_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            bail!("Pi runtime executable_sha256 must be a lowercase SHA-256 digest");
+        }
+        if executable_sha256 != config.executable_sha256 {
+            bail!("Pi runtime executable does not match its pinned SHA-256");
+        }
+        if config.json_protocol_version == 0 {
+            bail!("Pi runtime JSON protocol version must be nonzero");
+        }
+        validate_fixed_args(&config.fixed_args)?;
         let worktree_base = canonical_directory(&config.worktree_base, "worktree base")?;
         if config.timeout_ms == 0 || config.max_output_bytes == 0 {
             bail!("Pi runtime timeout and output limit must be nonzero");
@@ -114,6 +138,9 @@ impl PiRuntime {
         let resolved = ResolvedPiConfig {
             executable,
             fixed_args: config.fixed_args.clone(),
+            package_version: config.package_version.clone(),
+            executable_sha256,
+            json_protocol_version: config.json_protocol_version,
             worktree_base,
             timeout_ms: config.timeout_ms,
             max_output_bytes: config.max_output_bytes,
@@ -291,6 +318,62 @@ fn validate_paths(paths: &[PathBuf], label: &str) -> Result<()> {
     Ok(())
 }
 
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path)
+        .with_context(|| format!("opening Pi executable for hashing: {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn validate_fixed_args(args: &[String]) -> Result<()> {
+    let required_flags = [
+        "--no-session",
+        "--no-context-files",
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-approve",
+        "--offline",
+    ];
+    if !args.windows(2).any(|pair| pair == ["--mode", "json"]) {
+        bail!("Pi runtime requires --mode json");
+    }
+    for flag in required_flags {
+        if !args.iter().any(|arg| arg == flag) {
+            bail!("Pi runtime requires isolation flag {flag}");
+        }
+    }
+    for forbidden in [
+        "--extension",
+        "-e",
+        "--skill",
+        "--prompt-template",
+        "--theme",
+        "--approve",
+        "-a",
+        "--session",
+        "--session-dir",
+        "--continue",
+        "--resume",
+        "--fork",
+        "--api-key",
+    ] {
+        if args.iter().any(|arg| arg == forbidden) {
+            bail!("Pi runtime rejects unreviewed resource/session flag {forbidden}");
+        }
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl SubAgentRuntime for PiRuntime {
     async fn run(&self, task: &str, cancel: CancellationToken) -> Result<String, String> {
@@ -348,8 +431,17 @@ impl SubAgentRuntime for PiRuntime {
         sandbox_env.insert("PATH".into(), "/usr/local/bin:/usr/bin:/bin".into());
         sandbox_env.insert("HOME".into(), "/tmp".into());
         let sandbox_config = SandboxConfig {
-            working_dir: lease.path.to_string_lossy().into_owned(),
-            env_vars: sandbox_env,
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(lease.path.clone(), vec![])
+                .map_err(|error| {
+                    self.failure(
+                        FailureClass::ToolFailure,
+                        format!("invalid Pi workspace policy: {error}"),
+                        false,
+                        self.clock.mono_now().0.saturating_sub(started),
+                        vec![],
+                    )
+                })?,
+            environment: sandbox_env.into_iter().collect(),
         };
         let wrapped = match self.sandbox.wrap_argv(
             &self.config.executable,
@@ -433,6 +525,33 @@ impl SubAgentRuntime for PiRuntime {
         } else {
             CodingJobStatus::Failed
         };
+        let parsed = if status == CodingJobStatus::Succeeded {
+            match super::pi_protocol::parse_job_jsonl(
+                &output.stdout,
+                self.config.json_protocol_version,
+            ) {
+                Ok(parsed) => Some(parsed),
+                Err(error) => {
+                    let _ = self
+                        .worktrees
+                        .finish(lease, false, CancellationToken::new())
+                        .await;
+                    return Err(self.failure(
+                        FailureClass::ArchitectureViolation,
+                        format!("Pi JSON protocol validation failed: {error:#}"),
+                        false,
+                        output.elapsed_ms,
+                        vec![],
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        let normalized_stdout = parsed
+            .as_ref()
+            .map(|parsed| parsed.final_text.clone())
+            .unwrap_or_else(|| output.stdout.clone());
         let report = CodingJobReport {
             job_id: request.job.job_id,
             goal_id: request.job.goal_id,
@@ -441,7 +560,7 @@ impl SubAgentRuntime for PiRuntime {
             status,
             exit_code: output.exit_code,
             elapsed_ms: output.elapsed_ms,
-            stdout: output.stdout.clone(),
+            stdout: normalized_stdout.clone(),
             stderr: output.stderr.clone(),
             stdout_truncated: output.stdout_truncated,
             stderr_truncated: output.stderr_truncated,
@@ -457,7 +576,7 @@ impl SubAgentRuntime for PiRuntime {
             .expect("validated worktree must be beneath managed base")
             .to_string_lossy()
             .into_owned();
-        let evidence = vec![
+        let mut evidence = vec![
             AttemptEvidence {
                 kind: "coding_job_report".into(),
                 summary: format!(
@@ -488,7 +607,24 @@ impl SubAgentRuntime for PiRuntime {
                 })
                 .expect("capability audit is serializable"),
             },
+            AttemptEvidence {
+                kind: "pi_build_identity".into(),
+                summary: format!(
+                    "Pi package {} protocol v{}",
+                    self.config.package_version, self.config.json_protocol_version
+                ),
+                content: serde_json::json!({
+                    "package_version": self.config.package_version,
+                    "executable_sha256": self.config.executable_sha256,
+                    "json_protocol_version": self.config.json_protocol_version,
+                    "session_id": parsed.as_ref().map(|parsed| parsed.session_id.as_str()),
+                })
+                .to_string(),
+            },
         ];
+        if let Some(parsed) = &parsed {
+            evidence.extend(parsed.evidence.clone());
+        }
 
         // Successful non-empty worktrees are retained for M5 approval/apply;
         // successful empty worktrees are disposable. Every failure is retained.
@@ -508,13 +644,14 @@ impl SubAgentRuntime for PiRuntime {
             ));
         }
 
-        let usage = AttemptUsage {
-            elapsed_ms: output.elapsed_ms,
-            ..Default::default()
-        };
+        let mut usage = parsed
+            .as_ref()
+            .map(|parsed| parsed.usage.clone())
+            .unwrap_or_default();
+        usage.elapsed_ms = output.elapsed_ms;
         match status {
             CodingJobStatus::Succeeded => Ok(RuntimeResult {
-                output: output.stdout,
+                output: normalized_stdout,
                 usage,
                 evidence,
             }),
@@ -614,8 +751,21 @@ mod tests {
         std::fs::create_dir_all(&worktree_base).unwrap();
         PiRuntimeConfig {
             enabled: true,
-            executable,
-            fixed_args: vec!["--mode".into(), "json".into()],
+            executable: executable.clone(),
+            fixed_args: vec![
+                "--mode".into(),
+                "json".into(),
+                "--no-session".into(),
+                "--no-context-files".into(),
+                "--no-extensions".into(),
+                "--no-skills".into(),
+                "--no-prompt-templates".into(),
+                "--no-themes".into(),
+                "--no-approve".into(),
+                "--offline".into(),
+            ],
+            package_version: "0.0.3-test".into(),
+            executable_sha256: sha256_file(&executable).unwrap(),
             worktree_base,
             allowed_paths: vec![PathBuf::from("crates"), PathBuf::from("Cargo.toml")],
             forbidden_paths: vec![PathBuf::from(".git"), PathBuf::from(".env")],
@@ -625,17 +775,15 @@ mod tests {
 
     #[test]
     fn disabled_configuration_does_not_require_a_sandbox() {
-        let mut spawner = SubAgentSpawner::new();
+        let mut registry = RuntimeRegistry::new();
         assert!(!register_pi_runtime(
-            &mut spawner,
+            &mut registry,
             &PiRuntimeConfig::default(),
             None,
             Arc::new(aletheon_kernel::chronos::TestClock::default()),
         )
         .unwrap());
-        assert!(!spawner
-            .runtime_registry()
-            .contains(&PiRuntime::runtime_id()));
+        assert!(!registry.contains(&PiRuntime::runtime_id()));
     }
 
     #[test]
@@ -661,6 +809,20 @@ mod tests {
     }
 
     #[test]
+    fn executable_identity_mismatch_fails_closed() {
+        let fixture = TempDir::new().unwrap();
+        let mut config = enabled_config(&fixture);
+        config.executable_sha256 = "0".repeat(64);
+        let error = PiRuntime::prepare(
+            &config,
+            sandbox(IsolationLevel::Namespace),
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("pinned SHA-256"));
+    }
+
+    #[test]
     fn noop_and_process_sandboxes_are_rejected() {
         let fixture = TempDir::new().unwrap();
         let config = enabled_config(&fixture);
@@ -682,7 +844,7 @@ mod tests {
     fn namespace_sandbox_is_accepted_and_debug_is_secret_free() {
         let fixture = TempDir::new().unwrap();
         let mut config = enabled_config(&fixture);
-        config.fixed_args = vec!["--api-key".into(), "super-secret".into()];
+        config.package_version = "super-secret".into();
         let runtime = PiRuntime::prepare(
             &config,
             sandbox(IsolationLevel::Namespace),
@@ -693,16 +855,29 @@ mod tests {
         assert_eq!(PiRuntime::runtime_id(), RuntimeId("pi-coder".into()));
         assert!(!format!("{runtime:?}").contains("super-secret"));
 
-        let mut spawner = SubAgentSpawner::new();
+        let mut registry = RuntimeRegistry::new();
         assert!(register_pi_runtime(
-            &mut spawner,
+            &mut registry,
             &config,
             Some(sandbox(IsolationLevel::Namespace)),
             Arc::new(aletheon_kernel::chronos::TestClock::default()),
         )
         .unwrap());
-        assert!(spawner
-            .runtime_registry()
-            .contains(&PiRuntime::runtime_id()));
+        assert!(registry.contains(&PiRuntime::runtime_id()));
+    }
+
+    #[test]
+    fn api_keys_are_rejected_from_process_arguments() {
+        let fixture = TempDir::new().unwrap();
+        let mut config = enabled_config(&fixture);
+        config.fixed_args.push("--api-key".into());
+        config.fixed_args.push("super-secret".into());
+        let error = PiRuntime::prepare(
+            &config,
+            sandbox(IsolationLevel::Namespace),
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("--api-key"));
     }
 }

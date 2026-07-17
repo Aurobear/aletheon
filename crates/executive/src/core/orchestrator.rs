@@ -1,10 +1,9 @@
 use crate::core::config::{ExecutiveConfig, GenomeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 use crate::core::mode_router::ModeRouter;
-use crate::core::sub_agent::SubAgentSpawner;
+use crate::core::runtime_registry::RuntimeRegistry;
 use anyhow::Result;
 use cognit::harness::interrupt::InterruptFlag;
-use cognit::harness::linear::ReActLoop;
 use fabric::body::{Action, ActionResult};
 use fabric::context::Context;
 use fabric::runtime::StepResult;
@@ -23,25 +22,28 @@ use std::sync::Arc;
 /// - Runtime: orchestration (this struct)
 pub struct AletheonExecutive {
     config: ExecutiveConfig,
-    react_loop: ReActLoop,
+    iteration: usize,
+    awareness_signals: Vec<cognit::core::awareness_signal::AwarenessSignal>,
+    seeded_goal: Option<(String, Vec<String>)>,
     evolution: Option<EvolutionCoordinator>,
     genome_config: GenomeConfig,
     mode_router: ModeRouter,
     interrupt_flag: InterruptFlag,
-    sub_agent_spawner: SubAgentSpawner,
+    compatibility_runtimes: RuntimeRegistry,
 }
 
 impl AletheonExecutive {
     pub fn new(config: ExecutiveConfig) -> Self {
-        let react_loop = crate::service::harness_factory::build_configured_react_loop(&config);
         Self {
             config,
-            react_loop,
+            iteration: 0,
+            awareness_signals: Vec::new(),
+            seeded_goal: None,
             evolution: None,
             genome_config: GenomeConfig::default(),
             mode_router: ModeRouter::new(),
             interrupt_flag: InterruptFlag::new(),
-            sub_agent_spawner: SubAgentSpawner::new(),
+            compatibility_runtimes: RuntimeRegistry::new(),
         }
     }
 
@@ -77,7 +79,7 @@ impl AletheonExecutive {
     /// Run post-turn evolution if a coordinator is attached.
     ///
     /// Returns `None` if evolution is not configured.
-    pub async fn post_evolution<M: fabric::meta::MetaRuntimeOps>(
+    pub async fn post_evolution(
         &mut self,
         task_summary: &str,
         output: &str,
@@ -86,10 +88,9 @@ impl AletheonExecutive {
         tool_errors: usize,
         elapsed_ms: u64,
         iterations: usize,
-        meta: &metacog::MorphogenesisPipeline<M>,
+        meta: &dyn metacog::MetacogService,
     ) -> Result<Option<EvolutionSummary>> {
-        // Drain awareness signals from the react loop before passing to evolution
-        let signals = self.react_loop.take_signals();
+        let signals = std::mem::take(&mut self.awareness_signals);
         match &self.evolution {
             Some(coord) => {
                 let summary = coord
@@ -131,7 +132,7 @@ impl AletheonExecutive {
         F: Fn(&Intent, &Context) -> Result<Verdict>,
         H: Fn(&Action, &Context) -> Result<ActionResult>,
     {
-        if !self.react_loop.should_continue() {
+        if self.iteration >= self.config.max_iterations {
             return Ok(StepResult {
                 completed: true,
                 output: Some("Max iterations reached".to_string()),
@@ -140,7 +141,7 @@ impl AletheonExecutive {
             });
         }
 
-        self.react_loop.advance();
+        self.iteration += 1;
 
         Ok(StepResult {
             completed: false,
@@ -152,13 +153,13 @@ impl AletheonExecutive {
 
     /// Get current iteration count
     pub fn iteration(&self) -> usize {
-        self.react_loop.iteration()
+        self.iteration
     }
 
     /// Seed the goal tracker from persisted state (resume-on-start).
     /// Must be called before the first turn.
     pub fn seed_goal(&mut self, description: &str, sub_goals: &[String]) {
-        self.react_loop.seed_goal(description, sub_goals);
+        self.seeded_goal = Some((description.to_string(), sub_goals.to_vec()));
     }
 
     /// Get config
@@ -174,7 +175,7 @@ impl AletheonExecutive {
     pub fn take_awareness_signals(
         &mut self,
     ) -> Vec<cognit::core::awareness_signal::AwarenessSignal> {
-        self.react_loop.take_signals()
+        std::mem::take(&mut self.awareness_signals)
     }
 
     /// Reference to the mode router.
@@ -192,13 +193,12 @@ impl AletheonExecutive {
         &self.interrupt_flag
     }
 
-    /// Reference to the sub-agent spawner.
-    pub fn sub_agent_spawner(&self) -> &SubAgentSpawner {
-        &self.sub_agent_spawner
+    /// Legacy runtime implementations only; owns no Agent run state.
+    pub fn compatibility_runtimes(&self) -> &RuntimeRegistry {
+        &self.compatibility_runtimes
     }
 
-    /// Mutable reference to the sub-agent spawner.
-    pub fn sub_agent_spawner_mut(&mut self) -> &mut SubAgentSpawner {
-        &mut self.sub_agent_spawner
+    pub fn compatibility_runtimes_mut(&mut self) -> &mut RuntimeRegistry {
+        &mut self.compatibility_runtimes
     }
 }

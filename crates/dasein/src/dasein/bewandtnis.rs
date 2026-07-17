@@ -76,6 +76,41 @@ impl Bewandtnisganzheit {
         }
     }
 
+    /// Compare-and-set readiness for reducer transitions.
+    pub fn update_readiness_if(
+        &self,
+        id: &EntityId,
+        expected: &ReadinessState,
+        new_state: ReadinessState,
+    ) -> anyhow::Result<()> {
+        let mut nodes = self.nodes.write();
+        let node = nodes
+            .get_mut(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown Dasein world entity {id}"))?;
+        anyhow::ensure!(
+            node.readiness == *expected,
+            "Dasein readiness conflict for {id}"
+        );
+        node.readiness = new_state;
+        Ok(())
+    }
+
+    pub fn validate_readiness(
+        &self,
+        id: &EntityId,
+        expected: &ReadinessState,
+    ) -> anyhow::Result<()> {
+        let nodes = self.nodes.read();
+        let node = nodes
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown Dasein world entity {id}"))?;
+        anyhow::ensure!(
+            node.readiness == *expected,
+            "Dasein readiness conflict for {id}"
+        );
+        Ok(())
+    }
+
     /// Get all entities with a given readiness state.
     pub fn entities_by_readiness(&self, readiness: &ReadinessState) -> Vec<BewandtnisNode> {
         let nodes = self.nodes.read();
@@ -232,6 +267,9 @@ impl Bewandtnisganzheit {
                 }
             }
         }
+        ready.sort_by(|left, right| left.id.cmp(&right.id));
+        present.sort_by(|left, right| left.id.cmp(&right.id));
+        unavailable.sort_by(|left, right| left.id.cmp(&right.id));
 
         BewandtnisSnapshot {
             ready_to_hand: ready,

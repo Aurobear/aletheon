@@ -10,8 +10,8 @@ use mnemosyne::backends::gbrain::{
     SupplementalTransportError,
 };
 use mnemosyne::{
-    ExperienceEvent, ForgetPolicy, MemoryMetadata, MemoryProvenance, MemorySensitivity,
-    RecallRequest, TemporalState,
+    ExperienceEvent, ForgetPolicy, GbrainDegradedCategory, MemoryKindLabel, MemoryMetadata,
+    MemoryProvenance, MemorySensitivity, RecallRequest, RecallSourceLabel, TemporalState,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -205,6 +205,16 @@ async fn recall_preserves_provenance_temporal_fields_and_uses_get_only_when_need
     );
     assert_eq!(recall.items[0].temporal_state, TemporalState::Current);
     assert_eq!(transport.get_calls.load(Ordering::SeqCst), 0);
+    let snapshot = backend.metrics().snapshot();
+    assert_eq!(
+        snapshot.memory_recall_hits[&RecallSourceLabel::Gbrain]
+            [&MemoryKindLabel::ExternalReference],
+        1
+    );
+    assert_eq!(
+        snapshot.memory_recall_latency_ms[&RecallSourceLabel::Gbrain].count,
+        1
+    );
 
     *transport.query.lock().unwrap() = Ok(vec![SupplementalHit {
         source_id: "aletheon".into(),
@@ -252,6 +262,10 @@ async fn outage_slow_and_malformed_remote_memory_degrade_to_empty() {
         recall.health.error_category,
         Some(SupplementalErrorCategory::Provider)
     );
+    assert_eq!(
+        backend.metrics().snapshot().memory_gbrain_degraded[&GbrainDegradedCategory::Provider],
+        1
+    );
 
     let dir = tempfile::tempdir().unwrap();
     let transport = Arc::new(FakeTransport::healthy());
@@ -286,7 +300,16 @@ fn forget_is_explicitly_unsupported() {
     let dir = tempfile::tempdir().unwrap();
     let backend = build_backend(&dir, Arc::new(FakeTransport::healthy()), 100);
     assert!(backend
-        .forget(ForgetPolicy::default())
+        .forget(ForgetPolicy {
+            request_id: "request-1".into(),
+            selector: mnemosyne::ForgetSelector::Scope {
+                scope: mnemosyne::MemoryScope::Session("s".into()),
+                limit: 1,
+            },
+            requester: "owner".into(),
+            reason: "test".into(),
+            authority: mnemosyne::ForgetAuthority::Ordinary,
+        })
         .unwrap_err()
         .to_string()
         .contains("unsupported"));

@@ -4,8 +4,6 @@
 //! This bridge subscribes to CommunicationBus topics (via SchemaId from EventType)
 //! and translates system events into DaseinEvent messages on the DaseinModule's channel.
 
-use fabric::events::types::EventType;
-use fabric::ipc::envelope::Payload;
 use fabric::ipc::envelope_v2::SchemaId;
 use fabric::CommunicationBus;
 use tokio::sync::mpsc;
@@ -39,18 +37,14 @@ impl DaseinEventBridge {
         // JSON payload data into a DaseinEvent via the provided mapping closure.
         fn spawn_topic_subscriber(
             bus: &CommunicationBus,
-            event_type: EventType,
+            schema: SchemaId,
             tx: mpsc::Sender<DaseinEvent>,
             map: fn(serde_json::Value) -> DaseinEvent,
         ) {
-            let schema = SchemaId::from_event_type(&event_type);
-            let mut rx = bus.subscribe_topic(schema, Some(256));
+            let mut rx = bus.subscribe_envelope_v2(schema);
             tokio::spawn(async move {
                 while let Ok(envelope) = rx.recv().await {
-                    let json = match &envelope.payload {
-                        Payload::Json(v) => v.clone(),
-                        _ => continue,
-                    };
+                    let json = envelope.payload;
                     let event = map(json);
                     if tx.try_send(event).is_err() {
                         break; // channel closed
@@ -62,36 +56,46 @@ impl DaseinEventBridge {
         // ToolObservation → tool execution results
         {
             let tx = self.dasein_tx.clone();
-            spawn_topic_subscriber(communication_bus, EventType::ToolObservation, tx, |json| {
-                let tool_name = json
-                    .get("tool_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                let status = json
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                DaseinEvent::SystemEvent {
-                    source: "tool_execution".to_string(),
-                    content: format!("{}: {}", tool_name, status),
-                }
-            });
+            spawn_topic_subscriber(
+                communication_bus,
+                SchemaId(SchemaId::EVENT_TOOL_OBSERVATION_V1.into()),
+                tx,
+                |json| {
+                    let tool_name = json
+                        .get("tool_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let status = json
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    DaseinEvent::SystemEvent {
+                        source: "tool_execution".to_string(),
+                        content: format!("{}: {}", tool_name, status),
+                    }
+                },
+            );
         }
 
         // MemoryStored → memory events
         {
             let tx = self.dasein_tx.clone();
-            spawn_topic_subscriber(communication_bus, EventType::MemoryStored, tx, |json| {
-                let memory_type = json
-                    .get("memory_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                let content = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                DaseinEvent::SystemEvent {
-                    source: "memory".to_string(),
-                    content: format!("[{}] {}", memory_type, content),
-                }
-            });
+            spawn_topic_subscriber(
+                communication_bus,
+                SchemaId(SchemaId::EVENT_MEMORY_STORED_V1.into()),
+                tx,
+                |json| {
+                    let memory_type = json
+                        .get("memory_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let content = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    DaseinEvent::SystemEvent {
+                        source: "memory".to_string(),
+                        content: format!("[{}] {}", memory_type, content),
+                    }
+                },
+            );
         }
 
         // EvolutionTriggered → evolution events
@@ -99,7 +103,7 @@ impl DaseinEventBridge {
             let tx = self.dasein_tx.clone();
             spawn_topic_subscriber(
                 communication_bus,
-                EventType::EvolutionTriggered,
+                SchemaId(SchemaId::EVENT_EVOLUTION_TRIGGERED_V1.into()),
                 tx,
                 |json| {
                     let reason = json
@@ -117,12 +121,15 @@ impl DaseinEventBridge {
         // AgentStarted → session lifecycle
         {
             let tx = self.dasein_tx.clone();
-            spawn_topic_subscriber(communication_bus, EventType::AgentStarted, tx, |_json| {
-                DaseinEvent::SystemEvent {
+            spawn_topic_subscriber(
+                communication_bus,
+                SchemaId(SchemaId::EVENT_AGENT_STARTED_V1.into()),
+                tx,
+                |_json| DaseinEvent::SystemEvent {
                     source: "session".to_string(),
                     content: "new session started".to_string(),
-                }
-            });
+                },
+            );
         }
 
         tracing::info!("DaseinEventBridge subscribed to CommunicationBus topic events");

@@ -5,11 +5,9 @@
 //! direct tool calls that bypass this are forbidden.
 
 use async_trait::async_trait;
-use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, AdmissionRequest, AuditEventId, CapabilityInvoker, CapabilityRequest,
-    CapabilityResult, CapabilityScope, ExecutionPermit, SandboxDecision, SandboxRequirement,
-    UsageReport,
+    CapabilityResult, ExecutionPermit, SandboxDecision, UsageReport,
 };
 use std::sync::Arc;
 
@@ -27,7 +25,7 @@ use std::sync::Arc;
 pub struct DefaultCapabilityInvoker<A, E>
 where
     A: AdmissionController + ?Sized,
-    E: ToolExecutor,
+    E: ToolExecutor + ?Sized,
 {
     admission: Arc<A>,
     executor: Arc<E>,
@@ -53,7 +51,7 @@ pub trait ToolExecutor: Send + Sync {
 impl<A, E> DefaultCapabilityInvoker<A, E>
 where
     A: AdmissionController + ?Sized,
-    E: ToolExecutor,
+    E: ToolExecutor + ?Sized,
 {
     pub fn new(admission: Arc<A>, executor: Arc<E>) -> Self {
         Self {
@@ -67,22 +65,25 @@ where
 impl<A, E> CapabilityInvoker for DefaultCapabilityInvoker<A, E>
 where
     A: AdmissionController + ?Sized,
-    E: ToolExecutor,
+    E: ToolExecutor + ?Sized,
 {
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityResult {
         // 1. Build admission request.
         let admission_req = AdmissionRequest {
-            operation_id: request.operation_id,
-            process_id: request.process_id,
-            principal: fabric::PrincipalId("agent".into()),
-            capability: fabric::CapabilityId(request.name.clone()),
-            action: request.name.clone(),
-            input_summary: format!("{:?}", request.input).chars().take(200).collect(),
-            risk: RiskLevel::ReadOnly,
-            requested_scope: CapabilityScope::default(),
-            budget: None,
-            lease: None,
-            sandbox: SandboxRequirement::NotRequired,
+            operation_id: request.call.operation_id,
+            process_id: request.call.process_id,
+            principal: request.authority.principal.clone(),
+            capability: fabric::CapabilityId(request.call.name.clone()),
+            action: request.authority.action.clone(),
+            input_summary: format!("{:?}", request.call.input)
+                .chars()
+                .take(200)
+                .collect(),
+            risk: request.authority.risk,
+            requested_scope: request.authority.requested_scope.clone(),
+            budget: request.authority.budget.clone(),
+            lease: request.authority.lease.clone(),
+            sandbox: request.authority.sandbox,
         };
 
         // 2. Admit.
@@ -90,7 +91,7 @@ where
             Ok(p) => p,
             Err(e) => {
                 return CapabilityResult {
-                    call_id: request.call_id.clone(),
+                    call_id: request.call.call_id.clone(),
                     output: format!("admission denied: {e}"),
                     is_error: true,
                     usage: UsageReport::default(),
@@ -103,11 +104,15 @@ where
         // sandbox infrastructure is unavailable, execution must be denied even
         // if the permit was otherwise granted.  (M0-PR-0E)
         if matches!(permit.sandbox, SandboxDecision::Required) {
+            let _ = self
+                .admission
+                .revoke(permit.id, fabric::RevokeReason::OperationCancelled)
+                .await;
             return CapabilityResult {
-                call_id: request.call_id.clone(),
+                call_id: request.call.call_id.clone(),
                 output: format!(
                     "Sandbox required but execution infrastructure not available for '{}'",
-                    request.name
+                    request.call.name
                 ),
                 is_error: true,
                 usage: UsageReport {
@@ -119,7 +124,22 @@ where
         }
 
         // 3. Execute.
-        let mut result = self.executor.execute_with_permit(&request, &permit).await;
+        let mut result = tokio::select! {
+            result = self.executor.execute_with_permit(&request, &permit) => result,
+            _ = request.control.cancel.cancelled() => {
+                let _ = self
+                    .admission
+                    .revoke(permit.id, fabric::RevokeReason::OperationCancelled)
+                    .await;
+                return CapabilityResult {
+                    call_id: request.call.call_id.clone(),
+                    output: "capability invocation cancelled".into(),
+                    is_error: true,
+                    usage: UsageReport { permit_id: permit.id, ..Default::default() },
+                    audit_id: Some(AuditEventId::new()),
+                };
+            }
+        };
         result.usage.permit_id = permit.id;
         if result.audit_id.is_none() {
             result.audit_id = Some(AuditEventId::new());
@@ -130,7 +150,7 @@ where
         // accounting bugs cannot silently pass.
         if let Err(err) = self.admission.settle(permit.id, result.usage.clone()).await {
             return CapabilityResult {
-                call_id: request.call_id.clone(),
+                call_id: request.call.call_id.clone(),
                 output: format!("settlement failed: {err}"),
                 is_error: true,
                 usage: result.usage,
@@ -160,12 +180,12 @@ impl ToolExecutor for StubToolExecutor {
         _permit: &ExecutionPermit,
     ) -> CapabilityResult {
         CapabilityResult {
-            call_id: request.call_id.clone(),
-            output: format!("stub: executed {}", request.name),
+            call_id: request.call.call_id.clone(),
+            output: format!("stub: executed {}", request.call.name),
             is_error: false,
             usage: UsageReport {
                 permit_id: _permit.id,
-                output_bytes: request.name.len() as u64,
+                output_bytes: request.call.name.len() as u64,
                 ..Default::default()
             },
             audit_id: Some(AuditEventId::new()),

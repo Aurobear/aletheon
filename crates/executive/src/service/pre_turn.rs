@@ -1,5 +1,5 @@
 use anyhow::Result;
-use fabric::{RecallRequest, TurnRequest, TurnServices};
+use fabric::{TurnRequest, TurnServices};
 
 #[derive(Debug, Clone, Default)]
 pub struct PreTurnPipeline;
@@ -7,22 +7,12 @@ pub struct PreTurnPipeline;
 impl PreTurnPipeline {
     pub async fn run(
         &self,
-        mut request: TurnRequest,
-        services: &dyn TurnServices,
+        request: TurnRequest,
+        _services: &dyn TurnServices,
     ) -> Result<TurnRequest> {
-        let recall = services
-            .recall(RecallRequest {
-                session_id: request.session_id.clone(),
-                input: request.input.clone(),
-            })
-            .await?;
-        if !recall.snippets.is_empty() {
-            request.input = format!(
-                "<memory>\n{}\n</memory>\n\n{}",
-                recall.snippets.join("\n"),
-                request.input
-            );
-        }
+        // Memory is projected only through Mnemosyne -> Agora candidates ->
+        // conscious context. The legacy TurnServices recall hook remains a
+        // compatibility contract but is intentionally not prompt-injected.
         Ok(request)
     }
 }

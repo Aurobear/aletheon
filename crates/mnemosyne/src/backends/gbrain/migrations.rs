@@ -2,7 +2,7 @@
 
 use rusqlite::Connection;
 
-pub(crate) const SCHEMA_VERSION: i64 = 1;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
@@ -58,6 +58,94 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            value TEXT NOT NULL
          );",
     )?;
+    add_column(
+        connection,
+        "gbrain_pages",
+        "logical_page_id",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column(
+        connection,
+        "gbrain_pages",
+        "operation_kind",
+        "TEXT NOT NULL DEFAULT 'upsert'",
+    )?;
+    add_column(
+        connection,
+        "gbrain_pages",
+        "schema_version",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    add_column(
+        connection,
+        "gbrain_delivery_receipts",
+        "logical_page_id",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column(connection, "gbrain_delivery_receipts", "remote_id", "TEXT")?;
+    add_column(
+        connection,
+        "gbrain_delivery_receipts",
+        "operation_kind",
+        "TEXT NOT NULL DEFAULT 'upsert'",
+    )?;
+    add_column(
+        connection,
+        "gbrain_delivery_receipts",
+        "schema_version",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    add_column(
+        connection,
+        "gbrain_delivery_receipts",
+        "synced_at_ms",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column(
+        connection,
+        "gbrain_dead_letters",
+        "logical_page_id",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column(
+        connection,
+        "gbrain_dead_letters",
+        "operation_kind",
+        "TEXT NOT NULL DEFAULT 'upsert'",
+    )?;
+    add_column(
+        connection,
+        "gbrain_dead_letters",
+        "schema_version",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    connection.execute_batch(
+        "UPDATE gbrain_pages SET logical_page_id=slug WHERE logical_page_id='';
+         UPDATE gbrain_delivery_receipts SET logical_page_id=slug WHERE logical_page_id='';
+         UPDATE gbrain_delivery_receipts SET remote_id=remote_receipt WHERE remote_id IS NULL;
+         UPDATE gbrain_delivery_receipts SET synced_at_ms=delivered_ms WHERE synced_at_ms=0;
+         UPDATE gbrain_dead_letters SET logical_page_id=slug WHERE logical_page_id='';",
+    )?;
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    Ok(())
+}
+
+fn add_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == column);
+    if !exists {
+        connection.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        ))?;
+    }
     Ok(())
 }

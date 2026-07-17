@@ -1,8 +1,22 @@
 # Native systemd deployment
 
-Aletheon Executive is the only native application service. Goal workers,
-Telegram, Google sync, Pi, and memory workers remain supervised inside
-Executive; do not create one unit per worker.
+Aletheon has two native service boundaries:
+
+```
+root-managed aletheon-core.service
+  /run/aletheon/core.sock (0660, aletheon group)
+                ^
+                |
+user-manager aletheon.socket -> aletheon.service
+  %t/aletheon/aletheon.sock (0600, owning user)
+                |
+      arbitrary per-turn workspaces
+```
+
+The machine service runs only `aletheon core`. Each authorized local user gets a
+private, socket-activated `aletheon daemon`; Goal workers, integrations, Pi, and
+memory workers remain supervised inside that user runtime rather than becoming
+separate system units.
 
 Build a release binary, review `config/production.toml.example`, then install:
 
@@ -13,40 +27,94 @@ sudo ALETHEON_BINARY="$PWD/target/release/aletheon" \
   scripts/install-systemd.sh
 ```
 
-The installer is idempotent: it creates the system account and managed
-0750 directories, preserves an existing `/etc/aletheon/config.toml`, installs
-only checked-in assets, validates the real `daemon --config`/`--socket` flags,
-runs `systemd-analyze verify`, then enables the unit. Use `--no-enable` for
-image construction or offline verification.
+The installer is idempotent. It creates the system account and managed 0750
+core directories, preserves an existing `/etc/aletheon/config.toml`, installs
+only checked-in assets, runs typed core and user-unit verification, enables the
+core, and globally enables the user socket for user managers. Use `--no-enable`
+for image construction or offline verification.
 
-The unit uses `ProtectSystem=strict`, an empty capability set, read/write access
-only to state/cache/runtime roots, and no plaintext `EnvironmentFile`. systemd
-credentials are mounted read-only below `$CREDENTIALS_DIRECTORY`; application
-secret lifecycle and rotation are described separately. Never put a token in
-unit text, `ExecStart`, or `Environment=`.
+## Authorize a user
 
-Pi/bubblewrap requires user and mount namespaces, so `RestrictNamespaces` is
-intentionally not set. This is the minimal exception; `NoNewPrivileges`,
-`RestrictSUIDSGID`, filesystem protection, and the application sandbox remain
-active. Re-run Pi namespace/worktree tests after changing hardening directives.
-
-The preflight rejects missing/symlinked configuration, unsafe modes, non-
-production mode, and noncanonical roots. `ExecStartPost` sends the real JSON-RPC
-`health` request through the credential-checked Unix socket. Watchdog is not
-configured because the daemon does not yet emit systemd heartbeat notifications.
-
-Validation and recovery:
+Core inference is group-authorized. Installation deliberately does not grant
+all local accounts access. Enroll each approved user explicitly, then refresh
+that user's login session so supplementary groups are reapplied:
 
 ```bash
-systemd-analyze verify config/aletheon.service
-scripts/verify-systemd.sh --preflight --binary target/release/aletheon \
-  --config config/production.toml.example
-sudo systemctl restart aletheon
-sudo systemctl status aletheon --no-pager
-sudo journalctl -u aletheon -n 200 --no-pager
+sudo usermod -aG aletheon USER
+# log out and back in, then as USER:
+systemctl --user enable --now aletheon.socket
 ```
 
-`SIGTERM` receives 30 seconds for bounded worker/connection drain, after which
-`KillMode=mixed` terminates remaining children. Five failures within five
-minutes trigger start limiting. Test crash restart and SIGTERM during an active
-Goal on a disposable host before production rollout.
+Global socket enablement makes the unit available when a user manager starts;
+it does not keep every user's runtime resident. If an approved account must be
+available without an interactive login, enable lingering as an explicit
+operator decision:
+
+```bash
+sudo loginctl enable-linger USER
+```
+
+The private socket is `%t/aletheon/aletheon.sock`, normally
+`/run/user/$UID/aletheon/aletheon.sock`. It is owned by that user with mode
+0600. The daemon adopts the socket-activation descriptor and starts only when a
+client connects. The socket unit exclusively owns the runtime directory; the
+service must not declare the same `RuntimeDirectory`, otherwise a service
+restart can unlink the still-active listener.
+
+## Security and credentials
+
+The core unit uses `ProtectSystem=strict`, an empty capability set, and
+read/write access only to `/run/aletheon`, `/var/lib/aletheon`, and
+`/var/cache/aletheon`. Root manages provider credentials in
+`/etc/aletheon/credentials/provider.env`; never put a token in unit text,
+`ExecStart`, or `Environment=`. User integration credentials and user runtime
+state remain in that user's authority domain.
+
+For the checked-in user unit, systemd expands `StateDirectory=aletheon` to
+`$XDG_STATE_HOME/aletheon`, normally `$HOME/.local/state/aletheon`. It expands
+`CacheDirectory=aletheon` to `$XDG_CACHE_HOME/aletheon`, normally
+`$HOME/.cache/aletheon`. Do not treat `$HOME/.local/share/aletheon` as the
+managed state directory. The private socket remains below `$XDG_RUNTIME_DIR`
+and is not durable state.
+
+Pi/bubblewrap requires user and mount namespaces, so `RestrictNamespaces` is
+intentionally not set on the relevant runtime. `NoNewPrivileges`, filesystem
+protection, and the application sandbox remain active. Re-run Pi
+namespace/worktree tests after changing hardening directives.
+
+The system backup and cleanup timers cover only machine-scoped core state below
+`/var/lib/aletheon` and `/var/cache/aletheon`. They do **not** back up or delete
+systemd-managed per-user state/cache directories. Per-user data needs a
+separate user-owned retention and backup policy. A matching per-user backup
+must capture `$HOME/.local/state/aletheon` for every enrolled principal; cache
+and runtime socket directories are reconstructible and are not authoritative
+rollback inputs.
+
+## Validation and recovery
+
+```bash
+scripts/verify-systemd.sh --core-unit config/aletheon-core.service \
+  --binary target/release/aletheon
+scripts/verify-systemd.sh --user-units \
+  config/aletheon.user.service config/aletheon.user.socket \
+  --binary target/release/aletheon
+scripts/verify-systemd.sh --preflight --binary target/release/aletheon \
+  --config config/production.toml.example
+
+sudo systemctl restart aletheon-core.service
+sudo systemctl status aletheon-core.service --no-pager
+sudo journalctl -u aletheon-core.service -n 200 --no-pager
+
+# Run these as the authorized user. Stop the activated service before cycling
+# its listener, then let the next client connection start the service again.
+systemctl --user stop aletheon.service aletheon.socket
+systemctl --user start aletheon.socket
+systemctl --user status aletheon.socket aletheon.service --no-pager
+journalctl --user -u aletheon.service -n 200 --no-pager
+scripts/verify-systemd.sh --readiness \
+  --socket "$XDG_RUNTIME_DIR/aletheon/aletheon.sock"
+```
+
+Static verification is not production evidence. Test two distinct users,
+cross-user socket denial, crash restart, and SIGTERM during active work on a
+disposable systemd host before rollout.

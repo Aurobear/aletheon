@@ -62,13 +62,13 @@ A single, unambiguous format that supports all filesystem edits a model needs. T
 *** Begin Patch
 Add File: src/new_module.rs
 Content:
->>> 
+>>>
 use std::collections::HashMap;
 
 pub struct NewModule {
     data: HashMap<String, String>,
 }
->>> 
+>>>
 *** End Patch
 
 *** Begin Patch

@@ -1,7 +1,7 @@
-//! Integration tests for the EvolutionCoordinator pipeline.
+//! Integration tests for governed EvolutionCoordinator verification.
 //!
 //! Verifies the full flow from turn metrics through reflection accumulation
-//! to morphogenesis pipeline triggering and lineage recording.
+//! to Metacog verification without bypassing governed apply.
 //!
 //! Tests:
 //! 1. Failure-triggered evolution
@@ -18,7 +18,7 @@ use fabric::meta::{
 };
 use fabric::MutationIntent;
 use fabric::{Subsystem, SubsystemHealth, Version};
-use metacog::r#impl::morphogenesis::pipeline::MorphogenesisPipeline;
+use metacog::DefaultMetacogService;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -175,7 +175,7 @@ async fn failure_triggers_evolution() {
     };
     let coordinator = EvolutionCoordinator::new(config, Arc::new(TestClock::default())).unwrap();
     let (mock, gen_calls, mig_calls) = MockMetaRuntime::new();
-    let pipeline = MorphogenesisPipeline::new(mock);
+    let service = DefaultMetacogService::in_memory(Arc::new(mock), Arc::new(TestClock::default()));
 
     // Simulate 3 failure turns — each should trigger evolution
     for i in 0..3 {
@@ -188,7 +188,7 @@ async fn failure_triggers_evolution() {
                 2,     // tool_errors
                 1000,  // elapsed_ms
                 1,     // iterations
-                &pipeline,
+                &service,
                 vec![], // awareness_signals
             )
             .await
@@ -203,14 +203,15 @@ async fn failure_triggers_evolution() {
     }
 
     assert_eq!(coordinator.turn_count().await, 3);
-    // Each failure turn generates intents and runs the pipeline
+    // Each failure turn generates and verifies intents.
     assert!(
         gen_calls.load(Ordering::SeqCst) >= 3,
         "generate_candidate called at least 3 times"
     );
-    assert!(
-        mig_calls.load(Ordering::SeqCst) >= 3,
-        "migrate called at least 3 times"
+    assert_eq!(
+        mig_calls.load(Ordering::SeqCst),
+        0,
+        "verification cannot bypass governed apply"
     );
     // Reflections should accumulate
     assert_eq!(coordinator.recent_reflections().await.len(), 3);
@@ -233,7 +234,7 @@ async fn periodic_trigger_at_n_turns() {
     };
     let coordinator = EvolutionCoordinator::new(config, Arc::new(TestClock::default())).unwrap();
     let (mock, gen_calls, mig_calls) = MockMetaRuntime::new();
-    let pipeline = MorphogenesisPipeline::new(mock);
+    let service = DefaultMetacogService::in_memory(Arc::new(mock), Arc::new(TestClock::default()));
 
     let mut trigger_turns = Vec::new();
 
@@ -248,7 +249,7 @@ async fn periodic_trigger_at_n_turns() {
                 0,    // tool_errors
                 500,  // elapsed_ms
                 1,    // iterations
-                &pipeline,
+                &service,
                 vec![], // awareness_signals
             )
             .await
@@ -268,7 +269,11 @@ async fn periodic_trigger_at_n_turns() {
         1,
         "generate_candidate called once"
     );
-    assert_eq!(mig_calls.load(Ordering::SeqCst), 1, "migrate called once");
+    assert_eq!(
+        mig_calls.load(Ordering::SeqCst),
+        0,
+        "verification cannot migrate without governed evidence"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -288,7 +293,7 @@ async fn sliding_window_eviction() {
     };
     let coordinator = EvolutionCoordinator::new(config, Arc::new(TestClock::default())).unwrap();
     let (mock, _gen, _mig) = MockMetaRuntime::new();
-    let pipeline = MorphogenesisPipeline::new(mock);
+    let service = DefaultMetacogService::in_memory(Arc::new(mock), Arc::new(TestClock::default()));
 
     // Simulate 10 successful turns — no evolution triggers
     for i in 1..=10 {
@@ -301,7 +306,7 @@ async fn sliding_window_eviction() {
                 0,    // tool_errors
                 100,  // elapsed_ms
                 1,    // iterations
-                &pipeline,
+                &service,
                 vec![], // awareness_signals
             )
             .await
@@ -349,7 +354,7 @@ async fn disabled_coordinator_is_a_noop() {
     };
     let coordinator = EvolutionCoordinator::new(config, Arc::new(TestClock::default())).unwrap();
     let (mock, gen_calls, mig_calls) = MockMetaRuntime::new();
-    let pipeline = MorphogenesisPipeline::new(mock);
+    let service = DefaultMetacogService::in_memory(Arc::new(mock), Arc::new(TestClock::default()));
 
     let summary = coordinator
         .post_turn(
@@ -360,7 +365,7 @@ async fn disabled_coordinator_is_a_noop() {
             2,
             1000,
             1,
-            &pipeline,
+            &service,
             vec![],
         )
         .await

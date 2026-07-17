@@ -1,51 +1,40 @@
 //! CLI `exec` session builder — shared factory for non-daemon single-turn execution.
 //!
-//! # Turn-path convergence (Stage 3)
-//!
-//! The exec path intentionally does NOT share `TurnPipeline` with the daemon
-//! because it lacks the daemon's infrastructure (CoreSystems, SelfField,
-//! SessionGateway, memory service, hook registry, Agora). Instead, convergence
-//! is achieved at the ReActLoop level:
-//!
-//! | Layer | Daemon | Exec | Shared? |
-//! |---|---|---|---|
-//! | Orchestration | TurnPipeline::run() | TurnService::submit() | No (different infra) |
-//! | Session | ReActLoop::run_streaming() | LinearCognitiveSession::run_turn() → ReActLoop::run() | Same ReActLoop type |
-//! | Admission | AdmissionController::admit/settle | same | ✅ |
-//! | Agora | Full (propose/commit) | None (single-user CLI) | Policy: documented in Stage 1 |
-//! | Memory | ExperienceEvent::Message | None | Policy: exec is stateless |
-//! | Events | ChannelEventSink (streaming) | NoopTurnEventSink | Different sinks |
-//!
-//! ReActLoop is constructed in exactly two places:
-//! - `harness_factory::build_configured_react_loop()` — daemon path
-//! - `LinearCognitiveSession::new()` — exec path (via TurnService)
-//!
-//! Both use `ReActLoop::new(HarnessConfig, compressor)`.
+//! The CLI keeps its lighter orchestration because it does not own the daemon's
+//! long-lived infrastructure. Daemon, CLI, and native Agent turns nevertheless
+//! cross the same Cognit `CognitiveSession`/factory boundary. Interactive daemon
+//! turns select the streaming session operation; CLI and native Agent turns use
+//! the ordinary operation. Concrete harness construction remains in the
+//! Executive composition adapter.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::info;
 
 use aletheon_kernel::chronos::SystemClock;
-use aletheon_kernel::service::ServicePorts;
-use cognit::config::AppConfig;
+use aletheon_kernel::KernelRuntime;
 use cognit::harness::HarnessConfig;
-use cognit::r#impl::provider_registry::ProviderRegistry;
 use corpus::security::approval::{ApprovalGate, TerminalApprovalGate};
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::SandboxPreference;
-use corpus::tools::tools::{ToolContext, ToolRegistry};
+use corpus::CorpusService;
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, AdmissionRequest, AgoraOps, CapabilityId, CapabilityRequest,
-    CapabilityResult, CapabilityScope, LlmProvider, Message, MonoTime, PrincipalId, ProcessId,
-    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
+    AgoraOps, CapabilityCall, CapabilityResult, LlmProvider, Message, PrincipalId, ProcessId,
+    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices,
 };
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
-use crate::host::load_dotenv;
+use crate::r#impl::session::canonical_store::CanonicalSessionStore;
+use crate::service::governed_capability::{
+    CapabilityRuntimeFactory, RegistryAuthorityProvider, TurnCapabilityInvoker,
+};
+use crate::service::inference_port::{InferencePort, PortLlmProvider};
+use crate::service::turn_coordinator::TurnCoordinator;
 use crate::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 
 /// Builder for a CLI `exec` session (non-daemon, single-turn).
@@ -55,6 +44,7 @@ pub struct ExecSessionBuilder {
     max_turns: usize,
     working_dir: PathBuf,
     sandbox: String,
+    inference: Option<Arc<dyn InferencePort>>,
 }
 
 impl ExecSessionBuilder {
@@ -65,6 +55,7 @@ impl ExecSessionBuilder {
             max_turns: 20,
             working_dir,
             sandbox: "auto".to_string(),
+            inference: None,
         }
     }
 
@@ -88,38 +79,47 @@ impl ExecSessionBuilder {
         self
     }
 
-    /// Wire up the full exec stack and return the `TurnService`, `LlmProvider`,
-    /// and the configured `RiskLevel`.
-    pub async fn build(self) -> Result<(TurnService, Arc<dyn LlmProvider>, RiskLevel)> {
-        // Load ~/.aletheon/.env so provider API keys resolve.
-        if let Some(home) = std::env::var_os("HOME") {
-            load_dotenv(&PathBuf::from(home).join(".aletheon").join(".env"));
-        }
+    pub fn with_inference(mut self, inference: Arc<dyn InferencePort>) -> Self {
+        self.inference = Some(inference);
+        self
+    }
 
-        let working_dir = self
-            .working_dir
-            .canonicalize()
-            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
+    /// Wire up the full exec stack and return the turn service, provider view,
+    /// risk level, and registered kernel process that owns the turn.
+    pub async fn build(self) -> Result<(TurnService, Arc<dyn LlmProvider>, RiskLevel, ProcessId)> {
+        let working_dir = self.working_dir.canonicalize().with_context(|| {
+            format!("resolving exec workspace '{}'", self.working_dir.display())
+        })?;
 
         // Load config
-        let app_config = if let Some(ref path) = self.config_path {
-            AppConfig::load_or_default(path)
+        let app_config = crate::core::config::load_for_host(
+            Some(&self.working_dir),
+            self.config_path.as_deref(),
+        )?
+        .value;
+
+        let inference = self.inference.unwrap_or_else(|| {
+            let socket = std::env::var_os("ALETHEON_CORE_SOCKET")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/run/aletheon/core.sock"));
+            Arc::new(crate::r#impl::core_rpc::CoreRpcClient::new(socket))
+        });
+        let model = if self.model.is_empty() {
+            app_config.model_routing.default.clone().unwrap_or_default()
         } else {
-            AppConfig::load_layered(None)
+            self.model.clone()
         };
-
-        // Build provider registry
-        let registry = ProviderRegistry::from_config(&app_config)?;
-
-        // Create LLM provider
-        let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create(&self.model)?);
+        let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(inference, model));
         info!(provider = llm.name(), model = %self.model, "LLM provider initialized");
 
         // Create tool registry with default tools
-        let tool_registry = Arc::new(ToolRegistry::default());
+        let tool_registry = corpus::default_tool_registry();
 
         // Guarded runner with terminal approval for risky (L2+) tools.
-        let audit_path = working_dir.join(".aletheon-audit.jsonl");
+        let user_paths =
+            fabric::paths::UserRuntimePaths::resolve(&fabric::paths::ProcessRuntimeEnvironment)?;
+        user_paths.prepare()?;
+        let audit_path = user_paths.state_root.join("exec-audit.jsonl");
         let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
         let sandbox_preference = SandboxPreference::from_str(&self.sandbox);
         info!(preference = ?sandbox_preference, "sandbox configured");
@@ -127,14 +127,11 @@ impl ExecSessionBuilder {
         let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
             AuditLogger::new(audit_path)?,
             sandbox_preference,
-            clock,
+            clock.clone(),
         )
         .with_approval_gate(approval);
         let turn_id = uuid::Uuid::new_v4().to_string();
         runner.on_new_turn(&turn_id);
-
-        let tool_count = tool_registry.definitions().len();
-        info!(tool_count, "Tools registered");
 
         let system_prompt = format!(
             "You are Aletheon, an AI agent executing a task non-interactively. \
@@ -144,22 +141,109 @@ impl ExecSessionBuilder {
         );
 
         let session_id = uuid::Uuid::new_v4().to_string();
+        let event_db = user_paths.state_root.join("exec-events.db");
+        let event_spine = Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?);
 
-        // Create kernel service ports for process/operation tracking + admission gating.
-        let ports = Arc::new(ServicePorts::new());
+        let kernel = Arc::new(KernelRuntime::new());
+        let process = kernel.spawn_process(fabric::SpawnSpec::default()).await?;
+
+        let raw_executor = Arc::new(corpus::CorpusToolExecutor::new(
+            tool_registry.clone(),
+            Arc::new(Mutex::new(runner)),
+            clock.clone(),
+        ));
+        let corpus: Arc<dyn CorpusService> = Arc::new(corpus::DefaultCorpusService::from_runtime(
+            tool_registry.clone(),
+            raw_executor,
+            Arc::new(Mutex::new(corpus::HookRegistry::new(clock))),
+        ));
+        let descriptors = corpus::discover_tool_extensions(&tool_registry).await?;
+        let grant = corpus::ExtensionGrant {
+            grant_id: uuid::Uuid::new_v4().to_string(),
+            principal: PrincipalId("exec".into()),
+            session_id: session_id.clone(),
+            agent_id: None,
+            capabilities: descriptors
+                .iter()
+                .flat_map(|descriptor| descriptor.capabilities.clone())
+                .collect(),
+            resources: Default::default(),
+        };
+        let snapshot = corpus.catalog(&grant).await?;
+        let activated = crate::service::ExtensionService::new(
+            corpus.clone(),
+            Arc::new(
+                crate::service::extension_service::SpineExtensionDecisionSink::new(
+                    event_spine.clone(),
+                ),
+            ),
+        )
+        .activate(
+            grant,
+            snapshot
+                .entries
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect(),
+            &crate::service::SessionExtensionPolicy::default(),
+        )
+        .await?;
+        let snapshot = activated.snapshot;
+        let tool_definitions = snapshot
+            .entries
+            .iter()
+            .filter_map(|entry| entry.tool_definition.clone())
+            .collect::<Vec<_>>();
+        let tool_risks = snapshot
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .primary_capability()
+                    .map(|capability| (capability.0.clone(), entry.risk))
+            })
+            .collect();
+        info!(tool_count = tool_definitions.len(), "Tools registered");
+        let executor = Arc::new(corpus::ActivatedCorpusExecutor::new(
+            corpus,
+            activated.receipt.id,
+        ));
+        let authority = Arc::new(RegistryAuthorityProvider::new(
+            tool_risks,
+            PrincipalId("exec".into()),
+            fabric::ConnectionId::new(),
+            fabric::ThreadId(session_id.clone()),
+            fabric::TurnId::new(),
+            fabric::WorkspacePolicy::from_resolved_roots(working_dir.clone(), vec![])
+                .map_err(anyhow::Error::msg)?,
+            session_id,
+            working_dir,
+            SandboxRequirement::NotRequired,
+            CancellationToken::new(),
+        ));
+        let capability = CapabilityRuntimeFactory::build(kernel.admission(), executor, authority);
+
+        let session_db = user_paths.state_root.join("exec-sessions-v1.db");
+        if let Some(parent) = session_db.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let event_projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::open(
+            user_paths.state_root.join("exec-event-projections.db"),
+        )?);
+        let coordinator = Arc::new(
+            TurnCoordinator::with_event_spine(
+                kernel.clone(),
+                Arc::new(CanonicalSessionStore::open(session_db)?),
+                event_spine,
+            )
+            .with_event_projections(event_projections),
+        );
 
         let services = Arc::new(ExecTurnServices {
             llm: llm.clone(),
-            tool_registry,
-            runner: tokio::sync::Mutex::new(runner),
-            tool_ctx: ToolContext {
-                working_dir: working_dir.clone(),
-                session_id: session_id.clone(),
-                clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-            },
-            turn_id,
+            tool_definitions,
             system_prompt,
-            admission: ports.admission.clone(),
+            capability,
             agora: None,
         });
 
@@ -167,10 +251,11 @@ impl ExecSessionBuilder {
             max_iterations: self.max_turns,
             ..Default::default()
         };
-        let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, ports)
+        let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel)
+            .with_coordinator(coordinator)
             .with_harness_config(harness_config);
 
-        Ok((turn_service, llm, RiskLevel::ReadOnly))
+        Ok((turn_service, llm, RiskLevel::ReadOnly, process.id))
     }
 }
 
@@ -178,12 +263,9 @@ impl ExecSessionBuilder {
 
 struct ExecTurnServices {
     llm: Arc<dyn LlmProvider>,
-    tool_registry: Arc<ToolRegistry>,
-    runner: tokio::sync::Mutex<ToolRunnerWithGuard>,
-    tool_ctx: ToolContext,
-    turn_id: String,
+    tool_definitions: Vec<ToolDefinition>,
     system_prompt: String,
-    admission: Arc<dyn AdmissionController>,
+    capability: Arc<dyn TurnCapabilityInvoker>,
     // Optional shared workspace for exec mode.
     // When set (via with_agora), agora_view reflects real state.
     // Default: None (CLI exec is single-user).
@@ -203,7 +285,7 @@ impl TurnServices for ExecTurnServices {
     /// Exec sessions are single-user CLI runs with no shared workspace.
     /// Agora is intentionally absent — this is not a degraded daemon path.
     /// If shared cognitive workspace is ever needed in exec mode, inject
-    /// `ServicePorts::with_agora(registry)` and pass the agora handle here.
+    /// an Executive-owned DomainPorts Agora handle here.
     async fn agora_view(&self, _session_id: &str) -> Result<fabric::AgoraView> {
         // Exec sessions are single-user CLI runs with no shared workspace.
         // Agora is intentionally absent by default.
@@ -215,104 +297,8 @@ impl TurnServices for ExecTurnServices {
         Ok(fabric::AgoraView::default())
     }
 
-    /// Route tool invocation through the kernel AdmissionController.
-    ///
-    /// # Admission parity with daemon path
-    ///
-    /// This method constructs AdmissionRequest identically to the daemon path
-    /// (`daemon_turn/execute.rs:381`), with three intentional differences:
-    /// - `principal`: "exec" (CLI) vs "agent" (daemon) — audit distinction
-    /// - `sandbox`: NotRequired vs dynamic — CLI runs unsandboxed
-    /// - Approval: `TerminalApprovalGate` (interactive) vs `SelfField` review (automated)
-    ///
-    /// Both paths route through the same `AdmissionController::admit/settle` pipeline.
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
-        // Route all tool invocations through admission controller.
-        let adm_req = AdmissionRequest {
-            operation_id: req.operation_id,
-            process_id: req.process_id,
-            principal: PrincipalId("exec".into()),
-            capability: CapabilityId(req.name.clone()),
-            action: req.name.clone(),
-            input_summary: format!("{:?}", req.input).chars().take(200).collect(),
-            risk: RiskLevel::ReadOnly,
-            requested_scope: CapabilityScope::default(),
-            budget: None,
-            lease: None,
-            sandbox: SandboxRequirement::NotRequired,
-        };
-
-        let permit = match self.admission.admit(adm_req).await {
-            Ok(p) => p,
-            Err(e) => {
-                return CapabilityResult {
-                    call_id: req.call_id,
-                    output: format!("admission denied: {e}"),
-                    is_error: true,
-                    usage: UsageReport::default(),
-                    audit_id: None,
-                };
-            }
-        };
-
-        if !permit.is_valid_at(MonoTime(0)) {
-            return CapabilityResult {
-                call_id: req.call_id,
-                output: "admission permit invalid".into(),
-                is_error: true,
-                usage: UsageReport {
-                    permit_id: permit.id,
-                    ..Default::default()
-                },
-                audit_id: Some(fabric::AuditEventId::new()),
-            };
-        }
-
-        let Some(tool) = self.tool_registry.get(&req.name).cloned() else {
-            let _ = self
-                .admission
-                .settle(permit.id, UsageReport::default())
-                .await;
-            return CapabilityResult {
-                call_id: req.call_id,
-                output: format!("Error: Unknown tool '{}'", req.name),
-                is_error: true,
-                usage: UsageReport {
-                    permit_id: permit.id,
-                    ..Default::default()
-                },
-                audit_id: Some(fabric::AuditEventId::new()),
-            };
-        };
-
-        info!(tool = %req.name, "Executing tool (admitted)");
-        let result = self
-            .runner
-            .lock()
-            .await
-            .run(tool.as_ref(), req.input, &self.tool_ctx, &self.turn_id)
-            .await;
-
-        let usage = UsageReport {
-            permit_id: permit.id,
-            output_bytes: result.content.len() as u64,
-            exit_code: if result.is_error { Some(1) } else { Some(0) },
-            ..Default::default()
-        };
-        let _ = self.admission.settle(permit.id, usage.clone()).await;
-
-        if result.is_error {
-            tracing::warn!(tool = %req.name, error = %result.content, "Tool failed/denied");
-        } else {
-            info!(tool = %req.name, "Tool succeeded");
-        }
-        CapabilityResult {
-            call_id: req.call_id,
-            output: result.content,
-            is_error: result.is_error,
-            usage,
-            audit_id: Some(fabric::AuditEventId::new()),
-        }
+    async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
+        self.capability.invoke(req).await
     }
 
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {
@@ -320,7 +306,7 @@ impl TurnServices for ExecTurnServices {
     }
 
     fn tool_definitions(&self) -> Vec<ToolDefinition> {
-        self.tool_registry.definitions()
+        self.tool_definitions.clone()
     }
 
     fn seed_messages(&self, _request: &TurnRequest) -> Vec<Message> {

@@ -14,6 +14,7 @@
 //! collide, so callers reach this type via `mnemosyne::service::MemoryScope`.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -21,113 +22,15 @@ use fabric::{self, wall_to_datetime, ReflectionEntry, ReflectionOutcome, Reflect
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+pub use crate::model::{
+    MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity,
+    TemporalState,
+};
+use crate::model::{MemoryKind, MemoryRecord, MemoryRecordId, MemoryStatus};
+use crate::observability::{
+    MemoryMetrics, RecallOmittedReason, RecallSourceLabel, TombstoneDestination,
+};
 use crate::{CoreMemory, EpisodicMemory, FactStore, RecallMemory};
-
-/// Classification used to prevent unsafe memory projection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemorySensitivity {
-    Public,
-    Internal,
-    Confidential,
-    Restricted,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MemoryProvenance {
-    pub source: String,
-    pub source_id: String,
-    pub principal: Option<String>,
-    pub source_commit: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MemoryMetadata {
-    pub record_id: String,
-    pub provenance: MemoryProvenance,
-    pub source_time: Option<DateTime<Utc>>,
-    pub observed_time: DateTime<Utc>,
-    pub valid_from: Option<DateTime<Utc>>,
-    pub valid_until: Option<DateTime<Utc>>,
-    pub supersedes: Option<String>,
-    pub superseded_by: Option<String>,
-    pub confidence: f64,
-    pub sensitivity: MemorySensitivity,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TemporalState {
-    Current,
-    Superseded,
-    Expired,
-    Unknown,
-}
-
-impl MemoryMetadata {
-    pub fn local(
-        record_id: impl Into<String>,
-        source_id: impl Into<String>,
-        observed_time: DateTime<Utc>,
-    ) -> Self {
-        Self {
-            record_id: record_id.into(),
-            provenance: MemoryProvenance {
-                source: "aletheon".into(),
-                source_id: source_id.into(),
-                principal: None,
-                source_commit: None,
-            },
-            source_time: Some(observed_time),
-            observed_time,
-            valid_from: Some(observed_time),
-            valid_until: None,
-            supersedes: None,
-            superseded_by: None,
-            confidence: 1.0,
-            sensitivity: MemorySensitivity::Internal,
-        }
-    }
-
-    pub fn temporal_state(&self, current_at: Option<DateTime<Utc>>) -> TemporalState {
-        if self.superseded_by.is_some() {
-            return TemporalState::Superseded;
-        }
-        let Some(now) = current_at else {
-            return TemporalState::Unknown;
-        };
-        if self.valid_until.is_some_and(|until| until <= now) {
-            return TemporalState::Expired;
-        }
-        if self.valid_from.is_some_and(|from| from > now) {
-            return TemporalState::Unknown;
-        }
-        TemporalState::Current
-    }
-
-    pub(crate) fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            !self.record_id.trim().is_empty(),
-            "memory record ID is required"
-        );
-        anyhow::ensure!(
-            !self.provenance.source.trim().is_empty(),
-            "memory source is required"
-        );
-        anyhow::ensure!(
-            !self.provenance.source_id.trim().is_empty(),
-            "memory source ID is required"
-        );
-        anyhow::ensure!(
-            self.confidence.is_finite() && (0.0..=1.0).contains(&self.confidence),
-            "memory confidence must be between 0 and 1"
-        );
-        if let (Some(from), Some(until)) = (self.valid_from, self.valid_until) {
-            anyhow::ensure!(from < until, "memory valid-from must precede valid-until");
-        }
-        Ok(())
-    }
-}
 
 /// A unit of experience to be recorded into memory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -212,12 +115,17 @@ pub struct RecallItem {
     pub content: String,
     pub metadata: MemoryMetadata,
     pub temporal_state: TemporalState,
+    #[serde(default)]
+    pub authority: MemoryAuthority,
+    pub scope: MemoryScope,
 }
 
 /// Result of a recall query.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RecallSet {
     pub items: Vec<RecallItem>,
+    #[serde(default)]
+    pub degraded_sources: Vec<String>,
 }
 
 impl RecallSet {
@@ -234,18 +142,138 @@ impl RecallSet {
     }
 }
 
-/// Facade-local consolidation/forget scope. See module docs for why this is
-/// not re-exported at the crate root.
-#[derive(Debug, Clone)]
-pub enum MemoryScope {
-    All,
-    Session(String),
+impl RecallItem {
+    pub fn into_record(self, kind: MemoryKind, scope: MemoryScope) -> anyhow::Result<MemoryRecord> {
+        let status = match self.temporal_state {
+            TemporalState::Current | TemporalState::Unknown => MemoryStatus::Current,
+            TemporalState::Superseded => MemoryStatus::Superseded,
+            TemporalState::Expired => MemoryStatus::Expired,
+        };
+        let record = MemoryRecord {
+            id: MemoryRecordId(self.metadata.record_id.clone()),
+            kind,
+            scope,
+            content: self.content,
+            metadata: self.metadata,
+            status,
+            authority: self.authority,
+            source_event_ids: Vec::new(),
+            tags: Vec::new(),
+        };
+        record.validate()?;
+        Ok(record)
+    }
+
+    pub fn from_record(record: MemoryRecord) -> anyhow::Result<Self> {
+        record.validate()?;
+        let temporal_state = match record.status {
+            MemoryStatus::Current | MemoryStatus::Candidate | MemoryStatus::Rejected => {
+                record.metadata.temporal_state(None)
+            }
+            MemoryStatus::Superseded | MemoryStatus::Tombstoned => TemporalState::Superseded,
+            MemoryStatus::Expired => TemporalState::Expired,
+        };
+        Ok(Self {
+            content: record.content,
+            metadata: record.metadata,
+            temporal_state,
+            authority: record.authority,
+            scope: record.scope,
+        })
+    }
 }
 
-/// Conservative forget policy. `session: None` means "no-op" (see `forget`).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ForgetSelector {
+    Exact {
+        record_ids: Vec<MemoryRecordId>,
+        within: MemoryScope,
+    },
+    Scope {
+        scope: MemoryScope,
+        limit: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ForgetAuthority {
+    Ordinary,
+    Elevated { proof: String },
+}
+
+/// Audited logical-deletion policy. Every selector is exact or explicitly bounded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForgetPolicy {
-    pub session: Option<String>,
+    pub request_id: String,
+    pub selector: ForgetSelector,
+    pub requester: String,
+    pub reason: String,
+    pub authority: ForgetAuthority,
+}
+
+impl ForgetPolicy {
+    pub const MAX_RECORDS: usize = 100;
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.request_id.trim().is_empty(),
+            "forget request ID is required"
+        );
+        anyhow::ensure!(
+            !self.requester.trim().is_empty(),
+            "forget requester is required"
+        );
+        anyhow::ensure!(!self.reason.trim().is_empty(), "forget reason is required");
+        if let ForgetAuthority::Elevated { proof } = &self.authority {
+            anyhow::ensure!(
+                !proof.trim().is_empty(),
+                "elevated forget proof is required"
+            );
+        }
+        match &self.selector {
+            ForgetSelector::Exact { record_ids, within } => {
+                anyhow::ensure!(
+                    !record_ids.is_empty() && record_ids.len() <= Self::MAX_RECORDS,
+                    "exact forget selector is unbounded"
+                );
+                anyhow::ensure!(
+                    record_ids.iter().all(|id| !id.0.trim().is_empty()),
+                    "forget record ID is required"
+                );
+                within.validate()?;
+            }
+            ForgetSelector::Scope { scope, limit } => {
+                anyhow::ensure!(
+                    (1..=Self::MAX_RECORDS).contains(limit),
+                    "scope forget selector is unbounded"
+                );
+                scope.validate()?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForgetReceipt {
+    pub tombstoned: Vec<MemoryRecordId>,
+    pub already_tombstoned: Vec<MemoryRecordId>,
+    pub denied: Vec<MemoryRecordId>,
+    pub remote_pending: Vec<MemoryRecordId>,
+}
+
+impl ForgetReceipt {
+    pub(crate) fn sort(&mut self) {
+        for ids in [
+            &mut self.tombstoned,
+            &mut self.already_tombstoned,
+            &mut self.denied,
+            &mut self.remote_pending,
+        ] {
+            ids.sort_by(|left, right| left.0.cmp(&right.0));
+            ids.dedup();
+        }
+    }
 }
 
 /// Unified facade over the Mnemosyne memory objects.
@@ -254,7 +282,10 @@ pub trait MemoryService: Send + Sync {
     async fn record(&self, event: ExperienceEvent) -> anyhow::Result<()>;
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet>;
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()>;
-    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<()>;
+    async fn preview_forget(&self, _policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        anyhow::bail!("forget preview is unavailable")
+    }
+    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt>;
 }
 
 /// Default `MemoryService` implementation delegating to the real
@@ -266,6 +297,9 @@ pub struct DefaultMemoryService {
     core_memory: Arc<Mutex<CoreMemory>>,
     episodic: Arc<Mutex<EpisodicMemory>>,
     clock: Arc<dyn fabric::Clock>,
+    consolidation: Option<Arc<crate::consolidation::ConsolidationRepository>>,
+    retention: Option<Arc<crate::retention::RetentionRepository>>,
+    metrics: MemoryMetrics,
 }
 
 impl DefaultMemoryService {
@@ -282,7 +316,145 @@ impl DefaultMemoryService {
             core_memory,
             episodic,
             clock,
+            consolidation: None,
+            retention: None,
+            metrics: MemoryMetrics::default(),
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: MemoryMetrics) -> Self {
+        if let Some(repository) = &self.retention {
+            repository.set_metrics(metrics.clone());
+        }
+        if let Some(repository) = &self.consolidation {
+            repository.set_metrics(metrics.clone());
+        }
+        self.metrics = metrics;
+        self
+    }
+
+    pub fn metrics(&self) -> &MemoryMetrics {
+        &self.metrics
+    }
+
+    pub fn with_retention_repository(
+        mut self,
+        repository: Arc<crate::retention::RetentionRepository>,
+    ) -> Self {
+        repository.set_metrics(self.metrics.clone());
+        self.retention = Some(repository);
+        self
+    }
+
+    pub fn retention_repository(&self) -> Option<&Arc<crate::retention::RetentionRepository>> {
+        self.retention.as_ref()
+    }
+
+    pub fn preview_forget(&self, policy: &ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        let repository = self
+            .retention
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("retention repository is unavailable"))?;
+        repository.preview_forget(policy, self.clock.wall_now().0.max(0))
+    }
+
+    pub fn with_consolidation_repository(
+        mut self,
+        repository: Arc<crate::consolidation::ConsolidationRepository>,
+    ) -> Self {
+        repository.set_metrics(self.metrics.clone());
+        self.consolidation = Some(repository);
+        self
+    }
+
+    fn enqueue_for_consolidation(
+        &self,
+        event_id: &str,
+        kind: &str,
+        content: &str,
+        scope: &MemoryScope,
+        completed: bool,
+    ) -> anyhow::Result<()> {
+        let Some(repository) = &self.consolidation else {
+            return Ok(());
+        };
+        if !matches!(scope, MemoryScope::Session(_) | MemoryScope::Goal(_)) {
+            return Ok(());
+        }
+        let now_ms = self.clock.wall_now().0.max(0) as u64;
+        let (session_id, goal_id) = match scope {
+            MemoryScope::Session(session) => (session.clone(), None),
+            MemoryScope::Goal(goal) => (format!("goal:{goal}"), Some(goal.clone())),
+            _ => (format!("scope:{}", serde_json::to_string(scope)?), None),
+        };
+        repository.enqueue_experience(
+            &crate::consolidation::ExtractionJob {
+                idempotency_key: format!("experience:{event_id}"),
+                session_id: session_id.clone(),
+                goal_id,
+                ephemeral: session_id.starts_with("ephemeral:"),
+                memory_worker: session_id.starts_with("memory-worker:"),
+                completed_at_ms: completed.then_some(now_ms),
+                watermark: event_id.to_owned(),
+                created_at_ms: now_ms,
+            },
+            scope,
+            &crate::consolidation::CanonicalMemoryEvent {
+                event_id: event_id.to_owned(),
+                kind: kind.to_owned(),
+                content: content.to_owned(),
+            },
+        )?;
+        Ok(())
+    }
+
+    fn advance_consolidation(&self, requested: &MemoryScope, now_ms: u64) -> anyhow::Result<()> {
+        let Some(repository) = &self.consolidation else {
+            return Ok(());
+        };
+        let owner = format!("mnemosyne-consolidation:{}", std::process::id());
+        for _ in 0..32 {
+            let Some(lease) =
+                repository.claim_extraction(&owner, now_ms, 60_000, 30 * 24 * 60 * 60 * 1_000)?
+            else {
+                break;
+            };
+            let events = repository.extraction_events(&lease, 128)?;
+            let completion = crate::consolidation::CandidateExtractor::default().extract(
+                &crate::consolidation::ExtractionBatch {
+                    scope: lease.scope.clone(),
+                    events,
+                },
+            );
+            match completion {
+                Ok(completion) => repository.complete(&lease, completion, now_ms)?,
+                Err(error) if lease.attempts < 3 => repository.complete(
+                    &lease,
+                    crate::consolidation::ExtractionCompletion::RetryableFailure {
+                        error: error.to_string(),
+                        retry_at_ms: now_ms.saturating_add(1_000 * (1 << lease.attempts)),
+                    },
+                    now_ms,
+                )?,
+                Err(error) => repository.complete(
+                    &lease,
+                    crate::consolidation::ExtractionCompletion::PermanentFailure {
+                        error: error.to_string(),
+                    },
+                    now_ms,
+                )?,
+            }
+        }
+
+        let mut scopes = repository.pending_scopes(64)?;
+        scopes.push(requested.clone());
+        scopes.sort_by_key(|scope| serde_json::to_string(scope).unwrap_or_default());
+        scopes.dedup();
+        for scope in scopes {
+            crate::consolidation::ScopedConsolidator::new(repository)
+                .run(&scope, &owner, now_ms, None)?;
+        }
+        Ok(())
     }
 }
 
@@ -303,117 +475,264 @@ impl MemoryService for DefaultMemoryService {
                     other => other,
                 };
                 let rm = self.recall_memory.lock().await;
-                rm.store(&session, entry_type, &content, None)?;
+                rm.store(
+                    &session,
+                    entry_type,
+                    &content,
+                    Some(&serde_json::to_string(&metadata)?),
+                )?;
+                drop(rm);
+                let scope = MemoryScope::Session(session.clone());
+                self.enqueue_for_consolidation(
+                    &metadata.record_id,
+                    entry_type,
+                    &content,
+                    &scope,
+                    false,
+                )?;
+                if let Some(retention) = &self.retention {
+                    let record = MemoryRecord {
+                        id: MemoryRecordId(metadata.record_id.clone()),
+                        kind: MemoryKind::Message,
+                        scope: scope.clone(),
+                        content,
+                        metadata,
+                        status: MemoryStatus::Current,
+                        authority: MemoryAuthority::RawExperience,
+                        source_event_ids: Vec::new(),
+                        tags: Vec::new(),
+                    };
+                    retention.register(&record, self.clock.wall_now().0.max(0))?;
+                }
+                self.metrics.record_stored(MemoryKind::Message, &scope);
                 Ok(())
             }
-            ExperienceEvent::Reflection { content, metadata }
-            | ExperienceEvent::ArchitectureDecision {
-                content, metadata, ..
-            }
-            | ExperienceEvent::GoalOutcome {
-                content, metadata, ..
-            } => {
+            event @ (ExperienceEvent::Reflection { .. }
+            | ExperienceEvent::ArchitectureDecision { .. }
+            | ExperienceEvent::GoalOutcome { .. }) => {
+                let (content, metadata, kind, scope, completed) = match event {
+                    ExperienceEvent::Reflection { content, metadata } => {
+                        let scope = metadata
+                            .provenance
+                            .principal
+                            .clone()
+                            .map(MemoryScope::Principal)
+                            .unwrap_or(MemoryScope::Global);
+                        (content, metadata, MemoryKind::Reflection, scope, false)
+                    }
+                    ExperienceEvent::ArchitectureDecision {
+                        content, metadata, ..
+                    } => (
+                        content,
+                        metadata,
+                        MemoryKind::ArchitectureDecision,
+                        MemoryScope::Global,
+                        false,
+                    ),
+                    ExperienceEvent::GoalOutcome {
+                        goal_id,
+                        content,
+                        metadata,
+                        ..
+                    } => (
+                        content,
+                        metadata,
+                        MemoryKind::GoalOutcome,
+                        MemoryScope::Goal(goal_id),
+                        true,
+                    ),
+                    ExperienceEvent::Message { .. } => unreachable!(),
+                };
                 metadata.validate()?;
                 let entry = ReflectionEntry {
-                    id: metadata.record_id,
+                    id: metadata.record_id.clone(),
                     timestamp: wall_to_datetime(self.clock.wall_now()),
                     trigger: ReflectionTrigger::Manual,
                     task_summary: content.clone(),
                     outcome: ReflectionOutcome::Success,
                     what_worked: Vec::new(),
                     what_failed: Vec::new(),
-                    learned: vec![content],
+                    learned: vec![content.clone()],
                     behavior_changes: Vec::new(),
                     confidence: 0.5,
                 };
                 let episodic = self.episodic.lock().await;
                 episodic.store_reflection(&entry)?;
+                drop(episodic);
+                let extraction_kind = match kind {
+                    MemoryKind::ArchitectureDecision => "architecture_decision",
+                    MemoryKind::GoalOutcome => "goal_outcome",
+                    _ => "reflection",
+                };
+                self.enqueue_for_consolidation(
+                    &metadata.record_id,
+                    extraction_kind,
+                    &content,
+                    &scope,
+                    completed,
+                )?;
+                if let Some(retention) = &self.retention {
+                    retention.register(
+                        &MemoryRecord {
+                            id: MemoryRecordId(metadata.record_id.clone()),
+                            kind,
+                            scope: scope.clone(),
+                            content,
+                            metadata,
+                            status: MemoryStatus::Current,
+                            authority: MemoryAuthority::LocalEpisode,
+                            source_event_ids: Vec::new(),
+                            tags: Vec::new(),
+                        },
+                        self.clock.wall_now().0.max(0),
+                    )?;
+                }
+                self.metrics.record_stored(kind, &scope);
                 Ok(())
             }
         }
     }
 
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet> {
-        req.validate()?;
-        let _ = req.session; // facts are not session-scoped today.
-        let fact_store = self.fact_store.lock().await;
-        let rows = fact_store.search_facts(&req.query, None, 0.0, req.max_items)?;
-        let mut used_bytes = 0usize;
-        let mut items = Vec::with_capacity(rows.len());
-        for row in rows {
-            if used_bytes.saturating_add(row.content.len()) > req.max_content_bytes {
-                break;
-            }
-            let source_time = DateTime::parse_from_rfc3339(&row.created_at)
-                .ok()
-                .map(|value| value.with_timezone(&Utc));
-            let observed_time = DateTime::parse_from_rfc3339(&row.updated_at)
-                .ok()
-                .map(|value| value.with_timezone(&Utc))
-                .or(source_time)
-                .unwrap_or_else(|| wall_to_datetime(self.clock.wall_now()));
-            let valid_until = source_time.and_then(|created| {
-                (row.ttl_days > 0).then(|| created + chrono::Duration::days(row.ttl_days))
-            });
-            let metadata = MemoryMetadata {
-                record_id: format!("mnemosyne:fact:{}", row.fact_id),
-                provenance: MemoryProvenance {
-                    source: if row.source.is_empty() {
-                        "mnemosyne.fact_store".into()
-                    } else {
-                        row.source
-                    },
-                    source_id: row.fact_id.to_string(),
-                    principal: (!row.subject.is_empty()).then_some(row.subject),
-                    source_commit: None,
-                },
-                source_time,
-                observed_time,
-                valid_from: source_time,
-                valid_until,
-                supersedes: None,
-                superseded_by: None,
-                confidence: row.trust_score.clamp(0.0, 1.0),
-                sensitivity: MemorySensitivity::Internal,
-            };
-            let temporal_state = if row.status == "superseded" {
-                TemporalState::Superseded
-            } else {
-                metadata.temporal_state(req.current_at)
-            };
-            if !req.include_historical
-                && matches!(
-                    temporal_state,
-                    TemporalState::Superseded | TemporalState::Expired
-                )
-            {
-                continue;
-            }
-            used_bytes += row.content.len();
-            items.push(RecallItem {
-                content: row.content,
-                metadata,
-                temporal_state,
-            });
+        if let Err(error) = req.validate() {
+            self.metrics
+                .recall_omitted(RecallOmittedReason::InvalidRequest, 1);
+            return Err(error);
         }
-        Ok(RecallSet { items })
+        let fetch_limit = req
+            .max_items
+            .saturating_mul(4)
+            .min(RecallRequest::MAX_ITEMS);
+        let now = wall_to_datetime(self.clock.wall_now());
+        let messages = async {
+            let started = Instant::now();
+            let result = self
+                .recall_memory
+                .lock()
+                .await
+                .search_in_session(&req.session, &req.query, fetch_limit)
+                .map(|rows| crate::recall::local::messages(rows, &req));
+            (started.elapsed(), result)
+        };
+        let facts = async {
+            let started = Instant::now();
+            let result = self
+                .fact_store
+                .lock()
+                .await
+                .search_facts(&req.query, None, 0.0, fetch_limit)
+                .map(|rows| crate::recall::local::facts(rows, &req, now));
+            (started.elapsed(), result)
+        };
+        let reflections = async {
+            let started = Instant::now();
+            let result = self
+                .episodic
+                .lock()
+                .await
+                .recall_reflections(fetch_limit)
+                .map(|rows| crate::recall::local::reflections(rows, &req));
+            (started.elapsed(), result)
+        };
+        let core = async {
+            let started = Instant::now();
+            let blocks = self
+                .core_memory
+                .lock()
+                .await
+                .blocks()
+                .iter()
+                .map(|(label, block)| (label.clone(), block.value.clone()))
+                .collect::<Vec<_>>();
+            (
+                started.elapsed(),
+                Ok::<_, anyhow::Error>(crate::recall::local::core(blocks, &req, now)),
+            )
+        };
+        let (messages, facts, reflections, core) = tokio::join!(messages, facts, reflections, core);
+        let mut sources = Vec::with_capacity(4);
+        let mut degraded_sources = Vec::new();
+        for (name, source, kind, (elapsed, result)) in [
+            (
+                "recall_memory",
+                RecallSourceLabel::RecallMemory,
+                MemoryKind::Message,
+                messages,
+            ),
+            (
+                "fact_store",
+                RecallSourceLabel::FactStore,
+                MemoryKind::SemanticFact,
+                facts,
+            ),
+            (
+                "episodic",
+                RecallSourceLabel::Episodic,
+                MemoryKind::Reflection,
+                reflections,
+            ),
+            ("core", RecallSourceLabel::Core, MemoryKind::CoreState, core),
+        ] {
+            self.metrics.observe_recall_latency(source, elapsed);
+            match result {
+                Ok(items) => {
+                    self.metrics.recall_hit(source, kind, items.len());
+                    sources.push(items);
+                }
+                Err(error) => {
+                    tracing::warn!(source = name, %error, "local memory recall source degraded");
+                    self.metrics
+                        .recall_omitted(RecallOmittedReason::SourceDegraded, 1);
+                    degraded_sources.push(name.to_string());
+                }
+            }
+        }
+        let mut items = crate::recall::merge_items(sources, &req, Some(&self.metrics));
+        if let Some(retention) = &self.retention {
+            let before = items.len();
+            items.retain(|item| {
+                !retention
+                    .is_tombstoned(&item.metadata.record_id)
+                    .unwrap_or(false)
+            });
+            self.metrics
+                .recall_omitted(RecallOmittedReason::Tombstoned, before - items.len());
+            self.metrics.set_tombstone_pending(
+                TombstoneDestination::Gbrain,
+                retention.pending_remote_count().unwrap_or_default(),
+            );
+        }
+        Ok(RecallSet {
+            items,
+            degraded_sources,
+        })
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
-        // Facts are not session-scoped, so `Session(_)` and `All` behave the
-        // same for now: decay stale facts.
-        let _ = scope;
-        let fact_store = self.fact_store.lock().await;
-        fact_store.decay_stale()?;
+        let now_ms = self.clock.wall_now().0.max(0) as u64;
+        if let Some(repository) = &self.consolidation {
+            if matches!(scope, MemoryScope::Session(_) | MemoryScope::Goal(_)) {
+                // A scoped consolidate request is the existing contract's explicit
+                // lifecycle boundary. Periodic Global consolidation cannot infer that
+                // an active Session or Goal has completed.
+                repository.complete_scope(&scope, now_ms)?;
+            }
+        }
+        self.advance_consolidation(&scope, now_ms)?;
+        self.fact_store.lock().await.decay_stale()?;
         Ok(())
     }
 
-    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<()> {
-        // No destructive delete-by-session method exists on RecallMemory or
-        // FactStore today; implementing one is out of scope for this
-        // additive facade. Conservatively no-op and document the gap.
-        let _ = policy;
-        Ok(())
+    async fn preview_forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        DefaultMemoryService::preview_forget(self, &policy)
+    }
+
+    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        let repository = self
+            .retention
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("retention repository is unavailable"))?;
+        repository.forget(&policy, self.clock.wall_now().0.max(0))
     }
 }
 
@@ -558,18 +877,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn consolidate_and_forget_are_ok() {
+    async fn consolidate_is_ok_and_forget_fails_without_retention() {
         let dir = tempfile::tempdir().unwrap();
         let svc = build_service(dir.path()).await;
-        svc.consolidate(MemoryScope::All).await.unwrap();
+        svc.consolidate(MemoryScope::Global).await.unwrap();
         svc.consolidate(MemoryScope::Session("s1".into()))
             .await
             .unwrap();
-        svc.forget(ForgetPolicy {
-            session: Some("s1".into()),
-        })
-        .await
-        .unwrap();
-        svc.forget(ForgetPolicy::default()).await.unwrap();
+        assert!(svc
+            .forget(ForgetPolicy {
+                request_id: "request-1".into(),
+                selector: ForgetSelector::Scope {
+                    scope: MemoryScope::Session("s1".into()),
+                    limit: 1,
+                },
+                requester: "owner".into(),
+                reason: "test".into(),
+                authority: ForgetAuthority::Ordinary,
+            })
+            .await
+            .is_err());
     }
 }

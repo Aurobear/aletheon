@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tracing::{error, info};
 
 use super::risk_classifier::RiskCategory;
@@ -12,6 +13,7 @@ use crate::types::tool::PermissionLevel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditRecord {
+    pub audit_id: crate::AuditEventId,
     pub timestamp: WallTime,
     pub session_id: String,
     pub turn_id: String,
@@ -27,12 +29,18 @@ pub struct AuditRecord {
 }
 
 pub struct AuditLogger {
-    tx: mpsc::Sender<AuditRecord>,
+    tx: mpsc::Sender<(
+        AuditRecord,
+        oneshot::Sender<std::result::Result<(), String>>,
+    )>,
 }
 
 impl AuditLogger {
     pub fn new(log_path: PathBuf) -> Result<Self> {
-        let (tx, mut rx) = mpsc::channel::<AuditRecord>(1024);
+        let (tx, mut rx) = mpsc::channel::<(
+            AuditRecord,
+            oneshot::Sender<std::result::Result<(), String>>,
+        )>(1024);
 
         // Background writer task
         tokio::spawn(async move {
@@ -42,9 +50,9 @@ impl AuditLogger {
 
             info!(path = %log_path.display(), "Audit logger started");
 
-            while let Some(record) = rx.recv().await {
+            while let Some((record, acknowledgement)) = rx.recv().await {
                 let record = sanitize_record(record);
-                match chained_json(&record, &previous_hash) {
+                let outcome = match chained_json(&record, &previous_hash) {
                     Ok(json) => {
                         // Append to JSONL file
                         let mut options = OpenOptions::new();
@@ -56,23 +64,30 @@ impl AuditLogger {
                         }
                         match options.open(&log_path) {
                             Ok(mut file) => {
-                                if writeln!(file, "{}", json).is_err() {
-                                    error!("Failed to write audit record");
+                                if let Err(err) = writeln!(file, "{}", json) {
+                                    error!(error = %err, "Failed to write audit record");
+                                    Err(format!("failed to write audit record: {err}"))
                                 } else if let Some(hash) =
                                     json.get("_record_hash").and_then(serde_json::Value::as_str)
                                 {
                                     previous_hash = hash.to_owned();
+                                    Ok(())
+                                } else {
+                                    Err("audit record hash missing after serialization".into())
                                 }
                             }
                             Err(e) => {
                                 error!(error = %e, "Failed to open audit log file");
+                                Err(format!("failed to open audit log file: {e}"))
                             }
                         }
                     }
                     Err(e) => {
                         error!(error = %e, "Failed to serialize audit record");
+                        Err(format!("failed to serialize audit record: {e}"))
                     }
-                }
+                };
+                let _ = acknowledgement.send(outcome);
             }
 
             info!("Audit logger stopped");
@@ -82,14 +97,20 @@ impl AuditLogger {
     }
 
     pub async fn log(&self, record: AuditRecord) -> Result<()> {
+        let (ack_tx, ack_rx) = oneshot::channel();
         self.tx
-            .send(record)
+            .send((record, ack_tx))
             .await
-            .map_err(|e| anyhow::anyhow!("Audit logger channel closed: {}", e))
+            .map_err(|e| anyhow::anyhow!("Audit logger channel closed: {}", e))?;
+        ack_rx
+            .await
+            .map_err(|e| anyhow::anyhow!("Audit writer dropped acknowledgement: {e}"))?
+            .map_err(anyhow::Error::msg)
     }
 
     pub fn log_sync(&self, record: AuditRecord) {
-        let _ = self.tx.try_send(record);
+        let (ack_tx, _ack_rx) = oneshot::channel();
+        let _ = self.tx.try_send((record, ack_tx));
     }
 }
 
@@ -250,6 +271,7 @@ mod tests {
     #[test]
     fn audit_hash_chain_links_records() {
         let record = AuditRecord {
+            audit_id: crate::AuditEventId::new(),
             timestamp: WallTime(1),
             session_id: "session".into(),
             turn_id: "turn".into(),

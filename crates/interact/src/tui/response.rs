@@ -155,6 +155,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
+            app.turn_active = false;
         }
         ClientEvent::AwarenessChanged { level, context } => {
             if let Ok(awareness_level) =
@@ -290,6 +291,9 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
 }
 
 pub fn process_response(app: &mut App, msg: serde_json::Value) {
+    if apply_typed_protocol_event(app, &msg) {
+        return;
+    }
     if let Some(result) = msg.get("result") {
         if let Some(text) = result.get("response").and_then(|v| v.as_str()) {
             // Standard chat response - deduplicate consecutive identical text
@@ -350,6 +354,34 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
     //
     // Also do NOT clear response_buf — streaming events may follow in the
     // same try_read chunk.
+}
+
+fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {
+    use super::reducer::{reduce, UiAction, UiError};
+    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage};
+
+    let candidate = message
+        .get("params")
+        .or_else(|| message.get("result"))
+        .unwrap_or(message);
+    let Ok(message) = serde_json::from_value::<ClientMessage<ProtocolEvent>>(candidate.clone())
+    else {
+        return false;
+    };
+    let Ok(event) = message.into_v1() else {
+        return false;
+    };
+    let action = match event {
+        ProtocolEvent::InitializeResponse(_) => return true,
+        ProtocolEvent::Snapshot(value) => UiAction::Snapshot(value),
+        ProtocolEvent::Item(value) => UiAction::Item(value),
+        ProtocolEvent::Approval(value) => UiAction::Approval(value),
+        ProtocolEvent::Agent(value) => UiAction::Agent(value),
+        ProtocolEvent::Reconnected(value) => UiAction::Reconnected(value),
+        ProtocolEvent::Failed { cursor, message } => UiAction::Failed(UiError { cursor, message }),
+    };
+    let _effects = reduce(&mut app.app_state, action);
+    true
 }
 
 /// Deduplicate consecutive identical text blocks.
@@ -661,7 +693,9 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::deduplicate_consecutive_text;
+    use super::{deduplicate_consecutive_text, handle_event};
+    use crate::tui::{host_time::ClientClock, term_compat::TermCaps, App};
+    use std::sync::Arc;
 
     #[test]
     fn deduplicates_only_an_exact_repeated_response() {
@@ -676,5 +710,39 @@ mod tests {
     fn preserves_markdown_that_starts_with_repeated_rule_characters() {
         let response = "----------------------------------------\n邮件分析结果\n- 重点一\n- 重点二";
         assert_eq!(deduplicate_consecutive_text(response), response);
+    }
+
+    #[tokio::test]
+    async fn error_event_releases_the_active_turn() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+        );
+        app.streaming = true;
+        app.status.waiting = true;
+        app.app_state.streaming = true;
+        app.turn_active = true;
+
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "error", "message": "compaction failed"}),
+        );
+
+        assert!(!app.streaming);
+        assert!(!app.status.waiting);
+        assert!(!app.app_state.streaming);
+        assert!(!app.turn_active);
     }
 }

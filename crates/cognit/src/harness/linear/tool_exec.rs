@@ -1,5 +1,6 @@
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
 use super::tool_budget;
+use super::tool_output::{bounded_tool_result, MAX_TOOL_RESULT_BYTES};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
@@ -17,7 +18,7 @@ impl ReActLoop {
         llm: &L,
         tool_defs: &[ToolDefinition],
         execute_tool: F,
-        event_sink: &dyn EventSink,
+        event_sink: &impl EventSink,
     ) -> anyhow::Result<(String, TurnMetrics)>
     where
         L: LlmProvider,
@@ -394,36 +395,15 @@ impl ReActLoop {
                 if self.reflection_engine.record_call(is_timeout) {
                     should_reflect = true;
                 }
-                // Truncate large tool outputs before storing in conversation
-                // to prevent context window bloat. Keep head + tail for visibility.
-                const MAX_TOOL_RESULT_CHARS: usize = 8000;
-                let truncated_content = if content.len() > MAX_TOOL_RESULT_CHARS {
-                    let head = &content[..content
-                        .char_indices()
-                        .nth(3500)
-                        .map(|(i, _)| i)
-                        .unwrap_or(3500)];
-                    let tail_start = content
-                        .char_indices()
-                        .nth(content.chars().count().saturating_sub(3500))
-                        .map(|(i, _)| i)
-                        .unwrap_or(0);
-                    let tail = &content[tail_start..];
-                    format!(
-                        "{}\n... ({} chars truncated) ...\n{}",
-                        head,
-                        content.len() - 7000,
-                        tail
-                    )
-                } else {
-                    content.clone()
-                };
+                // The full result was emitted above for durable projection. Keep
+                // only a transient bounded copy in the active model context.
+                let bounded_content = bounded_tool_result(&content, MAX_TOOL_RESULT_BYTES);
                 // Accumulate tool result block for combined push after loop.
                 // Anthropic API requires all tool_result blocks for one assistant
                 // message to be in a SINGLE subsequent user message.
                 tool_result_blocks.push(ContentBlock::ToolResult {
                     tool_use_id: id.clone(),
-                    content: truncated_content,
+                    content: bounded_content,
                     is_error,
                 });
                 // Defer reflection: collect flag, will inject after all tool results

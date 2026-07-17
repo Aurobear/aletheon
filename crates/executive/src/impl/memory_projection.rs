@@ -1,21 +1,26 @@
-//! Durable, policy-gated projection of Goal outcomes and architecture decisions.
+//! Policy-gated publication of Goal and approval records onto the event spine.
 //!
-//! Projection is deliberately best-effort: callers persist the source record
-//! first, then invoke this boundary. Memory/spool failures are reported through
-//! sanitized health and never change the persisted Goal or approval result.
+//! Source records are persisted by their owning repositories first. This
+//! boundary records an idempotent memory-candidate source event and advances
+//! the deterministic memory-job reducer; it never writes a memory backend
+//! directly. M05 owns extraction, approval and durable memory consolidation.
 
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Utc};
-use mnemosyne::{
-    ExperienceEvent, MemoryMetadata, MemoryProvenance, MemorySensitivity, MemoryService,
+use fabric::{
+    EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity, EventPayload,
+    EventSpine, EventTreeId, EventVisibility, MessageId, NamespaceId, SchemaId, UnsequencedEvent,
 };
+use mnemosyne::MemorySensitivity;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::r#impl::goal::{GoalCompletionSummary, GoalProjectionEvidence};
+use crate::service::event_projection::EventProjectionSink;
 
 const MAX_DECISION_BODY_BYTES: usize = 64 * 1024;
+const MEMORY_SOURCE_EVENT_NAMESPACE: Uuid = Uuid::from_u128(0xf783b8b3_4109_40cc_a8d3_191011d122c1);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovedArchitectureDecision {
@@ -34,8 +39,13 @@ pub struct ApprovedArchitectureDecision {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectionStatus {
-    Recorded { record_id: String },
-    Excluded { reason: &'static str },
+    Queued {
+        record_id: String,
+        source_event_id: String,
+    },
+    Excluded {
+        reason: &'static str,
+    },
     Degraded,
 }
 
@@ -44,18 +54,32 @@ pub struct MemoryProjectionHealth {
     pub degraded: bool,
     pub last_error_category: Option<&'static str>,
     pub last_record_id: Option<String>,
+    pub last_source_event_id: Option<String>,
 }
 
 #[derive(Clone)]
 pub struct MemoryProjection {
-    memory: Arc<dyn MemoryService>,
+    event_spine: Arc<dyn EventSpine>,
+    event_projections: Arc<dyn EventProjectionSink>,
     health: Arc<Mutex<MemoryProjectionHealth>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct MemoryCandidateSource {
+    record_id: String,
+    kind: String,
+    content: serde_json::Value,
+    sensitivity: MemorySensitivity,
+}
+
 impl MemoryProjection {
-    pub fn new(memory: Arc<dyn MemoryService>) -> Self {
+    pub fn new(
+        event_spine: Arc<dyn EventSpine>,
+        event_projections: Arc<dyn EventProjectionSink>,
+    ) -> Self {
         Self {
-            memory,
+            event_spine,
+            event_projections,
             health: Arc::new(Mutex::new(MemoryProjectionHealth::default())),
         }
     }
@@ -64,8 +88,8 @@ impl MemoryProjection {
         self.health.clone()
     }
 
-    /// Project an immutable summary only after it has been read back from the
-    /// Goal store. Deterministic IDs make replay/restart idempotent downstream.
+    /// Queue an immutable summary only after it has been read back from the
+    /// Goal store. Stable source-event IDs make replay/restart idempotent.
     pub async fn project_goal_summary(
         &self,
         summary: &GoalCompletionSummary,
@@ -90,35 +114,30 @@ impl MemoryProjection {
             "goal:{}:approval:{}:outcome",
             summary.goal_id.0, summary.approval_id.0
         );
-        let observed = timestamp(summary.generated_at_ms);
         let content = serde_json::json!({
             "goal_id": summary.goal_id.0,
             "attempt_ids": evidence.attempt_ids,
             "artifact_ids": evidence.artifact_ids,
             "approval_id": summary.approval_id.0,
             "approval_status": summary.approval.status,
+            "principal_id": summary.approval.principal_id,
             "outcome": summary.final_state,
             "verification": evidence.verification,
             "intent": summary.intent,
             "changed_files": summary.changed_files,
             "risks": summary.risks,
-        })
-        .to_string();
-        let event = ExperienceEvent::GoalOutcome {
-            goal_id: summary.goal_id.0.to_string(),
-            outcome: summary.final_state.clone(),
-            content,
-            metadata: metadata(
-                record_id.clone(),
-                format!("goal-summary:{}", summary.approval_id.0),
-                summary.approval.principal_id.clone(),
-                evidence.source_commit.clone(),
-                observed,
-                None,
+            "source_commit": evidence.source_commit,
+            "observed_at_ms": summary.generated_at_ms,
+        });
+        self.queue(
+            format!("goal:{}", summary.goal_id.0),
+            MemoryCandidateSource {
+                record_id,
+                kind: "goal_outcome".into(),
+                content,
                 sensitivity,
-            ),
-        };
-        self.record(event, record_id).await
+            },
+        )
     }
 
     pub async fn project_architecture_decision(
@@ -145,69 +164,88 @@ impl MemoryProjection {
             decision.decision_id,
             short_hash(&decision.approval_id)
         );
-        let event = ExperienceEvent::ArchitectureDecision {
-            title: decision.title.clone(),
-            content: decision.content.clone(),
-            metadata: metadata(
-                record_id.clone(),
-                format!("architecture-decision:{}", decision.decision_id),
-                Some(decision.principal_id.clone()),
-                Some(decision.source_commit.clone()),
-                timestamp(decision.approved_at_ms),
-                decision.supersedes.clone(),
-                decision.sensitivity.clone(),
-            ),
-        };
-        self.record(event, record_id).await
+        self.queue(
+            format!("decision:{}", decision.decision_id),
+            MemoryCandidateSource {
+                record_id,
+                kind: "architecture_decision".into(),
+                content: serde_json::json!({
+                    "decision_id": decision.decision_id,
+                    "approval_id": decision.approval_id,
+                    "title": decision.title,
+                    "content": decision.content,
+                    "principal_id": decision.principal_id,
+                    "source_commit": decision.source_commit,
+                    "approved_at_ms": decision.approved_at_ms,
+                    "supersedes": decision.supersedes,
+                }),
+                sensitivity: decision.sensitivity.clone(),
+            },
+        )
     }
 
-    async fn record(&self, event: ExperienceEvent, record_id: String) -> ProjectionStatus {
-        match self.memory.record(event).await {
-            Ok(()) => {
-                let mut health = self.health.lock().unwrap();
-                health.last_record_id = Some(record_id.clone());
-                ProjectionStatus::Recorded { record_id }
-            }
-            Err(_) => {
-                let mut health = self.health.lock().unwrap();
-                health.degraded = true;
-                health.last_error_category = Some("memory_record_failed");
-                ProjectionStatus::Degraded
-            }
+    fn queue(&self, source: String, candidate: MemoryCandidateSource) -> ProjectionStatus {
+        let record_id = candidate.record_id.clone();
+        let payload = match serde_json::to_value(candidate) {
+            Ok(payload) => payload,
+            Err(_) => return self.degraded("memory_candidate_encode_failed"),
+        };
+        let event_id = EventId(Uuid::new_v5(
+            &MEMORY_SOURCE_EVENT_NAMESPACE,
+            record_id.as_bytes(),
+        ));
+        let tree_id = EventTreeId::for_root_session(&source);
+        let mut envelope = EnvelopeV2::new(
+            SchemaId(SchemaId::EVENT_MEMORY_CANDIDATE_V1.into()),
+            EnvelopeV2Target("memory-projection".into()),
+            EnvelopeV2Target(format!("memory-job:{source}")),
+            EnvelopeV2Delivery::Direct,
+            NamespaceId(format!("memory:{source}")),
+            payload.clone(),
+        );
+        envelope.id = MessageId(event_id.0);
+        let event = match self.event_spine.append(UnsequencedEvent {
+            tree_id,
+            event_id,
+            parent: None,
+            identity: EventIdentity {
+                root_session_id: source.clone(),
+                session_id: source.clone(),
+                agent_id: None,
+            },
+            envelope,
+            visibility: EventVisibility::Control,
+            payload: EventPayload::Inline { value: payload },
+        }) {
+            Ok(event) => event,
+            Err(_) => return self.degraded("event_spine_append_failed"),
+        };
+
+        let report = self.event_projections.project(&event);
+        if report
+            .failures
+            .iter()
+            .any(|failure| failure.projection == "memory-jobs")
+        {
+            return self.degraded("memory_job_projection_failed");
+        }
+
+        let source_event_id = event.position.event_id.to_string();
+        let mut health = self.health.lock().unwrap();
+        health.last_record_id = Some(record_id.clone());
+        health.last_source_event_id = Some(source_event_id.clone());
+        ProjectionStatus::Queued {
+            record_id,
+            source_event_id,
         }
     }
-}
 
-fn metadata(
-    record_id: String,
-    source_id: String,
-    principal: Option<String>,
-    source_commit: Option<String>,
-    observed_time: DateTime<Utc>,
-    supersedes: Option<String>,
-    sensitivity: MemorySensitivity,
-) -> MemoryMetadata {
-    MemoryMetadata {
-        record_id,
-        provenance: MemoryProvenance {
-            source: "aletheon".into(),
-            source_id,
-            principal,
-            source_commit,
-        },
-        source_time: Some(observed_time),
-        observed_time,
-        valid_from: Some(observed_time),
-        valid_until: None,
-        supersedes,
-        superseded_by: None,
-        confidence: 1.0,
-        sensitivity,
+    fn degraded(&self, category: &'static str) -> ProjectionStatus {
+        let mut health = self.health.lock().unwrap();
+        health.degraded = true;
+        health.last_error_category = Some(category);
+        ProjectionStatus::Degraded
     }
-}
-
-fn timestamp(value: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp_millis(value).unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
 }
 
 fn is_excluded(sensitivity: &MemorySensitivity) -> bool {

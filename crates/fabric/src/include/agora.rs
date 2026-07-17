@@ -9,6 +9,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::types::evidence::Evidence;
@@ -67,17 +68,124 @@ impl AgoraProposal {
     }
 }
 
+impl AgoraOperation {
+    /// Stable digest used to bind an authorization decision to one operation.
+    pub fn operation_hash(&self) -> anyhow::Result<String> {
+        let encoded = serde_json::to_vec(self)?;
+        let digest = Sha256::digest(encoded);
+        Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+}
+
 /// A committed operation, permanently recorded in the workspace history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgoraCommit {
     pub id: Uuid,
     pub space: AgoraSpaceId,
     pub author: ProcessId,
+    pub base_version: u64,
     pub version: u64,
     pub operation: AgoraOperation,
     pub evidence: Vec<String>,
     pub confidence: f32,
     pub committed_at: i64,
+    pub permit_id: Option<Uuid>,
+    pub operation_hash: String,
+    pub checksum: String,
+}
+
+impl AgoraCommit {
+    pub fn from_proposal(
+        proposal: &AgoraProposal,
+        version: u64,
+        committed_at: i64,
+        permit_id: Option<Uuid>,
+    ) -> anyhow::Result<Self> {
+        let operation_hash = proposal.operation.operation_hash()?;
+        let checksum = commit_checksum(
+            proposal.id,
+            &proposal.space,
+            proposal.author,
+            proposal.base_version,
+            version,
+            &operation_hash,
+            &proposal.evidence,
+            proposal.confidence,
+            permit_id,
+            committed_at,
+        )?;
+        Ok(Self {
+            id: proposal.id,
+            space: proposal.space.clone(),
+            author: proposal.author,
+            base_version: proposal.base_version,
+            version,
+            operation: proposal.operation.clone(),
+            evidence: proposal.evidence.clone(),
+            confidence: proposal.confidence,
+            committed_at,
+            permit_id,
+            operation_hash,
+            checksum,
+        })
+    }
+
+    pub fn validate_integrity(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.version == self.base_version + 1,
+            "workspace commit version is not contiguous"
+        );
+        anyhow::ensure!(
+            self.operation_hash == self.operation.operation_hash()?,
+            "workspace commit operation hash mismatch"
+        );
+        let checksum = commit_checksum(
+            self.id,
+            &self.space,
+            self.author,
+            self.base_version,
+            self.version,
+            &self.operation_hash,
+            &self.evidence,
+            self.confidence,
+            self.permit_id,
+            self.committed_at,
+        )?;
+        anyhow::ensure!(
+            self.checksum == checksum,
+            "workspace commit checksum mismatch"
+        );
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_checksum(
+    id: Uuid,
+    space: &AgoraSpaceId,
+    author: ProcessId,
+    base_version: u64,
+    version: u64,
+    operation_hash: &str,
+    evidence: &[String],
+    confidence: f32,
+    permit_id: Option<Uuid>,
+    committed_at: i64,
+) -> anyhow::Result<String> {
+    let material = serde_json::json!({
+        "id": id,
+        "space": space,
+        "author": author,
+        "base_version": base_version,
+        "version": version,
+        "operation_hash": operation_hash,
+        "evidence": evidence,
+        "confidence": confidence,
+        "permit_id": permit_id,
+        "committed_at": committed_at,
+    });
+    let digest = Sha256::digest(serde_json::to_vec(&material)?);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 /// Returned when a proposal's base_version does not match the workspace
@@ -121,10 +229,51 @@ pub struct AgoraView {
     pub snapshot: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommitPermit {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceCommitPermit {
+    pub permit_id: Uuid,
+    pub space: AgoraSpaceId,
+    pub proposal_id: Uuid,
     pub process: ProcessId,
-    pub authorized: bool,
+    pub operation_hash: String,
+    pub expected_version: u64,
+    pub expires_at_ms: i64,
+}
+
+impl WorkspaceCommitPermit {
+    pub fn issue_for(proposal: &AgoraProposal, expires_at_ms: i64) -> anyhow::Result<Self> {
+        Ok(Self {
+            permit_id: Uuid::new_v4(),
+            space: proposal.space.clone(),
+            proposal_id: proposal.id,
+            process: proposal.author,
+            operation_hash: proposal.operation.operation_hash()?,
+            expected_version: proposal.base_version,
+            expires_at_ms,
+        })
+    }
+
+    pub fn validate_for(&self, proposal: &AgoraProposal, now_ms: i64) -> anyhow::Result<()> {
+        anyhow::ensure!(self.space == proposal.space, "commit permit space mismatch");
+        anyhow::ensure!(
+            self.proposal_id == proposal.id,
+            "commit permit proposal mismatch"
+        );
+        anyhow::ensure!(
+            self.process == proposal.author,
+            "commit permit process mismatch"
+        );
+        anyhow::ensure!(
+            self.operation_hash == proposal.operation.operation_hash()?,
+            "commit permit operation mismatch"
+        );
+        anyhow::ensure!(
+            self.expected_version == proposal.base_version,
+            "commit permit version mismatch"
+        );
+        anyhow::ensure!(now_ms < self.expires_at_ms, "commit permit expired");
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,7 +285,7 @@ pub struct CommitReceipt {
 pub trait AgoraService: Send + Sync {
     async fn view(&self, req: AgoraViewRequest) -> Result<AgoraView>;
     async fn propose(&self, proposal: AgoraProposal) -> Result<Uuid>;
-    async fn commit(&self, id: Uuid, permit: CommitPermit) -> Result<CommitReceipt>;
+    async fn commit(&self, id: Uuid, permit: WorkspaceCommitPermit) -> Result<CommitReceipt>;
     async fn reject(&self, id: Uuid, reason: RejectReason) -> Result<()>;
     async fn changes_since(&self, space: AgoraSpaceId, version: u64) -> Result<Vec<AgoraCommit>>;
 }
@@ -159,10 +308,11 @@ pub trait AgoraOps: Send + Sync {
     }
     /// Clear a session's workspace.
     async fn clear(&self, session: &str) -> Result<()>;
-    /// Append an entry onto a session's reasoning trace.
+    /// Append a best-effort, sensitive audit fact. Implementations reject
+    /// runtime reasoning/tool payload kinds and this is never replay authority.
     async fn trace(&self, session: &str, kind: &str, content: serde_json::Value) -> Result<()>;
 
-    // -- Typed vocabulary (RFC-017) layered over the generic trace --------
+    // -- Typed audit vocabulary ---------------------------------------------
     //
     // These default methods lower a cognitive primitive onto the untyped
     // trace so producers speak the RFC-017 vocabulary instead of hand-rolled
@@ -170,10 +320,14 @@ pub trait AgoraOps: Send + Sync {
     // type. Add more recorders here as real producers for other primitives
     // (Hypothesis, Narrative, …) appear — not before (YAGNI).
 
-    /// Record a typed [`Evidence`] onto the session's reasoning trace
-    /// (trace kind `"evidence"`).
+    /// Record redacted Evidence identity metadata in the audit trail.
     async fn record_evidence(&self, session: &str, evidence: &Evidence) -> Result<()> {
-        let content = serde_json::to_value(evidence)?;
+        let content = serde_json::json!({
+            "id": evidence.id,
+            "source": evidence.source,
+            "weight": evidence.weight,
+            "content_redacted": true,
+        });
         self.trace(session, "evidence", content).await
     }
 
@@ -201,6 +355,17 @@ pub trait AgoraOps: Send + Sync {
     ) -> std::result::Result<AgoraCommit, String> {
         let _ = (session, proposal_id);
         Err("AgoraOps::commit not implemented for this backend".into())
+    }
+
+    /// Commit using an authorization bound to the exact proposal operation.
+    async fn commit_with_permit(
+        &self,
+        session: &str,
+        proposal_id: Uuid,
+        permit: WorkspaceCommitPermit,
+    ) -> std::result::Result<AgoraCommit, String> {
+        let _ = (session, proposal_id, permit);
+        Err("AgoraOps::commit_with_permit not implemented for this backend".into())
     }
 
     /// Reject a pending proposal by id, removing it from the proposal set.
@@ -274,7 +439,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn record_evidence_lowers_to_trace_and_roundtrips() {
+    async fn record_evidence_lowers_to_redacted_audit_metadata() {
         let spy = SpyAgora::default();
         let ev = Evidence::from_tool_result("c1", "bash", "exit 0", false);
         spy.record_evidence("s1", &ev).await.unwrap();
@@ -283,10 +448,64 @@ mod tests {
         assert_eq!(session, "s1");
         assert_eq!(kind, "evidence");
 
-        // Consumer half: the trace content deserializes back into Evidence.
-        let back: Evidence = serde_json::from_value(content).unwrap();
-        assert_eq!(back.id, "c1");
-        assert_eq!(back.source, "bash");
-        assert_eq!(back.weight, 1.0);
+        assert_eq!(content["id"], "c1");
+        assert_eq!(content["source"], "bash");
+        assert_eq!(content["weight"], 1.0);
+        assert_eq!(content["content_redacted"], true);
+        assert!(content.get("content").is_none());
+    }
+
+    fn permit_proposal() -> AgoraProposal {
+        AgoraProposal {
+            id: Uuid::from_u128(11),
+            space: AgoraSpaceId("space-a".into()),
+            author: ProcessId(Uuid::from_u128(12)),
+            base_version: 7,
+            operation: AgoraOperation::PublishFact {
+                key: "answer".into(),
+                value: serde_json::json!(42),
+            },
+            evidence: Vec::new(),
+            confidence: 1.0,
+            expires_at_ms: None,
+        }
+    }
+
+    #[test]
+    fn workspace_permit_round_trips_and_accepts_exact_transaction() {
+        let proposal = permit_proposal();
+        let permit = WorkspaceCommitPermit::issue_for(&proposal, 200).unwrap();
+        permit.validate_for(&proposal, 199).unwrap();
+        let encoded = serde_json::to_vec(&permit).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<WorkspaceCommitPermit>(&encoded).unwrap(),
+            permit
+        );
+    }
+
+    #[test]
+    fn workspace_permit_rejects_each_mismatch_and_expiry() {
+        let proposal = permit_proposal();
+        let valid = WorkspaceCommitPermit::issue_for(&proposal, 200).unwrap();
+        let mut cases = Vec::new();
+        let mut changed = valid.clone();
+        changed.space = AgoraSpaceId("other".into());
+        cases.push(changed);
+        let mut changed = valid.clone();
+        changed.proposal_id = Uuid::from_u128(99);
+        cases.push(changed);
+        let mut changed = valid.clone();
+        changed.process = ProcessId(Uuid::from_u128(99));
+        cases.push(changed);
+        let mut changed = valid.clone();
+        changed.operation_hash = "wrong".into();
+        cases.push(changed);
+        let mut changed = valid.clone();
+        changed.expected_version += 1;
+        cases.push(changed);
+        for permit in cases {
+            assert!(permit.validate_for(&proposal, 100).is_err());
+        }
+        assert!(valid.validate_for(&proposal, 200).is_err());
     }
 }

@@ -248,30 +248,38 @@ impl Fixture {
         }
     }
 
-    fn coordinator(&self) -> executive::r#impl::approval::ApplyCoordinator {
+    async fn coordinator(&self) -> (executive::r#impl::approval::ApplyCoordinator, ProcessId) {
         let goal = GoalCoordinator::new(self.store.clone());
-        goal.approved_apply_coordinator(
-            self.approvals.clone(),
-            Arc::new(aletheon_kernel::operation::OperationTable::new(Arc::new(
-                TestClock,
-            ))),
-            Arc::new(TestClock),
-            ApplyCoordinatorConfig {
-                worktree_base: self.worktree_base.clone(),
-                timeout: Duration::from_secs(5),
-            },
-            self.cleaner.clone(),
-        )
-        .unwrap()
+        let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(Arc::new(
+            TestClock,
+        )));
+        let owner = kernel
+            .spawn_process(fabric::SpawnSpec::default())
+            .await
+            .unwrap()
+            .id;
+        let coordinator = goal
+            .approved_apply_coordinator(
+                self.approvals.clone(),
+                kernel,
+                Arc::new(TestClock),
+                ApplyCoordinatorConfig {
+                    worktree_base: self.worktree_base.clone(),
+                    timeout: Duration::from_secs(5),
+                },
+                self.cleaner.clone(),
+            )
+            .unwrap();
+        (coordinator, owner)
     }
 }
 
 #[tokio::test]
 async fn approved_apply_is_consumed_once_and_completes_goal() {
     let f = Fixture::new();
-    let coordinator = f.coordinator();
+    let (coordinator, owner) = f.coordinator().await;
     let first = coordinator
-        .coordinate(f.approval_id, ProcessId::new(), CancellationToken::new())
+        .coordinate(f.approval_id, owner, CancellationToken::new())
         .await
         .unwrap();
     assert!(matches!(first, ApplyCoordinationOutcome::Applied(_)));
@@ -310,7 +318,7 @@ async fn approved_apply_is_consumed_once_and_completes_goal() {
         .is_some());
 
     let second = coordinator
-        .coordinate(f.approval_id, ProcessId::new(), CancellationToken::new())
+        .coordinate(f.approval_id, owner, CancellationToken::new())
         .await
         .unwrap();
     assert!(matches!(second, ApplyCoordinationOutcome::Recovered(_)));
@@ -325,18 +333,18 @@ async fn restart_recovers_claim_before_apply_and_receipt_after_apply() {
         .unwrap()
         .claim_apply(f.approval_id, operation_id, 500)
         .unwrap();
-    let restarted = f.coordinator();
+    let (restarted, restarted_owner) = f.coordinator().await;
     assert!(matches!(
         restarted
-            .coordinate(f.approval_id, ProcessId::new(), CancellationToken::new())
+            .coordinate(f.approval_id, restarted_owner, CancellationToken::new())
             .await
             .unwrap(),
         ApplyCoordinationOutcome::Applied(_)
     ));
-    let after = f.coordinator();
+    let (after, after_owner) = f.coordinator().await;
     assert!(matches!(
         after
-            .coordinate(f.approval_id, ProcessId::new(), CancellationToken::new())
+            .coordinate(f.approval_id, after_owner, CancellationToken::new())
             .await
             .unwrap(),
         ApplyCoordinationOutcome::Recovered(_)
@@ -348,9 +356,9 @@ async fn cancelled_apply_is_receipted_blocked_and_not_reusable() {
     let f = Fixture::new();
     let cancel = CancellationToken::new();
     cancel.cancel();
-    let result = f
-        .coordinator()
-        .coordinate(f.approval_id, ProcessId::new(), cancel)
+    let (coordinator, owner) = f.coordinator().await;
+    let result = coordinator
+        .coordinate(f.approval_id, owner, cancel)
         .await
         .unwrap();
     assert!(matches!(result, ApplyCoordinationOutcome::Failed(_)));
@@ -386,10 +394,11 @@ async fn cancelled_apply_is_receipted_blocked_and_not_reusable() {
 #[tokio::test]
 async fn concurrent_callbacks_schedule_only_one_apply() {
     let f = Fixture::new();
-    let coordinator = Arc::new(f.coordinator());
+    let (coordinator, owner) = f.coordinator().await;
+    let coordinator = Arc::new(coordinator);
     let (left, right) = tokio::join!(
-        coordinator.coordinate(f.approval_id, ProcessId::new(), CancellationToken::new()),
-        coordinator.coordinate(f.approval_id, ProcessId::new(), CancellationToken::new())
+        coordinator.coordinate(f.approval_id, owner, CancellationToken::new()),
+        coordinator.coordinate(f.approval_id, owner, CancellationToken::new())
     );
     let left = left.unwrap();
     let right = right.unwrap();
@@ -419,13 +428,9 @@ async fn rejection_and_revision_transition_without_applying() {
     let revision = Fixture::with_decision(ApprovalDecision::Reject {
         reason: Some("owner requested revision".into()),
     });
-    let result = revision
-        .coordinator()
-        .coordinate(
-            revision.approval_id,
-            ProcessId::new(),
-            CancellationToken::new(),
-        )
+    let (coordinator, owner) = revision.coordinator().await;
+    let result = coordinator
+        .coordinate(revision.approval_id, owner, CancellationToken::new())
         .await
         .unwrap();
     assert!(matches!(
@@ -452,13 +457,9 @@ async fn rejection_and_revision_transition_without_applying() {
     );
 
     let rejected = Fixture::with_decision(ApprovalDecision::Reject { reason: None });
-    rejected
-        .coordinator()
-        .coordinate(
-            rejected.approval_id,
-            ProcessId::new(),
-            CancellationToken::new(),
-        )
+    let (coordinator, owner) = rejected.coordinator().await;
+    coordinator
+        .coordinate(rejected.approval_id, owner, CancellationToken::new())
         .await
         .unwrap();
     assert_eq!(

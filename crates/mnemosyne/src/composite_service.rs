@@ -1,6 +1,5 @@
 //! Local-first composition of core Mnemosyne with optional supplemental memory.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -12,8 +11,8 @@ use crate::backends::gbrain::{
     SupplementalMemoryTransport, SupplementalRecall,
 };
 use crate::service::{
-    ExperienceEvent, ForgetPolicy, MemoryScope, MemoryService, RecallItem, RecallRequest,
-    RecallSet, TemporalState,
+    ExperienceEvent, ForgetPolicy, ForgetReceipt, MemoryScope, MemoryService, RecallRequest,
+    RecallSet,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +26,10 @@ pub struct CompositeMemoryHealth {
 #[async_trait]
 pub trait SupplementalMemoryService: Send + Sync {
     fn queue_depth(&self) -> usize;
+
+    fn metrics(&self) -> Option<crate::MemoryMetrics> {
+        None
+    }
 
     fn record(
         &self,
@@ -45,6 +48,10 @@ pub trait SupplementalMemoryService: Send + Sync {
 impl<T: SupplementalMemoryTransport + 'static> SupplementalMemoryService for GbrainBackend<T> {
     fn queue_depth(&self) -> usize {
         self.spool().queue_depth().unwrap_or_default()
+    }
+
+    fn metrics(&self) -> Option<crate::MemoryMetrics> {
+        Some(GbrainBackend::metrics(self).clone())
     }
 
     fn record(
@@ -202,8 +209,25 @@ impl MemoryService for CompositeMemoryService {
             supplemental.health.error_category,
             supplemental.health.queue_depth,
         );
+        let mut supplemental_items = supplemental.items;
+        for item in &mut supplemental_items {
+            item.scope = crate::MemoryScope::Session(request.session.clone());
+        }
+        let mut degraded_sources = local.degraded_sources;
+        if supplemental.health.degraded {
+            degraded_sources.push("gbrain".into());
+        }
+        let metrics = self
+            .supplemental
+            .as_ref()
+            .and_then(|service| service.metrics());
         Ok(RecallSet {
-            items: merge_items(local.items, supplemental.items, &request),
+            items: crate::recall::merge_items(
+                [local.items, supplemental_items],
+                &request,
+                metrics.as_ref(),
+            ),
+            degraded_sources,
         })
     }
 
@@ -211,116 +235,13 @@ impl MemoryService for CompositeMemoryService {
         self.local.consolidate(scope).await
     }
 
-    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<()> {
-        self.local.forget(policy.clone()).await?;
-        if let Some(supplemental) = &self.supplemental {
-            supplemental.forget(policy)?;
-        }
-        Ok(())
+    async fn preview_forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        self.local.preview_forget(policy).await
     }
-}
 
-fn merge_items(
-    local: Vec<RecallItem>,
-    remote: Vec<RecallItem>,
-    request: &RecallRequest,
-) -> Vec<RecallItem> {
-    let mut superseded = HashSet::new();
-    for item in local.iter().chain(&remote) {
-        if let Some(previous) = &item.metadata.supersedes {
-            superseded.insert(previous.clone());
-        }
-    }
-    let mut by_key: HashMap<(String, String), RecallItem> = HashMap::new();
-    for mut item in local.into_iter().chain(remote) {
-        if superseded.contains(&item.metadata.record_id) {
-            item.temporal_state = TemporalState::Superseded;
-        }
-        let key = (
-            item.metadata.provenance.source.clone(),
-            if request.include_historical {
-                format!(
-                    "{}#{}",
-                    item.metadata.provenance.source_id, item.metadata.record_id
-                )
-            } else {
-                item.metadata.provenance.source_id.clone()
-            },
-        );
-        match by_key.get(&key) {
-            Some(existing) if !prefer(&item, existing) => {}
-            _ => {
-                by_key.insert(key, item);
-            }
-        }
-    }
-    let mut items = by_key
-        .into_values()
-        .filter(|item| {
-            request.include_historical
-                || !matches!(
-                    item.temporal_state,
-                    TemporalState::Superseded | TemporalState::Expired
-                )
-        })
-        .collect::<Vec<_>>();
-    items.sort_by(|left, right| {
-        state_rank(left.temporal_state)
-            .cmp(&state_rank(right.temporal_state))
-            .then_with(|| {
-                right
-                    .metadata
-                    .observed_time
-                    .cmp(&left.metadata.observed_time)
-            })
-            .then_with(|| {
-                right
-                    .metadata
-                    .confidence
-                    .total_cmp(&left.metadata.confidence)
-            })
-            .then_with(|| left.metadata.record_id.cmp(&right.metadata.record_id))
-    });
-    let mut bytes = 0usize;
-    items
-        .into_iter()
-        .take(request.max_items)
-        .take_while(|item| {
-            if bytes.saturating_add(item.content.len()) > request.max_content_bytes {
-                false
-            } else {
-                bytes += item.content.len();
-                true
-            }
-        })
-        .collect()
-}
-
-fn prefer(candidate: &RecallItem, existing: &RecallItem) -> bool {
-    state_rank(candidate.temporal_state) < state_rank(existing.temporal_state)
-        || (state_rank(candidate.temporal_state) == state_rank(existing.temporal_state)
-            && (
-                candidate
-                    .metadata
-                    .valid_from
-                    .unwrap_or(candidate.metadata.observed_time),
-                candidate.metadata.observed_time,
-                candidate.metadata.confidence,
-            ) > (
-                existing
-                    .metadata
-                    .valid_from
-                    .unwrap_or(existing.metadata.observed_time),
-                existing.metadata.observed_time,
-                existing.metadata.confidence,
-            ))
-}
-
-fn state_rank(state: TemporalState) -> u8 {
-    match state {
-        TemporalState::Current => 0,
-        TemporalState::Unknown => 1,
-        TemporalState::Superseded => 2,
-        TemporalState::Expired => 3,
+    async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        // The local retention transaction persists remote-pending state. The
+        // supplemental worker propagates that durable outbox asynchronously.
+        self.local.forget(policy).await
     }
 }

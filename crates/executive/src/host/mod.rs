@@ -12,6 +12,7 @@
 //! - Object-safe: `serve` takes `self: Box<Self>` for ownership transfer
 
 pub mod container;
+pub mod launcher;
 pub mod systemd;
 
 use aletheon_kernel::chronos::SystemTimer;
@@ -154,14 +155,19 @@ impl RuntimeHost for DaemonHost {
         let socket = self.socket;
         let pulse_handle = core.pulse_handle;
         let pid_file = self.pid_file;
-        let clock = request_handler.subsystems.ports.clock.clone();
+        let clock = request_handler.clock();
 
         // ── MCP embedded server ─────────────────────────────────────
         let mcp_socket = socket
             .parent()
             .unwrap_or(&PathBuf::from("/tmp/aletheon"))
             .join("aletheon-mcp.sock");
-        let mcp_server = McpEmbedded::new(request_handler.tools(), mcp_socket.clone());
+        let mcp_server = McpEmbedded::new(
+            request_handler.corpus_service(),
+            request_handler.corpus_grant(),
+            request_handler.capability_service(),
+            mcp_socket.clone(),
+        );
         tokio::spawn(async move {
             if let Err(e) = mcp_server.serve().await {
                 tracing::error!("MCP embedded server error: {}", e);
@@ -197,6 +203,7 @@ impl RuntimeHost for DaemonHost {
         // Any chat turn that was still running when the accept loop
         // ended gets its interrupt flag set and per-turn token cancelled.
         unix_server.handler().cancel_current_turn().await;
+        unix_server.handler().shutdown_runtime().await?;
 
         // ── Graceful shutdown: stop LlmPulse ────────────────────────
         if let Some((shutdown_tx, handle)) = pulse_handle {

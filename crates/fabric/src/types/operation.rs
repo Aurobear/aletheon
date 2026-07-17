@@ -44,7 +44,8 @@ pub enum OperationKind {
     CapabilityCall,
     MemoryConsolidation,
     SubAgent,
-    Other(String),
+    ConsciousCycle,
+    ApprovedApply,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +59,19 @@ pub enum OperationState {
 }
 
 impl OperationState {
+    pub fn can_transition_to(self, next: Self) -> bool {
+        use OperationState::*;
+        matches!(
+            (self, next),
+            (Submitted, Running)
+                | (Submitted, Cancelling)
+                | (Running, Cancelling)
+                | (Running, Succeeded)
+                | (Running, Failed)
+                | (Cancelling, Cancelled)
+        )
+    }
+
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
     }

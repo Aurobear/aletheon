@@ -1,8 +1,8 @@
-use cognit::r#impl::provider_registry::ProviderRegistry;
 use fabric::LlmProvider;
 use std::sync::Arc;
 
 use crate::core::config::ModelRoutingConfig;
+use crate::service::inference_port::{InferencePort, PortLlmProvider};
 
 /// Task type for model routing decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,12 +22,12 @@ pub enum TaskType {
 /// Dynamic model router that selects the best model for each task type.
 pub struct ModelRouter {
     routing: ModelRoutingConfig,
-    registry: Arc<ProviderRegistry>,
+    inference: Arc<dyn InferencePort>,
 }
 
 impl ModelRouter {
-    pub fn new(routing: ModelRoutingConfig, registry: Arc<ProviderRegistry>) -> Self {
-        Self { routing, registry }
+    pub fn new(routing: ModelRoutingConfig, inference: Arc<dyn InferencePort>) -> Self {
+        Self { routing, inference }
     }
 
     /// Resolve the model spec for a given task type.
@@ -43,26 +43,13 @@ impl ModelRouter {
     }
 
     /// Create an LLM provider for the given task type.
-    /// Falls back through the routing chain: task-specific → default → registry default.
+    /// Falls back through the routing chain: task-specific → default → core default.
     pub fn create_provider(&self, task: TaskType) -> anyhow::Result<Box<dyn LlmProvider>> {
-        // Try task-specific model
-        if let Some(spec) = self.resolve_spec(task) {
-            if let Ok(provider) = self.registry.resolve_and_create(spec) {
-                return Ok(provider);
-            }
-        }
-
-        // Fall back to default routing
-        if task != TaskType::General {
-            if let Some(spec) = self.resolve_spec(TaskType::General) {
-                if let Ok(provider) = self.registry.resolve_and_create(spec) {
-                    return Ok(provider);
-                }
-            }
-        }
-
-        // Fall back to registry default
-        self.registry.resolve_and_create("")
+        let spec = self
+            .resolve_spec(task)
+            .or_else(|| self.resolve_spec(TaskType::General))
+            .unwrap_or_default();
+        Ok(Box::new(PortLlmProvider::new(self.inference.clone(), spec)))
     }
 
     /// Classify a message into a task type based on content analysis.
@@ -196,7 +183,7 @@ impl ModelRouter {
     /// Get the model name for a task type (for logging/debugging).
     pub fn model_name_for(&self, task: TaskType) -> String {
         self.resolve_spec(task)
-            .unwrap_or("(registry default)")
+            .unwrap_or("(core default)")
             .to_string()
     }
 }

@@ -61,7 +61,8 @@ impl Default for ExecutiveConfig {
 ///
 /// Each field is a list of script paths to execute at the specified lifecycle point.
 /// Paths may use `~` for home directory expansion.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct HooksConfig {
     /// Scripts to run before each turn (receives user prompt as JSON on stdin).
     #[serde(default)]

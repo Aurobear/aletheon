@@ -15,6 +15,7 @@
 //! Business logic lives in `crate::core/` (orchestrator, session_gateway)
 //! and in subsystem crates (cognit, dasein, corpus, memory, metacog).
 
+pub(crate) mod bootstrap;
 pub mod cache_shape;
 pub mod debug_handler;
 pub mod handler;
@@ -33,8 +34,6 @@ use crate::host::RuntimeHost;
 /// Daemon configuration.
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
-    pub api_key: String,
-    pub api_url: String,
     pub model: String,
     pub working_dir: String,
     pub data_dir: String,
@@ -52,6 +51,8 @@ pub struct DaemonConfig {
     pub gbrain_memory: cognit::config::GbrainMemoryConfig,
     /// Typed deployment paths, quotas, integrations, and health policy.
     pub deployment: cognit::config::DeploymentConfig,
+    /// Root-scoped multi-Agent topology and rollout limits.
+    pub agent_admission: cognit::config::AgentAdmissionConfig,
 }
 
 /// Default config file search paths.

@@ -1,28 +1,28 @@
 use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::operation::{OperationScope, OperationTable};
+use aletheon_kernel::operation::OperationScope;
+use aletheon_kernel::KernelRuntime;
 use fabric::{
-    CancelReason, OperationExitReason, OperationKind, OperationManager, OperationRequest,
-    OperationState, ProcessId,
+    CancelReason, OperationExitReason, OperationKind, OperationRequest, OperationState, SpawnSpec,
 };
 use std::sync::Arc;
 use std::time::Duration;
 
 #[tokio::test]
 async fn operation_parent_cancel_propagates_to_children() {
-    let table = OperationTable::new(Arc::new(TestClock::default()));
-    let owner = ProcessId::new();
-    let parent = table
-        .submit(OperationRequest {
-            owner,
+    let runtime = KernelRuntime::with_clock(Arc::new(TestClock::default()));
+    let process = runtime.spawn_process(SpawnSpec::default()).await.unwrap();
+    let parent = runtime
+        .submit_operation(OperationRequest {
+            owner: process.id,
             parent: None,
             kind: OperationKind::Turn,
             deadline: None,
         })
         .await
         .unwrap();
-    let child = table
-        .submit(OperationRequest {
-            owner,
+    let child = runtime
+        .submit_operation(OperationRequest {
+            owner: process.id,
             parent: Some(parent.id),
             kind: OperationKind::ModelCall,
             deadline: None,
@@ -30,9 +30,12 @@ async fn operation_parent_cancel_propagates_to_children() {
         .await
         .unwrap();
 
-    table.cancel(parent.id, CancelReason::User).await.unwrap();
-    let parent_result = table.wait(parent.id).await.unwrap();
-    let child_result = table.wait(child.id).await.unwrap();
+    runtime
+        .cancel_operation(parent.id, CancelReason::User)
+        .await
+        .unwrap();
+    let parent_result = runtime.wait_operation(parent.id).await.unwrap();
+    let child_result = runtime.wait_operation(child.id).await.unwrap();
     assert_eq!(parent_result.state, OperationState::Cancelled);
     assert_eq!(child_result.state, OperationState::Cancelled);
     assert!(matches!(

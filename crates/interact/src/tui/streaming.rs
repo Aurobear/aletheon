@@ -66,7 +66,7 @@ pub struct StreamController {
 
 impl Default for StreamController {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+        Self::new(Arc::new(crate::tui::host_time::ClientClock::new()))
     }
 }
 

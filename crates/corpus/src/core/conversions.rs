@@ -29,6 +29,8 @@ pub fn tool_result_to_action_result(result: &ToolResult) -> ActionResult {
 /// Convert Context to ToolContext
 pub fn context_to_tool_context(ctx: &Context, clock: Arc<dyn fabric::Clock>) -> ToolContext {
     ToolContext {
+        approval_authority: None,
+        agent: None,
         working_dir: ctx.working_dir.clone(),
         session_id: ctx.session_id.clone(),
         clock,

@@ -1,59 +1,46 @@
-//! AgentTool — delegates tasks to sub-agents with independent execution contexts.
-//!
-//! Each sub-agent runs with its own tool pool and system prompt as defined
-//! in the agent's markdown definition file.
+//! Compatibility `agent` tool implemented as bounded Agent control spawn + wait.
 
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use fabric::{
+    AgentBudget, AgentContextFork, AgentControlPort, AgentProfile, AgentSpawnRequest,
+    AgentWaitRequest, RuntimeId,
+};
 
-/// Agent definition loaded from markdown files.
-/// This mirrors the runtime's AgentDefinition to avoid cross-crate deps.
-#[derive(Debug, Clone)]
-pub struct AgentDefinition {
-    pub name: String,
-    pub description: String,
-    pub tools: Vec<String>,
-    pub model: Option<String>,
-    pub max_iterations: usize,
-    pub system_prompt: String,
-}
+const DEFAULT_WAIT_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 
-/// Function type for executing a sub-agent turn.
-/// Takes (system_prompt, user_prompt, allowed_tool_names) and returns the response.
-pub type ExecuteSubAgentFn = Arc<
-    dyn Fn(
-            String,
-            String,
-            Vec<String>,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>>
-        + Send
-        + Sync,
->;
-
-/// A tool that delegates tasks to sub-agents.
-///
-/// Each sub-agent runs with its own tool pool and system prompt as defined
-/// in the agent's markdown definition file. The actual LLM execution is
-/// delegated to a callback function provided at construction time.
 pub struct AgentTool {
-    agents: HashMap<String, AgentDefinition>,
-    execute_fn: ExecuteSubAgentFn,
+    profiles: HashMap<String, AgentProfile>,
+    control: Arc<dyn AgentControlPort>,
+    runtime_id: RuntimeId,
+    wait_timeout_ms: u64,
 }
 
 impl AgentTool {
-    pub fn new(agents: HashMap<String, AgentDefinition>, execute_fn: ExecuteSubAgentFn) -> Self {
-        Self { agents, execute_fn }
+    pub fn new(
+        profiles: HashMap<String, AgentProfile>,
+        control: Arc<dyn AgentControlPort>,
+        runtime_id: RuntimeId,
+    ) -> Self {
+        Self {
+            profiles,
+            control,
+            runtime_id,
+            wait_timeout_ms: DEFAULT_WAIT_TIMEOUT_MS,
+        }
     }
 
-    /// Get list of available agent names.
+    pub fn with_wait_timeout(mut self, timeout_ms: u64) -> Self {
+        self.wait_timeout_ms = timeout_ms.max(1);
+        self
+    }
+
     fn agent_names(&self) -> Vec<&str> {
-        self.agents.keys().map(|s| s.as_str()).collect()
+        self.profiles.keys().map(String::as_str).collect()
     }
 }
 
@@ -64,22 +51,23 @@ impl Tool for AgentTool {
     }
 
     fn description(&self) -> &str {
-        "Delegate a task to a specialized sub-agent with its own tools and system prompt"
+        "Delegate a task to a configured child Agent and wait for its bounded result"
     }
 
     fn input_schema(&self) -> serde_json::Value {
-        let agent_names: Vec<&str> = self.agent_names();
+        let agent_names = self.agent_names();
         json!({
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "agent_type": {
                     "type": "string",
-                    "description": "The type of agent to delegate to",
                     "enum": agent_names
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "The task or question to delegate to the sub-agent"
+                    "minLength": 1,
+                    "maxLength": 65536
                 }
             },
             "required": ["agent_type", "prompt"]
@@ -91,65 +79,88 @@ impl Tool for AgentTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(AgentTool {
-            agents: self.agents.clone(),
-            execute_fn: self.execute_fn.clone(),
+        Box::new(Self {
+            profiles: self.profiles.clone(),
+            control: self.control.clone(),
+            runtime_id: self.runtime_id.clone(),
+            wait_timeout_ms: self.wait_timeout_ms,
         })
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let agent_type = input["agent_type"].as_str().unwrap_or("");
-        let prompt = input["prompt"].as_str().unwrap_or("");
-
-        if agent_type.is_empty() || prompt.is_empty() {
-            return ToolResult {
-                content: "Both 'agent_type' and 'prompt' are required".to_string(),
-                is_error: true,
-                metadata: ToolResultMeta::default(),
-            };
-        }
-
-        // Look up agent definition
-        let agent_def = match self.agents.get(agent_type) {
-            Some(def) => def,
-            None => {
-                let available: Vec<&str> = self.agent_names();
-                return ToolResult {
-                    content: format!(
-                        "Unknown agent type: '{}'. Available agents: {:?}",
-                        agent_type, available
-                    ),
-                    is_error: true,
-                    metadata: ToolResultMeta::default(),
-                };
-            }
+    async fn execute(&self, input: serde_json::Value, context: &ToolContext) -> ToolResult {
+        let Some(trusted) = context.agent else {
+            return tool_error("Agent tool requires trusted lifecycle context");
         };
-
-        // Build system prompt with delegation context
-        let system_prompt = format!(
-            "{}\n\n---\nYou are a sub-agent delegated by the main agent. \
-             Focus on completing the assigned task efficiently.",
-            agent_def.system_prompt
-        );
-
-        // Get the list of allowed tools for this agent
-        let allowed_tools = agent_def.tools.clone();
-
-        // Execute the sub-agent via the callback
-        let result = (self.execute_fn)(system_prompt, prompt.to_string(), allowed_tools).await;
-
-        match result {
-            Ok(response) => ToolResult {
-                content: response,
+        let Some(agent_type) = input.get("agent_type").and_then(|value| value.as_str()) else {
+            return tool_error("Both 'agent_type' and 'prompt' are required");
+        };
+        let Some(prompt) = input.get("prompt").and_then(|value| value.as_str()) else {
+            return tool_error("Both 'agent_type' and 'prompt' are required");
+        };
+        let Some(profile) = self.profiles.get(agent_type) else {
+            return tool_error("Unknown Agent profile");
+        };
+        let request = AgentSpawnRequest {
+            root_agent_id: trusted.caller_root_agent_id,
+            parent_agent_id: Some(trusted.parent_agent_id),
+            parent_process_id: Some(trusted.parent_process_id),
+            profile_id: profile.id.clone(),
+            runtime_id: self.runtime_id.clone(),
+            trusted_workspace: match context.effective_workspace_policy() {
+                Ok(workspace) => Some(workspace),
+                Err(error) => return tool_error(&format!("Invalid Agent workspace: {error}")),
+            },
+            task: prompt.to_string(),
+            context: AgentContextFork::None,
+            broadcast_refs: vec![],
+            allowed_tools: profile.allowed_tools.clone(),
+            budget: AgentBudget {
+                max_input_tokens: profile.max_input_tokens,
+                max_output_tokens: profile.max_output_tokens,
+                max_tool_calls: profile.max_tool_calls,
+                max_elapsed_ms: profile.max_elapsed_ms,
+                max_cost_usd: None,
+                max_depth: 4,
+            },
+        };
+        if let Err(error) = request.validate() {
+            return tool_error(&format!("Invalid Agent request: {:?}", error.kind));
+        }
+        let handle = match self.control.spawn(request).await {
+            Ok(handle) => handle,
+            Err(error) => return tool_error(&format!("Agent spawn failed: {:?}", error.kind)),
+        };
+        let snapshot = match self
+            .control
+            .wait(AgentWaitRequest {
+                caller_root_agent_id: trusted.caller_root_agent_id,
+                agent_id: handle.agent_id,
+                timeout_ms: self.wait_timeout_ms,
+            })
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(error) => return tool_error(&format!("Agent wait failed: {:?}", error.kind)),
+        };
+        match snapshot.result {
+            Some(result) if snapshot.status == fabric::AgentRunStatus::Succeeded => ToolResult {
+                content: result.output,
                 is_error: false,
                 metadata: ToolResultMeta::default(),
             },
-            Err(e) => ToolResult {
-                content: format!("Sub-agent error: {}", e),
-                is_error: true,
-                metadata: ToolResultMeta::default(),
-            },
+            _ => tool_error(&format!(
+                "Agent terminated with status {:?}",
+                snapshot.status
+            )),
         }
+    }
+}
+
+fn tool_error(message: &str) -> ToolResult {
+    ToolResult {
+        content: message.to_string(),
+        is_error: true,
+        metadata: ToolResultMeta::default(),
     }
 }
 
@@ -158,31 +169,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_agent_tool_schema() {
-        let mut agents = HashMap::new();
-        agents.insert(
-            "test-agent".to_string(),
-            AgentDefinition {
-                name: "test-agent".to_string(),
-                description: "Test agent".to_string(),
-                tools: vec!["bash_exec".to_string()],
-                model: None,
-                max_iterations: 20,
-                system_prompt: "You are a test agent.".to_string(),
-            },
+    fn schema_is_bounded_and_has_no_identity_fields() {
+        let tool = AgentTool::new(
+            HashMap::new(),
+            Arc::new(TestControl),
+            RuntimeId("native-cognit".into()),
         );
-
-        let execute_fn: ExecuteSubAgentFn =
-            Arc::new(|_, _, _| Box::pin(async { Ok("test response".to_string()) }));
-
-        let tool = AgentTool::new(agents, execute_fn);
-        assert_eq!(tool.name(), "agent");
-        assert_eq!(tool.permission_level(), PermissionLevel::L1);
-
         let schema = tool.input_schema();
-        assert!(schema["properties"]["agent_type"]["enum"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("test-agent")));
+        assert_eq!(schema["additionalProperties"], false);
+        assert!(schema["properties"].get("caller_root_agent_id").is_none());
+    }
+
+    struct TestControl;
+
+    #[async_trait]
+    impl AgentControlPort for TestControl {
+        async fn spawn(
+            &self,
+            _request: AgentSpawnRequest,
+        ) -> Result<fabric::AgentHandle, fabric::AgentControlError> {
+            unreachable!()
+        }
+        async fn wait(
+            &self,
+            _request: AgentWaitRequest,
+        ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
+            unreachable!()
+        }
+        async fn send(
+            &self,
+            _request: fabric::AgentSendRequest,
+        ) -> Result<fabric::AgentControlMessage, fabric::AgentControlError> {
+            unreachable!()
+        }
+        async fn cancel(
+            &self,
+            _caller_root_agent_id: fabric::AgentId,
+            _agent_id: fabric::AgentId,
+        ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
+            unreachable!()
+        }
+        async fn inspect(
+            &self,
+            _caller_root_agent_id: fabric::AgentId,
+            _agent_id: fabric::AgentId,
+        ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
+            unreachable!()
+        }
+        async fn list(
+            &self,
+            _request: fabric::AgentListRequest,
+        ) -> Result<Vec<fabric::AgentSnapshot>, fabric::AgentControlError> {
+            unreachable!()
+        }
     }
 }

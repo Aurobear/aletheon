@@ -254,9 +254,10 @@ impl SkillExtractor {
     }
 }
 
+#[cfg(test)]
 impl Default for SkillExtractor {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
     }
 }
 

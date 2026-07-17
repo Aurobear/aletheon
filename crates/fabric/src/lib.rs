@@ -28,8 +28,14 @@ pub mod ipc;
 pub mod kernel;
 pub mod policy;
 pub mod primitives;
+pub mod protocol;
 pub mod security;
 pub mod types;
+
+pub use protocol::client::{
+    ClientEvent as ProtocolClientEvent, ClientMessage, ClientRequest, EventCursor,
+    EventSubscription, SnapshotRequest, UiSnapshot, CLIENT_PROTOCOL_VERSION,
+};
 
 // === Backward-compatible module re-exports ===
 // These allow `fabric::genome::*`, `fabric::self_field::*`, etc. to continue working.
@@ -49,11 +55,14 @@ pub use include::subsystem;
 
 // Shared type modules (from types/)
 pub use types::agent;
+pub use types::agent_control;
 pub use types::attempt;
 pub use types::capability;
 pub use types::channel;
+pub use types::conscious_core;
 pub use types::context;
 pub use types::evidence;
+pub use types::extension;
 pub use types::external_event;
 pub use types::external_identity;
 pub use types::genome;
@@ -69,8 +78,33 @@ pub use types::paths;
 pub use types::permission;
 pub use types::resource;
 pub use types::sandbox;
+pub use types::session;
 pub use types::tool;
 pub use types::vision;
+pub use types::workspace;
+
+pub use protocol::conscious_core::{
+    CandidateDisposition, ConsciousCoreSnapshot, InspectorProcessorAck,
+};
+pub use types::conscious_core::{
+    BroadcastIntegrationReceipt, ConsciousContextProjection, ConsciousProcessor,
+    ContextProjectionReceipt, ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId,
+    ProcessorResponse, StructuredSelfView, MAX_PROCESSOR_ACKNOWLEDGEMENTS,
+    MAX_PROCESSOR_RESPONSE_CANDIDATES, MAX_SELF_VIEW_ITEMS,
+};
+pub use types::conscious_core_trace::{
+    AcceptanceEvidence, ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult,
+    CONSCIOUS_CORE_TRACE_SCHEMA_V1,
+};
+pub use types::workspace::{
+    ActionProposalFrame, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, BroadcastEpoch,
+    CandidateScore, CareConcernFrame, ContentId, GoalFrame, GovernedActionOutcomeFrame,
+    PredictionErrorFrame, PredictionFrame, RecalledExperienceFrame, SalienceVector,
+    SelectionExplanation, SelectionResult, ToolOutcomeFrame, VisibilityScope, WorkspaceAttribution,
+    WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent, WorkspaceObservation,
+    WorkspaceProvenance, WorkspaceReflection, MAX_BROADCAST_RESPONSES, MAX_BROADCAST_WINNERS,
+    WORKSPACE_SCHEMA_V1,
+};
 
 // Event modules
 pub use events::evolution;
@@ -82,7 +116,7 @@ pub use events::ui_event;
 // Re-export ipc_msg types at ipc level for backward compatibility.
 pub use ipc::envelope;
 pub use ipc::ipc_types;
-pub use ipc::protocol;
+pub use ipc::protocol as legacy_protocol;
 pub use ipc::transport;
 
 // Kernel modules (from kernel/)
@@ -99,10 +133,10 @@ pub use policy::verifier;
 // These preserve the flat API surface so external consumers don't need to change.
 
 // Subsystem traits (from include/)
-pub use include::admission::AdmissionController;
+pub use include::admission::{AdmissionController, BudgetController, LeaseManager};
 pub use include::agora::{
     AgoraCommit, AgoraOperation, AgoraOps, AgoraProposal, AgoraService, AgoraViewRequest,
-    CommitPermit, CommitReceipt, RejectReason, VersionConflict,
+    CommitReceipt, RejectReason, VersionConflict, WorkspaceCommitPermit,
 };
 pub use include::body::{Action, ActionResult, BodyRuntime};
 pub use include::capability_invoker::CapabilityInvoker;
@@ -132,17 +166,27 @@ pub use include::self_field::{
 pub use include::space::SpaceManager;
 pub use include::subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
 pub use include::turn::{
-    AgoraView, CapabilityRequest, CapabilityResult, DaseinView, NoopTurnEventSink, RecallRequest,
-    RecallSet, StubTurnServices, TurnEventSink, TurnServices,
+    AgoraView, CapabilityAuthority, CapabilityCall, CapabilityRequest, CapabilityResult,
+    DaseinView, InvocationControl, NoopTurnEventSink, RecallRequest, RecallSet, StubTurnServices,
+    TurnEventSink, TurnServices,
 };
 
 // Shared types (from types/)
 pub use types::admission::{
     AdmissionError, AdmissionRequest, AuditEventId, BudgetRequest, BudgetReservationId,
-    CapabilityId, CapabilityScope, ExecutionPermit, LeaseRequest, PermitId, PrincipalId,
-    ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
+    BudgetReservationReceipt, BudgetScope, BudgetScopeId, BudgetScopeKind, CapabilityId,
+    CapabilityScope, ExecutionPermit, LeaseRequest, PermitId, PrincipalId, ResourceLeaseId,
+    RevokeReason, SandboxDecision, SandboxRequirement, UsageReport, BUDGET_SCOPE_SCHEMA_VERSION,
 };
 pub use types::agent::Pid;
+pub use types::agent_control::{
+    AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentControlError,
+    AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle, AgentListRequest,
+    AgentMessageDeliveryState, AgentMessageKind, AgentMessagePayload, AgentMessageReceipt,
+    AgentProfile, AgentRecoveryDecision, AgentRecoveryReceipt, AgentResult, AgentRunStatus,
+    AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentTaskId, AgentWaitRequest,
+    RuntimeResumability, AGENT_MESSAGE_SCHEMA_V1,
+};
 pub use types::approval::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,
     ApprovalRisk, ApprovalSnapshot, ApprovalStatus, ApprovalSubject,
@@ -162,6 +206,10 @@ pub use types::coding_job::{
     WorkspaceBoundary,
 };
 pub use types::context::{Context, TraceState};
+pub use types::extension::{
+    ActivationConstraints, ExtensionCatalog, ExtensionContractError, ExtensionDescriptor,
+    ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
+};
 pub use types::external_event::{
     DriveFileMetadata, ExternalContentRef, ExternalEventDraft, ExternalEventEnvelope,
     ExternalEventError, ExternalEventId, ExternalObjectRef, GoogleEvent, MailChange,
@@ -185,6 +233,10 @@ pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
 pub use types::llm_types::{
     LlmProvider, LlmResponse, LlmStream, ModelInfo, StopReason, StreamChunk, ToolDefinition, Usage,
 };
+pub use types::local_authority::{
+    ApprovalPolicy, ConnectionId, LocalOsPrincipal, PermissionProfileId, PrincipalContext,
+    ProtectedPathPolicy, ThreadId, WorkspacePolicy, WorkspaceResolveError, WorkspaceSelection,
+};
 pub use types::message::{ContentBlock, ImageSource, Message, Priority as MessagePriority, Role};
 pub use types::objective::{Objective, ObjectiveStatus, ObjectiveSummary};
 pub use types::operation::{
@@ -195,13 +247,19 @@ pub use types::permission::{
     ModeConfig, PermissionBehavior, PermissionContext, PermissionMode, PermissionRule,
 };
 pub use types::process::{
-    AgentId, AgentProfileId, ExitReason, ExitStatus, MailboxId, NamespaceId, ProcessRecord,
-    ProcessSignal, ProcessSnapshot, ProcessState, SpaceId, SpawnSpec,
+    AgentId, AgentProfileId, ExitReason, ExitStatus, MailboxId, NamespaceId, OsProcessId,
+    ProcessIdentity, ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState, SpaceId,
+    SpawnSpec,
 };
 pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
     SandboxExecutor, SandboxPreference, SandboxResult,
+};
+pub use types::session::{
+    AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
+    SessionForkedEvent, SessionNotification, SessionProtocolV1, SessionRecord, SessionStatus,
+    TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
 };
 pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,
@@ -209,17 +267,21 @@ pub use types::space::{
 };
 pub use types::time::{wall_to_datetime, MonoDeadline, MonoTime, WallTime};
 pub use types::tool::{
-    PermissionLevel as ToolPermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
+    AgentToolContext, ApprovalOwner, PendingApprovalKey, PermissionLevel as ToolPermissionLevel,
+    ThreadGrantKey, Tool, ToolApprovalAuthority, ToolContext, ToolResult, ToolResultMeta,
 };
-pub use types::turn::{TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop};
+pub use types::turn::{
+    TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop, TurnTerminalStatus,
+};
 
 // Event types
-pub use events::event_log;
-pub use events::event_log::{EventLog, LogEntry};
-pub use events::types as event;
-pub use events::types::{
-    AsyncEventHandler, ConcreteEvent, Event, EventHandler, EventType, Priority, SubscriptionId,
+pub use events::spine::{
+    EventId, EventIdentity, EventPayload, EventPosition, EventSpine, EventTreeId, EventVisibility,
+    ParentEventId, SpineEvent, TreeSequence, UnsequencedEvent,
 };
+pub use events::subscription::{AsyncEnvelopeHandler, EnvelopeHandler};
+pub use events::types as event;
+pub use events::types::{EventType, Priority, SubscriptionId};
 pub use events::ui_event::{
     AwarenessLevel, ClientEvent, CollaborationMode, EvolutionStage, InterruptReason, PlanUpdate,
     SubAgentHandle, SubAgentState, SubAgentStatus,
@@ -271,4 +333,4 @@ pub use primitives::{
 };
 
 // Compaction (shared context-compaction interface + pruning helpers)
-pub use include::compaction::{prune_tool_outputs, CompactorTrait};
+pub use include::compaction::{prune_tool_outputs, truncate_utf8_bytes, CompactorTrait};

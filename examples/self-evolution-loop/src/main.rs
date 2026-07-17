@@ -19,9 +19,10 @@ use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObserva
 use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
-use fabric::events::types::{ConcreteEvent, EventType, Priority};
 use fabric::evolution::*;
-use fabric::KernelEventBus;
+use fabric::{
+    EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, KernelEventBus, NamespaceId, SchemaId,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,21 +56,22 @@ fn build_scheduler() -> Result<Arc<LlmScheduler>> {
         ],
     };
 
-    Ok(Arc::new(LlmScheduler::new(&config)?))
+    Ok(Arc::new(LlmScheduler::new(
+        &config,
+        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+    )?))
 }
 
-/// Create a ConcreteEvent carrying a ToolObservationPayload.
-///
-/// The payload is boxed as `serde_json::Value` so that `to_json()` works
-/// correctly for async handler delivery through the EventBus.
-fn make_tool_observation_event(obs: &ToolObservationPayload) -> Box<ConcreteEvent> {
-    let json_value = serde_json::to_value(obs).unwrap_or(serde_json::Value::Null);
-    Box::new(ConcreteEvent::new(
-        EventType::ToolObservation,
-        Priority::Normal,
-        "demo-engine".to_string(),
-        Box::new(json_value),
-    ))
+/// Create a canonical, versioned envelope carrying a tool observation.
+fn make_tool_observation_event(obs: &ToolObservationPayload) -> EnvelopeV2 {
+    EnvelopeV2::new(
+        SchemaId(SchemaId::EVENT_TOOL_OBSERVATION_V1.into()),
+        EnvelopeV2Target("demo-engine".into()),
+        EnvelopeV2Target("cognit-observer".into()),
+        EnvelopeV2Delivery::FanOut,
+        NamespaceId("self-evolution-demo".into()),
+        serde_json::to_value(obs).unwrap_or(serde_json::Value::Null),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -129,11 +131,11 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     let observer_for_handler = observer.clone();
     bus.subscribe_async(
-        EventType::ToolObservation,
-        Box::new(move |json: serde_json::Value| {
+        SchemaId(SchemaId::EVENT_TOOL_OBSERVATION_V1.into()),
+        Box::new(move |envelope: EnvelopeV2| {
             let obs = observer_for_handler.clone();
             Box::pin(async move {
-                match serde_json::from_value::<ToolObservationPayload>(json) {
+                match serde_json::from_value::<ToolObservationPayload>(envelope.payload) {
                     Ok(payload) => {
                         println!(
                             "\n  [Handler] Processing tool observation: tool={}, error={:?}",

@@ -14,6 +14,7 @@ pub mod core;
 pub mod r#impl;
 pub mod service;
 pub mod tools;
+pub mod user_runtime;
 
 pub mod host;
 pub use aletheon_kernel as kernel;
@@ -39,6 +40,7 @@ pub use crate::service::exec_session::ExecSessionBuilder;
 pub use fabric::types::admission::RiskLevel;
 pub use fabric::{
     AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,
-    CapabilityScope, LlmProvider, Message, NoopTurnEventSink, OperationId, PrincipalId, ProcessId,
-    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices, UsageReport,
+    CapabilityScope, ContentBlock, LlmProvider, LlmResponse, LlmStream, LocalOsPrincipal, Message,
+    NoopTurnEventSink, OperationId, PrincipalId, ProcessId, RecallSet, SandboxRequirement,
+    StopReason, StreamChunk, ToolDefinition, TurnRequest, TurnServices, Usage, UsageReport,
 };

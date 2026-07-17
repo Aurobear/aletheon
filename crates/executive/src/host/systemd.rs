@@ -114,7 +114,6 @@ impl crate::host::RuntimeHost for SystemdHost {
         // ── Watchdog task ───────────────────────────────────────────
         if let Some(interval_usec) = watchdog_interval_usec() {
             let interval = Duration::from_micros(interval_usec);
-            let _clock = core.request_handler.subsystems.ports.clock.clone();
             tracing::info!(
                 interval_us = interval_usec,
                 "Systemd watchdog enabled, pinging every {} us",
@@ -144,14 +143,17 @@ impl crate::host::RuntimeHost for SystemdHost {
         let cancel_token = core.cancel_token;
         let socket = self.socket;
         let pulse_handle = core.pulse_handle;
-        let _clock = request_handler.subsystems.ports.clock.clone();
-
         // ── MCP embedded server ─────────────────────────────────────
         let mcp_socket = socket
             .parent()
             .unwrap_or(&PathBuf::from("/tmp/aletheon"))
             .join("aletheon-mcp.sock");
-        let mcp_server = McpEmbedded::new(request_handler.tools(), mcp_socket.clone());
+        let mcp_server = McpEmbedded::new(
+            request_handler.corpus_service(),
+            request_handler.corpus_grant(),
+            request_handler.capability_service(),
+            mcp_socket.clone(),
+        );
         tokio::spawn(async move {
             if let Err(e) = mcp_server.serve().await {
                 tracing::error!("MCP embedded server error: {}", e);
@@ -188,6 +190,8 @@ impl crate::host::RuntimeHost for SystemdHost {
 
         // ── Block until shutdown ────────────────────────────────────
         unix_server.run().await?;
+        unix_server.handler().cancel_current_turn().await;
+        unix_server.handler().shutdown_runtime().await?;
 
         // ── Graceful shutdown: stop LlmPulse ────────────────────────
         if let Some((shutdown_tx, handle)) = pulse_handle {

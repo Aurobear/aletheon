@@ -1,20 +1,39 @@
 use async_trait::async_trait;
-use cognit::harness::{CognitiveSession, HarnessConfig, LinearCognitiveSession};
+use cognit::harness::{
+    CognitiveSession, CognitiveSessionDependencies, CognitiveStreamEvent, CognitiveStreamSink,
+    HarnessConfig, LinearCognitiveSession,
+};
 use fabric::{
-    CapabilityRequest, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
+    CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
     NoopTurnEventSink, OperationId, ProcessId, StopReason, StubTurnServices, ToolDefinition,
     TurnRequest, TurnServices, TurnStop, Usage,
 };
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use tokio_util::sync::CancellationToken;
+
+fn dependencies() -> CognitiveSessionDependencies {
+    CognitiveSessionDependencies {
+        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        cancellation: CancellationToken::new(),
+        compactor: None,
+    }
+}
 
 fn request(input: &str) -> TurnRequest {
+    let cwd = std::env::current_dir().unwrap();
     TurnRequest {
         operation_id: OperationId::new(),
         process_id: ProcessId::new(),
-        session_id: "test".into(),
+        context: fabric::PrincipalContext::new(
+            fabric::PrincipalId("test:cognitive-session".into()),
+            fabric::LocalOsPrincipal { uid: 0, gid: 0 },
+            fabric::ConnectionId::new(),
+            fabric::ThreadId("test".into()),
+            fabric::WorkspacePolicy::from_resolved_roots(cwd, vec![]).unwrap(),
+            fabric::PermissionProfileId::workspace_write(),
+            fabric::ApprovalPolicy::OnRequest,
+        ),
         input: input.into(),
-        working_dir: PathBuf::from("."),
         model_policy: None,
         deadline: None,
     }
@@ -22,7 +41,7 @@ fn request(input: &str) -> TurnRequest {
 
 #[tokio::test]
 async fn linear_session_returns_turn_result() {
-    let mut session = LinearCognitiveSession::new(HarnessConfig::default());
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
 
     let result = session
         .run_turn(request("hello"), &StubTurnServices, &NoopTurnEventSink)
@@ -107,7 +126,7 @@ impl TurnServices for ScriptedTurnServices {
         Ok(fabric::AgoraView::default())
     }
 
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
+    async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
         self.invoked.lock().unwrap().push(req.name.clone());
         CapabilityResult {
             call_id: req.call_id,
@@ -139,10 +158,13 @@ async fn linear_session_runs_react_with_turn_services() {
         },
         invoked: Mutex::new(Vec::new()),
     };
-    let mut session = LinearCognitiveSession::new(HarnessConfig {
-        max_iterations: 4,
-        ..Default::default()
-    });
+    let mut session = LinearCognitiveSession::new(
+        HarnessConfig {
+            max_iterations: 4,
+            ..Default::default()
+        },
+        dependencies(),
+    );
 
     let result = session
         .run_turn(request("use tool"), &services, &NoopTurnEventSink)
@@ -153,4 +175,79 @@ async fn linear_session_runs_react_with_turn_services() {
     assert_eq!(result.output, "done: hi");
     assert_eq!(result.metrics.tool_calls_made, 1);
     assert_eq!(*services.invoked.lock().unwrap(), vec!["echo_tool"]);
+}
+
+struct StreamingServices {
+    llm: cognit::testing::mock_llm::MockLlmProvider,
+}
+
+#[async_trait]
+impl TurnServices for StreamingServices {
+    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+        Ok(Default::default())
+    }
+
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+        Ok(fabric::DaseinView {
+            text: Some("calm".into()),
+        })
+    }
+
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+        Ok(Default::default())
+    }
+
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        CapabilityResult {
+            call_id: call.call_id,
+            output: "unused".into(),
+            is_error: true,
+            usage: Default::default(),
+            audit_id: None,
+        }
+    }
+
+    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
+        Some(&self.llm)
+    }
+}
+
+#[derive(Default)]
+struct RecordingStream(Mutex<Vec<CognitiveStreamEvent>>);
+
+impl CognitiveStreamSink for RecordingStream {
+    fn emit(&self, event: CognitiveStreamEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
+#[tokio::test]
+async fn streaming_session_preserves_interactive_events_behind_the_facade() {
+    let llm = cognit::testing::mock_llm::MockLlmProvider::new("streaming");
+    llm.push_text_response("streamed answer", StopReason::EndTurn);
+    let services = StreamingServices { llm };
+    let stream = RecordingStream::default();
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_streaming_turn(
+            request("stream this"),
+            &services,
+            &NoopTurnEventSink,
+            &stream,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.output, "streamed answer");
+    let events = stream.0.lock().unwrap();
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, CognitiveStreamEvent::GoalSet { .. })));
+    assert!(events.iter().any(
+        |event| matches!(event, CognitiveStreamEvent::TextDelta { delta } if delta == "streamed answer")
+    ));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, CognitiveStreamEvent::TurnDone { result: Ok(text) } if text == "streamed answer")));
 }

@@ -1,24 +1,30 @@
+use crate::r#impl::session::canonical_store::CanonicalSessionStore;
+use crate::service::harness_factory::{CognitiveSessionFactory, LinearCognitiveSessionFactory};
+use crate::service::turn_coordinator::{cancelled_result, TurnCoordinator, TurnExecution};
+use crate::service::turn_policy::TurnPolicy;
 use crate::service::{PostTurnPipeline, PreTurnPipeline};
 use aletheon_kernel::chronos::SystemTimer;
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 use anyhow::Result;
-use cognit::harness::{CognitiveSession, HarnessConfig, LinearCognitiveSession};
+use async_trait::async_trait;
+use cognit::harness::HarnessConfig;
 use fabric::{
-    Clock, MonoDeadline, OperationKind, OperationManager, OperationRequest, ProcessManager,
-    ProcessSignal, SpawnSpec, Timer, TurnEventSink, TurnMetrics, TurnRequest, TurnResult,
-    TurnServices, TurnStop,
+    CapabilityCall, CapabilityResult, Clock, ItemPayload, RecallRequest, RecallSet, Timer,
+    TurnEventSink, TurnRequest, TurnServices,
 };
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
+/// Compatibility facade over the canonical [`TurnCoordinator`].
 pub struct TurnService {
     services: Arc<dyn TurnServices>,
     pre_turn: PreTurnPipeline,
     post_turn: PostTurnPipeline,
-    harness_config: HarnessConfig,
+    factory: Arc<dyn CognitiveSessionFactory>,
     clock: Arc<dyn Clock>,
-    /// Kernel service ports for process/operation lifecycle tracking (PR-2).
-    ports: Arc<ServicePorts>,
+    coordinator: Arc<TurnCoordinator>,
+    policy: TurnPolicy,
 }
 
 impl TurnService {
@@ -26,20 +32,30 @@ impl TurnService {
         services: Arc<dyn TurnServices>,
         pre_turn: PreTurnPipeline,
         post_turn: PostTurnPipeline,
-        ports: Arc<ServicePorts>,
+        kernel: Arc<KernelRuntime>,
     ) -> Self {
+        let store =
+            Arc::new(CanonicalSessionStore::open(":memory:").expect("in-memory session store"));
+        let coordinator = Arc::new(TurnCoordinator::new(kernel.clone(), store));
         Self {
             services,
             pre_turn,
             post_turn,
-            harness_config: HarnessConfig::default(),
-            clock: ports.clock.clone(),
-            ports,
+            factory: Arc::new(LinearCognitiveSessionFactory::new(
+                HarnessConfig::default(),
+                kernel.clock(),
+            )),
+            clock: kernel.clock(),
+            coordinator,
+            policy: TurnPolicy::exec(),
         }
     }
 
     pub fn with_harness_config(mut self, harness_config: HarnessConfig) -> Self {
-        self.harness_config = harness_config;
+        self.factory = Arc::new(LinearCognitiveSessionFactory::new(
+            harness_config,
+            self.clock.clone(),
+        ));
         self
     }
 
@@ -48,113 +64,140 @@ impl TurnService {
         self
     }
 
+    pub fn with_coordinator(mut self, coordinator: Arc<TurnCoordinator>) -> Self {
+        self.coordinator = coordinator;
+        self
+    }
+
+    pub fn with_session_factory(mut self, factory: Arc<dyn CognitiveSessionFactory>) -> Self {
+        self.factory = factory;
+        self
+    }
+
+    pub fn with_policy(mut self, policy: TurnPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
     pub async fn submit(
         &self,
-        mut request: TurnRequest,
+        request: TurnRequest,
         events: &dyn TurnEventSink,
-    ) -> Result<TurnResult> {
-        // --- PR-2: register process + operation in kernel tables ---
-        // Ensure the calling process exists in the ProcessTable.
-        if self
-            .ports
-            .process_table
-            .inspect(request.process_id)
-            .await
-            .is_err()
-        {
-            let handle = self
-                .ports
-                .process_table
-                .spawn(SpawnSpec {
-                    agent_id: fabric::AgentId::new(),
-                    namespace: fabric::NamespaceId(request.session_id.clone()),
-                    initial_operation: Some(OperationKind::Turn),
-                    ..SpawnSpec::default()
+    ) -> Result<fabric::TurnResult> {
+        let services = self.services.clone();
+        let pre_turn = self.pre_turn.clone();
+        let factory = self.factory.clone();
+        let clock = self.clock.clone();
+        let policy = self.policy.clone();
+        let runner_policy = policy.clone();
+        let history_store = self.coordinator.store();
+        let result = self
+            .coordinator
+            .submit_with(request, &policy, move |request, cancel| async move {
+                let session_record = fabric::SessionRecord {
+                    schema_version: fabric::SESSION_SCHEMA_VERSION,
+                    id: fabric::SessionId(request.context.thread_id.0.clone()),
+                    parent: None,
+                    created_at_ms: 0,
+                    status: fabric::SessionStatus::Active,
+                };
+                let mut history = history_store
+                    .load_items(&fabric::SessionId(request.context.thread_id.0.clone()), None)
+                    .await?;
+                if history.last().is_some_and(|item| {
+                    matches!(&item.payload, ItemPayload::UserMessage { content } if content == &request.input)
+                }) {
+                    history.pop();
+                }
+                let canonical_seed = crate::r#impl::session::canonical_store::project_messages(&history)?;
+                let recording = RecordingTurnServices::new(services, canonical_seed);
+                let request = pre_turn.run(request, &recording).await?;
+                let mut session = factory
+                    .create(&session_record, &runner_policy, cancel.clone())
+                    .await?;
+                let start = clock.mono_now();
+                let run = session.run_turn(request.clone(), &recording, events);
+                let mut result = match request.deadline {
+                    Some(deadline) => tokio::select! {
+                        _ = cancel.cancelled() => cancelled_result(),
+                        timeout = SystemTimer.timeout(Duration::from_millis(deadline.0), run) => {
+                            match timeout { Ok(result) => result?, Err(_) => cancelled_result() }
+                        }
+                    },
+                    None => tokio::select! {
+                        _ = cancel.cancelled() => cancelled_result(),
+                        result = run => result?,
+                    },
+                };
+                result.metrics.elapsed_ms = clock.mono_now().0.saturating_sub(start.0);
+                Ok(TurnExecution {
+                    result,
+                    items: recording.take_items().await,
+                    projection: None,
+                    context_projection: None,
                 })
-                .await?;
-            self.ports
-                .process_table
-                .signal(handle.id, ProcessSignal::Start)
-                .await?;
-        }
-
-        // Create a real operation record for this turn.
-        let op = self
-            .ports
-            .operation_table
-            .submit(OperationRequest {
-                owner: request.process_id,
-                parent: None,
-                kind: OperationKind::Turn,
-                deadline: request
-                    .deadline
-                    .as_ref()
-                    .map(|d| MonoDeadline::after(self.clock.mono_now(), d.0)),
             })
             .await?;
-        self.ports.operation_table.start(op.id).await?;
-        request.operation_id = op.id;
-        // --- end PR-2 kernel wiring ---
-
-        let request = self.pre_turn.run(request, self.services.as_ref()).await?;
-        let deadline = request.deadline;
-        let mut session = LinearCognitiveSession::new(self.harness_config.clone());
-        let start = self.clock.mono_now();
-
-        // Use Timer::timeout with the clock for deterministic deadline testing
-        // with TestClock.
-        let mut result = match deadline {
-            Some(deadline_millis) => {
-                let deadline_dur = Duration::from_millis(deadline_millis.0);
-                match SystemTimer
-                    .timeout(
-                        deadline_dur,
-                        session.run_turn(request, self.services.as_ref(), events),
-                    )
-                    .await
-                {
-                    Ok(inner) => inner?,
-                    Err(_) => {
-                        self.ports
-                            .operation_table
-                            .cancel(op.id, fabric::CancelReason::DeadlineExceeded)
-                            .await
-                            .ok();
-                        let elapsed = self.clock.mono_now().0.saturating_sub(start.0);
-                        TurnResult {
-                            output: String::new(),
-                            stop: TurnStop::Cancelled,
-                            metrics: TurnMetrics {
-                                elapsed_ms: elapsed,
-                                completed_normally: false,
-                                ..Default::default()
-                            },
-                        }
-                    }
-                }
-            }
-            None => {
-                session
-                    .run_turn(request, self.services.as_ref(), events)
-                    .await?
-            }
-        };
-
-        // Use clock to compute elapsed time for consistent metrics
-        result.metrics.elapsed_ms = self.clock.mono_now().0.saturating_sub(start.0);
-
-        // --- PR-2: settle operation ---
-        if result.stop == TurnStop::Cancelled || !result.metrics.completed_normally {
-            self.ports
-                .operation_table
-                .fail(op.id, format!("{:?}", result.stop))
-                .await
-                .ok();
-        } else {
-            self.ports.operation_table.succeed(op.id).await.ok();
-        }
-        // --- end PR-2 ---
-
         self.post_turn.run(result).await
+    }
+}
+
+struct RecordingTurnServices {
+    inner: Arc<dyn TurnServices>,
+    items: Mutex<Vec<ItemPayload>>,
+    canonical_seed: Vec<fabric::Message>,
+}
+
+impl RecordingTurnServices {
+    fn new(inner: Arc<dyn TurnServices>, canonical_seed: Vec<fabric::Message>) -> Self {
+        Self {
+            inner,
+            items: Mutex::new(Vec::new()),
+            canonical_seed,
+        }
+    }
+    async fn take_items(&self) -> Vec<ItemPayload> {
+        std::mem::take(&mut *self.items.lock().await)
+    }
+}
+
+#[async_trait]
+impl TurnServices for RecordingTurnServices {
+    async fn recall(&self, request: RecallRequest) -> Result<RecallSet> {
+        self.inner.recall(request).await
+    }
+    async fn dasein_view(&self, process: fabric::ProcessId) -> Result<fabric::DaseinView> {
+        self.inner.dasein_view(process).await
+    }
+    async fn agora_view(&self, session_id: &str) -> Result<fabric::AgoraView> {
+        self.inner.agora_view(session_id).await
+    }
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        self.items.lock().await.push(ItemPayload::ToolCall {
+            call_id: call.call_id.clone(),
+            name: call.name.clone(),
+            input: call.input.clone(),
+        });
+        let result = self.inner.invoke(call).await;
+        self.items.lock().await.push(ItemPayload::ToolResult {
+            call_id: result.call_id.clone(),
+            content: result.output.clone(),
+            is_error: result.is_error,
+            permit_id: (result.usage.permit_id != fabric::PermitId::default())
+                .then_some(result.usage.permit_id),
+            audit_id: result.audit_id,
+        });
+        result
+    }
+    fn llm_provider(&self) -> Option<&dyn fabric::LlmProvider> {
+        self.inner.llm_provider()
+    }
+    fn tool_definitions(&self) -> Vec<fabric::ToolDefinition> {
+        self.inner.tool_definitions()
+    }
+    fn seed_messages(&self, request: &TurnRequest) -> Vec<fabric::Message> {
+        let mut seed = self.inner.seed_messages(request);
+        seed.extend(self.canonical_seed.clone());
+        seed
     }
 }

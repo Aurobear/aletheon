@@ -9,6 +9,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::service::agent_control::{AgentResourceLease, AgentResourceLeaseKind};
+
 const QUARANTINE_DIR: &str = ".quarantine";
 
 #[derive(Debug, Clone)]
@@ -51,6 +53,89 @@ pub struct WorktreeRecoveryOutcome {
 
 pub trait WorktreeCleaner: Send + Sync {
     fn remove_known(&self, path: &Path) -> Result<()>;
+}
+
+pub trait AgentWorktreeReclaimer: Send + Sync {
+    fn reclaim(&self, lease: &AgentResourceLease) -> Result<()>;
+}
+
+/// Production deletion gate for Agent worktrees. Metadata must name one
+/// canonical direct child of the configured root, match the retained HEAD,
+/// and be clean. Unsafe or ambiguous worktrees are retained for inspection.
+pub struct VerifiedAgentWorktreeReclaimer {
+    cleaner: Arc<dyn WorktreeCleaner>,
+}
+
+impl Default for VerifiedAgentWorktreeReclaimer {
+    fn default() -> Self {
+        Self {
+            cleaner: Arc::new(FsWorktreeCleaner),
+        }
+    }
+}
+
+impl VerifiedAgentWorktreeReclaimer {
+    pub fn with_cleaner(cleaner: Arc<dyn WorktreeCleaner>) -> Self {
+        Self { cleaner }
+    }
+}
+
+impl AgentWorktreeReclaimer for VerifiedAgentWorktreeReclaimer {
+    fn reclaim(&self, lease: &AgentResourceLease) -> Result<()> {
+        if lease.kind != AgentResourceLeaseKind::Worktree {
+            bail!("resource lease is not a worktree lease");
+        }
+        let root = PathBuf::from(
+            lease
+                .worktree_root
+                .as_deref()
+                .context("missing worktree root")?,
+        )
+        .canonicalize()
+        .context("canonicalizing expected worktree root")?;
+        let path = PathBuf::from(
+            lease
+                .worktree_path
+                .as_deref()
+                .context("missing worktree path")?,
+        )
+        .canonicalize()
+        .context("canonicalizing retained worktree")?;
+        if path.parent() != Some(root.as_path()) {
+            bail!("worktree is not a direct child of its verified root");
+        }
+        let head = std::process::Command::new("git")
+            .args([
+                "-C",
+                path.to_str().context("non-UTF8 worktree path")?,
+                "rev-parse",
+                "HEAD",
+            ])
+            .output()
+            .context("inspecting retained worktree HEAD")?;
+        if !head.status.success()
+            || String::from_utf8_lossy(&head.stdout).trim()
+                != lease
+                    .expected_head
+                    .as_deref()
+                    .context("missing expected worktree HEAD")?
+        {
+            bail!("retained worktree HEAD does not match its lease");
+        }
+        let status = std::process::Command::new("git")
+            .args([
+                "-C",
+                path.to_str().context("non-UTF8 worktree path")?,
+                "status",
+                "--porcelain",
+            ])
+            .output()
+            .context("inspecting retained worktree cleanliness")?;
+        if !status.status.success() || !status.stdout.is_empty() {
+            bail!("retained worktree is dirty or unreadable");
+        }
+        self.cleaner.remove_known(&path)
+    }
 }
 
 #[derive(Debug, Default)]

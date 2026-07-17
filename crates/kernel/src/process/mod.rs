@@ -1,6 +1,6 @@
 //! Agent process table and handles.
 
 pub mod handle;
-pub mod table;
+pub(crate) mod table;
 
-pub use table::ProcessTable;
+pub(crate) use table::ProcessTable;

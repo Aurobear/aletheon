@@ -241,3 +241,76 @@ async fn supervised_run_honors_shutdown_without_poll_delay() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn retention_tombstone_outbox_is_projected_and_settled_asynchronously() {
+    use chrono::{DateTime, Utc};
+    use mnemosyne::{
+        ForgetAuthority, ForgetPolicy, ForgetSelector, MemoryAuthority, MemoryKind, MemoryMetadata,
+        MemoryRecord, MemoryRecordId, MemoryScope, MemoryStatus, RetentionRepository,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let spool = spool(&dir);
+    let retention = Arc::new(RetentionRepository::open(dir.path().join("retention.db")).unwrap());
+    let record = MemoryRecord {
+        id: MemoryRecordId("fact-remote".into()),
+        kind: MemoryKind::SemanticFact,
+        scope: MemoryScope::Global,
+        content: "project a durable tombstone".into(),
+        metadata: MemoryMetadata::local("fact-remote", "event-remote", DateTime::<Utc>::UNIX_EPOCH),
+        status: MemoryStatus::Current,
+        authority: MemoryAuthority::VerifiedLocalSemantic,
+        source_event_ids: vec!["event-remote".into()],
+        tags: Vec::new(),
+    };
+    retention.register(&record, 0).unwrap();
+    let policy = ForgetPolicy {
+        request_id: "forget-remote".into(),
+        selector: ForgetSelector::Exact {
+            record_ids: vec![record.id.clone()],
+            within: MemoryScope::Global,
+        },
+        requester: "owner".into(),
+        reason: "remote propagation".into(),
+        authority: ForgetAuthority::Elevated {
+            proof: "admin-proof".into(),
+        },
+    };
+    retention.preview_forget(&policy, 1).unwrap();
+    assert_eq!(
+        retention.forget(&policy, 1).unwrap().remote_pending,
+        vec![record.id.clone()]
+    );
+    let transport = Arc::new(FakeTransport::with(vec![Ok(Some("remote-page".into()))]));
+    let worker =
+        worker(spool, transport.clone(), "worker", 1).with_retention_repository(retention.clone());
+    let report = worker
+        .drain_once(2, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(report.delivered, 1);
+    assert!(transport.delivered.lock().unwrap()[0]
+        .content
+        .contains("Tombstone"));
+    assert!(retention.pending_remote_records(10).unwrap().is_empty());
+}
+
+#[test]
+fn executive_worker_only_schedules_mnemosyne_reconciliation() {
+    let source = include_str!("../src/impl/gbrain/worker.rs");
+    for forbidden in [
+        ".claim(",
+        ".acknowledge(",
+        ".retry(",
+        "RemoteMemoryReceipt",
+        "mark_remote_settled",
+        "DeadLettered",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "Executive retained GBrain memory-domain operation: {forbidden}"
+        );
+    }
+    assert!(source.contains("GbrainReconciliationService"));
+}

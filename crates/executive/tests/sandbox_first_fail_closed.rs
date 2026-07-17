@@ -11,8 +11,9 @@
 use aletheon_kernel::admission::AllowAllAdmissionController;
 use aletheon_kernel::capability::{DefaultCapabilityInvoker, StubToolExecutor};
 use fabric::{
-    AdmissionController, AdmissionError, AdmissionRequest, CapabilityInvoker, CapabilityRequest,
-    CapabilityScope, ExecutionPermit, PermitId, RevokeReason, SandboxDecision, UsageReport,
+    AdmissionController, AdmissionError, AdmissionRequest, CapabilityAuthority, CapabilityCall,
+    CapabilityInvoker, CapabilityRequest, CapabilityScope, ExecutionPermit, InvocationControl,
+    PermitId, PrincipalId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
 use std::sync::Arc;
 
@@ -60,6 +61,46 @@ impl AdmissionController for SandboxRequiredAdmissionController {
     }
 }
 
+fn request(
+    name: &str,
+    input: serde_json::Value,
+    call_id: &str,
+    sandbox: SandboxRequirement,
+) -> CapabilityRequest {
+    CapabilityRequest {
+        call: CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: name.into(),
+            input,
+            call_id: call_id.into(),
+            deadline: None,
+        },
+        authority: CapabilityAuthority {
+            agent: None,
+            principal: PrincipalId("test".into()),
+            action: name.into(),
+            requested_scope: CapabilityScope::default(),
+            risk: if sandbox == SandboxRequirement::NotRequired {
+                fabric::types::admission::RiskLevel::ReadOnly
+            } else {
+                fabric::types::admission::RiskLevel::Destructive
+            },
+            budget: None,
+            lease: None,
+            sandbox,
+            connection_id: fabric::ConnectionId::new(),
+            thread_id: fabric::ThreadId("test".into()),
+            turn_id: fabric::TurnId::new(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(std::env::temp_dir(), vec![])
+                .unwrap(),
+            session_id: "test".into(),
+            working_dir: std::env::temp_dir(),
+        },
+        control: InvocationControl::default(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -76,14 +117,12 @@ async fn sandbox_first_required_fail_closed_via_invoker() {
     let invoker = DefaultCapabilityInvoker::new(admission, executor);
 
     let result = invoker
-        .invoke(CapabilityRequest {
-            operation_id: fabric::OperationId::new(),
-            process_id: fabric::ProcessId::new(),
-            name: "dangerous.tool".into(),
-            input: serde_json::json!({"action": "rm -rf /"}),
-            call_id: "sandbox-required-1".into(),
-            deadline: None,
-        })
+        .invoke(request(
+            "dangerous.tool",
+            serde_json::json!({"action": "rm -rf /"}),
+            "sandbox-required-1",
+            SandboxRequirement::Required,
+        ))
         .await;
 
     // Fail-closed: must return error, not execute.
@@ -115,14 +154,12 @@ async fn sandbox_first_request_with_required_sandbox_fails_closed() {
     let invoker = DefaultCapabilityInvoker::new(admission, executor);
 
     let result = invoker
-        .invoke(CapabilityRequest {
-            operation_id: fabric::OperationId::new(),
-            process_id: fabric::ProcessId::new(),
-            name: "shell.execute".into(),
-            input: serde_json::json!({"cmd": "whoami"}),
-            call_id: "sf-1".into(),
-            deadline: None,
-        })
+        .invoke(request(
+            "shell.execute",
+            serde_json::json!({"cmd": "whoami"}),
+            "sf-1",
+            SandboxRequirement::Required,
+        ))
         .await;
 
     assert!(result.is_error);
@@ -144,14 +181,12 @@ async fn allow_all_still_passes_without_sandbox() {
     let invoker = DefaultCapabilityInvoker::new(admission, executor);
 
     let result = invoker
-        .invoke(CapabilityRequest {
-            operation_id: fabric::OperationId::new(),
-            process_id: fabric::ProcessId::new(),
-            name: "safe.readonly".into(),
-            input: serde_json::json!({"query": "hello"}),
-            call_id: "safe-1".into(),
-            deadline: None,
-        })
+        .invoke(request(
+            "safe.readonly",
+            serde_json::json!({"query": "hello"}),
+            "safe-1",
+            SandboxRequirement::NotRequired,
+        ))
         .await;
 
     assert!(!result.is_error, "AllowAll should permit safe operations");
@@ -195,14 +230,12 @@ async fn sandbox_required_on_destructive_request_fails_closed() {
     let invoker = DefaultCapabilityInvoker::new(admission, executor);
 
     let result = invoker
-        .invoke(CapabilityRequest {
-            operation_id: fabric::OperationId::new(),
-            process_id: fabric::ProcessId::new(),
-            name: "filesystem.delete_all".into(),
-            input: serde_json::json!({"path": "/important/data"}),
-            call_id: "destructive-1".into(),
-            deadline: None,
-        })
+        .invoke(request(
+            "filesystem.delete_all",
+            serde_json::json!({"path": "/important/data"}),
+            "destructive-1",
+            SandboxRequirement::Required,
+        ))
         .await;
 
     assert!(

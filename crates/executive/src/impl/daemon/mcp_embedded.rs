@@ -12,21 +12,29 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-use corpus::tools::tools::ToolRegistry;
+use crate::service::CapabilityService;
 
 /// Embedded MCP server that exposes body tools via MCP protocol.
 pub struct McpEmbedded {
-    tool_registry: Arc<Mutex<ToolRegistry>>,
+    corpus: Arc<dyn corpus::CorpusService>,
+    grant: corpus::ExtensionGrant,
+    capability: Arc<dyn CapabilityService>,
     socket_path: PathBuf,
 }
 
 impl McpEmbedded {
-    pub fn new(tool_registry: Arc<Mutex<ToolRegistry>>, socket_path: PathBuf) -> Self {
+    pub fn new(
+        corpus: Arc<dyn corpus::CorpusService>,
+        grant: corpus::ExtensionGrant,
+        capability: Arc<dyn CapabilityService>,
+        socket_path: PathBuf,
+    ) -> Self {
         Self {
-            tool_registry,
+            corpus,
+            grant,
+            capability,
             socket_path,
         }
     }
@@ -43,9 +51,13 @@ impl McpEmbedded {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
-                    let registry = self.tool_registry.clone();
+                    let corpus = self.corpus.clone();
+                    let grant = self.grant.clone();
+                    let capability = self.capability.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_connection(stream, registry).await {
+                        if let Err(e) =
+                            Self::handle_connection(stream, corpus, grant, capability).await
+                        {
                             warn!(error = %e, "MCP connection error");
                         }
                     });
@@ -59,7 +71,9 @@ impl McpEmbedded {
 
     async fn handle_connection(
         stream: tokio::net::UnixStream,
-        registry: Arc<Mutex<ToolRegistry>>,
+        corpus: Arc<dyn corpus::CorpusService>,
+        grant: corpus::ExtensionGrant,
+        capability: Arc<dyn CapabilityService>,
     ) -> anyhow::Result<()> {
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
@@ -79,7 +93,7 @@ impl McpEmbedded {
                 }
             };
 
-            let response = Self::handle_request(&request, &registry).await;
+            let response = Self::handle_request(&request, &corpus, &grant, &capability).await;
             let response_str = serde_json::to_string(&response)?;
             writer.write_all(response_str.as_bytes()).await?;
             writer.write_all(b"\n").await?;
@@ -89,14 +103,19 @@ impl McpEmbedded {
         Ok(())
     }
 
-    async fn handle_request(request: &Value, registry: &Arc<Mutex<ToolRegistry>>) -> Value {
+    async fn handle_request(
+        request: &Value,
+        corpus: &Arc<dyn corpus::CorpusService>,
+        grant: &corpus::ExtensionGrant,
+        capability: &Arc<dyn CapabilityService>,
+    ) -> Value {
         let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
         let id = request.get("id").cloned().unwrap_or(Value::Null);
 
         match method {
             "initialize" => Self::handle_initialize(id),
-            "tools/list" => Self::handle_tools_list(id, registry).await,
-            "tools/call" => Self::handle_tools_call(id, request, registry).await,
+            "tools/list" => Self::handle_tools_list(id, corpus, grant).await,
+            "tools/call" => Self::handle_tools_call(id, request, corpus, grant, capability).await,
             "ping" => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
             _ => json!({
                 "jsonrpc": "2.0",
@@ -121,16 +140,26 @@ impl McpEmbedded {
         })
     }
 
-    async fn handle_tools_list(id: Value, registry: &Arc<Mutex<ToolRegistry>>) -> Value {
-        let reg = registry.lock().await;
-        let tools: Vec<Value> = reg
-            .definitions()
+    async fn handle_tools_list(
+        id: Value,
+        corpus: &Arc<dyn corpus::CorpusService>,
+        grant: &corpus::ExtensionGrant,
+    ) -> Value {
+        let snapshot = match corpus.catalog(grant).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":error.to_string()}})
+            }
+        };
+        let tools: Vec<Value> = snapshot
+            .entries
             .into_iter()
-            .map(|def| {
+            .filter_map(|entry| entry.tool_definition)
+            .map(|definition| {
                 json!({
-                    "name": def.name,
-                    "description": def.description,
-                    "inputSchema": def.input_schema,
+                    "name": definition.name,
+                    "description": definition.description,
+                    "inputSchema": definition.input_schema,
                 })
             })
             .collect();
@@ -145,38 +174,52 @@ impl McpEmbedded {
     async fn handle_tools_call(
         id: Value,
         request: &Value,
-        registry: &Arc<Mutex<ToolRegistry>>,
+        corpus: &Arc<dyn corpus::CorpusService>,
+        grant: &corpus::ExtensionGrant,
+        capability: &Arc<dyn CapabilityService>,
     ) -> Value {
         let params = request.get("params").cloned().unwrap_or(json!({}));
         let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
-        let tool = {
-            let reg = registry.lock().await;
-            reg.get(tool_name).cloned()
-        };
-        let tool = match tool {
-            Some(t) => t,
-            None => {
-                return json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": {"code": -32602, "message": format!("Unknown tool: {}", tool_name)}
-                });
-            }
-        };
+        let known = corpus
+            .catalog(grant)
+            .await
+            .map(|snapshot| {
+                snapshot.entries.iter().any(|entry| {
+                    entry
+                        .capabilities
+                        .iter()
+                        .any(|capability| capability.0 == tool_name)
+                })
+            })
+            .unwrap_or(false);
+        if !known {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32602, "message": format!("Unknown tool: {}", tool_name)}
+            });
+        }
 
-        let ctx = fabric::tool::ToolContext {
-            working_dir: std::env::current_dir().unwrap_or_default(),
-            session_id: "mcp-session".into(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-        };
-
-        let result = tool.execute(arguments, &ctx).await;
+        let result = capability
+            .invoke(
+                None,
+                fabric::CapabilityCall {
+                    operation_id: fabric::OperationId::default(),
+                    process_id: fabric::ProcessId::default(),
+                    name: tool_name.to_string(),
+                    input: arguments,
+                    call_id: id.to_string(),
+                    deadline: None,
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await;
         let content_text = if result.is_error {
-            format!("Error: {}", result.content)
+            format!("Error: {}", result.output)
         } else {
-            result.content
+            result.output
         };
 
         json!({
@@ -193,17 +236,95 @@ impl McpEmbedded {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::Registry;
+    use aletheon_kernel::capability::ToolExecutor;
 
-    fn make_registry() -> Arc<Mutex<ToolRegistry>> {
-        Arc::new(Mutex::new(ToolRegistry::new()))
+    struct RejectCapability;
+
+    #[async_trait::async_trait]
+    impl CapabilityService for RejectCapability {
+        async fn invoke(
+            &self,
+            _context: Option<crate::service::CapabilityExecutionContext>,
+            call: fabric::CapabilityCall,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> fabric::CapabilityResult {
+            fabric::CapabilityResult {
+                call_id: call.call_id,
+                output: "unused".into(),
+                is_error: true,
+                usage: fabric::UsageReport::default(),
+                audit_id: None,
+            }
+        }
+    }
+
+    fn capability() -> Arc<dyn CapabilityService> {
+        Arc::new(RejectCapability)
+    }
+
+    struct RejectExecutor;
+
+    #[async_trait::async_trait]
+    impl ToolExecutor for RejectExecutor {
+        async fn execute_with_permit(
+            &self,
+            request: &fabric::CapabilityRequest,
+            _permit: &fabric::ExecutionPermit,
+        ) -> fabric::CapabilityResult {
+            fabric::CapabilityResult {
+                call_id: request.call.call_id.clone(),
+                output: "unused".into(),
+                is_error: true,
+                usage: Default::default(),
+                audit_id: None,
+            }
+        }
+    }
+
+    fn corpus(with_tool: bool) -> (Arc<dyn corpus::CorpusService>, corpus::ExtensionGrant) {
+        let mut capabilities = Vec::new();
+        let catalog = if with_tool {
+            capabilities.push(fabric::CapabilityId("bash_exec".into()));
+            corpus::ExtensionCatalog::new([corpus::ExtensionDescriptor::new(
+                corpus::ExtensionKind::Tool,
+                "bash_exec",
+                "1",
+                "execute bash",
+                fabric::CapabilityId("bash_exec".into()),
+                fabric::types::admission::RiskLevel::SystemModify,
+            )
+            .unwrap()
+            .with_tool_definition(fabric::ToolDefinition {
+                name: "bash_exec".into(),
+                description: "execute bash".into(),
+                input_schema: json!({"type":"object"}),
+            })
+            .unwrap()])
+            .unwrap()
+        } else {
+            corpus::ExtensionCatalog::default()
+        };
+        (
+            Arc::new(corpus::DefaultCorpusService::new(
+                catalog,
+                Arc::new(RejectExecutor),
+            )),
+            corpus::ExtensionGrant {
+                grant_id: "test".into(),
+                principal: fabric::PrincipalId("test".into()),
+                session_id: "test".into(),
+                agent_id: None,
+                capabilities,
+                resources: Default::default(),
+            },
+        )
     }
 
     #[tokio::test]
     async fn handle_initialize_returns_server_info() {
-        let registry = make_registry();
+        let (corpus, grant) = corpus(false);
         let request = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}});
-        let response = McpEmbedded::handle_request(&request, &registry).await;
+        let response = McpEmbedded::handle_request(&request, &corpus, &grant, &capability()).await;
 
         assert_eq!(response["result"]["protocolVersion"], "2024-11-05");
         assert_eq!(
@@ -214,15 +335,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_tools_list_returns_registry_tools() {
-        let reg = make_registry();
-        {
-            let mut r = reg.lock().await;
-            r.register(Arc::new(corpus::tools::tools::bash_exec::BashExecTool))
-                .unwrap();
-        }
+        let (corpus, grant) = corpus(true);
 
         let request = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}});
-        let response = McpEmbedded::handle_request(&request, &reg).await;
+        let response = McpEmbedded::handle_request(&request, &corpus, &grant, &capability()).await;
 
         let tools = response["result"]["tools"].as_array().unwrap();
         assert!(tools.iter().any(|t| t["name"] == "bash_exec"));
@@ -230,28 +346,28 @@ mod tests {
 
     #[tokio::test]
     async fn handle_ping() {
-        let registry = make_registry();
+        let (corpus, grant) = corpus(false);
         let request = json!({"jsonrpc": "2.0", "id": 3, "method": "ping"});
-        let response = McpEmbedded::handle_request(&request, &registry).await;
+        let response = McpEmbedded::handle_request(&request, &corpus, &grant, &capability()).await;
         assert!(response["result"].is_object());
     }
 
     #[tokio::test]
     async fn handle_unknown_method() {
-        let registry = make_registry();
+        let (corpus, grant) = corpus(false);
         let request = json!({"jsonrpc": "2.0", "id": 4, "method": "unknown"});
-        let response = McpEmbedded::handle_request(&request, &registry).await;
+        let response = McpEmbedded::handle_request(&request, &corpus, &grant, &capability()).await;
         assert_eq!(response["error"]["code"], -32601);
     }
 
     #[tokio::test]
     async fn handle_tools_call_unknown_tool() {
-        let registry = make_registry();
+        let (corpus, grant) = corpus(false);
         let request = json!({
             "jsonrpc": "2.0", "id": 5, "method": "tools/call",
             "params": {"name": "nonexistent", "arguments": {}}
         });
-        let response = McpEmbedded::handle_request(&request, &registry).await;
+        let response = McpEmbedded::handle_request(&request, &corpus, &grant, &capability()).await;
         assert_eq!(response["error"]["code"], -32602);
     }
 }

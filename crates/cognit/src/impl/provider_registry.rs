@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::llm::anthropic::AnthropicProvider;
 use super::llm::openai_provider::OpenAiProvider;
 use super::llm::LlmProvider;
-use crate::config::{AppConfig, ProviderConfig, Transport};
+use crate::config::{CognitConfig, ProviderConfig, ProviderTimeoutConfig, Transport};
 
 /// Resolved transport after auto-detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,11 +34,13 @@ pub struct ProviderRegistry {
     default_provider: String,
     default_model: String,
     max_tokens: u32,
+    provider_timeouts: ProviderTimeoutConfig,
 }
 
 impl ProviderRegistry {
-    /// Build registry from app config.
-    pub fn from_config(config: &AppConfig) -> anyhow::Result<Self> {
+    /// Build the registry from Executive's validated Cognit domain view.
+    pub fn from_config(config: &CognitConfig) -> anyhow::Result<Self> {
+        config.validate()?;
         let mut providers = HashMap::new();
         for p in &config.providers {
             providers.insert(p.name.clone(), p.clone());
@@ -74,6 +76,7 @@ impl ProviderRegistry {
             default_provider,
             default_model,
             max_tokens: config.agent.max_tokens as u32,
+            provider_timeouts: config.agent.provider_timeouts,
         })
     }
 
@@ -155,6 +158,7 @@ impl ProviderRegistry {
         match transport {
             ResolvedTransport::OpenAi => {
                 let mut provider = OpenAiProvider::new(&api_key, model, &config.base_url)
+                    .with_timeouts(self.provider_timeouts)
                     .with_max_tokens(self.max_tokens);
                 if let Some(ctx) = config.max_context_length {
                     provider = provider.with_max_context(ctx);
@@ -164,6 +168,7 @@ impl ProviderRegistry {
             ResolvedTransport::Anthropic => {
                 let mut provider = AnthropicProvider::new(&api_key, model)
                     .with_base_url(&config.base_url)
+                    .with_timeouts(self.provider_timeouts)
                     .with_max_tokens(self.max_tokens);
                 if let Some(ctx) = config.max_context_length {
                     provider = provider.with_max_context(ctx);
@@ -204,7 +209,7 @@ impl ProviderRegistry {
 mod tests {
     use super::*;
 
-    fn make_config() -> AppConfig {
+    fn make_config() -> CognitConfig {
         let toml = r#"
 [agent]
 default_provider = "mimo"

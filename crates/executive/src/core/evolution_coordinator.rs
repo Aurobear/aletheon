@@ -12,12 +12,10 @@ use cognit::core::awareness_signal::{signals_to_awareness, AwarenessSignal};
 use cognit::core::reflector::Reflector;
 use fabric::cognit::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
 use fabric::dasein::Stimmung;
-use fabric::meta::MetaRuntimeOps;
 use fabric::self_field::SelfAwareness;
 use fabric::Clock;
-use metacog::r#impl::meta_runtime::lineage::LineageTracker;
 use metacog::r#impl::morphogenesis::mutation_intent::MutationIntentGenerator;
-use metacog::r#impl::morphogenesis::pipeline::{MorphogenesisPipeline, PipelineResult};
+use metacog::{MetacogService, VerificationReceipt, VerifyMutation};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -63,7 +61,7 @@ pub struct EvolutionSummary {
     pub reflected: bool,
     pub reflection_id: Option<String>,
     pub evolution_triggered: bool,
-    pub pipeline_results: Vec<PipelineResult>,
+    pub verification_receipts: Vec<VerificationReceipt>,
     pub lineage_entries_added: usize,
     /// Awareness entries to store — (action, SelfAwareness) pairs.
     /// The caller stores these via EpisodicMemory::store_awareness().
@@ -102,7 +100,6 @@ pub struct EvolutionCoordinator {
     config: EvolutionConfig,
     reflector: Reflector,
     intent_generator: MutationIntentGenerator,
-    lineage: LineageTracker,
     recent_reflections: Arc<Mutex<Vec<ReflectionEntry>>>,
     turn_counter: Arc<AtomicUsize>,
     genome_config: Arc<Mutex<GenomeConfig>>,
@@ -110,13 +107,11 @@ pub struct EvolutionCoordinator {
 
 impl EvolutionCoordinator {
     pub fn new(config: EvolutionConfig, clock: Arc<dyn Clock>) -> Result<Self> {
-        let lineage =
-            LineageTracker::with_path(config.lineage_dir.join("lineage.jsonl"), clock.clone())?;
+        std::fs::create_dir_all(&config.lineage_dir)?;
         Ok(Self {
             config,
             reflector: Reflector::new(clock.clone()),
             intent_generator: MutationIntentGenerator::new(),
-            lineage,
             recent_reflections: Arc::new(Mutex::new(Vec::new())),
             turn_counter: Arc::new(AtomicUsize::new(0)),
             genome_config: Arc::new(Mutex::new(GenomeConfig::default())),
@@ -139,7 +134,7 @@ impl EvolutionCoordinator {
     ///
     /// If `awareness_signals` is provided, they are converted to
     /// `SelfAwareness` entries and returned in the summary for storage.
-    pub async fn post_turn<M: MetaRuntimeOps>(
+    pub async fn post_turn(
         &self,
         task_summary: &str,
         output: &str,
@@ -148,7 +143,7 @@ impl EvolutionCoordinator {
         tool_errors: usize,
         elapsed_ms: u64,
         _iterations: usize,
-        meta: &MorphogenesisPipeline<M>,
+        meta: &dyn MetacogService,
         awareness_signals: Vec<AwarenessSignal>,
     ) -> Result<EvolutionSummary> {
         // Build an ExecutionResult from turn metrics
@@ -172,7 +167,7 @@ impl EvolutionCoordinator {
                 reflected: false,
                 reflection_id: None,
                 evolution_triggered: false,
-                pipeline_results: Vec::new(),
+                verification_receipts: Vec::new(),
                 lineage_entries_added: 0,
                 awareness_entries: signals_to_awareness(&awareness_signals),
             });
@@ -204,10 +199,10 @@ impl EvolutionCoordinator {
             (n > 0 && counter % n == 0) || on_fail
         };
 
-        let (triggered, pipeline_results, lineage_added) = if should_trigger {
+        let (triggered, verification_receipts) = if should_trigger {
             self.run_evolution(meta).await?
         } else {
-            (false, Vec::new(), 0)
+            (false, Vec::new())
         };
 
         // Convert awareness signals to SelfAwareness entries for storage
@@ -217,8 +212,8 @@ impl EvolutionCoordinator {
             reflected: true,
             reflection_id: Some(reflection_id),
             evolution_triggered: triggered,
-            pipeline_results,
-            lineage_entries_added: lineage_added,
+            verification_receipts,
+            lineage_entries_added: 0,
             awareness_entries,
         })
     }
@@ -233,7 +228,7 @@ impl EvolutionCoordinator {
     /// 3. Returning the mood-derived negativity signal in the summary
     ///
     /// This is additive — does not modify `post_turn`.
-    pub async fn post_turn_with_stimmung<M: MetaRuntimeOps>(
+    pub async fn post_turn_with_stimmung(
         &self,
         task_summary: &str,
         output: &str,
@@ -242,7 +237,7 @@ impl EvolutionCoordinator {
         tool_errors: usize,
         elapsed_ms: u64,
         iterations: usize,
-        meta: &MorphogenesisPipeline<M>,
+        meta: &dyn MetacogService,
         awareness_signals: Vec<AwarenessSignal>,
         mood: &Stimmung,
     ) -> Result<(EvolutionSummary, Option<NegativitySignal>)> {
@@ -273,10 +268,9 @@ impl EvolutionCoordinator {
                     signal.source,
                     signal.depth
                 );
-                let (triggered, pipeline_results, lineage_added) = self.run_evolution(meta).await?;
+                let (triggered, verification_receipts) = self.run_evolution(meta).await?;
                 summary.evolution_triggered = triggered;
-                summary.pipeline_results = pipeline_results;
-                summary.lineage_entries_added += lineage_added;
+                summary.verification_receipts = verification_receipts;
             }
         }
 
@@ -319,69 +313,33 @@ impl EvolutionCoordinator {
         }
     }
 
-    /// Run the evolution pipeline: generate mutation intents from
-    /// recent reflections, execute each through the morphogenesis pipeline,
-    /// and record successful migrations to lineage.
-    async fn run_evolution<M: MetaRuntimeOps>(
+    /// Generate mutation intents from recent reflections and submit them to
+    /// Metacog verification. Applying or rolling back a verified mutation
+    /// remains a separate governed operation owned by Metacog.
+    async fn run_evolution(
         &self,
-        meta: &MorphogenesisPipeline<M>,
-    ) -> Result<(bool, Vec<PipelineResult>, usize)> {
+        meta: &dyn MetacogService,
+    ) -> Result<(bool, Vec<VerificationReceipt>)> {
         let intents = self
             .intent_generator
             .from_reflections(&self.recent_reflections.lock().await)
             .await;
         if intents.is_empty() {
-            return Ok((false, Vec::new(), 0));
+            return Ok((false, Vec::new()));
         }
 
         let mut results = Vec::new();
-        let mut lineage_count = 0;
         for intent in &intents {
-            let result = meta.run(intent).await?;
-            if result.success {
-                lineage_count += 1;
-                if let Some(ref migration) = result.migration {
-                    self.lineage.record(
-                        &migration.to_version,
-                        Some(&migration.from_version),
-                        &result.message,
-                    );
-                }
-                // Update care weights from the mutation intent that was applied.
-                self.apply_care_mutation(intent).await;
-            }
-            results.push(result);
+            results.push(
+                meta.verify(VerifyMutation {
+                    mutation_id: Uuid::new_v4(),
+                    intent: intent.clone(),
+                })
+                .await?,
+            );
         }
 
-        Ok((true, results, lineage_count))
-    }
-
-    /// Apply a care-related mutation intent to the tracked genome config.
-    ///
-    /// Only processes intents targeting "care.priorities" with adjust_weight / increase_weight
-    /// actions. Other intent targets are ignored.
-    async fn apply_care_mutation(&self, intent: &fabric::self_field::MutationIntent) {
-        if intent.target != "care.priorities" {
-            return;
-        }
-        let topic = intent.change.get("topic").and_then(|v| v.as_str());
-        let delta = intent
-            .change
-            .get("delta")
-            .or_else(|| intent.change.get("weight_delta"))
-            .and_then(|v| v.as_f64());
-        let (Some(topic), Some(delta)) = (topic, delta) else {
-            return;
-        };
-        let mut gc = self.genome_config.lock().await;
-        let entry = gc.care_weights.entry(topic.to_string()).or_insert(0.0);
-        *entry = (*entry + delta).clamp(0.0, 2.0);
-        tracing::debug!(
-            "Evolution adjusted care weight: {} += {:.3} -> {:.3}",
-            topic,
-            delta,
-            *entry
-        );
+        Ok((true, results))
     }
 
     /// Current turn count.
@@ -392,10 +350,5 @@ impl EvolutionCoordinator {
     /// Snapshot of recent reflections.
     pub async fn recent_reflections(&self) -> Vec<ReflectionEntry> {
         self.recent_reflections.lock().await.clone()
-    }
-
-    /// Reference to the lineage tracker.
-    pub fn lineage(&self) -> &LineageTracker {
-        &self.lineage
     }
 }

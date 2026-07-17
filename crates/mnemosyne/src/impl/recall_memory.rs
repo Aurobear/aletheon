@@ -124,6 +124,59 @@ impl RecallMemory {
         Ok(entries)
     }
 
+    /// Search within one exact Session boundary.
+    pub fn search_in_session(
+        &self,
+        session_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        if query.trim().is_empty() || session_id.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let fts_query = sanitize_fts_query(query);
+        let mut stmt = self.db.prepare(
+            "SELECT r.id, r.timestamp, r.session_id, r.entry_type, r.content, r.metadata
+             FROM recall_memory r
+             INNER JOIN recall_memory_fts fts ON r.id = fts.rowid
+             WHERE recall_memory_fts MATCH ?1 AND r.session_id = ?2
+             ORDER BY rank
+             LIMIT ?3",
+        )?;
+        let entries = stmt
+            .query_map(
+                rusqlite::params![fts_query, session_id, limit as i64],
+                row_to_entry,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        if entries.is_empty() {
+            return self.search_like_in_session(session_id, query, limit);
+        }
+        Ok(entries)
+    }
+
+    fn search_like_in_session(
+        &self,
+        session_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let mut stmt = self.db.prepare(
+            "SELECT id, timestamp, session_id, entry_type, content, metadata
+             FROM recall_memory
+             WHERE session_id = ?1 AND content LIKE ?2
+             ORDER BY timestamp DESC
+             LIMIT ?3",
+        )?;
+        let entries = stmt
+            .query_map(
+                rusqlite::params![session_id, format!("%{query}%"), limit as i64],
+                row_to_entry,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(entries)
+    }
+
     /// Fallback LIKE-based search (kept for edge cases).
     fn search_like(&self, query: &str, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
         let mut stmt = self.db.prepare(
@@ -200,6 +253,19 @@ impl RecallMemory {
         )?;
         Ok(count)
     }
+}
+
+fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
+    Ok(MemoryEntry {
+        id: row.get(0)?,
+        timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
+            .unwrap_or_default()
+            .with_timezone(&chrono::Utc),
+        session_id: row.get(2)?,
+        entry_type: row.get(3)?,
+        content: row.get(4)?,
+        metadata: row.get(5)?,
+    })
 }
 
 /// Sanitize a user query for FTS5 MATCH.
@@ -296,6 +362,23 @@ mod tests {
 
         let results = recall.search("Rust", 10).unwrap();
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn fts_search_in_session_excludes_other_sessions() {
+        let (recall, _tmp) = setup_recall();
+        recall
+            .store("session-a", "user", "shared isolation marker alpha", None)
+            .unwrap();
+        recall
+            .store("session-b", "user", "shared isolation marker beta", None)
+            .unwrap();
+
+        let results = recall
+            .search_in_session("session-a", "shared isolation marker", 10)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].session_id, "session-a");
     }
 
     #[test]

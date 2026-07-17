@@ -1,6 +1,5 @@
-//! Lifecycle hooks — trait-based hook system with recall injection and session distillation.
+//! Lifecycle hooks — trait-based hook system with session distillation.
 
-pub mod recall_inject;
 pub mod session_distiller;
 
 use anyhow::Result;

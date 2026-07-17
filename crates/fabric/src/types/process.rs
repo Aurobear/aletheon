@@ -14,6 +14,20 @@ impl AgentId {
     }
 }
 
+/// Optional operating-system process metadata. It is never used as a logical
+/// lifecycle identifier because the OS may reuse it after exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OsProcessId(pub u32);
+
+/// Canonical binding of a logical Agent to one Process generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessIdentity {
+    pub agent_id: AgentId,
+    pub process_id: crate::types::operation::ProcessId,
+    pub generation: u64,
+    pub os_pid: Option<OsProcessId>,
+}
+
 impl Default for AgentId {
     fn default() -> Self {
         Self::new()
@@ -78,7 +92,11 @@ impl ProcessState {
                 | (Waiting, Running)
                 | (Running, Stopping)
                 | (Waiting, Stopping)
+                | (Created, Stopping)
+                | (Ready, Stopping)
                 | (Stopping, Exited)
+                | (Created, Failed)
+                | (Ready, Failed)
                 | (Running, Failed)
                 | (Waiting, Failed)
                 | (Stopping, Failed)

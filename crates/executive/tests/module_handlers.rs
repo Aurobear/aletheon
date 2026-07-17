@@ -1,6 +1,6 @@
 //! Integration tests for the communication protocol module handlers.
 //!
-//! Tests Task 11: MemoryModule, BodyModule, SelfFieldModule, and PerceptionModule
+//! Tests Task 11: BodyModule, SelfFieldModule, and PerceptionModule
 //! through the CommunicationBus envelope pipeline.
 
 use std::sync::Arc;
@@ -14,12 +14,10 @@ use fabric::self_field::{Intent, IntentSource};
 use fabric::CommunicationBus;
 
 use executive::r#impl::engine::modules::body_module::BodyModule;
-use executive::r#impl::engine::modules::memory_module::MemoryModule;
 use executive::r#impl::engine::modules::perception_module::PerceptionModule;
 use executive::r#impl::engine::modules::self_field_module::SelfFieldModule;
 use executive::r#impl::engine::modules::{
-    BodyRequest, BodyResponse, MemoryRequest, MemoryResponse, PerceptionEventMsg, SelfFieldRequest,
-    SelfFieldResponse,
+    BodyRequest, BodyResponse, PerceptionEventMsg, SelfFieldRequest, SelfFieldResponse,
 };
 
 use corpus::tools::tools::ToolRegistry;
@@ -27,7 +25,6 @@ use dasein::core::{SelfField, SelfFieldConfig};
 use dasein::r#impl::perception::event::{
     EventCategory, EventData, EventSource, PerceptionEvent, Priority as EventPriority,
 };
-use mnemosyne::CoreMemory;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,68 +37,6 @@ fn make_envelope_request(target_module: ModuleId, payload_json: serde_json::Valu
         Payload::Json(payload_json),
         Duration::from_secs(5),
     )
-}
-
-fn core_memory_with_blocks() -> CoreMemory {
-    let mut core = CoreMemory::new();
-    let persona = mnemosyne::MemoryBlock::new("persona", "I am a test agent", 1024);
-    core.set_block(persona);
-    let context = mnemosyne::MemoryBlock::new("context", "Running integration tests", 1024);
-    core.set_block(context);
-    core
-}
-
-// ---------------------------------------------------------------------------
-// Test: MemoryModule — FormatForContext request/response
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_memory_module_format_for_context() {
-    let bus = Arc::new(CommunicationBus::new());
-
-    // Spawn the module in the background.
-    let core = Arc::new(Mutex::new(core_memory_with_blocks()));
-    let module = MemoryModule::new(core, None);
-    let bus_clone = bus.clone();
-    tokio::spawn(async move {
-        module.run(bus_clone).await;
-    });
-
-    // Give the module a moment to register.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // Send a FormatForContext request.
-    let request = serde_json::to_value(MemoryRequest::FormatForContext).unwrap();
-    let envelope = make_envelope_request(ModuleId::Mnemosyne, request);
-
-    let resp_envelope = bus.request(envelope).await.expect("request should succeed");
-
-    let response: MemoryResponse = match &resp_envelope.payload {
-        Payload::Json(val) => serde_json::from_value(val.clone()).expect("should deserialize"),
-        _ => panic!("expected JSON payload"),
-    };
-
-    match response {
-        MemoryResponse::ContextFormatted { text } => {
-            assert!(
-                text.contains("[persona]"),
-                "context should contain persona section header"
-            );
-            assert!(
-                text.contains("test agent"),
-                "context should contain persona value"
-            );
-            assert!(
-                text.contains("[context]"),
-                "context should contain the extra context block"
-            );
-            assert!(
-                text.contains("Running integration tests"),
-                "context should contain context value"
-            );
-        }
-        other => panic!("expected ContextFormatted, got: {:?}", other),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +130,7 @@ async fn test_self_field_module_review() {
 
     let config = SelfFieldConfig {
         agent_name: "test-agent".to_string(),
+        clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
         ..Default::default()
     };
     let self_field = Arc::new(Mutex::new(SelfField::new(config)));
@@ -250,6 +186,7 @@ async fn test_self_field_module_get_identity() {
         agent_name: "test-agent".to_string(),
         agent_description: "A test agent".to_string(),
         agent_version: "0.1.0".to_string(),
+        clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
         ..Default::default()
     };
     let self_field = Arc::new(Mutex::new(SelfField::new(config)));

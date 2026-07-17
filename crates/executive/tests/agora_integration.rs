@@ -16,7 +16,10 @@ fn test_author() -> ProcessId {
 async fn commit_then_recover() {
     let log = Arc::new(InMemoryCommitLog::new());
 
-    let reg1 = AgoraRegistry::new_with_persistence(log.clone() as Arc<dyn AgoraPersistence>);
+    let reg1 = AgoraRegistry::new_with_persistence(
+        log.clone() as Arc<dyn AgoraPersistence>,
+        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+    );
 
     let prop1 = reg1
         .propose(
@@ -45,8 +48,12 @@ async fn commit_then_recover() {
         .await
         .unwrap();
     reg1.commit("s1", prop2.id).await.unwrap();
+    let original = reg1.snapshot("s1").await.unwrap();
 
-    let reg2 = AgoraRegistry::new_with_persistence(log.clone() as Arc<dyn AgoraPersistence>);
+    let reg2 = AgoraRegistry::new_with_persistence(
+        log.clone() as Arc<dyn AgoraPersistence>,
+        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+    );
     let replayed = reg2.recover_session("s1").await.unwrap();
     assert_eq!(replayed, 2, "expected 2 commits replayed");
 
@@ -54,6 +61,7 @@ async fn commit_then_recover() {
     assert_eq!(snap["version"], json!(2));
     assert_eq!(snap["blackboard"]["alpha"], json!(10));
     assert_eq!(snap["blackboard"]["beta"], json!(20));
+    assert_eq!(snap, original, "recovery must reproduce the full snapshot");
 
     let changes = reg2.changes_since("s1", 0).await;
     assert_eq!(changes.len(), 2);
@@ -64,7 +72,7 @@ async fn commit_then_recover() {
 
 #[tokio::test]
 async fn no_persistence_still_works() {
-    let reg = AgoraRegistry::new();
+    let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
 
     let prop = reg
         .propose(
@@ -94,7 +102,10 @@ async fn no_persistence_still_works() {
 async fn recover_session_is_idempotent() {
     let log = Arc::new(InMemoryCommitLog::new());
 
-    let reg1 = AgoraRegistry::new_with_persistence(log.clone() as Arc<dyn AgoraPersistence>);
+    let reg1 = AgoraRegistry::new_with_persistence(
+        log.clone() as Arc<dyn AgoraPersistence>,
+        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+    );
     let prop = reg1
         .propose(
             "s1",
@@ -109,7 +120,10 @@ async fn recover_session_is_idempotent() {
         .unwrap();
     reg1.commit("s1", prop.id).await.unwrap();
 
-    let reg2 = AgoraRegistry::new_with_persistence(log.clone() as Arc<dyn AgoraPersistence>);
+    let reg2 = AgoraRegistry::new_with_persistence(
+        log.clone() as Arc<dyn AgoraPersistence>,
+        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+    );
     let n1 = reg2.recover_session("s1").await.unwrap();
     assert_eq!(n1, 1);
 

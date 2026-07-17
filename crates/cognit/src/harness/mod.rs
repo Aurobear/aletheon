@@ -17,7 +17,11 @@ pub mod session;
 pub use config::HarnessConfig;
 pub use linear as react_loop; // backward-compat: ReActLoop is the linear harness
 pub use linear::{CompactorTrait, ReActLoop};
-pub use session::{CognitiveSession, LinearCognitiveSession};
+pub use session::{
+    ChannelCognitiveStreamSink, CognitError, CognitErrorKind, CognitRetryDisposition,
+    CognitiveSession, CognitiveSessionDependencies, CognitiveSessionFactory, CognitiveStreamEvent,
+    CognitiveStreamSink, DefaultCognitiveSessionFactory, LinearCognitiveSession,
+};
 
 /// Selects which concrete harness implementation `build_harness` constructs.
 ///
@@ -48,8 +52,9 @@ pub fn build_harness(
     kind: HarnessKind,
     config: HarnessConfig,
     compressor: Box<dyn CompactorTrait>,
+    clock: std::sync::Arc<dyn fabric::Clock>,
 ) -> ReActLoop {
     match kind {
-        HarnessKind::Linear => ReActLoop::new(config, compressor),
+        HarnessKind::Linear => ReActLoop::new_with_clock(config, compressor, clock),
     }
 }

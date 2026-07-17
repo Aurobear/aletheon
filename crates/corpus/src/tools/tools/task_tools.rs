@@ -485,6 +485,8 @@ mod tests {
 
     fn ctx() -> ToolContext {
         ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),

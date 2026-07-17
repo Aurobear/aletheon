@@ -10,6 +10,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  architecture:
+    name: architecture fitness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - run: bash tests/architecture_check.sh
+      - run: bash tests/architecture_path_inventory.sh
+      - name: Reject architecture drift
+        env:
+          ARCH_BASE_REF: origin/${{ github.base_ref || 'dev' }}
+        run: bash scripts/architecture-check.sh
+
   msrv:
     name: Rust 1.88 MSRV
     runs-on: ubuntu-latest
@@ -46,6 +62,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev ripgrep
       - run: cargo +stable test --workspace
+
+  pi-contract:
+    name: pinned Pi RPC contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ALETHEON_REAL_PI: pi
+      ALETHEON_REAL_PI_VERSION: 0.80.7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install reviewed Pi release without lifecycle scripts
+        run: npm install --global --ignore-scripts @earendil-works/pi-coding-agent@${ALETHEON_REAL_PI_VERSION}
+      - name: Verify real Pi RPC framing and state response
+        run: cargo +stable test -p executive --test pi_real_contract -- --ignored --exact pinned_pi_rpc_get_state_obeys_reviewed_jsonl_contract
 
   clippy:
     name: cargo clippy

@@ -60,24 +60,37 @@ impl Tool for ApplyPatchTool {
             };
         }
 
+        let workspace = match ctx.effective_workspace_policy() {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                return tool_error(format!("Refused patch workspace: {error}"), start, ctx)
+            }
+        };
         let requested_base = match base_dir {
             Some(d) => {
                 let p = std::path::Path::new(d);
                 if p.is_absolute() {
                     p.to_path_buf()
                 } else {
-                    ctx.working_dir.join(d)
+                    workspace.cwd().join(d)
                 }
             }
-            None => ctx.working_dir.clone(),
+            None => workspace.cwd().to_path_buf(),
         };
-        let base_path = match validate_mutation_path(&ctx.working_dir, &requested_base) {
+        let base_path = match validate_mutation_path(
+            &workspace,
+            workspace.protected_paths(),
+            &requested_base,
+        ) {
             Ok(path) => path,
             Err(error) => return tool_error(format!("Refused patch base: {error}"), start, ctx),
         };
         for filename in extract_filenames(patch) {
-            if let Err(error) = validate_mutation_path(&ctx.working_dir, &base_path.join(&filename))
-            {
+            if let Err(error) = validate_mutation_path(
+                &workspace,
+                workspace.protected_paths(),
+                &base_path.join(&filename),
+            ) {
                 return tool_error(
                     format!("Refused patch target '{filename}': {error}"),
                     start,
@@ -626,6 +639,8 @@ mod tests {
     async fn test_apply_patch_create_file() {
         let tmp = TempDir::new().unwrap();
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -653,6 +668,8 @@ mod tests {
             .unwrap();
 
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -676,6 +693,8 @@ mod tests {
         fs::write(&file_path, "delete me\n").await.unwrap();
 
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -718,6 +737,8 @@ mod tests {
     async fn test_empty_patch_input() {
         let tmp = TempDir::new().unwrap();
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),

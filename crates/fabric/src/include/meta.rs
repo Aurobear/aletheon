@@ -6,13 +6,14 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use crate::Genome;
 use crate::MutationIntent;
 use crate::Subsystem;
 
 /// A candidate runtime generated from a genome mutation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeCandidate {
     pub id: uuid::Uuid,
     pub genome: Genome,
@@ -21,7 +22,7 @@ pub struct RuntimeCandidate {
 }
 
 /// Result of sandbox testing a candidate.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestResult {
     pub passed: bool,
     pub tests_run: usize,
@@ -32,7 +33,7 @@ pub struct TestResult {
 }
 
 /// Evaluation of a candidate after testing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Evaluation {
     pub score: f64, // 0.0 to 1.0
     pub strengths: Vec<String>,
@@ -40,7 +41,7 @@ pub struct Evaluation {
     pub recommendation: Recommendation,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Recommendation {
     Adopt,
     Reject,
@@ -49,7 +50,7 @@ pub enum Recommendation {
 }
 
 /// Result of migrating to a new runtime.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationResult {
     pub success: bool,
     pub from_version: String,

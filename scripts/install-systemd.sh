@@ -42,6 +42,15 @@ done
 /usr/libexec/aletheon/aletheon-secret-init.sh init /etc/aletheon/credentials
 install -o root -g root -m 0644 "$repo_root/config/aletheon.service" \
   /etc/systemd/system/aletheon.service
+install -o root -g root -m 0644 "$repo_root/config/aletheon-core.service" \
+  /etc/systemd/system/aletheon-core.service
+install -d -o root -g root -m 0755 /usr/lib/systemd/user
+install -o root -g root -m 0644 "$repo_root/config/aletheon.user.service" \
+  /usr/lib/systemd/user/aletheon.service
+sed -i 's|ExecStart=%h/.local/bin/aletheon daemon|ExecStart=/usr/bin/aletheon daemon|' \
+  /usr/lib/systemd/user/aletheon.service
+install -o root -g root -m 0644 "$repo_root/config/aletheon.user.socket" \
+  /usr/lib/systemd/user/aletheon.socket
 for unit in aletheon-backup.service aletheon-backup.timer \
   aletheon-cleanup.service aletheon-cleanup.timer; do
   install -o root -g root -m 0644 "$repo_root/config/$unit" "/etc/systemd/system/$unit"
@@ -56,11 +65,20 @@ install -D -o root -g root -m 0644 "$repo_root/docs/deployment/systemd.md" \
 
 /usr/libexec/aletheon/verify-systemd.sh --preflight \
   --binary /usr/bin/aletheon --config /etc/aletheon/config.toml
-systemd-analyze verify /etc/systemd/system/aletheon.service
+/usr/libexec/aletheon/verify-systemd.sh --core-unit \
+  /etc/systemd/system/aletheon.service --binary /usr/bin/aletheon
+/usr/libexec/aletheon/verify-systemd.sh --core-unit \
+  /etc/systemd/system/aletheon-core.service --binary /usr/bin/aletheon
 systemd-analyze verify /etc/systemd/system/aletheon-backup.service
 systemd-analyze verify /etc/systemd/system/aletheon-cleanup.service
+/usr/libexec/aletheon/verify-systemd.sh --user-units \
+  /usr/lib/systemd/user/aletheon.service /usr/lib/systemd/user/aletheon.socket \
+  --binary /usr/bin/aletheon
 systemctl daemon-reload
 if ((enable)); then
-  systemctl enable --now aletheon.service
+  systemctl disable --now aletheon.service
+  systemctl enable aletheon-core.service
+  systemctl restart aletheon-core.service
+  systemctl --global enable aletheon.socket
   systemctl enable --now aletheon-backup.timer aletheon-cleanup.timer
 fi

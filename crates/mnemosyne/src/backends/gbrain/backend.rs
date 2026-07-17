@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,9 @@ use super::page::GbrainPage;
 use super::spool::{EnqueueOutcome, GbrainSpool, SpoolError};
 use crate::service::{
     ExperienceEvent, ForgetPolicy, MemorySensitivity, RecallItem, RecallRequest, TemporalState,
+};
+use crate::{
+    GbrainDegradedCategory, MemoryKind, MemoryMetrics, RecallOmittedReason, RecallSourceLabel,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,15 +123,29 @@ pub struct GbrainBackend<T: SupplementalMemoryTransport> {
     spool: Arc<GbrainSpool>,
     transport: Arc<T>,
     config: GbrainBackendConfig,
+    metrics: MemoryMetrics,
 }
 
 impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
     pub fn new(spool: Arc<GbrainSpool>, transport: Arc<T>, config: GbrainBackendConfig) -> Self {
+        let metrics = MemoryMetrics::default();
+        metrics.set_gbrain_queue_depth(spool.queue_depth().unwrap_or_default());
         Self {
             spool,
             transport,
             config,
+            metrics,
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: MemoryMetrics) -> Self {
+        metrics.set_gbrain_queue_depth(self.spool.queue_depth().unwrap_or_default());
+        self.metrics = metrics;
+        self
+    }
+
+    pub fn metrics(&self) -> &MemoryMetrics {
+        &self.metrics
     }
 
     pub fn spool(&self) -> &Arc<GbrainSpool> {
@@ -141,6 +159,8 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
         now_ms: i64,
     ) -> Result<EnqueueOutcome, GbrainBackendError> {
         if !self.config.projection_enabled {
+            self.metrics
+                .recall_omitted(RecallOmittedReason::Unsupported, 1);
             return Ok(EnqueueOutcome::ExcludedSensitive);
         }
         let metadata = match event {
@@ -153,6 +173,8 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
             metadata.sensitivity,
             MemorySensitivity::Confidential | MemorySensitivity::Restricted
         ) {
+            self.metrics
+                .recall_omitted(RecallOmittedReason::Sensitive, 1);
             return Ok(EnqueueOutcome::ExcludedSensitive);
         }
         let Some(page) =
@@ -166,8 +188,9 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
             metadata.sensitivity.clone(),
             now_ms,
         )?;
-        self.transport
-            .set_queue_depth(self.spool.queue_depth().unwrap_or_default());
+        let depth = self.spool.queue_depth().unwrap_or_default();
+        self.transport.set_queue_depth(depth);
+        self.metrics.set_gbrain_queue_depth(depth);
         Ok(outcome)
     }
 
@@ -176,20 +199,30 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
         req: RecallRequest,
         cancel: &CancellationToken,
     ) -> SupplementalRecall {
+        let started = Instant::now();
         if !self.config.enabled {
-            return self.empty_health(None);
+            let result = self.empty_health(None);
+            self.metrics
+                .observe_recall_latency(RecallSourceLabel::Gbrain, started.elapsed());
+            return result;
         }
         if req.validate().is_err() {
-            return self.empty_health(Some(SupplementalErrorCategory::RejectedArguments));
+            self.metrics
+                .recall_omitted(RecallOmittedReason::InvalidRequest, 1);
+            let result = self.empty_health(Some(SupplementalErrorCategory::RejectedArguments));
+            self.finish_recall_metrics(&result, started.elapsed());
+            return result;
         }
         let budget = Duration::from_millis(self.config.request_timeout_ms);
         let result = tokio::select! {
-            _ = cancel.cancelled() => return self.empty_health(Some(SupplementalErrorCategory::Cancelled)),
-            result = tokio::time::timeout(budget, self.recall_inner(&req, cancel)) => result,
+            _ = cancel.cancelled() => Err(SupplementalErrorCategory::Cancelled),
+            result = tokio::time::timeout(budget, self.recall_inner(&req, cancel)) => match result {
+                Err(_) => Err(SupplementalErrorCategory::Timeout),
+                Ok(result) => result,
+            },
         };
-        match result {
-            Err(_) => self.empty_health(Some(SupplementalErrorCategory::Timeout)),
-            Ok(Ok((items, category))) => SupplementalRecall {
+        let recall = match result {
+            Ok((items, category)) => SupplementalRecall {
                 items,
                 health: SupplementalRecallHealth {
                     degraded: category.is_some(),
@@ -197,8 +230,10 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
                     queue_depth: self.spool.queue_depth().unwrap_or_default(),
                 },
             },
-            Ok(Err(category)) => self.empty_health(Some(category)),
-        }
+            Err(category) => self.empty_health(Some(category)),
+        };
+        self.finish_recall_metrics(&recall, started.elapsed());
+        recall
     }
 
     pub fn forget(&self, _policy: ForgetPolicy) -> Result<(), GbrainBackendError> {
@@ -270,6 +305,8 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
                 item.metadata.sensitivity,
                 MemorySensitivity::Confidential | MemorySensitivity::Restricted
             ) {
+                self.metrics
+                    .recall_omitted(RecallOmittedReason::Sensitive, 1);
                 continue;
             }
             if !req.include_historical
@@ -278,12 +315,18 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
                     TemporalState::Superseded | TemporalState::Expired
                 )
             {
+                self.metrics
+                    .recall_omitted(RecallOmittedReason::Historical, 1);
                 continue;
             }
             if !seen.insert(item.metadata.record_id.clone()) {
+                self.metrics
+                    .recall_omitted(RecallOmittedReason::Duplicate, 1);
                 continue;
             }
             if used_bytes.saturating_add(item.content.len()) > req.max_content_bytes {
+                self.metrics
+                    .recall_omitted(RecallOmittedReason::ByteLimit, 1);
                 break;
             }
             used_bytes += item.content.len();
@@ -300,6 +343,43 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
                 error_category: category,
                 queue_depth: self.spool.queue_depth().unwrap_or_default(),
             },
+        }
+    }
+
+    fn finish_recall_metrics(&self, recall: &SupplementalRecall, elapsed: Duration) {
+        self.metrics
+            .observe_recall_latency(RecallSourceLabel::Gbrain, elapsed);
+        self.metrics.recall_hit(
+            RecallSourceLabel::Gbrain,
+            MemoryKind::ExternalReference,
+            recall.items.len(),
+        );
+        self.metrics
+            .set_gbrain_queue_depth(recall.health.queue_depth);
+        if let Some(category) = recall.health.error_category {
+            self.metrics.gbrain_degraded(category.into());
+            self.metrics
+                .recall_omitted(RecallOmittedReason::SourceDegraded, 1);
+        }
+    }
+}
+
+impl From<SupplementalErrorCategory> for GbrainDegradedCategory {
+    fn from(value: SupplementalErrorCategory) -> Self {
+        match value {
+            SupplementalErrorCategory::Auth => Self::Auth,
+            SupplementalErrorCategory::Schema => Self::Schema,
+            SupplementalErrorCategory::InvalidPage => Self::InvalidPage,
+            SupplementalErrorCategory::RejectedArguments => Self::RejectedArguments,
+            SupplementalErrorCategory::Timeout => Self::Timeout,
+            SupplementalErrorCategory::Cancelled => Self::Cancelled,
+            SupplementalErrorCategory::RateLimited => Self::RateLimited,
+            SupplementalErrorCategory::Provider => Self::Provider,
+            SupplementalErrorCategory::Transport => Self::Transport,
+            SupplementalErrorCategory::MalformedResponse => Self::MalformedResponse,
+            SupplementalErrorCategory::OversizedResponse => Self::OversizedResponse,
+            SupplementalErrorCategory::Spool => Self::Spool,
+            SupplementalErrorCategory::Unsupported => Self::Unsupported,
         }
     }
 }

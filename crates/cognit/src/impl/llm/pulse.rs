@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use fabric::evolution::CognitivePulseEvent;
 use fabric::CommunicationBus;
-use fabric::EventType;
+use fabric::SchemaId;
 
 use super::scheduler::LlmScheduler;
 
@@ -92,7 +92,11 @@ impl LlmPulse {
         let json_payload = serde_json::to_value(&event)?;
 
         self.bus
-            .publish_event_v2(&EventType::CognitivePulse, "llm_pulse", json_payload)
+            .publish_event_v2(
+                SchemaId(SchemaId::EVENT_COGNITIVE_PULSE_V1.into()),
+                "llm_pulse",
+                json_payload,
+            )
             .await
     }
 

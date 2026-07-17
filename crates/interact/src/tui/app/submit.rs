@@ -326,7 +326,7 @@ pub async fn submit_message(app: &mut App, text: String) {
 }
 
 pub async fn send_to_daemon(app: &mut App, text: &str) {
-    let msg = crate::tui::chat_request(text);
+    let msg = crate::tui::chat_request(text, &app.workspace);
     let payload = serde_json::to_string(&msg).unwrap_or_default();
     let framed = format!("{}\n", payload);
 

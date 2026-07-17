@@ -18,6 +18,7 @@ use fabric::types::operation::ProcessId;
 // the trait contract), so consumers can import them from `agora::workspace`.
 pub use fabric::include::agora::{
     AgoraCommit, AgoraOperation, AgoraProposal, RejectReason, VersionConflict,
+    WorkspaceCommitPermit,
 };
 
 // ---------------------------------------------------------------------------
@@ -105,53 +106,92 @@ impl Workspace {
     }
 
     /// Insert a fully-specified proposal from the transactional AgoraService API.
-    pub fn propose_full(
-        &mut self,
-        proposal: AgoraProposal,
-    ) -> Result<AgoraProposal, VersionConflict> {
+    pub fn propose_full(&mut self, proposal: AgoraProposal) -> anyhow::Result<AgoraProposal> {
         if proposal.base_version != self.version {
-            return Err(VersionConflict {
-                expected: proposal.base_version,
-                actual: self.version,
-            });
+            anyhow::bail!(
+                "version conflict: expected {}, actual {}",
+                proposal.base_version,
+                self.version
+            );
         }
+        anyhow::ensure!(
+            proposal.space.0 == self.session_id,
+            "proposal space mismatch"
+        );
+        anyhow::ensure!(
+            !self.proposals.contains_key(&proposal.id)
+                && !self.commits.iter().any(|commit| commit.id == proposal.id),
+            "proposal id already exists"
+        );
         self.proposals.insert(proposal.id, proposal.clone());
         Ok(proposal)
     }
 
-    /// Commit a previously-created proposal. Returns the resulting commit,
-    /// bumps the workspace version, applies the operation to workspace state,
-    /// and appends to the commit log.
-    pub fn commit(&mut self, proposal_id: Uuid) -> Option<AgoraCommit> {
-        let proposal = self.proposals.remove(&proposal_id)?;
+    pub fn prepare_commit(
+        &self,
+        proposal_id: Uuid,
+        permit: Option<&WorkspaceCommitPermit>,
+    ) -> anyhow::Result<AgoraCommit> {
+        let proposal = self
+            .proposals
+            .get(&proposal_id)
+            .ok_or_else(|| anyhow::anyhow!("proposal {proposal_id} not found"))?;
         let now_ms = self.clock.wall_now().0;
-        if proposal.is_expired_at(now_ms) {
-            self.trace.push(
-                "proposal_rejected",
-                serde_json::json!({
-                    "proposal_id": proposal.id.to_string(),
-                    "reason": "Timeout",
-                    "operation": format!("{:?}", proposal.operation),
-                }),
-            );
-            return None;
+        anyhow::ensure!(
+            !proposal.is_expired_at(now_ms),
+            "proposal {proposal_id} expired"
+        );
+        anyhow::ensure!(
+            proposal.space.0 == self.session_id,
+            "proposal belongs to a different workspace"
+        );
+        anyhow::ensure!(
+            proposal.base_version == self.version,
+            "version conflict: expected {}, actual {}",
+            proposal.base_version,
+            self.version
+        );
+        self.validate_operation(&proposal.operation, proposal.author)?;
+        if let Some(permit) = permit {
+            permit.validate_for(proposal, now_ms)?;
         }
-        let operation = proposal.operation.clone();
-        let next_version = self.version + 1;
-        let commit = AgoraCommit {
-            id: proposal.id,
-            space: proposal.space,
-            author: proposal.author,
-            version: next_version,
-            operation: proposal.operation,
-            evidence: proposal.evidence,
-            confidence: proposal.confidence,
-            committed_at: now_ms,
-        };
-        self.apply_operation(&operation, proposal.author);
-        self.version = next_version;
-        self.commits.push(commit.clone());
-        Some(commit)
+        AgoraCommit::from_proposal(
+            proposal,
+            self.version + 1,
+            now_ms,
+            permit.map(|permit| permit.permit_id),
+        )
+    }
+
+    pub fn apply_prepared_commit(&mut self, commit: AgoraCommit) -> anyhow::Result<()> {
+        commit.validate_integrity()?;
+        anyhow::ensure!(commit.space.0 == self.session_id, "commit space mismatch");
+        anyhow::ensure!(
+            commit.base_version == self.version && commit.version == self.version + 1,
+            "workspace changed after commit preparation"
+        );
+        let proposal = self
+            .proposals
+            .get(&commit.id)
+            .ok_or_else(|| anyhow::anyhow!("proposal {} not found", commit.id))?;
+        anyhow::ensure!(
+            proposal.operation.operation_hash()? == commit.operation_hash
+                && proposal.author == commit.author,
+            "prepared commit no longer matches proposal"
+        );
+        self.apply_operation(&commit.operation, commit.author)?;
+        self.proposals.remove(&commit.id);
+        self.version = commit.version;
+        self.commits.push(commit);
+        Ok(())
+    }
+
+    /// Deprecated in-memory compatibility wrapper. Canonical callers provide a permit.
+    #[deprecated(note = "use prepare_commit with WorkspaceCommitPermit and apply_prepared_commit")]
+    pub fn commit(&mut self, proposal_id: Uuid) -> Option<AgoraCommit> {
+        let prepared = self.prepare_commit(proposal_id, None).ok()?;
+        self.apply_prepared_commit(prepared.clone()).ok()?;
+        Some(prepared)
     }
 
     /// Reject a pending proposal by id. Returns `Some(())` if the proposal
@@ -174,64 +214,138 @@ impl Workspace {
     }
 
     /// Replay a persisted commit idempotently.
-    pub fn apply_commit(&mut self, commit: AgoraCommit) -> bool {
-        if self.commits.iter().any(|existing| existing.id == commit.id) {
-            return false;
+    pub fn apply_commit(&mut self, commit: AgoraCommit) -> anyhow::Result<bool> {
+        if let Some(existing) = self
+            .commits
+            .iter()
+            .find(|existing| existing.id == commit.id)
+        {
+            anyhow::ensure!(
+                serde_json::to_vec(existing)? == serde_json::to_vec(&commit)?,
+                "replayed commit id collision"
+            );
+            return Ok(false);
         }
-        self.apply_operation(&commit.operation, commit.author);
-        self.version = self.version.max(commit.version);
+        commit.validate_integrity()?;
+        anyhow::ensure!(
+            commit.space.0 == self.session_id,
+            "replayed commit space mismatch"
+        );
+        anyhow::ensure!(
+            commit.base_version == self.version && commit.version == self.version + 1,
+            "replayed commit sequence is not contiguous"
+        );
+        self.validate_operation(&commit.operation, commit.author)?;
+        self.apply_operation(&commit.operation, commit.author)?;
+        self.version = commit.version;
         self.commits.push(commit);
-        true
+        Ok(true)
     }
 
     /// Apply the semantic effect of an operation to workspace state.
     ///
     /// This is called by [`commit`](Self::commit) so that every committed
     /// operation mutates the workspace, not just the append-only log.
-    fn apply_operation(&mut self, op: &AgoraOperation, author: ProcessId) {
+    fn validate_operation(&self, op: &AgoraOperation, author: ProcessId) -> anyhow::Result<()> {
+        match op {
+            AgoraOperation::PublishFact { key, .. } => {
+                anyhow::ensure!(
+                    !key.trim().is_empty() && key.len() <= 256,
+                    "invalid fact key"
+                );
+            }
+            AgoraOperation::ProposePlan { plan } => {
+                anyhow::ensure!(
+                    plan.as_object().is_some_and(|value| !value.is_empty()),
+                    "plan must be a non-empty object"
+                );
+            }
+            AgoraOperation::UpdateTask { task_patch } => {
+                let id = task_patch
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("task update requires an id"))?;
+                let status = task_patch
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("task update requires a status"))?;
+                let desired = parse_task_status(status)?;
+                let current = self
+                    .task_graph
+                    .get(id)
+                    .ok_or_else(|| anyhow::anyhow!("task {id} does not exist"))?;
+                anyhow::ensure!(current.status != desired, "task update is a no-op");
+            }
+            AgoraOperation::EmitObservation { obs } => {
+                anyhow::ensure!(!obs.is_null(), "observation cannot be null");
+            }
+            AgoraOperation::AcceptEvidence { evidence } => {
+                anyhow::ensure!(
+                    !evidence.id.is_empty() && !evidence.source.is_empty(),
+                    "evidence provenance is incomplete"
+                );
+                anyhow::ensure!(
+                    (0.0..=1.0).contains(&evidence.weight),
+                    "evidence weight is invalid"
+                );
+            }
+            AgoraOperation::ClaimSharedObject { oid } => {
+                anyhow::ensure!(!oid.is_empty(), "claim object id is empty");
+                anyhow::ensure!(
+                    !self.claims.contains_key(oid),
+                    "shared object is already claimed"
+                );
+            }
+            AgoraOperation::ReleaseSharedObject { oid } => {
+                anyhow::ensure!(
+                    self.claims.get(oid) == Some(&author),
+                    "shared object is not owned by process"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_operation(&mut self, op: &AgoraOperation, author: ProcessId) -> anyhow::Result<()> {
         match op {
             AgoraOperation::PublishFact { key, value } => {
                 self.blackboard.set(key, value.clone());
             }
             AgoraOperation::ProposePlan { plan } => {
-                // Store the plan as structured trace; full task-graph
-                // integration (RFC-014 Phase 3B) will materialize tasks
-                // from the plan schema.
-                self.trace.push("plan", plan.clone());
                 self.blackboard.set("current_plan", plan.clone());
             }
             AgoraOperation::UpdateTask { task_patch } => {
                 // Apply status/field updates from the patch to matching
                 // task-graph nodes when the patch carries an "id" field.
-                self.trace.push("task_update", task_patch.clone());
                 if let Some(id) = task_patch.get("id").and_then(|v| v.as_str()) {
                     if let Some(status) = task_patch.get("status").and_then(|v| v.as_str()) {
-                        let s = match status {
-                            "pending" => crate::task_graph::TaskStatus::Pending,
-                            "running" => crate::task_graph::TaskStatus::Running,
-                            "done" => crate::task_graph::TaskStatus::Done,
-                            "failed" => crate::task_graph::TaskStatus::Failed,
-                            _ => return,
-                        };
+                        let s = parse_task_status(status)?;
                         self.task_graph.set_status(id, s);
                     }
                 }
             }
-            AgoraOperation::EmitObservation { obs } => {
-                self.trace.push("observation", obs.clone());
-            }
+            AgoraOperation::EmitObservation { .. } => {}
             AgoraOperation::AcceptEvidence { evidence } => {
-                let content = serde_json::to_value(evidence).unwrap_or(serde_json::Value::Null);
-                self.trace.push("evidence", content);
+                self.trace.push(
+                    "evidence",
+                    serde_json::json!({
+                        "id": evidence.id,
+                        "source": evidence.source,
+                        "weight": evidence.weight,
+                        "content_redacted": true,
+                    }),
+                );
             }
             AgoraOperation::ClaimSharedObject { oid } => {
                 // Track the claim with the author's process identity.
-                self.claims.entry(oid.clone()).or_insert(author);
+                self.claims.insert(oid.clone(), author);
             }
             AgoraOperation::ReleaseSharedObject { oid } => {
                 self.claims.remove(oid);
             }
         }
+        Ok(())
     }
 
     /// Return all commits with version strictly greater than `since_version`.
@@ -254,6 +368,7 @@ impl Workspace {
                 "priorities": self.attention.priorities,
             },
             "task_count": self.task_graph.len(),
+            "task_graph": self.task_graph,
             "trace_len": self.trace.len(),
             // Full trace entries (incl. typed RFC-017 objects like Evidence)
             // so the persisted snapshot carries the reasoning trace, not just
@@ -261,8 +376,11 @@ impl Workspace {
             "trace": self.trace.entries(),
             "version": self.version,
             "commit_count": self.commits.len(),
+            "commits": self.commits,
             "claims_count": self.claims.len(),
+            "claims": self.claims,
             "pending_proposals": self.proposals.len(),
+            "proposals": self.proposals,
         })
     }
 
@@ -279,7 +397,18 @@ impl Workspace {
     }
 }
 
+fn parse_task_status(status: &str) -> anyhow::Result<crate::task_graph::TaskStatus> {
+    match status {
+        "pending" => Ok(crate::task_graph::TaskStatus::Pending),
+        "running" => Ok(crate::task_graph::TaskStatus::Running),
+        "done" => Ok(crate::task_graph::TaskStatus::Done),
+        "failed" => Ok(crate::task_graph::TaskStatus::Failed),
+        _ => anyhow::bail!("unknown task status {status}"),
+    }
+}
+
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -480,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_emit_observation_appends_to_trace() {
+    fn commit_emit_observation_does_not_duplicate_runtime_trace() {
         let mut ws = Workspace::new(
             "s1",
             Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -495,10 +624,7 @@ mod tests {
             )
             .unwrap();
         ws.commit(prop.id);
-        assert_eq!(ws.trace.len(), 1);
-        let entries = ws.trace.entries();
-        assert_eq!(entries[0].kind, "observation");
-        assert_eq!(entries[0].content["temp"], json!(72));
+        assert!(ws.trace.is_empty());
     }
 
     #[test]
@@ -535,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_propose_plan_traces_and_stores_on_blackboard() {
+    fn commit_propose_plan_stores_on_blackboard_without_runtime_trace() {
         let mut ws = Workspace::new(
             "s1",
             Arc::new(aletheon_kernel::chronos::TestClock::default()),
@@ -549,9 +675,7 @@ mod tests {
             )
             .unwrap();
         ws.commit(prop.id);
-        // Plan is stored as a structured trace entry.
-        assert_eq!(ws.trace.len(), 1);
-        assert_eq!(ws.trace.entries()[0].kind, "plan");
+        assert!(ws.trace.is_empty());
         // Plan is also available on the blackboard for quick access.
         assert_eq!(ws.blackboard.get("current_plan").cloned(), Some(plan));
     }
@@ -575,8 +699,7 @@ mod tests {
         // Task status must have been updated.
         let node = ws.task_graph.get("t1").unwrap();
         assert_eq!(node.status, crate::task_graph::TaskStatus::Done);
-        // Trace records the update.
-        assert_eq!(ws.trace.entries()[0].kind, "task_update");
+        assert!(ws.trace.is_empty());
     }
 
     // -- reject behaviour ---------------------------------------------------
@@ -681,5 +804,101 @@ mod tests {
         ws.reject(prop_id, RejectReason::Cancelled);
         // Committing the same id after reject should fail.
         assert!(ws.commit(prop_id).is_none());
+    }
+
+    #[test]
+    fn transaction_rechecks_base_version_before_apply() {
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
+        let first = ws
+            .propose(
+                0,
+                AgoraOperation::PublishFact {
+                    key: "first".into(),
+                    value: json!(1),
+                },
+                test_author(),
+            )
+            .unwrap();
+        let stale = ws
+            .propose(
+                0,
+                AgoraOperation::PublishFact {
+                    key: "stale".into(),
+                    value: json!(2),
+                },
+                test_author(),
+            )
+            .unwrap();
+        ws.commit(first.id).unwrap();
+        assert!(ws.prepare_commit(stale.id, None).is_err());
+        assert!(ws.proposals.contains_key(&stale.id));
+        assert!(ws.blackboard.get("stale").is_none());
+    }
+
+    #[test]
+    fn transaction_rejects_invalid_and_noop_task_updates() {
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
+        ws.task_graph.add("task", "work", Vec::new());
+        for (id, patch) in [
+            (
+                Uuid::from_u128(80),
+                json!({"id": "missing", "status": "done"}),
+            ),
+            (
+                Uuid::from_u128(81),
+                json!({"id": "task", "status": "unknown"}),
+            ),
+            (
+                Uuid::from_u128(82),
+                json!({"id": "task", "status": "pending"}),
+            ),
+        ] {
+            ws.propose_full(AgoraProposal {
+                id,
+                space: fabric::AgoraSpaceId("s1".into()),
+                author: test_author(),
+                base_version: 0,
+                operation: AgoraOperation::UpdateTask { task_patch: patch },
+                evidence: Vec::new(),
+                confidence: 1.0,
+                expires_at_ms: None,
+            })
+            .unwrap();
+            assert!(ws.prepare_commit(id, None).is_err());
+            assert!(ws.proposals.contains_key(&id));
+        }
+        assert_eq!(ws.version, 0);
+    }
+
+    #[test]
+    fn transaction_snapshot_contains_replayable_claim_and_task_state() {
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
+        ws.task_graph.add("task", "work", Vec::new());
+        let claim = ws
+            .propose(
+                0,
+                AgoraOperation::ClaimSharedObject {
+                    oid: "object".into(),
+                },
+                test_author(),
+            )
+            .unwrap();
+        ws.commit(claim.id).unwrap();
+        let snapshot = ws.snapshot();
+        assert_eq!(
+            snapshot["task_graph"]["nodes"]["task"]["description"],
+            "work"
+        );
+        assert!(snapshot["claims"]["object"].is_string());
+        assert_eq!(snapshot["commits"].as_array().unwrap().len(), 1);
     }
 }

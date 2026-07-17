@@ -44,8 +44,8 @@ impl MemoryService for LocalMemory {
     async fn consolidate(&self, _scope: mnemosyne::service::MemoryScope) -> anyhow::Result<()> {
         Ok(())
     }
-    async fn forget(&self, _policy: ForgetPolicy) -> anyhow::Result<()> {
-        Ok(())
+    async fn forget(&self, _policy: ForgetPolicy) -> anyhow::Result<mnemosyne::ForgetReceipt> {
+        Ok(mnemosyne::ForgetReceipt::default())
     }
 }
 
@@ -53,7 +53,10 @@ impl LocalMemory {
     fn new(items: Vec<RecallItem>) -> Self {
         Self {
             records: Mutex::new(Vec::new()),
-            recall: Mutex::new(RecallSet { items }),
+            recall: Mutex::new(RecallSet {
+                items,
+                degraded_sources: vec![],
+            }),
         }
     }
 }
@@ -120,6 +123,8 @@ fn item(record_id: &str, source_id: &str, content: &str, observed: i64) -> Recal
         content: content.into(),
         metadata: metadata(record_id, source_id, observed),
         temporal_state: TemporalState::Current,
+        authority: mnemosyne::MemoryAuthority::AletheonExternal,
+        scope: mnemosyne::MemoryScope::Session("s".into()),
     }
 }
 

@@ -15,7 +15,7 @@
 //! | Test | What it validates |
 //! |------|-------------------|
 //! | `main_agent_exists_in_process_table` | Spawn → inspect → state=Created |
-//! | `sub_agent_created_in_process_table` | SubAgentSpawner uses shared ProcessTable |
+//! | `sub_agent_created_in_process_table` | AgentControlService uses shared ProcessTable |
 //! | `every_turn_has_operation_id` | TurnService creates operation, state transitions |
 //! | `wait_on_operation_resolves_after_completion` | OperationTable::wait() unblocks on terminal state |
 //! | `cancel_propagates_to_operation_and_task_exits` | parent cancel → child cancelled |
@@ -23,15 +23,16 @@
 //! | `no_orphan_tasks_after_cancel_and_drain` | OperationScope drain → all tasks recorded |
 //! | `deadline_exceeded_sets_operation_to_cancelled` | Hanging LLM triggers tokio timeout → Cancelled |
 
+mod turn_request_support;
+
 use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::operation::{OperationScope, OperationTable};
-use aletheon_kernel::process::ProcessTable;
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::operation::OperationScope;
+use aletheon_kernel::KernelRuntime;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
     CancelReason, MonoDeadlineMillis, NoopTurnEventSink, OperationExitReason, OperationId,
-    OperationKind, OperationManager, OperationRequest, OperationState, ProcessId, ProcessManager,
-    ProcessSignal, ProcessState, SpawnSpec, TurnRequest, TurnServices, TurnStop,
+    OperationKind, OperationRequest, OperationState, ProcessId, ProcessSignal, ProcessState,
+    SpawnSpec, TurnRequest, TurnServices, TurnStop,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -41,18 +42,18 @@ use std::time::Duration;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn test_ports() -> Arc<ServicePorts> {
+fn test_kernel() -> Arc<KernelRuntime> {
     let clock: Arc<dyn fabric::Clock> = Arc::new(TestClock::default());
     let admission: Arc<dyn fabric::AdmissionController> =
         Arc::new(aletheon_kernel::admission::AllowAllAdmissionController::new(clock.clone()));
-    Arc::new(ServicePorts::for_testing(clock, admission))
+    Arc::new(KernelRuntime::with_admission(clock, admission))
 }
 
 /// Stub TurnServices that returns a simple text response immediately.
 fn stub_services() -> Arc<dyn TurnServices> {
     use async_trait::async_trait;
     use fabric::{
-        CapabilityRequest, CapabilityResult, LlmProvider, RecallRequest, RecallSet, ToolDefinition,
+        CapabilityCall, CapabilityResult, LlmProvider, RecallRequest, RecallSet, ToolDefinition,
         TurnServices,
     };
 
@@ -68,7 +69,7 @@ fn stub_services() -> Arc<dyn TurnServices> {
         async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
             Ok(fabric::AgoraView::default())
         }
-        async fn invoke(&self, _req: CapabilityRequest) -> CapabilityResult {
+        async fn invoke(&self, _req: CapabilityCall) -> CapabilityResult {
             CapabilityResult {
                 call_id: String::new(),
                 output: String::new(),
@@ -94,19 +95,18 @@ fn stub_services() -> Arc<dyn TurnServices> {
 
 #[tokio::test]
 async fn main_agent_exists_in_process_table() {
-    let clock = Arc::new(TestClock::default());
-    let table = ProcessTable::new(clock);
+    let kernel = test_kernel();
 
-    let handle = table
-        .spawn(SpawnSpec {
+    let handle = kernel
+        .spawn_process(SpawnSpec {
             namespace: fabric::NamespaceId("gate-1".into()),
             ..SpawnSpec::default()
         })
         .await
         .expect("spawn should succeed");
 
-    let snapshot = table
-        .inspect(handle.id)
+    let snapshot = kernel
+        .inspect_process(handle.id)
         .await
         .expect("process should exist in table");
     assert_eq!(snapshot.state, ProcessState::Created);
@@ -117,46 +117,14 @@ async fn main_agent_exists_in_process_table() {
 // 2. Sub-agent created in process table via shared table
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
-async fn sub_agent_created_in_process_table() {
-    use aletheon_kernel::supervision::RestartPolicy;
-    use executive::core::SubAgentSpawner;
-
-    let clock = Arc::new(TestClock::default());
-    let table = Arc::new(ProcessTable::new(clock));
-    let mut spawner = SubAgentSpawner::new();
-
-    // Spawn a main agent via the process table.
-    let main = table
-        .spawn(SpawnSpec {
-            namespace: fabric::NamespaceId("main-ns".into()),
-            ..SpawnSpec::default()
-        })
-        .await
-        .expect("main agent spawn");
-
-    table
-        .signal(main.id, ProcessSignal::Start)
-        .await
-        .expect("main agent start");
-
-    // Spawn a sub-agent through the spawner with a shared table.
-    let sub = spawner
-        .spawn_with_policy(
-            "sub-agent-1".into(),
-            "turn-1".into(),
-            RestartPolicy::RestartOnFailure { max_restarts: 1 },
-        )
-        .await
-        .expect("sub-agent spawn");
-
-    // The sub-agent is tracked in the SubAgentSpawner.
-    assert_eq!(spawner.list().len(), 1);
-    assert_eq!(spawner.state(&sub.id), Some(fabric::SubAgentState::Created));
-
-    // The main agent is still in the process table.
-    let main_snapshot = table.inspect(main.id).await.expect("main should exist");
-    assert_eq!(main_snapshot.state, ProcessState::Running);
+#[test]
+fn agent_control_is_the_only_subagent_process_owner() {
+    let compatibility = include_str!("../src/core/sub_agent.rs");
+    assert!(!compatibility.contains("struct SubAgentSpawner"));
+    assert!(!compatibility.contains("HashMap<"));
+    let authority = include_str!("../src/service/agent_control/mod.rs");
+    assert!(authority.contains(".spawn_process("));
+    assert!(authority.contains("repository.create"));
 }
 
 // ---------------------------------------------------------------------------
@@ -165,23 +133,22 @@ async fn sub_agent_created_in_process_table() {
 
 #[tokio::test]
 async fn every_turn_has_operation_id() {
-    let ports = test_ports();
+    let kernel = test_kernel();
     let services = stub_services();
-    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, ports.clone());
+    let turn_service =
+        TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel.clone());
 
     // Pre-register a process in the ProcessTable so TurnService picks it up.
-    let handle = ports
-        .process_table
-        .spawn(SpawnSpec {
+    let handle = kernel
+        .spawn_process(SpawnSpec {
             namespace: fabric::NamespaceId("gate-1-turn".into()),
             initial_operation: Some(OperationKind::Turn),
             ..SpawnSpec::default()
         })
         .await
         .expect("pre-spawn process");
-    ports
-        .process_table
-        .signal(handle.id, ProcessSignal::Start)
+    kernel
+        .signal_process(handle.id, ProcessSignal::Start)
         .await
         .unwrap();
 
@@ -190,9 +157,8 @@ async fn every_turn_has_operation_id() {
             TurnRequest {
                 operation_id: OperationId::new(),
                 process_id: handle.id,
-                session_id: "gate-1-turn".into(),
+                context: turn_request_support::context("gate-1-turn", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: None,
             },
@@ -205,9 +171,8 @@ async fn every_turn_has_operation_id() {
     assert!(result.metrics.completed_normally);
 
     // Verify the process is still in the ProcessTable and in Running state.
-    let process_snapshot = ports
-        .process_table
-        .inspect(handle.id)
+    let process_snapshot = kernel
+        .inspect_process(handle.id)
         .await
         .expect("process should be in table after turn");
     assert_eq!(process_snapshot.state, ProcessState::Running);
@@ -224,28 +189,27 @@ async fn every_turn_has_operation_id() {
 
 #[tokio::test]
 async fn wait_on_operation_resolves_after_completion() {
-    let clock = Arc::new(TestClock::default());
-    let table = Arc::new(OperationTable::new(clock));
-    let owner = ProcessId::new();
+    let kernel = test_kernel();
+    let process = kernel.spawn_process(SpawnSpec::default()).await.unwrap();
 
-    let op = table
-        .submit(OperationRequest {
-            owner,
+    let op = kernel
+        .submit_operation(OperationRequest {
+            owner: process.id,
             parent: None,
             kind: OperationKind::Turn,
             deadline: None,
         })
         .await
         .unwrap();
-    table.start(op.id).await.unwrap();
+    kernel.start_operation(op.id).await.unwrap();
 
     // Spawn a waiter that will block until terminal.
-    let t = table.clone();
+    let t = kernel.clone();
     let op_id = op.id;
-    let waiter = tokio::spawn(async move { t.wait(op_id).await });
+    let waiter = tokio::spawn(async move { t.wait_operation(op_id).await });
 
     // Succeed the operation — waiter should unblock.
-    table.succeed(op.id).await.unwrap();
+    kernel.succeed_operation(op.id).await.unwrap();
     let result = waiter.await.unwrap().unwrap();
 
     assert_eq!(result.state, OperationState::Succeeded);
@@ -259,37 +223,39 @@ async fn wait_on_operation_resolves_after_completion() {
 
 #[tokio::test]
 async fn cancel_propagates_to_operation_and_task_exits() {
-    let clock = Arc::new(TestClock::default());
-    let table = Arc::new(OperationTable::new(clock));
-    let owner = ProcessId::new();
+    let kernel = test_kernel();
+    let process = kernel.spawn_process(SpawnSpec::default()).await.unwrap();
 
-    let parent = table
-        .submit(OperationRequest {
-            owner,
+    let parent = kernel
+        .submit_operation(OperationRequest {
+            owner: process.id,
             parent: None,
             kind: OperationKind::Turn,
             deadline: None,
         })
         .await
         .unwrap();
-    table.start(parent.id).await.unwrap();
+    kernel.start_operation(parent.id).await.unwrap();
 
-    let child = table
-        .submit(OperationRequest {
-            owner,
+    let child = kernel
+        .submit_operation(OperationRequest {
+            owner: process.id,
             parent: Some(parent.id),
             kind: OperationKind::CapabilityCall,
             deadline: None,
         })
         .await
         .unwrap();
-    table.start(child.id).await.unwrap();
+    kernel.start_operation(child.id).await.unwrap();
 
     // Cancel the parent — child must also be cancelled.
-    table.cancel(parent.id, CancelReason::User).await.unwrap();
+    kernel
+        .cancel_operation(parent.id, CancelReason::User)
+        .await
+        .unwrap();
 
-    let parent_result = table.wait(parent.id).await.unwrap();
-    let child_result = table.wait(child.id).await.unwrap();
+    let parent_result = kernel.wait_operation(parent.id).await.unwrap();
+    let child_result = kernel.wait_operation(child.id).await.unwrap();
 
     assert_eq!(parent_result.state, OperationState::Cancelled);
     assert_eq!(child_result.state, OperationState::Cancelled);
@@ -305,11 +271,10 @@ async fn cancel_propagates_to_operation_and_task_exits() {
 
 #[tokio::test]
 async fn process_exit_transitions_state_and_operation_is_terminal() {
-    let clock = Arc::new(TestClock::default());
-    let process_table = ProcessTable::new(clock);
+    let kernel = test_kernel();
 
-    let handle = process_table
-        .spawn(SpawnSpec {
+    let handle = kernel
+        .spawn_process(SpawnSpec {
             namespace: fabric::NamespaceId("exit-test".into()),
             ..SpawnSpec::default()
         })
@@ -317,28 +282,28 @@ async fn process_exit_transitions_state_and_operation_is_terminal() {
         .unwrap();
 
     // Start the process.
-    process_table
-        .signal(handle.id, ProcessSignal::Start)
+    kernel
+        .signal_process(handle.id, ProcessSignal::Start)
         .await
         .unwrap();
     assert_eq!(
-        process_table.inspect(handle.id).await.unwrap().state,
+        kernel.inspect_process(handle.id).await.unwrap().state,
         ProcessState::Running
     );
 
     // Terminate — transitions through Stopping → Exited.
-    process_table
-        .signal(handle.id, ProcessSignal::Terminate)
+    kernel
+        .signal_process(handle.id, ProcessSignal::Terminate)
         .await
         .unwrap();
 
-    let exit = process_table.wait(handle.id).await.unwrap();
+    let exit = kernel.wait_process(handle.id).await.unwrap();
     assert_eq!(
         exit.reason,
         fabric::ExitReason::Cancelled("terminated".into())
     );
     assert_eq!(
-        process_table.inspect(handle.id).await.unwrap().state,
+        kernel.inspect_process(handle.id).await.unwrap().state,
         ProcessState::Exited
     );
 }
@@ -384,7 +349,7 @@ async fn no_orphan_tasks_after_cancel_and_drain() {
 async fn deadline_exceeded_sets_operation_to_cancelled() {
     use async_trait::async_trait;
     use fabric::{
-        CapabilityRequest, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
+        CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
         Message, RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices, Usage,
     };
 
@@ -439,7 +404,7 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
         async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
             Ok(fabric::AgoraView::default())
         }
-        async fn invoke(&self, _req: CapabilityRequest) -> CapabilityResult {
+        async fn invoke(&self, _req: CapabilityCall) -> CapabilityResult {
             CapabilityResult {
                 call_id: String::new(),
                 output: String::new(),
@@ -460,17 +425,21 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
     let services = Arc::new(HangingServices {
         llm: HangingLlm { hang_ms: 500 },
     });
-    let ports = test_ports();
-    let turn_service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, ports);
+    let kernel = test_kernel();
+    let process = kernel
+        .spawn_process(SpawnSpec::default())
+        .await
+        .expect("deadline process");
+    let turn_service =
+        TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel.clone());
 
     let result = turn_service
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                session_id: "deadline-gate1".into(),
+                process_id: process.id,
+                context: turn_request_support::context("deadline-gate1", PathBuf::from(".")),
                 input: "should timeout".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(50)),
             },

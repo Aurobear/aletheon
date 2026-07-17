@@ -5,9 +5,11 @@ use std::path::Path;
 use tracing::info;
 
 use super::agent::{Agent, Capability};
+use crate::service::CapabilityService;
 use corpus::tools::tools::Tool;
 use fabric::message::{ContentBlock, Message};
 use fabric::{LlmProvider, ToolDefinition};
+use std::sync::Arc;
 
 /// TOML agent configuration (loaded from `agents/<id>.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +44,7 @@ pub struct ConfigAgent {
     tools: Vec<Box<dyn Tool>>,
     capabilities: Vec<Capability>,
     llm: Box<dyn LlmProvider>,
+    capability: Arc<dyn CapabilityService>,
 }
 
 impl ConfigAgent {
@@ -53,6 +56,7 @@ impl ConfigAgent {
         toml_path: &Path,
         all_tools: &[Box<dyn Tool>],
         llm: Box<dyn LlmProvider>,
+        capability: Arc<dyn CapabilityService>,
     ) -> Result<Self> {
         let content = std::fs::read_to_string(toml_path)?;
         let wrapper: AgentFileConfigWrapper = toml::from_str(&content)?;
@@ -101,6 +105,7 @@ impl ConfigAgent {
             tools,
             capabilities,
             llm,
+            capability,
         })
     }
 
@@ -197,20 +202,32 @@ impl Agent for ConfigAgent {
 
             // Execute each tool call and append results
             for (id, name, input) in &tool_calls {
-                let tool = self.tools.iter().find(|t| t.name() == *name);
-                let result_text = if let Some(tool) = tool {
-                    let ctx = fabric::tool::ToolContext {
-                        working_dir: std::path::PathBuf::from("."),
-                        session_id: String::new(),
-                        clock: std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-                    };
-                    let result = tool.execute((*input).clone(), &ctx).await;
-                    result.content
+                let known = self.tools.iter().any(|tool| tool.name() == *name);
+                let (result_text, is_error) = if known {
+                    let result = self
+                        .capability
+                        .invoke(
+                            None,
+                            fabric::CapabilityCall {
+                                operation_id: fabric::OperationId::default(),
+                                process_id: fabric::ProcessId::default(),
+                                name: (*name).to_string(),
+                                input: (*input).clone(),
+                                call_id: (*id).to_string(),
+                                deadline: None,
+                            },
+                            tokio_util::sync::CancellationToken::new(),
+                        )
+                        .await;
+                    (result.output, result.is_error)
                 } else {
-                    format!("Error: tool '{}' not available to this agent", name)
+                    (
+                        format!("Error: tool '{}' not available to this agent", name),
+                        true,
+                    )
                 };
 
-                messages.push(Message::tool_result(id.to_string(), result_text, false));
+                messages.push(Message::tool_result(id.to_string(), result_text, is_error));
             }
         }
 

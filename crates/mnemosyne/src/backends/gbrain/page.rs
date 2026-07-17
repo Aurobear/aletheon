@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::model::{MemoryKind, MemoryRecord, MemoryStatus};
 use crate::service::{ExperienceEvent, MemoryMetadata, MemorySensitivity, RecallItem};
 
 pub const PAGE_SCHEMA_VERSION: &str = "aletheon.memory/v1";
@@ -62,6 +63,49 @@ impl GbrainPage {
         }
     }
 
+    /// Projects only locally approved, durable records. Candidate, rejected,
+    /// raw-message, and sensitive records remain exclusively in Mnemosyne.
+    pub fn from_record(record: &MemoryRecord) -> anyhow::Result<Option<Self>> {
+        record.validate()?;
+        if matches!(
+            record.status,
+            MemoryStatus::Candidate | MemoryStatus::Rejected
+        ) || matches!(
+            record.kind,
+            MemoryKind::Message
+                | MemoryKind::ToolOutcome
+                | MemoryKind::Reflection
+                | MemoryKind::ExternalReference
+        ) || matches!(
+            record.authority,
+            crate::model::MemoryAuthority::RawExperience
+                | crate::model::MemoryAuthority::ExternalReference
+        ) {
+            return Ok(None);
+        }
+        let kind = match record.status {
+            MemoryStatus::Tombstoned => "tombstone",
+            MemoryStatus::Superseded | MemoryStatus::Expired => "supersession",
+            _ => match record.kind {
+                MemoryKind::ArchitectureDecision => "architecture_decision",
+                MemoryKind::GoalOutcome => "goal_outcome",
+                MemoryKind::SemanticFact => "semantic_fact",
+                MemoryKind::Procedure => "procedure",
+                MemoryKind::CoreState => "core_state",
+                MemoryKind::Episodic => "episodic",
+                _ => return Ok(None),
+            },
+        };
+        let heading = match record.status {
+            MemoryStatus::Tombstoned => format!("Tombstone for {}", record.id.0),
+            MemoryStatus::Superseded | MemoryStatus::Expired => {
+                format!("Supersession for {}", record.id.0)
+            }
+            _ => record.id.0.clone(),
+        };
+        Self::build(kind, &heading, &record.content, &record.metadata).map(Some)
+    }
+
     pub fn build(
         kind: &str,
         heading: &str,
@@ -75,7 +119,17 @@ impl GbrainPage {
         ) {
             bail!("sensitive memory is excluded from GBrain projection");
         }
-        if !matches!(kind, "architecture_decision" | "goal_outcome") {
+        if !matches!(
+            kind,
+            "architecture_decision"
+                | "goal_outcome"
+                | "semantic_fact"
+                | "procedure"
+                | "core_state"
+                | "episodic"
+                | "supersession"
+                | "tombstone"
+        ) {
             bail!("unsupported GBrain memory record kind");
         }
         let frontmatter = Frontmatter {
@@ -146,8 +200,13 @@ impl GbrainPage {
         if [
             "<dasein_mutation",
             "<identity_instruction",
+            "<tool_execution",
+            "<policy_change",
             "\"dasein_mutation\":",
             "\"identity_instruction\":",
+            "\"tool_execution\":",
+            "\"tool_call\":",
+            "\"policy_change\":",
         ]
         .iter()
         .any(|marker| normalized_body.contains(marker))
@@ -161,6 +220,8 @@ impl GbrainPage {
             content: body.trim().to_string(),
             metadata,
             temporal_state,
+            authority: crate::model::MemoryAuthority::AletheonExternal,
+            scope: crate::model::MemoryScope::Global,
         })
     }
 }

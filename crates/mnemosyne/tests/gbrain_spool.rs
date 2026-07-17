@@ -3,7 +3,8 @@ use std::sync::{Arc, Barrier};
 
 use mnemosyne::backends::gbrain::config::RetryPolicy;
 use mnemosyne::backends::gbrain::{
-    EnqueueOutcome, GbrainPage, GbrainSpool, RetryOutcome, SpoolError, SpoolLimits,
+    EnqueueOutcome, GbrainPage, GbrainSpool, RemoteMemoryReceipt, RetryOutcome, SpoolError,
+    SpoolLimits,
 };
 use mnemosyne::MemorySensitivity;
 use rusqlite::{Connection, ErrorCode};
@@ -92,16 +93,30 @@ fn expired_lease_redelivers_and_ack_receipt_is_idempotent() {
         "crash before ack safely redelivers stable page"
     );
     assert_eq!(second.attempt, 2);
+    let first_receipt = RemoteMemoryReceipt {
+        record_id: first.record_id.clone(),
+        logical_page_id: first.logical_page_id.clone(),
+        remote_id: "receipt-1".into(),
+        content_hash: first.content_hash.clone(),
+        operation: first.operation,
+        schema_version: first.schema_version,
+        synced_at_ms: 101,
+    };
     assert!(matches!(
-        spool.acknowledge("goal-1", "worker-a", 101, None),
+        spool.acknowledge(&first, "worker-a", &first_receipt),
         Err(SpoolError::LeaseMismatch)
     ));
-    spool
-        .acknowledge("goal-1", "worker-b", 102, Some("receipt-1"))
-        .unwrap();
-    spool
-        .acknowledge("goal-1", "worker-b", 103, Some("receipt-1"))
-        .unwrap();
+    let receipt = RemoteMemoryReceipt {
+        record_id: second.record_id.clone(),
+        logical_page_id: second.logical_page_id.clone(),
+        remote_id: "receipt-1".into(),
+        content_hash: second.content_hash.clone(),
+        operation: second.operation,
+        schema_version: second.schema_version,
+        synced_at_ms: 102,
+    };
+    spool.acknowledge(&second, "worker-b", &receipt).unwrap();
+    spool.acknowledge(&second, "worker-b", &receipt).unwrap();
     assert!(spool.has_receipt("goal-1").unwrap());
     assert_eq!(spool.queue_depth().unwrap(), 0);
 }

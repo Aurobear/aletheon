@@ -69,6 +69,8 @@ pub struct ProductionAdmissionController {
 #[derive(Debug, Clone)]
 struct PermitRecord {
     principal: String,
+    process_id: fabric::ProcessId,
+    operation_id: fabric::OperationId,
     budget_reservation: Option<BudgetReservationId>,
     lease: Option<ResourceLeaseId>,
 }
@@ -94,6 +96,43 @@ impl ProductionAdmissionController {
             budget: None,
             leases: None,
             sandbox_available: true,
+        }
+    }
+
+    /// Revoke every still-active permit owned by a process. This is the
+    /// KernelRuntime terminal cleanup hook; settled permits are already clean.
+    pub async fn revoke_process_permits(&self, process: fabric::ProcessId) {
+        let permit_ids: Vec<_> = self
+            .active
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(permit, record)| (record.process_id == process).then_some(*permit))
+            .collect();
+        for permit in permit_ids {
+            let _ = self.revoke(permit, RevokeReason::OperationCancelled).await;
+        }
+    }
+
+    pub async fn active_for_process(&self, process: fabric::ProcessId) -> usize {
+        self.active
+            .lock()
+            .await
+            .values()
+            .filter(|record| record.process_id == process)
+            .count()
+    }
+
+    pub async fn revoke_operation_permits(&self, operation: fabric::OperationId) {
+        let permit_ids: Vec<_> = self
+            .active
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(permit, record)| (record.operation_id == operation).then_some(*permit))
+            .collect();
+        for permit in permit_ids {
+            let _ = self.revoke(permit, RevokeReason::OperationCancelled).await;
         }
     }
 
@@ -125,11 +164,25 @@ impl AdmissionController for ProductionAdmissionController {
     async fn admit(&self, request: AdmissionRequest) -> Result<ExecutionPermit, AdmissionError> {
         let now = self.clock.mono_now();
         let principal = request.principal.0.clone();
+        let permit_id = PermitId::new();
 
         // --- Budget reservation ---
         let budget_reservation = if let Some(ref budget_ctrl) = self.budget {
             if let Some(ref budget_req) = request.budget {
-                let id = budget_ctrl.reserve(&principal, budget_req).await?;
+                let id = if budget_ctrl.has_operation_scope(request.operation_id).await {
+                    budget_ctrl
+                        .reserve_capability_for_operation(
+                            request.operation_id,
+                            permit_id,
+                            budget_req.clone(),
+                        )
+                        .await?
+                        .reservation_id
+                } else {
+                    // Bounded compatibility for callers not yet composed with
+                    // KernelRuntime; the adapter still creates all four levels.
+                    budget_ctrl.reserve(&principal, budget_req).await?
+                };
                 Some(id)
             } else {
                 None
@@ -173,7 +226,7 @@ impl AdmissionController for ProductionAdmissionController {
         };
 
         let permit = ExecutionPermit {
-            id: PermitId::new(),
+            id: permit_id,
             operation_id: request.operation_id,
             process_id: request.process_id,
             capability: request.capability,
@@ -187,6 +240,8 @@ impl AdmissionController for ProductionAdmissionController {
             permit.id,
             PermitRecord {
                 principal,
+                process_id: request.process_id,
+                operation_id: request.operation_id,
                 budget_reservation: permit.budget_reservation,
                 lease: permit.lease,
             },

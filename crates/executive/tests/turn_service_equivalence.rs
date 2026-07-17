@@ -1,34 +1,43 @@
 use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::service::ServicePorts;
+use aletheon_kernel::KernelRuntime;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{NoopTurnEventSink, OperationId, ProcessId, StubTurnServices, TurnRequest, TurnStop};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-fn test_ports() -> Arc<ServicePorts> {
+fn test_kernel() -> Arc<KernelRuntime> {
     let clock: Arc<dyn fabric::Clock> = Arc::new(TestClock::default());
     let admission: Arc<dyn fabric::AdmissionController> =
         Arc::new(aletheon_kernel::admission::AllowAllAdmissionController::new(clock.clone()));
-    Arc::new(ServicePorts::for_testing(clock, admission))
+    Arc::new(KernelRuntime::with_admission(clock, admission))
+}
+
+async fn spawn_test_process(kernel: &KernelRuntime) -> ProcessId {
+    kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap()
+        .id
 }
 
 #[tokio::test]
 async fn turn_service_submits_one_turn() {
+    let kernel = test_kernel();
+    let process_id = spawn_test_process(&kernel).await;
     let service = TurnService::new(
         Arc::new(StubTurnServices),
         PreTurnPipeline,
         PostTurnPipeline,
-        test_ports(),
+        kernel,
     );
 
     let result = service
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                session_id: "s1".into(),
+                process_id,
+                context: turn_request_support::context("s1", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: None,
             },
@@ -43,7 +52,7 @@ async fn turn_service_submits_one_turn() {
 
 use async_trait::async_trait;
 use fabric::{
-    CapabilityRequest, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
+    CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
     RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices, Usage,
 };
 use std::sync::Mutex;
@@ -137,7 +146,7 @@ impl TurnServices for EquivalenceServices {
         Ok(fabric::AgoraView::default())
     }
 
-    async fn invoke(&self, req: CapabilityRequest) -> CapabilityResult {
+    async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
         self.tools.lock().unwrap().push(req.name.clone());
         CapabilityResult {
             call_id: req.call_id,
@@ -165,35 +174,38 @@ impl TurnServices for EquivalenceServices {
 async fn daemon_and_exec_turn_services_match_scripted_tool_order_and_output() {
     let daemon_services = Arc::new(EquivalenceServices::new());
     let exec_services = Arc::new(EquivalenceServices::new());
+    let daemon_kernel = test_kernel();
+    let daemon_process = spawn_test_process(&daemon_kernel).await;
     let daemon = TurnService::new(
         daemon_services.clone(),
         PreTurnPipeline,
         PostTurnPipeline,
-        test_ports(),
+        daemon_kernel,
     );
+    let exec_kernel = test_kernel();
+    let exec_process = spawn_test_process(&exec_kernel).await;
     let exec = TurnService::new(
         exec_services.clone(),
         PreTurnPipeline,
         PostTurnPipeline,
-        test_ports(),
+        exec_kernel,
     );
 
-    let make_request = || TurnRequest {
+    let make_request = |process_id| TurnRequest {
         operation_id: OperationId::new(),
-        process_id: ProcessId::new(),
-        session_id: "equiv".into(),
+        process_id,
+        context: turn_request_support::context("equiv", PathBuf::from(".")),
         input: "same request".into(),
-        working_dir: PathBuf::from("."),
         model_policy: None,
         deadline: None,
     };
 
     let daemon_result = daemon
-        .submit(make_request(), &NoopTurnEventSink)
+        .submit(make_request(daemon_process), &NoopTurnEventSink)
         .await
         .expect("daemon-shaped turn should complete");
     let exec_result = exec
-        .submit(make_request(), &NoopTurnEventSink)
+        .submit(make_request(exec_process), &NoopTurnEventSink)
         .await
         .expect("exec-shaped turn should complete");
 
@@ -209,8 +221,7 @@ use std::time::Duration;
 
 /// An LLM provider that sleeps before responding, used to simulate a
 /// long-running model call so that `tokio::time::timeout` in TurnService
-/// fires the deadline.  The sleep must happen inside `session.run_turn()`
-/// (not `recall`, which is called earlier in `PreTurnPipeline`).
+/// fires the deadline. The sleep must happen inside `session.run_turn()`.
 struct HangingLlm {
     hang_ms: u64,
 }
@@ -275,7 +286,7 @@ impl TurnServices for HangingServices {
         Ok(fabric::AgoraView::default())
     }
 
-    async fn invoke(&self, _req: CapabilityRequest) -> CapabilityResult {
+    async fn invoke(&self, _req: CapabilityCall) -> CapabilityResult {
         CapabilityResult {
             call_id: String::new(),
             output: String::new(),
@@ -298,16 +309,17 @@ impl TurnServices for HangingServices {
 async fn deadline_timeout_returns_cancelled() {
     // Deadline 100ms, LLM takes 500ms — deadline fires first.
     let services = Arc::new(HangingServices::new(500));
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports());
+    let kernel = test_kernel();
+    let process_id = spawn_test_process(&kernel).await;
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel);
 
     let result = service
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                session_id: "deadline".into(),
+                process_id,
+                context: turn_request_support::context("deadline", PathBuf::from(".")),
                 input: "should timeout".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(100)),
             },
@@ -326,16 +338,17 @@ async fn deadline_timeout_returns_cancelled() {
 #[tokio::test]
 async fn no_deadline_completes_normally() {
     let services = Arc::new(EquivalenceServices::new());
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports());
+    let kernel = test_kernel();
+    let process_id = spawn_test_process(&kernel).await;
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel);
 
     let result = service
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                session_id: "no-deadline".into(),
+                process_id,
+                context: turn_request_support::context("no-deadline", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: None,
             },
@@ -351,17 +364,18 @@ async fn no_deadline_completes_normally() {
 #[tokio::test]
 async fn deadline_not_exceeded_completes_normally() {
     let services = Arc::new(EquivalenceServices::new());
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports());
+    let kernel = test_kernel();
+    let process_id = spawn_test_process(&kernel).await;
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel);
 
     // Deadline is ample (60s) — the turn completes well before it.
     let result = service
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                session_id: "ample-deadline".into(),
+                process_id,
+                context: turn_request_support::context("ample-deadline", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(60_000)),
             },
@@ -378,7 +392,9 @@ async fn deadline_not_exceeded_completes_normally() {
 async fn clock_measures_elapsed_for_turn_metrics() {
     let clock = Arc::new(TestClock::new(0, 0));
     let services = Arc::new(EquivalenceServices::new());
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports())
+    let kernel = test_kernel();
+    let process_id = spawn_test_process(&kernel).await;
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel)
         .with_clock(clock.clone());
 
     // Advance the clock by 42ms during the turn (the turn itself runs fast,
@@ -387,10 +403,9 @@ async fn clock_measures_elapsed_for_turn_metrics() {
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                session_id: "clock-measure".into(),
+                process_id,
+                context: turn_request_support::context("clock-measure", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: None,
             },
@@ -423,17 +438,18 @@ async fn clock_deadline_short_returns_cancelled() {
     // 1 ms deadline fires well before the turn completes.
     let clock = Arc::new(TestClock::new(0, 0));
     let services = Arc::new(HangingServices::new(500));
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports())
+    let kernel = test_kernel();
+    let process_id = spawn_test_process(&kernel).await;
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel)
         .with_clock(clock.clone());
 
     let result = service
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                session_id: "clock-deadline-short".into(),
+                process_id,
+                context: turn_request_support::context("clock-deadline-short", PathBuf::from(".")),
                 input: "should timeout".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(1)),
             },
@@ -452,17 +468,18 @@ async fn clock_deadline_long_completes_normally() {
     // well before 5000 ms, so the turn completes normally.
     let clock = Arc::new(TestClock::new(0, 0));
     let services = Arc::new(EquivalenceServices::new());
-    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, test_ports())
+    let kernel = test_kernel();
+    let process_id = spawn_test_process(&kernel).await;
+    let service = TurnService::new(services, PreTurnPipeline, PostTurnPipeline, kernel)
         .with_clock(clock.clone());
 
     let result = service
         .submit(
             TurnRequest {
                 operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                session_id: "clock-deadline-long".into(),
+                process_id,
+                context: turn_request_support::context("clock-deadline-long", PathBuf::from(".")),
                 input: "hello".into(),
-                working_dir: PathBuf::from("."),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(5000)),
             },
@@ -476,3 +493,4 @@ async fn clock_deadline_long_completes_normally() {
     // With TestClock not advanced, elapsed_ms is 0.
     assert_eq!(result.metrics.elapsed_ms, 0);
 }
+mod turn_request_support;

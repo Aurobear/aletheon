@@ -6,10 +6,16 @@
 //! should map to `Deny`.
 
 use async_trait::async_trait;
+use fabric::{ApprovalOwner, ConnectionId, TurnId, WorkspacePolicy};
 
 /// A request for the user to approve a single tool action.
 #[derive(Debug, Clone)]
 pub struct ApprovalRequest {
+    pub owner: ApprovalOwner,
+    pub connection_id: ConnectionId,
+    pub turn_id: TurnId,
+    pub call_id: String,
+    pub workspace: WorkspacePolicy,
     /// Tool name, e.g. "bash_exec".
     pub tool: String,
     /// One-line human-readable summary, e.g. "bash: rm -rf /tmp/x".
@@ -106,6 +112,14 @@ mod tests {
     async fn auto_deny_gate_denies() {
         let gate = AutoDenyGate;
         let req = ApprovalRequest {
+            owner: fabric::ApprovalOwner::new(
+                fabric::PrincipalId("test".into()),
+                fabric::ThreadId("test".into()),
+            ),
+            connection_id: fabric::ConnectionId::new(),
+            turn_id: fabric::TurnId::new(),
+            call_id: "call".into(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap(),
             tool: "bash_exec".into(),
             action_summary: "rm -rf /tmp/x".into(),
             risk_level: "high".into(),
@@ -118,6 +132,14 @@ mod tests {
     async fn auto_approve_gate_approves() {
         let gate = AutoApproveGate;
         let req = ApprovalRequest {
+            owner: fabric::ApprovalOwner::new(
+                fabric::PrincipalId("test".into()),
+                fabric::ThreadId("test".into()),
+            ),
+            connection_id: fabric::ConnectionId::new(),
+            turn_id: fabric::TurnId::new(),
+            call_id: "call".into(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap(),
             tool: "file_write".into(),
             action_summary: "write hello.txt".into(),
             risk_level: "low".into(),

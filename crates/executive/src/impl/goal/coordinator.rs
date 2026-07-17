@@ -16,7 +16,7 @@ use crate::r#impl::memory_projection::{
     ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
 };
 use crate::r#impl::storage_quota::{StorageClass, StorageQuota, StorageReservation};
-use aletheon_kernel::operation::OperationTable;
+use aletheon_kernel::KernelRuntime;
 use fabric::goal::{GoalId, GoalSnapshot, GoalState, GoalWaitReason};
 use fabric::Clock;
 use fabric::ProcessId;
@@ -193,7 +193,7 @@ impl GoalCoordinator {
     pub fn approved_apply_coordinator(
         &self,
         approvals: Arc<Mutex<ApprovalRepository>>,
-        operations: Arc<OperationTable>,
+        kernel: Arc<KernelRuntime>,
         clock: Arc<dyn Clock>,
         config: ApplyCoordinatorConfig,
         cleaner: Arc<dyn ManagedWorktreeCleaner>,
@@ -201,7 +201,7 @@ impl GoalCoordinator {
         let coordinator = ApplyCoordinator::new(
             self.store.clone(),
             approvals,
-            operations,
+            kernel,
             clock,
             config,
             cleaner,

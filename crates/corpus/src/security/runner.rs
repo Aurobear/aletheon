@@ -25,6 +25,8 @@ pub enum ToolError {
     InterruptTurn { reason: String },
     MaxRetriesExceeded,
     ExecutionFailed(String),
+    OutputRejected(String),
+    AuditFailed(String),
 }
 
 impl std::fmt::Display for ToolError {
@@ -36,8 +38,15 @@ impl std::fmt::Display for ToolError {
             Self::InterruptTurn { reason } => write!(f, "Turn interrupted: {}", reason),
             Self::MaxRetriesExceeded => write!(f, "Max retries exceeded"),
             Self::ExecutionFailed(msg) => write!(f, "Execution failed: {}", msg),
+            Self::OutputRejected(msg) => write!(f, "Output rejected: {}", msg),
+            Self::AuditFailed(msg) => write!(f, "Audit persistence failed: {}", msg),
         }
     }
+}
+
+pub struct GuardedToolExecution {
+    pub result: std::result::Result<ToolResult, ToolError>,
+    pub audit_id: fabric::AuditEventId,
 }
 
 impl std::error::Error for ToolError {}
@@ -52,8 +61,8 @@ pub struct ToolRunnerWithGuard {
     /// Approval gate consulted before executing tools that require approval.
     /// Defaults to AutoDenyGate (conservative: preserves prior "deny L2+" behavior).
     approval_gate: Arc<dyn ApprovalGate>,
-    /// Tool names approved for the rest of the session (via ApproveForSession).
-    session_approvals: std::collections::HashSet<String>,
+    /// Principal/thread/tool grants approved for the rest of one thread.
+    session_approvals: std::collections::HashSet<fabric::ThreadGrantKey>,
     /// Permission context for mode/rule-based pre-approval.
     permission_ctx: PermissionContext,
     /// Independent execpolicy engine. When set, takes precedence over the inline PolicyEngine.
@@ -173,6 +182,33 @@ impl ToolRunnerWithGuard {
         ctx: &ToolContext,
         turn_id: &str,
     ) -> std::result::Result<ToolResult, ToolError> {
+        self.execute_tool_report(tool, input, ctx, turn_id)
+            .await
+            .result
+    }
+
+    pub async fn execute_tool_report(
+        &mut self,
+        tool: &dyn Tool,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+        turn_id: &str,
+    ) -> GuardedToolExecution {
+        let audit_id = fabric::AuditEventId::new();
+        let result = self
+            .execute_tool_inner(tool, input, ctx, turn_id, audit_id)
+            .await;
+        GuardedToolExecution { result, audit_id }
+    }
+
+    async fn execute_tool_inner(
+        &mut self,
+        tool: &dyn Tool,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+        turn_id: &str,
+        audit_id: fabric::AuditEventId,
+    ) -> std::result::Result<ToolResult, ToolError> {
         let tool_name = tool.name();
         let start = self.clock.mono_now();
 
@@ -181,6 +217,7 @@ impl ToolRunnerWithGuard {
         match policy_verdict {
             PolicyVerdict::Deny { reason } => {
                 self.log_audit(
+                    audit_id,
                     tool_name,
                     &input,
                     tool.permission_level(),
@@ -189,7 +226,8 @@ impl ToolRunnerWithGuard {
                     &start,
                     "denied",
                 )
-                .await;
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::PolicyDenied { reason });
             }
             PolicyVerdict::RequireApproval { reason } => {
@@ -207,6 +245,7 @@ impl ToolRunnerWithGuard {
                         }
                         PermissionBehavior::Deny => {
                             self.log_audit(
+                                audit_id,
                                 tool_name,
                                 &input,
                                 tool.permission_level(),
@@ -215,17 +254,50 @@ impl ToolRunnerWithGuard {
                                 &start,
                                 "rule_denied",
                             )
-                            .await;
+                            .await
+                            .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                             return Err(ToolError::PolicyDenied {
                                 reason: format!("{}: denied by permission rule/mode", reason),
                             });
                         }
                         PermissionBehavior::Ask => {
                             // Fall through to existing approval-gate flow.
-                            if self.session_approvals.contains(tool_name) {
+                            let Some(authority) = ctx.approval_authority.as_ref() else {
+                                self.log_audit(
+                                    audit_id,
+                                    tool_name,
+                                    &input,
+                                    tool.permission_level(),
+                                    turn_id,
+                                    None,
+                                    &start,
+                                    "approval_authority_missing",
+                                )
+                                .await
+                                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
+                                return Err(ToolError::PolicyDenied {
+                                    reason: format!(
+                                        "{}: authenticated approval authority is unavailable",
+                                        reason
+                                    ),
+                                });
+                            };
+                            let grant_key = fabric::ThreadGrantKey {
+                                owner: fabric::ApprovalOwner::new(
+                                    authority.principal_id.clone(),
+                                    authority.thread_id.clone(),
+                                ),
+                                tool: tool_name.to_owned(),
+                            };
+                            if self.session_approvals.contains(&grant_key) {
                                 // Previously approved-for-session; allow.
                             } else {
                                 let req = ApprovalRequest {
+                                    owner: grant_key.owner.clone(),
+                                    connection_id: authority.connection_id.clone(),
+                                    turn_id: authority.turn_id,
+                                    call_id: authority.call_id.clone(),
+                                    workspace: authority.workspace.clone(),
                                     tool: tool_name.to_string(),
                                     action_summary: summary,
                                     risk_level: format!("{:?}", tool.permission_level()),
@@ -234,10 +306,11 @@ impl ToolRunnerWithGuard {
                                 match self.approval_gate.request(&req).await {
                                     ApprovalDecision::Approve => {}
                                     ApprovalDecision::ApproveForSession => {
-                                        self.session_approvals.insert(tool_name.to_string());
+                                        self.session_approvals.insert(grant_key);
                                     }
                                     ApprovalDecision::Deny => {
                                         self.log_audit(
+                                            audit_id,
                                             tool_name,
                                             &input,
                                             tool.permission_level(),
@@ -246,7 +319,8 @@ impl ToolRunnerWithGuard {
                                             &start,
                                             "approval_denied",
                                         )
-                                        .await;
+                                        .await
+                                        .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                                         return Err(ToolError::PolicyDenied {
                                             reason: format!("{}: denied by approval gate", reason),
                                         });
@@ -269,6 +343,7 @@ impl ToolRunnerWithGuard {
             }
             LoopVerdict::Block { reason, suggestion } => {
                 self.log_audit(
+                    audit_id,
                     tool_name,
                     &input,
                     tool.permission_level(),
@@ -277,13 +352,15 @@ impl ToolRunnerWithGuard {
                     &start,
                     "loop_blocked",
                 )
-                .await;
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::LoopBlocked {
                     reason: format!("{}. {}", reason, suggestion),
                 });
             }
             LoopVerdict::Escalate { reason } => {
                 self.log_audit(
+                    audit_id,
                     tool_name,
                     &input,
                     tool.permission_level(),
@@ -292,13 +369,15 @@ impl ToolRunnerWithGuard {
                     &start,
                     "escalated",
                 )
-                .await;
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::EscalateToHuman {
                     reason: reason.clone(),
                 });
             }
             LoopVerdict::InterruptTurn { reason, .. } => {
                 self.log_audit(
+                    audit_id,
                     tool_name,
                     &input,
                     tool.permission_level(),
@@ -307,7 +386,8 @@ impl ToolRunnerWithGuard {
                     &start,
                     "interrupted",
                 )
-                .await;
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::InterruptTurn {
                     reason: reason.clone(),
                 });
@@ -321,10 +401,13 @@ impl ToolRunnerWithGuard {
         let result = if tool_name == "bash_exec" {
             let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
-            let trusted_working_dir = ctx.working_dir.to_string_lossy().to_string();
+            let workspace = ctx
+                .effective_workspace_policy()
+                .map_err(|reason| ToolError::PolicyDenied { reason })?;
+            let trusted_working_dir = workspace.cwd().to_string_lossy().to_string();
             let sandbox_config = SandboxConfig {
-                working_dir: ctx.working_dir.to_string_lossy().to_string(),
-                env_vars: std::collections::HashMap::from([
+                workspace,
+                environment: std::collections::BTreeMap::from([
                     ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
                     ("GIT_CONFIG_KEY_0".to_string(), "safe.directory".to_string()),
                     ("GIT_CONFIG_VALUE_0".to_string(), trusted_working_dir),
@@ -382,24 +465,14 @@ impl ToolRunnerWithGuard {
             }
         };
 
-        // 4. Output guardrail validation with retries
-        let mut final_result = result;
-        for retry in 0..self.output_guardrail.max_retries {
-            match self.output_guardrail.validate(&final_result).await {
-                Ok(()) => break,
-                Err(e) => {
-                    warn!(tool = tool_name, retry = retry, error = ?e, "Output validation failed");
-                    if retry < self.output_guardrail.max_retries - 1 {
-                        final_result = tool.execute(input.clone(), ctx).await;
-                    } else {
-                        warn!(
-                            tool = tool_name,
-                            "Max retries exceeded for output validation"
-                        );
-                    }
-                }
-            }
-        }
+        // 4. Validate captured output without re-running a side effect.
+        let final_result = result;
+        let output_rejection = self
+            .output_guardrail
+            .validate(&final_result)
+            .await
+            .err()
+            .map(|error| format!("{error:?}"));
 
         // 5. Loop detector post-check
         self.loop_detector
@@ -408,6 +481,7 @@ impl ToolRunnerWithGuard {
         // 6. Audit log
         let verdict_str = format!("{:?}", loop_verdict);
         self.log_audit(
+            audit_id,
             tool_name,
             &input,
             tool.permission_level(),
@@ -416,7 +490,12 @@ impl ToolRunnerWithGuard {
             &start,
             &verdict_str,
         )
-        .await;
+        .await
+        .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
+
+        if let Some(reason) = output_rejection {
+            return Err(ToolError::OutputRejected(reason));
+        }
 
         Ok(final_result)
     }
@@ -443,6 +522,7 @@ impl ToolRunnerWithGuard {
     #[allow(clippy::too_many_arguments)]
     async fn log_audit(
         &self,
+        audit_id: fabric::AuditEventId,
         tool_name: &str,
         input: &serde_json::Value,
         level: PermissionLevel,
@@ -450,9 +530,10 @@ impl ToolRunnerWithGuard {
         result: Option<&ToolResult>,
         start: &fabric::MonoTime,
         verdict: &str,
-    ) {
+    ) -> anyhow::Result<()> {
         let category = self.risk_classifier.classify(tool_name);
         let record = AuditRecord {
+            audit_id,
             timestamp: self.clock.wall_now(),
             session_id: String::new(), // Will be filled by caller or context
             turn_id: turn_id.to_string(),
@@ -466,7 +547,7 @@ impl ToolRunnerWithGuard {
             sandbox_backend: None,
             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
         };
-        let _ = self.audit_logger.log(record).await;
+        self.audit_logger.log(record).await
     }
 
     pub fn metrics(&self) -> &super::loop_detector::LoopDetectorMetrics {
@@ -577,6 +658,16 @@ mod tests {
 
     fn make_ctx() -> ToolContext {
         ToolContext {
+            approval_authority: Some(fabric::ToolApprovalAuthority {
+                principal_id: fabric::PrincipalId("test".into()),
+                connection_id: fabric::ConnectionId::new(),
+                thread_id: fabric::ThreadId("test-session".into()),
+                turn_id: fabric::TurnId::new(),
+                call_id: "test-call".into(),
+                workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
+                    .unwrap(),
+            }),
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test-session".into(),
             clock: test_clock(),
@@ -633,11 +724,9 @@ mod tests {
             .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
             .await;
         assert!(
-            result.is_ok(),
-            "AutoApproveGate should allow L2 tool: {:?}",
-            result.err()
+            matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),
+            "AutoApproveGate should pass policy before output validation: {result:?}"
         );
-        assert_eq!(result.unwrap().content, "ok");
     }
 
     #[tokio::test]
@@ -660,11 +749,9 @@ mod tests {
             .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
             .await;
         assert!(
-            result.is_ok(),
-            "BypassAll mode should allow L2 tool even with AutoDenyGate: {:?}",
-            result.err()
+            matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),
+            "BypassAll should pass policy even if captured output is rejected: {result:?}"
         );
-        assert_eq!(result.unwrap().content, "ok");
     }
 
     #[tokio::test]
@@ -734,9 +821,8 @@ mod tests {
             .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
             .await;
         assert!(
-            result.is_ok(),
-            "execpolicy Prompt + AutoApproveGate should allow: {:?}",
-            result.err()
+            matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),
+            "approval should pass before output validation: {result:?}"
         );
     }
 
@@ -752,9 +838,8 @@ mod tests {
             .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
             .await;
         assert!(
-            result.is_ok(),
-            "Inline PolicyEngine + AutoApproveGate should allow bash_exec: {:?}",
-            result.err()
+            matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),
+            "inline policy should pass before output validation: {result:?}"
         );
     }
 

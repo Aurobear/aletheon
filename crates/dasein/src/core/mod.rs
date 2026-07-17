@@ -61,7 +61,7 @@ pub struct SelfFieldConfig {
     pub dasein_retention_depth: usize,
     /// Decay rate for the DaseinModule's retention field (0.0-1.0).
     pub dasein_decay_rate: f64,
-    /// Clock for deterministic time. If None, uses SystemClock.
+    /// Clock supplied by the application composition root.
     pub clock: Option<Arc<dyn fabric::Clock>>,
 }
 
@@ -96,13 +96,13 @@ pub struct SelfField {
     mutation: MutationLayer,
     initialized: bool,
     /// Optional SQLite store for persistence.
-    store: Option<SelfFieldStore>,
+    store: Option<Arc<SelfFieldStore>>,
     // Bridges to external subsystems
     policy_bridge: PolicyBridge,
     loop_bridge: LoopBridge,
     hook_bridge: HookBridge,
     // DaseinModule (optional, opt-in via config)
-    dasein: Option<DaseinModule>,
+    dasein: Option<Arc<DaseinModule>>,
     dasein_event_tx: Option<tokio::sync::mpsc::Sender<DaseinEvent>>,
     /// Optional Runtime permission authority. When set, `review()` delegates
     /// the confirmation verdict to it instead of using the inline rule.
@@ -117,7 +117,7 @@ impl SelfField {
     pub fn new(config: SelfFieldConfig) -> Self {
         let clock: Arc<dyn fabric::Clock> = config
             .clock
-            .unwrap_or_else(|| Arc::new(aletheon_kernel::chronos::SystemClock::new()));
+            .expect("SelfFieldConfig.clock must be injected by the composition root");
 
         let mut boundary = BoundaryLayer::new();
         boundary.set_rules(config.boundary_rules);
@@ -138,11 +138,26 @@ impl SelfField {
 
         let store = config
             .db_path
-            .and_then(|path| SelfFieldStore::new(path).ok());
+            .and_then(|path| SelfFieldStore::new(path).ok())
+            .map(Arc::new);
 
         let (dasein, dasein_event_tx) = if config.enable_dasein {
-            let (module, tx) = DaseinModule::new(clock.clone());
-            (Some(module), Some(tx))
+            let runtime_config = crate::dasein::DaseinRuntimeConfig {
+                retention_depth: config.dasein_retention_depth,
+                decay_rate: config.dasein_decay_rate,
+                ..Default::default()
+            };
+            let ledger = store
+                .as_ref()
+                .map(|store| Arc::new(crate::dasein::ledger::SelfLedger::new(store.clone())));
+            let (module, tx) = DaseinModule::with_runtime_and_ledger(
+                clock.clone(),
+                Arc::new(crate::dasein::sorge::SystemSorgeTimer),
+                runtime_config,
+                ledger,
+            )
+            .expect("SelfField Dasein configuration must be valid");
+            (Some(Arc::new(module)), Some(tx))
         } else {
             (None, None)
         };
@@ -246,7 +261,12 @@ impl SelfField {
 
     /// Access the DaseinModule if enabled.
     pub fn dasein(&self) -> Option<&DaseinModule> {
-        self.dasein.as_ref()
+        self.dasein.as_deref()
+    }
+
+    /// Cloneable handle for Executive adapters that share the canonical state.
+    pub fn dasein_handle(&self) -> Option<Arc<DaseinModule>> {
+        self.dasein.clone()
     }
 
     /// Get DaseinContext for LLM injection.
@@ -324,14 +344,11 @@ impl Subsystem for SelfField {
         self.narrative
             .narrate("init", "SelfField subsystem initialized");
         if let Some(ref dasein) = self.dasein {
-            dasein.start_sorge_loop();
-            info!("DaseinModule sorge loop started");
-            // Load DaseinModule state from database
             if let Some(ref store) = self.store {
-                if let Err(e) = crate::dasein::persistence::load_dasein_state(dasein, store) {
-                    tracing::warn!("Failed to load DaseinModule state: {}", e);
-                }
+                crate::dasein::persistence::load_dasein_state(dasein, store).await?;
             }
+            dasein.start_sorge_loop();
+            info!("DaseinModule durable state restored; sorge loop started");
         }
         self.initialized = true;
         Ok(())
@@ -348,15 +365,12 @@ impl Subsystem for SelfField {
 
     async fn shutdown(&mut self) -> Result<()> {
         info!("SelfField shutting down");
-        // Save DaseinModule state before stopping sorge loop
-        if let (Some(ref dasein), Some(ref store)) = (&self.dasein, &self.store) {
-            if let Err(e) = crate::dasein::persistence::save_dasein_state(dasein, store) {
-                tracing::warn!("Failed to save DaseinModule state: {}", e);
-            }
-        }
         if let Some(ref dasein) = self.dasein {
-            dasein.stop_sorge_loop();
+            dasein.stop_sorge_loop().await;
             info!("DaseinModule sorge loop stopped");
+            if let Some(ref store) = self.store {
+                crate::dasein::persistence::save_dasein_state(dasein, store)?;
+            }
         }
         self.narrative
             .narrate("shutdown", "SelfField subsystem shutting down");
@@ -506,7 +520,10 @@ mod tests {
     use std::path::PathBuf;
 
     fn default_config() -> SelfFieldConfig {
-        SelfFieldConfig::default()
+        SelfFieldConfig {
+            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
+            ..SelfFieldConfig::default()
+        }
     }
 
     fn make_intent(action: &str, description: &str) -> Intent {

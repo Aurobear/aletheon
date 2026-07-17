@@ -1,17 +1,17 @@
 //! Inter-process messaging integration tests (Phase 4C).
 //!
-//! Validates that the ProcessTable + MailboxService + EnvelopeV2 stack works
+//! Validates that the opaque KernelRuntime + MailboxService + EnvelopeV2 stack works
 //! end-to-end: spawning processes with mailboxes, routing messages between them,
 //! and handling edge cases (unknown targets, backpressure, closed mailboxes).
 
 use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::process::ProcessTable;
+use aletheon_kernel::KernelRuntime;
 use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use fabric::ipc::mailbox::{
     DeliveryReceipt, InProcessMailbox, InProcessMailboxService, Mailbox, MailboxService,
 };
 use fabric::types::process::{NamespaceId, SpawnSpec};
-use fabric::{ProcessManager, ProcessSignal};
+use fabric::ProcessSignal;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -31,13 +31,12 @@ fn make_test_envelope(source: &str, target: &str, body: &str) -> EnvelopeV2 {
 
 /// Spawn a process in the process table and register its mailbox.
 async fn spawn_with_mailbox(
-    table: &ProcessTable,
-    svc: &InProcessMailboxService,
+    runtime: &KernelRuntime,
     agent_name: &str,
     namespace: &str,
 ) -> (fabric::ProcessId, Arc<dyn Mailbox>) {
-    let handle = table
-        .spawn(SpawnSpec {
+    let handle = runtime
+        .spawn_process(SpawnSpec {
             namespace: NamespaceId(namespace.to_string()),
             ..SpawnSpec::default()
         })
@@ -46,7 +45,8 @@ async fn spawn_with_mailbox(
     let pid = handle.id;
 
     let mailbox: Arc<dyn Mailbox> = Arc::new(InProcessMailbox::with_capacity(64));
-    svc.register(Target::from(agent_name), mailbox.clone())
+    runtime
+        .register_process_mailbox(pid, Target::from(agent_name), mailbox.clone())
         .await
         .unwrap();
 
@@ -60,21 +60,21 @@ async fn spawn_with_mailbox(
 #[tokio::test]
 async fn spawned_process_has_mailbox_registered() {
     let clock = Arc::new(TestClock::default());
-    let table = ProcessTable::new(clock);
-    let svc = InProcessMailboxService::new();
+    let runtime = KernelRuntime::with_clock(clock);
+    let svc = runtime.mailbox_service();
 
-    let (_pid, _mb) = spawn_with_mailbox(&table, &svc, "agent-1", "ns-1").await;
+    let (_pid, _mb) = spawn_with_mailbox(&runtime, "agent-1", "ns-1").await;
     assert_eq!(svc.len().await, 1);
 }
 
 #[tokio::test]
 async fn route_between_two_processes() {
     let clock = Arc::new(TestClock::default());
-    let table = ProcessTable::new(clock);
-    let svc = InProcessMailboxService::new();
+    let runtime = KernelRuntime::with_clock(clock);
+    let svc = runtime.mailbox_service();
 
-    let (_pid_a, _mb_a) = spawn_with_mailbox(&table, &svc, "alice", "test-ns").await;
-    let (_pid_b, mb_b) = spawn_with_mailbox(&table, &svc, "bob", "test-ns").await;
+    let (_pid_a, _mb_a) = spawn_with_mailbox(&runtime, "alice", "test-ns").await;
+    let (_pid_b, mb_b) = spawn_with_mailbox(&runtime, "bob", "test-ns").await;
 
     // Alice sends to Bob.
     let env = make_test_envelope("alice", "bob", "hello bob");
@@ -92,26 +92,23 @@ async fn route_between_two_processes() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn message_to_terminated_process_still_delivered_if_mailbox_open() {
+async fn message_to_terminated_process_is_rejected_after_kernel_cleanup() {
     let clock = Arc::new(TestClock::default());
-    let table = ProcessTable::new(clock);
-    let svc = InProcessMailboxService::new();
+    let runtime = KernelRuntime::with_clock(clock);
+    let svc = runtime.mailbox_service();
 
-    let (pid, mb) = spawn_with_mailbox(&table, &svc, "short-lived", "test-ns").await;
+    let (pid, _mb) = spawn_with_mailbox(&runtime, "short-lived", "test-ns").await;
 
     // Terminate the process.
-    table.signal(pid, ProcessSignal::Terminate).await.unwrap();
+    runtime
+        .signal_process(pid, ProcessSignal::Terminate)
+        .await
+        .unwrap();
 
-    // Mailbox is still open — send should succeed.
+    // Terminal cleanup removes the process-owned mailbox.
     let env = make_test_envelope("kernel", "short-lived", "farewell");
     let receipt = svc.route(env).await;
-    assert!(
-        receipt.is_ok(),
-        "delivery to terminated process should succeed: {receipt:?}"
-    );
-
-    let received = mb.recv().await.expect("mailbox still has pending messages");
-    assert_eq!(received.payload["body"], "farewell");
+    assert!(matches!(receipt, DeliveryReceipt::NoSuchMailbox { .. }));
 }
 
 #[tokio::test]
@@ -167,14 +164,14 @@ async fn full_mailbox_rejects_with_backpressure() {
 #[tokio::test]
 async fn fan_out_to_multiple_processes() {
     let clock = Arc::new(TestClock::default());
-    let table = ProcessTable::new(clock);
-    let svc = InProcessMailboxService::new();
+    let runtime = KernelRuntime::with_clock(clock);
+    let svc = runtime.mailbox_service();
 
     let n = 5;
     let mut mailboxes = vec![];
     for i in 0..n {
         let name = format!("worker-{i}");
-        let (_pid, mb) = spawn_with_mailbox(&table, &svc, &name, "fanout-ns").await;
+        let (_pid, mb) = spawn_with_mailbox(&runtime, &name, "fanout-ns").await;
         mailboxes.push(mb);
     }
 
@@ -251,9 +248,9 @@ async fn duplicate_mailbox_registration_is_rejected() {
 #[tokio::test]
 async fn process_signal_prioritized_in_mailbox() {
     let clock = Arc::new(TestClock::default());
-    let table = ProcessTable::new(clock);
-    let svc = InProcessMailboxService::new();
-    let (_pid, mb) = spawn_with_mailbox(&table, &svc, "agent-sig", "sig-ns").await;
+    let runtime = KernelRuntime::with_clock(clock);
+    let svc = runtime.mailbox_service();
+    let (_pid, mb) = spawn_with_mailbox(&runtime, "agent-sig", "sig-ns").await;
 
     svc.route(make_test_envelope("kernel", "agent-sig", "ordinary"))
         .await;

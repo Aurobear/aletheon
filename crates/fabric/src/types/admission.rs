@@ -32,6 +32,12 @@ impl Default for PermitId {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PrincipalId(pub String);
 
+impl PrincipalId {
+    pub fn local_uid(uid: u32) -> Self {
+        Self(format!("local-uid:{uid}"))
+    }
+}
+
 /// Human-readable capability name (e.g. "shell.execute", "memory.write").
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CapabilityId(pub String);
@@ -101,6 +107,67 @@ impl BudgetReservationId {
     }
 }
 
+/// Schema version for persisted hierarchical budget scope identifiers.
+pub const BUDGET_SCOPE_SCHEMA_VERSION: u16 = 1;
+
+/// Stable identifier for one node in a rollout budget hierarchy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BudgetScopeId(pub Uuid);
+
+impl BudgetScopeId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for BudgetScopeId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The only valid levels in the monetary budget ownership tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetScopeKind {
+    Rollout,
+    Process,
+    Operation,
+    Capability,
+}
+
+impl BudgetScopeKind {
+    pub fn accepts_child(self, child: Self) -> bool {
+        matches!(
+            (self, child),
+            (Self::Rollout, Self::Process)
+                | (Self::Process, Self::Operation)
+                | (Self::Operation, Self::Capability)
+        )
+    }
+}
+
+/// Public immutable view of a budget scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetScope {
+    pub schema_version: u16,
+    pub id: BudgetScopeId,
+    pub parent: Option<BudgetScopeId>,
+    pub kind: BudgetScopeKind,
+    /// Typed owner rendered at its adapter boundary (rollout/process/operation/permit).
+    pub owner: String,
+    pub limit: BudgetRequest,
+}
+
+/// Parent-bound proof returned when a child allocation is reserved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetReservationReceipt {
+    pub reservation_id: BudgetReservationId,
+    pub scope_id: BudgetScopeId,
+    pub parent_scope_id: BudgetScopeId,
+    pub request: BudgetRequest,
+}
+
 impl Default for BudgetReservationId {
     fn default() -> Self {
         Self::new()
@@ -108,7 +175,7 @@ impl Default for BudgetReservationId {
 }
 
 /// Budget request during admission.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetRequest {
     /// Maximum token budget.
     pub max_tokens: Option<u64>,

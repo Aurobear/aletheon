@@ -4,287 +4,80 @@
 mod connection;
 pub(crate) mod format;
 mod init;
+pub(crate) mod ports;
 mod rpc;
-mod session_routing;
 pub(crate) mod tool_executor;
 mod turn_handler;
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use std::time::Duration;
+use tokio::sync::mpsc;
 
-use aletheon_kernel::chronos::SystemTimer;
-use fabric::Timer;
-use tokio_util::sync::CancellationToken;
-
-use super::model_router::ModelRouter;
-use super::session_manager::SessionManager;
-use crate::core::core_systems::CoreSystems;
-use crate::service::DaemonTurnOrchestrator;
-use fabric::envelope::Payload;
-use fabric::envelope::*;
-use fabric::CommunicationBus;
-use fabric::LlmProvider;
-use fabric::{Context as AbiContext, Intent, SelfFieldOps, Verdict};
-
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use tokio::sync::{mpsc, Mutex};
-use tracing::warn;
-
-use crate::r#impl::engine::modules::{SelfFieldRequest, SelfFieldResponse};
-
-use crate::core::session_gateway::SessionGateway;
+pub(crate) async fn run_hook_scripts(scripts: &[String], input_json: &str) {
+    for script_path in scripts {
+        let path = format::expand_tilde(script_path);
+        if !std::path::Path::new(&path).exists() {
+            tracing::warn!(path = %path, "Hook script not found, skipping");
+            continue;
+        }
+        let spawn_result = tokio::process::Command::new(&path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let mut child = match spawn_result {
+            Ok(child) => child,
+            Err(error) => {
+                tracing::warn!(path = %path, %error, "Failed to spawn hook script");
+                continue;
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(input_json.as_bytes()).await;
+        }
+        match tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await {
+            Ok(Ok(status)) if status.success() => {}
+            Ok(Ok(status)) => {
+                tracing::warn!(path = %path, code = status.code(), "Hook script failed")
+            }
+            Ok(Err(error)) => tracing::warn!(path = %path, %error, "Hook script I/O error"),
+            Err(_) => {
+                tracing::warn!(path = %path, "Hook script timed out");
+                let _ = child.kill().await;
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct RequestHandler {
-    /// All subsystem types — becomes `Arc<dyn TraitOps>` in Group B.
-    pub(crate) subsystems: Arc<CoreSystems>,
-    /// Multi-session registry.
-    pub(crate) sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
-    /// Session gateway for external agent debug access.
-    pub(crate) session_gateway: Arc<SessionGateway>,
-    /// Communication bus (always available after init).
-    /// Only used by the currently-dead `sf_review`/`sf_narrate` bus fallback paths;
-    /// will become live when those methods are re-plumbed.
-    #[allow(dead_code)]
-    pub(crate) bus: Arc<CommunicationBus>,
-    /// Default LLM provider.
-    pub(crate) llm: Arc<dyn LlmProvider>,
-    /// Model router for per-task-type model selection.
-    /// Stored for future handler-level routing; the live path passes a clone
-    /// directly to the orchestrator at construction time (`init.rs`).
-    #[allow(dead_code)]
-    pub(crate) model_router: Arc<ModelRouter>,
+    /// Narrow application use cases available to protocol handlers.
+    pub(crate) ports: Arc<ports::HandlerPorts>,
     /// Per-connection notification channel for JSON-RPC push.
     pub(crate) notify_tx: Option<mpsc::Sender<String>>,
     /// Active connection count.
     pub(crate) active_connections: Arc<AtomicUsize>,
-    /// Daemon start time.
-    pub(crate) started_at: fabric::MonoTime,
-    /// Daemon-level cancellation token for graceful shutdown.
-    pub(crate) daemon_cancel_token: Option<CancellationToken>,
-    /// Macro-kernel turn orchestrator — handles the full pre/core/post turn pipeline.
-    pub(crate) turn_orchestrator: Arc<DaemonTurnOrchestrator>,
-    /// Telegram poll-loop task handle — stored so daemon shutdown can await
-    /// graceful termination. `None` when Telegram is disabled or not yet started.
-    pub(crate) telegram_task: Option<Arc<tokio::task::JoinHandle<()>>>,
-    /// Durable Goal scheduler, awaited with a bound during shutdown.
-    pub(crate) goal_worker_task: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
-    /// Google poll-loop supervisor handle, retained for graceful shutdown.
-    pub(crate) google_sync: Option<Arc<Mutex<Option<crate::r#impl::google::GoogleSyncHandle>>>>,
-    /// Optional GBrain spool worker, awaited with a bound during shutdown.
-    pub(crate) gbrain_worker_task: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
-    /// Durable approval-to-apply bridge shared by local RPC and channels.
-    pub(crate) approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
-    /// Configured Google control plane. Credentials remain behind its vault-owning boundary.
-    pub(crate) google: Option<Arc<crate::r#impl::external::GoogleIntegration>>,
-    /// Sanitized readiness state; payload data and error bodies never enter it.
-    pub(crate) health: Arc<crate::r#impl::health::HealthRegistry>,
+    /// User-state-root-scoped immutable thread authority records.
+    pub(crate) thread_authority: Arc<crate::service::thread_authority::ThreadAuthorityStore>,
 }
 
 impl RequestHandler {
-    /// Review an intent through SelfField via CommunicationBus.
-    /// Falls back to direct lock if bus is not configured.
-    /// Reserved for future bus-based SelfField integration; not yet called.
-    #[allow(dead_code)]
-    pub(crate) async fn sf_review(
+    /// Complete daemon-owned subsystem shutdown after transports stop accepting work.
+    pub async fn shutdown_runtime(&self) -> anyhow::Result<()> {
+        self.ports
+            .admin
+            .shutdown()
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+    }
+
+    pub async fn handle(
         &self,
-        intent: &Intent,
-        ctx: &AbiContext,
-    ) -> anyhow::Result<Verdict> {
-        let req = SelfFieldRequest::Review {
-            intent: intent.clone(),
-            ctx: serde_json::to_value(ctx).unwrap_or_default(),
-        };
-        let envelope = Envelope::request(
-            Endpoint::Module(ModuleId::Executive),
-            Target::Module(ModuleId::Dasein),
-            Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
-            Duration::from_secs(5),
-        );
-        match self.bus.request(envelope).await {
-            Ok(resp_envelope) => {
-                if let Payload::Json(val) = &resp_envelope.payload {
-                    match serde_json::from_value::<SelfFieldResponse>(val.clone()) {
-                        Ok(SelfFieldResponse::Verdict { verdict }) => return Ok(verdict),
-                        Ok(SelfFieldResponse::Error { message }) => {
-                            return Err(anyhow::anyhow!("SelfField review error: {}", message));
-                        }
-                        Ok(other) => {
-                            return Err(anyhow::anyhow!(
-                                "Unexpected SelfField response: {:?}",
-                                other
-                            ));
-                        }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!(
-                                "Failed to deserialize SelfFieldResponse: {}",
-                                e
-                            ));
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, "Bus request for SelfField review failed, falling back to direct");
-            }
-        }
-        // Fallback: direct lock
-        let sf = self.subsystems.self_field.lock().await;
-        sf.review(intent, ctx).await
-    }
-
-    /// Record a narrative entry in SelfField via CommunicationBus.
-    /// Falls back to direct lock if bus is not configured.
-    /// Reserved for future bus-based SelfField integration; not yet called.
-    #[allow(dead_code)]
-    pub(crate) async fn sf_narrate(&self, event: &str, reason: &str) {
-        let req = SelfFieldRequest::Narrate {
-            event: event.to_string(),
-            reason: reason.to_string(),
-        };
-        let envelope = Envelope::request(
-            Endpoint::Module(ModuleId::Executive),
-            Target::Module(ModuleId::Dasein),
-            Payload::Json(serde_json::to_value(&req).unwrap_or_default()),
-            Duration::from_secs(5),
-        );
-        match self.bus.request(envelope).await {
-            Ok(resp_envelope) => {
-                if let Payload::Json(val) = &resp_envelope.payload {
-                    match serde_json::from_value::<SelfFieldResponse>(val.clone()) {
-                        Ok(SelfFieldResponse::Narrated) => return,
-                        Ok(SelfFieldResponse::Error { message }) => {
-                            warn!(error = %message, "SelfField narrate error via bus");
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, "Bus request for SelfField narrate failed, falling back to direct");
-            }
-        }
-        // Fallback: direct lock
-        let sf = self.subsystems.self_field.lock().await;
-        let _ = sf.narrate(event, reason).await;
-    }
-
-    /// Post-turn coordination: update Dasein mood from turn output.
-    /// Reserved for future Dasein mood-feedback integration; not yet called.
-    #[allow(dead_code)]
-    pub(crate) async fn coordinate(&self, turn: &usize, turn_text: &str) {
-        let sf = self.subsystems.self_field.lock().await;
-        if let Some(dasein) = sf.dasein() {
-            let _mood = dasein.quick_mood_update(turn_text);
-            tracing::info!(turn = turn, "Dasein mood updated via coordinator");
-        }
-    }
-
-    /// Compose the user message with mid-session injections from the memory queue.
-    ///
-    /// Drains all pending memory updates and prepends them as a `<memory-update>`
-    /// XML block before the raw user input.  This is the same pattern as
-    /// `ReActLoop::compose_user_message()` and `Controller::compose_user_message()`
-    /// — changes ride the user message tail so the system prompt prefix stays
-    /// byte-stable for provider cache hits.
-    ///
-    /// Returns empty string if the queue is empty (no injections needed).
-    /// Reserved for future handler-based memory injection; the live path uses
-    /// `TurnPipeline::compose_memory_block` instead.
-    #[allow(dead_code)]
-    pub(crate) async fn compose_memory_block(&self) -> String {
-        let mut queue = self.subsystems.session.memory_queue.lock().await;
-        if queue.is_empty() {
-            return String::new();
-        }
-        let updates: Vec<String> = queue.drain(..).collect();
-        drop(queue);
-
-        let items: Vec<String> = updates.iter().map(|m| format!("- {}", m)).collect();
-        format!("<memory-update>\n{}\n</memory-update>", items.join("\n"))
-    }
-
-    /// Execute configured hook scripts at a lifecycle point.
-    ///
-    /// Each script is spawned as a subprocess with `input_json` piped to stdin.
-    /// Stdout from successful scripts is collected and returned.
-    /// Each script has a 30-second timeout.
-    pub(crate) async fn run_hook_scripts(
-        &self,
-        scripts: &[String],
-        input_json: &str,
-    ) -> Vec<String> {
-        let mut outputs = Vec::new();
-        for script_path in scripts {
-            let path = format::expand_tilde(script_path);
-            if !std::path::Path::new(&path).exists() {
-                tracing::warn!(path = %path, "Hook script not found, skipping");
-                continue;
-            }
-            let spawn_result = tokio::process::Command::new(&path)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-
-            match spawn_result {
-                Ok(mut child) => {
-                    // Write input to stdin
-                    if let Some(stdin) = child.stdin.take() {
-                        let input = input_json.to_string();
-                        tokio::spawn(async move {
-                            use tokio::io::AsyncWriteExt;
-                            let mut stdin = stdin;
-                            let _ = stdin.write_all(input.as_bytes()).await;
-                        });
-                    }
-                    // Capture stdout before waiting
-                    let mut stdout_pipe = child.stdout.take();
-                    // Wait with 30-second timeout
-                    match SystemTimer
-                        .timeout(Duration::from_secs(30), child.wait())
-                        .await
-                    {
-                        Ok(Ok(status)) if status.success() => {
-                            // Read captured stdout
-                            if let Some(ref mut stdout) = stdout_pipe {
-                                use tokio::io::AsyncReadExt;
-                                let mut buf = String::new();
-                                if stdout.read_to_string(&mut buf).await.is_ok() && !buf.is_empty()
-                                {
-                                    outputs.push(buf);
-                                }
-                            }
-                        }
-                        Ok(Ok(status)) => {
-                            tracing::warn!(
-                                path = %path,
-                                code = status.code(),
-                                "Hook script exited with non-zero status"
-                            );
-                        }
-                        Ok(Err(e)) => {
-                            tracing::warn!(path = %path, error = %e, "Hook script I/O error");
-                        }
-                        Err(_) => {
-                            tracing::warn!(path = %path, "Hook script timed out (30s)");
-                            child.kill().await.ok();
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(path = %path, error = %e, "Failed to spawn hook script");
-                }
-            }
-        }
-        outputs
-    }
-
-    pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value {
+        connection: &super::server::ConnectionContext,
+        request: serde_json::Value,
+    ) -> serde_json::Value {
         let method = request["method"].as_str().unwrap_or("").to_string();
         let id = request
             .get("id")
@@ -295,9 +88,46 @@ impl RequestHandler {
             .cloned()
             .unwrap_or(serde_json::Value::Null);
 
+        if matches!(
+            method.as_str(),
+            "session.resume" | "session.fork" | "session.interrupt" | "session.replay"
+        ) {
+            let session_id = fabric::SessionId(
+                params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+            let result: anyhow::Result<serde_json::Value> = match method.as_str() {
+                "session.resume" => self.ports.turn.session_resume(session_id.clone()).await.map(|resume| serde_json::json!({
+                    "session": resume.session, "next_sequence": resume.next_sequence, "messages": resume.messages,
+                })),
+                "session.fork" => self.ports.turn.session_fork(
+                    session_id.clone(),
+                    params.get("through_sequence").and_then(|v| v.as_u64()).unwrap_or(0),
+                ).await.and_then(|record| serde_json::to_value(record).map_err(Into::into)),
+                "session.interrupt" => self.ports.turn.session_interrupt(session_id.clone()).await.map(|outcome| serde_json::json!({
+                    "outcome": format!("{outcome:?}").to_lowercase(),
+                })),
+                "session.replay" => self.ports.turn.session_replay(
+                    session_id,
+                    params.get("after_sequence").and_then(|v| v.as_u64()),
+                ).await.map(|messages| serde_json::json!({"messages": messages})),
+                _ => unreachable!(),
+            };
+            return match result {
+                Ok(result) => serde_json::json!({"jsonrpc":"2.0","id":id,"result":result}),
+                Err(error) => {
+                    serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32020,"message":error.to_string()}})
+                }
+            };
+        }
+
         // Route session.* methods to the Session Gateway (new unified facade).
         if method.starts_with("session.") {
             if let Some(response) = self
+                .ports
                 .session_gateway
                 .handle_method(&method, &id, &params)
                 .await
@@ -309,8 +139,9 @@ impl RequestHandler {
         // Route debug.* methods to the debug handler (backward compat).
         if method.starts_with("debug.") {
             if let Some(response) = self
-                .subsystems
-                .debug_handler
+                .ports
+                .debug
+                .handler()
                 .handle_method(&method, &id, &params)
                 .await
             {
@@ -319,130 +150,152 @@ impl RequestHandler {
         }
 
         match method.as_str() {
-            "chat" => self.handle_chat(id, request).await,
-            _ => self.handle_rpc(&method, id, request).await,
+            "chat" => self.handle_chat(connection, id, request).await,
+            _ => self.handle_rpc(connection, &method, id, request).await,
         }
     }
 
     /// Thin delegation to the macro-kernel turn orchestrator.
     pub(super) async fn handle_chat(
         &self,
+        connection: &super::server::ConnectionContext,
         id: serde_json::Value,
         request: serde_json::Value,
     ) -> serde_json::Value {
         let message = request["params"]["message"].as_str().unwrap_or("");
-        let working_dir =
-            match validate_local_working_dir(request["params"]["working_dir"].as_str()) {
-                Ok(path) => path,
-                Err(error) => {
-                    return serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": { "code": -32602, "message": error }
-                    });
-                }
-            };
-        if let Err(error) = self.select_workspace_session(&working_dir).await {
+        let workspace = match resolve_requested_workspace(&request["params"]) {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                return serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": error }
+                });
+            }
+        };
+        let thread_id = match self.select_workspace_session(workspace.cwd()).await {
+            Ok(thread_id) => thread_id,
+            Err(error) => {
+                return serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32603, "message": error.to_string() }
+                })
+            }
+        };
+        let context = fabric::PrincipalContext::new(
+            connection.principal_id.clone(),
+            connection.os_principal,
+            connection.connection_id.clone(),
+            thread_id,
+            workspace,
+            fabric::PermissionProfileId::workspace_write(),
+            fabric::ApprovalPolicy::OnRequest,
+        );
+        if let Err(error) = self.bind_thread_authority(&context, None) {
             return serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": id,
-                "error": { "code": -32603, "message": error.to_string() }
+                "error": { "code": -32602, "message": error.to_string() }
             });
         }
         tracing::info!(message = %message, "Chat request received");
-        self.turn_orchestrator
-            .execute_turn(id, message, working_dir)
+        self.ports
+            .turn
+            .execute(id, message.to_owned(), context)
             .await
     }
 
     /// Keep local conversation history scoped to its canonical workspace.
     /// Without this, a TUI launched in one checkout inherits tool paths from
     /// the last TUI that happened to use the daemon's global default session.
-    async fn select_workspace_session(&self, working_dir: &Path) -> anyhow::Result<()> {
-        static WORKSPACE_SESSIONS: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
-        let routing = WORKSPACE_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut routing = routing.lock().await;
-
-        if let Some(session_id) = routing.get(working_dir).cloned() {
-            *self.subsystems.session.default_session_id.lock().await = session_id;
-            return Ok(());
-        }
-
-        let session_id = uuid::Uuid::new_v4().to_string();
-        let manager = SessionManager::new(
-            &self.subsystems.session.data_dir,
-            session_id.clone(),
-            self.subsystems.session.context_window,
-            self.subsystems.ports.clock.clone(),
-        )
-        .await?;
-        self.register_default_session(session_id.clone(), manager)
-            .await;
-        routing.insert(working_dir.to_path_buf(), session_id.clone());
+    async fn select_workspace_session(
+        &self,
+        working_dir: &Path,
+    ) -> anyhow::Result<fabric::ThreadId> {
+        let session_id = self
+            .ports
+            .sessions
+            .route_workspace(working_dir.to_path_buf())
+            .await?;
         tracing::info!(%session_id, cwd = %working_dir.display(), "Selected new workspace session");
-        Ok(())
+        Ok(LegacySessionThreadAdapter::thread_id(session_id))
+    }
+
+    fn bind_thread_authority(
+        &self,
+        context: &fabric::PrincipalContext,
+        model_policy: Option<String>,
+    ) -> Result<(), crate::service::thread_authority::ThreadAuthorityError> {
+        use crate::service::thread_authority::{ThreadAuthorityKey, ThreadSettings};
+        let key = ThreadAuthorityKey::new(context.principal_id.clone(), context.thread_id.clone());
+        self.thread_authority
+            .bind_or_verify(&key, &ThreadSettings::from_context(context, model_policy))
     }
 }
 
-const LOCAL_WORKSPACE_ROOT: &str = "/home/aurobear/Bear-ws";
-const LEGACY_WORKING_DIR: &str = "/var/lib/aletheon";
+/// M0 bridge from the legacy workspace/session router to explicit turn authority.
+struct LegacySessionThreadAdapter;
 
-fn validate_local_working_dir(value: Option<&str>) -> Result<std::path::PathBuf, String> {
-    validate_working_dir_against_roots(
-        value.unwrap_or(LEGACY_WORKING_DIR),
-        std::path::Path::new(LOCAL_WORKSPACE_ROOT),
-        std::path::Path::new(LEGACY_WORKING_DIR),
+impl LegacySessionThreadAdapter {
+    fn thread_id(session_id: String) -> fabric::ThreadId {
+        fabric::ThreadId(session_id)
+    }
+}
+
+fn resolve_requested_workspace(
+    params: &serde_json::Value,
+) -> Result<fabric::WorkspacePolicy, String> {
+    let requested = params["working_dir"]
+        .as_str()
+        .ok_or_else(|| "missing working_dir".to_string())?;
+    let roots = params["workspace_roots"]
+        .as_array()
+        .ok_or_else(|| "missing workspace_roots".to_string())?;
+    let roots: Vec<PathBuf> = roots
+        .iter()
+        .map(|root| {
+            root.as_str()
+                .map(PathBuf::from)
+                .ok_or_else(|| "workspace_roots must contain only paths".to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    if roots.first().map(PathBuf::as_path) != Some(Path::new(requested)) {
+        return Err("working_dir must be the first workspace root".into());
+    }
+    fabric::WorkspaceSelection::new(
+        Some(PathBuf::from(requested)),
+        roots.into_iter().skip(1).collect(),
     )
-}
-
-fn validate_working_dir_against_roots(
-    requested: &str,
-    workspace_root: &std::path::Path,
-    legacy_root: &std::path::Path,
-) -> Result<std::path::PathBuf, String> {
-    let canonical = std::fs::canonicalize(requested)
-        .map_err(|error| format!("invalid working_dir '{requested}': {error}"))?;
-    let workspace_root =
-        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
-    if canonical.starts_with(&workspace_root) || canonical.starts_with(legacy_root) {
-        Ok(canonical)
-    } else {
-        Err(format!(
-            "working_dir '{}' is outside allowed roots '{}' and '{}'",
-            canonical.display(),
-            workspace_root.display(),
-            legacy_root.display()
-        ))
-    }
+    .resolve(Path::new(requested))
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod working_dir_tests {
     #[test]
-    fn rejects_root_as_local_working_directory() {
-        assert!(super::validate_local_working_dir(Some("/")).is_err());
-    }
-
-    #[test]
-    fn rejects_missing_local_working_directory() {
+    fn rejects_workspace_without_roots() {
         assert!(
-            super::validate_local_working_dir(Some("/home/aurobear/Bear-ws/does-not-exist"))
-                .is_err()
+            super::resolve_requested_workspace(&serde_json::json!({"working_dir":"/tmp"})).is_err()
         );
     }
 
     #[test]
-    fn accepts_a_canonical_bear_workspace_directory() {
+    fn rejects_missing_local_working_directory() {
+        assert!(super::resolve_requested_workspace(&serde_json::json!({"working_dir":"/does-not-exist","workspace_roots":["/does-not-exist"]})).is_err());
+    }
+
+    #[test]
+    fn accepts_canonical_workspace_roots() {
         let root = std::env::temp_dir().join(format!("aletheon-cwd-test-{}", std::process::id()));
         let project = root.join("aletheon");
         std::fs::create_dir_all(&project).unwrap();
-        let path = super::validate_working_dir_against_roots(
-            project.to_str().unwrap(),
-            &root,
-            std::path::Path::new("/var/lib/aletheon"),
-        )
+        let workspace = super::resolve_requested_workspace(&serde_json::json!({
+            "working_dir": project,
+            "workspace_roots": [project, root]
+        }))
         .unwrap();
-        assert!(path.starts_with(std::fs::canonicalize(&root).unwrap()));
+        assert_eq!(workspace.writable_roots().len(), 2);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

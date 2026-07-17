@@ -3,13 +3,15 @@
 //! These types were originally in the core crate, then moved to aletheon-runtime.
 //! Duplicated here to break the cyclic dependency (brain-core <-> runtime).
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Dynamic model routing — maps task types to model specs.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ModelRoutingConfig {
     /// Default model for general chat (e.g., "mimo/mimo-v2.5-pro").
     pub default: Option<String>,
@@ -23,9 +25,11 @@ pub struct ModelRoutingConfig {
     pub auto_memory: Option<String>,
 }
 
-/// Top-level application config (loaded from TOML).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AppConfig {
+/// Cognit's typed configuration input. Application-layer discovery and merge
+/// are owned by Executive; Cognit only receives this validated domain view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CognitConfig {
     #[serde(default)]
     pub agent: AgentConfig,
     #[serde(default)]
@@ -34,31 +38,16 @@ pub struct AppConfig {
     pub model_aliases: HashMap<String, String>,
     #[serde(default)]
     pub model_routing: ModelRoutingConfig,
-    #[serde(default)]
-    pub sandbox: SandboxConfig,
-    #[serde(default)]
-    pub mcp_servers: Vec<McpServerConfig>,
-    #[serde(default)]
-    pub plugins: PluginsConfig,
-    #[serde(default)]
-    pub memory: MemoryConfig,
-    #[serde(default)]
-    pub daemon: DaemonConfig,
-    #[serde(default)]
-    pub perception: PerceptionConfig,
-    #[serde(default)]
-    pub evolution: EvolutionSettings,
-    #[serde(default)]
-    pub telegram: TelegramConfig,
-    #[serde(default)]
-    pub goal_runtime: Option<GoalRuntimeConfig>,
-    #[serde(default)]
-    pub pi_runtime: PiRuntimeConfig,
-    #[serde(default)]
-    pub deployment: DeploymentConfig,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+impl CognitConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.agent.admission.validate()?;
+        self.agent.provider_timeouts.validate()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentMode {
     Development,
@@ -67,8 +56,9 @@ pub enum DeploymentMode {
     Production,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploymentPathsConfig {
     pub state_root: PathBuf,
     pub config_root: PathBuf,
@@ -122,8 +112,9 @@ impl From<fabric::paths::ProductionPaths> for DeploymentPathsConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploymentQuotaConfig {
     pub total_data_bytes: u64,
     pub total_data_soft_bytes: u64,
@@ -178,16 +169,18 @@ impl Default for DeploymentQuotaConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploymentIntegrationsConfig {
     pub telegram: bool,
     pub google: bool,
     pub gbrain: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploymentSecretFilesConfig {
     pub provider: Option<PathBuf>,
     pub telegram: Option<PathBuf>,
@@ -196,7 +189,7 @@ pub struct DeploymentSecretFilesConfig {
     pub backup_password: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BackupMode {
     #[default]
@@ -205,15 +198,17 @@ pub enum BackupMode {
     EncryptedRemote,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploymentBackupConfig {
     pub mode: BackupMode,
     pub repository_file: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploymentHealthConfig {
     pub minimum_free_bytes: u64,
     pub maximum_backup_age_secs: u64,
@@ -230,8 +225,9 @@ impl Default for DeploymentHealthConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploymentConfig {
     pub mode: DeploymentMode,
     pub paths: DeploymentPathsConfig,
@@ -355,7 +351,8 @@ impl DeploymentConfig {
 }
 
 /// Fail-closed configuration for the isolated Pi coding runtime.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PiRuntimeConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -365,6 +362,15 @@ pub struct PiRuntimeConfig {
     pub trusted_executable_dir: Option<PathBuf>,
     #[serde(default)]
     pub fixed_args: Vec<String>,
+    /// Pinned upstream package version recorded in attempt evidence.
+    #[serde(default)]
+    pub package_version: String,
+    /// Lowercase SHA-256 of the trusted Pi executable.
+    #[serde(default)]
+    pub executable_sha256: String,
+    /// Expected Pi JSON session header version.
+    #[serde(default = "default_pi_json_protocol_version")]
+    pub json_protocol_version: u32,
     #[serde(default)]
     pub worktree_base: PathBuf,
     #[serde(default = "default_pi_timeout_ms")]
@@ -389,6 +395,9 @@ impl Default for PiRuntimeConfig {
             executable: PathBuf::new(),
             trusted_executable_dir: None,
             fixed_args: Vec::new(),
+            package_version: String::new(),
+            executable_sha256: String::new(),
+            json_protocol_version: default_pi_json_protocol_version(),
             worktree_base: PathBuf::new(),
             timeout_ms: default_pi_timeout_ms(),
             max_output_bytes: default_pi_max_output_bytes(),
@@ -407,6 +416,8 @@ impl fmt::Debug for PiRuntimeConfig {
             .field("executable", &self.executable)
             .field("trusted_executable_dir", &self.trusted_executable_dir)
             .field("fixed_arg_count", &self.fixed_args.len())
+            .field("package_version", &self.package_version)
+            .field("json_protocol_version", &self.json_protocol_version)
             .field("worktree_base", &self.worktree_base)
             .field("timeout_ms", &self.timeout_ms)
             .field("max_output_bytes", &self.max_output_bytes)
@@ -425,12 +436,17 @@ fn default_pi_timeout_ms() -> u64 {
     30 * 60 * 1_000
 }
 
+fn default_pi_json_protocol_version() -> u32 {
+    3
+}
+
 fn default_pi_max_output_bytes() -> usize {
     1024 * 1024
 }
 
 /// Provider/model routing for durable Goal worker attempts.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GoalRuntimeConfig {
     /// Enables autonomous Goal attempts. Both worker and reviewer are required.
     #[serde(default)]
@@ -442,7 +458,8 @@ pub struct GoalRuntimeConfig {
 }
 
 /// One cognitive role mapped to a stable runtime and strict model alias/spec.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RoleRuntimeConfig {
     pub runtime_id: String,
     /// A key from `[model_aliases]` or an explicit `provider/model` spec.
@@ -464,7 +481,8 @@ fn default_role_runtime_max_persisted_bytes() -> usize {
 }
 
 /// Agent-level settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
@@ -480,6 +498,128 @@ pub struct AgentConfig {
     pub compaction_threshold: usize,
     #[serde(default = "default_system_prompt")]
     pub system_prompt: String,
+    #[serde(default)]
+    pub admission: AgentAdmissionConfig,
+    #[serde(default)]
+    pub provider_timeouts: ProviderTimeoutConfig,
+}
+
+/// Bounded network waits for remote inference providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProviderTimeoutConfig {
+    /// Maximum time spent establishing a provider connection.
+    #[schemars(range(min = 1, max = 60_000))]
+    pub connect_timeout_ms: u64,
+    /// Maximum time for a non-stream response or streaming response headers.
+    #[schemars(range(min = 1, max = 300_000))]
+    pub request_timeout_ms: u64,
+    /// Maximum silence between streaming response body chunks.
+    #[schemars(range(min = 1, max = 120_000))]
+    pub stream_idle_timeout_ms: u64,
+}
+
+impl Default for ProviderTimeoutConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout_ms: 10_000,
+            request_timeout_ms: 90_000,
+            stream_idle_timeout_ms: 30_000,
+        }
+    }
+}
+
+impl ProviderTimeoutConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            (1..=60_000).contains(&self.connect_timeout_ms),
+            "provider connect timeout must be between 1 and 60000 ms"
+        );
+        anyhow::ensure!(
+            (1..=300_000).contains(&self.request_timeout_ms),
+            "provider request timeout must be between 1 and 300000 ms"
+        );
+        anyhow::ensure!(
+            (1..=120_000).contains(&self.stream_idle_timeout_ms),
+            "provider stream idle timeout must be between 1 and 120000 ms"
+        );
+        anyhow::ensure!(
+            self.connect_timeout_ms <= self.request_timeout_ms,
+            "provider connect timeout must not exceed request timeout"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+#[serde(deny_unknown_fields)]
+pub struct AgentAdmissionConfig {
+    pub max_agents_per_root: usize,
+    pub max_running_agents: usize,
+    pub max_depth: u16,
+    pub max_queued_per_root: usize,
+    pub sibling_fairness_quantum: usize,
+    pub root_max_tokens: u64,
+    pub root_max_cost_micro: Option<u64>,
+    pub max_child_tokens: u64,
+    pub max_child_cost_micro: Option<u64>,
+    pub max_storage_bytes: u64,
+    pub max_storage_items: u64,
+}
+
+impl Default for AgentAdmissionConfig {
+    fn default() -> Self {
+        Self {
+            max_agents_per_root: 64,
+            max_running_agents: 16,
+            max_depth: 4,
+            max_queued_per_root: 32,
+            sibling_fairness_quantum: 1,
+            root_max_tokens: 2_000_000,
+            root_max_cost_micro: None,
+            max_child_tokens: 200_000,
+            max_child_cost_micro: None,
+            max_storage_bytes: 4 * 1024 * 1024 * 1024,
+            max_storage_items: 128,
+        }
+    }
+}
+
+impl AgentAdmissionConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.max_agents_per_root > 0
+                && self.max_running_agents > 0
+                && self.max_depth > 0
+                && self.max_queued_per_root > 0
+                && self.sibling_fairness_quantum > 0
+                && self.root_max_tokens > 0
+                && self.max_child_tokens > 0
+                && self.max_storage_bytes > 0
+                && self.max_storage_items > 0,
+            "Agent admission bounds must be nonzero"
+        );
+        anyhow::ensure!(
+            self.max_running_agents <= self.max_agents_per_root
+                && self.max_queued_per_root <= self.max_agents_per_root,
+            "Agent running/queued bounds exceed the root tree bound"
+        );
+        anyhow::ensure!(
+            self.max_child_tokens <= self.root_max_tokens,
+            "Agent child token allowance exceeds root rollout allowance"
+        );
+        if let Some(child) = self.max_child_cost_micro {
+            let root = self
+                .root_max_cost_micro
+                .context("finite child cost allowance requires a finite root rollout allowance")?;
+            anyhow::ensure!(
+                child <= root,
+                "Agent child cost allowance exceeds root rollout allowance"
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Default for AgentConfig {
@@ -493,6 +633,8 @@ impl Default for AgentConfig {
             compaction_keep_recent: default_compaction_keep_recent(),
             compaction_threshold: default_compaction_threshold(),
             system_prompt: default_system_prompt(),
+            admission: AgentAdmissionConfig::default(),
+            provider_timeouts: ProviderTimeoutConfig::default(),
         }
     }
 }
@@ -524,7 +666,7 @@ fn default_system_prompt() -> String {
 }
 
 /// Wire protocol between client and LLM server.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum Transport {
@@ -535,7 +677,8 @@ pub enum Transport {
 }
 
 /// Per-provider configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
     pub name: String,
     pub base_url: String,
@@ -555,7 +698,8 @@ pub struct ProviderConfig {
 }
 
 /// Optional static per-provider pricing (USD per 1K tokens) for cost accounting.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderPricing {
     pub input_per_1k: f64,
     pub output_per_1k: f64,
@@ -566,7 +710,8 @@ pub struct ProviderPricing {
 // ---------------------------------------------------------------------------
 
 /// Sandbox execution preference.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SandboxConfig {
     /// "auto", "require", or "forbid"
     #[serde(default = "default_sandbox_preference")]
@@ -589,7 +734,8 @@ impl Default for SandboxConfig {
 }
 
 /// MCP (Model Context Protocol) server configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct McpServerConfig {
     pub name: String,
     /// "stdio", "http", or "sse"
@@ -623,14 +769,16 @@ impl Default for McpServerConfig {
 }
 
 /// Plugin directories.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginsConfig {
     #[serde(default)]
     pub directories: Vec<String>,
 }
 
 /// Memory backend configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MemoryConfig {
     /// "sqlite" or "in_memory"
     #[serde(default = "default_memory_backend")]
@@ -659,7 +807,8 @@ impl Default for MemoryConfig {
     }
 }
 /// Optional GBrain supplemental memory over the configured HTTP MCP server.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GbrainMemoryConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -780,7 +929,8 @@ impl Default for GbrainMemoryConfig {
 }
 
 /// Daemon runtime settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DaemonConfig {
     #[serde(default = "default_daemon_socket_path")]
     pub socket_path: String,
@@ -805,7 +955,8 @@ impl Default for DaemonConfig {
 }
 
 /// Self-evolution loop settings. Default OFF (HIGH-risk autonomy).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EvolutionSettings {
     /// Master switch for the self-evolution loop.
     /// When false (default), the loop is inert regardless of other settings.
@@ -830,7 +981,8 @@ impl Default for EvolutionSettings {
 }
 
 /// Perception subsystem configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PerceptionConfig {
     /// Master switch. Off by default: the perception→behavior loop is not yet
     /// wired (see roadmap §T3). When false, no watchers are spawned.
@@ -862,7 +1014,8 @@ impl Default for PerceptionConfig {
 ///
 /// The config stores the environment-variable NAME, never the token value itself.
 /// The runtime reads the token from that env var at startup.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TelegramConfig {
     /// Master switch. When false (default), the Telegram bot is not started.
     #[serde(default)]
@@ -935,334 +1088,9 @@ impl TelegramConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// AppConfig methods
-// ---------------------------------------------------------------------------
-
-impl AppConfig {
-    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config: AppConfig = toml::from_str(&content)?;
-        Ok(config)
-    }
-
-    pub fn load_or_default(path: &Path) -> Self {
-        Self::from_file(path).unwrap_or_default()
-    }
-
-    /// Merge `other` into `self`. Fields in `other` that are non-default
-    /// override `self`. Lists are appended (providers merged by name).
-    pub fn merge(&mut self, other: AppConfig) {
-        // Agent: override non-default values
-        if other.agent.default_provider.is_some() {
-            self.agent.default_provider = other.agent.default_provider;
-        }
-        if other.agent.default_model.is_some() {
-            self.agent.default_model = other.agent.default_model;
-        }
-        if other.agent.max_iterations != default_max_iterations() {
-            self.agent.max_iterations = other.agent.max_iterations;
-        }
-        if other.agent.max_tokens != default_max_tokens() {
-            self.agent.max_tokens = other.agent.max_tokens;
-        }
-        if other.agent.compaction_keep_recent != default_compaction_keep_recent() {
-            self.agent.compaction_keep_recent = other.agent.compaction_keep_recent;
-        }
-        if other.agent.compaction_threshold != default_compaction_threshold() {
-            self.agent.compaction_threshold = other.agent.compaction_threshold;
-        }
-        if other.agent.system_prompt != default_system_prompt() {
-            self.agent.system_prompt = other.agent.system_prompt;
-        }
-        if !other.agent.compaction_enabled {
-            self.agent.compaction_enabled = other.agent.compaction_enabled;
-        }
-
-        // Providers: merge by name, append new ones
-        for other_provider in other.providers {
-            if let Some(existing) = self
-                .providers
-                .iter_mut()
-                .find(|p| p.name == other_provider.name)
-            {
-                *existing = other_provider;
-            } else {
-                self.providers.push(other_provider);
-            }
-        }
-
-        // Model aliases: merge (other wins)
-        for (key, value) in other.model_aliases {
-            self.model_aliases.insert(key, value);
-        }
-
-        // Model routing: override non-default values
-        if other.model_routing.default.is_some() {
-            self.model_routing.default = other.model_routing.default;
-        }
-        if other.model_routing.multimodal.is_some() {
-            self.model_routing.multimodal = other.model_routing.multimodal;
-        }
-        if other.model_routing.cheap.is_some() {
-            self.model_routing.cheap = other.model_routing.cheap;
-        }
-        if other.model_routing.reasoning.is_some() {
-            self.model_routing.reasoning = other.model_routing.reasoning;
-        }
-        if other.model_routing.auto_memory.is_some() {
-            self.model_routing.auto_memory = other.model_routing.auto_memory;
-        }
-
-        // Goal runtimes are an explicit all-or-nothing routing block.
-        if other.goal_runtime.is_some() {
-            self.goal_runtime = other.goal_runtime;
-        }
-        if other.pi_runtime != PiRuntimeConfig::default() {
-            self.pi_runtime = other.pi_runtime;
-        }
-        if other.deployment != DeploymentConfig::default() {
-            self.deployment = other.deployment;
-        }
-
-        // Sandbox: override if non-default
-        if other.sandbox.preference != default_sandbox_preference() {
-            self.sandbox.preference = other.sandbox.preference;
-        }
-        if other.sandbox.bubblewrap_path.is_some() {
-            self.sandbox.bubblewrap_path = other.sandbox.bubblewrap_path;
-        }
-
-        // MCP servers: append
-        self.mcp_servers.extend(other.mcp_servers);
-
-        // Plugins: append directories
-        self.plugins.directories.extend(other.plugins.directories);
-
-        // Memory: override if non-default
-        if other.memory.backend != default_memory_backend() {
-            self.memory.backend = other.memory.backend;
-        }
-        if other.memory.data_dir != default_memory_data_dir() {
-            self.memory.data_dir = other.memory.data_dir;
-        }
-        // GBrain: merge non-default supplemental-memory settings.
-        let defaults = GbrainMemoryConfig::default();
-        let incoming = other.memory.gbrain;
-        if incoming.enabled {
-            self.memory.gbrain.enabled = true;
-        }
-        if incoming.server_name != defaults.server_name {
-            self.memory.gbrain.server_name = incoming.server_name;
-        }
-        if incoming.read_sources != defaults.read_sources {
-            self.memory.gbrain.read_sources = incoming.read_sources;
-        }
-        if incoming.write_source != defaults.write_source {
-            self.memory.gbrain.write_source = incoming.write_source;
-        }
-        if incoming.request_timeout_ms != defaults.request_timeout_ms {
-            self.memory.gbrain.request_timeout_ms = incoming.request_timeout_ms;
-        }
-        if incoming.delivery_batch_size != defaults.delivery_batch_size {
-            self.memory.gbrain.delivery_batch_size = incoming.delivery_batch_size;
-        }
-        if incoming.recall_limit != defaults.recall_limit {
-            self.memory.gbrain.recall_limit = incoming.recall_limit;
-        }
-        if incoming.max_content_bytes != defaults.max_content_bytes {
-            self.memory.gbrain.max_content_bytes = incoming.max_content_bytes;
-        }
-        if incoming.projection_enabled {
-            self.memory.gbrain.projection_enabled = true;
-        }
-        if incoming.spool_path != defaults.spool_path {
-            self.memory.gbrain.spool_path = incoming.spool_path;
-        }
-        if incoming.spool_max_items != defaults.spool_max_items {
-            self.memory.gbrain.spool_max_items = incoming.spool_max_items;
-        }
-        if incoming.spool_max_bytes != defaults.spool_max_bytes {
-            self.memory.gbrain.spool_max_bytes = incoming.spool_max_bytes;
-        }
-        if incoming.retry_initial_ms != defaults.retry_initial_ms {
-            self.memory.gbrain.retry_initial_ms = incoming.retry_initial_ms;
-        }
-        if incoming.retry_max_ms != defaults.retry_max_ms {
-            self.memory.gbrain.retry_max_ms = incoming.retry_max_ms;
-        }
-        if incoming.retry_max_attempts != defaults.retry_max_attempts {
-            self.memory.gbrain.retry_max_attempts = incoming.retry_max_attempts;
-        }
-        if incoming.retry_max_age_secs != defaults.retry_max_age_secs {
-            self.memory.gbrain.retry_max_age_secs = incoming.retry_max_age_secs;
-        }
-        if incoming.schema_fixture != defaults.schema_fixture {
-            self.memory.gbrain.schema_fixture = incoming.schema_fixture;
-        }
-        if incoming.schema_version != defaults.schema_version {
-            self.memory.gbrain.schema_version = incoming.schema_version;
-        }
-        if incoming.legacy_outbox_dir != defaults.legacy_outbox_dir {
-            self.memory.gbrain.legacy_outbox_dir = incoming.legacy_outbox_dir;
-        }
-
-        // Daemon: override if non-default
-        if other.daemon.socket_path != default_daemon_socket_path() {
-            self.daemon.socket_path = other.daemon.socket_path;
-        }
-        if other.daemon.log_level != default_daemon_log_level() {
-            self.daemon.log_level = other.daemon.log_level;
-        }
-
-        // Perception: override if non-default
-        if other.perception.enabled {
-            self.perception.enabled = other.perception.enabled;
-        }
-        if other.perception.watch_paths != default_perception_watch_paths() {
-            self.perception.watch_paths = other.perception.watch_paths;
-        }
-        if !other.perception.enable_journald {
-            self.perception.enable_journald = other.perception.enable_journald;
-        }
-
-        // Evolution: override if enabled downstream
-        if other.evolution.enabled {
-            self.evolution.enabled = other.evolution.enabled;
-        }
-
-        // Telegram: override if non-default
-        if other.telegram.enabled {
-            self.telegram.enabled = other.telegram.enabled;
-        }
-        if other.telegram.bot_token_env.is_some() {
-            self.telegram.bot_token_env = other.telegram.bot_token_env;
-        }
-        if other.telegram.owner_user_id.is_some() {
-            self.telegram.owner_user_id = other.telegram.owner_user_id;
-        }
-        if other.telegram.poll_timeout_secs != default_poll_timeout_secs() {
-            self.telegram.poll_timeout_secs = other.telegram.poll_timeout_secs;
-        }
-    }
-
-    /// Load config with layer merging (low → high precedence):
-    /// - Layer 0: compiled defaults
-    /// - Layer 1: /etc/aletheon/config.toml   (system defaults)
-    /// - Layer 2: ~/.aletheon/config.toml     (user; authoritative for daily edits)
-    /// - Layer 3: `<project>/.aletheon/config.toml` (project-local)
-    pub fn load_layered(project_dir: Option<&Path>) -> Self {
-        let mut config = Self::default();
-
-        // Layer 1: system
-        let etc_path = Path::new("/etc/aletheon/config.toml");
-        if etc_path.exists() {
-            if let Ok(sys_config) = Self::from_file(etc_path) {
-                config.merge(sys_config);
-            }
-        }
-
-        // Layer 2: user global
-        let global_path = dirs::home_dir()
-            .map(|h| h.join(".aletheon/config.toml"))
-            .filter(|p| p.exists());
-        if let Some(path) = global_path {
-            if let Ok(user_config) = Self::from_file(&path) {
-                config.merge(user_config);
-            }
-        }
-
-        // Layer 3: project local
-        if let Some(dir) = project_dir {
-            let project_path = dir.join(".aletheon/config.toml");
-            if project_path.exists() {
-                if let Ok(project_config) = Self::from_file(&project_path) {
-                    config.merge(project_config);
-                }
-            }
-        }
-
-        config
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn goal_runtime_defaults_disabled_without_claiming_providers() {
-        let config = AppConfig::default();
-        assert!(config.goal_runtime.is_none());
-    }
-
-    #[test]
-    fn goal_runtime_role_routing_parses_and_merges() {
-        let parsed: AppConfig = toml::from_str(
-            r#"
-            [goal_runtime]
-            enabled = true
-
-            [goal_runtime.worker]
-            runtime_id = "deepseek-worker"
-            model_alias = "deepseek"
-            max_steps = 6
-            allowed_tools = ["file_read", "grep"]
-
-            [goal_runtime.reviewer]
-            runtime_id = "escalation-reviewer"
-            model_alias = "reviewer/model"
-            "#,
-        )
-        .unwrap();
-        let goal_runtime = parsed.goal_runtime.as_ref().unwrap();
-        assert!(goal_runtime.enabled);
-        assert_eq!(goal_runtime.worker.as_ref().unwrap().max_steps, 6);
-        assert_eq!(
-            goal_runtime.reviewer.as_ref().unwrap().max_persisted_bytes,
-            16 * 1024
-        );
-
-        let mut base = AppConfig::default();
-        base.merge(parsed.clone());
-        assert_eq!(base.goal_runtime, parsed.goal_runtime);
-    }
-
-    #[test]
-    fn pi_runtime_is_disabled_and_network_denied_by_default() {
-        let config = AppConfig::default().pi_runtime;
-        assert!(!config.enabled);
-        assert!(!config.network_enabled);
-        assert!(config.require_namespace_isolation);
-    }
-
-    #[test]
-    fn pi_runtime_parses_merges_and_debug_omits_fixed_arguments() {
-        let parsed: AppConfig = toml::from_str(
-            r#"
-            [pi_runtime]
-            enabled = true
-            executable = "/opt/aletheon/bin/pi"
-            fixed_args = ["--api-key", "super-secret"]
-            worktree_base = "/var/lib/aletheon/pi-worktrees"
-            timeout_ms = 42000
-            max_output_bytes = 8192
-            allowed_paths = ["crates", "Cargo.toml"]
-            forbidden_paths = [".git", ".env"]
-            "#,
-        )
-        .unwrap();
-        assert_eq!(parsed.pi_runtime.fixed_args.len(), 2);
-        assert!(!parsed.pi_runtime.network_enabled);
-
-        let debug = format!("{:?}", parsed.pi_runtime);
-        assert!(!debug.contains("super-secret"));
-        assert!(debug.contains("fixed_arg_count"));
-
-        let mut base = AppConfig::default();
-        base.merge(parsed.clone());
-        assert_eq!(base.pi_runtime, parsed.pi_runtime);
-    }
 
     #[test]
     fn provider_pricing_parses_and_defaults_to_none() {
@@ -1281,36 +1109,6 @@ mod tests {
         let without = "name = \"local\"\nbase_url = \"http://localhost:11434\"\n";
         let p2: ProviderConfig = toml::from_str(without).unwrap();
         assert!(p2.pricing.is_none(), "pricing is optional");
-    }
-
-    #[test]
-    fn merge_covers_perception_evolution_and_prompt() {
-        let mut base = AppConfig::default();
-        let mut other = AppConfig::default();
-        other.perception.enabled = true;
-        other.agent.system_prompt = "OVERRIDDEN".into();
-        other.agent.compaction_enabled = false;
-
-        base.merge(other);
-
-        assert!(base.perception.enabled, "perception must merge");
-        assert_eq!(base.agent.system_prompt, "OVERRIDDEN");
-        assert!(!base.agent.compaction_enabled);
-    }
-
-    #[test]
-    fn merge_precedence_user_over_system() {
-        // Unit-level proxy for layer precedence: later merge wins.
-        let mut config = AppConfig::default();
-        let mut system = AppConfig::default();
-        system.agent.default_model = Some("system-model".into());
-        let mut user = AppConfig::default();
-        user.agent.default_model = Some("user-model".into());
-
-        config.merge(system);
-        config.merge(user);
-
-        assert_eq!(config.agent.default_model.as_deref(), Some("user-model"));
     }
 
     // ── TelegramConfig validation ──────────────────────────────────────
@@ -1451,45 +1249,6 @@ poll_timeout_secs = 20
     }
 
     #[test]
-    fn telegram_default_in_app_config() {
-        let toml = r#"
-[[providers]]
-name = "test"
-base_url = "http://localhost"
-"#;
-        let config: AppConfig = toml::from_str(toml).unwrap();
-        assert!(!config.telegram.enabled, "telegram disabled by default");
-        assert_eq!(config.telegram.poll_timeout_secs, 10);
-    }
-
-    #[test]
-    fn telegram_merge_overrides() {
-        let mut base = AppConfig::default();
-        let mut other = AppConfig::default();
-        other.telegram.enabled = true;
-        other.telegram.bot_token_env = Some("MY_TOKEN".into());
-        other.telegram.owner_user_id = Some(42);
-
-        base.merge(other);
-
-        assert!(base.telegram.enabled);
-        assert_eq!(base.telegram.bot_token_env.as_deref(), Some("MY_TOKEN"));
-        assert_eq!(base.telegram.owner_user_id, Some(42));
-    }
-
-    #[test]
-    fn gbrain_disabled_by_default() {
-        let config = AppConfig::default();
-        assert!(!config.memory.gbrain.enabled);
-        assert_eq!(config.memory.gbrain.server_name, "gbrain");
-        assert_eq!(config.memory.gbrain.write_source, "aletheon");
-        assert_eq!(config.memory.gbrain.request_timeout_ms, 1200);
-        assert_eq!(config.memory.gbrain.recall_limit, 4);
-        assert_eq!(config.memory.gbrain.max_content_bytes, 6000);
-        assert!(!config.memory.gbrain.projection_enabled);
-    }
-
-    #[test]
     fn gbrain_parses_from_toml() {
         let toml = r#"
 enabled = true
@@ -1540,51 +1299,6 @@ max_results = 6
         assert_eq!(mem.gbrain.write_source, "aletheon");
         assert_eq!(mem.gbrain.request_timeout_ms, 2500);
         assert_eq!(mem.gbrain.server_name, "gbrain");
-    }
-
-    #[test]
-    fn gbrain_merge_overrides() {
-        let mut base = AppConfig::default();
-        let mut other = AppConfig::default();
-        other.memory.gbrain.enabled = true;
-        other.memory.gbrain.write_source = "custom".into();
-        other.memory.gbrain.request_timeout_ms = 5000;
-
-        base.merge(other);
-
-        assert!(base.memory.gbrain.enabled);
-        assert_eq!(base.memory.gbrain.write_source, "custom");
-        assert_eq!(base.memory.gbrain.request_timeout_ms, 5000);
-    }
-
-    #[test]
-    fn production_deployment_paths_parse_validate_and_merge() {
-        let parsed: AppConfig = toml::from_str(
-            r#"
-            [deployment]
-            mode = "production"
-            [deployment.paths]
-            state_root = "/var/lib/aletheon"
-            config_root = "/etc/aletheon"
-            runtime_root = "/run/aletheon"
-            cache_root = "/var/cache/aletheon"
-            state = "/var/lib/aletheon/state"
-            goals = "/var/lib/aletheon/goals"
-            sessions = "/var/lib/aletheon/sessions"
-            mnemosyne = "/var/lib/aletheon/mnemosyne"
-            artifacts = "/var/lib/aletheon/artifacts"
-            worktrees = "/var/lib/aletheon/worktrees"
-            audit = "/var/lib/aletheon/audit"
-            secret_root = "/etc/aletheon/credentials"
-            [deployment.secrets]
-            provider = "/etc/aletheon/credentials/provider.env"
-            "#,
-        )
-        .unwrap();
-        assert!(parsed.deployment.validate(false).is_ok());
-        let mut base = AppConfig::default();
-        base.merge(parsed);
-        assert_eq!(base.deployment.mode, DeploymentMode::Production);
     }
 
     #[test]

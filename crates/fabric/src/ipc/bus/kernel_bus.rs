@@ -1,169 +1,88 @@
+//! Schema-filtered, bounded in-process delivery for canonical envelopes.
+
+use std::{collections::HashMap, sync::Arc};
+
 use anyhow::Result;
 use parking_lot::RwLock;
-use std::sync::Arc;
-use std::time::Duration;
+use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use crate::events::event_log::EventLog;
-use crate::events::routing_policy::{RouteAction, RoutingPolicy};
-use crate::events::subscription::SubscriptionRegistry;
-use crate::ipc::envelope::{Endpoint, Payload, Target};
-use crate::ipc::transport::Transport;
-use crate::{AsyncEventHandler, Clock, Event, EventHandler, EventType, SubscriptionId};
+use crate::events::subscription::{AsyncEnvelopeHandler, EnvelopeHandler, SubscriptionRegistry};
+use crate::{EnvelopeV2, SchemaId, SubscriptionId};
 
 pub struct KernelEventBus {
     subscriptions: SubscriptionRegistry,
-    event_log: Arc<RwLock<EventLog>>,
-    /// Optional transport for cross-process event bridging.
-    /// When set, published events are also sent through this transport.
-    transport: Option<Arc<dyn Transport>>,
-    /// Optional clock for deterministic wall-clock timestamps in tests.
-    /// When `None`, falls back to system time.
-    clock: Option<Arc<dyn Clock>>,
+    channels: RwLock<HashMap<SchemaId, broadcast::Sender<EnvelopeV2>>>,
+    channel_capacity: usize,
 }
 
 impl KernelEventBus {
-    /// Create a new KernelEventBus with no clock (uses system time).
-    pub fn new(log_capacity: usize) -> Self {
+    pub fn new(channel_capacity: usize) -> Self {
         Self {
             subscriptions: SubscriptionRegistry::new(),
-            event_log: Arc::new(RwLock::new(EventLog::new(log_capacity))),
-            transport: None,
-            clock: None,
+            channels: RwLock::new(HashMap::new()),
+            channel_capacity: channel_capacity.max(1),
         }
     }
 
-    /// Attach a clock for deterministic time in tests.
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.event_log.write().clock = Some(clock.clone());
-        self.clock = Some(clock);
-        self
-    }
-
-    /// Create a new KernelEventBus with cross-process transport bridging.
-    ///
-    /// When a transport is provided, published events are also sent through
-    /// the transport for cross-process delivery.
-    pub fn with_transport(log_capacity: usize, transport: Arc<dyn Transport>) -> Self {
-        Self {
-            subscriptions: SubscriptionRegistry::new(),
-            event_log: Arc::new(RwLock::new(EventLog::new(log_capacity))),
-            transport: Some(transport),
-            clock: None,
+    pub async fn publish(&self, envelope: EnvelopeV2) -> Result<()> {
+        envelope.validate_known_schema()?;
+        self.subscriptions.dispatch(&envelope);
+        if let Some(channel) = self.channels.read().get(&envelope.schema) {
+            // A lagging receiver observes `RecvError::Lagged`; overload is not
+            // silently converted into an unbounded allocation.
+            let _ = channel.send(envelope);
         }
-    }
-
-    pub fn event_log(&self) -> Arc<RwLock<EventLog>> {
-        self.event_log.clone()
-    }
-}
-
-impl KernelEventBus {
-    pub async fn publish(&self, event: Box<dyn Event>) -> Result<()> {
-        // 1. Record in event log
-        self.event_log.write().record(&*event);
-
-        // 2. Check routing policy
-        let route = RoutingPolicy::evaluate(&event.event_type(), &event.priority());
-        match route {
-            RouteAction::RequireSelfFieldReview => {
-                // Phase 1: log warning, still deliver (no actual SelfField gate yet)
-                warn!(
-                    event_type = ?event.event_type(),
-                    source = event.source(),
-                    "Event requires SelfField review (Phase 1: delivering anyway)"
-                );
-            }
-            RouteAction::FastPath => {
-                debug!(
-                    event_type = ?event.event_type(),
-                    source = event.source(),
-                    "Event on fast path"
-                );
-            }
-        }
-
-        // 3. Dispatch to in-process subscribers
-        self.subscriptions.dispatch(&*event);
-
-        // 4. Cross-process bridging: send through transport if available
-        if let Some(transport) = &self.transport {
-            let envelope = crate::ipc::envelope::Envelope::new_at(
-                Endpoint::System,
-                Target::Broadcast,
-                crate::ipc::envelope::Pattern::Publish,
-                Payload::Json(event.to_json()),
-                self.clock
-                    .as_ref()
-                    .map(|c| c.wall_now())
-                    .unwrap_or_else(crate::ipc::envelope::system_wall_now),
-            )
-            .with_priority(event.priority());
-            if let Err(e) = transport.send(envelope).await {
-                warn!(error = %e, "Failed to bridge event to transport");
-                // Non-fatal: in-process delivery already succeeded
-            }
-        }
-
         Ok(())
+    }
+
+    pub fn subscribe_channel(&self, schema: SchemaId) -> broadcast::Receiver<EnvelopeV2> {
+        self.channels
+            .write()
+            .entry(schema)
+            .or_insert_with(|| broadcast::channel(self.channel_capacity).0)
+            .subscribe()
     }
 
     pub async fn subscribe(
         &self,
-        event_type: EventType,
-        handler: EventHandler,
+        schema: SchemaId,
+        handler: EnvelopeHandler,
     ) -> Result<SubscriptionId> {
-        let id = self.subscriptions.subscribe(event_type, handler);
-        debug!(subscription_id = id.0, "New subscription");
+        schema.validate_known()?;
+        let id = self.subscriptions.subscribe(schema, handler);
+        debug!(subscription_id = id.0, "new envelope subscription");
         Ok(id)
     }
 
     pub async fn subscribe_async(
         &self,
-        event_type: EventType,
-        handler: AsyncEventHandler,
+        schema: SchemaId,
+        handler: AsyncEnvelopeHandler,
     ) -> Result<SubscriptionId> {
         let handler = Arc::new(handler);
-        let sync_handler: EventHandler = Box::new(move |event: &dyn Event| {
-            let json = event.to_json();
-            let handler = handler.clone();
-            tokio::spawn(async move {
-                handler(json).await;
-            });
-            true // non-blocking, continue propagation
-        });
-        let id = self.subscriptions.subscribe(event_type, sync_handler);
-        debug!(subscription_id = id.0, "New async subscription");
-        Ok(id)
-    }
-
-    pub async fn request(
-        &self,
-        event: Box<dyn Event>,
-        timeout: Duration,
-    ) -> Result<Box<dyn Event>> {
-        // Phase 1: request-response not fully implemented.
-        // For now, publish the event and return error after timeout.
-        // Full implementation will use oneshot channels when response events are supported.
-        warn!("request() not fully implemented in Phase 1; publishing event only");
-        self.publish(event).await?;
-        tokio::time::sleep(timeout).await;
-        Err(anyhow::anyhow!(
-            "Request timeout — no response received (Phase 1 limitation)"
-        ))
+        self.subscribe(
+            schema,
+            Box::new(move |envelope| {
+                let envelope = envelope.clone();
+                let handler = handler.clone();
+                tokio::spawn(async move {
+                    handler(envelope).await;
+                });
+                true
+            }),
+        )
+        .await
     }
 
     pub async fn unsubscribe(&self, id: SubscriptionId) -> Result<()> {
-        let found = self.subscriptions.unsubscribe(id);
-        if found {
-            debug!(subscription_id = id.0, "Unsubscribed");
-        } else {
-            warn!(subscription_id = id.0, "Unsubscribe called for unknown ID");
+        if !self.subscriptions.unsubscribe(id) {
+            warn!(subscription_id = id.0, "unsubscribe called for unknown ID");
         }
         Ok(())
     }
 
-    pub async fn has_subscribers(&self, event_type: &EventType) -> bool {
-        self.subscriptions.has_subscribers(event_type)
+    pub async fn has_subscribers(&self, schema: &SchemaId) -> bool {
+        self.subscriptions.has_subscribers(schema)
     }
 }

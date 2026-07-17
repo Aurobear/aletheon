@@ -97,7 +97,7 @@ impl std::error::Error for ApplyCoordinationError {}
 pub struct ApplyCoordinator {
     store: Arc<Mutex<ObjectiveStore>>,
     approvals: Arc<Mutex<ApprovalRepository>>,
-    operations: Arc<aletheon_kernel::operation::OperationTable>,
+    kernel: Arc<aletheon_kernel::KernelRuntime>,
     clock: Arc<dyn Clock>,
     config: ApplyCoordinatorConfig,
     cleaner: Arc<dyn ManagedWorktreeCleaner>,
@@ -108,7 +108,7 @@ impl ApplyCoordinator {
     pub fn new(
         store: Arc<Mutex<ObjectiveStore>>,
         approvals: Arc<Mutex<ApprovalRepository>>,
-        operations: Arc<aletheon_kernel::operation::OperationTable>,
+        kernel: Arc<aletheon_kernel::KernelRuntime>,
         clock: Arc<dyn Clock>,
         config: ApplyCoordinatorConfig,
         cleaner: Arc<dyn ManagedWorktreeCleaner>,
@@ -121,7 +121,7 @@ impl ApplyCoordinator {
         Ok(Self {
             store,
             approvals,
-            operations,
+            kernel,
             clock,
             config,
             cleaner,
@@ -189,12 +189,12 @@ impl ApplyCoordinator {
         let request = OperationRequest {
             owner: owner_process,
             parent: None,
-            kind: OperationKind::Other("approved_apply".into()),
+            kind: OperationKind::ApprovedApply,
             deadline: None,
         };
         if self
-            .operations
-            .submit_with_id(operation_id, request)
+            .kernel
+            .submit_operation_with_id(operation_id, request)
             .await
             .is_err()
         {
@@ -202,8 +202,8 @@ impl ApplyCoordinator {
         }
         // A recovered durable claim is intentionally re-registered with the
         // fresh in-memory table; a concurrently active claim cannot register twice.
-        self.operations
-            .start(operation_id)
+        self.kernel
+            .start_operation(operation_id)
             .await
             .map_err(|error| ApplyCoordinationError::Operation(error.to_string()))?;
         self.ensure_goal_running(approval.subject.goal_id)?;
@@ -246,8 +246,8 @@ impl ApplyCoordinator {
             .map_err(approval_error)?;
 
         if receipt.success {
-            self.operations
-                .succeed(operation_id)
+            self.kernel
+                .succeed_operation(operation_id)
                 .await
                 .map_err(|error| ApplyCoordinationError::Operation(error.to_string()))?;
             self.transition_terminal(receipt.goal_id, GoalState::Completed, &receipt)?;
@@ -259,8 +259,8 @@ impl ApplyCoordinator {
                 .map_err(|error| ApplyCoordinationError::Cleanup(error.to_string()))?;
             Ok(ApplyCoordinationOutcome::Applied(receipt))
         } else {
-            self.operations
-                .fail(operation_id, receipt.error.clone().unwrap_or_default())
+            self.kernel
+                .fail_operation(operation_id, receipt.error.clone().unwrap_or_default())
                 .await
                 .map_err(|error| ApplyCoordinationError::Operation(error.to_string()))?;
             self.transition_terminal(receipt.goal_id, GoalState::Blocked, &receipt)?;
