@@ -29,6 +29,7 @@ pub mod message;
 pub mod objective;
 pub mod paths;
 pub mod permission;
+pub mod prompt_queue;
 pub mod resource;
 pub mod sandbox;
 pub mod session;
