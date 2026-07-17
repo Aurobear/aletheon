@@ -2,15 +2,17 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --preflight --binary PATH --config PATH | --readiness --socket PATH [--timeout SEC] | --unit UNIT --binary PATH" >&2
+  echo "usage: $0 --preflight --binary PATH --config PATH | --readiness --socket PATH [--timeout SEC] | --core-unit UNIT --binary PATH | --user-units SERVICE SOCKET --binary PATH" >&2
   exit 64
 }
 
-mode="" binary="" config="" socket="" unit="" timeout=30
+mode="" binary="" config="" socket="" unit="" service_unit="" socket_unit="" timeout=30
 while (($#)); do
   case "$1" in
     --preflight|--readiness) mode="$1"; shift ;;
-    --unit) mode=--unit; unit=${2-}; shift 2 ;;
+    --core-unit) mode=--core-unit; unit=${2-}; shift 2 ;;
+    --user-units)
+      mode=--user-units; service_unit=${2-}; socket_unit=${3-}; shift 3 ;;
     --binary) binary=${2-}; shift 2 ;;
     --config) config=${2-}; shift 2 ;;
     --socket) socket=${2-}; shift 2 ;;
@@ -19,34 +21,82 @@ while (($#)); do
   esac
 done
 
+stage_unit() {
+  local source=$1 destination=$2
+  local verifier scripts_dir
+  verifier=$(realpath "$0")
+  scripts_dir=$(dirname "$verifier")
+  sed -e "s#/usr/bin/aletheon#$binary#g" \
+      -e "s#%h/.local/bin/aletheon#$binary#g" \
+      -e "s#/usr/libexec/aletheon/verify-systemd.sh#$verifier#g" \
+      -e "s#/usr/libexec/aletheon/aletheon-secret-audit.sh#$scripts_dir/aletheon-secret-audit.sh#g" \
+      -e "s#/usr/libexec/aletheon/backup-aletheon.sh#$scripts_dir/backup-aletheon.sh#g" \
+      -e "s#/usr/libexec/aletheon/cleanup-aletheon.sh#$scripts_dir/cleanup-aletheon.sh#g" \
+      "$source" >"$destination"
+}
+
+require_contract() {
+  local file=$1 contract=$2 message=$3
+  grep -Eq "$contract" "$file" || {
+    echo "$message: missing boundary $contract" >&2
+    exit 1
+  }
+}
+
 case "$mode" in
-  --unit)
+  --core-unit)
     [[ -f "$unit" && -x "$binary" ]] || usage
     binary=$(realpath "$binary")
-    verifier=$(realpath "$0")
-    scripts_dir=$(dirname "$verifier")
-    staged=$(mktemp --suffix=.service)
-    trap 'rm -f "$staged"' EXIT
-    sed -e "s#/usr/bin/aletheon#$binary#g" \
-        -e "s#/usr/libexec/aletheon/verify-systemd.sh#$verifier#g" \
-        -e "s#/usr/libexec/aletheon/aletheon-secret-audit.sh#$scripts_dir/aletheon-secret-audit.sh#g" \
-        -e "s#/usr/libexec/aletheon/backup-aletheon.sh#$scripts_dir/backup-aletheon.sh#g" \
-        -e "s#/usr/libexec/aletheon/cleanup-aletheon.sh#$scripts_dir/cleanup-aletheon.sh#g" \
-        "$unit" > "$staged"
+    staged_dir=$(mktemp -d)
+    trap 'rm -rf "$staged_dir"' EXIT
+    staged="$staged_dir/aletheon-core.service"
+    stage_unit "$unit" "$staged"
     systemd-analyze verify "$staged"
-    # Release verification is not only syntax: assert the installed unit keeps
-    # the daemon unprivileged, journal-backed and limited to explicit roots.
     for contract in \
       '^User=aletheon$' '^Group=aletheon$' '^NoNewPrivileges=yes$' \
       '^ProtectSystem=strict$' '^StandardOutput=journal$' \
       '^RestrictAddressFamilies=.*AF_UNIX'; do
-      grep -Eq "$contract" "$staged" || {
-        echo "unit verification: missing boundary $contract" >&2; exit 1;
-      }
+      require_contract "$staged" "$contract" 'core unit verification'
     done
-    grep -Eq '^ExecStart=.* core .*--config .*--socket /run/aletheon/core\.sock' "$staged" || {
-      echo "unit verification: core must expose the explicit internal AF_UNIX socket" >&2; exit 1;
-    }
+    require_contract "$staged" \
+      '^ExecStart=.* core .*--config .*--socket /run/aletheon/core\.sock$' \
+      'core unit verification'
+    require_contract "$staged" \
+      '^ReadWritePaths=/run/aletheon /var/lib/aletheon /var/cache/aletheon$' \
+      'core unit verification'
+    if grep -Eq '^ReadWritePaths=.*(/home|/tmp)' "$staged"; then
+      echo 'core unit verification: user or temporary writable root is forbidden' >&2
+      exit 1
+    fi
+    ;;
+  --user-units)
+    [[ -f "$service_unit" && -f "$socket_unit" && -x "$binary" ]] || usage
+    binary=$(realpath "$binary")
+    staged_dir=$(mktemp -d)
+    trap 'rm -rf "$staged_dir"' EXIT
+    staged_service="$staged_dir/aletheon.service"
+    staged_socket="$staged_dir/aletheon.socket"
+    stage_unit "$service_unit" "$staged_service"
+    stage_unit "$socket_unit" "$staged_socket"
+    systemd-analyze verify "$staged_socket" "$staged_service"
+    for contract in \
+      '^ExecStart=.* daemon$' '^RuntimeDirectory=aletheon$' \
+      '^RuntimeDirectoryMode=0700$' '^NoNewPrivileges=yes$' '^LimitCORE=0$'; do
+      require_contract "$staged_service" "$contract" 'user unit verification'
+    done
+    if grep -Eq '^(User|Group)=' "$staged_service"; then
+      echo 'user unit verification: a user-manager service must not switch identity' >&2
+      exit 1
+    fi
+    if grep -Eq '(/etc/aletheon/credentials|/var/lib/aletheon|/var/cache/aletheon)' "$staged_service"; then
+      echo 'user unit verification: machine-scoped state or credentials leaked into user runtime' >&2
+      exit 1
+    fi
+    for contract in \
+      '^ListenStream=%t/aletheon/aletheon\.sock$' \
+      '^DirectoryMode=0700$' '^SocketMode=0600$' '^WantedBy=sockets\.target$'; do
+      require_contract "$staged_socket" "$contract" 'user socket verification'
+    done
     ;;
   --preflight)
     [[ -x "$binary" && -f "$config" && ! -L "$config" ]] || {

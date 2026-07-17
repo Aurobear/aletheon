@@ -28,9 +28,20 @@ migration matrix -- installed release/systemd -- real monitor workflows
 ### Static lane
 
 Run `scripts/verify-migration-matrix.sh`, shell syntax checks, monitor pytest,
-Python bytecode compilation, and `scripts/verify-systemd.sh --unit ...` against
-a real release binary. These checks are useful before a disposable host exists,
-but are not release approval.
+Python bytecode compilation, and both typed systemd checks against a real
+release binary:
+
+```bash
+scripts/verify-systemd.sh --core-unit config/aletheon-core.service \
+  --binary target/release/aletheon
+scripts/verify-systemd.sh --user-units \
+  config/aletheon.user.service config/aletheon.user.socket \
+  --binary target/release/aletheon
+```
+
+The first check covers the machine inference core; the second checks the
+per-user socket-activated runtime and its 0600 endpoint. These checks are useful
+before a disposable host exists, but are not release approval.
 
 ### Credential-free disposable-host lane
 

@@ -65,12 +65,15 @@ install -D -o root -g root -m 0644 "$repo_root/docs/deployment/systemd.md" \
 
 /usr/libexec/aletheon/verify-systemd.sh --preflight \
   --binary /usr/bin/aletheon --config /etc/aletheon/config.toml
-systemd-analyze verify /etc/systemd/system/aletheon.service
-systemd-analyze verify /etc/systemd/system/aletheon-core.service
+/usr/libexec/aletheon/verify-systemd.sh --core-unit \
+  /etc/systemd/system/aletheon.service --binary /usr/bin/aletheon
+/usr/libexec/aletheon/verify-systemd.sh --core-unit \
+  /etc/systemd/system/aletheon-core.service --binary /usr/bin/aletheon
 systemd-analyze verify /etc/systemd/system/aletheon-backup.service
 systemd-analyze verify /etc/systemd/system/aletheon-cleanup.service
-systemd-analyze verify /usr/lib/systemd/user/aletheon.socket \
-  /usr/lib/systemd/user/aletheon.service
+/usr/libexec/aletheon/verify-systemd.sh --user-units \
+  /usr/lib/systemd/user/aletheon.service /usr/lib/systemd/user/aletheon.socket \
+  --binary /usr/bin/aletheon
 systemctl daemon-reload
 if ((enable)); then
   systemctl disable --now aletheon.service
