@@ -193,6 +193,23 @@ impl InterpretedExperience {
     }
 }
 
+/// Fabric-level projection of Dasein's `CareStructure::determine_action()`
+/// decision. The concrete `CareAction` type lives in the `dasein` crate (which
+/// depends on `fabric`, not the reverse), so the reducer maps it into this
+/// dependency-free representation when emitting a [`SelfSignal::CareDecision`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CareActionKind {
+    /// Deep deliberation needed — spawn a ReAct loop.
+    Deliberate,
+    /// Direct action — no deliberation needed.
+    Direct,
+    /// Monitor but do not act.
+    Wait,
+    /// Question something about the self.
+    Negate,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SelfSignal {
@@ -203,6 +220,10 @@ pub enum SelfSignal {
     WorldReadinessChanged { entity_id: String },
     WorldEntityIntegrated { entity_id: String },
     ReflectionCompleted,
+    /// The care structure decided what to do during scheduled reflection.
+    /// Flows into Agora as a candidate so "care" has a behavioral effect
+    /// (conscious-core plan R1: close the `determine_action` dead-code gap).
+    CareDecision { action: CareActionKind, rationale: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
