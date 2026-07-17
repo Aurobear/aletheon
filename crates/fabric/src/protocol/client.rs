@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ui_event::{CollaborationMode, InterruptReason},
-    AgentSnapshot, ApprovalSnapshot, ConnectionId, ItemRecord, LocalOsPrincipal, PrincipalId,
-    SessionId, WorkspacePolicy,
+    AgentSnapshot, ApprovalSnapshot, ConnectionId, ItemRecord, LocalOsPrincipal, OperationId,
+    PrincipalId, SessionId, ThreadId, TurnId, TurnStop, WorkspacePolicy,
 };
 
 pub const CLIENT_PROTOCOL_VERSION: u16 = 1;
@@ -692,6 +692,24 @@ pub enum ClientEvent {
     Failed {
         cursor: Option<EventCursor>,
         message: String,
+    },
+    TurnStarted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        operation_id: OperationId,
+        iteration: u32,
+    },
+    TurnCompleted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        operation_id: OperationId,
+        stop: TurnStop,
+    },
+    TurnStopped {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        operation_id: OperationId,
+        reason: TurnStop,
     },
 }
 

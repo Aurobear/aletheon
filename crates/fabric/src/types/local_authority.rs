@@ -1,6 +1,7 @@
 //! Authenticated local principal and workspace authority contracts.
 
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use std::{
     collections::HashSet,
     io,
@@ -26,7 +27,7 @@ impl Default for ConnectionId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ThreadId(pub String);
 
