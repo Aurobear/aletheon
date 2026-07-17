@@ -17,10 +17,54 @@ use fabric::{
 use uuid::Uuid;
 
 use crate::r#impl::events::session_projection::SessionProjection;
+use crate::r#impl::events::SqliteEventSpine;
 use crate::service::event_projection::EventProjectionSink;
 
 const SESSION_EVENT_NAMESPACE: Uuid = Uuid::from_u128(0x01b2f7f1_0d98_441a_a30e_4f637b27be55);
 const FORK_ITEM_NAMESPACE: Uuid = Uuid::from_u128(0x97223947_4cbc_4e93_94fa_a71798f64a30);
+const RECONCILIATION_PAGE_SIZE: usize = 256;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionEventReconcileReport {
+    pub scanned: u64,
+    pub materialized: u64,
+}
+
+/// Replay the committed event-spine prefix into deterministic projections and
+/// the compatibility Session read model. Every operation is idempotent, so a
+/// restart can safely replay events committed before any prior crash point.
+pub async fn reconcile_committed_session_events(
+    event_spine: &SqliteEventSpine,
+    event_projections: &dyn EventProjectionSink,
+    read_model: &dyn SessionAppendStore,
+) -> Result<SessionEventReconcileReport> {
+    let through_row_id = event_spine.committed_row_watermark()?;
+    let mut after_row_id = 0;
+    let mut report = SessionEventReconcileReport::default();
+
+    loop {
+        let page = event_spine.read_committed_page(
+            after_row_id,
+            through_row_id,
+            RECONCILIATION_PAGE_SIZE,
+        )?;
+        if page.is_empty() {
+            break;
+        }
+        for (row_id, event) in page {
+            let session_event = is_session_materialization_event(&event);
+            apply_event_projections(event_projections, &event, session_event)?;
+            report.scanned += 1;
+            if session_event {
+                SessionProjection::materialize(read_model, &event).await?;
+                report.materialized += 1;
+            }
+            after_row_id = row_id;
+        }
+    }
+
+    Ok(report)
+}
 
 pub struct EventSourcedSessionStore {
     read_model: Arc<dyn SessionAppendStore>,
@@ -45,40 +89,7 @@ impl EventSourcedSessionStore {
 
     async fn append_and_materialize(&self, input: UnsequencedEvent) -> Result<SpineEvent> {
         let event = self.event_spine.append(input)?;
-        let report = self.event_projections.project(&event);
-        for lag in report.lags.iter().filter(|lag| lag.pending_events > 0) {
-            tracing::warn!(
-                projection = %lag.projection,
-                input_sequence = lag.input_sequence,
-                through_sequence = lag.through_sequence,
-                pending_events = lag.pending_events,
-                "event projection is behind its input watermark"
-            );
-        }
-        for poison in &report.poisons {
-            tracing::warn!(
-                projection = %poison.projection,
-                event_id = %poison.event_id,
-                sequence = poison.sequence,
-                error = %poison.error,
-                "event projection poison recorded"
-            );
-        }
-        let mut public_failure = None;
-        for failure in report.failures {
-            if failure.projection == "public-session" {
-                public_failure = Some(failure.error);
-            } else {
-                tracing::warn!(
-                    projection = %failure.projection,
-                    error = %failure.error,
-                    "event projection failed; unrelated reducers continued"
-                );
-            }
-        }
-        if let Some(error) = public_failure {
-            bail!("public Session projection failed: {error}");
-        }
+        apply_event_projections(self.event_projections.as_ref(), &event, true)?;
         SessionProjection::materialize(self.read_model.as_ref(), &event).await?;
         Ok(event)
     }
@@ -129,6 +140,58 @@ impl EventSourcedSessionStore {
             }
         }
     }
+}
+
+fn apply_event_projections(
+    event_projections: &dyn EventProjectionSink,
+    event: &SpineEvent,
+    public_failure_is_fatal: bool,
+) -> Result<()> {
+    let report = event_projections.project(event);
+    for lag in report.lags.iter().filter(|lag| lag.pending_events > 0) {
+        tracing::warn!(
+            projection = %lag.projection,
+            input_sequence = lag.input_sequence,
+            through_sequence = lag.through_sequence,
+            pending_events = lag.pending_events,
+            "event projection is behind its input watermark"
+        );
+    }
+    for poison in &report.poisons {
+        tracing::warn!(
+            projection = %poison.projection,
+            event_id = %poison.event_id,
+            sequence = poison.sequence,
+            error = %poison.error,
+            "event projection poison recorded"
+        );
+    }
+    let mut public_failure = None;
+    for failure in report.failures {
+        if failure.projection == "public-session" && public_failure_is_fatal {
+            public_failure = Some(failure.error);
+        } else {
+            tracing::warn!(
+                projection = %failure.projection,
+                error = %failure.error,
+                "event projection failed; unrelated reducers continued"
+            );
+        }
+    }
+    if let Some(error) = public_failure {
+        bail!("public Session projection failed: {error}");
+    }
+    Ok(())
+}
+
+fn is_session_materialization_event(event: &SpineEvent) -> bool {
+    event.envelope.source.0 == "session-command"
+        && matches!(
+            event.schema.0.as_str(),
+            SchemaId::EVENT_SESSION_CREATED_V1
+                | SchemaId::EVENT_SESSION_FORKED_V1
+                | SchemaId::TURN_EVENT_V1
+        )
 }
 
 #[async_trait]

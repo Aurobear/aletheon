@@ -116,6 +116,49 @@ impl SqliteEventSpine {
             .map(|json| serde_json::from_str(&json).context("decode persisted spine event"))
             .collect()
     }
+
+    /// Capture the committed prefix used by bounded startup reconciliation.
+    /// Events appended after this watermark belong to the live writer path.
+    pub(crate) fn committed_row_watermark(&self) -> Result<i64> {
+        self.connection
+            .lock()
+            .query_row(
+                "SELECT COALESCE(MAX(rowid),0) FROM spine_events",
+                [],
+                |row| row.get(0),
+            )
+            .context("read event spine reconciliation watermark")
+    }
+
+    /// Read one insertion-ordered page from a previously captured committed
+    /// prefix. SQLite row order preserves append order within every event tree,
+    /// while allowing reconciliation to remain bounded in memory.
+    pub(crate) fn read_committed_page(
+        &self,
+        after_row_id: i64,
+        through_row_id: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, SpineEvent)>> {
+        let limit = limit.clamp(1, 10_000);
+        let connection = self.connection.lock();
+        let mut statement = connection.prepare(
+            "SELECT rowid,event_json FROM spine_events
+             WHERE rowid>?1 AND rowid<=?2
+             ORDER BY rowid ASC LIMIT ?3",
+        )?;
+        let rows: Vec<(i64, String)> = statement
+            .query_map(params![after_row_id, through_row_id, limit], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        rows.into_iter()
+            .map(|(row_id, json)| {
+                serde_json::from_str(&json)
+                    .context("decode persisted spine event")
+                    .map(|event| (row_id, event))
+            })
+            .collect()
+    }
 }
 
 impl EventSpine for SqliteEventSpine {

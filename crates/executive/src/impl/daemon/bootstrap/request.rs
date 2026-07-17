@@ -996,6 +996,19 @@ impl RequestHandler {
                     crate::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
                         .expect("in-memory canonical session store")
                 });
+        let session_recovery =
+            crate::r#impl::session::event_sourced_store::reconcile_committed_session_events(
+                canonical_event_spine.as_ref(),
+                event_projections.as_ref(),
+                &canonical_store,
+            )
+            .await
+            .context("reconcile committed Session events during daemon startup")?;
+        info!(
+            scanned = session_recovery.scanned,
+            materialized = session_recovery.materialized,
+            "Session event-spine recovery completed before turn admission"
+        );
         let coordinator = Arc::new(
             crate::service::turn_coordinator::TurnCoordinator::with_event_spine(
                 kernel.clone(),
