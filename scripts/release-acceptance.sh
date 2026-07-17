@@ -128,12 +128,35 @@ PY
 "$repo_root/scripts/verify-migration-matrix.sh"
 ALETHEON_RELEASE_ARTIFACTS="$guest_artifacts/installed-host" \
   "$repo_root/tests/production/install_upgrade_restart.sh"
+source "$repo_root/tests/production/lib/installed_host.sh"
+production_user=${ALETHEON_PRODUCTION_USER:-${ALETHEON_TEST_USER_A:-}}
+[[ -n "$production_user" ]] || {
+  echo "BLOCKED: ALETHEON_PRODUCTION_USER or ALETHEON_TEST_USER_A is required" >&2; exit 78;
+}
+case " $ALETHEON_TEST_USER_A $ALETHEON_TEST_USER_B " in
+  *" $production_user "*) ;;
+  *) echo "BLOCKED: production scenario user was not admitted by the installed-host lane" >&2; exit 78 ;;
+esac
+production_uid=$(installed_user_uid "$production_user")
+production_gid=$(id -g "$production_user")
+production_socket=$(installed_user_socket "$production_user")
+production_workspace=$(mktemp -d "/var/tmp/aletheon-production-workspace.${production_uid}.XXXXXX")
+chown "$production_uid:$production_gid" "$production_workspace"
+chmod 0700 "$production_workspace"
+printf '%s\n' "$production_workspace" >"$guest_artifacts/production-workspace-path.txt"
 (
   cd "$repo_root/tools/aletheon-monitor"
   python3 -m pytest -q tests
-  python3 -m src.__main__ scenario --suite production --source-root "$repo_root" \
+  run_as_installed_user "$production_user" env \
+    ALETHEON_SOCKET="$production_socket" \
+    ALETHEON_PRODUCTION_WORKSPACE="$production_workspace" \
+    ALETHEON_PRODUCTION_GMAIL_ACCOUNT="${ALETHEON_PRODUCTION_GMAIL_ACCOUNT:-}" \
+    python3 -m src.__main__ scenario --suite production --source-root "$repo_root" \
     | tee "$artifacts/production-scenarios.json"
 )
+install -d -m 0700 "$guest_artifacts/production-workspace"
+cp -a -- "$production_workspace/." "$guest_artifacts/production-workspace/"
+rm -rf -- "$production_workspace"
 ALETHEON_RELEASE_ARTIFACTS="$guest_artifacts" ALETHEON_V01_ACCEPTANCE_REPORT="$v01_report" \
   ALETHEON_V01_RECIPE_RECEIPT="$v01_recipe_receipt" \
   "$repo_root/tests/production/failure_matrix.sh"
