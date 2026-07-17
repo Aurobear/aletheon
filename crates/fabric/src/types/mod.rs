@@ -3,6 +3,7 @@
 pub mod admission;
 pub mod agent;
 pub mod agent_control;
+pub mod agent_settlement;
 pub mod approval;
 pub mod attempt;
 pub mod capability;
