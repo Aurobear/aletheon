@@ -14,43 +14,6 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-pub(crate) async fn run_hook_scripts(scripts: &[String], input_json: &str) {
-    for script_path in scripts {
-        let path = format::expand_tilde(script_path);
-        if !std::path::Path::new(&path).exists() {
-            tracing::warn!(path = %path, "Hook script not found, skipping");
-            continue;
-        }
-        let spawn_result = tokio::process::Command::new(&path)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-        let mut child = match spawn_result {
-            Ok(child) => child,
-            Err(error) => {
-                tracing::warn!(path = %path, %error, "Failed to spawn hook script");
-                continue;
-            }
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            use tokio::io::AsyncWriteExt;
-            let _ = stdin.write_all(input_json.as_bytes()).await;
-        }
-        match tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await {
-            Ok(Ok(status)) if status.success() => {}
-            Ok(Ok(status)) => {
-                tracing::warn!(path = %path, code = status.code(), "Hook script failed")
-            }
-            Ok(Err(error)) => tracing::warn!(path = %path, %error, "Hook script I/O error"),
-            Err(_) => {
-                tracing::warn!(path = %path, "Hook script timed out");
-                let _ = child.kill().await;
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct RequestHandler {
     /// Narrow application use cases available to protocol handlers.

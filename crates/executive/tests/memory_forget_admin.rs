@@ -7,7 +7,7 @@ use executive::core::orchestrator::AletheonExecutive;
 use executive::service::admin_service::{
     AdminResources, AdminService, AdminServiceError, AdminUseCases, SkillAdminPort,
 };
-use executive::service::request_use_cases::ProductionMemoryAdminUseCases;
+use executive::service::request_use_cases::{ProductionMemoryAdminUseCases, RetentionAdminPort};
 use mnemosyne::{
     ForgetAuthority, ForgetPolicy, ForgetReceipt, ForgetSelector, MemoryAuthority, MemoryKind,
     MemoryMetadata, MemoryRecord, MemoryRecordId, MemoryScope, MemoryService, MemoryStatus,
@@ -26,6 +26,21 @@ impl SkillAdminPort for NoopSkills {
 
 struct RepositoryMemory {
     repository: Arc<RetentionRepository>,
+}
+
+struct RepositoryRetentionAdmin {
+    repository: Arc<RetentionRepository>,
+}
+
+impl RetentionAdminPort for RepositoryRetentionAdmin {
+    fn compact(
+        &self,
+        owner: &str,
+        now_ms: i64,
+        policy: &mnemosyne::RetentionCompactionPolicy,
+    ) -> anyhow::Result<mnemosyne::RetentionCompactionReport> {
+        mnemosyne::RetentionCompactor::new(&self.repository).run(owner, now_ms, policy)
+    }
 }
 #[async_trait]
 impl MemoryService for RepositoryMemory {
@@ -89,7 +104,9 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         repository: repository.clone(),
     });
     let memory_admin = Arc::new(ProductionMemoryAdminUseCases::new(
-        memory, repository, "owner",
+        memory,
+        Arc::new(RepositoryRetentionAdmin { repository }),
+        "owner",
     ));
     let service = AdminService::new(AdminResources {
         orchestrator: Arc::new(Mutex::new(AletheonExecutive::new(

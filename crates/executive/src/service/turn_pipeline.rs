@@ -174,18 +174,7 @@ impl TurnPipeline {
         self.runtime_ports.storm.reset().await;
         let mut effective_message = String::new();
 
-        // -- Configured pre_turn hook scripts --
-        effective_message.push_str(
-            &self
-                .runtime_ports
-                .hooks
-                .run_pre_turn_script(&message, &session_id)
-                .await,
-        );
-
-        effective_message.push_str(&message);
-
-        // -- PreTurn hooks --
+        // -- PreTurn hooks (including configured scripts owned by Corpus) --
         {
             let ctx = HookContext {
                 point: HookPoint::PreTurn,
@@ -211,6 +200,7 @@ impl TurnPipeline {
                 _ => {}
             }
         }
+        effective_message.push_str(&message);
 
         let (sess_id, turn_count) = self.runtime_ports.sessions.begin_user(&message).await?;
 

@@ -164,6 +164,7 @@ request_source = request_use_cases.read_text().split("#[cfg(test)]", 1)[0]
 required_request_ports = [
     "Arc<dyn ExecutiveRuntimePort>",
     "Arc<dyn ReflectionMemoryPort>",
+    "Arc<dyn ReflectionEnginePort>",
     "Arc<dyn SelfStatusPort>",
     "Arc<dyn SupplementalMemoryStatusPort>",
     "Arc<dyn RetentionAdminPort>",
@@ -178,6 +179,7 @@ concrete = [
         "CompositeMemoryHealth",
         "RetentionRepository",
         "RetentionCompactor",
+        "cognit::core::reflector::Reflector",
     ]
     if name in request_source
 ]
@@ -190,11 +192,32 @@ if missing or concrete:
 
 turn_runtime = Path("crates/executive/src/service/turn_runtime_ports.rs")
 turn_source = turn_runtime.read_text().split("#[cfg(test)]", 1)[0]
-required_turn_ports = ["Arc<dyn SelfPolicyPort>", "Arc<dyn TurnConfigPort>"]
+required_turn_ports = [
+    "Arc<dyn TurnHookPort>",
+    "Arc<dyn StormStatePort>",
+    "Arc<dyn ModelSelectionPort>",
+    "Arc<dyn SelfPolicyPort>",
+    "Arc<dyn TurnApprovalPort>",
+    "Arc<dyn GovernedTurnCapabilityPort>",
+    "Arc<dyn TurnSessionStatePort>",
+    "Arc<dyn TurnConfigPort>",
+    "Arc<dyn TurnObservabilityPort>",
+]
 missing = [port for port in required_turn_ports if port not in turn_source]
 concrete = [
     name
-    for name in ["dasein::SelfField", "AletheonExecutive"]
+    for name in [
+        "dasein::SelfField",
+        "AletheonExecutive",
+        "StormBreaker",
+        "PendingApproval",
+        "CapabilityResources",
+        "SessionManager",
+        "ModelRouter",
+        "PerfCounter",
+        "corpus::CorpusService",
+        "mnemosyne::MemoryService",
+    ]
     if name in turn_source
 ]
 if missing or concrete:

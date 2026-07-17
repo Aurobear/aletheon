@@ -11,8 +11,8 @@ use fabric::{Subsystem, SubsystemContext};
 
 use crate::core::orchestrator::AletheonExecutive;
 use crate::service::request_use_cases::{
-    CareWeight, ExecutiveRuntimePort, ReflectionMemoryPort, ReflectionStats, RetentionAdminPort,
-    RuntimeStatus, SelfStatus, SelfStatusPort, SupplementalMemoryStatus,
+    CareWeight, ExecutiveRuntimePort, ReflectionEnginePort, ReflectionMemoryPort, ReflectionStats,
+    RetentionAdminPort, RuntimeStatus, SelfStatus, SelfStatusPort, SupplementalMemoryStatus,
     SupplementalMemoryStatusPort,
 };
 use crate::service::turn_runtime_ports::{SelfPolicyPort, TurnConfigPort};
@@ -35,6 +35,12 @@ pub(super) fn retention_admin_port(
     repository: Arc<mnemosyne::RetentionRepository>,
 ) -> Arc<dyn RetentionAdminPort> {
     Arc::new(RetentionAdminAdapter { repository })
+}
+
+pub(super) fn reflection_engine_port(
+    reflector: cognit::core::reflector::Reflector,
+) -> Arc<dyn ReflectionEnginePort> {
+    Arc::new(ReflectionEngineAdapter { reflector })
 }
 
 pub(super) struct RequestFacadePorts {
@@ -102,6 +108,31 @@ impl ExecutiveRuntimePort for ExecutiveRuntimeAdapter {
 
 struct ReflectionMemoryAdapter {
     episodic: Arc<Mutex<EpisodicMemory>>,
+}
+
+struct ReflectionEngineAdapter {
+    reflector: cognit::core::reflector::Reflector,
+}
+
+impl ReflectionEnginePort for ReflectionEngineAdapter {
+    fn reflect_conversation(
+        &self,
+        conversation: &str,
+        trigger: fabric::ReflectionTrigger,
+        succeeded: bool,
+        what_worked: Vec<String>,
+        what_failed: Vec<String>,
+        learned: Vec<String>,
+    ) -> fabric::ReflectionEntry {
+        self.reflector.reflect_conversation(
+            conversation,
+            trigger,
+            succeeded,
+            what_worked,
+            what_failed,
+            learned,
+        )
+    }
 }
 
 #[async_trait::async_trait]

@@ -84,6 +84,7 @@ fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
     for contract in [
         "Arc<dyn ExecutiveRuntimePort>",
         "Arc<dyn ReflectionMemoryPort>",
+        "Arc<dyn ReflectionEnginePort>",
         "Arc<dyn SelfStatusPort>",
         "Arc<dyn SupplementalMemoryStatusPort>",
         "Arc<dyn RetentionAdminPort>",
@@ -102,6 +103,7 @@ fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
         "CompositeMemoryHealth",
         "RetentionRepository",
         "RetentionCompactor",
+        "cognit::core::reflector::Reflector",
     ] {
         assert!(
             !source.contains(concrete),
@@ -132,17 +134,33 @@ fn exec_session_crosses_private_corpus_composition() {
 }
 
 #[test]
-fn turn_runtime_resources_retain_only_typed_self_and_config_ports() {
+fn turn_runtime_retain_only_typed_use_case_ports() {
     let source = production_source("src/service/turn_runtime_ports.rs");
     for contract in [
         "Arc<dyn SelfPolicyPort>",
         "Arc<dyn TurnConfigPort>",
-        "Arc<dyn corpus::CorpusService>",
-        "Arc<dyn mnemosyne::MemoryService>",
+        "Arc<dyn TurnHookPort>",
+        "Arc<dyn StormStatePort>",
+        "Arc<dyn ModelSelectionPort>",
+        "Arc<dyn TurnApprovalPort>",
+        "Arc<dyn GovernedTurnCapabilityPort>",
+        "Arc<dyn TurnSessionStatePort>",
+        "Arc<dyn TurnObservabilityPort>",
     ] {
         assert!(source.contains(contract), "missing turn port: {contract}");
     }
-    for concrete in ["dasein::SelfField", "AletheonExecutive"] {
+    for concrete in [
+        "dasein::SelfField",
+        "AletheonExecutive",
+        "StormBreaker",
+        "PendingApproval",
+        "CapabilityResources",
+        "SessionManager",
+        "ModelRouter",
+        "PerfCounter",
+        "corpus::CorpusService",
+        "mnemosyne::MemoryService",
+    ] {
         assert!(
             !source.contains(concrete),
             "turn runtime retained concrete domain state: {concrete}"

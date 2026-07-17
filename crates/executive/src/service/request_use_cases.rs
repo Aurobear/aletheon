@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use cognit::core::reflector::Reflector;
 use fabric::hook::{HookContext, HookPoint};
 use fabric::ui_event::InterruptReason;
 use fabric::{
@@ -23,7 +22,6 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
-use crate::core::config::HooksConfig;
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use crate::r#impl::external::GoogleIntegration;
 use crate::r#impl::health::{ComponentHealth, HealthRegistry, ProductionHealth};
@@ -74,6 +72,18 @@ pub trait ReflectionMemoryPort: Send + Sync {
     async fn recall_reflections(&self, limit: usize) -> anyhow::Result<Vec<ReflectionEntry>>;
     async fn store_reflection(&self, entry: &ReflectionEntry) -> anyhow::Result<()>;
     async fn recall_evolution_logs(&self, limit: usize) -> anyhow::Result<Vec<EvolutionLogEntry>>;
+}
+
+pub trait ReflectionEnginePort: Send + Sync {
+    fn reflect_conversation(
+        &self,
+        conversation: &str,
+        trigger: ReflectionTrigger,
+        succeeded: bool,
+        what_worked: Vec<String>,
+        what_failed: Vec<String>,
+        learned: Vec<String>,
+    ) -> ReflectionEntry;
 }
 
 #[derive(Clone, Debug, Default)]
@@ -281,7 +291,7 @@ pub struct ProductionReflectionUseCases {
     runtime_port: Arc<dyn ExecutiveRuntimePort>,
     reflections: Arc<dyn ReflectionMemoryPort>,
     metacog: Arc<dyn metacog::MetacogService>,
-    reflector: Reflector,
+    reflector: Arc<dyn ReflectionEnginePort>,
 }
 
 impl ProductionReflectionUseCases {
@@ -289,7 +299,7 @@ impl ProductionReflectionUseCases {
         runtime_port: Arc<dyn ExecutiveRuntimePort>,
         reflections: Arc<dyn ReflectionMemoryPort>,
         metacog: Arc<dyn metacog::MetacogService>,
-        reflector: Reflector,
+        reflector: Arc<dyn ReflectionEnginePort>,
     ) -> Self {
         Self {
             runtime_port,
@@ -364,7 +374,6 @@ pub trait SessionLifecycleUseCases: Send + Sync {
 
 pub struct ProductionSessionLifecycle {
     corpus: Arc<dyn corpus::CorpusService>,
-    config: HooksConfig,
     approvals: crate::service::admin_service::ScopedApprovalCache,
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
 }
@@ -372,13 +381,11 @@ pub struct ProductionSessionLifecycle {
 impl ProductionSessionLifecycle {
     pub fn new(
         corpus: Arc<dyn corpus::CorpusService>,
-        config: HooksConfig,
         approvals: crate::service::admin_service::ScopedApprovalCache,
         cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     ) -> Self {
         Self {
             corpus,
-            config,
             approvals,
             cancel_token,
         }
@@ -400,20 +407,15 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
             tool_input: None,
             tool_result: None,
             message: None,
-            metadata: HashMap::new(),
+            metadata: HashMap::from([(
+                "cwd".into(),
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .display()
+                    .to_string(),
+            )]),
         };
         self.corpus.execute_hook(&context).await;
-        if !self.config.on_session_end.is_empty() {
-            let input = json!({
-                "session_id": session_id,
-                "cwd": std::env::current_dir().unwrap_or_default(),
-            });
-            crate::r#impl::daemon::handler::run_hook_scripts(
-                &self.config.on_session_end,
-                &input.to_string(),
-            )
-            .await;
-        }
     }
 
     async fn start(&self, session_id: String, clear_approvals: bool) {

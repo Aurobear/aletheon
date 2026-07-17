@@ -498,6 +498,7 @@ impl RequestHandler {
         for plugin in skill_loader.plugins() {
             register_skill(plugin, &mut tools, &mut hook_registry);
         }
+        super::turn_runtime::register_configured_hooks(&mut hook_registry, &config.hooks);
         let hook_registry = Arc::new(Mutex::new(hook_registry));
 
         // Cache-stable prefix
@@ -542,7 +543,6 @@ impl RequestHandler {
             }
         }
         let skill_router = Arc::new(Mutex::new(skill_router));
-        let hooks_config = config.hooks.clone();
 
         // ModelRouter
         let model_router = Arc::new(ModelRouter::new(model_routing.clone(), inference.clone()));
@@ -707,7 +707,6 @@ impl RequestHandler {
         let corpus_group = crate::core::CorpusGroup {
             tools,
             hook_registry,
-            hooks_config,
         };
         let corpus_executor = Arc::new(corpus::CorpusToolExecutor::new(
             corpus_group.tools.clone(),
@@ -1039,31 +1038,28 @@ impl RequestHandler {
                 ),
             );
         let turn_runtime_facades = TurnRuntimeFacadePorts::new(runtime.clone(), self_field.clone());
-        let runtime_ports = Arc::new(
-            crate::service::turn_runtime_ports::TurnRuntimePorts::production(
-                crate::service::turn_runtime_ports::TurnRuntimeResources {
-                    corpus: domains.corpus(),
-                    pre_turn_scripts: corpus_group.hooks_config.pre_turn.clone(),
-                    storm: security_group.storm_breaker.clone(),
-                    model_router: model_router.clone(),
-                    default_llm: llm.clone(),
-                    self_policy: turn_runtime_facades.self_policy,
-                    approval_rx: security_group.approval_rx.clone(),
-                    pending_approvals: security_group.pending_approvals.clone(),
-                    capabilities: capability_resources,
-                    admission: kernel.admission(),
-                    sessions: sessions.clone(),
-                    default_session_id: session_group.default_session_id.clone(),
-                    session_created_at: session_group.session_created_at.clone(),
-                    data_dir: session_group.data_dir.clone(),
-                    context_window: session_group.context_window,
-                    clock: clock.clone(),
-                    memory: memory_group.memory_service.clone(),
-                    config: turn_runtime_facades.config,
-                    performance: debug_perf.clone(),
-                },
-            ),
-        );
+        let runtime_ports = Arc::new(super::turn_runtime::compose_turn_runtime(
+            super::turn_runtime::TurnRuntimeResources {
+                corpus: domains.corpus(),
+                storm: security_group.storm_breaker.clone(),
+                model_router: model_router.clone(),
+                default_llm: llm.clone(),
+                self_policy: turn_runtime_facades.self_policy,
+                approval_rx: security_group.approval_rx.clone(),
+                pending_approvals: security_group.pending_approvals.clone(),
+                capabilities: capability_resources,
+                admission: kernel.admission(),
+                sessions: sessions.clone(),
+                default_session_id: session_group.default_session_id.clone(),
+                session_created_at: session_group.session_created_at.clone(),
+                data_dir: session_group.data_dir.clone(),
+                context_window: session_group.context_window,
+                clock: clock.clone(),
+                memory: memory_group.memory_service.clone(),
+                config: turn_runtime_facades.config,
+                performance: debug_perf.clone(),
+            },
+        ));
         let pipeline = Arc::new(crate::service::TurnPipeline::new(
             crate::service::turn_pipeline::TurnPipelineResources {
                 session_gateway: session_gateway.clone(),
@@ -1250,7 +1246,6 @@ impl RequestHandler {
         > = Arc::new(
             crate::service::request_use_cases::ProductionSessionLifecycle::new(
                 domains.corpus(),
-                corpus_group.hooks_config.clone(),
                 security_group.session_approvals.clone(),
                 turn_token.clone(),
             ),
@@ -1281,7 +1276,7 @@ impl RequestHandler {
                     request_facades.runtime_port.clone(),
                     request_facades.reflections,
                     domains.metacog(),
-                    reflector.clone(),
+                    super::request_ports::reflection_engine_port(reflector.clone()),
                 ),
             );
         let google_use_cases: Arc<dyn crate::service::request_use_cases::GoogleUseCases> = Arc::new(
