@@ -49,7 +49,15 @@ impl RequestHandler {
         let params = &request["params"];
         let description = params["description"].as_str().unwrap_or("");
         let scope = params["scope"].as_str().unwrap_or("session");
-        let session_id = match self.ports.sessions.current().await {
+        let target_session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s,
+            _ => return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32602, "message": "Missing session_id parameter" }
+            }),
+        };
+        let session_id = match self.ports.sessions.current(target_session_id).await {
             Ok(value) => value.session_id,
             Err(error) => {
                 return json!({
@@ -170,7 +178,15 @@ impl RequestHandler {
             });
         }
         let scope = params["scope"].as_str().unwrap_or("session");
-        let session_id = match self.ports.sessions.current().await {
+        let target_session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s,
+            _ => return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32602, "message": "Missing session_id parameter" }
+            }),
+        };
+        let session_id = match self.ports.sessions.current(target_session_id).await {
             Ok(value) => value.session_id,
             Err(error) => {
                 return json!({

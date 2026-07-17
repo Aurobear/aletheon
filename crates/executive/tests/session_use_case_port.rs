@@ -84,7 +84,6 @@ async fn service_with_history(
     let canonical = Arc::new(SessionService::new(canonical_store, active));
     let service = LegacySessionService::new(LegacySessionResources {
         registry,
-        default_id: Arc::new(Mutex::new(initial_id.clone())),
         created_at: Arc::new(Mutex::new(HashMap::from([(initial_id, clock.mono_now())]))),
         data_dir: temp.path().to_path_buf(),
         context_window: 8_000,
@@ -124,7 +123,7 @@ async fn resume_imports_legacy_journal_into_canonical_history_once() {
 async fn clear_rotates_to_empty_canonical_session() {
     let (_temp, service, canonical) = service_with_history(&[Message::user("stale context")]).await;
 
-    let transition = service.clear().await.unwrap();
+    let transition = service.clear("legacy-initial").await.unwrap();
     assert_eq!(transition.previous.session_id, "legacy-initial");
     assert_ne!(
         transition.current.session_id,
@@ -137,8 +136,8 @@ async fn clear_rotates_to_empty_canonical_session() {
         .messages
         .is_empty());
     assert_eq!(
-        service.current().await.unwrap().session_id,
-        transition.current.session_id
+        service.current("legacy-initial").await.unwrap().session_id,
+        "legacy-initial"
     );
 }
 
@@ -155,7 +154,7 @@ async fn compact_materializes_a_new_canonical_session() {
     let (_temp, service, canonical) = service_with_history(&messages).await;
 
     let transition = service
-        .compact()
+        .compact("legacy-initial")
         .await
         .unwrap()
         .expect("long history should compact");
@@ -170,8 +169,8 @@ async fn compact_materializes_a_new_canonical_session() {
     assert!(!projected.messages.is_empty());
     assert!(projected.messages.len() < messages.len());
     assert_eq!(
-        service.current().await.unwrap().session_id,
-        transition.current.session_id
+        service.current("legacy-initial").await.unwrap().session_id,
+        "legacy-initial"
     );
 }
 

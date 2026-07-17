@@ -1223,7 +1223,6 @@ impl RequestHandler {
             crate::service::legacy_session_service::LegacySessionService::new(
                 crate::service::legacy_session_service::LegacySessionResources {
                     registry: sessions.clone(),
-                    default_id: default_session_id,
                     created_at: session_created_at,
                     data_dir: data_dir.clone(),
                     context_window,

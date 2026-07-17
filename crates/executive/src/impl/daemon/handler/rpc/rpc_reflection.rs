@@ -24,9 +24,13 @@ impl RequestHandler {
     pub(super) async fn handle_reflect_now(
         &self,
         id: &serde_json::Value,
-        _request: &serde_json::Value,
+        request: &serde_json::Value,
     ) -> serde_json::Value {
-        let turn = match self.ports.sessions.current().await {
+        let session_id = match request["params"].get("session_id").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s,
+            _ => return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Missing session_id parameter"}}),
+        };
+        let turn = match self.ports.sessions.current(session_id).await {
             Ok(snapshot) => snapshot.turn_count,
             Err(error) => {
                 return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":error.to_string()}})

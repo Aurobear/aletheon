@@ -14,9 +14,13 @@ impl RequestHandler {
     pub(super) async fn handle_clear(
         &self,
         id: &serde_json::Value,
-        _request: &serde_json::Value,
+        request: &serde_json::Value,
     ) -> serde_json::Value {
-        let transition = match self.ports.sessions.clear().await {
+        let session_id = match request["params"]["session_id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Missing session_id parameter"}}),
+        };
+        let transition = match self.ports.sessions.clear(session_id).await {
             Ok(transition) => transition,
             Err(error) => return session_error(id, -32022, error),
         };
@@ -72,9 +76,13 @@ impl RequestHandler {
     pub(super) async fn handle_compact(
         &self,
         id: &serde_json::Value,
-        _request: &serde_json::Value,
+        request: &serde_json::Value,
     ) -> serde_json::Value {
-        match self.ports.sessions.compact().await {
+        let session_id = match request["params"]["session_id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Missing session_id parameter"}}),
+        };
+        match self.ports.sessions.compact(session_id).await {
             Ok(Some(transition)) => json!({
                 "jsonrpc":"2.0",
                 "id":id,
@@ -91,9 +99,13 @@ impl RequestHandler {
     pub(super) async fn handle_new_session(
         &self,
         id: &serde_json::Value,
-        _request: &serde_json::Value,
+        request: &serde_json::Value,
     ) -> serde_json::Value {
-        let transition = match self.ports.sessions.create_and_switch().await {
+        let previous_session_id = match request["params"]["session_id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Missing session_id parameter"}}),
+        };
+        let transition = match self.ports.sessions.create_and_switch(previous_session_id).await {
             Ok(transition) => transition,
             Err(error) => return session_error(id, -32030, error),
         };
