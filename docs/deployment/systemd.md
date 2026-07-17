@@ -1,8 +1,10 @@
 # Native systemd deployment
 
-Aletheon Executive is the only native application service. Goal workers,
-Telegram, Google sync, Pi, and memory workers remain supervised inside
-Executive; do not create one unit per worker.
+Aletheon uses a machine-scoped inference core plus per-user runtimes. The system
+unit runs only `aletheon core` on `/run/aletheon/core.sock`; the private user
+socket activates `aletheon daemon`. Goal workers, integrations, Pi, and memory
+workers remain supervised inside the user runtime rather than becoming separate
+system units.
 
 Build a release binary, review `config/production.toml.example`, then install:
 
@@ -15,15 +17,16 @@ sudo ALETHEON_BINARY="$PWD/target/release/aletheon" \
 
 The installer is idempotent: it creates the system account and managed
 0750 directories, preserves an existing `/etc/aletheon/config.toml`, installs
-only checked-in assets, validates the real `daemon --config`/`--socket` flags,
-runs `systemd-analyze verify`, then enables the unit. Use `--no-enable` for
-image construction or offline verification.
+only checked-in assets, validates the real `core` and `daemon`
+`--config`/`--socket` flags, runs `systemd-analyze verify`, then enables the
+core and global user socket. Use `--no-enable` for image construction or
+offline verification.
 
-The unit uses `ProtectSystem=strict`, an empty capability set, read/write access
-only to state/cache/runtime roots, and no plaintext `EnvironmentFile`. systemd
-credentials are mounted read-only below `$CREDENTIALS_DIRECTORY`; application
-secret lifecycle and rotation are described separately. Never put a token in
-unit text, `ExecStart`, or `Environment=`.
+The core unit uses `ProtectSystem=strict`, an empty capability set, and
+read/write access only to state/cache/runtime roots. Provider credentials are
+loaded from the root-managed `/etc/aletheon/credentials/provider.env` file;
+application secret lifecycle and rotation are described separately. Never put a
+token in unit text, `ExecStart`, or `Environment=`.
 
 Pi/bubblewrap requires user and mount namespaces, so `RestrictNamespaces` is
 intentionally not set. This is the minimal exception; `NoNewPrivileges`,
@@ -32,18 +35,20 @@ active. Re-run Pi namespace/worktree tests after changing hardening directives.
 
 The preflight rejects missing/symlinked configuration, unsafe modes, non-
 production mode, and noncanonical roots. `ExecStartPost` sends the real JSON-RPC
-`health` request through the credential-checked Unix socket. Watchdog is not
-configured because the daemon does not yet emit systemd heartbeat notifications.
+`health` request through the credential-checked user Unix socket. Watchdog is
+not configured because the runtimes do not yet emit systemd heartbeat
+notifications.
 
 Validation and recovery:
 
 ```bash
-systemd-analyze verify config/aletheon.service
+systemd-analyze verify config/aletheon-core.service \
+  config/aletheon.user.socket config/aletheon.user.service
 scripts/verify-systemd.sh --preflight --binary target/release/aletheon \
   --config config/production.toml.example
-sudo systemctl restart aletheon
-sudo systemctl status aletheon --no-pager
-sudo journalctl -u aletheon -n 200 --no-pager
+sudo systemctl restart aletheon-core
+sudo systemctl status aletheon-core --no-pager
+sudo journalctl -u aletheon-core -n 200 --no-pager
 ```
 
 `SIGTERM` receives 30 seconds for bounded worker/connection drain, after which

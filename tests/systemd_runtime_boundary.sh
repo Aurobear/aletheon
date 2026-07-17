@@ -16,6 +16,7 @@ if grep -Eq 'ReadWritePaths=.*(/home|/tmp)' config/aletheon-core.service; then
   echo 'core unit grants a user or temporary writable root' >&2; exit 1
 fi
 grep -q 'ExecStart=.*aletheon core' config/aletheon-core.service
+grep -q 'ExecStart=.*aletheon core .*--socket /run/aletheon/core.sock' config/aletheon-core.service
 grep -q 'ExecStart=.*aletheon daemon' config/aletheon.user.service
 grep -q '^EnvironmentFile=-/etc/aletheon/credentials/provider.env$' config/aletheon-core.service
 if grep -q '^EnvironmentFile=-%d/provider.env$' config/aletheon-core.service; then
@@ -25,6 +26,7 @@ fi
 # The legacy system unit is core-only, and installation enables the private
 # socket rather than keeping every user's runtime resident.
 grep -q 'ExecStart=.*aletheon core' config/aletheon.service
+grep -q 'ExecStart=.*aletheon core .*--socket /run/aletheon/core.sock' config/aletheon.service
 if grep -q 'ExecStart=.*aletheon daemon' config/aletheon.service; then
   echo 'compatibility system service still starts user execution' >&2; exit 1
 fi

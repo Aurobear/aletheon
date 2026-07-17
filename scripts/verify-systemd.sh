@@ -44,8 +44,8 @@ case "$mode" in
         echo "unit verification: missing boundary $contract" >&2; exit 1;
       }
     done
-    grep -Eq '^ExecStart=.* daemon .*--socket ' "$staged" || {
-      echo "unit verification: daemon must expose an explicit AF_UNIX socket" >&2; exit 1;
+    grep -Eq '^ExecStart=.* core .*--config .*--socket /run/aletheon/core\.sock' "$staged" || {
+      echo "unit verification: core must expose the explicit internal AF_UNIX socket" >&2; exit 1;
     }
     ;;
   --preflight)
@@ -55,6 +55,8 @@ case "$mode" in
     [[ $(stat -c '%a' "$config") =~ ^(600|640|644)$ ]] || {
       echo "preflight: config mode must be 0600/0640/0644" >&2; exit 1;
     }
+    "$binary" core --help | grep -q -- '--config <CONFIG>'
+    "$binary" core --help | grep -q -- '--socket <SOCKET>'
     "$binary" daemon --help | grep -q -- '--config <CONFIG>'
     "$binary" daemon --help | grep -q -- '--socket <SOCKET>'
     python3 - "$config" <<'PY'
