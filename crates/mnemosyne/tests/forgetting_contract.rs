@@ -6,7 +6,7 @@ use fabric::{Subsystem, SubsystemContext};
 use mnemosyne::{
     CoreMemory, DefaultMemoryService, EpisodicMemory, ExperienceEvent, FactStore, ForgetAuthority,
     ForgetPolicy, ForgetSelector, MemoryMetadata, MemoryRecordId, MemoryScope, MemoryService,
-    RecallMemory, RecallRequest, RetentionRepository,
+    RecallMemory, RecallRequest, RetentionRepository, TombstoneDestination,
 };
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -84,6 +84,10 @@ async fn exact_forget_changes_recall_is_idempotent_and_survives_restart() {
     );
     let first = svc.forget(policy.clone()).await.unwrap();
     assert_eq!(first.tombstoned, vec![MemoryRecordId("message-1".into())]);
+    assert_eq!(
+        svc.metrics().snapshot().memory_tombstone_pending_total[&TombstoneDestination::Local],
+        1
+    );
     assert_eq!(svc.forget(policy).await.unwrap(), first);
     assert!(svc
         .recall(RecallRequest::bounded("session-a", "copper lighthouse"))

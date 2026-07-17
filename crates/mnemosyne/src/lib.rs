@@ -12,6 +12,7 @@ pub mod consolidation;
 pub mod fact_service;
 pub mod r#impl;
 pub mod model;
+pub mod observability;
 pub mod ops;
 pub mod projection;
 pub mod promotion;
@@ -36,6 +37,11 @@ pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDec
 pub use model::{
     MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProvenance, MemoryRecord, MemoryRecordId,
     MemoryScope, MemorySensitivity, MemoryStatus, ScopeAncestry, TemporalState,
+};
+pub use observability::{
+    CandidateDecisionLabel, ConsolidationJobState, GbrainDegradedCategory, LatencySamples,
+    MemoryKindLabel, MemoryMetrics, MemoryMetricsSnapshot, MemoryScopeLabel, RecallOmittedReason,
+    RecallSourceLabel, TombstoneDestination,
 };
 pub use projection::{
     DefaultMemoryWorkspaceProjector, MemoryCandidateContext, MemoryProjection,

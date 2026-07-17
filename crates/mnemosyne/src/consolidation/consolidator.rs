@@ -1,5 +1,5 @@
 use super::{ConsolidationRepository, MemoryCandidate};
-use crate::{MemoryAuthority, MemoryRecordId, MemoryScope};
+use crate::{CandidateDecisionLabel, MemoryAuthority, MemoryRecordId, MemoryScope};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -67,6 +67,15 @@ impl<'a> ScopedConsolidator<'a> {
             .collect::<Vec<_>>();
         self.repository
             .commit_decisions(&lease, &watermark, &rows, now_ms)?;
+        let metrics = self.repository.metrics();
+        for (_, decision, _) in &decisions {
+            metrics.candidate_decision(match decision {
+                ConsolidationDecision::Insert => CandidateDecisionLabel::Insert,
+                ConsolidationDecision::Merge => CandidateDecisionLabel::Merge,
+                ConsolidationDecision::Reject => CandidateDecisionLabel::Reject,
+                ConsolidationDecision::Supersede => CandidateDecisionLabel::Supersede,
+            });
+        }
         Ok(ConsolidationOutcome {
             consumed: decisions.len(),
             decisions,

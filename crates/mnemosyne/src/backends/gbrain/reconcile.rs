@@ -8,7 +8,7 @@ use super::page::GbrainPage;
 use super::spool::{EnqueueOutcome, GbrainSpool, SpoolError};
 use super::{RetryOutcome, RetryPolicy, SupplementalErrorCategory, SupplementalMemoryTransport};
 use crate::model::{MemoryRecord, MemoryRecordId, MemoryStatus};
-use crate::RetentionRepository;
+use crate::{MemoryMetrics, RetentionRepository};
 
 pub const RECONCILIATION_SCHEMA_VERSION: u32 = 1;
 
@@ -139,6 +139,7 @@ pub struct GbrainReconciliationService<T: SupplementalMemoryTransport> {
     batch_size: usize,
     lease_ms: i64,
     retention: Option<Arc<RetentionRepository>>,
+    metrics: MemoryMetrics,
 }
 
 impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
@@ -162,7 +163,14 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
             batch_size,
             lease_ms,
             retention: None,
+            metrics: MemoryMetrics::default(),
         })
+    }
+
+    pub fn with_metrics(mut self, metrics: MemoryMetrics) -> Self {
+        metrics.set_gbrain_queue_depth(self.spool.queue_depth().unwrap_or_default());
+        self.metrics = metrics;
+        self
     }
 
     pub fn with_retention_repository(mut self, retention: Arc<RetentionRepository>) -> Self {
@@ -193,6 +201,8 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
         };
         for item in claimed {
             if cancel.is_cancelled() {
+                self.metrics
+                    .gbrain_degraded(SupplementalErrorCategory::Cancelled.into());
                 report.interrupted += 1;
                 break;
             }
@@ -222,6 +232,8 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
                     if cancel.is_cancelled()
                         || error.category == SupplementalErrorCategory::Cancelled =>
                 {
+                    self.metrics
+                        .gbrain_degraded(SupplementalErrorCategory::Cancelled.into());
                     report.interrupted += 1;
                     break;
                 }
@@ -233,13 +245,20 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
                     &self.retry,
                     !error.category.is_transient(),
                 )? {
-                    RetryOutcome::Scheduled { .. } => report.retried += 1,
-                    RetryOutcome::DeadLettered => report.dead_lettered += 1,
+                    RetryOutcome::Scheduled { .. } => {
+                        self.metrics.gbrain_degraded(error.category.into());
+                        report.retried += 1;
+                    }
+                    RetryOutcome::DeadLettered => {
+                        self.metrics.gbrain_degraded(error.category.into());
+                        report.dead_lettered += 1;
+                    }
                 },
             }
         }
         report.queue_depth = self.spool.queue_depth()?;
         self.transport.set_queue_depth(report.queue_depth);
+        self.metrics.set_gbrain_queue_depth(report.queue_depth);
         Ok(report)
     }
 

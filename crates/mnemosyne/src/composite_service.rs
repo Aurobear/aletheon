@@ -27,6 +27,10 @@ pub struct CompositeMemoryHealth {
 pub trait SupplementalMemoryService: Send + Sync {
     fn queue_depth(&self) -> usize;
 
+    fn metrics(&self) -> Option<crate::MemoryMetrics> {
+        None
+    }
+
     fn record(
         &self,
         event: &ExperienceEvent,
@@ -44,6 +48,10 @@ pub trait SupplementalMemoryService: Send + Sync {
 impl<T: SupplementalMemoryTransport + 'static> SupplementalMemoryService for GbrainBackend<T> {
     fn queue_depth(&self) -> usize {
         self.spool().queue_depth().unwrap_or_default()
+    }
+
+    fn metrics(&self) -> Option<crate::MemoryMetrics> {
+        Some(GbrainBackend::metrics(self).clone())
     }
 
     fn record(
@@ -209,8 +217,16 @@ impl MemoryService for CompositeMemoryService {
         if supplemental.health.degraded {
             degraded_sources.push("gbrain".into());
         }
+        let metrics = self
+            .supplemental
+            .as_ref()
+            .and_then(|service| service.metrics());
         Ok(RecallSet {
-            items: crate::recall::merge_items([local.items, supplemental_items], &request),
+            items: crate::recall::merge_items(
+                [local.items, supplemental_items],
+                &request,
+                metrics.as_ref(),
+            ),
             degraded_sources,
         })
     }

@@ -5,10 +5,12 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::backends::gbrain::GbrainPage;
 use crate::model::{MemoryKind, MemoryRecord, MemoryRecordId, MemoryScope, MemoryStatus};
+use crate::observability::{MemoryMetrics, TombstoneDestination};
 use crate::service::{ForgetAuthority, ForgetPolicy, ForgetReceipt, ForgetSelector};
 
 pub struct RetentionRepository {
     connection: Mutex<Connection>,
+    metrics: Mutex<MemoryMetrics>,
 }
 
 impl RetentionRepository {
@@ -60,7 +62,16 @@ impl RetentionRepository {
         )?;
         Ok(Self {
             connection: Mutex::new(connection),
+            metrics: Mutex::new(MemoryMetrics::default()),
         })
+    }
+
+    pub fn set_metrics(&self, metrics: MemoryMetrics) {
+        *self
+            .metrics
+            .lock()
+            .expect("retention metrics mutex poisoned") = metrics;
+        let _ = self.refresh_pending_metrics();
     }
 
     pub fn register(&self, record: &MemoryRecord, now_ms: i64) -> anyhow::Result<()> {
@@ -92,6 +103,8 @@ impl RetentionRepository {
             params![policy.request_id, hash, now_ms],
         )?;
         tx.commit()?;
+        drop(connection);
+        self.refresh_pending_metrics()?;
         Ok(receipt)
     }
 
@@ -178,6 +191,8 @@ impl RetentionRepository {
             params![policy.request_id, hash, serde_json::to_string(&receipt)?, now_ms],
         )?;
         tx.commit()?;
+        drop(connection);
+        self.refresh_pending_metrics()?;
         Ok(receipt)
     }
 
@@ -227,6 +242,41 @@ impl RetentionRepository {
                 "UPDATE memory_tombstones SET remote_state='settled' WHERE record_id=?1",
                 [record_id],
             )?;
+        self.refresh_pending_metrics()?;
+        Ok(())
+    }
+
+    pub fn pending_remote_count(&self) -> anyhow::Result<usize> {
+        Ok(self
+            .connection
+            .lock()
+            .expect("retention mutex poisoned")
+            .query_row(
+                "SELECT COUNT(*) FROM memory_tombstones WHERE remote_state='pending'",
+                [],
+                |row| row.get(0),
+            )?)
+    }
+
+    pub(crate) fn refresh_pending_metrics(&self) -> anyhow::Result<()> {
+        let (local, gbrain): (usize, usize) = self
+            .connection
+            .lock()
+            .expect("retention mutex poisoned")
+            .query_row(
+                "SELECT COALESCE(SUM(CASE WHEN payload_removed_ms IS NULL THEN 1 ELSE 0 END),0),
+                        COALESCE(SUM(CASE WHEN remote_state='pending' THEN 1 ELSE 0 END),0)
+                 FROM memory_tombstones",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+        let metrics = self
+            .metrics
+            .lock()
+            .expect("retention metrics mutex poisoned")
+            .clone();
+        metrics.set_tombstone_pending(TombstoneDestination::Local, local);
+        metrics.set_tombstone_pending(TombstoneDestination::Gbrain, gbrain);
         Ok(())
     }
 

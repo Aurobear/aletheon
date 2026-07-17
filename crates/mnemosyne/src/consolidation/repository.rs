@@ -15,6 +15,7 @@ type ExtractionClaimRow = (
     Option<String>,
     u32,
 );
+use crate::observability::{ConsolidationJobState, MemoryMetrics};
 use crate::{MemoryKind, MemoryScope};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +37,19 @@ impl ExtractionStatus {
             Self::SucceededNoOutput => "succeeded_no_output",
             Self::RetryableFailure => "retryable_failure",
             Self::PermanentFailure => "permanent_failure",
+        }
+    }
+}
+
+impl From<ExtractionStatus> for ConsolidationJobState {
+    fn from(value: ExtractionStatus) -> Self {
+        match value {
+            ExtractionStatus::Pending => Self::Pending,
+            ExtractionStatus::Leased => Self::Leased,
+            ExtractionStatus::Succeeded => Self::Succeeded,
+            ExtractionStatus::SucceededNoOutput => Self::SucceededNoOutput,
+            ExtractionStatus::RetryableFailure => Self::RetryableFailure,
+            ExtractionStatus::PermanentFailure => Self::PermanentFailure,
         }
     }
 }
@@ -135,6 +149,7 @@ pub struct ScopeLease {
 
 pub struct ConsolidationRepository {
     connection: Mutex<Connection>,
+    metrics: Mutex<MemoryMetrics>,
 }
 impl ConsolidationRepository {
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -154,7 +169,51 @@ impl ConsolidationRepository {
         }
         Ok(Self {
             connection: Mutex::new(c),
+            metrics: Mutex::new(MemoryMetrics::default()),
         })
+    }
+
+    pub fn set_metrics(&self, metrics: MemoryMetrics) {
+        *self
+            .metrics
+            .lock()
+            .expect("consolidation metrics mutex poisoned") = metrics;
+        let _ = self.refresh_job_metrics();
+    }
+
+    pub(crate) fn metrics(&self) -> MemoryMetrics {
+        self.metrics
+            .lock()
+            .expect("consolidation metrics mutex poisoned")
+            .clone()
+    }
+
+    fn refresh_job_metrics(&self) -> anyhow::Result<()> {
+        let connection = self.connection.lock().unwrap();
+        let mut query = connection
+            .prepare("SELECT status,COUNT(*) FROM memory_extraction_jobs GROUP BY status")?;
+        let rows = query
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(query);
+        drop(connection);
+        let metrics = self.metrics();
+        for state in [
+            ConsolidationJobState::Pending,
+            ConsolidationJobState::Leased,
+            ConsolidationJobState::Succeeded,
+            ConsolidationJobState::SucceededNoOutput,
+            ConsolidationJobState::RetryableFailure,
+            ConsolidationJobState::PermanentFailure,
+        ] {
+            metrics.set_consolidation_jobs(state, 0);
+        }
+        for (status, count) in rows {
+            metrics.set_consolidation_jobs(parse_status(&status)?.into(), count);
+        }
+        Ok(())
     }
     pub fn enqueue_extraction(&self, job: &ExtractionJob) -> anyhow::Result<i64> {
         let scope = job
@@ -174,12 +233,17 @@ impl ConsolidationRepository {
         );
         scope.validate()?;
         let c = self.connection.lock().unwrap();
-        c.execute("INSERT OR IGNORE INTO memory_extraction_jobs(idempotency_key,session_id,goal_id,ephemeral,memory_worker,completed_at_ms,status,watermark,scope_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,'pending',?7,?8,?9,?9)",params![job.idempotency_key,job.session_id,job.goal_id,job.ephemeral,job.memory_worker,job.completed_at_ms,job.watermark,serde_json::to_string(scope)?,job.created_at_ms])?;
-        Ok(c.query_row(
+        let inserted = c.execute("INSERT OR IGNORE INTO memory_extraction_jobs(idempotency_key,session_id,goal_id,ephemeral,memory_worker,completed_at_ms,status,watermark,scope_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,'pending',?7,?8,?9,?9)",params![job.idempotency_key,job.session_id,job.goal_id,job.ephemeral,job.memory_worker,job.completed_at_ms,job.watermark,serde_json::to_string(scope)?,job.created_at_ms])?;
+        let id = c.query_row(
             "SELECT id FROM memory_extraction_jobs WHERE idempotency_key=?1",
             [&job.idempotency_key],
             |r| r.get(0),
-        )?)
+        )?;
+        drop(c);
+        if inserted == 1 {
+            self.refresh_job_metrics()?;
+        }
+        Ok(id)
     }
 
     /// Durably append one canonical experience and its restart-safe extraction job.
@@ -198,7 +262,7 @@ impl ConsolidationRepository {
         scope.validate()?;
         let mut connection = self.connection.lock().unwrap();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
+        let inserted = transaction.execute(
             "INSERT OR IGNORE INTO memory_extraction_jobs(idempotency_key,session_id,goal_id,ephemeral,memory_worker,completed_at_ms,status,watermark,scope_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,'pending',?7,?8,?9,?9)",
             params![job.idempotency_key,job.session_id,job.goal_id,job.ephemeral,job.memory_worker,job.completed_at_ms,job.watermark,serde_json::to_string(scope)?,job.created_at_ms],
         )?;
@@ -212,6 +276,10 @@ impl ConsolidationRepository {
             params![id, event.event_id, event.kind, event.content],
         )?;
         transaction.commit()?;
+        drop(connection);
+        if inserted == 1 {
+            self.refresh_job_metrics()?;
+        }
         Ok(id)
     }
     pub fn claim_extraction(
@@ -239,6 +307,8 @@ impl ConsolidationRepository {
             return Ok(None);
         }
         tx.commit()?;
+        drop(c);
+        self.refresh_job_metrics()?;
         let scope = match scope_json {
             Some(value) => serde_json::from_str(&value)?,
             None => goal
@@ -347,6 +417,8 @@ impl ConsolidationRepository {
         }
         tx.execute("UPDATE memory_extraction_jobs SET status=?1,last_error=?2,retry_at_ms=?3,lease_owner=NULL,lease_until_ms=NULL,updated_at_ms=?4 WHERE id=?5",params![status.as_str(),error,retry,now_ms,lease.id])?;
         tx.commit()?;
+        drop(c);
+        self.refresh_job_metrics()?;
         Ok(())
     }
     pub fn status(&self, key: &str) -> anyhow::Result<ExtractionStatus> {

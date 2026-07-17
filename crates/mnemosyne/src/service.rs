@@ -14,6 +14,7 @@
 //! collide, so callers reach this type via `mnemosyne::service::MemoryScope`.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -26,6 +27,9 @@ pub use crate::model::{
     TemporalState,
 };
 use crate::model::{MemoryKind, MemoryRecord, MemoryRecordId, MemoryStatus};
+use crate::observability::{
+    MemoryMetrics, RecallOmittedReason, RecallSourceLabel, TombstoneDestination,
+};
 use crate::{CoreMemory, EpisodicMemory, FactStore, RecallMemory};
 
 /// A unit of experience to be recorded into memory.
@@ -295,6 +299,7 @@ pub struct DefaultMemoryService {
     clock: Arc<dyn fabric::Clock>,
     consolidation: Option<Arc<crate::consolidation::ConsolidationRepository>>,
     retention: Option<Arc<crate::retention::RetentionRepository>>,
+    metrics: MemoryMetrics,
 }
 
 impl DefaultMemoryService {
@@ -313,13 +318,30 @@ impl DefaultMemoryService {
             clock,
             consolidation: None,
             retention: None,
+            metrics: MemoryMetrics::default(),
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: MemoryMetrics) -> Self {
+        if let Some(repository) = &self.retention {
+            repository.set_metrics(metrics.clone());
+        }
+        if let Some(repository) = &self.consolidation {
+            repository.set_metrics(metrics.clone());
+        }
+        self.metrics = metrics;
+        self
+    }
+
+    pub fn metrics(&self) -> &MemoryMetrics {
+        &self.metrics
     }
 
     pub fn with_retention_repository(
         mut self,
         repository: Arc<crate::retention::RetentionRepository>,
     ) -> Self {
+        repository.set_metrics(self.metrics.clone());
         self.retention = Some(repository);
         self
     }
@@ -340,6 +362,7 @@ impl DefaultMemoryService {
         mut self,
         repository: Arc<crate::consolidation::ConsolidationRepository>,
     ) -> Self {
+        repository.set_metrics(self.metrics.clone());
         self.consolidation = Some(repository);
         self
     }
@@ -461,7 +484,7 @@ impl MemoryService for DefaultMemoryService {
                     let record = MemoryRecord {
                         id: MemoryRecordId(metadata.record_id.clone()),
                         kind: MemoryKind::Message,
-                        scope,
+                        scope: scope.clone(),
                         content,
                         metadata,
                         status: MemoryStatus::Current,
@@ -471,6 +494,7 @@ impl MemoryService for DefaultMemoryService {
                     };
                     retention.register(&record, self.clock.wall_now().0.max(0))?;
                 }
+                self.metrics.record_stored(MemoryKind::Message, &scope);
                 Ok(())
             }
             event @ (ExperienceEvent::Reflection { .. }
@@ -539,7 +563,7 @@ impl MemoryService for DefaultMemoryService {
                         &MemoryRecord {
                             id: MemoryRecordId(metadata.record_id.clone()),
                             kind,
-                            scope,
+                            scope: scope.clone(),
                             content,
                             metadata,
                             status: MemoryStatus::Current,
@@ -550,40 +574,55 @@ impl MemoryService for DefaultMemoryService {
                         self.clock.wall_now().0.max(0),
                     )?;
                 }
+                self.metrics.record_stored(kind, &scope);
                 Ok(())
             }
         }
     }
 
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet> {
-        req.validate()?;
+        if let Err(error) = req.validate() {
+            self.metrics
+                .recall_omitted(RecallOmittedReason::InvalidRequest, 1);
+            return Err(error);
+        }
         let fetch_limit = req
             .max_items
             .saturating_mul(4)
             .min(RecallRequest::MAX_ITEMS);
         let now = wall_to_datetime(self.clock.wall_now());
         let messages = async {
-            self.recall_memory
+            let started = Instant::now();
+            let result = self
+                .recall_memory
                 .lock()
                 .await
                 .search_in_session(&req.session, &req.query, fetch_limit)
-                .map(|rows| crate::recall::local::messages(rows, &req))
+                .map(|rows| crate::recall::local::messages(rows, &req));
+            (started.elapsed(), result)
         };
         let facts = async {
-            self.fact_store
+            let started = Instant::now();
+            let result = self
+                .fact_store
                 .lock()
                 .await
                 .search_facts(&req.query, None, 0.0, fetch_limit)
-                .map(|rows| crate::recall::local::facts(rows, &req, now))
+                .map(|rows| crate::recall::local::facts(rows, &req, now));
+            (started.elapsed(), result)
         };
         let reflections = async {
-            self.episodic
+            let started = Instant::now();
+            let result = self
+                .episodic
                 .lock()
                 .await
                 .recall_reflections(fetch_limit)
-                .map(|rows| crate::recall::local::reflections(rows, &req))
+                .map(|rows| crate::recall::local::reflections(rows, &req));
+            (started.elapsed(), result)
         };
         let core = async {
+            let started = Instant::now();
             let blocks = self
                 .core_memory
                 .lock()
@@ -592,32 +631,63 @@ impl MemoryService for DefaultMemoryService {
                 .iter()
                 .map(|(label, block)| (label.clone(), block.value.clone()))
                 .collect::<Vec<_>>();
-            Ok::<_, anyhow::Error>(crate::recall::local::core(blocks, &req, now))
+            (
+                started.elapsed(),
+                Ok::<_, anyhow::Error>(crate::recall::local::core(blocks, &req, now)),
+            )
         };
         let (messages, facts, reflections, core) = tokio::join!(messages, facts, reflections, core);
         let mut sources = Vec::with_capacity(4);
         let mut degraded_sources = Vec::new();
-        for (name, result) in [
-            ("recall_memory", messages),
-            ("fact_store", facts),
-            ("episodic", reflections),
-            ("core", core),
+        for (name, source, kind, (elapsed, result)) in [
+            (
+                "recall_memory",
+                RecallSourceLabel::RecallMemory,
+                MemoryKind::Message,
+                messages,
+            ),
+            (
+                "fact_store",
+                RecallSourceLabel::FactStore,
+                MemoryKind::SemanticFact,
+                facts,
+            ),
+            (
+                "episodic",
+                RecallSourceLabel::Episodic,
+                MemoryKind::Reflection,
+                reflections,
+            ),
+            ("core", RecallSourceLabel::Core, MemoryKind::CoreState, core),
         ] {
+            self.metrics.observe_recall_latency(source, elapsed);
             match result {
-                Ok(items) => sources.push(items),
+                Ok(items) => {
+                    self.metrics.recall_hit(source, kind, items.len());
+                    sources.push(items);
+                }
                 Err(error) => {
                     tracing::warn!(source = name, %error, "local memory recall source degraded");
+                    self.metrics
+                        .recall_omitted(RecallOmittedReason::SourceDegraded, 1);
                     degraded_sources.push(name.to_string());
                 }
             }
         }
-        let mut items = crate::recall::merge_items(sources, &req);
+        let mut items = crate::recall::merge_items(sources, &req, Some(&self.metrics));
         if let Some(retention) = &self.retention {
+            let before = items.len();
             items.retain(|item| {
                 !retention
                     .is_tombstoned(&item.metadata.record_id)
                     .unwrap_or(false)
             });
+            self.metrics
+                .recall_omitted(RecallOmittedReason::Tombstoned, before - items.len());
+            self.metrics.set_tombstone_pending(
+                TombstoneDestination::Gbrain,
+                retention.pending_remote_count().unwrap_or_default(),
+            );
         }
         Ok(RecallSet {
             items,

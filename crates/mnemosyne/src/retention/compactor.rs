@@ -97,6 +97,8 @@ impl<'a> RetentionCompactor<'a> {
             params![report.watermark, now_ms],
         )?;
         tx.commit()?;
+        drop(connection);
+        self.repository.refresh_pending_metrics()?;
         Ok(report)
     }
 }

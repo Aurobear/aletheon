@@ -10,8 +10,8 @@ use mnemosyne::backends::gbrain::{
 };
 use mnemosyne::{
     CompositeMemoryService, CoreMemory, DefaultMemoryService, EpisodicMemory, ExperienceEvent,
-    FactStore, ForgetPolicy, MemoryBlock, MemoryMetadata, MemoryService, RecallMemory,
-    RecallRequest, SupplementalMemoryService,
+    FactStore, ForgetPolicy, MemoryBlock, MemoryKindLabel, MemoryMetadata, MemoryScopeLabel,
+    MemoryService, RecallMemory, RecallRequest, RecallSourceLabel, SupplementalMemoryService,
 };
 use rusqlite::Connection;
 use serde_json::Value;
@@ -99,6 +99,19 @@ async fn message_recall_does_not_leak_across_sessions() {
         .items
         .iter()
         .any(|item| item.content.ends_with("session-b")));
+    let snapshot = fixture.service.metrics().snapshot();
+    assert_eq!(
+        snapshot.memory_record_total[&MemoryKindLabel::Message][&MemoryScopeLabel::Session],
+        2
+    );
+    assert_eq!(
+        snapshot.memory_recall_hits[&RecallSourceLabel::RecallMemory][&MemoryKindLabel::Message],
+        1
+    );
+    assert_eq!(
+        snapshot.memory_recall_latency_ms[&RecallSourceLabel::RecallMemory].count,
+        1
+    );
 }
 
 #[tokio::test]
