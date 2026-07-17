@@ -222,6 +222,27 @@ impl SandboxExecutor {
             tracing::warn!("Sandbox degraded to no isolation (BestEffort mode)");
         }
 
+        // S1 T11: a resolved profile that restricts the network must not run on
+        // a backend that cannot isolate it. Under Require this fails closed
+        // (same posture as the noop guard); otherwise it warns rather than
+        // silently opening the network. `None` policy skips the check entirely.
+        if let Some(policy) = &config.policy {
+            if policy.restrict_network && !backend.capabilities().network_isolation {
+                if self.preference == SandboxPreference::Require {
+                    return Err(anyhow::anyhow!(
+                        "Sandbox profile '{}' requires network isolation but backend '{}' cannot provide it (fail-closed)",
+                        policy.name,
+                        backend.name()
+                    ));
+                }
+                tracing::warn!(
+                    profile = %policy.name,
+                    backend = %backend.name(),
+                    "Sandbox profile requests network restriction but backend lacks network isolation; continuing degraded"
+                );
+            }
+        }
+
         backend.execute(cmd, config, timeout).await
     }
 
@@ -709,5 +730,159 @@ mod resolve_tests {
                 "profile {name} must deny the credential path"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod executor_tests {
+    use super::*;
+
+    /// Minimal backend whose network-isolation capability is configurable, so
+    /// the S1 T11 consistency check can be exercised without a real sandbox.
+    struct MockBackend {
+        name: &'static str,
+        isolation: IsolationLevel,
+        network_isolation: bool,
+    }
+
+    #[async_trait]
+    impl SandboxBackend for MockBackend {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn isolation_level(&self) -> IsolationLevel {
+            self.isolation
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        fn capabilities(&self) -> SandboxCapabilities {
+            SandboxCapabilities {
+                filesystem_isolation: true,
+                network_isolation: self.network_isolation,
+                resource_limits: false,
+                seccomp_filter: false,
+                limitations: vec![],
+            }
+        }
+        async fn execute(
+            &self,
+            _cmd: &str,
+            _config: &SandboxConfig,
+            _timeout: Duration,
+        ) -> anyhow::Result<SandboxResult> {
+            Ok(SandboxResult {
+                stdout: "ran".into(),
+                stderr: String::new(),
+                exit_code: 0,
+                backend_used: self.name.to_string(),
+                isolation_level: self.isolation,
+                elapsed_ms: 0,
+            })
+        }
+    }
+
+    fn config_with_network_restriction(restrict: bool) -> SandboxConfig {
+        SandboxConfig {
+            workspace: WorkspacePolicy::from_resolved_roots(PathBuf::from("/tmp"), vec![]).unwrap(),
+            environment: BTreeMap::new(),
+            policy: Some(ResolvedSandboxPolicy {
+                name: "read-only".into(),
+                read_only_roots: vec![PathBuf::from("/")],
+                read_write_roots: vec![],
+                deny_exact: vec![],
+                deny_globs: vec![],
+                restrict_network: restrict,
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn require_fails_closed_when_backend_lacks_network_isolation() {
+        let executor = SandboxExecutor::new(
+            vec![Box::new(MockBackend {
+                name: "namespace",
+                isolation: IsolationLevel::Namespace,
+                network_isolation: false,
+            })],
+            SandboxPreference::Require,
+        );
+        let err = executor
+            .run(
+                "echo hi",
+                &config_with_network_restriction(true),
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("requires network isolation"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn best_effort_runs_degraded_when_backend_lacks_network_isolation() {
+        let executor = SandboxExecutor::new(
+            vec![Box::new(MockBackend {
+                name: "namespace",
+                isolation: IsolationLevel::Namespace,
+                network_isolation: false,
+            })],
+            SandboxPreference::BestEffort,
+        );
+        // Degraded, not fail-closed: it warns and still executes.
+        let result = executor
+            .run(
+                "echo hi",
+                &config_with_network_restriction(true),
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn require_runs_when_backend_provides_network_isolation() {
+        let executor = SandboxExecutor::new(
+            vec![Box::new(MockBackend {
+                name: "namespace",
+                isolation: IsolationLevel::Namespace,
+                network_isolation: true,
+            })],
+            SandboxPreference::Require,
+        );
+        let result = executor
+            .run(
+                "echo hi",
+                &config_with_network_restriction(true),
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn none_policy_skips_the_network_consistency_check() {
+        let executor = SandboxExecutor::new(
+            vec![Box::new(MockBackend {
+                name: "namespace",
+                isolation: IsolationLevel::Namespace,
+                network_isolation: false,
+            })],
+            SandboxPreference::Require,
+        );
+        let config = SandboxConfig {
+            workspace: WorkspacePolicy::from_resolved_roots(PathBuf::from("/tmp"), vec![]).unwrap(),
+            environment: BTreeMap::new(),
+            policy: None,
+        };
+        let result = executor
+            .run("echo hi", &config, Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
     }
 }
