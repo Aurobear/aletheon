@@ -8,6 +8,7 @@ pub mod attempt;
 pub mod capability;
 pub mod channel;
 pub mod coding_job;
+pub mod conscious_arbitration;
 pub mod conscious_core;
 pub mod conscious_core_trace;
 pub mod context;

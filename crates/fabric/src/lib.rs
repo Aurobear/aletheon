@@ -59,6 +59,7 @@ pub use types::agent_control;
 pub use types::attempt;
 pub use types::capability;
 pub use types::channel;
+pub use types::conscious_arbitration;
 pub use types::conscious_core;
 pub use types::context;
 pub use types::evidence;
@@ -95,6 +96,11 @@ pub use types::conscious_core::{
 pub use types::conscious_core_trace::{
     AcceptanceEvidence, ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult,
     CONSCIOUS_CORE_TRACE_SCHEMA_V1,
+};
+pub use types::conscious_arbitration::{
+    CapabilityBatchDecision, CapabilityBatchPlan, ConsciousArbitrationMode,
+    ConsciousFieldReadout, FieldDecisionKind, FieldDecisionReason,
+    LatestConsciousContextPort,
 };
 pub use types::workspace::{
     ActionProposalFrame, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, BroadcastEpoch,
